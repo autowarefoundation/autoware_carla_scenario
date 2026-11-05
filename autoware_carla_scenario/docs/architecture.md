@@ -1055,7 +1055,10 @@ sequenceDiagram
     participant SR as ScenarioRunner
     participant C as CARLA Simulator
 
-    B->>A: POST /api/run {scenario, overrides, sweeper}
+    B->>A: POST /api/run {scenario, extra_overrides, sweeper, launcher, slurm}
+    opt The body is not a JSON object, or a field has the wrong type
+        A-->>B: 400 {"status": "error", "message": ...}
+    end
 
     alt With sweeper
         A->>A: sweep_resolver.resolve_sweep()
@@ -1104,6 +1107,7 @@ sequenceDiagram
 
 - **Process isolation**: Each scenario runs in a separate `uv run scenario` subprocess. This prevents CARLA's C++ extension from crashing the web server.
 - **Thread-safe progress**: A global `RunProgress` object protected by `threading.Lock` provides progress state. `start_run()` checks for a run in progress and claims the run under that lock, so two runs never start at once and the stream never replays the previous run's `done`.
+- **Checked run bodies**: `/api/run` and `/api/run/preview` read their body through one parser (`app.parse_run_body`): it must be a JSON object, `scenario` a string, `extra_overrides` a list of strings (null or absent: none), `sweeper` a string or null, `launcher` `local`, `slurm` or null, and `slurm` an object of text or number options. Anything else is answered with 400 before a run starts or a batch is submitted, so a string of overrides is never run one character per argument (#1500). The SLURM `resubmit` action refuses a body that is not an object, or a `failed` that is not a boolean, the same way.
 - **SSE streaming**: The `/api/run/progress` endpoint uses Server-Sent Events for real-time progress updates (polled at 0.5 s intervals).
 - **Multirun grouping**: When running multiple scenarios, jobs share a timestamped `multirun/` directory with numbered subdirectories. The directory is the run's alone: one started in the same second as another run or a CLI sweep gets `HH-MM-SS-1`, then `HH-MM-SS-2`, ...
 

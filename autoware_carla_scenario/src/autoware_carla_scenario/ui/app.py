@@ -8,6 +8,7 @@ import logging
 import shlex
 from collections.abc import AsyncIterator
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
@@ -104,6 +105,144 @@ def _resolve_scenario_names(scenario: str) -> list[str]:
     if is_scenario_glob(scenario):
         return resolve_scenario_glob(scenario, scanner.scenario_conf_dirs())
     return [scenario]
+
+
+# ── Request bodies ───────────────────────────────────────────────────────
+
+#: The SLURM option fields that are text (``launcher.<key>``).
+_SLURM_TEXT_FIELDS = ("partition", "time", "mem", "gres", "remote_cwd", "python")
+#: The SLURM option fields that are numbers (the panel sends them as text).
+_SLURM_NUMBER_FIELDS = ("array_parallelism", "cases_per_task", "start_stagger_seconds")
+
+
+class BodyError(ValueError):
+    """A request body that is not what its endpoint reads (answered with 400)."""
+
+
+def _is_number(value: object) -> bool:
+    """An int or a float, not a bool (which JSON keeps apart)."""
+    return isinstance(value, (int, float)) and not isinstance(value, bool)
+
+
+async def _json_object(request: Request) -> dict[str, Any]:
+    """The request's JSON body as an object; ``{}`` when there is none.
+
+    A body that is not JSON keeps the defaults, as before; one that is JSON
+    but not an object (``[1]``, ``"x"``, ``null``) is refused.
+
+    Raises:
+        BodyError: The body is JSON but not an object.
+    """
+    try:
+        body = await request.json()
+    except Exception:  # noqa: BLE001 -- no body (or not JSON): the defaults
+        return {}
+    if not isinstance(body, dict):
+        raise BodyError("the request body must be a JSON object")
+    return body
+
+
+def _check_slurm_fields(raw: object) -> dict[str, Any]:
+    """The ``slurm`` field: an object of the run panel's SLURM options, or
+    ``{}`` when absent or null.  Each option is checked for its type only;
+    :meth:`slurm_launch.SlurmOptions.from_request` checks its value.
+
+    Raises:
+        BodyError: The field, or one of its options, has the wrong type.
+    """
+    if raw is None:
+        return {}
+    if not isinstance(raw, dict):
+        raise BodyError("slurm must be an object")
+    for key in _SLURM_TEXT_FIELDS:
+        value = raw.get(key)
+        if value is not None and not isinstance(value, str) and not _is_number(value):
+            raise BodyError(f"slurm.{key} must be text")
+    for key in _SLURM_NUMBER_FIELDS:
+        value = raw.get(key)
+        if value is not None and not isinstance(value, str) and not _is_number(value):
+            raise BodyError(f"slurm.{key} must be a number")
+    setup = raw.get("setup")
+    if setup is not None and not isinstance(setup, str):
+        if not isinstance(setup, list) or not all(isinstance(x, str) for x in setup):
+            raise BodyError("slurm.setup must be text or a list of strings")
+    env = raw.get("env")
+    if env is not None and not isinstance(env, str):
+        if not isinstance(env, dict) or not all(
+            isinstance(v, str) or _is_number(v) for v in env.values()
+        ):
+            raise BodyError(
+                "slurm.env must be NAME=value lines or an object of text values"
+            )
+    return raw
+
+
+@dataclass(frozen=True)
+class RunBody:
+    """The body of ``/api/run`` and ``/api/run/preview``, its types checked."""
+
+    scenario: str = "*/*"
+    extra_overrides: list[str] = field(default_factory=list)
+    sweeper: str = ""
+    #: ``local`` or ``slurm``.
+    launcher: str = "local"
+    #: The SLURM options (``launcher == "slurm"``), unchecked values.
+    slurm: dict[str, Any] = field(default_factory=dict)
+
+
+def parse_run_body(body: dict[str, Any]) -> RunBody:
+    """Check the fields a run reads, before anything runs or is submitted.
+
+    ``extra_overrides`` must be a list of strings (null or absent: none) --
+    a string would otherwise be extended into the command one character at a
+    time (#1500); ``scenario`` a string, ``sweeper`` a string or null,
+    ``launcher`` ``"local"``, ``"slurm"`` or null, ``slurm`` an object or
+    null.  Other fields are ignored.
+
+    Raises:
+        BodyError: A field has the wrong type or value.
+    """
+    scenario = body.get("scenario", "*/*")
+    if not isinstance(scenario, str):
+        raise BodyError("scenario must be a string")
+    extra = body.get("extra_overrides")
+    if extra is None:
+        extra = []
+    if not isinstance(extra, list) or not all(isinstance(x, str) for x in extra):
+        raise BodyError("extra_overrides must be a list of strings")
+    sweeper = body.get("sweeper")
+    if sweeper is None:
+        sweeper = ""
+    if not isinstance(sweeper, str):
+        raise BodyError("sweeper must be a string or null")
+    launcher = body.get("launcher")
+    if launcher is None:
+        launcher = "local"
+    if launcher not in ("local", "slurm"):
+        raise BodyError("launcher must be 'local' or 'slurm'")
+    return RunBody(
+        scenario=scenario,
+        extra_overrides=list(extra),
+        sweeper=sweeper,
+        launcher=launcher,
+        slurm=_check_slurm_fields(body.get("slurm")),
+    )
+
+
+async def _run_body(request: Request) -> RunBody:
+    """The run body of *request* (:func:`parse_run_body`).
+
+    Raises:
+        BodyError: The body is not a JSON object, or a field is wrong.
+    """
+    return parse_run_body(await _json_object(request))
+
+
+def _run_body_error(exc: BodyError) -> JSONResponse:
+    """The 400 answer to a run body refused (``/api/run``'s error shape)."""
+    return JSONResponse(
+        status_code=400, content={"status": "error", "message": str(exc)}
+    )
 
 
 # ── Page routes ──────────────────────────────────────────────────────────
@@ -232,22 +371,25 @@ async def list_scenarios() -> list[str]:
     return scanner.list_scenario_configs()
 
 
-@app.post("/api/run/preview")
-async def run_preview(request: Request) -> dict[str, str]:
-    """Return the command that would be executed, for preview."""
-    body: dict[str, Any] = {}
+@app.post("/api/run/preview", response_model=None)
+async def run_preview(request: Request) -> dict[str, str] | JSONResponse:
+    """Return the command that would be executed, for preview.
+
+    A body :func:`parse_run_body` refuses is answered with 400 and the
+    reason as the command's comment (``{"command": "# ..."}``).
+    """
     try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
-        pass
+        body = await _run_body(request)
+    except BodyError as exc:
+        return JSONResponse(status_code=400, content={"command": f"# {exc}"})
 
-    scenario: str = body.get("scenario", "*/*")
-    extra_overrides: list[str] = body.get("extra_overrides", [])
-    sweeper: str = body.get("sweeper", "")
+    scenario = body.scenario
+    extra_overrides = body.extra_overrides
+    sweeper = body.sweeper
 
-    if body.get("launcher") == "slurm":
+    if body.launcher == "slurm":
         try:
-            options = slurm_launch.SlurmOptions.from_request(body.get("slurm"))
+            options = slurm_launch.SlurmOptions.from_request(body.slurm)
         except ValueError as exc:
             return {"command": f"# {exc}"}
         cmd = slurm_launch.build_command(scenario, extra_overrides, sweeper, options)
@@ -305,20 +447,21 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
 
     The request body specifies the scenario pattern and options
     explicitly from the Run Options panel.  A local run is refused with
-    409 (``{"status": "busy"}``) while another is in progress.
+    409 (``{"status": "busy"}``) while another is in progress.  A body
+    :func:`parse_run_body` refuses is answered with 400
+    (``{"status": "error"}``) before anything runs or is submitted.
     """
-    body: dict[str, Any] = {}
     try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001
-        pass
+        body = await _run_body(request)
+    except BodyError as exc:
+        return _run_body_error(exc)
 
-    scenario: str = body.get("scenario", "*/*")
-    extra_overrides: list[str] = body.get("extra_overrides", [])
-    sweeper: str = body.get("sweeper", "")
+    scenario = body.scenario
+    extra_overrides = body.extra_overrides
+    sweeper = body.sweeper
 
-    if body.get("launcher") == "slurm":
-        return _submit_slurm(scenario, extra_overrides, sweeper, body.get("slurm"))
+    if body.launcher == "slurm":
+        return _submit_slurm(scenario, extra_overrides, sweeper, body.slurm)
 
     # A fast path: a sweep's resolution can load (or clone) a map, so a run
     # that would be refused is refused before it.  The claim in
@@ -743,16 +886,15 @@ async def compare_runs(request: Request) -> HTMLResponse:
 
 
 def _submit_slurm(
-    scenario: str, extra_overrides: list[str], sweeper: str, raw: Any
+    scenario: str, extra_overrides: list[str], sweeper: str, raw: dict[str, Any]
 ) -> dict[str, str]:
-    """Submit the batch through SLURM (``launcher=slurm --no-wait``)."""
+    """Submit the batch through SLURM (``launcher=slurm --no-wait``); *raw*
+    is the ``slurm`` field, its types checked (:func:`parse_run_body`)."""
     available, reason = slurm_launch.availability()
     if not available:
         return {"status": "error", "message": reason}
     try:
-        options = slurm_launch.SlurmOptions.from_request(
-            raw if isinstance(raw, dict) else {}
-        )
+        options = slurm_launch.SlurmOptions.from_request(raw)
     except ValueError as exc:
         return {"status": "error", "message": str(exc)}
     command = slurm_launch.build_command(scenario, extra_overrides, sweeper, options)
@@ -834,7 +976,8 @@ async def slurm_action(
     """``scenario-slurm resubmit|collect|cancel`` on the batch.
 
     ``resubmit`` takes ``{"failed": bool, "array_parallelism": n,
-    "cases_per_task": n}`` and submits without waiting.
+    "cases_per_task": n}`` and submits without waiting; a body that is not
+    a JSON object, or a field of the wrong type, is refused with 400.
     """
     directory = _slurm_batch(date, time)
     if action not in ("resubmit", "collect", "cancel"):
@@ -847,15 +990,33 @@ async def slurm_action(
             )
     args = [action, str(directory)]
     if action == "resubmit":
-        body: dict[str, Any] = {}
         try:
-            body = await request.json()
-        except Exception:  # noqa: BLE001 -- no body: the defaults
-            pass
-        if body.get("failed"):
+            body = await _json_object(request)
+        except BodyError as exc:
+            return JSONResponse(
+                status_code=400, content={"ok": False, "output": str(exc)}
+            )
+        failed = body.get("failed")
+        if failed is not None and not isinstance(failed, bool):
+            # "false" would otherwise be true.
+            return JSONResponse(
+                status_code=400,
+                content={"ok": False, "output": "failed must be true or false"},
+            )
+        if failed:
             args.append("--failed")
         for key in ("array_parallelism", "cases_per_task"):
             value = body.get(key)
+            if value not in (None, "") and not (
+                isinstance(value, str) or _is_number(value)
+            ):
+                return JSONResponse(
+                    status_code=400,
+                    content={
+                        "ok": False,
+                        "output": f"{key} must be a positive integer",
+                    },
+                )
             if value not in (None, ""):
                 text = str(value)
                 if not (text.isascii() and text.isdigit()) or int(text) < 1:

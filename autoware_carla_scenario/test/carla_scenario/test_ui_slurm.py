@@ -659,3 +659,123 @@ def test_a_batch_submitted_from_the_viewer_is_followed_and_collected(
         client, status_url, lambda d: len(d["submissions"]) == 2 and not d["active"]
     )
     assert status["submissions"][1]["cases"] == len(failed)
+
+
+# ── The submission's body (#1500) ──────────────────────────────────────────
+
+
+@pytest.fixture
+def submitted(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """The commands submitted through sbatch (nothing is submitted)."""
+    commands: list[list[str]] = []
+    monkeypatch.setattr(slurm_launch, "availability", lambda: (True, ""))
+    monkeypatch.setattr(
+        slurm_launch,
+        "start_submit",
+        lambda command, base: commands.append(command),
+    )
+    monkeypatch.delenv("VIEWER_SCENARIO_COMMAND", raising=False)
+    return commands
+
+
+@pytest.mark.parametrize(
+    ("body", "names"),
+    [
+        (
+            {"scenario": "x", "extra_overrides": "carla.port=2001"},
+            "extra_overrides",
+        ),
+        ({"scenario": "x", "extra_overrides": ["a=1", None]}, "extra_overrides"),
+        ({"scenario": 1}, "scenario"),
+        ({"scenario": "x", "sweeper": ["lanelet_constraint"]}, "sweeper"),
+        ({"scenario": "x", "slurm": "partition=main"}, "slurm"),
+        ({"scenario": "x", "slurm": {"time": {"h": 2}}}, "slurm.time"),
+        ({"scenario": "x", "slurm": {"array_parallelism": [4]}}, "slurm."),
+    ],
+)
+def test_a_slurm_body_of_the_wrong_type_is_not_submitted(
+    client: TestClient, submitted: list[list[str]], body: dict[str, Any], names: str
+) -> None:
+    response = client.post("/api/run", json={**body, "launcher": "slurm"})
+    assert response.status_code == 400
+    assert response.json()["status"] == "error"
+    assert names in response.json()["message"]
+    assert submitted == []
+
+
+def test_the_slurm_panel_s_body_is_submitted_with_whole_overrides(
+    client: TestClient, submitted: list[list[str]]
+) -> None:
+    """What base.html's collectRunOptions() sends for SLURM: every field text."""
+    slurm = {
+        "partition": "main",
+        "array_parallelism": "4",
+        "cases_per_task": "",
+        "time": "",
+        "mem": "",
+        "gres": "",
+        "start_stagger_seconds": "",
+        "remote_cwd": "",
+        "python": "",
+        "setup": "",
+        "env": "",
+    }
+    body = {
+        "scenario": "x",
+        "extra_overrides": ["carla.port=2001"],
+        "sweeper": "",
+        "launcher": "slurm",
+        "slurm": slurm,
+    }
+    assert client.post("/api/run", json=body).json() == {"status": "submitting"}
+    assert submitted == [
+        [
+            "uv",
+            "run",
+            "scenario",
+            "scenario=x",
+            "carla.port=2001",
+            "launcher=slurm",
+            "launcher.partition=main",
+            "launcher.array_parallelism=4",
+            "--no-wait",
+        ]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("body", "names"),
+    [
+        ([1], "JSON object"),
+        ({"failed": "false"}, "failed"),
+        ({"array_parallelism": [2]}, "array_parallelism"),
+        ({"cases_per_task": True}, "cases_per_task"),
+    ],
+)
+def test_a_resubmit_body_of_the_wrong_type_is_refused(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    body: Any,
+    names: str,
+) -> None:
+    _manifest_batch(tmp_path)
+    ran: list[list[str]] = []
+    monkeypatch.setattr(slurm_launch, "availability", lambda: (True, ""))
+
+    def run_cli(args: list[str], timeout: float = 300.0) -> tuple[int, str]:
+        ran.append(args)
+        return 0, ""
+
+    monkeypatch.setattr(slurm_launch, "run_cli", run_cli)
+    response = client.post("/api/slurm/2026-10-19/12-00-00/resubmit", json=body)
+    assert response.status_code == 400
+    assert not response.json()["ok"] and names in response.json()["output"]
+    assert ran == []
+    # What session.html sends is accepted.
+    accepted = client.post(
+        "/api/slurm/2026-10-19/12-00-00/resubmit",
+        json={"failed": False, "array_parallelism": "2", "cases_per_task": ""},
+    )
+    assert accepted.status_code == 200 and accepted.json()["ok"]
+    assert ran[-1][-3:] == ["--array-parallelism", "2", "--no-wait"]
