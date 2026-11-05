@@ -16,10 +16,10 @@ next one, and one retried took a second stem, so a position alone is not
 enough.
 
 The path guard every directory the viewer builds from a request goes
-through (``contained``, ``session_dir``, ``job_dir``), ``CaseFiles`` and the
-stems of a directory live in ``ui.case_paths``, which the library check
-compiles, and are re-exported here; what reads the JSON documents a batch
-leaves (of any type) stays here.
+through (``contained``, ``session_dir``, ``job_dir``), ``CaseFiles``, the
+stems of a directory and a batch's stamp (``batch_stamp``) live in
+``ui.case_paths``, which the library check compiles, and are re-exported here;
+what reads the JSON documents a batch leaves (of any type) stays here.
 
 Free of heavy imports: the viewer reads these on every page.
 """
@@ -30,7 +30,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-# The path guard and the case stems, compiled by the library check; every
+# The path guard, the case stems and a batch's stamp, compiled by the library check; every
 # name stays importable from here.
 from .case_paths import _COMPONENT as _COMPONENT
 from .case_paths import _mtime as _mtime
@@ -41,7 +41,10 @@ from .case_paths import _TRAJECTORY as _TRAJECTORY
 from .case_paths import SESSION_TYPES as SESSION_TYPES
 from .case_paths import CaseFiles as CaseFiles
 from .case_paths import _safe as _safe
+from .case_paths import _stat as _stat
 from .case_paths import _stems_in as _stems_in
+from .case_paths import _summary_is_current as _summary_is_current
+from .case_paths import batch_stamp as batch_stamp
 from .case_paths import contained as contained
 from .case_paths import job_dir as job_dir
 from .case_paths import session_dir as session_dir
@@ -168,59 +171,6 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
             )
         entries.append(entry)
     return entries
-
-
-def _stat(path: Path) -> tuple[int, int]:
-    """*path*'s modification time (ns) and size, ``(0, -1)`` when missing."""
-    try:
-        info = path.stat()
-    except OSError:
-        return (0, -1)
-    return (info.st_mtime_ns, info.st_size)
-
-
-def batch_stamp(directory: Path) -> tuple[tuple[int, int], ...]:
-    """What a batch's entries and case files are read from, cheaply: the
-    modification time and size of its ``batch_results.json``, of a SLURM
-    batch's manifest and ``collected.json``, and of the directories its
-    submissions and case outcomes are written to, and of *directory* itself.
-
-    A few ``stat`` calls, whatever the size of the batch: the launcher writes
-    every record by renaming a new file over it (``slurm.manifest.write_json``)
-    and a task removes a case's old outcome before it runs it again, so a
-    record added, replaced or removed changes its directory's time.  The
-    viewer's caches of a batch (:func:`batch_case_files`, and the session and
-    case pages' in ``ui.scanner``) are kept while this stays the same.
-    """
-    slurm = directory / "slurm"
-    return (
-        _stat(directory / "batch_results.json"),
-        _stat(slurm / "manifest.json"),
-        _stat(slurm / "collected.json"),
-        _stat(slurm / "submissions"),
-        _stat(slurm / "results"),
-        _stat(directory),
-    )
-
-
-def _summary_is_current(directory: Path) -> bool:
-    """Whether a batch's ``batch_results.json`` is its latest summary: not
-    older than a SLURM batch's last submission or case outcome.
-
-    A resubmission (``scenario-slurm resubmit``, the viewer's "Resubmit")
-    leaves the summary of the earlier collect in place until its own collect
-    rewrites it; until then the summary is stale, and the cases are read from
-    what the tasks record (``slurm/results``).  A local batch has no
-    ``slurm/``, so its summary is always current.
-    """
-    slurm = directory / "slurm"
-    summary = _stat(directory / "batch_results.json")[0]
-    collected = _stat(slurm / "collected.json")
-    if collected[1] >= 0:
-        # A collect writes the summary, then collected.json.
-        summary = min(summary, collected[0])
-    latest = max(_stat(slurm / "submissions")[0], _stat(slurm / "results")[0])
-    return latest <= summary
 
 
 def batch_entries(directory: Path) -> tuple[list[dict[str, Any]], bool] | None:

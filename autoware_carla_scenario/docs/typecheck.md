@@ -4047,8 +4047,14 @@ What Codon 0.19 needs that Python does not, beyond
   `a + (b,)`) is not, and turning the source's tuple into a list changes what
   the class does (a frozen dataclass's hash, its equality with a tuple). A
   function that returns one is checked as returning a `List[X]` (#191):
-  return `tuple(x)` of a list (`signals.registry.registered_signal_controllers()`),
-  not a tuple display, which is a fixed-length Codon tuple, nor `()`.
+  return `tuple(x)` of a list (`signals.registry.registered_signal_controllers()`,
+  `ui.case_paths.batch_stamp()`), not a tuple display, which is a
+  fixed-length Codon tuple, nor `()`.
+- **A lookup with a default is a loop**: `next((f(x) for x in xs if p(x)),
+  None)` is a `for` loop that returns `f(x)` at the first `x` that passes
+  and `None` after it, and `sorted(f(x) for x in xs if p(x))` sorts a list
+  built in a loop (`ui.case_paths._override_label()` and `_job_indices()`,
+  #1637). Both do what the generator did, in the same order.
 - **No `**` of a dict in a call** (`f(**extra)` with `extra` a `dict`):
   Codon unpacks only a named tuple into keyword arguments. Write one call
   per set of keywords (`RoutingAction` passes `waypoints=` only when there
