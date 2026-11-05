@@ -52,6 +52,34 @@ GATE_RECORD_SUFFIX = "_gate.json"
 EGO_COLUMNS: tuple[str, ...] = ("t", "s", "lateral_m", "speed_mps")
 
 
+def _object(raw: Mapping[str, Any], key: str) -> Mapping[str, Any]:
+    """The JSON object *raw* holds at *key*; empty when it holds none.
+
+    Raises:
+        ValueError: If *key* holds something other than an object.
+    """
+    value = raw.get(key)
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(f"{key!r} is not a JSON object ({type(value).__name__})")
+    return value
+
+
+def _array(raw: Mapping[str, Any], key: str) -> list[Any]:
+    """The JSON array *raw* holds at *key*; empty when it holds none.
+
+    Raises:
+        ValueError: If *key* holds something other than an array.
+    """
+    value = raw.get(key)
+    if value is None:
+        return []
+    if not isinstance(value, list):
+        raise ValueError(f"{key!r} is not a JSON array ({type(value).__name__})")
+    return value
+
+
 @dataclass(frozen=True)
 class GateCase:
     """The concrete case a run drove: one route match on one map.
@@ -91,13 +119,21 @@ class GateCase:
 
     @classmethod
     def from_dict(cls, raw: Mapping[str, Any]) -> "GateCase":
+        """The case *raw* holds.
+
+        Raises:
+            ValueError: If *raw* is not a JSON object, or one of its lists is
+                not a JSON array.
+        """
+        if not isinstance(raw, dict):
+            raise ValueError(f"the case is not a JSON object ({type(raw).__name__})")
         return cls(
             map=str(raw.get("map") or ""),
             index=int(raw.get("index") or 0),
-            lanelet_ids=tuple(int(v) for v in raw.get("lanelet_ids") or ()),
+            lanelet_ids=tuple(int(v) for v in _array(raw, "lanelet_ids")),
             case_count=int(raw.get("case_count") or 0),
-            segment_kinds=tuple(str(v) for v in raw.get("segment_kinds") or ()),
-            segment_ends=tuple(float(v) for v in raw.get("segment_ends") or ()),
+            segment_kinds=tuple(str(v) for v in _array(raw, "segment_kinds")),
+            segment_ends=tuple(float(v) for v in _array(raw, "segment_ends")),
         )
 
 
@@ -170,21 +206,33 @@ class GateRecord:
         """The record *raw* holds.
 
         Raises:
-            ValueError: If *raw* is not a gate record of this format.
+            ValueError: If *raw* is not a gate record of this format: another
+                schema, no ``gate`` object, or a part that is not of its JSON
+                type (``case``, ``outcome``, ``files`` and ``ego`` objects,
+                the ego's rows arrays).
         """
+        if not isinstance(raw, dict):
+            raise ValueError("not a gate record (not a JSON object)")
         schema = raw.get("schema")
         if schema != GATE_RECORD_SCHEMA:
             raise ValueError(
                 f"not a gate record (schema {schema!r}, expected "
                 f"{GATE_RECORD_SCHEMA!r})"
             )
-        outcome = raw.get("outcome") or {}
-        ego = raw.get("ego") or {}
-        columns = list(ego.get("columns") or EGO_COLUMNS)
+        if raw.get("gate") is None:
+            raise ValueError("not a gate record (no 'gate' object)")
+        gate = _object(raw, "gate")
+        case = _object(raw, "case")
+        outcome = _object(raw, "outcome")
+        files = _object(raw, "files")
+        ego = _object(raw, "ego")
+        columns = _array(ego, "columns") or list(EGO_COLUMNS)
         if columns != list(EGO_COLUMNS):
             raise ValueError(f"ego columns {columns}, expected {list(EGO_COLUMNS)}")
         rows: list[tuple[float, float, float, float]] = []
-        for row in ego.get("rows") or ():
+        for row in _array(ego, "rows"):
+            if not isinstance(row, list):
+                raise ValueError(f"malformed ego row {row!r}")
             values = tuple(float(v) for v in row)
             if len(values) != len(EGO_COLUMNS) or not all(
                 math.isfinite(v) for v in values
@@ -196,13 +244,13 @@ class GateRecord:
             scenario=str(raw.get("scenario") or ""),
             title=str(raw.get("title") or ""),
             digest=str(raw.get("digest") or ""),
-            gate=dict(raw.get("gate") or {}),
-            case=GateCase.from_dict(raw.get("case") or {}),
+            gate=dict(gate),
+            case=GateCase.from_dict(case),
             passed=bool(outcome.get("passed")),
             message=str(outcome.get("message") or ""),
             elapsed_seconds=float(outcome.get("elapsed_seconds") or 0.0),
             failure_category=None if category is None else str(category),
-            files={str(k): str(v) for k, v in (raw.get("files") or {}).items()},
+            files={str(k): str(v) for k, v in files.items()},
             ego=rows,
             path=path,
         )
@@ -221,7 +269,8 @@ def read_gate_record(path: Path) -> GateRecord:
     """The gate record in *path*.
 
     Raises:
-        ValueError: If the file is not JSON, or not a gate record.
+        ValueError: If the file cannot be read, is not JSON, or is not a gate
+            record -- malformed in any way, never another exception.
     """
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
@@ -231,5 +280,5 @@ def read_gate_record(path: Path) -> GateRecord:
         raise ValueError(f"{path}: not a gate record (not a JSON object)")
     try:
         return GateRecord.from_dict(raw, path)
-    except (TypeError, ValueError) as exc:
+    except (AttributeError, TypeError, ValueError) as exc:
         raise ValueError(f"{path}: {exc}") from exc

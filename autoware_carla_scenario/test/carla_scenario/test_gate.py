@@ -28,8 +28,10 @@ from autoware_carla_scenario.gate.evaluate import (
     compare,
     compare_all,
     consistency,
+    find_gate_records,
     judge,
     judge_all,
+    load_gate_records,
     main,
     station_values,
 )
@@ -233,6 +235,88 @@ class TestRecord:
         with pytest.raises(ValueError, match="malformed ego row"):
             read_gate_record(path)
 
+    @pytest.mark.parametrize(
+        ("key", "value", "match"),
+        [
+            ("case", "m", "'case' is not a JSON object"),
+            ("files", ["x"], "'files' is not a JSON object"),
+            ("outcome", [True], "'outcome' is not a JSON object"),
+            ("ego", "rows", "'ego' is not a JSON object"),
+            ("gate", "strict", "'gate' is not a JSON object"),
+        ],
+    )
+    def test_a_part_of_the_wrong_type_is_refused(
+        self, tmp_path: Path, key: str, value: Any, match: str
+    ) -> None:
+        path = _write(tmp_path, "x", _record())
+        raw = json.loads(path.read_text())
+        raw[key] = value
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match=match):
+            read_gate_record(path)
+
+    @pytest.mark.parametrize(
+        ("part", "key", "value"),
+        [
+            ("case", "lanelet_ids", 7),
+            ("ego", "rows", {"0": [0, 0, 0, 0]}),
+            ("ego", "columns", "tslv"),
+        ],
+    )
+    def test_a_nested_list_of_the_wrong_type_is_refused(
+        self, tmp_path: Path, part: str, key: str, value: Any
+    ) -> None:
+        path = _write(tmp_path, "x", _record())
+        raw = json.loads(path.read_text())
+        raw[part][key] = value
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match="is not a JSON array"):
+            read_gate_record(path)
+
+    def test_a_row_that_is_not_an_array_is_refused(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, "x", _record())
+        raw = json.loads(path.read_text())
+        raw["ego"]["rows"][0] = "0000"
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match="malformed ego row"):
+            read_gate_record(path)
+
+    @pytest.mark.parametrize("gate", ["missing", None])
+    def test_a_record_without_a_gate_is_refused(
+        self, tmp_path: Path, gate: Optional[str]
+    ) -> None:
+        path = _write(tmp_path, "x", _record())
+        raw = json.loads(path.read_text())
+        if gate == "missing":
+            del raw["gate"]
+        else:
+            raw["gate"] = None
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match="no 'gate' object"):
+            read_gate_record(path)
+
+    def test_an_empty_gate_is_still_a_gate(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, "x", _record(gate={}))
+        assert read_gate_record(path).gate == {}
+
+    def test_a_case_that_is_not_an_object_is_refused_on_its_own(self) -> None:
+        with pytest.raises(ValueError, match="the case is not a JSON object"):
+            GateCase.from_dict("m")  # type: ignore[arg-type]
+
+    def test_a_record_that_is_not_an_object_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="not a JSON object"):
+            GateRecord.from_dict(["x"])  # type: ignore[arg-type]
+
+    def test_a_malformed_record_does_not_stop_the_others(self, tmp_path: Path) -> None:
+        _write(tmp_path, "a", _record())
+        bad = _write(tmp_path, "b", _record())
+        raw = json.loads(bad.read_text())
+        raw["case"] = "m"
+        bad.write_text(json.dumps(raw))
+        records, errors = load_gate_records(find_gate_records([tmp_path]))
+        assert [r.path for r in records] == [tmp_path / "a_gate.json"]
+        assert len(errors) == 1 and "b_gate.json" in errors[0]
+
 
 class TestSignedLateral:
     def test_left_of_the_route_is_positive(self) -> None:
@@ -416,6 +500,33 @@ class TestCli:
     def test_an_unreadable_record_exits_2(self, tmp_path: Path) -> None:
         _write(tmp_path, "a", _record())
         (tmp_path / "b_gate.json").write_text("{")
+        assert main([str(tmp_path)]) == EXIT_ERROR
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [("case", "m"), ("files", ["x"]), ("gate", None), ("outcome", 1)],
+    )
+    def test_a_malformed_record_exits_2(
+        self, tmp_path: Path, capsys: Any, key: str, value: Any
+    ) -> None:
+        # A passing record beside it: the malformed one is reported as
+        # unreadable (2), not as a failed gate (1), nor ignored (0).
+        _write(tmp_path, "a", _record())
+        path = _write(tmp_path, "b", _record())
+        raw = json.loads(path.read_text())
+        if value is None:
+            del raw[key]
+        else:
+            raw[key] = value
+        path.write_text(json.dumps(raw))
+        assert main([str(tmp_path)]) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+
+    def test_a_record_without_a_gate_alone_exits_2(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, "a", _record())
+        raw = json.loads(path.read_text())
+        del raw["gate"]
+        path.write_text(json.dumps(raw))
         assert main([str(tmp_path)]) == EXIT_ERROR
 
     def test_the_documents_gate_rejudges_the_runs(self, tmp_path: Path) -> None:

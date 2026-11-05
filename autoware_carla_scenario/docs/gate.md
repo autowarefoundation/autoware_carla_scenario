@@ -136,7 +136,10 @@ A run of a logical scenario with a gate writes `{stem}_gate.json` beside
 - `digest` is the SHA-256 of the document the run ran, its `ui` layout left
   out, taken before a case's overrides are folded in: every case of one
   version of the document has the same digest.
-- `gate` is the gate the document stated when the run ran.
+- `gate` is the gate the document stated when the run ran. A record without
+  one is refused, as is one whose `case`, `outcome`, `files` or `ego` is not
+  a JSON object, or whose lists are not JSON arrays: `scenario-gate` reports
+  it as unreadable (exit code 2) and judges the other records.
 - `files` names the run's other outputs the runner wrote beside the record
   (one it did not write is left out); the coverage criteria merge the
   `coverage` files of the runs judged.
@@ -238,7 +241,7 @@ Newly failing cases:
 |-----------|---------|
 | `0` | Every gate judged passed (two sets: on the candidate; with `--fail-on-regression`, and nothing regressed) |
 | `1` | A gate failed, or (two sets, `--fail-on-regression`) something regressed |
-| `2` | Nothing to judge, a record could not be read, more than two sets, `--fail-on-regression` with one set, or `--document` has no gate |
+| `2` | Nothing to judge, a record could not be read (not JSON, or malformed), more than two sets, `--fail-on-regression` with one set, or `--document` has no gate |
 
 The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 `passed`, `runs`, `passed_runs`, the `gate` judged, each criterion (`name`,
