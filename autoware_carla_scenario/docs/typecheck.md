@@ -2433,9 +2433,9 @@ the first:
 - **Those that import what Codon cannot compile**: a package (pydantic,
   pickle, grpc, protobuf, omegaconf and hydra, yaml, jinja2, fastapi, cv2,
   cyclonedds, or openodd and hilspy, Rust extensions) or a standard module
-  Codon lacks (`socket`, `inspect`, `concurrent.futures`, `importlib` beyond
+  Codon lacks (`inspect`, `concurrent.futures`, `importlib` beyond
   `importlib.metadata`, or more of `os`, `pathlib`, `shlex`, `shutil`,
-  `signal`, `subprocess`, `tempfile`, `threading`, `dataclasses`,
+  `signal`, `socket`, `subprocess`, `tempfile`, `threading`, `dataclasses`,
   `importlib.metadata` or `urllib.parse` than their shims declare), at module
   level or inside a function the check calls. This is most of the tooling
   around a run (the editor, the UI, authoring, the sweeper's expansion and
