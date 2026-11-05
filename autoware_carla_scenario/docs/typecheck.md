@@ -774,7 +774,7 @@ What `test_typecheck_model.py` compares, model by model:
 - **`coverage.codon`, `entity.codon`, `odd.codon`**: the names the checked
   modules import (`_BOUNDARY`), `COVERAGE_SCHEMA` and `CoverGroup` by value.
 - **The models of one framework module each** (`_MODULE_MODELS`):
-  `_bridge_pose`, `action_state`, `carla_install`, `debug_markers`,
+  `_bridge_pose`, `action_state`, `debug_markers`,
   `trajectory_recorder`, `environment`, `autoware_bridge/grpc_server`,
   `autoware_stack/launcher`, `autoware_stack/devcontainer` (and its values),
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
@@ -2806,8 +2806,7 @@ stands in for it in the check's workspace:
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
   `maps/cache.codon`, `autoware_stack/devcontainer.codon`,
   `ros2/cyclone.codon`, `pedestrian/soma.codon`), or, for a module of
-  the top-level package, a model of that module (`carla_install.codon`, for
-  `server`, declares `installed_executable()`; `trajectory_recorder.codon`,
+  the top-level package, a model of that module (`trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
   closes, whose JSON lines hold values of mixed types; `environment.codon`,
   for `scenario_runner`, `capture()` and the id of the `RunEnvironment` it
@@ -2816,6 +2815,13 @@ stands in for it in the check's workspace:
   `vehicle_rules_in_use()` they read the weather rules through). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
+
+A module that is excluded for most of what it does can have the part a
+checked module needs split into a checked module of its own, which the
+excluded one re-exports, instead of a model: `server` imports
+`installed_executable()` from `carla_install_paths`, which holds the path
+logic of the installer `carla_install` (tqdm, urllib.request, tarfile) and is
+compiled from its source (#1635).
 
 Each checked module gets the `__file__` Python sets on it (its source's path,
 a `str`), which Codon 0.19 does not, bound on the last line of the prelude so
