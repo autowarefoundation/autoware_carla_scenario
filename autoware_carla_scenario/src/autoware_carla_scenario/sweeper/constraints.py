@@ -126,6 +126,62 @@ class HasStopLineConstraint(Constraint):
         return len(results) > 0
 
 
+def _lanelet_id(owner: str, name: str, value: Any) -> int:
+    """*value* as a lanelet id, or ``ValueError`` naming ``owner.name``.
+
+    Read as :class:`EqualsConstraint` reads one: a string of ASCII digits --
+    quoted in YAML, or typed into the editor -- names the lanelet of that id,
+    and so does a whole float (``1001.0`` equals ``1001``).  A bool, a float
+    with a fraction, and any other text name no lanelet: kept, they would
+    silently match nothing.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"{owner}.{name}: a lanelet id is no bool, got {value!r}")
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        number = float(value)
+        if math.isfinite(number) and number.is_integer():
+            return int(number)
+    elif isinstance(value, str):
+        text = str(value)
+        if text.isascii() and text.isdigit():
+            return int(text)
+    elif TYPE_CHECKING:
+        pass
+    else:
+        # Another integer type (numpy's, say) still names its lanelet.
+        import operator  # noqa: PLC0415 -- run time only
+
+        try:
+            return operator.index(value)
+        except TypeError:
+            pass
+    raise ValueError(
+        f"{owner}.{name}: a lanelet id is a whole number or a string of "
+        f"digits, got {value!r}"
+    )
+
+
+def _unresolved(values: Any) -> bool:
+    """Whether *values* is an interpolation (``${...}``) Hydra has yet to resolve.
+
+    The editor and an export parse a scenario's constraints before Hydra
+    composes it, with ``${map.no_3d_model_lanelet_ids}`` still a string.
+    """
+    return isinstance(values, str) and str(values).lstrip().startswith("${")
+
+
+def _lanelet_ids(owner: str, name: str, values: Any) -> tuple[int, ...]:
+    """Each of *values* as a lanelet id (:func:`_lanelet_id`)."""
+    if isinstance(values, str):
+        # A string is iterable, and its characters are no ids.
+        raise ValueError(
+            f"{owner}.{name}: a list of lanelet ids, got the string {values!r}"
+        )
+    return tuple(_lanelet_id(owner, name, value) for value in values)
+
+
 @dataclass(frozen=True)
 class EqualsConstraint(Constraint):
     """Matches a lanelet whose ID equals the given value.
@@ -186,7 +242,16 @@ class InSetConstraint(Constraint):
     _lookup: frozenset[int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_lookup", frozenset(self.values))
+        if _unresolved(self.values):
+            # Kept as it always was, before Hydra resolves it: matching nothing.
+            if TYPE_CHECKING:
+                pass
+            else:
+                object.__setattr__(self, "_lookup", frozenset(self.values))
+            return
+        values = _lanelet_ids("in_set", "values", self.values)
+        object.__setattr__(self, "values", values)
+        object.__setattr__(self, "_lookup", frozenset(values))
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         return lanelet.id in self._lookup
@@ -211,7 +276,16 @@ class OnRouteConstraint(Constraint):
     _lookup: frozenset[int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_lookup", frozenset(self.lanelet_ids))
+        if _unresolved(self.lanelet_ids):
+            # Kept as it always was, before Hydra resolves it: matching nothing.
+            if TYPE_CHECKING:
+                pass
+            else:
+                object.__setattr__(self, "_lookup", frozenset(self.lanelet_ids))
+            return
+        lanelet_ids = _lanelet_ids("on_route", "lanelet_ids", self.lanelet_ids)
+        object.__setattr__(self, "lanelet_ids", lanelet_ids)
+        object.__setattr__(self, "_lookup", frozenset(lanelet_ids))
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         return not self._lookup or lanelet.id in self._lookup
@@ -349,6 +423,15 @@ class LaneletLengthConstraint(Constraint):
         valid = {r.name.lower() for r in rules}
         if self.rule not in valid:
             raise ValueError(f"Unknown rule {self.rule!r}. Available: {sorted(valid)}")
+        value = self.value
+        if (
+            isinstance(value, bool)
+            or not (isinstance(value, int) or isinstance(value, float))
+            or not math.isfinite(float(value))
+        ):
+            raise ValueError(
+                f"lanelet_length.value: a finite number of metres, got {value!r}"
+            )
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Return ``True`` if lanelet length satisfies the comparison rule."""
