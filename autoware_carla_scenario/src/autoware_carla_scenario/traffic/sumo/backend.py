@@ -2558,8 +2558,13 @@ class SumoTrafficBackend(TrafficBackend):
             return
         logger.info("SUMO: lane %s reopened", handle)
 
-    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
-        """Every background vehicle SUMO still has, at its CARLA ``(x, y)``."""
+    def background_vehicles(
+        self, world: Any
+    ) -> dict[str, tuple[float, float, Optional[float]]]:
+        """Every background vehicle SUMO still has, at its CARLA ``(x, y, z)``.
+
+        One the queue model holds has no height (``None``): the model places
+        it on a lane's 2D shape."""
         del world
         if not self._running:
             return {}
@@ -2572,7 +2577,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._background &= (
             present | pending | {i for i in self._background if i in meso}
         )
-        out: dict[str, tuple[float, float]] = {}
+        out: dict[str, tuple[float, float, Optional[float]]] = {}
         if self._meso is not None:
             now = self._now()
             for sumo_id in self._background:
@@ -2580,7 +2585,7 @@ class SumoTrafficBackend(TrafficBackend):
                     pose = self._background_origin(
                         sumo_id, self._meso_carla_pose(sumo_id, now)
                     )
-                    out[sumo_id] = (pose.x, pose.y)
+                    out[sumo_id] = (pose.x, pose.y, None)
         for sumo_id in self._background & present:
             x, y, z = vehicle.getPosition3D(sumo_id)
             pose = self._background_origin(
@@ -2591,7 +2596,7 @@ class SumoTrafficBackend(TrafficBackend):
                     self._offset,
                 ),
             )
-            out[sumo_id] = (pose.x, pose.y)
+            out[sumo_id] = (pose.x, pose.y, pose.z)
         return out
 
     def _background_origin(self, sumo_id: str, centre: Pose2D) -> Pose2D:

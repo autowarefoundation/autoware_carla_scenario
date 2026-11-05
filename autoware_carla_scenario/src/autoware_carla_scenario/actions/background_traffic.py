@@ -142,12 +142,22 @@ class LaneletRegion:
             logger.info("Background traffic region: %d lanelet(s)", len(self._ids))
         return self._ids
 
-    def contains(self, x: float, y: float) -> bool:
-        """Whether the CARLA position ``(x, y)`` lies on one of the lanelets."""
+    def contains(self, x: float, y: float, z: Optional[float] = None) -> bool:
+        """Whether the CARLA position ``(x, y, z)`` lies on one of the lanelets.
+
+        By its elevation *z* too, as
+        :func:`~autoware_carla_scenario.coordinate.on_lanelet` reads it: a
+        point on a road under a region's overpass is not on the region.
+        Without *z* (``None``), by ``(x, y)`` alone.
+        """
         from ..coordinate import CarlaWorldPose, on_lanelet  # noqa: PLC0415
 
-        pose = CarlaWorldPose(x=x, y=y, z=0.0, yaw=0.0)
-        return any(on_lanelet(pose, lanelet_id) for lanelet_id in self.lanelet_ids)
+        by_height = z is not None
+        pose = CarlaWorldPose(x=x, y=y, z=z if z is not None else 0.0, yaw=0.0)
+        return any(
+            on_lanelet(pose, lanelet_id, by_height=by_height)
+            for lanelet_id in self.lanelet_ids
+        )
 
 
 class _Never(BaseCondition):
@@ -361,7 +371,10 @@ class TrafficSourceAction(_BackendAction):
         live = backend.background_vehicles(world)
         if self._max is not None:
             due = min(due, max(self._max - len(live), 0))
-        occupied = list(live.values()) + _vehicle_positions(world)
+        occupied: list[tuple[float, float]] = []
+        for position in live.values():
+            occupied.append((position[0], position[1]))
+        occupied += _vehicle_positions(world)
         added = 0
         for _ in range(due):
             handle = self._spawn_one(world, backend, occupied)
@@ -473,8 +486,8 @@ class TrafficSinkAction(_BackendAction):
         backend = self._require_backend()
         if backend is None:
             return
-        for handle, (x, y) in backend.background_vehicles(world).items():
-            if self._region.contains(x, y):
+        for handle, (x, y, z) in backend.background_vehicles(world).items():
+            if self._region.contains(x, y, z):
                 backend.remove_background(world, handle)
                 self.removed += 1
 

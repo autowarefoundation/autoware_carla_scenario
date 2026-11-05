@@ -755,16 +755,17 @@ class TrafficManagerBackend(TrafficBackend):
 
     def background_vehicles(
         self, world: "carla.World"
-    ) -> dict[str, tuple[float, float]]:
-        """Every background vehicle still in the world, at its ``(x, y)``."""
-        out: dict[str, tuple[float, float]] = {}
+    ) -> dict[str, tuple[float, float, Optional[float]]]:
+        """Every background vehicle still in the world, at its ``(x, y, z)``."""
+        out: dict[str, tuple[float, float, Optional[float]]] = {}
         for handle, actor in list(self._background.items()):
             try:
                 location = actor.get_location()
             except RuntimeError:
                 self._background.pop(handle)  # Destroyed by something else.
                 continue
-            out[handle] = (location.x, location.y)
+            z: Optional[float] = location.z  # the dict's type, for Codon
+            out[handle] = (location.x, location.y, z)
         return out
 
     def background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:

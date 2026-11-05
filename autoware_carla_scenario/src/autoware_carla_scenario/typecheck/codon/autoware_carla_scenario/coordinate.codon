@@ -159,7 +159,8 @@ def project_onto_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> Lanelet2Pose:
     raise NotImplementedError()
 
 
-def on_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> bool:
+def on_lanelet(pose: CarlaWorldPose, lanelet_id: int, *_kw, by_height: bool = True) -> bool:
+    _keyword_only(_kw, "on_lanelet(): by_height")
     raise NotImplementedError()
 
 

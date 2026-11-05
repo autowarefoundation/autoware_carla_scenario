@@ -470,12 +470,17 @@ class _World:
 
 class _Backend:
     def __init__(self) -> None:
-        self.vehicles = {"in_zone": (-80.0, 1.75), "elsewhere": (-80.0, -1.75)}
+        self.vehicles: dict[str, tuple[float, float, Optional[float]]] = {
+            "in_zone": (-80.0, 1.75, 0.0),
+            "elsewhere": (-80.0, -1.75, 0.0),
+        }
         self.removed: list[str] = []
         self.closed: list[Any] = []
         self.reopened: list[str] = []
 
-    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
+    def background_vehicles(
+        self, world: Any
+    ) -> dict[str, tuple[float, float, Optional[float]]]:
         return dict(self.vehicles)
 
     def remove_background(self, world: Any, handle: str) -> None:
@@ -596,6 +601,33 @@ def test_an_urban_zone_is_placed_by_the_same_action() -> None:
         prop_module.standing_props()
     )
     assert backend.removed == ["in_zone"] and len(backend.closed) == 2
+
+
+def test_the_zone_is_cleared_by_each_vehicle_s_height_where_it_is_known(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # A vehicle's height reaches on_lanelet, which tells an overpass from the
+    # road beneath it by it; one whose height is not known (None, SUMO's
+    # queue model) is placed in plan view (#1586).
+    from autoware_carla_scenario.actions import construction_zone
+
+    asked: dict[float, bool] = {}
+    real = construction_zone.on_lanelet
+
+    def recording(pose: Any, lanelet_id: int, *, by_height: bool = True) -> bool:
+        asked[pose.x] = by_height
+        if by_height:
+            assert pose.z == pytest.approx(2.5)
+        return real(pose, lanelet_id, by_height=by_height)
+
+    monkeypatch.setattr(construction_zone, "on_lanelet", recording)
+    world, backend = _World(), _Backend()
+    backend.vehicles = {"high": (-80.0, 1.75, 2.5), "unknown": (-70.0, 1.75, None)}
+    action = ConstructionZoneAction(rm.W_IN1, 20.0, 70.0, SHORT)
+    action.set_traffic_backend(backend)  # type: ignore[arg-type]
+    _run(action, world, [0.0])
+    assert asked == {-80.0: True, -70.0: False}
+    assert backend.removed == ["high", "unknown"]
 
 
 def test_what_the_action_refuses() -> None:
