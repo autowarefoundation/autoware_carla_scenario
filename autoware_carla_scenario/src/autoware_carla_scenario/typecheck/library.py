@@ -330,6 +330,25 @@ CHECKED: tuple[str, ...] = (
 #: The reason of a method that builds a dict of mixed value types.
 _DETAILS = "builds a dict[str, Any] of mixed value types, which Codon cannot express"
 
+#: The reason of what builds traffic parameters from a ``traffic.vehicles``,
+#: ``traffic.pedestrians`` or ``traffic.bicycles`` node.
+_PARAMETERS_NODE = (
+    "takes a traffic.vehicles, traffic.pedestrians or traffic.bicycles node as "
+    "`Mapping[str, Any]`, a Hydra node of mixed value types, which Codon "
+    "cannot express"
+)
+_SPREADS_FROM = (
+    f"{_PARAMETERS_NODE}, and the parameter class as a value (`cls: type`); "
+    "checks the node's keys with utils.config, which reads a dataclass's "
+    "fields from its class (`type`) and is imported inside it, and returns a "
+    "`dict[str, Any]` of Spreads and the values of the other fields, so it is "
+    "not compiled"
+)
+_PARAMETERS_FROM_MAPPING = (
+    f"{_PARAMETERS_NODE}, and builds the parameters with `**` of the "
+    "`dict[str, Any]` that _spreads_from, itself uncalled, returns"
+)
+
 #: The reason of a function that takes a backend's options node.
 _OPTIONS = (
     "takes a backend's options as `Mapping[str, Any]`, a Hydra node of mixed "
@@ -454,13 +473,13 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.traffic.parameters.PedestrianParameters.describe": _DETAILS,
     "autoware_carla_scenario.traffic.parameters.BicycleParameters.describe": _DETAILS,
     "autoware_carla_scenario.traffic.parameters._described": "takes and returns a value of any type (`Any`: a Spread's describe() or the value unchanged), which Codon cannot express; only the describe() methods, themselves uncalled, call it",
-    "autoware_carla_scenario.traffic.parameters._number_of": "takes one config value of any type (`Any`: a number, or a bool or string to refuse), which Codon cannot express; only _spread_of, itself uncalled, calls it",
-    "autoware_carla_scenario.traffic.parameters._spread_of": "takes one config value of any type (`Any`: None, a Spread, a `{mean, std}` mapping or a number), which Codon cannot express; only _spreads_from, itself uncalled, calls it",
-    "autoware_carla_scenario.traffic.parameters._spreads_from": _FROM_MAPPING,
-    "autoware_carla_scenario.traffic.parameters.PedestrianParameters.from_mapping": _FROM_MAPPING,
-    "autoware_carla_scenario.traffic.parameters.BicycleParameters.from_mapping": _FROM_MAPPING,
+    "autoware_carla_scenario.traffic.parameters._number_of": "takes one config value of any type (`Any`: a number or numeric text, `'1.5'` read as 1.5; a bool, other text, None, a list or a mapping to refuse), which Codon cannot express; only _spread_of, itself uncalled, calls it",
+    "autoware_carla_scenario.traffic.parameters._spread_of": "takes one config value of any type (`Any`: None, a Spread, a `{mean, std}` mapping, a number or numeric text; a bool, other text, a list or a mapping with other keys to refuse), which Codon cannot express; only _spreads_from, itself uncalled, calls it",
+    "autoware_carla_scenario.traffic.parameters._spreads_from": _SPREADS_FROM,
+    "autoware_carla_scenario.traffic.parameters.PedestrianParameters.from_mapping": _PARAMETERS_FROM_MAPPING,
+    "autoware_carla_scenario.traffic.parameters.BicycleParameters.from_mapping": _PARAMETERS_FROM_MAPPING,
     "autoware_carla_scenario.traffic.parameters.VehicleParameters.describe": _DETAILS,
-    "autoware_carla_scenario.traffic.parameters.VehicleParameters.from_mapping": _FROM_MAPPING,
+    "autoware_carla_scenario.traffic.parameters.VehicleParameters.from_mapping": _PARAMETERS_FROM_MAPPING,
     "autoware_carla_scenario.traffic.sumo.config.AmbientTrafficConfig.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.sumo.config.BicycleConfig.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.sumo.config.PedestrianConfig.from_mapping": _FROM_MAPPING,
@@ -573,7 +592,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.examples": "re-exports examples.run (omegaconf, hydra) and the registry (omegaconf, importlib)",
     "autoware_carla_scenario.examples.compose_errors": "imports difflib, and, inside functions, hydra and omegaconf (their errors), the registry (omegaconf, importlib) and examples.run (hydra, omegaconf), which are neither checked nor modelled; reads a composed config of any shape (`Any`), which Codon cannot express",
     "autoware_carla_scenario.examples.expand": "imports the registry (omegaconf, importlib) and sweeper.expand (omegaconf), and, inside main(), authoring.hydra_config (pydantic, through authoring.models), odd.controls (omegaconf, difflib) and examples.compose_errors (difflib, and hydra, omegaconf and examples.run inside its functions), which are not checked, and `OddDraws` from odd.sampler, which the odd model does not declare; holds the composed config as `Any`, which Codon cannot express",
-    "autoware_carla_scenario.examples.run": "imports omegaconf, hydra, and typecheck and typecheck.mode (the checker, outside the library check), registry (omegaconf, importlib), prepare.pool (`BackendPool`), pedestrian.ardy (grpc; `ArdyBackend`, inside _check_backend_settings()) and hydra_compat (argparse, hydra) and, inside functions, authoring.hydra_config (pydantic, through authoring.models; inside check_scenario_maps()), sweeper.expand (omegaconf), commonroad.session (concurrent.futures), odd.controls (omegaconf, difflib), slurm.submit (omegaconf, slurm.manifest), utils.config (a dataclass's fields read from its class) and entity.hils_entity (hils.protocol), which are neither checked nor modelled, and, inside _cap_malloc_arenas(), ctypes, ctypes.util and platform, which Codon has nothing for; imports `ScenarioQueue` (and, inside build_ego_entity(), `AutowareBridgeConfig` and `AutowareEgoEntity`) from the package, `PlannedRoute`, `RouteError`, `ODD_CASE_KEY`, `check_sample_settings()`, `decode_case()`, `seed_setting()` and `whole_number_setting()` (and, inside a function, `OddDraws`) from odd.route and odd.sampler, which the package and odd models do not declare, `RerunConversion`, `RerunUnavailableError` and `report()` from rerun, which the rerun model does not declare, `T4Settings` and `T4UnavailableError` from t4, which the t4 model does not declare, and, inside functions, `use_weather_rules()` and `check_weather_rules()` from weather_rules, which the weather_rules model does not declare; imports more of contextlib and threading than their shims declare (`contextlib.contextmanager`, `threading.main_thread()`, `threading.current_thread()`); reads the fields of `DockerAutowareConfig` and `AutowareBridgeConfig` from their classes (`__dataclass_fields__`) and builds them, and `EnvironmentAction`, with `**` of a dict, neither of which Codon compiles; holds settings as `dict[str, Any]` of mixed value types (a case's settings, the video, sensor and environment settings, `_to_dict()`, `_rules_locations(spec: Any) -> Any`), which Codon cannot express; what it reads off the command line and the environment is the checked examples.argv's",
+    "autoware_carla_scenario.examples.run": "imports omegaconf, hydra, and typecheck and typecheck.mode (the checker, outside the library check), registry (omegaconf, importlib), prepare.pool (`BackendPool`) and hydra_compat (argparse, hydra) and, inside functions, pedestrian.ardy (grpc; `ArdyBackend`, inside _check_backend_settings()), authoring.hydra_config (pydantic, through authoring.models; inside check_scenario_maps()), sweeper.expand (omegaconf), commonroad.session (concurrent.futures), odd.controls (omegaconf, difflib), slurm.submit (omegaconf, slurm.manifest), utils.config (a dataclass's fields read from its class) and entity.hils_entity (hils.protocol), which are neither checked nor modelled, and, inside _cap_malloc_arenas(), ctypes, ctypes.util and platform, which Codon has nothing for; imports `ScenarioQueue` (and, inside build_ego_entity(), `AutowareBridgeConfig` and `AutowareEgoEntity`) from the package, `PlannedRoute`, `RouteError`, `ODD_CASE_KEY`, `check_sample_settings()`, `decode_case()`, `seed_setting()` and `whole_number_setting()` (and, inside a function, `OddDraws`) from odd.route and odd.sampler, which the package and odd models do not declare, `RerunConversion`, `RerunUnavailableError` and `report()` from rerun, which the rerun model does not declare, `T4Settings` and `T4UnavailableError` from t4, which the t4 model does not declare, and, inside functions, `use_weather_rules()` and `check_weather_rules()` from weather_rules, which the weather_rules model does not declare; imports more of contextlib and threading than their shims declare (`contextlib.contextmanager`, `threading.main_thread()`, `threading.current_thread()`); reads the fields of `DockerAutowareConfig` from its class (`__dataclass_fields__`), and those of `AutowareBridgeConfig` through utils.config, and builds them, `EnvironmentAction` and `RerunConverter` with `**` of a dict; holds a registered scenario's config class as a value (`config_cls`, from `get_scenario_classes()`) and builds it with `config_cls(**_to_dict(scenario))` in _check_scenario_config(); none of which Codon compiles; takes a launcher setting of any type (`value: object`) in _launcher_str_list() and _launcher_str_mapping(), which Codon cannot express; holds settings as `dict[str, Any]` of mixed value types (a case's settings, the video, sensor and environment settings, `_to_dict()`, `_rules_locations(spec: Any) -> Any`), which Codon cannot express; what it reads off the command line and the environment is the checked examples.argv's",
     "autoware_carla_scenario.hils": "re-exports hils.config (yaml), which is neither checked nor modelled",
     "autoware_carla_scenario.hils.bridge": "imports hilspy (a Rust extension) at module level under TYPE_CHECKING, for its `Channel`, `Periodic` and `Clock` annotations, and inside _require_hilspy(), which hands the module on as a `types.ModuleType` value, and typesafe_carla's CPython package inside HilsBridge, which it holds as `_carla: Any`; uses more of threading than its shim declares (`Event`); holds hilspy's messages, CARLA's measurements and the queues that carry them typed `Any`; and builds on hils.link and hils.protocol (socket), hils.measurements (cv2) and hils.config (yaml), which are neither checked nor modelled",
     "autoware_carla_scenario.hils.cli": "imports argparse and importlib.resources, and hils.config (yaml) and, inside main(), hils.bridge (hilspy), which are neither checked nor modelled",
