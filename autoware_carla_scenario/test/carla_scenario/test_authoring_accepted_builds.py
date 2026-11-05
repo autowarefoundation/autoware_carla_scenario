@@ -801,6 +801,8 @@ def document_errors(document: ScenarioDocument) -> list[Any]:
             "margin",
         ),
         ({"type": "entity_count", "params": {"count": -1}}, "count"),
+        # A negative impulse threshold is refused at construction (#1501).
+        ({"type": "collision", "params": {"min_impulse": -1.0}}, "min_impulse"),
         (
             {"type": "entity_count", "params": {"min_distance_m": -1.0}},
             "min_distance_m",
