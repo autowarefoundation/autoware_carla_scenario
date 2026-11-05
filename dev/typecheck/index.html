@@ -6717,6 +6717,22 @@ function: <code>autoware_stack.bridge_node</code> finds the installed
 <code>autoware_bridge</code> package with <code>from ..autoware_bridge import __file__</code>.
 Codon has no module object, so <code>from .. import autoware_bridge</code> and
 <code>autoware_bridge.__file__</code> do not compile.</p>
+<p>A <strong>constant</strong> imported from another checked module is read through that
+module (#1693): Codon 0.19 can report a constant imported with <code>from M import
+NAME</code> and read at module level as not defined, depending on what precedes it
+in <code>M</code> (<code>heavy_metrics</code> reading <code>metrics.CRIME_TTR_S</code>). So, on the import's
+own line, <code>from .metrics import CRIME_TTR_S, ego_progress</code> becomes</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-47-1" name="__codelineno-47-1" href="#__codelineno-47-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">_acs_lib.autoware_carla_scenario__metrics</span><span class="w"> </span><span class="kn">import</span> <span class="n">ego_progress</span><span class="p">;</span> <span class="kn">import</span><span class="w"> </span><span class="nn">_acs_lib.autoware_carla_scenario__metrics</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">_acs_const_12</span><span class="p">;</span> <span class="n">CRIME_TTR_S</span> <span class="o">=</span> <span class="n">_acs_const_12</span><span class="o">.</span><span class="n">CRIME_TTR_S</span>
+</code></pre></div>
+<p>(<code>from M import X as NAME</code> binds <code>NAME</code>). A constant is an UPPER_CASE name of
+more than one letter (not a <code>T</code> TypeVar) that the imported module binds with a
+plain assignment at module level (<code>NAME = ...</code> or <code>NAME: type = ...</code>, not
+<code>NAME: TypeAlias = ...</code>), or re-exports from another checked module that has
+it as a constant (<code>from .metrics import CRIME_TTR_S as CRIME_TTR_S</code>);
+<code>module_constants()</code> in <code>typecheck/transform.py</code> finds them. Every other name,
+and an import through the model (<code>MODELLED_IMPORTS</code>), stays a <code>from M import</code>.
+An UPPER_CASE assignment that holds a type (<code>JSON = dict[str, Any]</code>) would
+read as a variable, not a type, through the module: annotate it <code>TypeAlias</code>.</p>
 <p>Two checked modules that import each other can each need the other's types
 the moment Codon reads it: <code>BaseScenario</code> declares <code>_measures: dict[str,
 Measure]</code> at class level, and <code>measures</code> declares the running scenario
@@ -7472,10 +7488,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   the actor as it is, and its Codon library wants the checked conversion.
   Convert under <code>if TYPE_CHECKING:</code>, which Codon reads as true and Python as
   false, so nothing changes at run time (<code>traffic_manager._vehicle()</code>):</p>
-<p><div class="highlight"><pre><span></span><code><a id="__codelineno-47-1" name="__codelineno-47-1" href="#__codelineno-47-1"></a><span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
-<a id="__codelineno-47-2" name="__codelineno-47-2" href="#__codelineno-47-2"></a>    <span class="k">return</span> <span class="n">actor</span><span class="o">.</span><span class="n">as_vehicle</span><span class="p">()</span>
-<a id="__codelineno-47-3" name="__codelineno-47-3" href="#__codelineno-47-3"></a><span class="k">else</span><span class="p">:</span>
-<a id="__codelineno-47-4" name="__codelineno-47-4" href="#__codelineno-47-4"></a>    <span class="k">return</span> <span class="n">actor</span>
+<p><div class="highlight"><pre><span></span><code><a id="__codelineno-48-1" name="__codelineno-48-1" href="#__codelineno-48-1"></a><span class="k">if</span> <span class="n">TYPE_CHECKING</span><span class="p">:</span>
+<a id="__codelineno-48-2" name="__codelineno-48-2" href="#__codelineno-48-2"></a>    <span class="k">return</span> <span class="n">actor</span><span class="o">.</span><span class="n">as_vehicle</span><span class="p">()</span>
+<a id="__codelineno-48-3" name="__codelineno-48-3" href="#__codelineno-48-3"></a><span class="k">else</span><span class="p">:</span>
+<a id="__codelineno-48-4" name="__codelineno-48-4" href="#__codelineno-48-4"></a>    <span class="k">return</span> <span class="n">actor</span>
 </code></pre></div>
 - <strong>An import of the framework inside an uncalled function</strong> is left as
   written: Codon does not compile it, so a checked module may import a
@@ -7585,18 +7601,18 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 - <strong>An operator whose result depends on the operand</strong> (<code>Absolute - Absolute
   -&gt; Relative</code>, <code>Absolute - Relative -&gt; Absolute</code>) keeps its <code>@overload</code>
   stubs, for mypy, and spells the union out on the implementation:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-48-1" name="__codelineno-48-1" href="#__codelineno-48-1"></a><span class="nd">@overload</span>
-<a id="__codelineno-48-2" name="__codelineno-48-2" href="#__codelineno-48-2"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RelativeVelocity</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-48-3" name="__codelineno-48-3" href="#__codelineno-48-3"></a><span class="nd">@overload</span>
-<a id="__codelineno-48-4" name="__codelineno-48-4" href="#__codelineno-48-4"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">RelativeVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AbsoluteVelocity</span><span class="p">:</span> <span class="o">...</span>
-<a id="__codelineno-48-5" name="__codelineno-48-5" href="#__codelineno-48-5"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span>
-<a id="__codelineno-48-6" name="__codelineno-48-6" href="#__codelineno-48-6"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span> <span class="o">|</span> <span class="n">RelativeVelocity</span>
-<a id="__codelineno-48-7" name="__codelineno-48-7" href="#__codelineno-48-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">RelativeVelocity</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">]:</span>
-<a id="__codelineno-48-8" name="__codelineno-48-8" href="#__codelineno-48-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">):</span>
-<a id="__codelineno-48-9" name="__codelineno-48-9" href="#__codelineno-48-9"></a>        <span class="k">return</span> <span class="n">RelativeVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-<a id="__codelineno-48-10" name="__codelineno-48-10" href="#__codelineno-48-10"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">RelativeVelocity</span><span class="p">):</span>
-<a id="__codelineno-48-11" name="__codelineno-48-11" href="#__codelineno-48-11"></a>        <span class="k">return</span> <span class="n">AbsoluteVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
-<a id="__codelineno-48-12" name="__codelineno-48-12" href="#__codelineno-48-12"></a>    <span class="k">return</span> <span class="bp">NotImplemented</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-49-1" name="__codelineno-49-1" href="#__codelineno-49-1"></a><span class="nd">@overload</span>
+<a id="__codelineno-49-2" name="__codelineno-49-2" href="#__codelineno-49-2"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">RelativeVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-49-3" name="__codelineno-49-3" href="#__codelineno-49-3"></a><span class="nd">@overload</span>
+<a id="__codelineno-49-4" name="__codelineno-49-4" href="#__codelineno-49-4"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span><span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">RelativeVelocity</span><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">AbsoluteVelocity</span><span class="p">:</span> <span class="o">...</span>
+<a id="__codelineno-49-5" name="__codelineno-49-5" href="#__codelineno-49-5"></a><span class="k">def</span><span class="w"> </span><span class="fm">__sub__</span><span class="p">(</span>
+<a id="__codelineno-49-6" name="__codelineno-49-6" href="#__codelineno-49-6"></a>    <span class="bp">self</span><span class="p">,</span> <span class="n">other</span><span class="p">:</span> <span class="n">AbsoluteVelocity</span> <span class="o">|</span> <span class="n">RelativeVelocity</span>
+<a id="__codelineno-49-7" name="__codelineno-49-7" href="#__codelineno-49-7"></a><span class="p">)</span> <span class="o">-&gt;</span> <span class="n">Union</span><span class="p">[</span><span class="n">RelativeVelocity</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">]:</span>
+<a id="__codelineno-49-8" name="__codelineno-49-8" href="#__codelineno-49-8"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">AbsoluteVelocity</span><span class="p">):</span>
+<a id="__codelineno-49-9" name="__codelineno-49-9" href="#__codelineno-49-9"></a>        <span class="k">return</span> <span class="n">RelativeVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-49-10" name="__codelineno-49-10" href="#__codelineno-49-10"></a>    <span class="k">if</span> <span class="nb">isinstance</span><span class="p">(</span><span class="n">other</span><span class="p">,</span> <span class="n">RelativeVelocity</span><span class="p">):</span>
+<a id="__codelineno-49-11" name="__codelineno-49-11" href="#__codelineno-49-11"></a>        <span class="k">return</span> <span class="n">AbsoluteVelocity</span><span class="p">(</span><span class="o">...</span><span class="p">)</span>
+<a id="__codelineno-49-12" name="__codelineno-49-12" href="#__codelineno-49-12"></a>    <span class="k">return</span> <span class="bp">NotImplemented</span>
 </code></pre></div>
 <p>The check calls the implementation once per member, and Codon compiles
   only the <code>isinstance</code> branch of that member, so each call has one result
@@ -8253,7 +8269,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 22:50:53 UTC"><span class="timeago" datetime="2026-11-05T22:50:53+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 22:50:53 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 23:05:19 UTC"><span class="timeago" datetime="2026-11-05T23:05:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 23:05:19 UTC">2026-11-05</span>
   </span>
 
     
