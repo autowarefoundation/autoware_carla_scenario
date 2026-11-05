@@ -3865,6 +3865,12 @@ class Recorder:
 
 def launcher() -> Optional[Path]:
     return installed_executable()
+
+
+def exit_handlers() -> None:
+    # CPython's undocumented helpers, which a forked child calls (#1647).
+    atexit._clear()
+    atexit._run_exitfuncs()
 """
 
 
@@ -3919,6 +3925,8 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_tak
         ),
         ("stdin.write(bgr.data)", "stdin.write(bgr.size)", None),
         ("installed_executable()", "installed_executable(True)", None),
+        ("atexit._clear()", "atexit._clear(True)", None),
+        ("atexit._run_exitfuncs()", "atexit._run_exitfuncs(0)", None),
     ],
     ids=[
         "signal-int-handler",
@@ -3932,6 +3940,8 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_tak
         "popen-unknown-keyword",
         "write-bytes-like",
         "installed-executable-arguments",
+        "clear-arguments",
+        "run-exitfuncs-arguments",
     ],
 )
 def test_the_signal_atexit_and_pipe_shims_and_their_models_refuse_what_cpython_refuses(
@@ -4011,6 +4021,7 @@ def opened(directory: Path) -> IO[bytes]:
 def logged(directory: Path) -> Optional[int]:
     log = opened(directory)
     log.write(b"start\\n")
+    end: int = log.seek(0, 2) + log.seek(0)
     process: subprocess.Popen[bytes] = subprocess.Popen(
         ["true"], stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL
     )
@@ -4102,6 +4113,7 @@ def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
         ("path.is_symlink()", "path.is_symlink(True)", None),
         ('.open("ab")', '.open("ab", buffer=0)', None),
         ('log.write(b"start\\n")', 'log.write(len(b"start\\n"))', None),
+        ("log.seek(0)", 'log.seek("0")', None),
         ("stdout=log,", 'stdout="x.log",', "subprocess.Popen("),
     ],
     ids=[
@@ -4115,6 +4127,7 @@ def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
         "is-symlink-arguments",
         "open-keyword",
         "write-bytes",
+        "seek-offset-int",
         "popen-stream-file",
     ],
 )

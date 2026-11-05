@@ -28,6 +28,33 @@ RAW_OUTPUT_LOG = "raw_output.log"
 STOP_TIMEOUT_SECONDS = 10.0
 """How long a stopped job's process group has after ``SIGTERM``, before ``SIGKILL``."""
 
+_RAW_LOG_MAX_BYTES = 256 * 1024  # 256 KB cap per log
+
+
+def _read_raw_log(job_dir: Path) -> str:
+    """Read raw terminal log from a job directory.
+
+    Tries ``raw_output.log`` first (subprocess stdout/stderr captured by
+    the runner), then falls back to ``run.log`` (Python logging output).
+    Returns an empty string when neither file exists.  Large files are
+    truncated to the last ``_RAW_LOG_MAX_BYTES`` bytes.
+    """
+    for name in (RAW_OUTPUT_LOG, "run.log"):
+        try:
+            log_path = job_dir / name
+            size = log_path.stat().st_size
+            if size <= _RAW_LOG_MAX_BYTES:
+                return log_path.read_text(encoding="utf-8", errors="replace")
+            with log_path.open(encoding="utf-8", errors="replace") as f:
+                f.seek(size - _RAW_LOG_MAX_BYTES)
+                f.readline()  # discard partial first line
+                tail = f.read()
+            return f"... (truncated, showing last {len(tail)} chars) ...\n{tail}"
+        except OSError:
+            continue
+    return ""
+
+
 # Global state for the current run.
 _lock = threading.Lock()
 _progress: RunProgress | None = None

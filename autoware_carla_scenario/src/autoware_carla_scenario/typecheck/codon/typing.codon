@@ -60,9 +60,9 @@ Literal = str
 # codon/pathlib.codon): generic in what it reads and writes, `bytes` (read as
 # `str` by the check) or `str`, so IO[bytes] and IO[str] are one type here.
 # Declared are name, mode, closed, close(), fileno(), flush(), read(),
-# readline(), write(), iteration over the lines and `with`, as typing.IO
-# declares them and a file object has them in CPython 3.10; the rest is not.
-# Nothing here runs: nothing is read or written.
+# readline(), seek(), write(), iteration over the lines and `with`, as
+# typing.IO declares them and a file object has them in CPython 3.10; the rest
+# is not. Nothing here runs: nothing is read, written or sought.
 class IO:
     # Codon's generic parameter, in a form Python 3.10 can parse.
     T: type
@@ -91,6 +91,9 @@ class IO:
 
     def readline(self, limit: int = -1) -> T:
         return Ptr[T]()[0]
+
+    def seek(self, offset: int, whence: int = 0) -> int:
+        return 0
 
     def write(self, s: T) -> int:
         return 0

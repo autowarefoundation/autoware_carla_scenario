@@ -3066,6 +3066,9 @@ What Codon 0.19 needs that Python does not, beyond
   whatever the mode, since the check reads `bytes` as `str` (so `IO[bytes]`
   and `IO[str]` are one type). `typing.IO` declares `name`, `mode`,
   `closed`, `close()`, `fileno()`, `flush()`, `read()`, `readline()`,
+  `seek(offset, whence=0)`, which returns the new position (`ui.runner` reads
+  the tail of a job's log, #1647; it takes `whence` by keyword, as `typing.IO`
+  declares it, where a CPython file object takes it by position only),
   `write()` (of a `str`, read as bytes too), iteration over the lines and
   `with`. `stat()` (no argument) returns a result of the five fields the
   framework reads (`st_dev`, `st_ino`, `st_size`, `st_mtime_ns`, `st_mtime`),
@@ -3244,6 +3247,10 @@ What Codon 0.19 needs that Python does not, beyond
   position only and returns it, and which calls it with the arguments it is
   given, so a function that cannot take them is refused where CPython
   reports it only at exit, and `unregister(func)`, of one value by position.
+  So do CPython's undocumented `_clear()` and `_run_exitfuncs()`, of no
+  argument, which `sweeper.isolation` calls in a forked case to drop the
+  handlers it inherited from the sweep and to run its own before `os._exit`
+  (#1647).
   `copy2()` and `move()` return a `str` for a `str`
   destination, as CPython does; for a `Path` one CPython returns the `Path`,
   or a `str` when it names a directory, so the check returns a path that
