@@ -414,7 +414,10 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     The settings the launcher of the type reads are checked too, naming the
     key: ``stop_timeout_s`` must be a finite number above 0, and the docker
     launcher's ``ros_domain_ids`` a list of ROS domain ids (ints from 0 to
-    232).  :func:`check_batch_configs` calls this, so a batch or a sweep is
+    232).  The argument lists (``launch``, ``colcon_args``, ``docker_args``,
+    ``command``) must be lists, not strings, of strings or numbers; ``env``
+    and ``mounts`` mappings of strings or numbers; ``bridge_parameters`` a
+    mapping.  :func:`check_batch_configs` calls this, so a batch or a sweep is
     refused for any of these before its first scenario starts.
 
     Raises:
@@ -469,27 +472,36 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
         )
         raise ValueError(msg)
     stop_timeout_s = _launcher_stop_timeout_s(settings)
-    ros_domain_ids = _launcher_ros_domain_ids(settings) if kind == "docker" else ()
+    if kind == "docker":
+        options = {k: v for k, v in settings.items() if k in docker_fields}
+        options["workspace"] = Path(str(options.get("workspace", "~/autoware")))
+        # Absent is empty, refused naming the key.
+        options.setdefault("launch", ())
+        # The settings' types are checked here, naming the key (the
+        # _launcher_* helpers do); their values by the config, below.
+        for name in ("launch", "colcon_args", "docker_args"):
+            if name in options:
+                options[name] = _launcher_str_list(name, options[name])
+        for name in ("mounts", "env"):
+            if name in options:
+                options[name] = _launcher_str_mapping(name, options[name])
+        options["ros_domain_ids"] = _launcher_ros_domain_ids(settings)
+        options["stop_timeout_s"] = stop_timeout_s
+        if "bridge_parameters" in options:
+            options["bridge_parameters"] = _launcher_bridge_parameters(settings)
+    else:
+        argv = _launcher_str_list("command", settings.get("command"))
+        env = _launcher_str_mapping("env", settings.get("env"))
+        bridge_parameters = _launcher_bridge_parameters(settings)
     try:
         if kind == "docker":
-            options = {k: v for k, v in settings.items() if k in docker_fields}
-            options["workspace"] = Path(str(options.get("workspace", "~/autoware")))
-            # Absent is empty, refused naming the key.
-            options.setdefault("launch", ())
-            for name in ("launch", "colcon_args", "docker_args"):
-                if name in options:
-                    options[name] = tuple(options[name] or ())
-            options["ros_domain_ids"] = ros_domain_ids
-            options["stop_timeout_s"] = stop_timeout_s
-            if "bridge_parameters" in options:
-                options["bridge_parameters"] = dict(options["bridge_parameters"] or {})
             launcher = DockerAutowareLauncher(DockerAutowareConfig(**options))
         else:
             launcher = CommandAutowareLauncher(
-                tuple(str(arg) for arg in settings.get("command") or ()),
-                env={str(k): str(v) for k, v in (settings.get("env") or {}).items()},
+                argv,
+                env=env,
                 stop_timeout_s=stop_timeout_s,
-                bridge_parameters=dict(settings.get("bridge_parameters") or {}),
+                bridge_parameters=bridge_parameters,
             )
     except ValueError as exc:
         # The configs' own refusals name the field; this is the group.
@@ -522,6 +534,84 @@ def _launcher_stop_timeout_s(settings: dict[str, Any]) -> float:
             f"(got {value!r})"
         )
     return float(value)
+
+
+def _launcher_str_list(name: str, value: object) -> tuple[str, ...]:
+    """``autoware.launcher.<name>``, a list of arguments, checked: a list (or a
+    tuple) of strings or numbers, each made a ``str``; null or absent is empty.
+
+    ``launch``, ``colcon_args``, ``docker_args`` and ``command`` are read
+    through it.  A string is refused rather than taken as one argument or
+    split: Python would iterate it into characters (``docker_args:
+    '--shm-size=8g'`` became ``('-', '-', 's', ...)``), and neither reading is
+    safe -- ``'ros2 launch x y'`` may be one argument (a ``bash -c`` script)
+    or four, and only the author knows which.  An element that is a list, a
+    mapping, null or a boolean is refused too: its ``str()`` (``"['a']"``,
+    ``"None"``, ``"True"``) is never the argument that was meant.
+
+    Raises:
+        ValueError: naming the key.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or not isinstance(value, (list, tuple)):
+        raise ValueError(
+            f"autoware.launcher.{name} must be a list of arguments, not "
+            f"{type(value).__name__} {value!r}: write "
+            f"'autoware.launcher.{name}=[a,b,c]' (a list item may hold spaces "
+            "when quoted)"
+        )
+    for index, item in enumerate(value):
+        if isinstance(item, bool) or not isinstance(item, (str, int, float)):
+            raise ValueError(
+                f"autoware.launcher.{name}[{index}] must be a string or a number, "
+                f"not {type(item).__name__} {item!r}"
+            )
+    return tuple(str(item) for item in value)
+
+
+def _launcher_str_mapping(name: str, value: object) -> dict[str, str]:
+    """``autoware.launcher.<name>`` (``env``, ``mounts``), checked: a mapping
+    whose values are strings or numbers, each made a ``str``; null or absent is
+    empty.  A value that is null, a boolean, a list or a mapping is refused, as
+    :func:`_launcher_str_list` refuses such an argument.
+
+    Raises:
+        ValueError: naming the key.
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(
+            f"autoware.launcher.{name} must be a mapping, not "
+            f"{type(value).__name__} {value!r}"
+        )
+    for key, item in value.items():
+        if isinstance(item, bool) or not isinstance(item, (str, int, float)):
+            raise ValueError(
+                f"autoware.launcher.{name}.{key} must be a string or a number, "
+                f"not {type(item).__name__} {item!r}"
+            )
+    return {str(key): str(item) for key, item in value.items()}
+
+
+def _launcher_bridge_parameters(settings: dict[str, Any]) -> dict[str, Any]:
+    """``autoware.launcher.bridge_parameters`` of *settings*: a mapping of ROS
+    parameters (values of any type: ``use_sim_time: true``); null or absent is
+    none.
+
+    Raises:
+        ValueError: naming the key.
+    """
+    value = settings.get("bridge_parameters")
+    if value is None:
+        return {}
+    if not isinstance(value, dict):
+        raise ValueError(
+            "autoware.launcher.bridge_parameters must be a mapping of ROS "
+            f"parameters, not {type(value).__name__} {value!r}"
+        )
+    return dict(value)
 
 
 def _launcher_ros_domain_ids(settings: dict[str, Any]) -> tuple[int, ...]:

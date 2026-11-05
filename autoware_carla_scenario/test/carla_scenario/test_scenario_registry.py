@@ -514,6 +514,127 @@ class TestBuildAutowareLauncher:
         assert isinstance(launcher, DockerAutowareLauncher)
         assert launcher.config.ros_domain_ids == ()
 
+    @pytest.mark.parametrize(
+        ("kind", "name"),
+        [
+            ("docker", "launch"),
+            ("docker", "colcon_args"),
+            ("docker", "docker_args"),
+            ("command", "command"),
+        ],
+    )
+    @pytest.mark.parametrize("value", ["--shm-size=8g", "ros2 launch x y", 7, {}])
+    def test_an_argument_list_that_is_not_a_list_is_refused(
+        self, kind: str, name: str, value: object
+    ) -> None:
+        """#1484: a string used to be split into its characters."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+        )
+        cfg.autoware.launcher[name] = value
+        with pytest.raises(
+            ValueError,
+            match=rf"^autoware\.launcher\.{name} must be a list of arguments, not ",
+        ):
+            build_autoware_launcher(cfg)
+
+    @pytest.mark.parametrize(
+        ("kind", "name"), [("docker", "docker_args"), ("command", "command")]
+    )
+    @pytest.mark.parametrize("item", [["a"], {"a": 1}, None, True])
+    def test_an_argument_that_is_not_a_string_or_number_is_refused(
+        self, kind: str, name: str, item: object
+    ) -> None:
+        """#1484: its str() (``"['a']"``, ``"None"``) is not the argument meant."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+        )
+        cfg.autoware.launcher[name] = ["ok", item]
+        with pytest.raises(
+            ValueError,
+            match=rf"^autoware\.launcher\.{name}\[1\] must be a string or a number",
+        ):
+            build_autoware_launcher(cfg)
+
+    def test_argument_lists_are_made_strings(self) -> None:
+        from autoware_carla_scenario.autoware_stack import (
+            CommandAutowareLauncher,
+            DockerAutowareLauncher,
+        )
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        docker = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace="/nowhere",
+                launch=["autoware_launch", "x.launch.xml", "rate:=10"],
+                colcon_args=None,
+                docker_args=["--shm-size=8g", "--cpus", 4],
+                env={"A": 1, "B": "two words"},
+                mounts={"/data": "/home/aw/data"},
+            )
+        )
+        assert isinstance(docker, DockerAutowareLauncher)
+        assert docker.config.launch == ("autoware_launch", "x.launch.xml", "rate:=10")
+        assert docker.config.colcon_args == ()
+        assert docker.config.docker_args == ("--shm-size=8g", "--cpus", "4")
+        assert docker.config.env == {"A": "1", "B": "two words"}
+        assert docker.config.mounts == {"/data": "/home/aw/data"}
+        command = build_autoware_launcher(
+            self._cfg(type="command", command=["sleep", 5], env=None)
+        )
+        assert isinstance(command, CommandAutowareLauncher)
+        assert tuple(command.argv) == ("sleep", "5")
+        assert command.env == {}
+
+    @pytest.mark.parametrize(
+        ("kind", "name", "value", "message"),
+        [
+            ("docker", "env", "A=1", r"env must be a mapping"),
+            ("command", "env", ["A=1"], r"env must be a mapping"),
+            ("docker", "mounts", "/data:/data", r"mounts must be a mapping"),
+            ("docker", "env", {"A": None}, r"env\.A must be a string or a number"),
+            ("command", "env", {"A": [1]}, r"env\.A must be a string or a number"),
+            (
+                "docker",
+                "bridge_parameters",
+                "x",
+                r"bridge_parameters must be a mapping",
+            ),
+            (
+                "command",
+                "bridge_parameters",
+                [1],
+                r"bridge_parameters must be a mapping",
+            ),
+        ],
+    )
+    def test_a_mapping_setting_that_is_not_one_is_refused(
+        self, kind: str, name: str, value: object, message: str
+    ) -> None:
+        """#1484: refused naming the key, not by an AttributeError at run time."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+        )
+        cfg.autoware.launcher[name] = value
+        with pytest.raises(ValueError, match=rf"^autoware\.launcher\.{message}"):
+            build_autoware_launcher(cfg)
+
     def test_a_config_refusal_names_the_group(self) -> None:
         """DockerAutowareConfig's own refusals are prefixed with the group."""
         from autoware_carla_scenario.examples.run import build_autoware_launcher

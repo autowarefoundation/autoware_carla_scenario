@@ -641,6 +641,35 @@ def test_docker_config_rejects_an_unknown_build_policy() -> None:
         DockerAutowareConfig(workspace=Path("/ws"), launch=("a",), build="sometimes")  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize("field", ["launch", "colcon_args", "docker_args"])
+@pytest.mark.parametrize("value", ["--shm-size=8g", b"--shm-size=8g"])
+def test_docker_config_refuses_a_string_argument_list(
+    field: str, value: str | bytes
+) -> None:
+    """#1484: a str would be run a character per argument."""
+    options: dict[str, object] = {"launch": ("a",), field: value}
+    with pytest.raises(ValueError, match=rf"^{field} must be a sequence of arguments"):
+        DockerAutowareConfig(workspace=Path("/ws"), **options)  # type: ignore[arg-type]
+
+
+def test_docker_config_takes_argument_lists_as_lists_and_tuples() -> None:
+    config = DockerAutowareConfig(
+        workspace=Path("/ws"),
+        launch=["autoware_launch", "x.launch.xml"],
+        colcon_args=(),
+        docker_args=["--shm-size=8g"],
+    )
+    assert list(config.launch) == ["autoware_launch", "x.launch.xml"]
+    assert list(config.docker_args) == ["--shm-size=8g"]
+
+
+@pytest.mark.parametrize("argv", ["ros2 launch x y", b"ros2 launch x y"])
+def test_command_launcher_refuses_a_string_command(argv: str | bytes) -> None:
+    """#1484: ``"ros2 launch x y"`` may be one argument or four; it is refused."""
+    with pytest.raises(ValueError, match=r"^argv must be a sequence of arguments"):
+        CommandAutowareLauncher(argv)  # type: ignore[arg-type]
+
+
 #: #1450: a NaN never times out (the stack is never escalated), and 0 or less
 #: skips the grace a stack is given to stop.
 _BAD_STOP_TIMEOUTS = [float("nan"), float("inf"), -5.0, 0.0]

@@ -225,6 +225,30 @@ def _check_stop_timeout_s(stop_timeout_s: float) -> None:
         )
 
 
+def _check_argument_list(name: str, value: Sequence[str]) -> None:
+    """Refuse a *value* of argument list *name* that is a ``str`` or ``bytes``.
+
+    Python's typing takes a ``str`` as a ``Sequence[str]``, and the launcher
+    would then pass each of its characters as an argument
+    (``docker_args="--shm-size=8g"`` ran ``docker run - - s h m ...``).  It is
+    refused rather than split or wrapped: ``"ros2 launch x y"`` may be one
+    argument (a ``bash -c`` script) or four.  The message names the field; a
+    caller prefixes the group it came from (``autoware.launcher.``).
+
+    Raises:
+        ValueError: ``<name> must be a sequence of arguments, not a str ...``.
+    """
+    if not TYPE_CHECKING:
+        # The static check takes `value` as the list it declares, so the test
+        # would be statically false there (docs/typecheck.md); Python can be
+        # handed a str.
+        if isinstance(value, (str, bytes)):
+            raise ValueError(
+                f"{name} must be a sequence of arguments (a list or a tuple), "
+                f"not a {type(value).__name__}: {value!r}"
+            )
+
+
 def _signal_group(pgid: int, sig: signal.Signals) -> None:
     try:
         os.killpg(pgid, sig)
@@ -399,8 +423,9 @@ class CommandAutowareLauncher:
             ``require_localization_initialized``, ...).
 
     Raises:
-        ValueError: Naming the field, when ``stop_timeout_s`` is not positive
-            and finite.
+        ValueError: Naming the field, when ``argv`` is a ``str`` (or
+            ``bytes``) rather than a sequence of arguments, or
+            ``stop_timeout_s`` is not positive and finite.
     """
 
     argv: Sequence[str]
@@ -416,6 +441,7 @@ class CommandAutowareLauncher:
 
     def __post_init__(self) -> None:
         # Checked here, not when the first stack is stopped.
+        _check_argument_list("argv", self.argv)
         _check_stop_timeout_s(self.stop_timeout_s)
 
     def prepare(self, log_dir: Optional[Path] = None) -> None:
