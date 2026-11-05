@@ -894,6 +894,85 @@ def test_ng_after_ng_for_exactly_the_limit_fails_no_earlier_than_its_frame() -> 
     assert result.elapsed_seconds == times[150]
 
 
+def _coarse_ttr_series() -> tuple[list[float], list[Optional[float]], float]:
+    # 2 s of 0.05 s ticks, with crime_ttr_s sampled at its own, coarser
+    # period: NG from 1 s on (#1581).
+    from autoware_carla_scenario.commonroad import commonroad_settings
+    from autoware_carla_scenario.metric_batch import Frame, sampled
+
+    frames: list[Frame] = []
+    t = 0.0
+    for k in range(40):
+        frames.append(Frame(frame=k, t=t, weight=None, actors=()))
+        t += 0.05
+    picked = sampled(frames, commonroad_settings().period_for("crime_ttr_s"))
+    times = [f.t for f in picked]
+    values: list[Optional[float]] = [2.0 if at < 1.0 - 1e-9 else 0.5 for at in times]
+    return times, values, frames[-1].t
+
+
+def test_a_coarse_metric_counts_its_last_ng_sample_to_the_run_end() -> None:
+    times, values, end = _coarse_ttr_series()
+    assert times == pytest.approx([0.0, 0.5, 1.0, 1.5])
+    condition = MetricCondition(
+        "crime_ttr_s", ComparisonRule.LESS_THAN, 1.0, max_ng_seconds=0.6, label="ttr"
+    )
+    result = condition.judge(times, values, end=end)
+    # NG from 1 s to the run's end at 1.95 s: 0.95 s, more than 0.6 s, which
+    # are up 0.1 s into the last sample.
+    assert result is not None
+    assert result.elapsed_seconds == pytest.approx(1.6)
+    assert condition.get_details()["ng_seconds"] == pytest.approx(0.95)
+    # Positionally too.
+    assert condition.judge(times, values, end) is not None
+    # Without the run's end the last sample counts nothing, as before.
+    assert condition.judge(times, values) is None
+    assert condition.get_details()["ng_seconds"] == pytest.approx(0.5)
+    # An end before the last sample counts nothing either.
+    assert condition.judge(times, values, end=1.0) is None
+    assert condition.get_details()["ng_seconds"] == pytest.approx(0.5)
+
+
+def test_an_every_tick_metric_is_judged_the_same_with_the_run_end() -> None:
+    condition = MetricCondition(
+        MIN_DISTANCE_TO_OBSTACLE_M,
+        ComparisonRule.LESS_THAN,
+        1.0,
+        max_ng_seconds=0.25,
+        label="near",
+    )
+    times = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    values: list[Optional[float]] = [0.5, 0.4, 2.0, 0.8, 0.3, 0.9, 0.2]
+    without = condition.judge(times, values)
+    details = condition.get_details()
+    with_end = condition.judge(times, values, end=times[-1])
+    assert without is not None and with_end is not None
+    assert with_end.elapsed_seconds == without.elapsed_seconds
+    assert condition.get_details() == details
+
+
+def test_the_runner_judges_to_the_last_recorded_frame() -> None:
+    from autoware_carla_scenario.conditions import ScenarioResult
+
+    ends: list[Optional[float]] = []
+
+    class _Spy(MetricCondition):
+        def judge(
+            self,
+            times: list[float],
+            values: list[Optional[float]],
+            end: Optional[float] = None,
+        ) -> Optional[ScenarioResult]:
+            ends.append(end)
+            return super().judge(times, values, end)
+
+    passed = ScenarioResult(passed=True, message="done", elapsed_seconds=3.0)
+    _judged_run(
+        _Spy(COLLISION_AT_FAULT, label="hit"), result=passed, worlds=_hit_at_two()
+    )
+    assert ends == [3.0]
+
+
 def test_nothing_read_is_not_ng() -> None:
     condition = MetricCondition(
         MIN_DISTANCE_TO_OBSTACLE_M, ComparisonRule.LESS_THAN, 1.0, label="near"

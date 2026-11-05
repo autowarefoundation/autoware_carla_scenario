@@ -495,10 +495,13 @@ def _judge_metrics(
     series = evaluate_metrics(recorder.frames, run_carla_map(world), keys)
     if trajectory is not None:
         _record_metrics(trajectory, recorder.frames, series, judged)
+    # The run's end, in the frames' time base: a metric sampled less often
+    # than every tick counts its last sample until then.
+    end: Optional[float] = recorder.frames[-1].t if recorder.frames else None
     first: Optional[tuple[int, BaseCondition, ScenarioResult]] = None
     for i, condition in judged:
         metric = series[condition.metric]  # type: ignore[attr-defined]
-        verdict = condition.judge(metric.times, metric.values)  # type: ignore[attr-defined]
+        verdict = condition.judge(metric.times, metric.values, end)  # type: ignore[attr-defined]
         if verdict is None:
             logger.info(
                 "[%s] Metric condition [%d](%s) held: %s",
