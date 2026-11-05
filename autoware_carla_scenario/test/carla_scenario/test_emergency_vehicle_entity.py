@@ -17,6 +17,8 @@ import pytest
 import typesafe_carla.carla as carla
 
 import autoware_carla_scenario as acs
+from autoware_carla_scenario.actions import EmergencyAction
+from autoware_carla_scenario.control_domain import ControlDomain
 from autoware_carla_scenario.entity import (
     ANY_EMERGENCY_VEHICLE,
     EmergencyVehicleEntity,
@@ -418,3 +420,58 @@ class TestTheTrafficManagerDrivesIt:
         ambulance.set_emergency(True)
         backend.close()
         assert backend._emergencies == set()
+
+
+class TestTheEmergencyAction:
+    """Puts the named emergency vehicle on a call, or takes it off one."""
+
+    @pytest.fixture(autouse=True)
+    def _registry(self) -> Any:
+        clear_entities()
+        yield
+        clear_entities()
+
+    def _registered(self, spawned: List[Tuple[str, str]]) -> EmergencyVehicleEntity:
+        ambulance = EmergencyVehicleEntity(_config())
+        ambulance.spawn(_world())
+        register_entity("ambulance", ambulance)
+        return ambulance
+
+    def test_it_puts_the_vehicle_on_a_call(
+        self, spawned: List[Tuple[str, str]]
+    ) -> None:
+        ambulance = self._registered(spawned)
+        EmergencyAction("ambulance").execute(_World())  # type: ignore[arg-type]
+        assert ambulance.in_emergency
+        assert ambulance.actor.light_state & _SIREN  # type: ignore[union-attr]
+
+    def test_inactive_it_takes_the_vehicle_off_its_call(
+        self, spawned: List[Tuple[str, str]]
+    ) -> None:
+        ambulance = self._registered(spawned)
+        ambulance.set_emergency(True)
+        EmergencyAction("ambulance", active=False).execute(_World())  # type: ignore[arg-type]
+        assert not ambulance.in_emergency
+        assert not ambulance.actor.light_state & _SIREN  # type: ignore[union-attr]
+
+    def test_it_claims_the_vehicles_lights(self) -> None:
+        assert EmergencyAction("ambulance")._control_claims() == [
+            ("ambulance", ControlDomain.LIGHTING)
+        ]
+
+    def test_a_vehicle_that_is_no_emergency_vehicle_is_left_as_it_is(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        npc = VehicleEntity(VehicleEntityConfig("npc1", SpawnPointIndex(0)))
+        register_entity("npc1", npc)
+        EmergencyAction("npc1").execute(_World())  # type: ignore[arg-type]
+        assert "is not an emergency vehicle" in caplog.text
+
+    def test_an_unknown_entity_is_reported(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        EmergencyAction("nobody").execute(_World())  # type: ignore[arg-type]
+        assert "entity 'nobody' not found" in caplog.text
+
+    def test_the_package_exports_it(self) -> None:
+        assert acs.EmergencyAction is EmergencyAction

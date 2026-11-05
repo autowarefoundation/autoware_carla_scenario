@@ -189,6 +189,8 @@ class EgoVehicle:
             _acs_expect_return(r, bool, "EgoVehicle.finish_at() returns bool")
         elif name == "release_from_traffic":
             _acs_expect_return(r, NoneType, "EgoVehicle.release_from_traffic() returns None")
+        elif name == "set_emergency":
+            _acs_expect_return(r, NoneType, "EgoVehicle.set_emergency() returns None")
         elif name == "resume_traffic":
             _acs_expect_return(r, NoneType, "EgoVehicle.resume_traffic() returns None")
         elif name == "require_microscopic":
@@ -269,6 +271,11 @@ class EgoVehicle:
         raise NotImplementedError()
 
     def release_from_traffic(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    # traffic.driven.BackendDriven's: only an EmergencyVehicleEntity can be
+    # put on a call (EmergencyAction).
+    def set_emergency(self, active: bool) -> None:
         raise NotImplementedError()
 
     def resume_traffic(self, world: carla.World) -> None:

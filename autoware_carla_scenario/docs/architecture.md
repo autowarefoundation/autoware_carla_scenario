@@ -706,6 +706,7 @@ lateral together are its movement (`MOVEMENT`).
 | `SetSpeedAction` | longitudinal |
 | `LaneChangeAction`, `TurnAction` | lateral |
 | `TurnIndicatorAction` | lighting |
+| `EmergencyAction` | lighting |
 | `WalkStraightAction` | longitudinal, lateral |
 | `RoutingAction`, `follow` / `position` | longitudinal, lateral |
 | `RoutingAction`, `driver` | lateral; longitudinal too with a `speed`, a timed waypoint, `stop_at_goal`, or for a pedestrian (which it walks) |

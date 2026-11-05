@@ -1197,8 +1197,19 @@ police = EmergencyVehicleEntity(
 ambulance.spawn(world)
 self.register_entity(ambulance)
 
-# Later, when the scenario's emergency begins (on_tick, a condition, ...):
+# Later, when the scenario's emergency begins (on_tick, ...):
 ambulance.set_emergency(True)
+```
+
+`EmergencyAction` does the same from a trigger, and is what the scenario
+editor offers (*Vehicle / Lights* > *Emergency*):
+
+```python
+from autoware_carla_scenario import EmergencyAction, ElapsedTimeCondition
+
+# On a call 3 s in, off duty again 20 s in.
+self.register_pre_tick(EmergencyAction("ambulance", True, ElapsedTimeCondition(3.0)))
+self.register_pre_tick(EmergencyAction("ambulance", False, ElapsedTimeCondition(20.0)))
 ```
 
 **Stepping**: one SUMO step per CARLA tick, with the step length set to the

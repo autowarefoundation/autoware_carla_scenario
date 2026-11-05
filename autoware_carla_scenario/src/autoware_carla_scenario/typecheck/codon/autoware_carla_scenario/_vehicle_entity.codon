@@ -149,6 +149,11 @@ class VehicleEntity:
     def release_from_traffic(self, world: carla.World) -> None:
         raise NotImplementedError()
 
+    # traffic.driven.BackendDriven's: only an EmergencyVehicleEntity can be
+    # put on a call (EmergencyAction).
+    def set_emergency(self, active: bool) -> None:
+        raise NotImplementedError()
+
     def resume_traffic(self, world: carla.World) -> None:
         raise NotImplementedError()
 

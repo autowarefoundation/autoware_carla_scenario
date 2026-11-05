@@ -468,8 +468,13 @@ class EmergencyVehicleEntity(VehicleEntity):
 
     def set_traffic_backend(self, backend: TrafficBackend) -> None:
         """Inject the backend that drives it, which drives it on a call at
-        once if it is on one (:meth:`set_emergency`)."""
-        super().set_traffic_backend(backend)
+        once if it is on one (:meth:`set_emergency`).
+
+        Sets the backend as :meth:`BackendDriven.set_traffic_backend` does,
+        not through ``super()``: Codon cannot call the mixin's method from
+        an override two classes below it (docs/typecheck.md).
+        """
+        self._traffic_backend = backend
         if self._emergency:
             self._tell_backend()
 

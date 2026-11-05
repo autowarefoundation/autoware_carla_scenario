@@ -231,6 +231,18 @@ class BackendDriven(DrivenEntity):
         driven: BackendDriven = self
         driven.follow_route(world, stops)
 
+    def set_emergency(self, active: bool) -> None:
+        """Put this vehicle on a call as an emergency vehicle (*active*) or
+        off duty.  Only an
+        :class:`~autoware_carla_scenario.entity.EmergencyVehicleEntity` can:
+        any other vehicle is left as it is, with a warning."""
+        if active:
+            logger.warning(
+                "%s is not an emergency vehicle (EmergencyVehicleEntity); it "
+                "drives as before",
+                type(self).__name__,
+            )
+
     def release_from_traffic(self, world: "carla.World") -> None:
         """Stop the backend driving this vehicle; the caller drives it now."""
         entity: DrivenEntity = self

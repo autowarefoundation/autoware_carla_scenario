@@ -3341,6 +3341,7 @@ def test_what_the_constructors_take_still_compiles(tmp_path: Path) -> None:
     setup = """
         from autoware_carla_scenario import (
             AlwaysTrueCondition,
+            EmergencyAction,
             EmergencyVehicleEntity,
             EmergencyVehicleEntityConfig,
             MotorcycleEntity,
@@ -3383,6 +3384,15 @@ def test_what_the_constructors_take_still_compiles(tmp_path: Path) -> None:
         )
         ambulance.set_emergency(False)
         self.register_entity(ambulance)
+        self.register_pre_tick(EmergencyAction("ambulance", label="siren_on"))
+        self.register_pre_tick(
+            EmergencyAction(
+                "ambulance",
+                False,
+                ElapsedTimeCondition(5.0, label="later"),
+                label="siren_off",
+            )
+        )
         logger.info("%s %s", ambulance.role_name, str(ambulance.in_emergency))
         walker = PedestrianEntity(
             PedestrianEntityConfig("walker1", SpawnTransform(carla.Transform()))
