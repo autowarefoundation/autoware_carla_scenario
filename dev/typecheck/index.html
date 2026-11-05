@@ -4814,9 +4814,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-285 of the package's 408
-modules (70%; about 87,700 of
-151,600 lines) are <code>CHECKED</code>: the kinematics, the
+286 of the package's 409
+modules (70%; about 87,800 of
+151,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4840,7 +4840,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 285 CHECKED modules</summary>
+<summary>The 286 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5978,6 +5978,10 @@ with the first paragraph of its docstring:</p>
 <td>Vehicle-wide helpers that read nothing but the world they are handed.</td>
 </tr>
 <tr>
+<td><code>value_text</code></td>
+<td>A config value as an error message shows it, a huge integer included.</td>
+</tr>
+<tr>
 <td><code>visibility</code></td>
 <td>How far a driver sees: the visibility that night, rain and fog leave.</td>
 </tr>
@@ -5992,7 +5996,7 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>149 functions and methods of those modules are <code>UNCALLED</code>
+<p>150 functions and methods of those modules are <code>UNCALLED</code>
 (42 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
@@ -6005,7 +6009,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 149 UNCALLED functions and methods, and why</summary>
+<summary>The 150 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6156,6 +6160,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>trajectory.model._vertex_advance</code>: takes a TrajectoryVertex call's <code>*args</code> and <code>**kwargs</code> as written (<code>tuple[Any, ...]</code>, <code>dict[str, Any]</code>), which Codon cannot express; only _refusing_vertex_times, itself uncalled, calls it</li>
 <li><code>trajectory.model._whole</code>: checks that a value of any type (<code>value: Any</code>: whatever a YAML document or a caller wrote for a lane or junction index) is a whole number, which Codon cannot express; the route poses' __post_init__ call it with their own fields, so its body is compiled through them</li>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; only validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it</li>
 </ul>
 </details>
 <p>The 123 <code>EXCLUDED</code> modules fall in three groups. Many fit
