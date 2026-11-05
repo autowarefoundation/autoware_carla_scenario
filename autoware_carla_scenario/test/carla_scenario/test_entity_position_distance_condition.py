@@ -199,11 +199,11 @@ class TestAPlaceWithoutHeight:
     def _measure(condition, road, at=(5.0, -5.0, -10.0)):
         from unittest.mock import patch
 
-        reads: list[tuple[float, float]] = []
+        reads: list[tuple[float, float, float]] = []
 
         def ground(_carla_map):
-            def height(x: float, y: float):
-                reads.append((x, y))
+            def height(x: float, y: float, z_hint: float = 0.0):
+                reads.append((x, y, z_hint))
                 return road
 
             return height
@@ -224,7 +224,9 @@ class TestAPlaceWithoutHeight:
         first, second, reads = self._measure(condition, road=-10.0)
         assert first is not None and math.isclose(first, 0.0, abs_tol=1e-9)
         assert second is not None and math.isclose(second, 0.0, abs_tol=1e-9)
-        assert reads == [(5.0, -5.0)]  # read once, then cached
+        # Read once, then cached; near the entity's height, so that where
+        # roads are stacked it is the road the entity is on (#1585).
+        assert reads == [(5.0, -5.0, -10.0)]
         assert math.isclose(condition.get_details()["target_z"], -10.0)
 
     def test_the_height_above_the_road_still_counts(self) -> None:

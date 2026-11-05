@@ -63,6 +63,14 @@ _SEAM_TOLERANCE = 1e-3
 #: elevation, to tell stacked lanelets apart.
 _STACKED_CANDIDATES = 8
 
+#: How much farther (m) from a point's elevation than the nearest lanelet
+#: surface over or under it a lanelet's surface may be and still hold the
+#: point (:func:`on_lanelet`).  Lanelets that overlap on one level -- a
+#: junction's -- all hold it; of lanelets stacked over one another -- an
+#: overpass and the road beneath it, metres apart -- only the one at the
+#: point's level does.
+_STACKED_HEIGHT_TOLERANCE = 1.0
+
 
 # ---------------------------------------------------------------------------
 # Public API (overloaded)
@@ -155,18 +163,53 @@ def project_onto_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> Lanelet2Pose:
     )
 
 
-def on_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> bool:
+def on_lanelet(
+    pose: CarlaWorldPose, lanelet_id: int, *, by_height: bool = True
+) -> bool:
     """Whether a CARLA world position lies within a lanelet's bounds.
 
     The membership test for an address given as a lanelet.  It is asked of the
     lanelet itself rather than answered by "the nearest lanelet is this one",
     which a point in a junction -- where lanelets overlap -- would answer for
     only one of them.
+
+    The bounds are a lanelet's in plan view, and its height: where lanelets
+    are stacked over one another -- an overpass and the road beneath it -- the
+    point is on the one its elevation (``pose.z``) is at, as
+    :func:`to_lanelet2` reads it.  A lanelet holds the point unless another
+    lanelet that holds it in plan view has a surface nearer the point's
+    elevation by more than ``_STACKED_HEIGHT_TOLERANCE``, so lanelets
+    overlapping on one level all hold it, and a map whose elevation is off
+    where nothing is stacked still reads as it does in plan view.
+
+    Args:
+        pose: The CARLA world position.
+        lanelet_id: The lanelet asked about.
+        by_height: ``False`` when the position's elevation is not known: the
+            test is then the plan-view one alone, and a point under an
+            overpass is on both roads.
     """
     mm = MapManager.get_instance()
-    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
+    layer = mm.lanelet_map.laneletLayer
+    lanelet = layer[lanelet_id]
     x, y, _heading = _carla_to_lanelet2_frame(pose)
-    return bool(lanelet2.geometry.inside(lanelet, lanelet2.core.BasicPoint2d(x, y)))
+    point = lanelet2.core.BasicPoint2d(x, y)
+    if not lanelet2.geometry.inside(lanelet, point):
+        return False
+    if not by_height:
+        return True
+    z = pose.z + mm.z_offset
+    # How far the point is from this lanelet's surface: worked out only once
+    # another lanelet holds the point too, which most points have none of.
+    own = -1.0
+    for _distance, other in lanelet2.geometry.findWithin2d(layer, point, 0.0):
+        if other.id == lanelet_id or not lanelet2.geometry.inside(other, point):
+            continue
+        if own < 0.0:
+            own = _project_with_height(lanelet, x, y, z)[0]
+        if _project_with_height(other, x, y, z)[0] + _STACKED_HEIGHT_TOLERANCE < own:
+            return False
+    return True
 
 
 def lanelet_length(lanelet_id: int) -> float:
@@ -884,9 +927,7 @@ def _carla_to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
     for distance, candidate in results:
         if distance > nearest + _SEAM_TOLERANCE:
             break
-        points = [(p.x, p.y, p.z) for p in candidate.centerline]
-        s, t, heading_cl = _project_to_centerline(points, ll2_x, ll2_y)
-        dz = abs(_interpolate_at_s(points, s)[2] - ll2_z)
+        dz, s, t, heading_cl = _project_with_height(candidate, ll2_x, ll2_y, ll2_z)
         if best is None or dz < best[0]:
             best = (dz, candidate, s, t, heading_cl)
     assert best is not None
@@ -899,6 +940,18 @@ def _carla_to_lanelet2(pose: CarlaWorldPose) -> Lanelet2Pose:
 # ---------------------------------------------------------------------------
 # Geometry helpers
 # ---------------------------------------------------------------------------
+
+
+def _project_with_height(
+    lanelet: lanelet2.core.Lanelet, x: float, y: float, z: float
+) -> tuple[float, float, float, float]:
+    """``(dz, s, t, heading)``: the Lanelet2-frame point ``(x, y, z)`` projected
+    onto *lanelet*'s centerline in plan view (:func:`_project_to_centerline`),
+    and how far ``z`` is from the centerline's elevation there."""
+    points = [(p.x, p.y, p.z) for p in lanelet.centerline]
+    s, t, heading_cl = _project_to_centerline(points, x, y)
+    dz = abs(_interpolate_at_s(points, s)[2] - z)
+    return dz, s, t, heading_cl
 
 
 def _compute_arc_lengths_2d(

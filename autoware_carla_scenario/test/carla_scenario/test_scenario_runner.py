@@ -760,6 +760,53 @@ def _set_up_once(runner: ScenarioRunner) -> None:
         runner.run_scenario(scenario, reset_world=False)
 
 
+class TestTheRunsSeed:
+    """A scenario's random_seed is checked before the run touches the world
+    (#1576): one assigned after construction that CARLA or SUMO would refuse
+    leaves the world as it was, not synchronous."""
+
+    @pytest.mark.parametrize("seed", [-1, 2**31, 2**32 - 1, 1.5])
+    def test_a_seed_out_of_range_is_refused_before_the_world_is_touched(
+        self, seed: object
+    ) -> None:
+        from autoware_carla_scenario.seed import run_seed
+
+        runner = _make_runner(None)
+        client = runner._client
+        built = list(client.mock_calls)  # type: ignore[attr-defined]
+        world = MagicMock()
+        runner._world = world
+        scenario = MagicMock()
+        scenario.random_seed = seed
+        before = run_seed()
+
+        with (
+            patch.object(runner, "_world_for_next_run") as next_world,
+            pytest.raises(ValueError, match=r"^random_seed must"),
+        ):
+            runner.run_scenario(scenario, reset_world=False)
+
+        next_world.assert_not_called()
+        scenario.create_ego.assert_not_called()
+        world.apply_settings.assert_not_called()
+        assert client.mock_calls == built  # type: ignore[attr-defined]
+        assert run_seed() == before
+
+    def test_a_seed_on_the_bound_runs_on(self) -> None:
+        runner = _make_runner(None)
+        scenario = MagicMock()
+        scenario.random_seed = 2**31 - 1
+        scenario.create_ego.side_effect = _Stop
+
+        with (
+            patch.object(runner, "_world_for_next_run") as next_world,
+            pytest.raises(_Stop),
+        ):
+            runner.run_scenario(scenario, reset_world=False)
+
+        next_world.assert_called_once()
+
+
 class TestTheBatchMap:
     """A batch runs on the map it loaded, even when another client loads a
     world of its own on the same server between (or during) its runs."""

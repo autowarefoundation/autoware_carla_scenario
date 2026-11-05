@@ -802,7 +802,11 @@ self.register_pre_tick(
   `until` fires. Registered with `register_init`, a source places its
   `initial_vehicles` once, during initialization, and never again.
 - **Who drives them** is the backend: `spawn_background`, `background_vehicles`
-  and `remove_background` on `TrafficBackend`. Under `traffic=sumo` they are
+  and `remove_background` on `TrafficBackend`; `background_vehicles` gives each
+  one's CARLA `(x, y, z)`, so a sink or a construction zone tells a road from
+  the overpass above it (`on_lanelet` reads the height); `z` is `None` for a
+  vehicle SUMO's queue model holds (on a lane's 2D shape), which is then
+  placed in plan view alone. Under `traffic=sumo` they are
   SUMO vehicles that wander the network (a random way out at each junction) and
   are mirrored into CARLA like the rest of SUMO's traffic; ones placed during
   initialization have SUMO's warm-up to spread out. Under

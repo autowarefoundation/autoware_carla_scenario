@@ -1376,7 +1376,7 @@ def test_background_vehicles_are_sumo_traffic_mirrored_into_carla(
         # Mirrored into CARLA like the rest of SUMO's traffic.
         mirror = backend._ambient[handle]
         assert mirror in world.spawned
-        (x, y) = backend.background_vehicles(world)[handle]
+        (x, y, _z) = backend.background_vehicles(world)[handle]
         assert -60.0 < x < -50.0 and y == pytest.approx(5.25, abs=1.0)
 
         backend.remove_background(world, handle)
@@ -2283,7 +2283,7 @@ def test_background_vehicles_are_where_their_mirrors_origins_are(
         for i in range(5):
             backend.tick(world, i * 0.05)
         assert handle in backend._ambient
-        x, y = backend.background_vehicles(world)[handle]
+        x, y, _z = backend.background_vehicles(world)[handle]
         yaw = math.radians(_carla_yaw(backend, handle))
         reach = float(tc.vehicle.getLength(handle)) / 2.0 + (
             box_location[0] if box_location else 0.0
@@ -2808,6 +2808,31 @@ def test_the_scenarios_vehicles_stay_in_carla_unless_let_go(
         assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
         assert entity.actor is not None and not entity.actor.destroyed
         assert len(backend._meso) == 0
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_background_vehicle_the_queue_model_holds_has_no_height(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    # The queue model places a vehicle on a lane's 2D shape: its height is
+    # not known (None), so a sink or a construction zone places it in plan
+    # view (#1586).  One SUMO drives has its height.
+    backend, world, _entity, _ego = _mesoscopic(crossroads, tmp_path)
+    try:
+        near = backend.spawn_background(
+            world, _carla_transform(-100.0, 5.25, 0.0), speed_kmh=5.0
+        )
+        far = backend.spawn_background(
+            world, _carla_transform(-20.0, 5.25, 0.0), speed_kmh=5.0
+        )
+        assert near is not None and far is not None
+        _tick_until(backend, world, lambda: far in backend._meso)
+        vehicles = backend.background_vehicles(world)
+        assert vehicles[far][2] is None
+        assert near not in backend._meso
+        assert isinstance(vehicles[near][2], float)
     finally:
         backend.close()
 
@@ -4152,7 +4177,9 @@ def test_a_car_sumo_drives_stops_for_what_stands_in_its_way_in_carla(
     npc.get_world = lambda: world  # type: ignore[attr-defined]
     standing: list[Any] = []
 
-    def in_way(world_: Any, self_id: int, x: float, y: float, *rest: Any) -> Any:
+    def in_way(
+        world_: Any, self_id: int, x: float, y: float, *rest: Any, **kwargs: Any
+    ) -> Any:
         if not standing or rest[1] != "vehicle":
             return None
         found = clearance.Obstacle(7, standing[0], 5.25, 2.5, 0.0)

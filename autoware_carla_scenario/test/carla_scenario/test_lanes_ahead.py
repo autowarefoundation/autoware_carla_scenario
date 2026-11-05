@@ -496,18 +496,19 @@ class TestCutInOnTheFixtureMap:
         assert npc_on in lanelets_ahead(npc_beside, 1000.0)
         assert overlapped in lanelets_ahead(ego, 1000.0)
         pose = Lanelet2Pose(lanelet_id=npc_on, s=30.0)
-        assert on_lanelet(to_carla_world(pose), overlapped)
+        assert on_lanelet(to_carla_world(pose), overlapped, by_height=False)
         assert not self._cut_in(pose, ego_lanelet=ego)
 
     def test_not_past_a_junction(self) -> None:
         # The ego on 3002098, the NPC beside it on 3002099: past the
-        # junction, 3002092 runs inside 3002020, which follows the ego's lane
-        # through it.  The NPC there has not cut in.
+        # junction, 3002092 runs inside 3002020 in plan view (a ramp, 6 m
+        # above it), which follows the ego's lane through it.  The NPC there
+        # has not cut in.
         ego, npc_beside, npc_on, overlapped = 3002098, 3002099, 3002092, 3002020
         assert npc_on in lanelets_ahead(npc_beside, 1000.0)
         assert overlapped in lanelets_ahead(ego, 1000.0)
         pose = Lanelet2Pose(lanelet_id=npc_on, s=67.0)
-        assert on_lanelet(to_carla_world(pose), overlapped)
+        assert on_lanelet(to_carla_world(pose), overlapped, by_height=False)
         assert not self._cut_in(pose, ego_lanelet=ego)
 
 

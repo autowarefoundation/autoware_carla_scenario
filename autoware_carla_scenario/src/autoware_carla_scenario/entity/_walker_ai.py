@@ -658,6 +658,7 @@ def give_way(
         "walker",
         GIVE_WAY_M,
         _GIVE_WAY_SIDE_M,
+        z=float(location.z),
     )
     what = "walker"
     if found is None:
@@ -668,7 +669,15 @@ def give_way(
         except AttributeError:
             half = _GIVE_WAY_SIDE_M
         found = first_in_way(
-            world, key, location.x, location.y, heading, "vehicle", GIVE_WAY_M, half
+            world,
+            key,
+            location.x,
+            location.y,
+            heading,
+            "vehicle",
+            GIVE_WAY_M,
+            half,
+            z=float(location.z),
         )
         if found is not None and found.speed >= _STANDING_MPS:
             found = None  # coming: not waited for in the middle of the road

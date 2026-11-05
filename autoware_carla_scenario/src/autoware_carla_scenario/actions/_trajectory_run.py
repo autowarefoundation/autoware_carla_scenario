@@ -1366,6 +1366,7 @@ def _walker_in_way(
             "walker",
             speed * speed / 8.0 + 4.0,
             half_width,
+            z=float(transform.location.z),
         )
     except (AttributeError, RuntimeError):
         return False
@@ -1419,6 +1420,8 @@ def _in_way_ahead(
     half_width: float,
     behind: tuple[float, float, float, float],
     body_half_width: float = 0.0,
+    z: Optional[float] = None,
+    along: float = 0.0,
 ) -> int:
     """The *kind* actor other than *own* standing within *distance* ahead of
     ``(x, y)`` facing *heading* (deg, CARLA), *half_width* across -- one piece
@@ -1429,11 +1432,15 @@ def _in_way_ahead(
     path's first piece, from where the vehicle stands to the route's next
     point, may run off sideways.  A walker walking away from the piece, off
     the vehicle's own *body_half_width*, does not count either: it is leaving
-    the way (pedestrian_66, walking off the corner vehicle_56 turned round)."""
+    the way (pedestrian_66, walking off the corner vehicle_56 turned round).
+    Only on *own*'s level of road, its origin at height *z* *along* m back
+    along the path (:func:`~..utils.clearance.first_box_in_way`)."""
     from ..utils.clearance import first_box_in_way  # noqa: PLC0415
 
     try:
-        found = first_box_in_way(world, own, x, y, heading, kind, distance, half_width)
+        found = first_box_in_way(
+            world, own, x, y, heading, kind, distance, half_width, z=z, along=along
+        )
     except (AttributeError, RuntimeError):
         return -1
     if found is None:
@@ -1482,6 +1489,7 @@ def _vehicle_before_walker(walker: "carla.Actor") -> bool:
             "vehicle",
             reach,
             float(extent.y) + 0.2,
+            z=float(transform.location.z),
         )
     except (AttributeError, RuntimeError):
         return False
@@ -1509,6 +1517,7 @@ def _vehicle_in_way(
             "vehicle",
             speed * speed / 8.0 + float(extent.x) + 2.0,
             float(extent.y) + 0.3,
+            z=float(transform.location.z),
         )
     except (AttributeError, RuntimeError):
         return False

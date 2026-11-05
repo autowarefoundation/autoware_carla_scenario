@@ -786,7 +786,7 @@ class MetricCondition(BaseCondition):
     def is_ng(self, value: Optional[float]) -> bool:
         raise NotImplementedError()
 
-    def judge(self, times: List[float], values: List[Optional[float]]) -> Optional[ScenarioResult]:
+    def judge(self, times: List[float], values: List[Optional[float]], end: Optional[float] = None) -> Optional[ScenarioResult]:
         raise NotImplementedError()
 
 

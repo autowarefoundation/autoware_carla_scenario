@@ -185,15 +185,16 @@ class EntityPositionDistanceCondition(CompositionCondition):
             self._target = None
             self._height_known = True
 
-    def _place(self, world: "carla.World") -> Optional[Vector3]:
+    def _place(self, world: "carla.World", z_hint: float = 0.0) -> Optional[Vector3]:
         """The place in CARLA's world, placed the first time it is asked for
         (on every call, one placed against an entity); ``None`` while that
         entity is not in the scene, or (said once) when it cannot be placed.
 
         A place with no height of its own (a :class:`MapPose` without ``z``, a
         crosswalk or roadside pose) stands on the road under it, read once from
-        the run's map; where none can be read the height is unknown and left
-        out of a vertical measurement."""
+        the run's map near *z_hint* (the entity's height: where roads are
+        stacked, the road it is on); where none can be read the height is
+        unknown and left out of a vertical measurement."""
         target = self._target
         if self._unplaced or (target is not None and not self._follows):
             return target
@@ -224,7 +225,7 @@ class EntityPositionDistanceCondition(CompositionCondition):
         if z is not None:
             height = float(z)
         else:
-            surface = road_height(run_carla_map(world))(float(x), float(y))
+            surface = road_height(run_carla_map(world))(float(x), float(y), z_hint)
             if surface is not None:
                 height = float(surface)
             else:
@@ -239,11 +240,11 @@ class EntityPositionDistanceCondition(CompositionCondition):
         entity = find_actor_by_role_name(world, self._entity_name)
         if entity is None:
             return None
-        target = self._place(world)
+        location = entity.get_location()
+        target = self._place(world, float(location.z))
         if target is None:
             return None
 
-        location = entity.get_location()
         dz = 0.0
         if self._vertical and self._height_known:
             dz = target.z - location.z
