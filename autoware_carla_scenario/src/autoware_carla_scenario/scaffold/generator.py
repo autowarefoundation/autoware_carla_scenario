@@ -501,7 +501,12 @@ def _move_into_place(staging: Path, root: Path, *, force: bool) -> None:
         return
     aside = Path(tempfile.mkdtemp(prefix=f".{root.name}.old-", dir=root.parent))
     old = aside / root.name
-    os.replace(root, old)
+    try:
+        os.replace(root, old)
+    except BaseException:
+        # The old package was not moved: drop the empty holder and leave it.
+        shutil.rmtree(aside, ignore_errors=True)
+        raise
     try:
         os.replace(staging, root)
     except BaseException:

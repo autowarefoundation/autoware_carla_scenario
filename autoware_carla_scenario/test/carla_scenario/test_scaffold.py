@@ -11,6 +11,7 @@ steps that need a live CARLA world.
 from __future__ import annotations
 
 import importlib
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -447,6 +448,29 @@ class TestCreateScenarioPackage:
         before = sorted(str(p.relative_to(first.root)) for p in first.root.rglob("*"))
         self._fail_on_write(monkeypatch, nth=3)
         with pytest.raises(OSError, match="No space left"):
+            create_scenario_package(
+                "dup_pkg", scenario_name="beta", output_dir=tmp_path, force=True
+            )
+        after = sorted(str(p.relative_to(first.root)) for p in first.root.rglob("*"))
+        assert after == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
+
+    def test_a_package_that_cannot_be_moved_aside_leaves_no_holder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first = create_scenario_package(
+            "dup_pkg", scenario_name="alpha", output_dir=tmp_path
+        )
+        before = sorted(str(p.relative_to(first.root)) for p in first.root.rglob("*"))
+        real = os.replace
+
+        def replace(src: Any, dst: Any) -> None:
+            if Path(src) == first.root:
+                raise PermissionError(13, "Permission denied", str(src))
+            real(src, dst)
+
+        monkeypatch.setattr(os, "replace", replace)
+        with pytest.raises(PermissionError):
             create_scenario_package(
                 "dup_pkg", scenario_name="beta", output_dir=tmp_path, force=True
             )
