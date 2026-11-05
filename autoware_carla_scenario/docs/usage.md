@@ -538,9 +538,15 @@ uv run scenario scenario=intersection_passing/straight seed=42
 
 A seed -- `seed`, `sweep.odd_sample.seed`, and each component's own below
 (`background_traffic.seed`, `driver.random_seed`,
-`driver.lidars[].noise_seed`) -- is a whole number, not negative: `42` or
-`42.0`, not `1.9`, a boolean or a string that is no integer, as a route
-search's counts are ([Logical Scenarios](logical_scenarios.md));
+`driver.lidars[].noise_seed`) -- is a whole number from 0 to 2147483647
+(`2**31 - 1`, `autoware_carla_scenario.seed.MAX_SEED`): `42` or `42.0`, not
+`1.9`, a boolean, a string that is no integer, `-1` or `2147483648`, as a
+route search's counts are ([Logical Scenarios](logical_scenarios.md)). The
+upper bound is what the simulators take: CARLA's pedestrian seed is a 32-bit
+unsigned integer and SUMO's `--seed` a 32-bit signed one, so a larger seed
+used to fail every case once CARLA had started (#1560). The background
+traffic source draws from one past `background_traffic.seed`, which wraps to
+0 past 2147483647;
 `sweep.odd_sample.count` is a whole number of at least 1. Any other value is
 refused before anything starts, naming the key, on every path: a single run,
 a batch (local or SLURM), a lanelet sweep and `scenario-expand` (which reads

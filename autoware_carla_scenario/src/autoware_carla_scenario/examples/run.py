@@ -93,7 +93,7 @@ from autoware_carla_scenario.rerun import report as rerun_report
 from autoware_carla_scenario.coordinate.snap import check_ray_distances
 from autoware_carla_scenario.run_timeout import run_timeout_seconds
 from autoware_carla_scenario.scenario_config import EntityConfig
-from autoware_carla_scenario.seed import DEFAULT_SEED, set_run_seed
+from autoware_carla_scenario.seed import DEFAULT_SEED, MAX_SEED, set_run_seed
 from autoware_carla_scenario.server import fog_density_scale_args
 from autoware_carla_scenario.t4 import T4Recorder, T4Settings, T4UnavailableError
 from autoware_carla_scenario.t4_scene import T4SceneExporter
@@ -2458,7 +2458,8 @@ def config_seed(cfg: DictConfig) -> int | None:
     the key (an exported scenario package's) leaves the scenario its own seed.
 
     Raises:
-        ValueError: When it is not a non-negative whole number
+        ValueError: When it is not a whole number from 0 to
+            :data:`~autoware_carla_scenario.seed.MAX_SEED` (``2**31 - 1``)
             (:func:`~autoware_carla_scenario.odd.sampler.seed_setting`):
             ``1.9`` and ``true`` are not seed 1.
     """
@@ -2467,8 +2468,8 @@ def config_seed(cfg: DictConfig) -> int | None:
 
 def _check_seeds(cfg: DictConfig) -> None:
     """Refuse the run's ``seed`` and its sweep's ``odd_sample`` ``seed`` and
-    ``count`` unless each is a whole number (a seed not negative, a count at
-    least 1), naming the key, as expanding the sweep and building the scenario
+    ``count`` unless each is a whole number (a seed from 0 to ``2**31 - 1``,
+    a count at least 1), naming the key, as expanding the sweep and building the scenario
     would refuse them.
 
     Raises:
@@ -2909,7 +2910,12 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
     if constraints and rate > 0:
         scenario.register_pre_tick(
             source_action(
-                initial=0, rate=rate, seed=seed + 1, label="background_source"
+                initial=0,
+                rate=rate,
+                # One past the initial vehicles' seed, wrapped into the seed
+                # range: MAX_SEED's successor is 0, not a seed refused (#1560).
+                seed=(seed + 1) % (MAX_SEED + 1),
+                label="background_source",
             )
         )
     if sink.get("constraints"):

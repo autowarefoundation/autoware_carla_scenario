@@ -16,6 +16,11 @@ draws at random takes it unless it is given a seed of its own:
   (and the config's ``background_traffic``);
 * the driver policy's ``start_session`` seed and its LiDARs' weather noise.
 
+Every seed is a whole number from 0 to :data:`MAX_SEED` (``2**31 - 1``):
+CARLA's pedestrian seed is a 32-bit unsigned integer and SUMO's ``--seed`` a
+32-bit signed one, so a larger seed would be refused by the simulator on every
+case, after CARLA had started.  :func:`check_seed` refuses it up front.
+
 A component given ``seed=None`` (the default) takes the run's seed when it is
 built (:func:`resolve_seed`); one given a number keeps it.  The runner sets the
 run's seed before it builds the scenario and again before ``setup()``
@@ -31,6 +36,7 @@ from typing import Optional
 
 __all__ = [
     "DEFAULT_SEED",
+    "MAX_SEED",
     "check_seed",
     "check_whole_number",
     "resolve_seed",
@@ -40,6 +46,11 @@ __all__ = [
 
 #: The seed of a run that names none.
 DEFAULT_SEED: int = 0
+
+#: The largest seed a run takes: ``2**31 - 1``, the largest SUMO's ``--seed``
+#: (a 32-bit signed integer) reads, and within CARLA's 32-bit unsigned
+#: ``World.set_pedestrians_seed``.
+MAX_SEED: int = 2147483647
 
 #: The run's seed, in a list so that setting it needs no ``global``.
 _RUN_SEED: list[int] = [DEFAULT_SEED]
@@ -54,12 +65,12 @@ def set_run_seed(seed: int) -> int:
     """Make *seed* the run's seed, and return the one it replaces.
 
     Raises:
-        ValueError: If *seed* is negative (CARLA's and SUMO's seeds are not).
+        ValueError: If *seed* is negative or above :data:`MAX_SEED`
+            (:func:`check_seed`).
     """
-    if seed < 0:
-        raise ValueError(f"seed must not be negative, got {seed}")
+    number = check_seed("seed", seed)
     previous = _RUN_SEED[0]
-    _RUN_SEED[0] = int(seed)
+    _RUN_SEED[0] = number
     return previous
 
 
@@ -99,7 +110,7 @@ def check_whole_number(key: str, value: int) -> int:
 def check_seed(key: str, seed: int) -> int:
     """*seed*, a component's own seed as its config holds it, checked: a
     whole number (:func:`check_whole_number`: ``2``, or ``2.0`` read as 2),
-    not negative, as the run's ``seed`` is.
+    from 0 to :data:`MAX_SEED` (``2**31 - 1``), as the run's ``seed`` is.
 
     Raises:
         ValueError: naming *key*.
@@ -107,6 +118,11 @@ def check_seed(key: str, seed: int) -> int:
     number = check_whole_number(key, seed)
     if number < 0:
         raise ValueError(f"{key} must not be negative, got {seed!r}")
+    if number > MAX_SEED:
+        raise ValueError(
+            f"{key} must be at most {MAX_SEED} (2**31 - 1: seeds range over "
+            f"0..{MAX_SEED}, what CARLA and SUMO take), got {seed!r}"
+        )
     return number
 
 
