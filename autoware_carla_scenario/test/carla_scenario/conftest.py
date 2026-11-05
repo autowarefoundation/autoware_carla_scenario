@@ -111,6 +111,28 @@ def _map_manager_left_as_found() -> Iterator[None]:
 
 
 @pytest.fixture(autouse=True)
+def _entity_registry_left_as_found() -> Iterator[None]:
+    """Put back the entities the registry held when a test started.
+
+    The registry is module-level, and only the runner clears it: an entity a
+    test registered (``BaseScenario.register_entity``) would answer to its
+    role name in every later test of the process, so an action looking up
+    ``"npc1"`` there would find it and drive it (#1592).  The dicts the test
+    found are refilled in place, so a test that swapped them with
+    ``monkeypatch`` is undone whichever teardown runs first.
+    """
+    from autoware_carla_scenario.entity import registry
+
+    vehicles, pedestrians = registry._VEHICLES, registry._PEDESTRIANS
+    found = (dict(vehicles), dict(pedestrians))
+    yield
+    vehicles.clear()
+    vehicles.update(found[0])
+    pedestrians.clear()
+    pedestrians.update(found[1])
+
+
+@pytest.fixture(autouse=True)
 def _heavy_metrics_decision_cleared(monkeypatch: pytest.MonkeyPatch) -> None:
     """Start without, and forget, the heavy metrics decision a run left.
 
