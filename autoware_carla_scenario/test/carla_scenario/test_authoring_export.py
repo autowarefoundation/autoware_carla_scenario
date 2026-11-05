@@ -81,6 +81,20 @@ def _document_with_goal(lanelet_id: int | None, s: float = 0.0):
     return document
 
 
+def _in_set_values(tree: Any) -> list[Any]:
+    """Every ``in_set`` constraint's ``values`` in *tree*, in order."""
+    found: list[Any] = []
+    if isinstance(tree, dict):
+        if tree.get("type") == "in_set":
+            found.append(tree.get("values"))
+        for value in tree.values():
+            found.extend(_in_set_values(value))
+    elif isinstance(tree, list):
+        for value in tree:
+            found.extend(_in_set_values(value))
+    return found
+
+
 class TestHydraConfig:
     def test_ego_spawn_uses_the_frameworks_own_keys(self) -> None:
         """The sweeper already overrides these; an authored scenario must too."""
@@ -166,6 +180,22 @@ class TestHydraConfig:
         """An empty exclusion list must fall through, not shadow the group's."""
         config = build_scenario_config(new_document())
         assert "no_3d_model_lanelet_ids" not in config["map"]
+
+    def test_an_empty_exclusion_list_keeps_the_reference(self) -> None:
+        """Left empty, the list is the group's: Hydra resolves the reference."""
+        config = build_scenario_config(new_document())
+        assert _in_set_values(config["sweep"]) == ["${map.no_3d_model_lanelet_ids}"]
+
+    def test_a_listed_exclusion_list_replaces_the_reference(self) -> None:
+        """On a built-in group the ``map`` keys lose to the group, so a list the
+        author typed is written into the constraints that name it (#1523)."""
+        document = new_document()
+        document.map.no_3d_model_lanelet_ids = [1, 2]
+        config = build_scenario_config(document)
+        assert _in_set_values(config["sweep"]) == [[1, 2]]
+        assert "no_3d_model_lanelet_ids" not in config["map"]
+        # The document itself still names the reference.
+        assert "${map.no_3d_model_lanelet_ids}" in str(document.model_dump(mode="json"))
 
 
 class TestFrameworkPin:
@@ -517,6 +547,98 @@ class TestExportedMapGroup:
         assert cfg.map.name == "NishishinjukuMap"
         assert cfg.map.overwrite_xodr is True
         assert cfg.map.lanelet2_path
+
+
+def _group_exclusions(group: str) -> list[int]:
+    """The ``no_3d_model_lanelet_ids`` the framework's *group* file lists."""
+    data = yaml.safe_load((_FRAMEWORK_CONF / "map" / f"{group}.yaml").read_text())
+    return [int(v) for v in data["map"]["no_3d_model_lanelet_ids"]]
+
+
+class TestExcludedLaneletIds:
+    """The editor's "Excluded lanelet IDs" on a built-in map group (#1523).
+
+    A non-empty list replaces the group's, an empty one inherits it -- in a
+    run of the export and in the editor's preview alike.
+    """
+
+    @staticmethod
+    def _effective(package: Path) -> list[Any]:
+        from omegaconf import OmegaConf
+
+        cfg = _compose_exported(package, "map=nishishinjuku")
+        sweep = OmegaConf.to_container(cfg.sweep, resolve=True)
+        return _in_set_values(sweep)
+
+    def test_an_empty_list_inherits_the_groups(self, tmp_path: Path) -> None:
+        group = _group_exclusions("nishishinjuku")
+        assert len(group) > 2
+        package = export_package(new_document(), tmp_path, **OFFLINE).root
+        assert self._effective(package) == [group]
+
+    def test_a_listed_one_replaces_the_groups(self, tmp_path: Path) -> None:
+        document = new_document()
+        document.map.no_3d_model_lanelet_ids = [1, 2]
+        package = export_package(document, tmp_path, **OFFLINE).root
+        assert self._effective(package) == [[1, 2]]
+
+    def test_the_effective_list_follows_the_same_rule(self) -> None:
+        from autoware_carla_scenario.authoring.hydra_config import (
+            effective_no_3d_model_lanelet_ids,
+        )
+
+        document = new_document()
+        assert effective_no_3d_model_lanelet_ids(document) == _group_exclusions(
+            "nishishinjuku"
+        )
+        document.map.no_3d_model_lanelet_ids = [1, 2]
+        assert effective_no_3d_model_lanelet_ids(document) == [1, 2]
+        # A document on its own map group keeps its own list, empty or not.
+        own = _document_on_own_map("source")
+        own.map.no_3d_model_lanelet_ids = []
+        assert effective_no_3d_model_lanelet_ids(own) == []
+
+    @pytest.mark.usefixtures("at_repo_root")
+    @pytest.mark.parametrize("listed", [False, True])
+    def test_the_preview_matches_what_the_sweep_enumerates(
+        self, tmp_path: Path, listed: bool
+    ) -> None:
+        """The preview's match count is the sweep's, list or no list."""
+        from autoware_carla_scenario.authoring.hydra_config import swept_slot
+        from autoware_carla_scenario.editor import map_preview
+        from autoware_carla_scenario.sweeper.constraints import (
+            create_routing_graph,
+            find_matching_lanelets,
+            parse_constraint,
+        )
+        from autoware_carla_scenario.sweeper.expand import load_sweep_map
+        from omegaconf import OmegaConf
+
+        document = new_document()
+        if listed:
+            # Lanelets the group excludes are back in; one it does not is out.
+            document.map.no_3d_model_lanelet_ids = [1, 2]
+        slot = swept_slot(document)
+        assert slot is not None
+        preview = map_preview.evaluate_slot(document, slot, load_map=True)
+        assert preview.map_loaded, preview.error
+
+        package = export_package(document, tmp_path, **OFFLINE).root
+        cfg = _compose_exported(package, "map=nishishinjuku")
+        sweep = OmegaConf.to_container(cfg.sweep, resolve=True)
+        assert isinstance(sweep, dict)
+        constraints = [
+            parse_constraint(entry)
+            for entries in sweep["constraints"].values()
+            for entry in entries
+        ]
+        lanelet_map = load_sweep_map(cfg.map)
+        swept = find_matching_lanelets(
+            constraints, lanelet_map, create_routing_graph(lanelet_map)
+        )
+
+        assert swept
+        assert sorted(preview.matched_ids) == sorted(swept)
 
 
 @pytest.fixture

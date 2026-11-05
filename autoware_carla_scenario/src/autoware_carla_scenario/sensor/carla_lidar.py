@@ -103,7 +103,10 @@ class CarlaLidarSensorConfig:
             check_whole_number("LiDAR points_per_second", self.points_per_second),
         )
         # Hydra reads ``=nan`` as a float, and a NaN fails every comparison
-        # below, so the numbers are refused unless finite first (#1391).
+        # below, so the numbers are refused unless finite first (#1391); a
+        # bool would be taken as 1.0 (range_m=true as 1 m) and a string
+        # would fail with a TypeError naming no key, so neither is a number
+        # (#1506).
         for key, value in (
             ("range_m", self.range_m),
             ("upper_fov_deg", self.upper_fov_deg),
@@ -118,7 +121,13 @@ class CarlaLidarSensorConfig:
             ("pitch", self.pitch),
             ("yaw", self.yaw),
         ):
-            if not math.isfinite(value):
+            if isinstance(value, bool) or isinstance(value, str):
+                raise ValueError(f"LiDAR {key} must be a number, got {value!r}")
+            try:
+                number = float(value)
+            except TypeError:
+                raise ValueError(f"LiDAR {key} must be a number, got {value!r}")
+            if not math.isfinite(number):
                 raise ValueError(f"LiDAR {key} must be finite, got {value}")
         seed = self.noise_seed
         if seed is not None:

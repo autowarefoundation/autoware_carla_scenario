@@ -44,6 +44,13 @@ whose blueprint is a bicycle joins SUMO as one, published or driven like the
 rest, and SUMO routes it where bicycles may go.  How SUMO's bicycles ride is
 ``bicycles``' own, not the drivers' parameters.
 
+Motorcycles are SUMO vehicles of the class ``motorcycle``.  A scenario's own
+vehicle whose blueprint is a motorcycle (:func:`is_motorcycle`, a
+:class:`~autoware_carla_scenario.entity.MotorcycleEntity`) joins SUMO as one
+of the run's motorcycle type, which has SUMO's defaults for the class,
+published or driven like the rest; it rides the carriageway, with the drivers'
+parameters, as a car does.
+
 Nothing joins the run that the run did not ask for: SUMO's own vehicles
 (``ambient``), pedestrians (``pedestrians``) and bicycles (``bicycles``) are
 off by default, so the road holds the scenario's vehicles and pedestrians, and
@@ -168,7 +175,7 @@ logger = logging.getLogger(__name__)
 #: turn: the lowest CARLA takes, so it does not drop onto the road (#1003).
 _SPAWN_LIFTS_M = (0.05, 0.2, 0.5)
 
-__all__ = ["SumoTrafficBackend", "is_bicycle"]
+__all__ = ["SumoTrafficBackend", "is_bicycle", "is_motorcycle"]
 
 #: SUMO's lane-change duration for a manoeuvre a scenario asks for, seconds.
 LANE_CHANGE_DURATION_S: float = 3.0
@@ -247,6 +254,17 @@ PEDESTRIAN_TYPES = 100
 #: bicycle parameter (``traffic.bicycles``) sets.
 BICYCLE_TYPES = 100
 _BICYCLE_TYPE = "DEFAULT_BIKETYPE"
+#: The type a scenario's motorcycle joins SUMO as.  SUMO has no default
+#: motorcycle type, so every run declares this one: of the class
+#: ``motorcycle``, with SUMO's defaults for it (:func:`_write_motorcycle_type`).
+MOTORCYCLE_TYPE = "acs_motorcycle"
+#: A scenario vehicle's blueprint ``base_type`` -> the SUMO vehicle class and
+#: type it joins SUMO as; any other is a passenger car (:data:`_PASSENGER`).
+_SUMO_CLASSES = {
+    "bicycle": ("bicycle", _BICYCLE_TYPE),
+    "motorcycle": ("motorcycle", MOTORCYCLE_TYPE),
+}
+_PASSENGER = ("passenger", "DEFAULT_VEHTYPE")
 #: The bicycle parameters a run can change, each set on every bicycle; the
 #: speed (desiredMaxSpeed) and the red light only on a type, before the run.
 _BICYCLE_SETTERS = {
@@ -318,14 +336,84 @@ def _net_offset(net_file: Path) -> tuple[float, float]:
     return 0.0, 0.0
 
 
+def _base_type(actor: Any) -> str:
+    """The CARLA vehicle *actor*'s blueprint ``base_type``, lower case; empty
+    for an actor without one."""
+    try:
+        return str(actor.attributes.get("base_type", "")).lower()
+    except Exception:  # noqa: BLE001 - an actor without attributes is a car
+        return ""
+
+
 def is_bicycle(actor: Any) -> bool:
     """Whether the CARLA vehicle *actor* is a bicycle: its blueprint's
     ``base_type`` says so, as CARLA's bicycles' do."""
-    try:
-        base_type = str(actor.attributes.get("base_type", ""))
-    except Exception:  # noqa: BLE001 - an actor without attributes is a car
-        return False
-    return base_type.lower() == "bicycle"
+    return _base_type(actor) == "bicycle"
+
+
+def is_motorcycle(actor: Any) -> bool:
+    """Whether the CARLA vehicle *actor* is a motorcycle: its blueprint's
+    ``base_type`` says so, as CARLA's motorcycles' do."""
+    return _base_type(actor) == "motorcycle"
+
+
+def _write_motorcycle_type(path: Path) -> Path:
+    """Declare :data:`MOTORCYCLE_TYPE` in *path* (an additional file): of the
+    class ``motorcycle``, every other attribute SUMO's default for it."""
+    path.write_text(
+        "<additional>\n"
+        f'    <vType id="{MOTORCYCLE_TYPE}" vClass="motorcycle" guiShape="motorcycle"/>\n'
+        "</additional>\n"
+    )
+    return path
+
+
+#: SUMO's spellings of the options naming its additional and route files.
+_ADDITIONAL_OPTIONS = ("-a", "--additional-files", "--additional")
+_ROUTE_OPTIONS = ("-r", "--route-files", "--routes")
+
+
+def _merge_file_options(
+    sumo_args: list[str], additional: list[str], routes: list[str]
+) -> list[str]:
+    """SUMO's command-line arguments for the backend's own *additional* and
+    *routes* files and a configuration's extra *sumo_args*.
+
+    SUMO refuses an option given twice, so an additional or route file option
+    in *sumo_args* (``-a X``, ``--additional-files X``, ``--additional X`` or
+    ``--additional-files=X``; likewise ``-r``, ``--route-files`` and
+    ``--routes``) is taken out of it and its comma-separated files appended to
+    the backend's own: theirs first, so the files given in *sumo_args* can use
+    the types they declare.  Every other argument keeps its order, after the
+    files.  An option without a value is passed on as it is, for SUMO to
+    reject.
+    """
+    files: dict[str, list[str]] = {"-a": list(additional), "-r": list(routes)}
+    rest: list[str] = []
+    index = 0
+    while index < len(sumo_args):
+        arg = sumo_args[index]
+        index += 1
+        name, equals, value = arg.partition("=")
+        if name in _ADDITIONAL_OPTIONS:
+            key = "-a"
+        elif name in _ROUTE_OPTIONS:
+            key = "-r"
+        else:
+            rest.append(arg)
+            continue
+        if not equals:
+            if index >= len(sumo_args):
+                rest.append(arg)
+                continue
+            value = sumo_args[index]
+            index += 1
+        files[key] += [f for f in value.split(",") if f]
+    merged: list[str] = []
+    for key in ("-a", "-r"):
+        if files[key]:
+            merged += [key, ",".join(files[key])]
+    return merged + rest
 
 
 def _write_type_distribution(
@@ -486,8 +574,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._walking: dict[str, tuple[float, float, float, float]] = {}
         #: SUMO ids of the background vehicles spawn_background added.
         self._background: set[str] = set()
-        #: Lane id -> the vehicle classes it allowed before its first
-        #: close_lane(), and how many close_lane() calls are not yet matched
+        #: Lane id -> the vehicle classes it disallowed before its first
+        #: close_lane() (its permissions, kept as what it disallows: see
+        #: close_lane()), and how many close_lane() calls are not yet matched
         #: by a reopen_lane(): two zones on one lane share the closure, and
         #: the lane opens only once both are cleared (#1294).
         self._closed_lanes: dict[str, tuple[list[str], int]] = {}
@@ -916,19 +1005,20 @@ class SumoTrafficBackend(TrafficBackend):
         types = [
             str(path) for path in (pedestrian_type, bicycle_type) if path is not None
         ]
-        if types:
-            # Before the demand: SUMO's default types are redefined only
-            # before anything uses them.
-            cmd += ["-a", ",".join(types)]
-        if routes:
-            cmd += ["-r", ",".join(str(r) for r in routes)]
+        # Always: a scenario's motorcycle may join at any point of the run.
+        types.append(str(_write_motorcycle_type(out / "motorcycle_type.add.xml")))
+        # Before the demand: SUMO's default types are redefined only before
+        # anything uses them.  sumo_args' own additional and route files join
+        # these (SUMO refuses an option twice), after them.
+        cmd += _merge_file_options(
+            list(self._config.sumo_args), types, [str(r) for r in routes]
+        )
         if self._config.fcd_output:
             cmd += ["--fcd-output", str(out / "fcd.xml"), "--fcd-output.geo", "false"]
             # How SUMO's clock maps onto CARLA's, to line the FCD up with
             # anything else recorded on CARLA's (camera frames, a rosbag).
             self._clock_log = (out / "clock.csv").open("w")
             self._clock_log.write("sumo_time,carla_elapsed_seconds,carla_frame\n")
-        cmd += self._config.sumo_args
         try:
             self._traci.start(cmd)
         except Exception as exc:
@@ -2241,11 +2331,11 @@ class SumoTrafficBackend(TrafficBackend):
 
         A bicycle (:func:`is_bicycle`) as one of SUMO's default bicycle type,
         on the nearest lane a bicycle may use -- a sidewalk's, when bicycles
-        ride them.
+        ride them; a motorcycle (:func:`is_motorcycle`) as one of
+        :data:`MOTORCYCLE_TYPE`, on the nearest lane a motorcycle may use.
         """
         tc = self._traci
-        bicycle = is_bicycle(actor)
-        vclass = "bicycle" if bicycle else "passenger"
+        vclass, type_id = _SUMO_CLASSES.get(_base_type(actor), _PASSENGER)
         place = self._road_position(self._carla_pose_to_sumo(actor), sumo_id, vclass)
         if place is None:
             return False
@@ -2274,7 +2364,7 @@ class SumoTrafficBackend(TrafficBackend):
             tc.vehicle.add(
                 sumo_id,
                 route_id,
-                typeID=_BICYCLE_TYPE if bicycle else "DEFAULT_VEHTYPE",
+                typeID=type_id,
                 departLane=str(lane),
                 departPos=f"{pos:.2f}",
                 departSpeed=f"{speed:.2f}",
@@ -2402,16 +2492,22 @@ class SumoTrafficBackend(TrafficBackend):
         if closure is not None:
             # Closed already (by another zone, or another span of this one):
             # one more owner, whose reopen_lane() the lane waits for too.
-            allowed, owners = closure
-            self._closed_lanes[lane_id] = (allowed, owners + 1)
+            disallowed, owners = closure
+            self._closed_lanes[lane_id] = (disallowed, owners + 1)
             return lane_id
         try:
-            allowed = list(tc.lane.getAllowed(lane_id))
+            # Kept as what the lane disallows, not what it allows: SUMO lists
+            # no class as allowed on a lane open to every class (no allow or
+            # disallow attribute, as netgenerate and most nets have), and
+            # setAllowed(lane, []) closes it to everything (#1533). The
+            # disallowed classes restore both that lane and one with an
+            # allow list exactly, with libsumo and TraCI alike.
+            disallowed = list(tc.lane.getDisallowed(lane_id))
             tc.lane.setDisallowed(lane_id, ["all"])
         except Exception as exc:  # noqa: BLE001 - a closure must not end the run
             logger.warning("SUMO could not close lane %s: %s", lane_id, exc)
             return None
-        self._closed_lanes[lane_id] = (allowed, 1)
+        self._closed_lanes[lane_id] = (disallowed, 1)
         logger.info("SUMO: lane %s closed", lane_id)
         return lane_id
 
@@ -2423,16 +2519,16 @@ class SumoTrafficBackend(TrafficBackend):
         closure = self._closed_lanes.get(handle)
         if closure is None:
             return
-        allowed, owners = closure
+        disallowed, owners = closure
         if owners > 1:
             # Another zone still stands on the lane: it stays closed.
-            self._closed_lanes[handle] = (allowed, owners - 1)
+            self._closed_lanes[handle] = (disallowed, owners - 1)
             return
         del self._closed_lanes[handle]
         if not self._running:
             return
         try:
-            self._traci.lane.setAllowed(handle, allowed)
+            self._traci.lane.setDisallowed(handle, disallowed)
         except Exception as exc:  # noqa: BLE001
             logger.warning("SUMO could not reopen lane %s: %s", handle, exc)
             return

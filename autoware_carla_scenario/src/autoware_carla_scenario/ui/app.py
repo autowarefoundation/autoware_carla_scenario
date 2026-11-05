@@ -375,6 +375,9 @@ async def list_scenarios() -> list[str]:
 async def run_preview(request: Request) -> dict[str, str] | JSONResponse:
     """Return the command that would be executed, for preview.
 
+    Every argument is shell-quoted (:func:`shlex.quote`), so the preview can
+    be pasted into a shell as it is.
+
     A body :func:`parse_run_body` refuses is answered with 400 and the
     reason as the command's comment (``{"command": "# ..."}``).
     """
@@ -396,7 +399,9 @@ async def run_preview(request: Request) -> dict[str, str] | JSONResponse:
         return {"command": " ".join(shlex.quote(c) for c in cmd)}
 
     cmd, note = runner.build_command(scenario, extra_overrides, sweeper)
-    preview = " ".join(cmd)
+    # Quoted as the SLURM preview is: the page lets it be selected and pasted
+    # into a shell, where an unquoted glob or a space would change it (#1512).
+    preview = " ".join(shlex.quote(c) for c in cmd)
     if note:
         preview += f"  # {note}"
     return {"command": preview}

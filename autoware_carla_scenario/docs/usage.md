@@ -731,6 +731,7 @@ With `rerun.enabled=true`:
   A run that raised is converted too: its log is what shows what happened.
 - At the end the run waits for the last conversions and prints how they went:
   `Rerun recordings: N/M written`, and a line per failure naming its case. A
+  retried case counts once, by the conversion of its last attempt. A
   failed conversion does not change any verdict or the exit code.
 - Each case's `{ScenarioName}_result.json` names its recording
   (`rerun_recording`), and so does its entry in a batch's

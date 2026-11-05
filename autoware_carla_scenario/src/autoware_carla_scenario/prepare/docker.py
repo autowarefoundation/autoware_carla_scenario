@@ -397,7 +397,7 @@ class DockerBackend:
         if log_dir is None or self._container is None:
             return
         log_dir.mkdir(parents=True, exist_ok=True)
-        self._log = open(log_dir / f"backend_{self.name}.log", "ab")
+        self._log = (log_dir / f"backend_{self.name}.log").open("ab")
         self._follower = subprocess.Popen(
             [self._settings.docker, "logs", "--follow", self._container],
             stdout=self._log,

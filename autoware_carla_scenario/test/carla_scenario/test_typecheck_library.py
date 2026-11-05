@@ -637,7 +637,8 @@ def test_the_vehicle_entity_model_re_exports_the_checked_spawn_and_vehicle() -> 
     assert out["_vehicle_entity"].splitlines() == [
         f"from {workspace_module(spawn)} import SpawnLocation, SpawnPointIndex, "
         "SpawnTransform",
-        f"from {workspace_module(vehicle)} import VehicleEntity, VehicleEntityConfig",
+        f"from {workspace_module(vehicle)} import ANY_MOTORCYCLE, MotorcycleEntity, "
+        "MotorcycleEntityConfig, VehicleEntity, VehicleEntityConfig",
     ]
 
 
@@ -4642,6 +4643,104 @@ def test_the_fnmatch_shim_matches_as_cpython_does() -> None:
         want = fnmatch.fnmatchcase(name, pattern)
         assert shim["fnmatchcase"](name, pattern) == want, (name, pattern)
         assert shim["fnmatch"](name, pattern) == want, (name, pattern)
+
+
+# ---------------------------------------------------------------------------
+# The socket shim: a bound socket, its name and the host's (#1498)
+# ---------------------------------------------------------------------------
+
+
+_SOCKETS = """
+from __future__ import annotations
+
+import socket
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def other_port() -> int:
+    probe = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM, proto=0)
+    probe.bind(("", 0))
+    host, port = probe.getsockname()
+    probe.close()
+    return port + len(host) + socket.socket().getsockname()[1]
+
+
+def owner(pid: int) -> str:
+    return f"{socket.gethostname()}:{pid}"
+
+
+def dial(port: int) -> None:
+    with socket.create_connection(("127.0.0.1", port), timeout=1.0):
+        pass
+    socket.create_connection(("127.0.0.1", port)).close()
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_socket_shim_takes_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_SOCKETS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too.
+        ('probe.bind(("127.0.0.1", 0))', 'probe.bind(address=("127.0.0.1", 0))'),
+        ('probe.bind(("127.0.0.1", 0))', 'probe.bind(("127.0.0.1", 0), 1)'),
+        ('probe.bind(("127.0.0.1", 0))', "probe.bind()"),
+        ('probe.bind(("127.0.0.1", 0))', 'probe.bind(("127.0.0.1", "0"))'),
+        ("probe.getsockname()[1]", "probe.getsockname(0)[1]"),
+        ("socket.gethostname()", "socket.gethostname(pid)"),
+        ("socket.gethostname()", "socket.hostname()"),
+        ("proto=0", "protocol=0"),
+    ],
+    ids=[
+        "bind-keyword",
+        "bind-arguments",
+        "bind-no-address",
+        "bind-port-type",
+        "getsockname-argument",
+        "gethostname-argument",
+        "unknown-name",
+        "unknown-keyword",
+    ],
+)
+def test_the_socket_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _SOCKETS.replace(right, wrong, 1)
+    assert source != _SOCKETS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+@pytest.mark.codon_selftest
+def test_the_socket_shim_constants_are_cpythons() -> None:
+    import socket
+
+    shim = (model_dir() / "socket.codon").read_text()
+    for name in ("AF_INET", "SOCK_STREAM"):
+        value = int(getattr(socket, name))
+        assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
 
 
 # Directories of codon/ that model a third-party package, not the standard

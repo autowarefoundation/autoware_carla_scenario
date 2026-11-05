@@ -81,7 +81,7 @@ from ..maps import (
     resolve_map,
 )
 from ..authoring.validator import ValidationReport, validate_document
-from .forms import field_present, parse_params
+from .forms import field_present, parse_int_list, parse_params
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -501,12 +501,20 @@ class EditorService:
             # and two spellings of one map are one string.
             document.map.source = self._canonical_source(document.map.source)
         if "map_no_3d_model_lanelet_ids" in form:
-            from .forms import parse_int_list  # noqa: PLC0415
-
-            parsed = parse_int_list(form["map_no_3d_model_lanelet_ids"])
+            parsed = _as_int_list(
+                form["map_no_3d_model_lanelet_ids"], "Excluded lanelet IDs"
+            )
             document.map.no_3d_model_lanelet_ids = (
                 parsed if isinstance(parsed, list) else []
             )
+        if (
+            not self._same_map(document.map, before)
+            and document.map.no_3d_model_lanelet_ids == before.no_3d_model_lanelet_ids
+        ):
+            # Lanelet ids of the map just left mean nothing on the new one, so
+            # the list the form sent back unchanged goes with it, as the file
+            # paths do in _adopt_directory; one typed in alongside stays.
+            document.map.no_3d_model_lanelet_ids = []
 
     # ------------------------------------------------------------------
     # Traffic signals
@@ -563,8 +571,6 @@ class EditorService:
         document written by hand may, and renaming one of them must not carry
         off what the other was driving.
         """
-        from .forms import parse_int_list  # noqa: PLC0415
-
         group = self._signal_group(document, index)
         if "name" in form:
             new_name = str(form["name"]).strip()
@@ -580,7 +586,9 @@ class EditorService:
                     self._rename_signal_group(document, old_name, new_name)
                 group.name = new_name
         if "lanelet2_regulatory_element_ids" in form:
-            parsed = parse_int_list(form["lanelet2_regulatory_element_ids"])
+            parsed = _as_int_list(
+                form["lanelet2_regulatory_element_ids"], "Regulatory element IDs"
+            )
             group.lanelet2_regulatory_element_ids = (
                 parsed if isinstance(parsed, list) else []
             )
@@ -591,6 +599,33 @@ class EditorService:
             group.conflicts_with = [
                 str(value) for value in values if str(value) in names
             ]
+            self._drop_unticked_conflicts(document, group)
+
+    @staticmethod
+    def _drop_unticked_conflicts(document: ScenarioDocument, group: Any) -> None:
+        """Take *group* out of the conflicts of every group its form left unticked.
+
+        The form ticks a box when either side lists the other, so a box left
+        unticked means "these two do not cross" -- which only holds once the
+        other side stops listing this group too.  Otherwise the untick would
+        be ignored: the box comes back ticked and the validator still reads
+        the two as crossing.  While another group shares this group's name (a
+        hand-written duplicate), an entry naming it may mean that other group,
+        so the references are left alone, as a rename or a delete leaves them.
+        """
+        if any(
+            other is not group and other.name == group.name
+            for other in document.map.signal_groups
+        ):
+            return
+        ticked = set(group.conflicts_with)
+        for other in document.map.signal_groups:
+            if other is group or other.name in ticked:
+                continue
+            if group.name in other.conflicts_with:
+                other.conflicts_with = [
+                    name for name in other.conflicts_with if name != group.name
+                ]
 
     @staticmethod
     def _rename_signal_group(document: ScenarioDocument, old: str, new: str) -> None:
@@ -863,6 +898,38 @@ class EditorService:
         return KNOWN_REPOSITORIES
 
     @staticmethod
+    def _same_map(after: MapRef, before: MapRef) -> bool:
+        """Whether *after* still names the map *before* did.
+
+        What decides it is what the map resolves from: a local directory,
+        which wins over a source, else a source -- two spellings of one source
+        being the same map -- else the built-in group.  An explicit Lanelet2
+        file overrides any of them, so it counts too.  The excluded lanelet
+        ids belong to that map: they are lanelet ids, and another map numbers
+        its lanelets its own way.
+        """
+
+        def source(ref: MapRef) -> object:
+            if not ref.source:
+                return None
+            try:
+                return MapSource.parse(ref.source)
+            except ValueError:
+                # MapSourceError, or a plain ValueError from urlsplit (an
+                # unclosed IPv6 bracket).  Unparsable, it is compared as text:
+                # the same map only as the very same string.
+                return ref.source
+
+        def origin(ref: MapRef) -> tuple[object, ...]:
+            if ref.directory:
+                return ("directory", ref.directory, ref.lanelet2_path)
+            if ref.source:
+                return ("source", source(ref), ref.lanelet2_path)
+            return ("group", ref.group, ref.lanelet2_path)
+
+        return origin(after) == origin(before)
+
+    @staticmethod
     def _adopt_directory(document: ScenarioDocument, before: MapRef) -> None:
         """Make a newly named map directory the map *document* resolves to.
 
@@ -895,6 +962,7 @@ class EditorService:
         Raises:
             EditorError: If the map could not be fetched.
         """
+        before = document.map.model_copy()
         document.map.source = self._canonical_source(uri)
         # A source supersedes whatever map the document named before it --
         # files or a local directory, which would otherwise win over it --
@@ -902,6 +970,11 @@ class EditorService:
         document.map.directory = None
         document.map.lanelet2_path = None
         document.map.xodr_path = None
+        # So do the lanelets excluded from 3D models: they are the old map's
+        # lanelet ids, and the export's own map group would ship them with
+        # this one.  Choosing the same map again keeps them.
+        if not self._same_map(document.map, before):
+            document.map.no_3d_model_lanelet_ids = []
         self.fetch_map(document)
 
     def fetch_map(self, document: ScenarioDocument, *, refresh: bool = False) -> str:
@@ -1739,6 +1812,20 @@ def as_int(raw: Any, label: str, fallback: int) -> int:
         return int(text)
     except ValueError as exc:
         raise EditorError(f"{label} must be a whole number, got {raw!r}.") from exc
+
+
+def _as_int_list(raw: Any, label: str) -> Any:
+    """Return *raw* as a list of ints (or an interpolation), or raise a
+    user-facing error naming *label*.
+
+    The form parser (:func:`_parse`) turns the same ``ValueError`` into an
+    :class:`EditorError`; a handler that reads an id list itself goes through
+    here, so a typo is shown beside the form instead of escaping as a 500.
+    """
+    try:
+        return parse_int_list(raw)
+    except ValueError as exc:
+        raise EditorError(f"{label}: {exc}.") from exc
 
 
 def _unique_entity_id(document: ScenarioDocument, stem: str) -> str:

@@ -304,7 +304,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     },
     f"{_PACKAGE}.rerun": _each(
         "INSTALL_HINT RECORDING_SUFFIX RerunConversion RerunUnavailableError "
-        "convert_outputs main report require_converter",
+        "convert_outputs latest main report require_converter",
         "makes Rerun recordings of a run's trajectory logs with the "
         "autoware-carla-scenario-rerun package, which the runner does after a "
         "run (rerun.enabled), not a scenario; the model declares only the "

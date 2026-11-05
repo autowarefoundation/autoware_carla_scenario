@@ -48,6 +48,7 @@
       {% endfor %}
     </select>
   {% elif spec.kind == 'entity' %}
+    {%- set known = document.entities|selectattr('id', 'equalto', current)|list -%}
     <select name="{{ name }}" class="ed-input">
       <option value="" {% if not current %}selected{% endif %}>— choose —</option>
       {% for entity in document.entities %}
@@ -55,6 +56,12 @@
           {{ entity.display_name }}
         </option>
       {% endfor %}
+      {# Kept like a controller this document no longer declares: an entity
+         that was deleted or renamed by hand would otherwise show as "choose"
+         and be cleared by the next save of this card (#1519). #}
+      {% if current and not known %}
+        <option value="{{ current }}" selected>{{ current }} — no such entity</option>
+      {% endif %}
     </select>
   {% elif spec.kind in ('lanelet', 'lanelet_list') %}
     {# The readout only.  Its map lives in a modal that
@@ -65,6 +72,7 @@
   {% elif spec.kind == 'action' %}
     {# Actions are listed by track, because "which one is Cut in" is a question
        about whose track it sits on as much as about its title. #}
+    {%- set known = document.actions|selectattr('id', 'equalto', current)|list -%}
     <select name="{{ name }}" class="ed-input">
       <option value="" {% if not current %}selected{% endif %}>— choose —</option>
       {% for other in document.actions %}
@@ -72,6 +80,10 @@
           {{ action_label(other, document) }}
         </option>
       {% endfor %}
+      {# Kept for the same reason as an unknown entity above. #}
+      {% if current and not known %}
+        <option value="{{ current }}" selected>{{ current }} — no such action</option>
+      {% endif %}
     </select>
   {% elif spec.kind == 'signal_controller' %}
     {# The document already says which junctions it runs.  Offering them beats a

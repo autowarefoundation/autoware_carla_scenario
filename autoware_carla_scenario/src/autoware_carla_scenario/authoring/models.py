@@ -733,6 +733,23 @@ class UiLayout(_Node):
 SIGNAL_STATE_NAMES: tuple[str, ...] = ("green", "yellow", "red", "off", "unknown")
 
 
+def _lower_signal_state(value: Any) -> Any:
+    """Return a phase's signal state in the lower case :data:`SIGNAL_STATE_NAMES` uses.
+
+    A CARLA spelling (``"Red"``) is a valid state: the validator compares it
+    lower-cased and the runtime lower-cases it before driving a light.  Kept as
+    written, though, it was the one place the two spellings meant different
+    things -- the editor's colour select matched it against the lower-case names,
+    showed no colour chosen, and the next edit of the phase posted the first one
+    (#1519).  Lower-casing here, as the document is read, makes the spelling the
+    document holds the one everything else already means; a saved document
+    then writes the canonical word.  Only the case changes: an unknown word stays
+    unknown (and the validator still names it), and whitespace is left alone,
+    because the validator and runtime have never accepted a padded state.
+    """
+    return value.lower() if isinstance(value, str) else value
+
+
 def _strip_signal_name(value: Any) -> Any:
     """Return a signal name without surrounding whitespace.
 
@@ -807,7 +824,8 @@ class SignalStateRef(_Node):
         lanelet2_regulatory_element_id: One signal, named by the Lanelet2
             regulatory element it belongs to -- the same id every other signal
             primitive here takes.
-        state: ``green``, ``yellow``, ``red``, ``off`` or ``unknown``.
+        state: ``green``, ``yellow``, ``red``, ``off`` or ``unknown``.  A
+            CARLA spelling (``"Red"``) is read as the lower-case word.
     """
 
     group: Optional[str] = None
@@ -816,6 +834,9 @@ class SignalStateRef(_Node):
 
     _strip_group = field_validator("group", mode="before")(
         classmethod(lambda cls, v: _strip_signal_name(v))
+    )
+    _lower_state = field_validator("state", mode="before")(
+        classmethod(lambda cls, v: _lower_signal_state(v))
     )
 
 
