@@ -2712,7 +2712,9 @@ Septentrio receiver streams SBF:</p>
 networks, SOME/IP, SBF, NMEA, UBX, RTCM).</p>
 <h3 id="sensor-devices">Sensor devices<a class="headerlink" href="#sensor-devices" title="Permanent link">&para;</a></h3>
 <p>The bridge spawns the sensor on the ego (its <code>role_name</code> is the device's
-name), listens to it, and sends each measurement:</p>
+name), listens to it, and sends each measurement. A blueprint attribute is
+text, a number or a bool; an empty value (YAML's null), a list or a mapping
+is refused. A sensor that fails to attach is destroyed, not left on the ego:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="nt">lidar_top</span><span class="p">:</span>
 <a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span><span class="nt">url</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">udp://192.168.1.201:2368</span><span class="w">          </span><span class="c1"># the ECU's LiDAR driver</span>
 <a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="w">  </span><span class="nt">codec</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">lidar:pandar_xt32</span>
@@ -2741,7 +2743,8 @@ name), listens to it, and sends each measurement:</p>
   packets, paced over the revolution as the sensor streams them. A
   revolution is one sweep of <code>horizontal_fov</code> (360 degrees by default; CARLA
   turns the rays through azimuths [-fov/2, fov/2)), which may be anything in
-  (0, 360]. A <code>sensor_tick</code> other than 0 is refused: CARLA sweeps only one
+  (0, 360], at <code>rotation_frequency</code> revolutions a second, which must be a
+  finite positive number. A <code>sensor_tick</code> other than 0 is refused: CARLA sweeps only one
   world tick per measurement, so a LiDAR measured less often turns slower
   than its <code>rotation_frequency</code>. Points go from CARLA's sensor frame (y
   right) to the sensor's (y left). Match <code>channels</code>, the field of view and
@@ -3011,7 +3014,7 @@ each frame the runner ticks. carla_canvas's client is installed with
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 20:46:03 UTC"><span class="timeago" datetime="2026-11-03T20:46:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 20:46:03 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 00:52:19 UTC"><span class="timeago" datetime="2026-11-05T00:52:19+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 00:52:19 UTC">2026-11-05</span>
   </span>
 
     
