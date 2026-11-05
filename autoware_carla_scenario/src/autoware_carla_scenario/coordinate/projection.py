@@ -102,7 +102,9 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
         return {}
     try:
         info = yaml.safe_load(info_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        # UnicodeDecodeError is a ValueError, not an OSError: a descriptor
+        # with one legacy Shift-JIS or Latin-1 comment is unreadable too.
         logger.warning("Could not read %s; falling back", info_path, exc_info=True)
         return {}
     if not isinstance(info, dict):

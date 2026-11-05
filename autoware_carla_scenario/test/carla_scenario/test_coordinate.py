@@ -30,6 +30,9 @@ from autoware_carla_scenario.coordinate.projection import (
     map_origin,
 )
 from autoware_carla_scenario.coordinate.projection import (
+    read_map_origin as _read_map_origin,
+)
+from autoware_carla_scenario.coordinate.projection import (
     read_projector_type as _read_projector_type,
 )
 from autoware_carla_scenario.coordinate.transform import (
@@ -191,6 +194,17 @@ class TestReadProjectorType:
     def test_malformed_descriptor_leaves_the_choice_to_the_caller(self, tmp_path):
         map_path = self._map_with_info(tmp_path, "projector_type: [unclosed\n")
         assert _read_projector_type(map_path) is None
+
+    def test_a_descriptor_that_is_not_utf8_is_ignored(self, tmp_path):
+        # A Shift-JIS comment: UnicodeDecodeError is a ValueError, which must
+        # still end in the documented fallback rather than escape (#1687).
+        map_path = self._map_with_info(tmp_path, "")
+        (tmp_path / "map_projector_info.yaml").write_bytes(
+            b"# \x8e\xa9\x93\xae\nprojector_type: MGRS\n"
+            b"map_origin: {latitude: 35.0, longitude: 139.0}\n"
+        )
+        assert _read_projector_type(map_path) is None
+        assert _read_map_origin(map_path) is None
 
     def test_a_descriptor_that_is_not_a_mapping_is_ignored(self, tmp_path):
         # Valid YAML, wrong shape: .get() on a list would be an AttributeError
