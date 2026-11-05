@@ -4818,7 +4818,7 @@ lists here. -->
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 292 of the package's 414
 modules (71%; about 89,300 of
-152,700 lines) are <code>CHECKED</code>: the kinematics, the
+152,800 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6334,7 +6334,7 @@ the first:</p>
 <li><code>ros2.cyclone</code>: imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds</li>
 <li><code>ros2.messages</code>: imports cyclonedds (the IdlStruct base of every message, and the IDL field types <code>array[float64, 36]</code> and <code>sequence[TrajectoryPoint]</code>, which Codon cannot express)</li>
 <li><code>scaffold</code>: re-exports scaffold.generator (argparse, jinja2)</li>
-<li><code>scaffold.generator</code>: imports argparse, ast, functools, importlib.metadata, templating (jinja2) and, inside functions, packaging and authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked; its naming rules are the checked scaffold.names'</li>
+<li><code>scaffold.generator</code>: imports argparse, ast, errno, functools, importlib.metadata, templating (jinja2) and, inside functions, packaging and authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked; its naming rules are the checked scaffold.names'</li>
 <li><code>serve_cli</code>: imports argparse and ipaddress</li>
 <li><code>slurm.cli</code>: imports argparse, and slurm.collect, slurm.manifest and slurm.submit, which are not checked</li>
 <li><code>slurm.collect</code>: imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON into dataclass fields typed <code>dict[str, Any]</code>, which Codon cannot express</li>
