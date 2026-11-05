@@ -2417,7 +2417,9 @@ example scenarios and their configs, the SLURM launcher's job scripts, where
 a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
 and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
 `scontrol`, `sinfo`: `slurm.queue`, #1634), the naming rules of
-`scenario-new` (`scaffold.names`, #1654), the frame math of the T4Scene
+`scenario-new` (`scaffold.names`, #1654), where the viewer keeps its
+recordings and its copy of Rerun's web viewer, and which web viewer it picks
+(`ui.web_viewer_paths`, #1672), the frame math of the T4Scene
 converter (CARLA's world frame to Autoware's `map` frame, and the rotations
 and quaternions of its angles: `t4_scene.frames`, #1665; the converter
 itself, which reads the log's mixed-type records and builds protobuf
