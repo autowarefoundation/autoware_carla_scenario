@@ -35,7 +35,15 @@ from ..trajectory.authoring import (
     trajectory_summary,
 )
 from .forms import bool_choice, is_nullable_bool
-from .service import EditorError, EditorService, condition_actions, route_yaml
+from .service import (
+    GATE_CONSISTENCY_FIELDS,
+    GATE_FIELDS,
+    GATE_ITEM_FIELD,
+    EditorError,
+    EditorService,
+    condition_actions,
+    route_yaml,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -184,6 +192,10 @@ def create_app(
         condition_actions=condition_actions,
         # A logical scenario's route search, as the YAML its inspector edits.
         route_yaml=route_yaml,
+        # A logical scenario's gate, as the fields its inspector edits.
+        gate_fields=GATE_FIELDS,
+        gate_consistency_fields=GATE_CONSISTENCY_FIELDS,
+        gate_item_field=GATE_ITEM_FIELD,
         # The operator glyph comes from the same table the select does.
         rule_symbol=registry.rule_symbol,
         action_phases=registry.ACTION_PHASES,

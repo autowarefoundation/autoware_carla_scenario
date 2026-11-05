@@ -23,6 +23,7 @@ import uuid
 import weakref
 import zipfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
@@ -85,7 +86,7 @@ from .forms import field_present, parse_int_list, parse_params
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ..authoring.models import RouteSearch
+    from ..authoring.models import GateSpec, RouteSearch
     from ..maps import MapEntry
 
 logger = logging.getLogger(__name__)
@@ -93,6 +94,9 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "EditorError",
     "EditorService",
+    "GATE_CONSISTENCY_FIELDS",
+    "GATE_FIELDS",
+    "GATE_ITEM_FIELD",
     "as_int",
     "SLOT_FAIL",
     "SLOT_PASS",
@@ -466,6 +470,8 @@ class EditorService:
             )
         if "route_yaml" in form:
             document.route = parse_route_yaml(str(form["route_yaml"]))
+        if "gate_form" in form:
+            document.gate = parse_gate_form(form)
         before = document.map.model_copy()
         # ``group`` and ``name`` are required strings: a blank one is refused,
         # not filled in.  A fallback would be some other map's name or group
@@ -1870,6 +1876,131 @@ def parse_route_yaml(text: str) -> Optional["RouteSearch"]:
         return RouteSearch.model_validate(raw)
     except Exception as exc:  # pydantic validation
         raise EditorError(f"Route search: {exc}") from exc
+
+
+@dataclass(frozen=True)
+class GateField:
+    """One threshold of the gate as the inspector edits it: a checkbox that
+    says whether it is judged, a bar and a number.
+
+    Attributes:
+        name: The :class:`~autoware_carla_scenario.authoring.models.GateSpec`
+            field.
+        label: What the inspector calls it.
+        unit: ``%`` for a share (edited as 0-100, stored as 0-1), ``m``,
+            ``m/s``, or ``""`` for a count.
+        default: The value a threshold gets when its checkbox is ticked with
+            no value of its own, in the unit edited.
+        bar_max: Where the bar ends, in the unit edited (the number may go
+            past it).
+        step: The bar's and the number's step.
+        optional: Whether it has a checkbox at all: a count the gate always
+            reads has none.
+    """
+
+    name: str
+    label: str
+    unit: str
+    default: float
+    bar_max: float
+    step: float
+    optional: bool = True
+
+    @property
+    def percent(self) -> bool:
+        return self.unit == "%"
+
+    def shown(self, stored: Optional[float]) -> str:
+        """*stored* as the number edited (a share as a percentage), its
+        default when unset."""
+        if stored is None:
+            return f"{self.default:g}"
+        return f"{round(stored * 100.0, 6) if self.percent else stored:g}"
+
+
+#: The gate's thresholds the inspector edits, in the order it lists them.
+GATE_FIELDS: tuple[GateField, ...] = (
+    GateField("min_runs", "Minimum runs", "", 1, 100, 1, optional=False),
+    GateField("min_success_rate", "Minimum success rate", "%", 90, 100, 1),
+    GateField("min_case_coverage", "Minimum case coverage", "%", 80, 100, 1),
+    GateField("min_scenario_coverage", "Minimum scenario coverage", "%", 80, 100, 1),
+    GateField("min_odd_coverage", "Minimum ODD coverage", "%", 50, 100, 1),
+    GateField("max_lateral_spread_m", "Maximum lateral spread", "m", 0.5, 2.0, 0.05),
+    GateField("max_speed_spread_mps", "Maximum speed spread", "m/s", 1.0, 5.0, 0.1),
+)
+
+#: How the trajectory spreads are measured: counts, edited only while a spread
+#: is judged.
+GATE_CONSISTENCY_FIELDS: tuple[GateField, ...] = (
+    GateField(
+        "consistency_stations", "Stations per segment", "", 20, 200, 1, optional=False
+    ),
+    GateField("consistency_min_runs", "Runs per station", "", 2, 20, 1, optional=False),
+)
+
+#: A cover item's grade, as each row of them edits it: added at 100 %.
+GATE_ITEM_FIELD = GateField("item", "Coverage", "%", 100, 100, 1)
+
+
+def _gate_number(
+    form: Mapping[str, Any], field: GateField, key: str = "", label: str = ""
+) -> Any:
+    """*field*'s value in *form* (``gate_<name>``, or *key*), in the unit
+    stored; its default when blank."""
+    label = f"Gate: {label or field.label}"
+    text = str(form.get(key or f"gate_{field.name}", "")).strip()
+    if field.unit == "":
+        return as_int(text, label, int(field.default))
+    value = _as_float(text, label, field.default)
+    return value / 100.0 if field.percent else value
+
+
+def parse_gate_form(form: Mapping[str, Any]) -> Optional["GateSpec"]:
+    """The gate the inspector's Gate form states; ``None`` when it is off.
+
+    Each optional threshold is judged while its checkbox (``gate_on_<name>``)
+    is ticked, at its number (``gate_<name>``; a share in percent), or at its
+    default when it has none -- a threshold just ticked on.  A cover item is
+    a row (``gate_item_name_<i>``, ``gate_item_min_<i>`` in percent) kept
+    while its checkbox (``gate_item_on_<i>``) is ticked; ``gate_item_new``
+    adds one at 100 %.
+
+    Raises:
+        EditorError: If a value is not a number, or the gate refuses it.
+    """
+    from ..authoring.models import GateSpec  # noqa: PLC0415
+
+    if not form.get("gate_enabled"):
+        return None
+    raw: dict[str, Any] = {}
+    for field in GATE_FIELDS + GATE_CONSISTENCY_FIELDS:
+        if field.optional and not form.get(f"gate_on_{field.name}"):
+            continue
+        if not field.optional and f"gate_{field.name}" not in form:
+            continue  # not on the form yet: the model's default
+        raw[field.name] = _gate_number(form, field)
+    items: list[dict[str, Any]] = []
+    index = 0
+    while f"gate_item_name_{index}" in form:
+        name = str(form[f"gate_item_name_{index}"]).strip()
+        if name and form.get(f"gate_item_on_{index}"):
+            grade = _gate_number(
+                form, GATE_ITEM_FIELD, f"gate_item_min_{index}", f"coverage of {name}"
+            )
+            items.append({"item": name, "min": grade})
+        index += 1
+    added = str(form.get("gate_item_new", "")).strip()
+    if added:
+        if " " in added:
+            raise EditorError(
+                f"Gate: a cover item's name has no spaces, got {added!r}."
+            )
+        items.append({"item": added, "min": GATE_ITEM_FIELD.default / 100.0})
+    raw["coverage_items"] = items
+    try:
+        return GateSpec.model_validate(raw)
+    except Exception as exc:  # pydantic validation
+        raise EditorError(f"Gate: {exc}") from exc
 
 
 def condition_actions(node: ConditionNode) -> list[str]:

@@ -41,6 +41,8 @@ RUN_FILE_SUFFIXES: tuple[str, ...] = (
     "_result.json",
     ".trajectory.jsonl",
     "_coverage.json",
+    # A logical scenario's gate record (docs/gate.md).
+    "_gate.json",
     "_odd.tar.gz",
     "_environment.json",
     "_requirements.lock",

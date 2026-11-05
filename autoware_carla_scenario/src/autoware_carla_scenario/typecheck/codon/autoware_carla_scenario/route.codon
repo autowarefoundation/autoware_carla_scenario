@@ -148,6 +148,9 @@ class RouteFrame:
     def point(self, s: float) -> Tuple[float, float, float]:
         raise NotImplementedError()
 
+    def reference(self, s: float) -> Tuple[float, float, float]:
+        raise NotImplementedError()
+
     def lanelet_at(self, s: float) -> lanelet2.core.Lanelet:
         raise NotImplementedError()
 

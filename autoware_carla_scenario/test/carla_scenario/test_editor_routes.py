@@ -4131,3 +4131,151 @@ def test_a_form_number_that_is_not_finite_is_refused(raw: str) -> None:
         _as_float(raw, "Timeout", 60.0)
     assert _as_float(" 12.5 ", "Timeout", 60.0) == 12.5
     assert _as_float("", "Timeout", 60.0) == 60.0
+
+
+class TestTheGate:
+    """A logical scenario's gate, edited in the scenario inspector (docs/gate.md).
+
+    A checkbox, a bar and a number per threshold; shares in percent.
+    """
+
+    @staticmethod
+    def _on(client: TestClient, draft_id: str, **fields: str) -> Any:
+        data = {"gate_form": "1", "gate_enabled": "1", **fields}
+        return client.post(f"/draft/{draft_id}/scenario", data=data)
+
+    def test_the_inspector_offers_a_gate(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert 'name="gate_enabled"' in body
+        assert "add a route search first" in body
+
+    def test_turning_the_gate_on_shows_a_row_per_threshold(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._on(client, draft_id)
+        gate = _document(store, draft_id).gate
+        assert gate is not None and gate.judged() == ["min_runs"]
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert 'name="gate_on_min_success_rate"' in body
+        assert 'type="range"' in body
+        # Unticked: its bar and number are disabled, so they are not sent.
+        row = body.split('name="gate_on_min_success_rate"')[1].split(
+            "</div>\n  </div>"
+        )[0]
+        assert "disabled" in row
+
+    def test_a_ticked_threshold_without_a_value_takes_its_default(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._on(client, draft_id, gate_on_min_success_rate="1")
+        gate = _document(store, draft_id).gate
+        assert gate is not None and gate.min_success_rate == pytest.approx(0.9)
+
+    def test_shares_are_edited_in_percent(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._on(
+            client,
+            draft_id,
+            gate_min_runs="8",
+            gate_on_min_success_rate="1",
+            gate_min_success_rate="95",
+            gate_on_max_lateral_spread_m="1",
+            gate_max_lateral_spread_m="0.4",
+            # Not ticked: not judged, whatever its number says.
+            gate_min_odd_coverage="50",
+        )
+        gate = _document(store, draft_id).gate
+        assert gate is not None
+        assert (gate.min_runs, gate.min_success_rate) == (8, pytest.approx(0.95))
+        assert gate.max_lateral_spread_m == 0.4
+        assert gate.min_odd_coverage is None
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert (
+            'name="gate_min_success_rate"\n             min="0" step="1" value="95"'
+            in body
+        )
+        # A spread is judged: how it is measured is shown.
+        assert 'name="gate_consistency_stations"' in body
+
+    def test_cover_items_are_added_kept_and_dropped(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._on(client, draft_id, gate_item_new="speed_at_cut_in")
+        gate = _document(store, draft_id).gate
+        assert gate is not None
+        assert [(e.item, e.min) for e in gate.coverage_items] == [
+            ("speed_at_cut_in", 1.0)
+        ]
+        self._on(
+            client,
+            draft_id,
+            gate_item_name_0="speed_at_cut_in",
+            gate_item_on_0="1",
+            gate_item_min_0="80",
+            gate_item_new="gap",
+        )
+        gate = _document(store, draft_id).gate
+        assert gate is not None
+        assert [(e.item, e.min) for e in gate.coverage_items] == [
+            ("speed_at_cut_in", pytest.approx(0.8)),
+            ("gap", 1.0),
+        ]
+        # Unticked: dropped.
+        self._on(
+            client,
+            draft_id,
+            gate_item_name_0="speed_at_cut_in",
+            gate_item_min_0="80",
+            gate_item_name_1="gap",
+            gate_item_on_1="1",
+            gate_item_min_1="100",
+        )
+        gate = _document(store, draft_id).gate
+        assert gate is not None
+        assert [e.item for e in gate.coverage_items] == ["gap"]
+
+    def test_every_threshold_of_the_gate_has_a_row(self) -> None:
+        """A new GateSpec threshold must reach the editor, as a share in %
+        exactly when the model bounds it to 0-1."""
+        from annotated_types import Le
+
+        from autoware_carla_scenario.authoring.models import GateSpec
+        from autoware_carla_scenario.editor.service import (
+            GATE_CONSISTENCY_FIELDS,
+            GATE_FIELDS,
+        )
+
+        fields = {f.name: f for f in GATE_FIELDS + GATE_CONSISTENCY_FIELDS}
+        assert set(fields) | {"coverage_items"} == set(GateSpec.model_fields)
+        for name, field in fields.items():
+            share = any(
+                isinstance(m, Le) and m.le == 1.0
+                for m in GateSpec.model_fields[name].metadata
+            )
+            assert field.percent == share, name
+
+    def test_turning_the_gate_off_drops_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._on(client, draft_id)
+        client.post(f"/draft/{draft_id}/scenario", data={"gate_form": "1"})
+        assert _document(store, draft_id).gate is None
+
+    def test_a_share_over_100_percent_is_refused(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        response = self._on(
+            client, draft_id, gate_on_min_success_rate="1", gate_min_success_rate="150"
+        )
+        assert "Gate:" in response.text
+        assert _document(store, draft_id).gate is None
+
+    def test_a_cover_item_name_with_a_space_is_refused(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        response = self._on(client, draft_id, gate_item_new="speed at")
+        assert "has no spaces" in response.text
+        assert _document(store, draft_id).gate is None

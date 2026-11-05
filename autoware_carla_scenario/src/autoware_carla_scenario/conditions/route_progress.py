@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 __all__ = [
     "HIDDEN_BELOW_ROUTE_M",
     "RouteProgressCondition",
+    "route_map_point",
     "route_s_of_carla_point",
 ]
 
@@ -39,6 +40,14 @@ def route_below(s: float, z: float) -> float:
     return frame.height(s) - MapManager.get_instance().z_offset - z
 
 
+def route_map_point(x: float, y: float) -> tuple[float, float]:
+    """The Lanelet2 map point a route is laid on of CARLA world point ``(x, y)``."""
+    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
+
+    offset_x, offset_y = MapManager.get_instance().mgrs_offset
+    return x + offset_x, -y + offset_y
+
+
 def route_s_of_carla_point(
     x: float, y: float, near: Optional[float] = None
 ) -> tuple[float, float]:
@@ -52,12 +61,10 @@ def route_s_of_carla_point(
     Raises:
         ValueError: If the scenario has no route.
     """
-    from ..coordinate.map_manager import MapManager  # noqa: PLC0415
     from ..route.active import scenario_route_frame  # noqa: PLC0415
 
-    frame = scenario_route_frame()
-    offset_x, offset_y = MapManager.get_instance().mgrs_offset
-    return frame.project(x + offset_x, -y + offset_y, near)
+    map_x, map_y = route_map_point(x, y)
+    return scenario_route_frame().project(map_x, map_y, near)
 
 
 class RouteProgressCondition(BaseCondition):

@@ -132,6 +132,8 @@ ROUTE_CONFIG_DEFAULTS: dict[str, Any] = {
     "segment_ends": [],
     "segment_lanelet_counts": [],
     "junction_turns": [],
+    # How many cases the expansion found on the run's map (docs/gate.md).
+    "case_count": 0,
 }
 
 

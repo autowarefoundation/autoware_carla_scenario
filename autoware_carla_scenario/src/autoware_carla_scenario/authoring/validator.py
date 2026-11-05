@@ -1693,8 +1693,50 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     _check_sweep_shape(out, document)
     _check_signal_controllers(out, document)
     _check_route(out, document)
+    _check_gate(out, document)
 
     return ValidationReport(issues=tuple(out.issues))
+
+
+def _check_gate(out: _Collector, document: ScenarioDocument) -> None:
+    """Check a logical scenario's gate (``docs/gate.md``).
+
+    The thresholds' ranges are the model's own; what is checked here is what
+    the gate is judged on.  A gate belongs to a logical scenario: its cases
+    are the route search's matches and its trajectories are measured along the
+    route, so a document with no route search has nothing for it to judge.
+    """
+    gate = document.gate
+    if gate is None:
+        return
+    if document.route is None:
+        out.error(
+            "gate",
+            "A gate judges a logical scenario over its runs: its cases are the "
+            "route search's matches and the ego's trajectory is measured along "
+            "the route. Add a route search, or drop the gate.",
+        )
+    if gate.judged() == ["min_runs"]:
+        out.warn(
+            "gate",
+            "The gate judges nothing but the number of runs: set a success "
+            "rate, a coverage or a trajectory spread.",
+        )
+    seen: set[str] = set()
+    for index, entry in enumerate(gate.coverage_items):
+        if entry.item in seen:
+            out.error(
+                f"gate.coverage_items[{index}]",
+                f"Cover item {entry.item!r} is named twice.",
+            )
+        seen.add(entry.item)
+    if gate.judges_consistency and gate.min_runs < gate.consistency_min_runs:
+        out.warn(
+            "gate.min_runs",
+            f"The trajectory spread needs {gate.consistency_min_runs} runs at a "
+            f"station, and the gate asks for {gate.min_runs} run(s) in all: "
+            "with fewer, the spread is not measured and the gate fails.",
+        )
 
 
 def _route_sets_goal(document: ScenarioDocument) -> bool:

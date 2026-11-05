@@ -62,6 +62,89 @@
   </div>
 </form>
 
+<h4 class="ed-subheading">{{ ic.icon('gate', 12) }} Gate <span class="unit">(logical scenario)</span></h4>
+
+{# When the logical scenario passes over all its runs -- apart from each
+   concrete run's own pass and fail conditions.  Each run records what the
+   gate needs; `scenario-gate` judges it afterwards (docs/gate.md).
+
+   One row per threshold: its checkbox says whether it is judged, its bar and
+   number what it asks.  A share is edited in percent and stored as 0-1.  The
+   bar names no field -- it moves the number beside it, which the form sends.
+   An unticked row's inputs are disabled, so they are not sent at all. #}
+{% macro gate_row(field, value, input_name, label, check_name=none, judged=true, mono=false) %}
+  <div class="ed-gate-row{% if not judged %} is-off{% endif %}">
+    <label class="ed-gate-name{% if mono %} mono{% endif %}">
+      {% if check_name %}
+        <input type="checkbox" name="{{ check_name }}" value="1" {% if judged %}checked{% endif %}>
+      {% endif %}
+      {{ label }}
+    </label>
+    <div class="ed-gate-value">
+      <input type="range" class="ed-gate-bar" min="0" max="{{ field.bar_max }}" step="{{ field.step }}"
+             value="{{ value }}" aria-label="{{ label }}"
+             oninput="this.nextElementSibling.value = this.value"
+             {% if not judged %}disabled{% endif %}>
+      <input type="number" class="ed-input ed-gate-number" name="{{ input_name }}"
+             min="0" step="{{ field.step }}" value="{{ value }}"
+             oninput="this.previousElementSibling.value = this.value"
+             {% if not judged %}disabled{% endif %}>
+      <span class="unit">{{ field.unit }}</span>
+    </div>
+  </div>
+{% endmacro %}
+
+{% if not document.route %}
+  <p class="ed-help">A gate judges a logical scenario: add a route search first.</p>
+{% endif %}
+<form hx-post="/draft/{{ draft.id }}/scenario"
+      hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
+  <input type="hidden" name="gate_form" value="1">
+  <label class="ed-gate-name ed-gate-switch">
+    <input type="checkbox" name="gate_enabled" value="1" {% if document.gate %}checked{% endif %}>
+    Judge the logical scenario
+  </label>
+  {% if document.gate %}
+    {% set gate = document.gate %}
+    <div class="ed-gate">
+      {% for field in gate_fields %}
+        {% set stored = gate|attr(field.name) %}
+        {{ gate_row(field, field.shown(stored), 'gate_' ~ field.name, field.label,
+                    check_name=('gate_on_' ~ field.name) if field.optional else none,
+                    judged=(not field.optional or stored is not none)) }}
+      {% endfor %}
+      {% if gate.judges_consistency %}
+        <p class="ed-side-title ed-gate-sub">Spread measured at</p>
+        {% for field in gate_consistency_fields %}
+          {{ gate_row(field, field.shown(gate|attr(field.name)), 'gate_' ~ field.name, field.label) }}
+        {% endfor %}
+      {% else %}
+        {# Kept while no spread is judged, so ticking one back finds them. #}
+        {% for field in gate_consistency_fields %}
+          <input type="hidden" name="gate_{{ field.name }}" value="{{ gate|attr(field.name) }}">
+        {% endfor %}
+      {% endif %}
+
+      <p class="ed-side-title ed-gate-sub">Coverage items</p>
+      {% for entry in gate.coverage_items %}
+        <input type="hidden" name="gate_item_name_{{ loop.index0 }}" value="{{ entry.item }}">
+        {{ gate_row(gate_item_field, gate_item_field.shown(entry.min),
+                    'gate_item_min_' ~ loop.index0, entry.item,
+                    check_name='gate_item_on_' ~ loop.index0, mono=true) }}
+      {% endfor %}
+      <input type="text" name="gate_item_new" class="ed-input mono" style="font-size:11.5px"
+             placeholder="add a cover item by name (speed_at_cut_in)">
+      <p class="ed-help">
+        Tick a threshold to judge it. The shares are percentages of the runs,
+        of the route search's matches, and of the merged coverage files'
+        buckets; the spreads are the standard deviation across runs of the
+        ego's lateral offset from the route and of its speed. Untick a cover
+        item to drop it.
+      </p>
+    </div>
+  {% endif %}
+</form>
+
 <h4 class="ed-subheading">{{ ic.icon('map', 12) }} Map</h4>
 
 {# The source and its actions come first: a scenario that names a repository
