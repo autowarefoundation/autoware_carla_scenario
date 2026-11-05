@@ -395,10 +395,13 @@ def _on_another_level(
     *planar_distance* metres from the ego in the plane, is on another level
     of road than the ego's (*ego_span*): on a bridge over it, or in an
     underpass beneath it.  Its boxes clear of the ego's by more than
-    ``utils.clearance._SAME_LEVEL_MARGIN_M``, and by more than a road of
-    :data:`_MAX_GRADE` climbs over the distance between them (#1587)."""
-    gap = _level_gap(ego_span, other_span)
-    return gap > 0.0 and gap > _MAX_GRADE * planar_distance
+    ``utils.clearance._SAME_LEVEL_MARGIN_M``, and their bottoms (where each
+    stands on its road) differ by more than a road of :data:`_MAX_GRADE`
+    climbs over the distance between them (#1587)."""
+    if _level_gap(ego_span, other_span) <= 0.0:
+        return False
+    rise = abs(other_span[0] - ego_span[0])
+    return rise > _MAX_GRADE * planar_distance
 
 
 def _pedestrians_around(
