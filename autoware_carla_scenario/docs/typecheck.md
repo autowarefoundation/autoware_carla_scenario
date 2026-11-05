@@ -2408,7 +2408,10 @@ plain-typed parts of the SUMO backend (its geometry, its physics control, the
 signal states it sets, and its command-line options, mode bits, vehicle types
 and type files, with the command line of `randomTrips.py` and the options of
 each demand it generates: `traffic.sumo.options`, #1679), the signal
-controllers, the adversity math, the measures, the metrics and the ODD's
+controllers, the adversity math, the measures, the metrics (and which of the
+CommonRoad metrics are heavy, the environment that turns them off and the
+checks of their periods: `heavy_metrics`, #1689; not `commonroad.session`,
+which runs the workers and re-exports it) and the ODD's
 probes (and the names, knob keys, limits and ranges of the traffic
 parameters' probes: `odd.traffic_ranges`, #1680; not the probes themselves,
 `odd.traffic_probes`, which builds openodd's knobs), the gate package's

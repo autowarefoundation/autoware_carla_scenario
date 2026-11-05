@@ -24,7 +24,7 @@ from typing import Any, Iterator, Optional
 
 import pytest
 
-from autoware_carla_scenario import metrics
+from autoware_carla_scenario import heavy_metrics, metrics
 from autoware_carla_scenario.commonroad import frame as cr_frame
 from autoware_carla_scenario.commonroad import session as cr_session
 from autoware_carla_scenario.commonroad import worker as cr_worker
@@ -727,6 +727,125 @@ def test_the_heavy_metrics_are_on_unless_the_environment_says(
         assert settings.evaluates(CRIME_WTTR_S)
     monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "1")
     assert cr_session.CommonRoadSettings().evaluates(CRIME_TTR_S)
+
+
+def test_the_heavy_metrics_settings_are_heavy_metrics_reexported() -> None:
+    # Moved to the checked heavy_metrics (#1689); session keeps the names.
+    for name in (
+        "DEFAULT_METRIC_PERIODS_S",
+        "HEAVY_METRICS",
+        "HEAVY_METRICS_DECIDED_ENV",
+        "HEAVY_METRICS_ENV",
+        "_check_period",
+        "_heavy_metrics_default",
+        "_heavy_metrics_from_user",
+        "_heavy_metrics_on",
+        "evaluates",
+    ):
+        assert getattr(cr_session, name) is getattr(heavy_metrics, name), name
+    assert heavy_metrics.HEAVY_METRICS_ENV == "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS"
+    assert heavy_metrics.HEAVY_METRICS_DECIDED_ENV == (
+        "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED"
+    )
+
+
+def test_heavy_metrics_writes_the_key_metrics_defines() -> None:
+    # heavy_metrics writes the key out: Codon cannot read a constant imported
+    # from metrics at module level (#1689).
+    assert heavy_metrics.HEAVY_METRICS == frozenset({metrics.CRIME_TTR_S})
+    assert isinstance(heavy_metrics.HEAVY_METRICS, frozenset)
+    assert heavy_metrics.HEAVY_METRICS <= set(metrics.COMMONROAD_METRICS)
+    assert heavy_metrics.DEFAULT_METRIC_PERIODS_S == {metrics.CRIME_TTR_S: 0.5}
+
+
+@pytest.mark.parametrize(
+    ("value", "on"),
+    [
+        (None, True),
+        ("", True),
+        ("   ", True),
+        ("1", True),
+        ("true", True),
+        ("on", True),
+        ("anything", True),
+        ("0", False),
+        (" 0 ", False),
+        ("false", False),
+        ("False", False),
+        ("OFF", False),
+        ("no", False),
+        ("No\n", False),
+    ],
+)
+def test_heavy_metrics_on_reads_an_environment_value(
+    value: Optional[str], on: bool
+) -> None:
+    assert heavy_metrics._heavy_metrics_on(value) is on
+
+
+@pytest.mark.parametrize(
+    ("user", "decided", "on"),
+    [
+        (None, None, True),
+        ("0", None, False),
+        ("1", None, True),
+        # The scenario command's decision wins over the user's variable.
+        ("0", "1", True),
+        ("1", "0", False),
+        (None, "off", False),
+        # A blank decision is no decision: the user's variable says.
+        ("0", "", False),
+        ("0", "  ", False),
+        ("1", " ", True),
+    ],
+)
+def test_heavy_metrics_default_reads_the_decision_then_the_user(
+    monkeypatch: pytest.MonkeyPatch,
+    user: Optional[str],
+    decided: Optional[str],
+    on: bool,
+) -> None:
+    for name, value in (
+        (heavy_metrics.HEAVY_METRICS_ENV, user),
+        (heavy_metrics.HEAVY_METRICS_DECIDED_ENV, decided),
+    ):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    assert heavy_metrics._heavy_metrics_from_user() is (user not in ("0",))
+    assert heavy_metrics._heavy_metrics_default() is on
+    assert cr_session.CommonRoadSettings().heavy_metrics is on
+
+
+@pytest.mark.parametrize("heavy", [True, False])
+def test_evaluates_leaves_out_only_a_heavy_metric_when_they_are_off(
+    heavy: bool,
+) -> None:
+    settings = cr_session.CommonRoadSettings(heavy_metrics=heavy)
+    for key in metrics.COMMONROAD_METRICS:
+        expected = heavy or key != CRIME_TTR_S
+        assert heavy_metrics.evaluates(heavy, key) is expected, key
+        assert settings.evaluates(key) is expected, key
+
+
+@pytest.mark.parametrize(
+    ("period", "message"),
+    [
+        (0.0, "p must be positive and finite, got 0.0"),
+        (-1.0, "p must be positive and finite, got -1.0"),
+        (math.inf, "p must be positive and finite, got inf"),
+        (math.nan, "p must be positive and finite, got nan"),
+        (10**400, "p must be positive and finite, got 1"),
+    ],
+)
+def test_check_period_refuses_a_period_not_positive_and_finite(
+    period: float, message: str
+) -> None:
+    with pytest.raises(ValueError, match=re.escape(message)):
+        heavy_metrics._check_period("p", period)
+    heavy_metrics._check_period("p", 0.5)
+    heavy_metrics._check_period("p", 1)
 
 
 def test_a_condition_on_a_heavy_metric_turned_off_is_not_judged(
