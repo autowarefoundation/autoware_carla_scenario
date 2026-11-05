@@ -2,17 +2,21 @@
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import io
 import json
 import os
 import shutil
+import signal
 import tarfile
 import threading
+import time
 from collections.abc import Iterator
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Optional
+from typing import IO, Optional
 import urllib.error
 
 import pytest
@@ -565,7 +569,10 @@ def test_an_interrupted_swap_never_passes_for_a_current_install(
     assert installed_executable() is not None
     assert len((install_dir() / "noise").read_bytes()) == 256 * 1024
     assert (install_dir() / ".download.json").is_file()
-    assert sorted(p.name for p in install_dir().parent.iterdir()) == ["carla"]
+    assert sorted(p.name for p in install_dir().parent.iterdir()) == [
+        "carla",
+        "carla.lock",
+    ]
 
 
 def test_an_interrupt_between_the_renames_leaves_no_install_to_trust(
@@ -587,7 +594,10 @@ def test_an_interrupt_between_the_renames_leaves_no_install_to_trust(
 
     install(origin.url)
     assert len((install_dir() / "noise").read_bytes()) == 256 * 1024
-    assert sorted(p.name for p in install_dir().parent.iterdir()) == ["carla"]
+    assert sorted(p.name for p in install_dir().parent.iterdir()) == [
+        "carla",
+        "carla.lock",
+    ]
 
 
 def test_a_failed_swap_puts_the_previous_install_back(
@@ -608,3 +618,137 @@ def test_a_failed_swap_puts_the_previous_install_back(
         install(archive.as_uri())
     assert (install_dir() / "VERSION").read_bytes() == b"nightly"
     assert (install_dir() / ".download.json").is_file()
+
+
+def test_concurrent_installs_wait_for_each_other(
+    home: Path,
+    origin: _Origin,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A second run waits for the first instead of deleting its download (#1570)."""
+    downloading = threading.Event()  # the first run is mid-download
+    waiting = threading.Event()  # the second run blocks on the lock
+    real_flock = fcntl.flock
+    real_read = carla_install._ResumingStream.read
+    staged: list[bool] = []
+
+    def flock(fd: int, operation: int) -> None:
+        if operation == fcntl.LOCK_EX:  # the blocking wait, after LOCK_NB failed
+            waiting.set()
+        real_flock(fd, operation)
+
+    def read(stream: carla_install._ResumingStream, amount: int = -1) -> bytes:
+        if not downloading.is_set():
+            downloading.set()
+            assert waiting.wait(10), "the second run never waited"
+            time.sleep(0.2)  # time for it to be blocked in flock, not just about to be
+        staged.append(install_dir().with_name("carla.partial").is_dir())
+        return real_read(stream, amount)
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+    monkeypatch.setattr(carla_install._ResumingStream, "read", read)
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            install(origin.url)
+        except BaseException as exc:  # noqa: BLE001 -- reported by the test
+            errors.append(exc)
+
+    first = threading.Thread(target=run)
+    first.start()
+    assert downloading.wait(10)
+    second = threading.Thread(target=run)
+    second.start()
+    first.join(30)
+    second.join(30)
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+    assert all(staged), "the first run's download was deleted under it"
+    out = capsys.readouterr().out
+    assert "Waiting for another scenario-setup" in out
+    assert "up to date" in out  # the second found the first one's install
+    assert origin.ranges == [None, None]  # one download, one check
+    assert len((install_dir() / "noise").read_bytes()) == 256 * 1024
+    assert sorted(p.name for p in install_dir().parent.iterdir()) == [
+        "carla",
+        "carla.lock",
+    ]
+
+
+def test_ctrl_c_while_waiting_for_the_lock_stops_the_run(
+    home: Path, tmp_path: Path
+) -> None:
+    url = _carla(tmp_path / "carla.tar.gz")
+    lock = install_dir().with_name("carla.lock")
+    lock.parent.mkdir(parents=True)
+
+    def interrupt(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGALRM, interrupt)
+    try:
+        with open(lock, "a") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)  # another run's install
+            signal.setitimer(signal.ITIMER_REAL, 0.3)
+            with pytest.raises(KeyboardInterrupt):
+                install(url)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    assert installed_executable() is None
+    assert install(url) == install_dir() / LAUNCHER  # the lock is free again
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_a_read_only_install_is_still_checked(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    url = _carla(tmp_path / "carla.tar.gz")
+    install(url)
+    parent = install_dir().parent
+    parent.chmod(0o555)
+    try:
+        for lock_left in (True, False):
+            if not lock_left:
+                parent.chmod(0o755)
+                install_dir().with_name("carla.lock").unlink()
+                parent.chmod(0o555)
+            capsys.readouterr()
+            assert install(url) == install_dir() / LAUNCHER
+            assert "up to date" in capsys.readouterr().out
+    finally:
+        parent.chmod(0o755)
+
+
+@pytest.mark.parametrize("lock_left", [True, False])
+def test_an_unwritable_lock_file_does_not_stop_a_check(
+    lock_left: bool,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """As the test above, for root too: opening the lock for writing is refused."""
+    url = _carla(tmp_path / "carla.tar.gz")
+    install(url)
+    lock = install_dir().with_name("carla.lock")
+    if not lock_left:
+        lock.unlink()
+    opened: list[str] = []
+
+    def read_only_open(file: Path, mode: str = "r") -> IO[str]:
+        opened.append(mode)
+        if mode != "r":
+            raise PermissionError(errno.EACCES, "Permission denied", str(file))
+        return open(file, mode)  # noqa: SIM115
+
+    monkeypatch.setattr(carla_install, "open", read_only_open, raising=False)
+    capsys.readouterr()
+    assert install(url) == install_dir() / LAUNCHER
+    captured = capsys.readouterr()
+    assert "up to date" in captured.out
+    assert opened == ["a", "r"]
+    assert ("going ahead unlocked" in captured.err) is not lock_left
+    assert lock.exists() is lock_left

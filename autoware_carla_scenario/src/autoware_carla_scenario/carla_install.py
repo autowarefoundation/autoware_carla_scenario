@@ -13,6 +13,13 @@ never kept on disk; the new tree replaces the old one only once it is complete,
 by renames, so an interrupted run never leaves a half-deleted install in place.
 A connection that drops mid-download is picked up where it stopped with a range
 request, so a flaky link costs a retry rather than the whole transfer.
+
+One run at a time installs into a directory: each holds an exclusive ``flock``
+on ``<target>.lock`` beside it from the clean-up of what an interrupted run left
+to the swap, so a second ``scenario-setup`` for the same directory waits for the
+first (and then usually finds its install up to date) instead of deleting the
+first one's download. The lock file stays: deleting it would let a run lock the
+deleted file while another locks its replacement.
 ``AUTOWARE_CARLA_SCENARIO_HOME`` moves ``~/.autoware_carla_scenario``.
 
 CARLA publishes its server for Linux x86_64 only, so on any other machine
@@ -25,6 +32,8 @@ from a URL or from a local path (``--url ~/Downloads/CARLA.tar.gz``).
 from __future__ import annotations
 
 import argparse
+import contextlib
+import errno
 import http.client
 import json
 import os
@@ -36,7 +45,7 @@ import tarfile
 import time
 from email.message import Message
 from pathlib import Path, PurePosixPath
-from typing import IO, Callable, Optional, cast
+from typing import IO, Callable, Iterator, Optional, cast
 
 HOME_ENV = "AUTOWARE_CARLA_SCENARIO_HOME"
 """Overrides the framework's home directory, ``~/.autoware_carla_scenario``."""
@@ -105,6 +114,8 @@ def install(
     An install already made from the same download (same ETag, or Last-Modified
     and size) is kept unless *force*. The package's single top-level directory
     is dropped, so the launcher is always ``<target>/Linux/CarlaUnreal.sh``.
+    Another install into *target* running meanwhile is waited for (see
+    :func:`_locked`), so the two never delete each other's download.
 
     Raises:
         RuntimeError: There is not room for the package, it has no launcher, or
@@ -117,11 +128,8 @@ def install(
     """
     _require_extraction_filters()  # before anything is downloaded
     # The runner imports this module for install_dir() alone; these it does not need.
-    import urllib.error  # noqa: PLC0415
     import urllib.parse  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
-
-    from tqdm import tqdm  # noqa: PLC0415
 
     url = package_url(url)
     parts = urllib.parse.urlsplit(url)
@@ -131,11 +139,24 @@ def install(
         if not local.is_file():
             raise FileNotFoundError(f"{local}: no such file")
     target = (target or install_dir()).expanduser().resolve()
+    # Before the lock, so a directory refused gets no lock file beside it; a
+    # run holding the lock only ever leaves *target* missing or stamped.
     if target.exists() and not (target / _STAMP).is_file() and any(target.iterdir()):
         raise RuntimeError(
             f"{target} is not empty and not a CARLA scenario-setup installed; "
             "pick an empty or new directory"
         )
+    with _locked(target):
+        return _install(url, target, force)
+
+
+def _install(url: str, target: Path, force: bool) -> Path:
+    """:func:`install`'s work, with the lock on *target* held."""
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
+    from tqdm import tqdm  # noqa: PLC0415
+
     # What an interrupted run left: an unfinished download and an old install
     # moved aside but not yet deleted. Neither is ever trusted as an install.
     for leftover in (_staging(target), _replaced(target)):
@@ -190,6 +211,91 @@ def install(
     (staging / _STAMP).write_text(json.dumps(source, indent=2) + "\n")
     _swap_into_place(staging, target)
     return target / LAUNCHER
+
+
+#: The errors of a ``flock`` the file system does not support (some NFS mounts).
+_NO_FLOCK_ERRNOS = frozenset(
+    {errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOLCK, errno.EINVAL}
+)
+
+
+#: The errors of a lock file that cannot be created or written: a read-only
+#: file system, or a directory of another user's.
+_UNWRITABLE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
+
+
+def _lock_path(target: Path) -> Path:
+    """The file whose ``flock`` lets one run at a time install into *target*."""
+    return target.with_name(target.name + ".lock")
+
+
+@contextlib.contextmanager
+def _locked(target: Path) -> Iterator[None]:
+    """Hold the exclusive lock on installing into *target*, waiting for it if taken.
+
+    A ``flock`` on :func:`_lock_path`, released when the file is closed, so also
+    when the process dies. The file is never deleted: a run that opened it just
+    before the deletion would lock a file no later run sees. Waiting is a
+    blocking ``flock``, which a Ctrl-C ends with ``KeyboardInterrupt``. Where
+    the file system has no ``flock``, the install goes ahead unlocked.
+
+    Checking an install needs no write access: where the lock file cannot be
+    opened for writing (a read-only or another user's install), an existing one
+    is locked through a read-only descriptor, which ``flock`` takes as well, and
+    without one the run goes ahead unlocked, as it can only find the install up
+    to date or fail to write it.
+    """
+    import fcntl  # noqa: PLC0415
+
+    lock = _lock_path(target)
+    stream = _open_lock(lock)
+    if stream is None:
+        yield
+        return
+    with stream:
+        try:
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(
+                f"Waiting for another scenario-setup on {target} to finish "
+                f"(lock {lock}) ...",
+                flush=True,
+            )
+            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+        except OSError as exc:
+            if exc.errno not in _NO_FLOCK_ERRNOS:
+                raise
+            print(
+                f"scenario-setup: no flock on {lock.parent} ({exc}); installing "
+                "unlocked, so run only one scenario-setup for it at a time",
+                file=sys.stderr,
+            )
+        yield
+
+
+def _open_lock(lock: Path) -> Optional[IO[str]]:
+    """*lock* opened to ``flock``: for writing, else read-only, else nothing.
+
+    Raises:
+        OSError: *lock* cannot be created for a reason other than permissions
+            or a read-only file system.
+    """
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        return open(lock, "a")  # noqa: SIM115 -- the caller closes it
+    except OSError as exc:
+        if exc.errno not in _UNWRITABLE_ERRNOS:
+            raise
+        error = exc
+    try:
+        return open(lock)  # noqa: SIM115 -- flock takes a read-only descriptor too
+    except OSError:
+        print(
+            f"scenario-setup: cannot create {lock} ({error}); going ahead "
+            "unlocked, so run only one scenario-setup for it at a time",
+            file=sys.stderr,
+        )
+        return None
 
 
 def _staging(target: Path) -> Path:
