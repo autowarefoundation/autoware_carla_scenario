@@ -27,6 +27,9 @@ _MOVED = (
     "_height_colours",
     "_is_sensor_entity",
     "chunk_entities",
+    # #1697
+    "_SCAN_BLOCK",
+    "carries_sensors",
 )
 
 

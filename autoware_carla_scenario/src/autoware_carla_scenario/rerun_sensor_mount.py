@@ -5,23 +5,26 @@ the sensors'.
 :class:`CameraMount` places a camera of ``driver.cameras`` in the recording's
 right-handed frame and gives its focal length; :func:`_height_colours` colours
 a sweep's points by height; :data:`SENSOR_ENTITIES` and
-:func:`_is_sensor_entity` tell the sensors' entities from the others; and
+:func:`_is_sensor_entity` tell the sensors' entities from the others;
 :func:`chunk_entities` reads the entities of a recording's chunks from
-``rerun rrd print``.  rerun_lidar re-exports every name and keeps what needs
-the Rerun SDK (held as ``Any``) and its CLI; this module is pure numpy and
-``re``, so the library check compiles it (``docs/typecheck.md``, "Checking
-the framework itself", #1688).
+``rerun rrd print``; and :func:`carries_sensors` scans a recording's bytes for
+the sensors' entity paths.  rerun_lidar re-exports every name and keeps what
+needs the Rerun SDK (held as ``Any``) and its CLI; this module is pure numpy,
+``re`` and file reads, so the library check compiles it (``docs/typecheck.md``, "Checking
+the framework itself", #1688, #1697).
 """
 
 from __future__ import annotations
 
 import re
+from pathlib import Path
 
 import numpy as np
 
 __all__ = [
     "SENSOR_ENTITIES",
     "CameraMount",
+    "carries_sensors",
     "chunk_entities",
 ]
 
@@ -132,3 +135,32 @@ def _height_colours(
     colours[:, 1] = (255 * (1.0 - np.abs(2.0 * t - 1.0))).astype(np.uint8)
     colours[:, 2] = (255 * np.clip(1.0 - 2.0 * t, 0.0, 1.0)).astype(np.uint8)
     return colours
+
+
+#: How much of a recording :func:`carries_sensors` reads at a time.
+_SCAN_BLOCK = 1 << 20
+
+
+def carries_sensors(recording: Path) -> bool:
+    """Whether *recording* seems to hold sensor entities
+    (:data:`SENSOR_ENTITIES`), without the Rerun SDK.
+
+    A heuristic, for when rerun_lidar's ``extract_sensors`` cannot tell: it scans the
+    file's bytes for the sensors' entity paths.  Each chunk names its entity
+    in its Arrow schema, whose first mention of the path stays legible even
+    in an LZ4-compressed chunk (checked with the SDK's 0.38 encoding), and the
+    recording's footer names them again.  A recording that merely mentions
+    such a path elsewhere is a false positive: it is kept rather than
+    replaced, which errs on the safe side.
+    """
+    needles = [f"{root}/".encode() for root in SENSOR_ENTITIES]
+    overlap = max(len(needle) for needle in needles) - 1
+    tail = b""
+    # str(): Codon's open() does not take a Path; the same file in Python.
+    with open(str(recording), "rb") as stream:
+        while block := stream.read(_SCAN_BLOCK):
+            window = tail + block
+            if any(needle in window for needle in needles):
+                return True
+            tail = window[-overlap:]
+    return False

@@ -6,16 +6,21 @@ map-frame roll, pitch and yaw.
 ``y`` flips and the map's offsets are added; ``roll`` keeps its sign,
 ``pitch`` and ``yaw`` flip.  t4_scene.convert re-exports these under its own
 protected names (``_FLIP_Y``, ``_rotations``, ``_quaternions``) and its
-``_MapFrame`` calls :func:`map_positions` and :func:`map_angles`; this module
-is pure numpy, so Codon checks it (#1665).
+``_MapFrame`` calls :func:`map_positions` and :func:`map_angles`.
+:func:`checked_rear_axle_offset`, the check of where the ego's ``base_link``
+is, lives here too (#1697), and t4_scene.convert re-exports it.  This module
+is pure numpy and ``math``, so Codon checks it (#1665).
 """
 
 from __future__ import annotations
+
+import math
 
 import numpy as np
 
 __all__ = [
     "FLIP_Y",
+    "checked_rear_axle_offset",
     "map_angles",
     "map_positions",
     "quaternions",
@@ -83,3 +88,29 @@ def quaternions(
         ],
         axis=-1,
     )
+
+
+def checked_rear_axle_offset(
+    rear_axle_offset_m: float, key: str = "rear_axle_offset_m"
+) -> float:
+    """*rear_axle_offset_m* as a float, which must be finite.
+
+    The offset is where the ego's rear axle (its ``base_link``) is from its
+    actor origin along its x axis: negative behind the origin -- the usual
+    case, and the default's ``-0.5 * extent.x`` -- 0 at it, positive ahead of
+    it, so any finite value is a place.  NaN or infinity would put the ego's
+    every pose and ``base_link_to_front`` at NaN, so either is refused before
+    a scene is written.  A bool is refused too: ``true`` is not an offset,
+    though ``float()`` would read it as 1 m.
+
+    Args:
+        rear_axle_offset_m: The offset, metres.
+        key: The setting's name, which the error names (``--rear-axle-offset``).
+
+    Raises:
+        ValueError: If *rear_axle_offset_m* is a bool, or not finite.
+    """
+    value = float(rear_axle_offset_m)
+    if isinstance(rear_axle_offset_m, bool) or not math.isfinite(value):
+        raise ValueError(f"{key} must be finite, not {rear_axle_offset_m}")
+    return value

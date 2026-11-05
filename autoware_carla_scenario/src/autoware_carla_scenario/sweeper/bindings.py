@@ -511,3 +511,35 @@ def parse_binding(target_key: str, cfg: dict[str, Any]) -> Binding:
         )
     kwargs = {k: v for k, v in cfg.items() if k != "type"}
     return cls(target_key=target_key, **kwargs)
+
+
+def _walk_back_lanelet_key(s_key: str, lanelet_id: int) -> str:
+    """The lanelet key of the spawn whose ``s`` a walk-back moved, by *s_key*.
+
+    A ``stop_line_offset`` binding that walks back off the pick puts its spawn
+    on a predecessor: that spawn's lanelet key has to say so, and no other.
+    The spawn keys come in pairs, so the lanelet key is the ``s`` key's
+    sibling: ``<prefix>.s`` -> ``<prefix>.lanelet_id`` (an entity's
+    ``scenario.spawn_overrides.<entity>``), ``<prefix>.spawn_s`` ->
+    ``<prefix>.spawn_lanelet_id`` and ``<prefix>.goal_s`` ->
+    ``<prefix>.goal_lanelet_id`` (the ego's).
+
+    Raises:
+        ValueError: If *s_key* is none of those, so there is no lanelet key
+            to move to *lanelet_id*.
+    """
+    prefix, _, leaf = s_key.rpartition(".")
+    sibling = {
+        "s": "lanelet_id",
+        "spawn_s": "spawn_lanelet_id",
+        "goal_s": "goal_lanelet_id",
+    }.get(leaf)
+    if sibling is None:
+        raise ValueError(
+            f"sweep.bindings: {s_key} walks back to lanelet {lanelet_id}, but "
+            "is not a spawn's s (<prefix>.s, <prefix>.spawn_s or "
+            "<prefix>.goal_s), so there is no lanelet key to move with it. "
+            "Bind stop_line_offset to a spawn's s, or use an offset that fits "
+            "on the pick."
+        )
+    return f"{prefix}.{sibling}" if prefix else sibling
