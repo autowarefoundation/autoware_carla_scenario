@@ -4064,7 +4064,13 @@ What Codon 0.19 needs that Python does not, beyond
 - **A datetime is formatted from its fields**: Codon's `datetime` has no
   `__format__`, so `f"{now:%Y-%m-%d}"` is
   `f"{now.year:04d}-{now.month:02d}-{now.day:02d}"`, the same string for
-  every year from 1000 on (`ui.runner._multirun_dir()`).
+  every year from 1000 on (`run_dirs.timestamped_dir()`, which
+  `examples.run` and `ui.runner` share, #1653).
+- **`FileExistsError` is `OSError` and a test of the path**: Codon does not
+  name `FileExistsError`, so `except FileExistsError:` around a `mkdir()` is
+  `except OSError:` that raises again unless the path exists, or is a
+  symbolic link (one that resolves to nothing fails `mkdir()` with
+  `FileExistsError` too) (`run_dirs.reserve_timestamped_dir()`).
 - **A dataclass derived from a dataclass** is constructed with its base's
   fields first, as Python's constructor and Codon's take them, wherever the
   base is checked (`CarlaCameraSensorConfig(CameraSensorConfig)`). Of two
