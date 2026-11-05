@@ -688,6 +688,10 @@ def test_the_bound_messages_say_what_the_runtime_says() -> None:
     )
     messages = {i.path.rsplit(".", 1)[-1]: i.message for i in document_errors(document)}
     assert messages["fraction"] == "Fraction must be in (0, 1]."
+    # A whole number's bounds in full: MAX_SEED, not 2.14748e+09 (#1576).
+    document = _card("traffic_source", None, seed=2**31)
+    messages = {i.path.rsplit(".", 1)[-1]: i.message for i in document_errors(document)}
+    assert messages["seed"] == "Seed must be in [0, 2147483647]."
 
 
 def document_errors(document: ScenarioDocument) -> list[Any]:
@@ -897,6 +901,12 @@ def test_validator_refuses_a_bound_the_condition_refuses(
         # The seeds' bounds (#1495): a negative seed is refused at construction.
         ("adversarial_traffic", None, {"seed": -1}, "seed"),
         ("smart_pedestrian", "ped", {"seed": -1}, "seed"),
+        # ... and so is one above MAX_SEED (#1576), which CARLA and SUMO
+        # would refuse once the run had started.
+        ("adversarial_traffic", None, {"seed": 2**31}, "seed"),
+        ("smart_pedestrian", "ped", {"seed": 2**31}, "seed"),
+        ("traffic_source", None, {"seed": 2**31}, "seed"),
+        ("traffic_source", None, {"seed": -1}, "seed"),
         (
             "routing",
             "car",
