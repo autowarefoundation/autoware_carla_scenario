@@ -17,6 +17,7 @@ from pathlib import Path
 # check compiles this module, docs/typecheck.md).
 from typing import Any, Collection, Mapping, Protocol, Sequence  # noqa: UP035
 
+from .atomic_file import write_text_atomically
 from .failure import Failure
 
 __all__ = ["print_summary", "write_batch_result_json"]
@@ -126,6 +127,12 @@ def write_batch_result_json(
     The file is what ``json.dumps(entries, indent=2, ensure_ascii=False)``
     gives, laid out as text a member at a time, since an entry's values (a
     condition's details) are of any type.
+
+    It is replaced in one rename
+    (:func:`~autoware_carla_scenario.atomic_file.write_text_atomically`): a
+    batch rewrites it as each case ends (``examples/run.py``), and the viewer,
+    reading it meanwhile, finds the cases run so far, whole, never half a
+    file (#1566).
     """
     failed_recordings: dict[int, str] = {}
     if rerun_errors is not None:
@@ -180,7 +187,7 @@ def write_batch_result_json(
                 members.append(own[key])
         entries.append("  {\n" + ",\n".join(members) + "\n  }")
     text = "[\n" + ",\n".join(entries) + "\n]" if entries else "[]"
-    json_path.write_text(text, encoding="utf-8")
+    write_text_atomically(json_path, text)
     return json_path
 
 

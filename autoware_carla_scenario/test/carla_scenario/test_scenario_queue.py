@@ -471,6 +471,36 @@ class TestScenarioQueueUnit:
         if not release:
             assert queue.result_for(scenarios[1]) is results[1]
 
+    def test_on_result_hears_each_case_as_it_ends_errored_or_not(self) -> None:
+        """#1566: a batch writes its summary from it, case by case; a retried
+        case is heard once, after its last attempt, and an errored one is
+        among the errored indices by then."""
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(RuntimeError("no"))
+        heard: list[tuple[int, bool, list[int], int]] = []
+
+        def on_result(index: int, result: ScenarioResult) -> None:
+            heard.append(
+                (index, result.passed, queue.errored_indices(), len(runner.ran))
+            )
+
+        results = queue.run_all(continue_on_error=True, on_result=on_result)
+
+        assert heard == [(0, True, [], 1), (1, False, [1], 3), (2, True, [1], 4)]
+        assert [r.passed for r in results] == [True, False, True]
+
+    def test_what_on_result_raises_ends_the_run_and_is_no_failed_attempt(
+        self,
+    ) -> None:
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(RuntimeError("no"))
+
+        def on_result(index: int, _result: ScenarioResult) -> None:
+            raise KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            queue.run_all(continue_on_error=True, on_result=on_result)
+
+        assert runner.ran == [0]
+
     def test_an_errored_last_case_leaves_the_world_to_the_next_run(self) -> None:
         queue, runner, _ = self._queue_whose_second_case_cannot_run(
             RuntimeError("no"), retries=0, cases=2

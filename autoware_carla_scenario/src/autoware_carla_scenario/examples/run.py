@@ -70,6 +70,7 @@ from autoware_carla_scenario import (
 import autoware_carla_scenario.hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
 from autoware_carla_scenario.batch_report import print_summary as _print_summary
+from autoware_carla_scenario.batch_report import write_batch_result_json
 from autoware_carla_scenario.canvas import use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
@@ -2426,13 +2427,43 @@ def run_batch(
 
     logger.info("All %d scenario(s) built. Starting execution...", len(labels))
 
+    # The cases run so far, for batch_results.json: rewritten as each case
+    # ends, so that the viewer lists a batch still running, or cut short
+    # (Ctrl-C, a SIGTERM), as the batch it is, with the cases it ran (#1566).
+    # The summary below writes it once more, whole, when the batch ends.
+    done: list[ScenarioResult] = []
+
+    def write_done() -> None:
+        try:
+            write_batch_result_json(
+                labels,
+                done,
+                output_dir,
+                case_overrides if expand else None,
+                errored=queue.errored_indices(),
+            )
+        except Exception:
+            # The batch goes on: its summary is written again at the end.
+            logger.warning("Could not write the batch's results so far", exc_info=True)
+
+    def case_done(_index: int, result: ScenarioResult) -> None:
+        done.append(result)
+        write_done()
+
+    finished = False
     try:
         with queue:
             # A case that cannot run (a spawn point without ground, say) is
             # recorded as errored, and the rest of the batch still runs.
-            results = queue.run_all(release=True, continue_on_error=True)
+            results = queue.run_all(
+                release=True, continue_on_error=True, on_result=case_done
+            )
             errored = queue.errored_indices()
+        finished = True
     finally:
+        if not finished and done:
+            # Cut short: the cases it ran, as the last case's end wrote them.
+            write_done()
         # Each log was converted as its case ended; wait for the last ones.
         conversions = rerun.close() if rerun is not None else []
 

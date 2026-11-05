@@ -50,6 +50,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Optional, Sequence
 
+from ..atomic_file import write_text_atomically
 from .source import MapSource
 
 logger = logging.getLogger(__name__)
@@ -858,20 +859,11 @@ def _write_atomically(path: Path, text: str) -> None:
 
     :mod:`~autoware_carla_scenario.maps.opendrive` writes the ``.xodr`` files
     of the ``derived`` directory through it too, for the same reason.
+
+    The write is :func:`~autoware_carla_scenario.atomic_file.write_text_atomically`'s,
+    which ``batch_results.json`` shares.
     """
-    fd, name = tempfile.mkstemp(
-        prefix=f".{path.name}.", suffix=".tmp", dir=str(path.parent)
-    )
-    os.close(fd)
-    try:
-        Path(name).write_text(text, encoding="utf-8")
-        # 0o644 (Codon has no octal literal), what write_text made, rather
-        # than mkstemp's 0o600: the cache may be shared.
-        os.chmod(name, 420)
-        os.replace(name, str(path))
-    except BaseException:
-        Path(name).unlink(missing_ok=True)
-        raise
+    write_text_atomically(path, text)
 
 
 def _copy_atomically(source: Path, path: Path) -> None:
