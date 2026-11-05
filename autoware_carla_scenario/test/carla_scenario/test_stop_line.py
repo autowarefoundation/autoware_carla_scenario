@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, NonCallableMagicMock, patch
 
 import pytest
 
@@ -32,7 +32,9 @@ def _make_linestring(
         pt.y = y
         mock_points.append(pt)
 
-    ls = MagicMock()
+    # Not callable, as a lanelet2 line string is not: a callable stopLine
+    # is a DetectionArea's method, which pattern 1 skips.
+    ls = NonCallableMagicMock()
     ls.id = ls_id
     ls.__iter__ = lambda self: iter(mock_points)
     ls.attributes = attrs or {}

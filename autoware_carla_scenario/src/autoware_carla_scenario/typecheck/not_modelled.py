@@ -655,10 +655,11 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     },
     "RerunConverter": {
         **_members(
-            "close strict wait",
-            "waits for the conversions and reports them, which the runner's "
-            "caller (examples.run) does once the runs are over, not the checked "
-            "runner, which only submits each log",
+            "close strict",
+            "closes the converter and reports the conversions, which the "
+            "runner's caller (examples.run) does once the runs are over, not "
+            "the checked runner, which only submits each log (and waits for "
+            "it before a retry)",
         ),
         "records_sensors": (
             "whether rerun.lidar or rerun.cameras is set, which the converter's "

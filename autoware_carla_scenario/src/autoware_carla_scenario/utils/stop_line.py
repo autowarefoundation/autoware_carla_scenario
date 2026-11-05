@@ -107,16 +107,12 @@ def regulatory_element_stop_lines(
     if hasattr(reg_elem, "stopLine"):
         try:
             stop_line = reg_elem.stopLine
-            if TYPE_CHECKING:
-                # The model declares stopLine only where it is a property.
-                is_line = True
-            else:
-                # A DetectionArea's (or NoStoppingArea's) stopLine is a
-                # method: its bound method is no line (pattern 2 reads it).
-                # The `types` module is not modelled for Codon.
-                from types import BuiltinMethodType, MethodType  # noqa: PLC0415
-
-                is_line = not isinstance(stop_line, (BuiltinMethodType, MethodType))
+            # A DetectionArea's (or NoStoppingArea's) stopLine is a method:
+            # its bound method is no line (pattern 2 reads it).  A line
+            # string (or None) has no __call__; Codon decides the hasattr by
+            # the static type, where the model declares stopLine only as a
+            # property.
+            is_line = not hasattr(stop_line, "__call__")
             if is_line and stop_line is not None and stop_line.id not in seen_ids:
                 seen_ids.add(stop_line.id)
                 results.append(stop_line)
