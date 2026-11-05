@@ -132,6 +132,9 @@ def clear_props() -> None:
     for name in list(_STANDING.keys()):
         remove_prop(name)
     _BROUGHT_IN.clear()
+    # The entry speeds too: written on every spawn, by an actor id the next
+    # run's world may reuse, and nothing else forgets them (#1599).
+    _ENTERED.clear()
 
 
 def note_brought_in(world: "carla.World", role: str, pose: CarlaWorldPose) -> None:

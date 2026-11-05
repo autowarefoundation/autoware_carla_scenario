@@ -56,6 +56,7 @@ from .coordinate.transform import to_opendrive
 from .entity.vehicle_entity import _clear_entry_speeds, _set_warmup_done
 from .ego_base_link import clear_ego_base_link
 from .scenario_base import BaseScenario
+from .signals.registry import clear_signal_controllers
 from .seed import check_seed, set_run_seed
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
@@ -1529,6 +1530,10 @@ class ScenarioRunner:
         # What a scenario before carried out is not under way in this one.
         clear_adversities()
         clear_props()
+        # And the signal controllers a DeclarativeScenario registered: a
+        # Python scenario next would still find them by name (#1599), their
+        # tick callbacks gone with the run.
+        clear_signal_controllers()
         _set_warmup_done(False)
         _clear_entry_speeds()
         # And where the last run's ego had its base_link: this run's ego says
@@ -2164,6 +2169,8 @@ class ScenarioRunner:
             # And the props a SpawnAction placed: the leftovers' sweep takes
             # vehicles, walkers and sensors, not static props.
             clear_props()
+            # And the run's signal controllers (#1599).
+            clear_signal_controllers()
 
             # The T4 dataset's sensors go before the ego they are on.
             if t4_recording is not None:

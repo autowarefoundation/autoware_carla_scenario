@@ -356,6 +356,39 @@ class TestRunScenarioStartsFromACleanSlate:
 
         assert recorded == [{}]
 
+    def test_signal_controllers_are_only_this_run_s(self, tmp_path: Any) -> None:
+        """A signal controller a run before registered (a DeclarativeScenario's)
+        is gone before this run starts, and one this run registers is gone
+        when it ends, however it ended (#1599)."""
+        from types import SimpleNamespace
+
+        from autoware_carla_scenario.signals import registry
+
+        registry.register_signal_controller(SimpleNamespace(name="old"))  # type: ignore[arg-type]
+        runner = _runner(tmp_path)
+        scenario = _Registers(ego_entity=_fake_ego())
+        at_clock: list[Any] = []
+
+        def clock(world: Any) -> None:
+            at_clock.append(registry.registered_signal_controllers())
+            registry.register_signal_controller(SimpleNamespace(name="new"))  # type: ignore[arg-type]
+            raise _Stop("clock")
+
+        try:
+            with (
+                patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
+                patch("autoware_carla_scenario.scenario_runner._ScenarioClock", clock),
+            ):
+                with pytest.raises(_Stop):
+                    runner.run_scenario(
+                        scenario, timeout_seconds=12.0, reset_world=False
+                    )
+            assert at_clock == [()]
+            assert registry.find_signal_controller("old") is None
+            assert registry.registered_signal_controllers() == ()
+        finally:
+            registry.clear_signal_controllers()
+
     def test_the_ego_s_base_link_is_only_this_run_s(self, tmp_path: Any) -> None:
         """Where the last run's ego had its base_link is gone before this run's
         ego starts, and this run's is gone when the run ends -- even when the

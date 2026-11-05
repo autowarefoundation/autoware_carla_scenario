@@ -92,6 +92,7 @@ def _map(monkeypatch: pytest.MonkeyPatch) -> None:
         return SimpleNamespace(
             x=x,
             y=y,
+            z=0.0,
             to_carla_transform=lambda: carla.Transform(carla.Location(x=x, y=y, z=0.0)),
         )
 
@@ -290,7 +291,9 @@ class TestSource:
         world.get_actors = lambda: SimpleNamespace(  # type: ignore[method-assign]
             filter=lambda pattern: [vehicle(1.0, 2.0, 0.3), vehicle(5.0, 6.0, -499.7)]
         )
-        assert background_traffic._vehicle_positions(world) == [(1.0, 2.0)]
+        assert background_traffic._vehicle_positions(world) == [
+            (1.0, 2.0, pytest.approx(0.3))
+        ]
 
 
 class TestSink:
@@ -572,6 +575,7 @@ class TestMinGapDistance:
         pose = SimpleNamespace(
             x=0.0,
             y=0.0,
+            z=0.0,
             to_carla_transform=lambda: carla.Transform(
                 carla.Location(x=0.0, y=0.0, z=0.0)
             ),
@@ -580,5 +584,69 @@ class TestMinGapDistance:
         backend, world = _Backend(), _World()
         source = TrafficSourceAction(_NOT_JUNCTION, min_gap_m=15.0)
         # 15 m away (9, 12): far enough; 14.9 m away: too close.
-        assert source._spawn_one(world, backend, [(9.0, 12.0)]) is not None
-        assert source._spawn_one(world, backend, [(0.0, 14.9)]) is None
+        assert source._spawn_one(world, backend, [(9.0, 12.0, 0.0)]) is not None
+        assert source._spawn_one(world, backend, [(0.0, 14.9, 0.0)]) is None
+
+
+class TestMinGapLevels:
+    """#1599: a vehicle on another level of road, near in plan, takes no room
+    from a spawn; one whose height is unknown is placed in plan alone."""
+
+    @pytest.fixture
+    def source(self, monkeypatch: pytest.MonkeyPatch) -> TrafficSourceAction:
+        import autoware_carla_scenario.coordinate as coordinate
+
+        pose = SimpleNamespace(
+            x=0.0,
+            y=0.0,
+            z=10.0,
+            to_carla_transform=lambda: carla.Transform(
+                carla.Location(x=0.0, y=0.0, z=10.0)
+            ),
+        )
+        monkeypatch.setattr(coordinate, "to_carla_world", lambda _pose: pose)
+        return TrafficSourceAction(_NOT_JUNCTION, initial_vehicles=1, min_gap_m=15.0)
+
+    @pytest.mark.parametrize("z", [3.2, 16.8, 10.0 - 2.01, 12.01])
+    def test_a_vehicle_on_another_level_does_not_block(
+        self, source: TrafficSourceAction, z: float
+    ) -> None:
+        # 6.8 m under, as lanelet 552 runs under 132 on the fixture map.
+        assert source._spawn_one(_World(), _Backend(), [(1.0, 1.0, z)]) is not None
+
+    @pytest.mark.parametrize("z", [10.0, 10.5, 8.0, 12.0])
+    def test_a_vehicle_on_the_same_level_blocks(
+        self, source: TrafficSourceAction, z: float
+    ) -> None:
+        assert source._spawn_one(_World(), _Backend(), [(1.0, 1.0, z)]) is None
+
+    def test_a_vehicle_of_unknown_height_blocks_in_plan(
+        self, source: TrafficSourceAction
+    ) -> None:
+        # A vehicle SUMO's queue model holds has no height.
+        assert source._spawn_one(_World(), _Backend(), [(1.0, 1.0, None)]) is None
+        assert source._spawn_one(_World(), _Backend(), [(20.0, 1.0, None)]) is not None
+
+    def test_execute_keeps_the_backends_heights(
+        self, source: TrafficSourceAction
+    ) -> None:
+        backend = _Backend()
+        backend.vehicles = {"under": (1.0, 1.0, 3.2), "flat": (40.0, 0.0, None)}
+        source.set_traffic_backend(backend)
+        source.tick(_World(), 0.0)
+        assert len(backend.vehicles) == 3
+
+    def test_a_world_vehicle_on_another_level_does_not_block(
+        self, source: TrafficSourceAction
+    ) -> None:
+        world = _World()
+        under = SimpleNamespace(
+            get_location=lambda: carla.Location(x=1.0, y=1.0, z=3.2)
+        )
+        world.get_actors = lambda: SimpleNamespace(  # type: ignore[method-assign]
+            filter=lambda pattern: [under]
+        )
+        backend = _Backend()
+        source.set_traffic_backend(backend)
+        source.tick(world, 0.0)
+        assert len(backend.vehicles) == 1

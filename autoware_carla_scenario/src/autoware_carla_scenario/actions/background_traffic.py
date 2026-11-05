@@ -59,6 +59,13 @@ __all__ = [
 _END_MARGIN_M = 3.0
 #: How many places a source tries for one vehicle before giving up this tick.
 _SPAWN_ATTEMPTS = 8
+#: How far (m) a vehicle's origin may be above or below a spawn point and
+#: still stand on its level of road (#1599): one on a deck over or under it
+#: takes no room there, however near in plan.  Origins, not boxes, so more
+#: than ``utils.clearance._SAME_LEVEL_MARGIN_M``: a vehicle's origin sits a
+#: little off the road surface the spawn point is on, and a slope rises
+#: within ``min_gap_m``; an overpass is 4.5 m or more over the road below.
+_OTHER_LEVEL_M = 2.0
 
 ConstraintSpec = Union[Mapping[str, Any], Any]
 
@@ -371,9 +378,12 @@ class TrafficSourceAction(_BackendAction):
         live = backend.background_vehicles(world)
         if self._max is not None:
             due = min(due, max(self._max - len(live), 0))
-        occupied: list[tuple[float, float]] = []
+        # With each vehicle's height where it is known (None where not: one
+        # SUMO's queue model holds), so a vehicle on another level of road
+        # does not block a spawn (#1599).
+        occupied: list[tuple[float, float, Optional[float]]] = []
         for position in live.values():
-            occupied.append((position[0], position[1]))
+            occupied.append((position[0], position[1], position[2]))
         occupied += _vehicle_positions(world)
         added = 0
         for _ in range(due):
@@ -389,7 +399,7 @@ class TrafficSourceAction(_BackendAction):
         self,
         world: "carla.World",
         backend: "TrafficBackend",
-        occupied: list[tuple[float, float]],
+        occupied: list[tuple[float, float, Optional[float]]],
     ) -> Optional[str]:
         from ..coordinate import Lanelet2Pose, lanelet_length, to_carla_world  # noqa: PLC0415
 
@@ -404,10 +414,7 @@ class TrafficSourceAction(_BackendAction):
             else:
                 s = length / 2
             pose = to_carla_world(Lanelet2Pose(lanelet_id=lanelet_id, s=s))
-            if any(
-                math.hypot(pose.x - px, pose.y - py) < self._min_gap
-                for px, py in occupied
-            ):
+            if _too_near(pose.x, pose.y, pose.z, occupied, self._min_gap):
                 continue
             handle: Optional[str] = None
             if TYPE_CHECKING:
@@ -429,7 +436,8 @@ class TrafficSourceAction(_BackendAction):
                     blueprint=self._blueprint,
                 )
             if handle is not None:
-                occupied.append((pose.x, pose.y))
+                placed_z: Optional[float] = pose.z  # the list's type, for Codon
+                occupied.append((pose.x, pose.y, placed_z))
                 return handle
         return None
 
@@ -512,12 +520,34 @@ def _simulated_seconds(world: "carla.World") -> Optional[float]:
         return None
 
 
-def _vehicle_positions(world: "carla.World") -> list[tuple[float, float]]:
+def _too_near(
+    x: float,
+    y: float,
+    z: float,
+    occupied: list[tuple[float, float, Optional[float]]],
+    gap: float,
+) -> bool:
+    """Whether a vehicle of *occupied* stands within *gap* (m, in plan) of the
+    CARLA point ``(x, y, z)`` on the same level of road: one more than
+    :data:`_OTHER_LEVEL_M` above or below it is on a deck over or under it
+    (#1599).  One whose height is unknown (``None``) is placed in plan alone."""
+    for px, py, pz in occupied:
+        if math.hypot(x - px, y - py) >= gap:
+            continue
+        if pz is not None and abs(pz - z) > _OTHER_LEVEL_M:
+            continue
+        return True
+    return False
+
+
+def _vehicle_positions(
+    world: "carla.World",
+) -> list[tuple[float, float, Optional[float]]]:
     try:
         actors = world.get_actors().filter("vehicle.*")
     except Exception:  # noqa: BLE001
         return []
-    out: list[tuple[float, float]] = []
+    out: list[tuple[float, float, Optional[float]]] = []
     for actor in actors:
         try:
             location = actor.get_location()
@@ -526,5 +556,6 @@ def _vehicle_positions(world: "carla.World") -> list[tuple[float, float]]:
         # One parked under the map until its spawn takes no room (#853).
         if location.z < _HIDDEN_BELOW_M:
             continue
-        out.append((location.x, location.y))
+        z: Optional[float] = location.z  # the list's type, for Codon
+        out.append((location.x, location.y, z))
     return out
