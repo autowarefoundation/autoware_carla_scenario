@@ -234,7 +234,8 @@ def weights_from_config(
     not name its taxonomy (docs/odd.md, "Sampling by shares of the ODD").
 
     Raises:
-        ValueError: When the file or the mapping is not module -> number.
+        ValueError: When the file cannot be read, is not UTF-8 or not YAML, or
+            when it or the mapping is not module -> number.
     """
     if raw is None:
         return None
@@ -242,9 +243,12 @@ def weights_from_config(
         path = Path(raw)
         if not path.is_absolute() and base_dir is not None:
             path = base_dir / path
+        # A file that is not there, not UTF-8 (UnicodeDecodeError, a
+        # ValueError without the key) or not YAML is refused with the key,
+        # as the docstring promises (#1703).
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except OSError as e:
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as e:
             raise ValueError(
                 f"sweep.odd_sample.weights: cannot read {path}: {e}"
             ) from e
