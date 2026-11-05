@@ -2427,7 +2427,12 @@ recordings and its copy of Rerun's web viewer, and which web viewer it picks
 (`ui.web_viewer_paths`, #1672), what a run names its outputs, the path
 rule of a trajectory log and its recordings among them (`run_outputs`, #1678:
 the stem a log is of, its recording and its sensor recording, which `rerun`,
-`rerun_lidar` and `ui.web_viewer_paths` all name them with), the frame math
+`rerun_lidar` and `ui.web_viewer_paths` all name them with; `ui.case_paths`
+names a case's log and recording with it too), the typed core of the sensors
+in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
+entities are the sensors' and the parse of `rerun rrd print`:
+`rerun_sensor_mount`, #1688; not `rerun_lidar`, which holds the Rerun SDK as
+`Any` and re-exports it), the frame math
 of the T4Scene converter (CARLA's world frame to Autoware's `map` frame, and the rotations
 and quaternions of its angles: `t4_scene.frames`, #1665; the converter
 itself, which reads the log's mixed-type records and builds protobuf
