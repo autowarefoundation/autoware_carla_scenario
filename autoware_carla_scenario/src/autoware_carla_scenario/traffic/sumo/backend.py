@@ -3313,7 +3313,16 @@ class SumoTrafficBackend(TrafficBackend):
             for kind in ("vehicle", "walker"):
                 try:
                     found = first_box_in_way(
-                        world, int(actor.id), x0, y0, heading, kind, span, half_width
+                        world,
+                        int(actor.id),
+                        x0,
+                        y0,
+                        heading,
+                        kind,
+                        span,
+                        half_width,
+                        z=float(tf.location.z),
+                        along=travelled,
                     )
                 except (AttributeError, RuntimeError):
                     continue
