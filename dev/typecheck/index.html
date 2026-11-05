@@ -4750,7 +4750,9 @@ package without Codon.</p>
 <p>A run that names modules is a slice of the full run. With the named
 modules, it compiles from their source the <code>CHECKED</code> modules they import,
 transitively. It does not follow an import that <code>MODELLED_IMPORTS</code> routes
-through the model, or one inside an <code>UNCALLED</code> function. It also brings the
+through the model (an import cycle Codon cannot resolve, or a call of an
+<code>UNCALLED</code> function of the imported module, see <em>A call of another checked
+module's <code>UNCALLED</code> function</em> below), or one inside an <code>UNCALLED</code> function. It also brings the
 other modules of a <code>REPLACED_MODELS</code> entry once one of them is in, so that the
 model re-exports the checked definitions, as it does in the full run.
 <code>scenario_base</code>, for example, imports <code>register_vehicle_entity</code> from the
@@ -4814,8 +4816,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-287 of the package's 410
-modules (70%; about 87,900 of
+288 of the package's 410
+modules (70%; about 88,300 of
 151,900 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4844,7 +4846,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 287 CHECKED modules</summary>
+<summary>The 288 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5618,6 +5620,10 @@ with the first paragraph of its docstring:</p>
 <td>A walker's skeleton, posed by the directions of a motion's bones.</td>
 </tr>
 <tr>
+<td><code>pedestrian.soma</code></td>
+<td>A SOMA motion (NVlabs SOMA-X) replayed on a CARLA walker's skeleton.</td>
+</tr>
+<tr>
 <td><code>placement</code></td>
 <td>Place a road user so a scenario measure reads a given value at the start.</td>
 </tr>
@@ -6004,8 +6010,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>150 functions and methods of those modules are <code>UNCALLED</code>
-(42 of them protected helpers, see <em>What is
+<p>152 functions and methods of those modules are <code>UNCALLED</code>
+(43 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6017,7 +6023,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 150 UNCALLED functions and methods, and why</summary>
+<summary>The 152 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6092,6 +6098,8 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>maps.config._flag</code>: reads a boolean <code>map</code> setting with _setting, off a config of any shape (<code>map_config: Any</code>), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it, and passes what it reads to the checked _resolve()</li>
 <li><code>maps.config._setting</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths and _flag, both themselves uncalled, call it, and what they read is resolved by the checked _resolve()</li>
 <li><code>maps.config.resolve_map_paths</code>: takes the <code>map</code> config node as <code>Any</code> (a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; it only reads the settings, and the checked _resolve() resolves them</li>
+<li><code>pedestrian.soma._as_matrices</code>: returns a motion's poses as they come when they are <code>(N, J, 3, 3)</code> matrices, or converts <code>(N, J, 3)</code> axis-angle ones with _rotvec_to_matrix: an array of 3 or 4 dimensions (<code>np.ndarray[Any, ...]</code>), which Codon, typing an array by its number of dimensions, cannot express; only load_soma_motion, itself uncalled, calls it</li>
+<li><code>pedestrian.soma.load_soma_motion</code>: reads a SOMA motion's .npz with <code>numpy.load(..., allow_pickle=False)</code>: Codon's numpy cannot read an .npz, and its load() has no <code>allow_pickle</code>; the checked actions.play_motion, which calls it, imports pedestrian.soma through its model (MODELLED_IMPORTS), so it is not compiled through that call either</li>
 <li><code>prepare.docker.positive_seconds</code>: takes a value of a backend's block of the run's config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express (a timeout); only read_docker_settings, itself uncalled, and the excluded pedestrian.ardy call it</li>
 <li><code>prepare.docker.read_docker_settings</code>: takes a backend's block of the run's config (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express; only the excluded pedestrian.ardy calls it</li>
 <li><code>prepare.docker.string_list</code>: takes a value of a backend's block of the run's config of any type (<code>Any</code>: a Hydra node's), which Codon cannot express (a list setting, <code>docker_args</code>); only read_docker_settings, itself uncalled, calls it</li>
@@ -6171,7 +6179,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; only validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it</li>
 </ul>
 </details>
-<p>The 123 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 122 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6200,7 +6208,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 123 EXCLUDED modules, and why</summary>
+<summary>The 122 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads into values of any type (<code>Any</code>)</li>
@@ -6277,7 +6285,6 @@ the first:</p>
 <li><code>pedestrian._proto.pedestrian_motion_pb2_grpc</code>: imports grpc</li>
 <li><code>pedestrian.ardy</code>: imports grpc and pedestrian.motion_client (grpc), which is neither checked nor modelled; ArdyBackend.from_settings() reads the backend's settings as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
 <li><code>pedestrian.motion_client</code>: imports grpc and the generated protobuf modules (google.protobuf)</li>
-<li><code>pedestrian.soma</code>: reads a SOMA motion with numpy.load (an .npz, which Codon's numpy cannot read) and types its arrays with numpy.typing (<code>NDArray</code>), which Codon's numpy lacks; pedestrian/soma.codon models what the checked actions.play_motion uses of it</li>
 <li><code>prepare.declare</code>: sets and reads a class attribute by name (setattr, <code>type.__dict__</code>, <code>__mro__</code>) and imports a module by name (importlib), which Codon cannot</li>
 <li><code>prepare.pool</code>: builds backends from the classes it is handed, by attribute name (<code>getattr(cls, ...)</code>), which Codon cannot</li>
 <li><code>pytest_fixtures</code>: imports pytest, and takes the scenario's class (<code>Type[BaseScenario]</code>), which Codon cannot hold as a value</li>
@@ -7849,7 +7856,11 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>numpy.typing</code>. Annotate with numpy's shape-typed array instead,
   <code>np.ndarray[tuple[int, int], np.dtype[np.float32]]</code> (two dimensions),
   which mypy reads as precisely and the check translates; a shape of
-  <code>tuple[int, ...]</code> or <code>Any</code>, and <code>NDArray</code>, are dropped. An annotation
+  <code>tuple[int, ...]</code> or <code>Any</code>, and <code>NDArray</code>, are dropped (<code>pedestrian.soma</code>
+  holds a motion's bone directions as <code>np.ndarray[tuple[int, int, int],
+  np.dtype[np.float64]]</code> and its rotations with four dimensions; its
+  <code>_as_matrices()</code>, whose poses have three dimensions or four, takes
+  <code>np.ndarray[Any, np.dtype[np.float64]]</code> and is <code>UNCALLED</code>). An annotation
   broken over lines keeps its line breaks inside its brackets, so
   <code>newest: Optional[\n    ...\n] = None</code> still compiles.
 - <strong>A measurement's <code>raw_data</code> is a view</strong> in typesafe_carla's Codon library,
@@ -8100,6 +8111,17 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   makes <code>other</code> a <code>Lanelet</code>, and a list of <code>(float, ConstLanelet)</code> then
   refuses it. Give the upcast a name of its own (<code>nearby: ConstLanelet =
   near</code>, <code>route.geometry</code>).
+- <strong>A call of another checked module's <code>UNCALLED</code> function</strong>: Codon
+  compiles a function when something calls it, so a checked module that
+  calls an <code>UNCALLED</code> function of another compiles that function's body
+  through the call, and its <code>UNCALLED</code> entry does not keep it out. When the
+  other module has a model that declares the function, the caller imports
+  the module through the model (<code>MODELLED_IMPORTS</code>), and is compiled against
+  that declaration instead: <code>actions.play_motion</code> imports <code>pedestrian.soma</code>
+  through <code>pedestrian/soma.codon</code>, so its call of <code>load_soma_motion()</code>, whose
+  <code>numpy.load</code> of an .npz Codon cannot compile, compiles against the model,
+  while <code>pedestrian.soma</code> itself is checked from its source. The caller then
+  holds the model's types (<code>SomaMotion</code>), as below.
 - <strong>A value of a type the model holds</strong>: a checked module that hands a checked
   value to a checked module that imports it through the model
   (<code>MODELLED_IMPORTS</code>) hands the wrong type. <code>scenario_runner</code> hands the
@@ -8185,7 +8207,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 19:25:59 UTC"><span class="timeago" datetime="2026-11-05T19:25:59+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 19:25:59 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 19:31:04 UTC"><span class="timeago" datetime="2026-11-05T19:31:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 19:31:04 UTC">2026-11-05</span>
   </span>
 
     
