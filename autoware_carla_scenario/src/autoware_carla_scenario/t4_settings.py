@@ -114,6 +114,24 @@ class T4Settings:
         workers = self.workers
         if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
             raise ValueError(f"t4.workers must be a positive integer, not {workers!r}")
+        self._check_lenses()
+
+    def _check_lenses(self) -> None:
+        """Refuse a camera's F-theta lens the dataset cannot hold: one with no
+        OpenCV model (:func:`opencv_of_ftheta`), which the writer would
+        otherwise refuse only as each run's dataset starts (#1686).  A lens
+        whose logical id names no camera is not written, so not checked."""
+        for logical_id, lens in self.lenses:
+            for camera_id, cam in self.cameras:
+                if camera_id != logical_id:
+                    continue
+                try:
+                    opencv_of_ftheta(lens, cam.image_width, cam.image_height)
+                except ValueError as error:
+                    raise ValueError(
+                        f"t4: the lens of camera '{logical_id}' cannot be written "
+                        f"to a T4 dataset: {error}"
+                    ) from None
 
     @property
     def interval_ticks(self) -> int:

@@ -340,23 +340,70 @@ class T4Recording:
         else:
             self._rear_axle = rear_axle_offset(ego, settings.rear_axle_offset_m)
 
+        # Before the writer makes the dataset's directory: a lens with no
+        # OpenCV model is refused with nothing on disk (#1686).
+        camera_models = self._camera_models()
+
         started = time.time()
         self._epoch_us = int(started * 1e6)
         captured = datetime.fromtimestamp(started, tz=timezone.utc)
+        # Whatever fails from here on leaves no unfinished dataset behind: the
+        # directory goes, unless it was there before (it is then not ours).
+        existed = self.path.exists()
+        try:
+            self._start_writer(
+                writer_module,
+                world,
+                ego,
+                camera_models,
+                scene_name=scene_name,
+                description=description,
+                location=location,
+                lanelet2_path=lanelet2_path,
+                date_captured=captured.strftime("%Y-%m-%d-%H-%M-%S"),
+            )
+        except BaseException:
+            if not existed:
+                shutil.rmtree(self.path, ignore_errors=True)
+            raise
+        logger.info(
+            "T4 dataset: %d LiDAR(s) and %d camera(s) %s, every %d tick(s) -> %s",
+            len(settings.lidars),
+            len(settings.cameras),
+            "fed by the driver policy's" if self.fed_by_driver else "on the ego",
+            settings.interval_ticks,
+            self.path,
+        )
+
+    def _start_writer(
+        self,
+        writer_module: ModuleType,
+        world: "carla.World",
+        ego: "carla.Actor",
+        camera_models: list[tuple[list[list[float]], list[float]]],
+        *,
+        scene_name: str,
+        description: str,
+        location: str,
+        lanelet2_path: Optional[Path],
+        date_captured: str,
+    ) -> None:
+        """Make the writer, give it the map and the channels, and put the
+        sensors on an ego that has none of its own."""
         self._writer: Any = writer_module.T4Writer(
             self.path / _VERSION,
             scene_name=scene_name,
             scene_description=description,
             logfile=f"{scene_name}.log",
             vehicle=str(ego.type_id),
-            date_captured=captured.strftime("%Y-%m-%d-%H-%M-%S"),
+            date_captured=date_captured,
             location=location,
             token_seed=f"{scene_name}@{self._epoch_us}",
             map_offset=_map_offset(),
             rear_axle_offset_m=self._rear_axle,
-            max_distance_m=settings.max_distance_m,
-            jpeg_quality=settings.jpeg_quality,
-            workers=settings.workers,
+            max_distance_m=self._settings.max_distance_m,
+            jpeg_quality=self._settings.jpeg_quality,
+            workers=self._settings.workers,
         )
         if lanelet2_path is not None and Path(lanelet2_path).is_file():
             self._writer.add_lanelet2_map(Path(lanelet2_path))
@@ -368,25 +415,15 @@ class T4Recording:
                     info, self.path / _VERSION / "map" / PROJECTOR_INFO_FILENAME
                 )
 
-        self._declare_sensors()
+        self._declare_sensors(camera_models)
         if not self.fed_by_driver:
             self._attach_sensors(world, ego)
-        logger.info(
-            "T4 dataset: %d LiDAR(s) and %d camera(s) %s, every %d tick(s) -> %s",
-            len(settings.lidars),
-            len(settings.cameras),
-            "fed by the driver policy's" if self.fed_by_driver else "on the ego",
-            settings.interval_ticks,
-            self.path,
-        )
 
-    def _declare_sensors(self) -> None:
-        """Declare the channels: the LiDARs' cloud in the ego's frame, and each
-        camera's optical frame on the ego with its pinhole."""
-        if self._settings.lidars:
-            self._writer.add_sensor(
-                LIDAR_CHANNEL, "lidar", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0)
-            )
+    def _camera_models(self) -> list[tuple[list[list[float]], list[float]]]:
+        """Each camera's ``(intrinsic, distortion)``, in the order of
+        ``settings.cameras``: its pinhole, or OpenCV's rational model fitted
+        to its F-theta lens."""
+        models: list[tuple[list[list[float]], list[float]]] = []
         lenses = dict(self._settings.lenses)
         for logical_id, cam in self._settings.cameras:
             intrinsic = [
@@ -407,6 +444,22 @@ class T4Recording:
                     mean_px,
                     max_px,
                 )
+            models.append((intrinsic, distortion))
+        return models
+
+    def _declare_sensors(
+        self, camera_models: list[tuple[list[list[float]], list[float]]]
+    ) -> None:
+        """Declare the channels: the LiDARs' cloud in the ego's frame, and each
+        camera's optical frame on the ego with its model (*camera_models*, of
+        :meth:`_camera_models`)."""
+        if self._settings.lidars:
+            self._writer.add_sensor(
+                LIDAR_CHANNEL, "lidar", (0.0, 0.0, 0.0), (1.0, 0.0, 0.0, 0.0)
+            )
+        for (logical_id, cam), (intrinsic, distortion) in zip(
+            self._settings.cameras, camera_models
+        ):
             body = sensor_pose_in_rig(
                 cam.position_x,
                 cam.position_y,

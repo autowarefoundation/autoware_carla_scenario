@@ -126,7 +126,11 @@ step apart.
   logged; for Cosmos3's front wide camera it is within 0.05 px out to the
   image's corners. t4-devkit v0.8.0's own projection (`view_points`) applies
   the distortion before dividing by depth, so project with OpenCV
-  (`cv2.projectPoints`).
+  (`cv2.projectPoints`). A lens OpenCV cannot hold -- one skewed in its rows
+  (`linear_cde`'s `e` != 0), or one no rational model fits -- is refused
+  before the run starts, as a config error naming the camera
+  (`t4: the lens of camera '<logical_id>' cannot be written to a T4
+  dataset: ...`), rather than leaving every run without a dataset.
 - A **box** is its centre and orientation in the map frame, and its size
   `(width, length, height)`; velocities are in the map frame too. A
   pedestrian's velocity is measured from where it stood at the key frame
