@@ -1007,7 +1007,7 @@ guess.
 | Option | Variable | Default | Meaning |
 | --- | --- | --- | --- |
 | `--drafts` | `SCENARIO_EDITOR_DRAFTS` | `./scenario_drafts` | Where drafts are stored |
-| `--export-dir` | `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged, in a directory per draft, until the browser fetches it |
+| `--export-dir` | `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged for download, in a directory per draft; it is kept, so the link can be followed again, until the draft is deleted or exported again |
 | — | `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated; the map cache (`map_root()`: `$AUTOWARE_DATA_DIR/maps`, `~/autoware_data/maps` by default, or `AUTOWARE_CARLA_SCENARIO_MAP_CACHE`) is always added, set or not |
 | `--host` | `SCENARIO_EDITOR_HOST` | `127.0.0.1` | Bind address |
 | `--port` | `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |

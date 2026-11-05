@@ -3856,6 +3856,108 @@ class TestDraftsDoNotShareAnExport:
         assert zipfile.ZipFile(io.BytesIO(after)).namelist()
 
 
+class TestTheStagedWheelhouseLivesAsLongAsItsDraft:
+    """A staged wheelhouse is kept for every download, and goes with its draft (#1702).
+
+    The archive is a few hundred MB.  Nothing removed it, so a deleted draft's
+    archive -- which no route can reach any more -- stayed in the export
+    directory for good.
+    """
+
+    @staticmethod
+    def _stage(service: EditorService, draft: Draft, tmp_path: Path) -> Path:
+        """Stage a tiny wheelhouse for *draft*, as a finished export does."""
+        source = tmp_path / "src" / f"{draft.id}_wheelhouse"
+        source.mkdir(parents=True)
+        (source / "a-0.1.0-py3-none-any.whl").write_text("x", encoding="utf-8")
+        return service._stage_archive(source, draft)
+
+    def test_deleting_a_draft_removes_its_archive(self, tmp_path: Path) -> None:
+        service = EditorService(DraftStore(tmp_path / "drafts"), tmp_path / "exports")
+        doomed = service.create_draft()
+        kept = service.create_draft()
+        doomed_archive = self._stage(service, doomed, tmp_path)
+        kept_archive = self._stage(service, kept, tmp_path)
+        assert doomed_archive.is_file() and kept_archive.is_file()
+
+        assert service.delete_draft(doomed.id) is True
+        assert not (tmp_path / "exports" / doomed.id).exists()
+        # Another draft's archive is not the deleted draft's to remove.
+        assert kept_archive.is_file()
+        assert service.staged_archive(kept) == kept_archive
+
+    def test_deleting_a_missing_draft_touches_no_archive(self, tmp_path: Path) -> None:
+        """Nothing was deleted, so nothing staged is removed either."""
+        service = EditorService(DraftStore(tmp_path / "drafts"), tmp_path / "exports")
+        draft = service.create_draft()
+        archive = self._stage(service, draft, tmp_path)
+        service.store.path_for(draft.id).unlink()
+        assert service.delete_draft(draft.id) is False
+        assert archive.is_file()
+
+    def test_the_delete_route_removes_the_archive(
+        self, client: TestClient, offline_export: None, draft_id: str
+    ) -> None:
+        client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
+        packages = client.app.state.service.export_dir  # type: ignore[attr-defined]
+        assert (packages / draft_id / "cut_in-wheelhouse.zip").is_file()
+
+        response = client.post(f"/draft/{draft_id}/delete", follow_redirects=False)
+        assert response.status_code == 303
+        assert list(packages.iterdir()) == []
+
+    def test_the_download_link_can_be_followed_again(
+        self, client: TestClient, offline_export: None, draft_id: str
+    ) -> None:
+        """The report keeps its link on the page, and an interrupted or
+        mislaid download is fetched again rather than re-exported -- an export
+        is minutes of resolving and building -- so serving the zip keeps it."""
+        client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
+        first = client.get(f"/draft/{draft_id}/wheelhouse.zip")
+        second = client.get(f"/draft/{draft_id}/wheelhouse.zip")
+        assert first.status_code == second.status_code == 200
+        assert second.content == first.content
+        assert zipfile.ZipFile(io.BytesIO(second.content)).namelist()
+
+    def test_a_draft_deleted_during_its_export_gets_nothing_staged(
+        self,
+        client: TestClient,
+        offline_export: None,
+        monkeypatch: pytest.MonkeyPatch,
+        draft_id: str,
+    ) -> None:
+        """An export that finishes after its draft was deleted would otherwise
+        stage an archive no route can reach -- the leak this issue is about."""
+        from autoware_carla_scenario.editor import service as service_module
+
+        zipping = threading.Event()
+        release = threading.Event()
+        real_zip = service_module._zip_directory
+
+        def _slow_zip(source: Path, archive: Path) -> None:
+            zipping.set()
+            assert release.wait(_HANG_S)
+            real_zip(source, archive)
+
+        monkeypatch.setattr(service_module, "_zip_directory", _slow_zip)
+        exporter = threading.Thread(
+            target=lambda: client.post(
+                f"/draft/{draft_id}/export", data={"dev_mode": "on"}
+            )
+        )
+        exporter.start()
+        try:
+            assert zipping.wait(_HANG_S)
+            deleted = client.post(f"/draft/{draft_id}/delete", follow_redirects=False)
+            assert deleted.status_code == 303
+        finally:
+            release.set()
+            exporter.join(_HANG_S)
+        assert not exporter.is_alive(), "the export never finished"
+        packages = client.app.state.service.export_dir  # type: ignore[attr-defined]
+        assert not (packages / draft_id).exists()
+
+
 class TestMapActionsKeepConcurrentEdits:
     """A map operation runs for tens of seconds off the event loop (#679).
 

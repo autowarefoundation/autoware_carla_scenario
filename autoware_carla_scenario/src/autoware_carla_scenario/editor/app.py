@@ -57,7 +57,7 @@ _TEMPLATES_DIR = _EDITOR_DIR / "templates"
 _STATIC_DIR = _EDITOR_DIR / "static"
 
 #: Environment variable choosing where an exported package's archive is
-#: staged until the browser has fetched it.
+#: staged for download (kept until the draft is deleted or exported again).
 EXPORT_DIR_ENV = "SCENARIO_EDITOR_EXPORT_DIR"
 
 #: Environment variable pointing at a self-hosted build of the simple_lanelet2

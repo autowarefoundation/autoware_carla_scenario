@@ -49,8 +49,9 @@ def _parser() -> argparse.ArgumentParser:
         "--export-dir",
         type=Path,
         default=os.environ.get("SCENARIO_EDITOR_EXPORT_DIR") or None,
-        help="where an exported wheelhouse's .zip is staged until the browser "
-        "fetches it (env SCENARIO_EDITOR_EXPORT_DIR; default "
+        help="where an exported wheelhouse's .zip is staged for download, kept "
+        "until the draft is deleted or exported again "
+        "(env SCENARIO_EDITOR_EXPORT_DIR; default "
         "./scenario_packages)",
     )
     return parser
@@ -66,8 +67,8 @@ def main(argv: list[str] | None = None) -> None:
     * ``--drafts`` / ``SCENARIO_EDITOR_DRAFTS`` -- where drafts are stored
       (default ``./scenario_drafts``).
     * ``--export-dir`` / ``SCENARIO_EDITOR_EXPORT_DIR`` -- where an exported
-      wheelhouse's ``.zip`` is staged until the browser fetches it (default
-      ``./scenario_packages``).  Exports are handed back as downloads, so this
+      wheelhouse's ``.zip`` is staged for download, and kept until the draft
+      is deleted or exported again (default ``./scenario_packages``).  Exports are handed back as downloads, so this
       is a holding area rather than a destination anyone browses.
     * ``--host`` / ``SCENARIO_EDITOR_HOST`` and ``--port`` /
       ``SCENARIO_EDITOR_PORT`` -- bind address (default ``127.0.0.1:9100``,
