@@ -34,9 +34,9 @@ ahead, measured along the ego's lane on the Lanelet2 map:
   centreline runs closest to its heading; where lanes are stacked -- an
   elevated road over a street -- the one at the ego's height), the
   lanelets following it -- every branch, up to :data:`AHEAD_RANGE_M` ahead,
-  for the measure does not know the route -- and back from it through the first lanelet before each
-  (``previous[0]``); its arc length ``s`` runs along their centrelines,
-  continued from one to the next;
+  for the measure does not know the route -- and back from it through the
+  first lanelet before each (``previous[0]``); its arc length ``s`` runs
+  along their centrelines, continued from one to the next;
 * a vehicle **counts** when it is on one of those lanelets or on a lanelet
   beside one (its left or right neighbour in the routing graph, a lane change
   allowed or not), and its origin is further along the lane than the ego's;
@@ -1014,7 +1014,9 @@ class _LaneFrame:
         still on it, running its way, and no rival under the ego runs closer
         to its heading -- the rule :func:`_ego_lanelet` chooses by, asked of
         the lanelets that overlap the ego's where a lane branches or merges,
-        so a moment's heading drift there does not hold the wrong branch."""
+        so a moment's heading drift there does not hold the wrong branch.  A
+        rival stacked over or under the ego's lanelet, not at the ego's level
+        (:func:`_at_the_egos_level`), never displaces it (#1595)."""
         if not _area(self.ego_lanelet).holds(ego.x, ego.y):
             return False
         _s, d2, yaw = _line(self.ego_lanelet).project(ego.x, ego.y)
@@ -1025,8 +1027,18 @@ class _LaneFrame:
             if not _area(rival).holds(ego.x, ego.y):
                 continue
             _rs, rival_d2, rival_yaw = _line(rival).project(ego.x, ego.y)
-            if _runs_closer(_angle_between(rival_yaw, ego.yaw), rival_d2, angle, d2):
-                return False
+            rival_angle = _angle_between(rival_yaw, ego.yaw)
+            if not _runs_closer(rival_angle, rival_d2, angle, d2):
+                continue
+            # Asked only of a rival that would win: heights are read off
+            # Lanelet2's centreline, slow for a long lanelet.
+            level = _at_the_egos_level(
+                ego,
+                [(self.ego_lanelet, angle, d2), (rival, rival_angle, rival_d2)],
+            )
+            for lanelet_id, _angle, _d2 in level:
+                if lanelet_id == rival:
+                    return False
         return True
 
     def __init__(self, ego_lanelet: int, reach: float) -> None:

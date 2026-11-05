@@ -13,6 +13,7 @@ import typesafe_carla.carla as carla
 from autoware_carla_scenario.constants import EGO_ROLE_NAME
 from autoware_carla_scenario.coordinate.poses import Lanelet2Pose
 from autoware_carla_scenario.coordinate.transform import to_carla_world
+from autoware_carla_scenario import measures
 from autoware_carla_scenario.measures import (
     STOP_LINE_DISTANCE_M,
     Bumpers,
@@ -234,3 +235,45 @@ def test_a_spawn_on_the_elevated_road_is_not_placed_by_the_street_s_stop_line(
     assert _measured(to_carla_world(pose).to_carla_transform()) == pytest.approx(
         10.0, abs=0.01
     )
+
+
+@pytest.fixture
+def shifted_decks() -> Iterator[LaneMap]:
+    """As :func:`decks`, the elevated road 0.5 m to the street's left: its
+    lanelets overlap the street's in plan view, so the street's lane frame
+    holds them as rivals."""
+    cuts = [0.0, 100.0, 200.0, 300.0]
+    street = build_road(straight(300.0), cuts, [-1.75, 1.75], {"ego": (0, False)})
+    deck = build_road(
+        straight(300.0, y0=0.5),
+        cuts,
+        [-1.75, 1.75],
+        {"ego": (0, False)},
+        z=_DECK_Z,
+        first_id=20_000_000,
+    )
+    built = _lane_maps.stacked(street, deck)
+    _with_stop_line(built, built.id("ego", 1), _STOP_X)
+    yield from _lane_maps.loaded(built)
+
+
+def test_the_lane_is_kept_under_an_elevated_road_nearer_in_plan_view(
+    shifted_decks: LaneMap,
+) -> None:
+    # On the street 0.4 m left of its centreline: the deck's centreline,
+    # 0.5 m left, is nearer in plan view, but not at the ego's level -- it
+    # does not displace the street's lane, which is built once.
+    built = measures._FRAMES_BUILT["count"]
+    for x in range(60, 80):
+        ego = carla.Transform(
+            carla.Location(x=float(x), y=-0.4, z=0.0), carla.Rotation(yaw=0.0)
+        )
+        assert stop_line_distance_between(ego, _EGO) == pytest.approx(
+            _STOP_X - (x + _EGO.front), abs=1e-3
+        )
+    assert measures._FRAMES_BUILT["count"] == built + 1
+
+    on_deck = carla.Transform(
+        carla.Location(x=60.0, y=-0.4, z=_DECK_Z), carla.Rotation(yaw=0.0)
+    )
+    assert stop_line_distance_between(on_deck, _EGO) is None
