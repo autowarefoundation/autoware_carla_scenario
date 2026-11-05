@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import shlex
 import threading
 from pathlib import Path
 from typing import Any
@@ -452,6 +453,37 @@ def test_the_run_panel_s_body_is_accepted(
     assert preview.json()["command"] == "uv run scenario scenario=a/one carla.port=2001"
     rerun = {"scenario": "a/one", "extra_overrides": [], "sweeper": ""}
     assert client.post("/api/run", json=rerun).json() == {"status": "started"}
+
+
+def test_the_local_preview_is_shell_quoted(client: TestClient) -> None:
+    """The preview is meant to be copied into a shell (#1512): a glob or a
+    space in an argument is quoted, as the SLURM preview quotes it, and the
+    sweep note stays an unquoted comment."""
+    body = {
+        "scenario": "intersection_passing/*",
+        "extra_overrides": ["+note=two words"],
+        "sweeper": "lanelet",
+        "launcher": "local",
+    }
+    preview = client.post("/api/run/preview", json=body).json()["command"]
+    assert preview == (
+        "uv run scenario 'scenario=intersection_passing/*' '+note=two words'"
+        "  # sweep: lanelet (resolved to N individual jobs)"
+    )
+    command, _, _ = preview.partition("  # ")
+    expected, _ = runner.build_command(
+        "intersection_passing/*", ["+note=two words"], "lanelet"
+    )
+    assert shlex.split(command) == expected
+
+
+def test_the_page_s_default_preview_is_shell_quoted(client: TestClient) -> None:
+    """base.html's preview before the first /api/run/preview answer quotes
+    its glob as the endpoint does (#1512)."""
+    page = client.get("/").text
+    assert ">uv run scenario 'scenario=*/*'</code>" in page
+    preview = client.post("/api/run/preview", json={"scenario": "*/*"}).json()
+    assert preview["command"] == "uv run scenario 'scenario=*/*'"
 
 
 def test_null_or_absent_overrides_and_sweeper_are_none(
