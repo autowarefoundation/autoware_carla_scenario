@@ -138,8 +138,10 @@ users around it, every one going on as it goes -- its velocity and
 acceleration held, a braking one stopping -- over a 3 s horizon; the CriMe
 measures against other road users are the most critical over them, as CriMe
 folds them. CommonRoad's scenario is planar, so the road users on another
-level of road than the ego's -- more than 1 m above or below its box -- are
-left out of it, as they are of the collisions.
+level of road than the ego's -- more than 1 m above or below its box, and
+higher or lower than a 10 % grade climbs over the distance between them, so a
+lead on the same road up a slope stays in -- are left out of it, as they are
+of the collisions.
 
 | Key | Unit | Reads | Folds with |
 |---|---|---|---|
