@@ -128,6 +128,7 @@ from .transform import (
     conflicting_imports,
     enum_class_names,
     literal_all,
+    module_constants,
     plain_classes,
     redirect_imports,
     relative_module_imports,
@@ -3944,6 +3945,21 @@ def _library_files(
 
         return target
 
+    # The module-level constants of the checked modules: an import of one
+    # from a checked module (not through the model) reads it through the
+    # module (#1693, :func:`.transform.redirect_imports`).
+    constants = module_constants(
+        {n: (sources.modules[n].tree, sources.modules[n].is_package) for n in names}
+    )
+
+    def constants_for(name: str) -> Callable[[str, str], bool]:
+        modelled = set(MODELLED_IMPORTS.get(name, ()))
+
+        def constant(module: str, imported: str) -> bool:
+            return module not in modelled and imported in constants.get(module, ())
+
+        return constant
+
     # The classes of the checked modules, by name: a dataclass derived from
     # one is constructed with the fields of its base too.
     classes = {
@@ -3963,6 +3979,7 @@ def _library_files(
             targets(name),
             every.__contains__,
             uncalled=_uncalled(name),
+            constant=constants_for(name),
         )
         uncalled = _uncalled(name)
         checks = render_library_checks(module.tree, uncalled, classes)

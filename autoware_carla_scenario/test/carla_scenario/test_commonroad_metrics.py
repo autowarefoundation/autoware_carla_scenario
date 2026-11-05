@@ -749,9 +749,10 @@ def test_the_heavy_metrics_settings_are_heavy_metrics_reexported() -> None:
     )
 
 
-def test_heavy_metrics_writes_the_key_metrics_defines() -> None:
-    # heavy_metrics writes the key out: Codon cannot read a constant imported
-    # from metrics at module level (#1689).
+def test_heavy_metrics_holds_the_key_metrics_defines() -> None:
+    # heavy_metrics imports the key from metrics, which the library check
+    # reads through the module (#1693; #1689 wrote it out).
+    assert heavy_metrics.CRIME_TTR_S is metrics.CRIME_TTR_S
     assert heavy_metrics.HEAVY_METRICS == frozenset({metrics.CRIME_TTR_S})
     assert isinstance(heavy_metrics.HEAVY_METRICS, frozenset)
     assert heavy_metrics.HEAVY_METRICS <= set(metrics.COMMONROAD_METRICS)
