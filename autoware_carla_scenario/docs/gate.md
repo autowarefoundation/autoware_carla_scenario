@@ -136,7 +136,16 @@ A run of a logical scenario with a gate writes `{stem}_gate.json` beside
 - `digest` is the SHA-256 of the document the run ran, its `ui` layout left
   out, taken before a case's overrides are folded in: every case of one
   version of the document has the same digest.
-- `gate` is the gate the document stated when the run ran.
+- `gate` is the gate the document stated when the run ran. A record without
+  one is refused, as is one whose gate is not a valid gate (a field a gate
+  does not have, a value of the wrong type or out of range), or whose
+  `case`, `outcome`, `files` or `ego` is not a JSON object, whose lists
+  are not JSON arrays, whose ego rows hold a route s, lateral offset or
+  speed beyond 1e7, or whose text cannot be written back as UTF-8 (a lone
+  surrogate): `scenario-gate` reports it as unreadable (exit code 2)
+  and judges the other records. A malformed gate is refused with
+  `--document` too, though the document's gate replaces it: the record is
+  corrupt all the same.
 - `files` names the run's other outputs the runner wrote beside the record
   (one it did not write is left out); the coverage criteria merge the
   `coverage` files of the runs judged.
@@ -238,12 +247,13 @@ Newly failing cases:
 |-----------|---------|
 | `0` | Every gate judged passed (two sets: on the candidate; with `--fail-on-regression`, and nothing regressed) |
 | `1` | A gate failed, or (two sets, `--fail-on-regression`) something regressed |
-| `2` | Nothing to judge, a record could not be read, more than two sets, `--fail-on-regression` with one set, or `--document` has no gate |
+| `2` | Nothing to judge, a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, or `--document` has no gate |
 
 The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 `passed`, `runs`, `passed_runs`, the `gate` judged, each criterion (`name`,
-`passed`, `value`, `threshold`, `comparison`, `detail`), the `warnings` and
-the records' paths. Of two sets, it holds the `baseline` and `candidate`
+`passed`, `value`, `threshold`, `comparison`, `detail`), the `warnings`, the
+`errors` (coverage files that could not be read; the run then exits `2` even
+if `passed`) and the records' paths. Of two sets, it holds the `baseline` and `candidate`
 paths and a comparison per scenario (`comparisons`): `passed` (the candidate's gate), `regressed`,
 both verdicts, each criterion's `change` and `delta` (candidate less
 baseline), the `newly_failing` and `fixed` cases, and the `warnings`.

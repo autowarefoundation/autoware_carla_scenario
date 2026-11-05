@@ -36,6 +36,7 @@ from __future__ import annotations
 import argparse
 import dataclasses
 import json
+import math
 import statistics
 import sys
 from collections.abc import Iterable, Mapping, Sequence
@@ -126,6 +127,8 @@ class GateVerdict:
         records: The runs judged.
         criteria: Each criterion judged, in :data:`GATE_CRITERIA` order.
         warnings: What the judging noticed and went on past.
+        errors: Files the judging needed and could not read (a run's
+            coverage file); ``scenario-gate`` exits 2 on any.
     """
 
     scenario: str
@@ -134,6 +137,7 @@ class GateVerdict:
     records: list[GateRecord]
     criteria: list[CriterionResult] = field(default_factory=list)
     warnings: list[str] = field(default_factory=list)
+    errors: list[str] = field(default_factory=list)
 
     @property
     def passed(self) -> bool:
@@ -158,6 +162,7 @@ class GateVerdict:
             "gate": self.gate.to_dict(),
             "criteria": [c.to_dict() for c in self.criteria],
             "warnings": list(self.warnings),
+            "errors": list(self.errors),
             "records": [str(r.path) for r in self.records if r.path is not None],
         }
 
@@ -180,6 +185,7 @@ class GateVerdict:
                 f"{_number(c.threshold)} | {result} |"
             )
         lines += _warning_lines(self.warnings)
+        lines += [f"- error: {e}" for e in self.errors]
         return "\n".join(lines)
 
 
@@ -215,14 +221,29 @@ def find_gate_records(paths: Iterable[Path]) -> list[Path]:
 
 
 def load_gate_records(paths: Iterable[Path]) -> tuple[list[GateRecord], list[str]]:
-    """The records in *paths*, and why any file could not be read."""
+    """The records in *paths*, and why any file could not be read.
+
+    A record whose gate is not a valid :class:`GateSpec` (a field it does not
+    have, a value of the wrong type or out of range) cannot be read either:
+    it is reported here, naming its file, rather than failing the judging of
+    every record later.  It is refused even when a document's gate
+    (``--document``) replaces the gates the records state: a record whose
+    gate is malformed is corrupt, and judging it would hide that.
+    """
     records: list[GateRecord] = []
     errors: list[str] = []
     for path in paths:
         try:
-            records.append(read_gate_record(path))
+            record = read_gate_record(path)
         except ValueError as exc:
             errors.append(str(exc))
+            continue
+        try:
+            GateSpec.model_validate(record.gate)
+        except ValueError as exc:  # pydantic's ValidationError is a ValueError
+            errors.append(f"{path}: not a valid gate ({exc})")
+            continue
+        records.append(record)
     return records, errors
 
 
@@ -288,15 +309,19 @@ def consistency(
         for key, at_station in station_values(record, per_segment).items():
             by_station.setdefault(key, []).append(at_station)
     # (lateral spread, speed spread, where) of each station enough runs passed.
-    spreads = [
-        (
-            statistics.pstdev(v[0] for v in passed),
-            statistics.pstdev(v[1] for v in passed),
-            (segment, (j + 0.5) / per_segment),
-        )
-        for (segment, j), passed in sorted(by_station.items())
-        if len(passed) >= min_runs
-    ]
+    # A station with a value that is not finite is not measured: the records
+    # bound their values, so only a degenerate interpolation gives one.
+    spreads: list[tuple[float, float, tuple[int, float]]] = []
+    for (segment, j), passed in sorted(by_station.items()):
+        if len(passed) < min_runs or not all(
+            math.isfinite(x) for v in passed for x in v
+        ):
+            continue
+        lateral_spread = statistics.pstdev(v[0] for v in passed)
+        speed_spread = statistics.pstdev(v[1] for v in passed)
+        if math.isfinite(lateral_spread) and math.isfinite(speed_spread):
+            where = (segment, (j + 0.5) / per_segment)
+            spreads.append((lateral_spread, speed_spread, where))
     if not spreads:
         return ConsistencyResult()
     # max() keeps the first of equals: the station furthest back.
@@ -342,10 +367,18 @@ def _case_coverage(records: Sequence[GateRecord]) -> tuple[Optional[float], str]
 
 
 def _coverage_criteria(
-    gate: GateSpec, records: Sequence[GateRecord], warnings: list[str]
+    gate: GateSpec,
+    records: Sequence[GateRecord],
+    warnings: list[str],
+    errors: list[str],
 ) -> list[CriterionResult]:
     """The coverage grades the gate asks for, from the records' coverage files
-    merged."""
+    merged.
+
+    A coverage file a record names that cannot be read (openodd's loader
+    skips it), or files that cannot be merged, go into *errors*: the grades
+    are judged on what was read, and ``scenario-gate`` exits 2.
+    """
     groups = [
         (name, group, threshold)
         for name, group, threshold in (
@@ -356,7 +389,10 @@ def _coverage_criteria(
     ]
     if not groups and not gate.coverage_items:
         return []
-    from ..coverage.report import load_and_merge  # noqa: PLC0415
+    from ..coverage.report import (  # noqa: PLC0415
+        load_coverage_files,
+        merge_coverage,
+    )
 
     paths: list[Path] = []
     for record in records:
@@ -365,7 +401,20 @@ def _coverage_criteria(
             paths.append(path)
         else:
             warnings.append(f"{record.path}: no coverage file beside it")
-    report = load_and_merge(paths) if paths else None
+    report = None
+    if paths:
+        documents = load_coverage_files(paths)
+        read = {p.resolve() for p, _ in documents}
+        errors.extend(
+            f"{p}: the coverage file cannot be read"
+            for p in paths
+            if p.resolve() not in read
+        )
+        try:
+            report = merge_coverage([doc for _, doc in documents])
+        except Exception as exc:  # noqa: BLE001 -- reported as the exit code says
+            names = ", ".join(str(p) for p, _ in documents)
+            errors.append(f"{names}: the coverage files cannot be merged ({exc})")
     merged_groups = report.groups() if report is not None else []
     detail = f"{len(paths)} coverage file(s)"
     out: list[CriterionResult] = []
@@ -446,7 +495,7 @@ def judge(
         out.append(
             _criterion("min_case_coverage", value, ">=", gate.min_case_coverage, detail)
         )
-    out.extend(_coverage_criteria(gate, records, warnings))
+    out.extend(_coverage_criteria(gate, records, warnings, verdict.errors))
     if gate.judges_consistency:
         spread = consistency(
             records, gate.consistency_stations, gate.consistency_min_runs
@@ -642,6 +691,14 @@ class GateComparison:
         does (``scenario-gate --fail-on-regression``).
         """
         return self.candidate is not None and self.candidate.passed
+
+    @property
+    def errors(self) -> list[str]:
+        """What either side's judging could not read."""
+        return [
+            *(self.baseline.errors if self.baseline is not None else []),
+            *(self.candidate.errors if self.candidate is not None else []),
+        ]
 
     def ok(self, strict: bool = False) -> bool:
         """Whether the comparison passes: the candidate passes the gate, and
@@ -942,7 +999,12 @@ def main(
         print(markdown)
     if args.json is not None:
         args.json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
-    if errors:
+    # What the judging could not read (a run's coverage file), as the records
+    # main could not read: reported, and the exit code says so.
+    unread = [e for r in reports for e in r.errors]
+    for error in unread:
+        print(f"scenario-gate: {error}", file=sys.stderr)
+    if errors or unread:
         return EXIT_ERROR
     passed = all(
         r.ok(strict) if isinstance(r, GateComparison) else r.passed for r in reports

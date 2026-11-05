@@ -28,8 +28,10 @@ from autoware_carla_scenario.gate.evaluate import (
     compare,
     compare_all,
     consistency,
+    find_gate_records,
     judge,
     judge_all,
+    load_gate_records,
     main,
     station_values,
 )
@@ -233,6 +235,88 @@ class TestRecord:
         with pytest.raises(ValueError, match="malformed ego row"):
             read_gate_record(path)
 
+    @pytest.mark.parametrize(
+        ("key", "value", "match"),
+        [
+            ("case", "m", "'case' is not a JSON object"),
+            ("files", ["x"], "'files' is not a JSON object"),
+            ("outcome", [True], "'outcome' is not a JSON object"),
+            ("ego", "rows", "'ego' is not a JSON object"),
+            ("gate", "strict", "'gate' is not a JSON object"),
+        ],
+    )
+    def test_a_part_of_the_wrong_type_is_refused(
+        self, tmp_path: Path, key: str, value: Any, match: str
+    ) -> None:
+        path = _write(tmp_path, "x", _record())
+        raw = json.loads(path.read_text())
+        raw[key] = value
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match=match):
+            read_gate_record(path)
+
+    @pytest.mark.parametrize(
+        ("part", "key", "value"),
+        [
+            ("case", "lanelet_ids", 7),
+            ("ego", "rows", {"0": [0, 0, 0, 0]}),
+            ("ego", "columns", "tslv"),
+        ],
+    )
+    def test_a_nested_list_of_the_wrong_type_is_refused(
+        self, tmp_path: Path, part: str, key: str, value: Any
+    ) -> None:
+        path = _write(tmp_path, "x", _record())
+        raw = json.loads(path.read_text())
+        raw[part][key] = value
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match="is not a JSON array"):
+            read_gate_record(path)
+
+    def test_a_row_that_is_not_an_array_is_refused(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, "x", _record())
+        raw = json.loads(path.read_text())
+        raw["ego"]["rows"][0] = "0000"
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match="malformed ego row"):
+            read_gate_record(path)
+
+    @pytest.mark.parametrize("gate", ["missing", None])
+    def test_a_record_without_a_gate_is_refused(
+        self, tmp_path: Path, gate: Optional[str]
+    ) -> None:
+        path = _write(tmp_path, "x", _record())
+        raw = json.loads(path.read_text())
+        if gate == "missing":
+            del raw["gate"]
+        else:
+            raw["gate"] = None
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match="no 'gate' object"):
+            read_gate_record(path)
+
+    def test_an_empty_gate_is_still_a_gate(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, "x", _record(gate={}))
+        assert read_gate_record(path).gate == {}
+
+    def test_a_case_that_is_not_an_object_is_refused_on_its_own(self) -> None:
+        with pytest.raises(ValueError, match="the case is not a JSON object"):
+            GateCase.from_dict("m")  # type: ignore[arg-type]
+
+    def test_a_record_that_is_not_an_object_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="not a JSON object"):
+            GateRecord.from_dict(["x"])  # type: ignore[arg-type]
+
+    def test_a_malformed_record_does_not_stop_the_others(self, tmp_path: Path) -> None:
+        _write(tmp_path, "a", _record())
+        bad = _write(tmp_path, "b", _record())
+        raw = json.loads(bad.read_text())
+        raw["case"] = "m"
+        bad.write_text(json.dumps(raw))
+        records, errors = load_gate_records(find_gate_records([tmp_path]))
+        assert [r.path for r in records] == [tmp_path / "a_gate.json"]
+        assert len(errors) == 1 and "b_gate.json" in errors[0]
+
 
 class TestSignedLateral:
     def test_left_of_the_route_is_positive(self) -> None:
@@ -276,6 +360,19 @@ class TestConsistency:
         assert spread.stations == 30
         assert spread.lateral_spread_m == pytest.approx(0.0)
         assert spread.speed_spread_mps == pytest.approx(0.0)
+
+    def test_a_station_with_a_value_that_is_not_finite_is_not_measured(
+        self,
+    ) -> None:
+        # Built directly, past the bound read_gate_record holds a record to:
+        # interpolating between -1e308 and 1e308 overflows to inf (and nan).
+        rows = _drive()
+        rows[5] = (rows[5][0], rows[5][1], 1e308, 10.0)
+        rows[6] = (rows[6][0], rows[6][1], -1e308, 10.0)
+        spread = consistency([_record(ego=rows), _record()], 10, 2)
+        assert spread.stations == 29
+        assert spread.lateral_spread_m is not None
+        assert math.isfinite(spread.lateral_spread_m)
 
     def test_the_largest_spread_is_found(self) -> None:
         wide = _drive(lateral=1.0, speed=12.0)
@@ -416,6 +513,188 @@ class TestCli:
     def test_an_unreadable_record_exits_2(self, tmp_path: Path) -> None:
         _write(tmp_path, "a", _record())
         (tmp_path / "b_gate.json").write_text("{")
+        assert main([str(tmp_path)]) == EXIT_ERROR
+
+    @pytest.mark.parametrize(
+        ("key", "value"),
+        [("case", "m"), ("files", ["x"]), ("gate", None), ("outcome", 1)],
+    )
+    def test_a_malformed_record_exits_2(
+        self, tmp_path: Path, capsys: Any, key: str, value: Any
+    ) -> None:
+        # A passing record beside it: the malformed one is reported as
+        # unreadable (2), not as a failed gate (1), nor ignored (0).
+        _write(tmp_path, "a", _record())
+        path = _write(tmp_path, "b", _record())
+        raw = json.loads(path.read_text())
+        if value is None:
+            del raw[key]
+        else:
+            raw[key] = value
+        path.write_text(json.dumps(raw))
+        assert main([str(tmp_path)]) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [
+            ('"index":0', '"index":1e999'),
+            ('"lanelet_ids":[1,', '"lanelet_ids":[Infinity,'),
+            ('"case_count":4', '"case_count":-Infinity'),
+        ],
+    )
+    def test_an_infinite_integer_exits_2(
+        self, tmp_path: Path, capsys: Any, old: str, new: str
+    ) -> None:
+        verdict = tmp_path / "v.json"
+        _write(tmp_path, "a", _record())
+        path = _write(tmp_path, "b", _record())
+        text = path.read_text()
+        assert old in text
+        path.write_text(text.replace(old, new))
+        with pytest.raises(ValueError, match="b_gate.json"):
+            read_gate_record(path)
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+        # The other record is still judged.
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
+
+    @pytest.mark.parametrize(
+        "gate",
+        [{"bogus_field": 1}, {"min_success_rate": "x"}, {"min_success_rate": 2.0}],
+    )
+    def test_a_malformed_gate_exits_2(
+        self, tmp_path: Path, capsys: Any, gate: dict[str, Any]
+    ) -> None:
+        verdict = tmp_path / "v.json"
+        _write(tmp_path, "a", _record())
+        _write(tmp_path, "b", _record(gate=gate))
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_gate.json: not a valid gate" in capsys.readouterr().err
+        # The other record is still judged.
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
+
+    def test_a_malformed_gate_is_refused_with_a_document_too(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        # The document's gate replaces the records', but a record whose gate
+        # is malformed is corrupt all the same.
+        runs = tmp_path / "runs"
+        _write(runs, "a", _record())
+        _write(runs, "b", _record(gate={"bogus_field": 1}))
+        document = new_document()
+        document.id = "left_turn"
+        document.route = _route()
+        document.gate = GateSpec(min_success_rate=0.0)
+        path = tmp_path / "document.yaml"
+        save_document(document, path)
+        assert main([str(runs), "--document", str(path)]) == EXIT_ERROR
+        assert "b_gate.json: not a valid gate" in capsys.readouterr().err
+
+    def test_deeply_nested_json_exits_2(self, tmp_path: Path, capsys: Any) -> None:
+        verdict = tmp_path / "v.json"
+        _write(tmp_path, "a", _record())
+        path = tmp_path / "b_gate.json"
+        path.write_text("[" * 200_000 + "]" * 200_000)
+        with pytest.raises(ValueError, match="b_gate.json: cannot be read"):
+            read_gate_record(path)
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
+
+    def test_a_huge_integer_literal_names_the_file(self, tmp_path: Path) -> None:
+        # Past Python's integer digit limit (4300 digits; 3.11, backported to
+        # 3.10.7) json.loads raises ValueError, which names the file.
+        path = tmp_path / "b_gate.json"
+        path.write_text('{"schema": ' + "1" * 5000 + "}")
+        with pytest.raises(ValueError, match="b_gate.json: "):
+            read_gate_record(path)
+        assert main([str(tmp_path)]) == EXIT_ERROR
+
+    @pytest.mark.parametrize("column", [1, 2, 3])
+    @pytest.mark.parametrize("value", [1e160, -1e308])
+    def test_a_huge_ego_value_exits_2(
+        self, tmp_path: Path, capsys: Any, column: int, value: float
+    ) -> None:
+        verdict = tmp_path / "v.json"
+        gate = {"max_lateral_spread_m": 1.0, "max_speed_spread_mps": 1.0}
+        _write(tmp_path, "a", _record(gate=gate))
+        _write(tmp_path, "c", _record(gate=gate))
+        path = _write(tmp_path, "b", _record(gate=gate))
+        raw = json.loads(path.read_text())
+        raw["ego"]["rows"][3][column] = value
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match="b_gate.json: ego row .* beyond 1e"):
+            read_gate_record(path)
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 2
+
+    def test_a_lone_surrogate_exits_2(self, tmp_path: Path, capsys: Any) -> None:
+        verdict = tmp_path / "v.json"
+        markdown = tmp_path / "gate.md"
+        _write(tmp_path, "a", _record())
+        path = _write(tmp_path, "b", _record())
+        # json.dumps escapes it as \ud800, which json.loads reads back as a
+        # lone surrogate.
+        path.write_text(path.read_text().replace('"Left turn"', '"\\ud800"'))
+        with pytest.raises(ValueError, match="b_gate.json: cannot be read"):
+            read_gate_record(path)
+        argv = [str(tmp_path), "--json", str(verdict), "--markdown", str(markdown)]
+        assert main(argv) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
+
+    def test_a_lone_surrogate_in_two_sets_exits_2(self, tmp_path: Path) -> None:
+        base, cand = tmp_path / "base", tmp_path / "cand"
+        _write(base, "a", _record())
+        _write(cand, "a", _record())
+        path = _write(cand, "b", _record())
+        path.write_text(path.read_text().replace('"Left turn"', '"\\ud800"'))
+        assert main([str(base), str(cand)]) == EXIT_ERROR
+
+    @pytest.mark.parametrize("content", [b"{", b"\xff", b"[1]"])
+    def test_a_corrupt_coverage_file_exits_2(
+        self, tmp_path: Path, capsys: Any, content: bytes
+    ) -> None:
+        verdict = tmp_path / "v.json"
+        gate = {"min_odd_coverage": 0.0}
+        _write(tmp_path, "a", _record(gate=gate))
+        _write(tmp_path, "b", _record(gate=gate))
+        (tmp_path / "b_coverage.json").write_bytes(content)
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_coverage.json: the coverage file cannot be read" in (
+            capsys.readouterr().err
+        )
+        judged = json.loads(verdict.read_text())["verdicts"][0]
+        # Both records are still judged; the error is in the verdict.
+        assert judged["runs"] == 2
+        assert any("b_coverage.json" in e for e in judged["errors"])
+
+    def test_a_corrupt_coverage_file_exits_2_in_two_sets(self, tmp_path: Path) -> None:
+        base, cand = tmp_path / "base", tmp_path / "cand"
+        gate = {"min_odd_coverage": 0.0}
+        _write(base, "a", _record(gate=gate))
+        _write(cand, "a", _record(gate=gate))
+        (base / "a_coverage.json").write_text("{")
+        assert main([str(base), str(cand)]) == EXIT_ERROR
+
+    def test_a_file_not_in_utf8_exits_2(self, tmp_path: Path, capsys: Any) -> None:
+        verdict = tmp_path / "v.json"
+        _write(tmp_path, "a", _record())
+        path = tmp_path / "b_gate.json"
+        path.write_bytes(b'{"schema": "\xff\xfe"}')
+        with pytest.raises(ValueError, match="b_gate.json: cannot be read"):
+            read_gate_record(path)
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
+
+    def test_a_record_without_a_gate_alone_exits_2(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, "a", _record())
+        raw = json.loads(path.read_text())
+        del raw["gate"]
+        path.write_text(json.dumps(raw))
         assert main([str(tmp_path)]) == EXIT_ERROR
 
     def test_the_documents_gate_rejudges_the_runs(self, tmp_path: Path) -> None:

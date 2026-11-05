@@ -53,10 +53,14 @@ def signed_lateral(
 class GateProbe:
     """The ego's rows in the route's frame, one per tick it was found on it."""
 
+    _t0: Optional[float]
+    _last_s: Optional[float]
+    rows: list[tuple[float, float, float, float]]
+
     def __init__(self) -> None:
-        self._t0: Optional[float] = None
-        self._last_s: Optional[float] = None
-        self.rows: list[tuple[float, float, float, float]] = []
+        self._t0 = None
+        self._last_s = None
+        self.rows = []
 
     def __call__(self, world: "carla.World") -> None:
         """Keep a row for the ego where it is now; none when it is not on the
