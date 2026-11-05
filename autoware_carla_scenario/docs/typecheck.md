@@ -2403,7 +2403,8 @@ and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
 base, its runner and its queue, the traffic backends' interface, the signal
 controllers, the adversity math, the measures, the metrics and the ODD's
-probes, the example scenarios and their configs, and the parts of the tooling
+probes, the gate's per-run record and probe (its evaluator is not), the
+example scenarios and their configs, and the parts of the tooling
 around a run that need nothing Codon lacks. A checked package's `__init__`
 re-exports what is not checked through models of it (see *A class a checked
 package only re-exports* below). Each checked module is listed here with the

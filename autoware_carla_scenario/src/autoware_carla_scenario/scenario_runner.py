@@ -624,8 +624,9 @@ def _write_gate_record(
     (:meth:`~autoware_carla_scenario.declarative.DeclarativeScenario.gate_record`)
     returning a :class:`~autoware_carla_scenario.gate.record.GateRecord` or
     ``None``.  Best effort, as the coverage file: a record that cannot be made
-    or written is logged, and the run's result stands.  Its record is a module
-    the check does not compile (gate.record).
+    or written is logged, and the run's result stands.  The check leaves it
+    out: the scenario's method is found with ``getattr()``, and the record is
+    written as JSON of mixed value types.
     """
     make = getattr(scenario, "gate_record", None)
     if not callable(make):
