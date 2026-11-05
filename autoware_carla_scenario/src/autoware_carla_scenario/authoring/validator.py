@@ -38,7 +38,7 @@ from ..trajectory.authoring import (
 )
 from ..constants import MIN_BACKGROUND_SPEED_KMH
 from .hydra_config import MAP_EXCLUSION_REF
-from .package_names import framework_name_problem, shared_package_id
+from .package_names import framework_name_problem
 from ._builders_generated import (
     FAILURE_ONLY_CONDITIONS,
     ONCE_ACTIONS,
@@ -1637,22 +1637,11 @@ def _check_id(out: _Collector, scenario_id: str) -> None:
     An error when that package would be the framework's own
     (``autoware_carla`` and ``autoware_carla_scenario``), so the editor shows
     it before an export starts rather than ``uv lock`` failing on a package
-    that depends on itself.  A warning when a shorter id exports to the same
-    package directory (``cut_in_scenario`` and ``cut_in``): an export with
-    ``force`` of one replaces the other's.
+    that depends on itself.
     """
     problem = framework_name_problem(scenario_id)
     if problem is not None:
         out.error("id", problem)
-        return
-    short_id = shared_package_id(scenario_id)
-    if short_id is not None:
-        out.warn(
-            "id",
-            f"The id {scenario_id!r} exports to the same package directory as the "
-            f"id {short_id!r}, so exporting either with force replaces the "
-            f"other's package. Use {short_id!r} unless that is intended.",
-        )
 
 
 def validate_document(document: ScenarioDocument) -> ValidationReport:

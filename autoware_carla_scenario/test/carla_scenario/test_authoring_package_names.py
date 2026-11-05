@@ -16,7 +16,7 @@ import pytest
 
 from autoware_carla_scenario.authoring import package_export, package_names
 from autoware_carla_scenario.authoring.framework_pin import Pin
-from autoware_carla_scenario.authoring.starter import new_document
+from autoware_carla_scenario.authoring.starter import blank_document, new_document
 from autoware_carla_scenario.authoring.validator import validate_document
 from autoware_carla_scenario.scaffold import generator, names
 from autoware_carla_scenario.typecheck.library import CHECKED
@@ -54,20 +54,6 @@ def _random_ids(count: int) -> list[str]:
     while len(ids) < count:
         candidate = rng.choice("abcz") + "".join(
             rng.choice(alphabet) for _ in range(rng.randint(0, 12))
-        )
-        ids.append(candidate)
-    return ids
-
-
-def _suffix_ids(count: int) -> list[str]:
-    """Ids built from ``_scenario`` suffixes, underscores and the framework name."""
-    rng = random.Random(16952)
-    heads = ["a", "cut_in", "scenario", "autoware_carla", "autoware"]
-    parts = ["_", "__", "scenario", "_scenario", "__scenario", "carla", "a"]
-    ids: list[str] = []
-    while len(ids) < count:
-        candidate = rng.choice(heads) + "".join(
-            rng.choice(parts) for _ in range(rng.randint(0, 4))
         )
         ids.append(candidate)
     return ids
@@ -152,60 +138,40 @@ class TestFrameworkName:
 
 
 class TestSharedDirectory:
+    """Ids that share a package directory are documented, not warned about."""
+
     @pytest.mark.parametrize(
-        ("scenario_id", "short_id"),
-        [
-            ("cut_in_scenario", "cut_in"),
-            ("cut__in", "cut_in"),
-            ("cut_in_", "cut_in"),
-            ("scenario_scenario", "scenario"),
-            ("cut_in", None),
-            ("scenario", None),
-            ("a_scenario_scenario", None),
-            ("a_scenario__scenario_", "a_scenario_scenario"),
-            ("a_scenario", "a"),
-            ("autoware_carla_scenario_scenario", None),
-            ("autoware_carla_scenario__scenario", "autoware_carla_scenario_scenario"),
-            ("autoware_carla", None),
-            ("autoware_carla_scenario", None),
-        ],
+        "scenario_id",
+        ["cut_in", "cut_in_scenario", "cut__in", "cut_in_", "cut__in_scenario_"],
     )
-    def test_shared_package_id(self, scenario_id: str, short_id: str | None) -> None:
-        assert package_names.shared_package_id(scenario_id) == short_id
-        if short_id is not None:
-            assert (
-                package_names.names_for_id(scenario_id)["package_name"]
-                == package_names.names_for_id(short_id)["package_name"]
-            )
+    def test_ids_share_one_package(self, scenario_id: str) -> None:
+        assert (
+            package_names.names_for_id(scenario_id)["package_name"] == "cut_in_scenario"
+        )
 
-    def test_a_returned_id_shares_the_package(self) -> None:
-        returned = 0
-        for scenario_id in _suffix_ids(20000) + _random_ids(2000):
-            short_id = package_names.shared_package_id(scenario_id)
-            if short_id is None:
-                continue
-            returned += 1
-            assert short_id != scenario_id, scenario_id
-            assert len(short_id) <= len(scenario_id), scenario_id
-            assert _ID.match(short_id), scenario_id
-            assert package_names.framework_name_problem(short_id) is None, scenario_id
-            assert (
-                package_names.names_for_id(short_id)["package_name"]
-                == package_names.names_for_id(scenario_id)["package_name"]
-            ), scenario_id
-            assert package_names.shared_package_id(short_id) is None, scenario_id
-        assert returned > 1000
-
-    def test_the_validator_warns(self) -> None:
-        report = validate_document(new_document("cut_in_scenario"))
+    @pytest.mark.parametrize(
+        "scenario_id", ["cut_in", "cut_in_scenario", "cut__in", "new_scenario"]
+    )
+    def test_the_validator_does_not_warn(self, scenario_id: str) -> None:
+        report = validate_document(new_document(scenario_id))
         assert report.ok
-        warnings = [i for i in report.warnings if i.path == "id"]
-        assert len(warnings) == 1
-        assert "'cut_in'" in warnings[0].message
-
-    def test_the_short_id_is_not_warned_about(self) -> None:
-        report = validate_document(new_document("cut_in"))
         assert not [i for i in report.issues if i.path == "id"]
+
+
+class TestStarterDocuments:
+    """The editor's starting drafts validate with no errors and no warnings."""
+
+    def test_blank_document(self) -> None:
+        report = validate_document(blank_document())
+        assert report.ok
+        assert report.errors == ()
+        assert report.warnings == ()
+
+    def test_new_document(self) -> None:
+        report = validate_document(new_document())
+        assert report.ok
+        assert report.errors == ()
+        assert report.warnings == ()
 
 
 class TestPinLines:
