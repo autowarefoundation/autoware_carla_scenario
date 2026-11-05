@@ -125,6 +125,19 @@ def test_the_runner_clears_every_prop_away() -> None:
     assert prop_module.standing_props() == []
 
 
+def test_clearing_props_forgets_the_entry_speeds() -> None:
+    # #1599: written on every spawn, by an actor id a later world may reuse.
+    prop_module._ENTERED[42] = (7, 10.0)
+    prop_module._BROUGHT_IN[(1, "npc1")] = (0, CarlaWorldPose(1.0, 2.0, 0.0))
+    try:
+        prop_module.clear_props()
+        assert prop_module._ENTERED == {}
+        assert prop_module._BROUGHT_IN == {}
+    finally:
+        prop_module._ENTERED.clear()
+        prop_module._BROUGHT_IN.clear()
+
+
 def test_many_props_share_the_library_and_the_ground() -> None:
     world = _World(ground=None)
     library = world.get_blueprint_library()
