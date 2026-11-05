@@ -112,7 +112,7 @@ def install(
         ValueError: *url* has a scheme urllib cannot open.
     """
     _require_extraction_filters()  # before anything is downloaded
-    # The runner imports this module for install_dir() alone; these it does not need.
+    # Imported here: only a download needs them, not the commands that check an install.
     import urllib.parse  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
 
