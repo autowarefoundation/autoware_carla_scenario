@@ -203,10 +203,17 @@ baseline run of passed and a candidate run of failed is **newly failing**, one
 a baseline run of failed and every candidate run of passed is **fixed**.
 
 The candidate **regressed** when a criterion regressed, a case is newly
-failing, or it did not run the scenario at all. A regression fails the
-comparison even when the candidate still clears the gate: a case that broke
-is a regression whatever the success rate. A scenario only the candidate ran
-is judged on its own.
+failing, or it did not run the scenario at all. The report always says so,
+but by default only the **candidate's gate** decides the exit code: a case
+that broke while the success rate still clears the gate is reported, and the
+comparison passes. `--fail-on-regression` makes any regression fail it too,
+for a release that must not lose a case it had. A scenario the candidate did
+not run fails either way; one only the candidate ran is judged on its own.
+
+```bash
+# Strict: exit 1 on any regression, even inside the gate
+scenario-gate runs/v1.4/ runs/v1.5/ --fail-on-regression
+```
 
 ```markdown
 ## Left turn (`logical_left_turn`): PASSED, REGRESSED
@@ -227,15 +234,15 @@ Newly failing cases:
 
 | Exit code | Meaning |
 |-----------|---------|
-| `0` | Every gate judged passed (two sets: on the candidate, and nothing regressed) |
-| `1` | A gate failed, or (two sets) something regressed |
-| `2` | Nothing to judge, a record could not be read, more than two sets, or `--document` has no gate |
+| `0` | Every gate judged passed (two sets: on the candidate; with `--fail-on-regression`, and nothing regressed) |
+| `1` | A gate failed, or (two sets, `--fail-on-regression`) something regressed |
+| `2` | Nothing to judge, a record could not be read, more than two sets, `--fail-on-regression` with one set, or `--document` has no gate |
 
 The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 `passed`, `runs`, `passed_runs`, the `gate` judged, each criterion (`name`,
 `passed`, `value`, `threshold`, `comparison`, `detail`), the `warnings` and
 the records' paths. Of two sets, it holds the `baseline` and `candidate`
-paths and a comparison per scenario (`comparisons`): `passed`, `regressed`,
+paths and a comparison per scenario (`comparisons`): `passed` (the candidate's gate), `regressed`,
 both verdicts, each criterion's `change` and `delta` (candidate less
 baseline), the `newly_failing` and `fixed` cases, and the `warnings`.
 

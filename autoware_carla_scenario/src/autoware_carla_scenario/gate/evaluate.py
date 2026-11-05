@@ -24,7 +24,9 @@ The criteria, each judged only when the gate sets it:
 Given two sets of runs -- a baseline's and a candidate's, of the same
 logical scenarios -- both are judged against one gate, and the report says
 what regressed: a criterion that passed and fails now, and the cases every
-baseline run of passed and a candidate run of failed.
+baseline run of passed and a candidate run of failed.  The candidate's gate
+decides the exit code; ``--fail-on-regression`` makes a regression fail it
+too.
 
 See ``docs/gate.md``.
 """
@@ -652,10 +654,18 @@ class GateComparison:
 
     @property
     def passed(self) -> bool:
-        """Whether the candidate passes the gate and did not regress."""
-        return (
-            self.candidate is not None and self.candidate.passed and not self.regressed
-        )
+        """Whether the candidate passes the gate.
+
+        A regression inside the gate -- a case that broke while the success
+        rate still clears it -- does not fail it; :meth:`ok` with *strict*
+        does (``scenario-gate --fail-on-regression``).
+        """
+        return self.candidate is not None and self.candidate.passed
+
+    def ok(self, strict: bool = False) -> bool:
+        """Whether the comparison passes: the candidate passes the gate, and
+        with *strict* nothing regressed either."""
+        return self.passed and not (strict and self.regressed)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -860,6 +870,15 @@ def _parser(prog: Optional[str]) -> argparse.ArgumentParser:
             "recorded (its id selects the runs)"
         ),
     )
+    parser.add_argument(
+        "--fail-on-regression",
+        action="store_true",
+        help=(
+            "with two sets: exit 1 on any regression (a criterion that passed "
+            "and fails, a newly failing case), even when the candidate passes "
+            "the gate. By default only the candidate's gate decides"
+        ),
+    )
     parser.add_argument("--scenario", help="judge only the runs of this scenario id")
     parser.add_argument("--json", type=Path, help="also write the verdicts as JSON")
     parser.add_argument(
@@ -879,9 +898,9 @@ def main(
 ) -> int:
     """``scenario-gate RUNS`` or ``scenario-gate BASELINE CANDIDATE``.
 
-    0 when every gate passes (and, with two sets, nothing regressed), 1 when
-    one fails (or regressed), 2 when there is nothing to judge or a file
-    cannot be read.
+    0 when every gate passes (on the candidate, with two sets), 1 when one
+    fails -- or, with ``--fail-on-regression``, something regressed -- and 2
+    when there is nothing to judge or a file cannot be read.
     """
     parser = _parser(prog)
     args = parser.parse_args(argv)
@@ -913,6 +932,9 @@ def main(
     for error in errors:
         print(f"scenario-gate: {error}", file=sys.stderr)
     reports: Sequence[GateVerdict | GateComparison]
+    strict = bool(args.fail_on_regression)
+    if strict and len(sets) == 1:
+        parser.error("--fail-on-regression needs two sets (BASELINE CANDIDATE)")
     if len(sets) == 1:
         reports = judge_all(sets[0], gate, scenario)
         title = "# Logical scenario gates"
@@ -937,7 +959,10 @@ def main(
         args.json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     if errors:
         return EXIT_ERROR
-    return EXIT_PASSED if all(r.passed for r in reports) else EXIT_FAILED
+    passed = all(
+        r.ok(strict) if isinstance(r, GateComparison) else r.passed for r in reports
+    )
+    return EXIT_PASSED if passed else EXIT_FAILED
 
 
 if __name__ == "__main__":  # pragma: no cover

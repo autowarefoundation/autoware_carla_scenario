@@ -464,7 +464,7 @@ class TestRegression:
         by_name = {c.name: c for c in comparison.criteria}
         assert by_name["min_success_rate"].change == "regressed"
         assert by_name["min_success_rate"].delta == pytest.approx(1 / 3 - 1)
-        assert comparison.regressed and not comparison.passed
+        assert comparison.regressed and not comparison.ok()
 
     def test_a_case_that_passed_and_fails_regressed_inside_the_gate(self) -> None:
         # Still above the success rate: the gate passes, the case regressed.
@@ -479,6 +479,9 @@ class TestRegression:
             (0, 1),
         )
         assert comparison.regressed
+        # The gate decides by default; strict, the regression fails it.
+        assert comparison.ok()
+        assert not comparison.ok(strict=True)
 
     def test_a_fixed_case_is_reported(self) -> None:
         comparison = compare(self._runs(True, False), self._runs(True, True))
@@ -532,13 +535,31 @@ class TestRegressionCli:
         payload = json.loads(out.read_text())
         assert payload["comparisons"][0]["regressed"] is False
 
-    def test_a_newly_failing_case_exits_1(self, tmp_path: Path) -> None:
+    def test_a_newly_failing_case_inside_the_gate_exits_0(self, tmp_path: Path) -> None:
+        # 1 of 2 passed: the gate's 0.5 success rate still holds.
         base = self._set(tmp_path / "base", True, True)
         cand = self._set(tmp_path / "cand", True, False)
         markdown = tmp_path / "c.md"
-        assert main([str(base), str(cand), "--markdown", str(markdown)]) == EXIT_FAILED
+        argv = [str(base), str(cand), "--markdown", str(markdown)]
+        assert main(argv) == EXIT_PASSED
         text = markdown.read_text()
         assert "REGRESSED" in text and "Newly failing cases" in text
+
+    def test_fail_on_regression_makes_it_exit_1(self, tmp_path: Path) -> None:
+        base = self._set(tmp_path / "base", True, True)
+        cand = self._set(tmp_path / "cand", True, False)
+        argv = [str(base), str(cand), "--fail-on-regression"]
+        assert main(argv) == EXIT_FAILED
+
+    def test_a_candidate_failing_the_gate_exits_1(self, tmp_path: Path) -> None:
+        base = self._set(tmp_path / "base", True, True)
+        cand = self._set(tmp_path / "cand", False, False)
+        assert main([str(base), str(cand)]) == EXIT_FAILED
+
+    def test_fail_on_regression_needs_two_sets(self, tmp_path: Path) -> None:
+        with pytest.raises(SystemExit) as exited:
+            main([str(tmp_path), "--fail-on-regression"])
+        assert exited.value.code == 2
 
     def test_more_than_two_sets_are_refused(self, tmp_path: Path) -> None:
         with pytest.raises(SystemExit) as exited:
