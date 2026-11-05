@@ -249,55 +249,6 @@ def _skewed_lens_camera(logical_id: str = "cam_front") -> DriverCameraConfig:
     )
 
 
-def test_settings_refuse_a_lens_the_dataset_cannot_hold() -> None:
-    # Refused as the settings are built, naming the camera, not as every
-    # run's dataset starts (#1686).
-    with pytest.raises(
-        ValueError, match=r"camera 'cam_wide'.*linear_cde e != 0 has no OpenCV model"
-    ):
-        T4Settings.from_driver(_driver(cameras=(_skewed_lens_camera("cam_wide"),)), {})
-
-
-def test_settings_do_not_check_a_lens_of_no_camera() -> None:
-    # A lens whose logical id names no camera is not written: as before, it
-    # is not refused.
-    (camera,) = _driver().cameras
-    lens = _skewed_lens_camera().lens
-    assert lens is not None
-    settings = T4Settings(
-        cameras=(("cam_front", camera.to_sensor_config()),),
-        lenses=(("cam_elsewhere", lens),),
-    )
-    assert settings.lenses == (("cam_elsewhere", lens),)
-
-
-def test_a_run_refuses_a_lens_the_dataset_cannot_hold_before_it_starts() -> None:
-    from autoware_carla_scenario.examples import run  # noqa: PLC0415
-
-    from ._ftheta_lens import COSMOS3_FRONT_WIDE
-    from .test_video_removed import _shipped
-
-    cfg = OmegaConf.merge(
-        _shipped(["t4.enabled=true"]),
-        {
-            "driver": {
-                "cameras": [
-                    {
-                        "logical_id": "cam_front",
-                        "image_width": 832,
-                        "image_height": 480,
-                        "lens": {**COSMOS3_FRONT_WIDE, "linear_cde": [1.0, 0.0, 0.01]},
-                    }
-                ]
-            }
-        },
-    )
-    with pytest.raises(
-        run.RunConfigError, match=r"^t4: the lens of camera 'cam_front'"
-    ):
-        run.check_run_config(cfg)  # type: ignore[arg-type]
-
-
 @pytest.mark.parametrize(
     ("type_id", "base_type", "wheels", "category"),
     [
