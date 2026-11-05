@@ -274,3 +274,67 @@ def test_an_empty_route_is_still_no_route() -> None:
             5,
         ]
         assert _match(parse_constraint({"type": "in_set", "values": empty})) == []
+
+
+@pytest.mark.parametrize(
+    ("type_id", "key"), [("in_set", "values"), ("on_route", "lanelet_ids")]
+)
+@pytest.mark.parametrize("bad", ["${x} junk", "${a}${b}", "junk ${x}", "${}"])
+def test_only_one_whole_reference_skips_validation(
+    type_id: str, key: str, bad: str
+) -> None:
+    with pytest.raises(ValueError, match=rf"{type_id}\.{key}"):
+        parse_constraint({"type": type_id, key: bad})
+    # One reference, spaces around it, is still left for Hydra.
+    assert _match(parse_constraint({"type": type_id, key: " ${map.ids} "})) == []
+
+
+@pytest.mark.parametrize("cls", [InSetConstraint, OnRouteConstraint])
+def test_whole_numbers_of_any_kind_name_their_lanelets(cls: Any) -> None:
+    """numpy floats, Fractions and Decimals matched on master, and still do."""
+    from decimal import Decimal
+    from fractions import Fraction
+
+    np = pytest.importorskip("numpy")
+    ids = (np.float32(2.0), np.int64(3), Fraction(4, 1), Decimal("5"))
+    constraint = cls(ids)
+    assert _match(constraint) == [2, 3, 4, 5]
+    assert all(type(i) is int for i in constraint._lookup)
+
+
+@pytest.mark.parametrize(
+    "bad",
+    [
+        "numpy-half",
+        "numpy-nan",
+        "numpy-bool",
+        "fraction-half",
+        "decimal-half",
+        "decimal-nan",
+        "decimal-inf",
+    ],
+)
+def test_numbers_with_a_fraction_or_no_value_are_refused(bad: str) -> None:
+    from decimal import Decimal
+    from fractions import Fraction
+
+    np = pytest.importorskip("numpy")
+    value = {
+        "numpy-half": np.float32(2.5),
+        "numpy-nan": np.float32("nan"),
+        "numpy-bool": np.bool_(True),
+        "fraction-half": Fraction(5, 2),
+        "decimal-half": Decimal("2.5"),
+        "decimal-nan": Decimal("NaN"),
+        "decimal-inf": Decimal("Infinity"),
+    }[bad]
+    with pytest.raises(ValueError, match=r"in_set\.values"):
+        InSetConstraint((1, value))
+
+
+def test_an_id_too_long_to_show_is_refused_by_field() -> None:
+    """A huge non-whole element is described, not a bare repr() ValueError."""
+    from fractions import Fraction
+
+    with pytest.raises(ValueError, match=r"in_set\.values: .*Fraction"):
+        InSetConstraint((Fraction(10**5000 + 1, 2),))  # type: ignore[arg-type]

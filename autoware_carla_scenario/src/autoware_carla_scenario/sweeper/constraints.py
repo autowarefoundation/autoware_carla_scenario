@@ -133,12 +133,13 @@ def _lanelet_id(owner: str, name: str, value: Any) -> int:
 
     Read as :class:`EqualsConstraint` reads one: a string of ASCII digits --
     quoted in YAML, or typed into the editor -- names the lanelet of that id,
-    and so does a whole float (``1001.0`` equals ``1001``).  A bool, a float
-    with a fraction, and any other text name no lanelet: kept, they would
-    silently match nothing.
+    and so does any whole, finite real number (``1001.0``, numpy's
+    ``float32(1001)``, ``Fraction(1001)`` and ``Decimal("1001")`` all equal
+    ``1001``).  A bool, a number with a fraction, and any other text name no
+    lanelet: kept, they would silently match nothing.
     """
     if isinstance(value, bool):
-        raise ValueError(f"{owner}.{name}: a lanelet id is no bool, got {value!r}")
+        raise ValueError(f"{owner}.{name}: a lanelet id is no bool, got {shown(value)}")
     if isinstance(value, int):
         return int(value)
     if isinstance(value, float):
@@ -152,26 +153,46 @@ def _lanelet_id(owner: str, name: str, value: Any) -> int:
     elif TYPE_CHECKING:
         pass
     else:
-        # Another integer type (numpy's, say) still names its lanelet.
-        import operator  # noqa: PLC0415 -- run time only
+        # Another number (numpy's, a Fraction, a Decimal) still names its
+        # lanelet when it is whole; numpy's bool_ is none of them.
+        import decimal  # noqa: PLC0415 -- run time only
+        import numbers  # noqa: PLC0415
+        import operator  # noqa: PLC0415
 
         try:
             return operator.index(value)
         except TypeError:
             pass
+        if isinstance(value, (numbers.Real, decimal.Decimal)):
+            try:
+                whole = int(value)
+            except (ValueError, OverflowError):  # NaN, an infinity
+                pass
+            else:
+                if whole == value:
+                    return whole
     raise ValueError(
         f"{owner}.{name}: a lanelet id is a whole number or a string of "
-        f"digits, got {value!r}"
+        f"digits, got {shown(value)}"
     )
 
 
 def _unresolved(values: Any) -> bool:
-    """Whether *values* is an interpolation (``${...}``) Hydra has yet to resolve.
+    """Whether *values* is one interpolation (``${...}``) Hydra has yet to resolve.
 
     The editor and an export parse a scenario's constraints before Hydra
-    composes it, with ``${map.no_3d_model_lanelet_ids}`` still a string.
+    composes it, with ``${map.no_3d_model_lanelet_ids}`` still a string.  Only
+    a string that is a single whole reference is one: ``"${x} junk"`` and
+    ``"${a}${b}"`` are refused as any other text.
     """
-    return isinstance(values, str) and str(values).lstrip().startswith("${")
+    if not isinstance(values, str):
+        return False
+    if TYPE_CHECKING:
+        return False
+    else:
+        import re  # noqa: PLC0415 -- run time only
+
+        return re.fullmatch(r"\s*\$\{[^{}]+\}\s*", values) is not None
 
 
 def _lanelet_ids(owner: str, name: str, values: Any) -> tuple[int, ...]:
@@ -179,7 +200,7 @@ def _lanelet_ids(owner: str, name: str, values: Any) -> tuple[int, ...]:
     if isinstance(values, str):
         # A string is iterable, and its characters are no ids.
         raise ValueError(
-            f"{owner}.{name}: a list of lanelet ids, got the string {values!r}"
+            f"{owner}.{name}: a list of lanelet ids, got the string {shown(values)}"
         )
     if TYPE_CHECKING:
         pass
