@@ -9,7 +9,8 @@ when ``CARLA_EXECUTABLE`` is not set::
     scenario-setup --force    # download again regardless
 
 The archive (~16 GB, ~30 GB unpacked) is unpacked while it downloads, so it is
-never kept on disk; the new tree replaces the old one only once it is complete.
+never kept on disk; the new tree replaces the old one only once it is complete,
+by renames, so an interrupted run never leaves a half-deleted install in place.
 A connection that drops mid-download is picked up where it stopped with a range
 request, so a flaky link costs a retry rather than the whole transfer.
 ``AUTOWARE_CARLA_SCENARIO_HOME`` moves ``~/.autoware_carla_scenario``.
@@ -135,6 +136,10 @@ def install(
             f"{target} is not empty and not a CARLA scenario-setup installed; "
             "pick an empty or new directory"
         )
+    # What an interrupted run left: an unfinished download and an old install
+    # moved aside but not yet deleted. Neither is ever trusted as an install.
+    for leftover in (_staging(target), _replaced(target)):
+        shutil.rmtree(leftover, ignore_errors=True)
     request = urllib.request.Request(
         url, headers={} if force else _conditions(target, url)
     )
@@ -157,8 +162,7 @@ def install(
             return target / LAUNCHER
         size = int(source["size"]) if source["size"] else None
         target.parent.mkdir(parents=True, exist_ok=True)
-        staging = target.with_name(target.name + ".partial")
-        shutil.rmtree(staging, ignore_errors=True)  # an interrupted run's
+        staging = _staging(target)
         if size is not None:
             _check_room(target.parent, size)
 
@@ -184,9 +188,44 @@ def install(
         finally:
             stream.close()
     (staging / _STAMP).write_text(json.dumps(source, indent=2) + "\n")
-    shutil.rmtree(target, ignore_errors=True)
-    staging.rename(target)
+    _swap_into_place(staging, target)
     return target / LAUNCHER
+
+
+def _staging(target: Path) -> Path:
+    """Where the download into *target* is unpacked until it is complete."""
+    return target.with_name(target.name + ".partial")
+
+
+def _replaced(target: Path) -> Path:
+    """Where the install *target* held is moved while it is being deleted."""
+    return target.with_name(target.name + ".replaced")
+
+
+def _swap_into_place(staging: Path, target: Path) -> None:
+    """Replace the install at *target* with the complete one at *staging*.
+
+    Deleting ~30 GB takes seconds, long enough for a Ctrl-C, and a tree deleted
+    in place could be left with its launcher and stamp but not much else, which
+    the next run would take for a current install. So the old tree is renamed
+    aside first and deleted only once *staging* is in its place: *target* is
+    always either a complete install or missing, never half of one. What an
+    interrupt leaves aside, :func:`install` deletes on its next run.
+    """
+    old = _replaced(target)
+    shutil.rmtree(old, ignore_errors=True)
+    if not target.exists():
+        staging.rename(target)
+        return
+    target.rename(old)
+    try:
+        staging.rename(target)
+    except OSError:
+        old.rename(target)  # the previous install, as it was
+        raise
+    # Not an install any more, whatever is left of it if this is cut short.
+    (old / _STAMP).unlink(missing_ok=True)
+    shutil.rmtree(old, ignore_errors=True)
 
 
 class _ResumingStream:
