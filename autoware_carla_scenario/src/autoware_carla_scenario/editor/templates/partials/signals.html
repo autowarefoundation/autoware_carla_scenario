@@ -193,10 +193,19 @@
               {% for group in groups %}
                 <div class="ed-field">
                   <label class="ed-label">{{ group.name }}</label>
+                  {#- Compared lower-cased, as the validator and the runtime read
+                      a state: a CARLA spelling ("Red") is the same colour, and
+                      matching none of the options would show the first one and
+                      post it on the next edit of this phase (#1519).  A word
+                      that is no colour at all is kept, for the same reason. -#}
+                  {%- set colour_now = shown.get(group.name, 'red')|string -%}
                   <select name="state_{{ group.name }}" class="ed-input">
+                    {% if colour_now|lower not in signal_state_names %}
+                      <option value="{{ colour_now }}" selected>{{ colour_now }} — not a state</option>
+                    {% endif %}
                     {% for colour in signal_state_names %}
                       <option value="{{ colour }}"
-                              {% if shown.get(group.name, 'red') == colour %}selected{% endif %}>
+                              {% if colour_now|lower == colour %}selected{% endif %}>
                         {{ colour }}
                       </option>
                     {% endfor %}

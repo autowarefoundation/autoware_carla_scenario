@@ -1207,6 +1207,60 @@ class TestFieldsAFormCannotLeaveUnset:
         data = _inspector_post(client, draft_id, "action", node.id)
         assert data["location"] == "parking"
 
+    def test_an_entity_the_document_lacks_survives_a_save(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Shown as "choose", it was cleared by the next post (#1519)."""
+        draft = _draft(store, draft_id)
+        trigger = _present(draft.document.actions[0].trigger, "trigger")
+        node = next(c for c in trigger.children if c.type == "entity_distance")
+        node.params["source"] = "ghost"
+        store.save(draft)
+
+        body = client.get(f"/draft/{draft_id}/inspector/{node.id}").text
+        select = body.split('name="source"')[1].split("</select>")[0]
+        assert '<option value="ghost" selected>' in select
+        assert "no such entity" in select
+
+        data = _inspector_post(client, draft_id, "condition", node.id)
+        assert data["source"] == "ghost"
+        client.post(f"/draft/{draft_id}/condition/{node.id}", data=data)
+        assert _condition(store, draft_id, node.id).params["source"] == "ghost"
+
+    def test_an_action_the_document_lacks_survives_a_save(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The action picker keeps an unknown id as the entity picker does."""
+        client.post(
+            f"/draft/{draft_id}/condition",
+            data={"slot": "pass", "type_id": "action_state"},
+        )
+        draft = _draft(store, draft_id)
+        node = draft.document.assertions.pass_conditions[-1]
+        assert node.type == "action_state"
+        node.params["action"] = "deleted_action"
+        store.save(draft)
+
+        body = client.get(f"/draft/{draft_id}/inspector/{node.id}").text
+        select = body.split('name="action"')[1].split("</select>")[0]
+        assert '<option value="deleted_action" selected>' in select
+        assert "no such action" in select
+
+        data = _inspector_post(client, draft_id, "condition", node.id)
+        assert data["action"] == "deleted_action"
+        client.post(f"/draft/{draft_id}/condition/{node.id}", data=data)
+        assert _condition(store, draft_id, node.id).params["action"] == "deleted_action"
+
+    def test_a_known_entity_shows_no_extra_option(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        trigger = _present(_document(store, draft_id).actions[0].trigger, "trigger")
+        node = next(c for c in trigger.children if c.type == "entity_distance")
+        body = client.get(f"/draft/{draft_id}/inspector/{node.id}").text
+        select = body.split('name="source"')[1].split("</select>")[0]
+        assert "no such entity" not in select
+        assert len(re.findall(r"\bselected\b", select)) == 1
+
 
 class TestPredicateEditing:
     def test_a_second_trigger_condition_wraps_both_in_all(
@@ -2711,6 +2765,85 @@ class TestTheJunctionEditor:
         assert phase.name == "ns_amber"
         assert phase.duration_seconds == 3.0
         assert {s.group: s.state for s in phase.states} == {"ns": "yellow", "ew": "red"}
+
+    @staticmethod
+    def _phase_states_spelled(store: DraftStore, draft_id: str, **states: str) -> None:
+        """Set the first phase's group states as a hand-written file spells them.
+
+        The draft is read back through the model, so a CARLA spelling arrives
+        lower-cased; the template compares lower-cased as well, and either
+        alone keeps these tests green.  An unknown word passes both untouched,
+        which is what the "not a state" test relies on.
+        """
+        from autoware_carla_scenario.authoring.models import SignalStateRef
+
+        draft = _draft(store, draft_id)
+        phase = draft.document.map.traffic_signal_controllers[0].phases[0]
+        phase.states = [
+            SignalStateRef(group=group, state=state) for group, state in states.items()
+        ]
+        store.save(draft)
+
+    @staticmethod
+    def _colour_select(client: TestClient, draft_id: str, group: str) -> str:
+        body = client.get(f"/draft/{draft_id}/inspector/environment").text
+        return body.split(f'name="state_{group}"')[1].split("</select>")[0]
+
+    def test_a_carla_spelled_state_is_read_lower_cased(self) -> None:
+        """The model stores the spelling the validator and runtime mean (#1519)."""
+        from autoware_carla_scenario.authoring.models import SignalStateRef
+
+        assert SignalStateRef(group="ns", state="Red").state == "red"
+        assert SignalStateRef(group="ns", state="YELLOW").state == "yellow"
+        # Only the case is normalised; an unknown word stays for the validator.
+        assert SignalStateRef(group="ns", state="Purple").state == "purple"
+
+    def test_a_carla_spelled_state_shows_as_its_colour(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """It used to match no option, so the browser showed "green"."""
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        self._phase_states_spelled(store, draft_id, ns="Red", ew="Yellow")
+
+        ns = self._colour_select(client, draft_id, "ns")
+        ew = self._colour_select(client, draft_id, "ew")
+        assert re.search(r'<option value="red"\s+selected>', ns)
+        assert re.search(r'<option value="yellow"\s+selected>', ew)
+        assert len(re.findall(r"\bselected\b", ns)) == 1
+        assert "not a state" not in ns
+
+    def test_editing_only_the_duration_keeps_a_carla_spelled_red(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The silent flip of #1519: a duration edit posted state=green."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        self._phase_states_spelled(store, draft_id, ns="Red")
+
+        target = f"/draft/{draft_id}/signal-controller/0/phase/0"
+        form = _FormPost(target)
+        form.feed(client.get(f"/draft/{draft_id}/inspector/environment").text)
+        assert form.found
+        assert form.data["state_ns"] == "red"
+        form.data["duration_seconds"] = "7"
+        client.post(target, data=form.data)
+
+        phase = self._map(store, draft_id).traffic_signal_controllers[0].phases[0]
+        assert phase.duration_seconds == 7.0
+        assert {s.group: s.state for s in phase.states} == {"ns": "red"}
+
+    def test_a_state_that_is_no_colour_is_kept_by_the_form(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Left for the validator to name, not replaced by the first colour."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        self._phase_states_spelled(store, draft_id, ns="purple")
+
+        select = self._colour_select(client, draft_id, "ns")
+        assert '<option value="purple" selected>' in select
+        assert "not a state" in select
 
     def test_a_state_named_by_element_id_survives_the_form(
         self, client: TestClient, store: DraftStore, draft_id: str
