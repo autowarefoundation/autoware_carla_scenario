@@ -522,6 +522,41 @@ class TestCli:
         assert main([str(tmp_path)]) == EXIT_ERROR
         assert "b_gate.json" in capsys.readouterr().err
 
+    @pytest.mark.parametrize(
+        ("old", "new"),
+        [
+            ('"index":0', '"index":1e999'),
+            ('"lanelet_ids":[1,', '"lanelet_ids":[Infinity,'),
+            ('"case_count":4', '"case_count":-Infinity'),
+        ],
+    )
+    def test_an_infinite_integer_exits_2(
+        self, tmp_path: Path, capsys: Any, old: str, new: str
+    ) -> None:
+        verdict = tmp_path / "v.json"
+        _write(tmp_path, "a", _record())
+        path = _write(tmp_path, "b", _record())
+        text = path.read_text()
+        assert old in text
+        path.write_text(text.replace(old, new))
+        with pytest.raises(ValueError, match="b_gate.json"):
+            read_gate_record(path)
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+        # The other record is still judged.
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
+
+    def test_a_file_not_in_utf8_exits_2(self, tmp_path: Path, capsys: Any) -> None:
+        verdict = tmp_path / "v.json"
+        _write(tmp_path, "a", _record())
+        path = tmp_path / "b_gate.json"
+        path.write_bytes(b'{"schema": "\xff\xfe"}')
+        with pytest.raises(ValueError, match="b_gate.json: cannot be read"):
+            read_gate_record(path)
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        assert "b_gate.json" in capsys.readouterr().err
+        assert json.loads(verdict.read_text())["verdicts"][0]["runs"] == 1
+
     def test_a_record_without_a_gate_alone_exits_2(self, tmp_path: Path) -> None:
         path = _write(tmp_path, "a", _record())
         raw = json.loads(path.read_text())

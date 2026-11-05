@@ -273,11 +273,12 @@ def read_gate_record(path: Path) -> GateRecord:
     """
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, json.JSONDecodeError) as exc:
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as exc:
         raise ValueError(f"{path}: cannot be read ({exc})") from exc
     if not isinstance(raw, dict):
         raise ValueError(f"{path}: not a gate record (not a JSON object)")
     try:
         return GateRecord.from_dict(raw, path)
-    except (AttributeError, TypeError, ValueError) as exc:
+    except (AttributeError, OverflowError, TypeError, ValueError) as exc:
+        # OverflowError: an infinite number (1e999, Infinity) as an int.
         raise ValueError(f"{path}: {exc}") from exc

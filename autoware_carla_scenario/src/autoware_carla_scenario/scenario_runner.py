@@ -2294,8 +2294,9 @@ class ScenarioRunner:
                     "[%s] Coverage written to: %s", scenario_name, coverage_path
                 )
             if TYPE_CHECKING:
-                # A logical scenario's gate record (gate.record, not checked;
-                # UNCALLED in typecheck/library.py).
+                # A logical scenario's gate record: _write_gate_record calls a
+                # scenario method found with getattr() and writes JSON of
+                # mixed value types (UNCALLED in typecheck/library.py).
                 pass
             else:
                 _write_gate_record(self.output_dir, file_stem, scenario, result)
