@@ -964,3 +964,11 @@ def test_the_shipped_config_leaves_the_heavy_metrics_to_the_environment(
     assert apply_metrics(_shipped_config(["metrics.heavy=true"]))
     monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "1")
     assert not apply_metrics(_shipped_config(["metrics.heavy=false"]))
+
+
+def test_a_version_reads_ascii_digits_only() -> None:
+    """#1612: ``"²".isdigit()`` is true but ``int("²")`` raises."""
+    from autoware_carla_scenario.commonroad.map import _version
+
+    assert _version("2.1rc3") == (2, 13)
+    assert _version("2².1") == (2, 1)

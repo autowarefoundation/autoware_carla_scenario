@@ -43,8 +43,7 @@ def _master_split_versioned(name: str) -> tuple[str, int, str]:
 
 
 def _outcome(split: Callable[[str], tuple[str, int, str]], name: str) -> object:
-    """What *split* returns, or the type of what it raises (``a@v²``: ``²`` is
-    a digit to ``str.isdigit()`` but not to ``int()``)."""
+    """What *split* returns, or the type of what it raises."""
     try:
         return split(name)
     except Exception as exc:  # noqa: BLE001 - compared, not handled
@@ -96,12 +95,21 @@ def test_versioned_item_name_is_masters(name: str, version: int) -> None:
     )
 
 
+# Names whose version is a non-ASCII digit, which master read as one (``٣``)
+# or raised on (``²``: a digit to ``str.isdigit()`` but not to ``int()``).
+_NON_ASCII = [name for name in _NAMES if not name.isascii()]
+
+
 @pytest.mark.parametrize(
     "name",
-    _NAMES
-    + [
-        versioned_item_name(n, v) + suffix
-        for n, v, suffix in itertools.product(_NAMES, [1, 2, 7], ["", "#2", "#10"])
+    [
+        name
+        for name in _NAMES
+        + [
+            versioned_item_name(n, v) + suffix
+            for n, v, suffix in itertools.product(_NAMES, [1, 2, 7], ["", "#2", "#10"])
+        ]
+        if name.isascii()
     ],
 )
 def test_split_versioned_is_masters(name: str) -> None:
@@ -115,5 +123,11 @@ def test_a_versioned_name_splits_back() -> None:
         "#2",
     )
     assert _split_versioned(versioned_item_name("odd.x", 1)) == ("odd.x", 1, "")
-    with pytest.raises(ValueError):
-        _split_versioned("a@v²")
+
+
+@pytest.mark.parametrize("name", _NON_ASCII)
+def test_a_non_ascii_digit_is_no_version(name: str) -> None:
+    """#1612: only an ASCII number is a version; anything else is part of
+    the name, as ``a@vx`` is."""
+    assert _split_versioned(name) == (name, 1, "")
+    assert _split_versioned(name + "#2") == (name, 1, "#2")

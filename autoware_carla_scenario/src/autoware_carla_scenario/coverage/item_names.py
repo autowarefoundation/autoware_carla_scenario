@@ -41,6 +41,7 @@ def _split_versioned(name: str) -> tuple[str, int, str]:
     if hash_at >= 0:
         head, rest = name[:hash_at], name[hash_at:]
     mark_at = head.rfind(VERSION_MARK)
-    if mark_at >= 0 and head[mark_at + len(VERSION_MARK) :].isdigit():
-        return head[:mark_at], int(head[mark_at + len(VERSION_MARK) :]), rest
+    version = head[mark_at + len(VERSION_MARK) :] if mark_at >= 0 else ""
+    if version.isascii() and version.isdigit():
+        return head[:mark_at], int(version), rest
     return head, 1, rest

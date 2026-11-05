@@ -162,3 +162,9 @@ def test_an_unbound_set_level_constraint_has_no_cached_ids() -> None:
 def test_the_base_class_is_not_a_constraint_itself() -> None:
     with pytest.raises(TypeError):
         Constraint()  # type: ignore[abstract]
+
+
+def test_an_id_of_non_ascii_digits_stays_a_string() -> None:
+    """#1612: ``"²".isdigit()`` is true but ``int("²")`` raises."""
+    assert EqualsConstraint("12").value == 12
+    assert EqualsConstraint("²").value == "²"

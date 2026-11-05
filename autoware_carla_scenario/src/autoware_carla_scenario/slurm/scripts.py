@@ -478,6 +478,6 @@ def squeue_task_states(job: str, output: str) -> dict[int, str]:
                 states[task] = state
             continue
         head, _, task_id = job_task.partition("_")
-        if head == str(job) and task_id.isdigit():
+        if head == str(job) and task_id.isascii() and task_id.isdigit():
             states[int(task_id)] = state
     return states

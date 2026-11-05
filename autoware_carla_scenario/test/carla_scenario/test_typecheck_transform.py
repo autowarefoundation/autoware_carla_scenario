@@ -3193,6 +3193,35 @@ def test_str_format_on_a_literal_becomes_an_fstring(call: str, expected: str) ->
     assert _rewritten(f"s = {call}\n") == f"s = {expected}\n"
 
 
+@pytest.mark.parametrize(
+    ("template", "args"),
+    [
+        ("{٣}", "(0, 1, 2, 3)"),
+        ("{0[٣]}", "([0, 1, 2, 3],)"),
+        ("{0[²]}", "({'²': 'sq'},)"),
+        ("{0[03]}", "([0, 1, 2, 3],)"),
+    ],
+)
+def test_str_format_reads_an_index_as_cpython_does(template: str, args: str) -> None:
+    """#1612: str.format takes any decimal digit as an index (``٣`` is 3),
+    but ``²``, a digit only to ``isdigit()``, as a key."""
+    text = _rewritten(f's = "{template}".format{args}\n')
+    expected = template.format(*eval(args))  # noqa: S307 - a test's own literal
+    namespace: dict[str, object] = {}
+    exec(text, namespace)  # noqa: S102 - the rewritten test source
+    assert namespace["s"] == expected
+
+
+def test_str_format_with_a_non_decimal_digit_field_is_a_keyword() -> None:
+    """#1612: ``"{²}".format(1)`` is a KeyError in CPython, not index 2."""
+    template = "{²}"
+    with pytest.raises(KeyError):
+        template.format(1)
+    refused = python_rewrite_refusals('s = "{²}".format(1)\n')
+    assert len(refused) == 1
+    assert "keyword '²'" in refused[0][1]
+
+
 def test_str_format_evaluates_a_complex_argument_once() -> None:
     text = _rewritten('s = "{0}{0}{k}".format(f(1), k=g("q"))\n')
     assert text == (

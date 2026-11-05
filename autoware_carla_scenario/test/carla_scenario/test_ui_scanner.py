@@ -196,3 +196,25 @@ def test_the_sweeper_reads_no_verdict_off_a_result_not_utf8(tmp_path: Path) -> N
     (tmp_path / "X_result.json").write_bytes(b"\xff\xfe{")
 
     assert _read_verdict(tmp_path) is None
+
+
+@pytest.mark.parametrize("stray", ["²", "٣"])
+def test_a_job_directory_named_by_a_non_ascii_digit_is_skipped(
+    tmp_path: Path, stray: str
+) -> None:
+    """#1612: ``"²".isdigit()`` is true but ``int("²")`` raises, which took
+    down the session list; ``"٣"`` (an Arabic-Indic 3) is no job either."""
+    session = tmp_path / "multirun" / DATE / GOOD
+    (session / "0").mkdir(parents=True)
+    (session / "0" / "Good_result.json").write_text(
+        json.dumps({"passed": True, "scenario": "Good"})
+    )
+    (session / stray).mkdir()
+
+    (summary,) = scanner.scan_sessions(tmp_path)
+    (item,) = scanner.load_session(tmp_path, "multirun", DATE, GOOD)
+    (case,) = results.load_results(tmp_path, "multirun", DATE, GOOD, metrics=False)
+
+    assert (summary.passed_count, summary.total_count) == (1, 1)
+    assert (item.index, item.scenario_name, item.passed) == (0, "Good", True)
+    assert case.passed is True

@@ -100,7 +100,9 @@ def _proc_stat(pid: str) -> list[str] | None:
 
 def _proc_pids() -> list[str]:
     try:
-        return [name for name in os.listdir("/proc") if name.isdigit()]
+        return [
+            name for name in os.listdir("/proc") if name.isascii() and name.isdigit()
+        ]
     except OSError:
         return []
 

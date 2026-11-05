@@ -1807,6 +1807,7 @@ def test_settings_keep_the_array_within_max_array_size() -> None:
     assert parse_max_array_size("MaxJobCount = 10000\n") is None
     assert parse_max_array_size("MaxArraySize = (null)\n") is None
     assert parse_max_array_size("MaxArraySize = 0\n") is None
+    assert parse_max_array_size("MaxArraySize = ²\n") is None
 
 
 def _scontrol_on_path(
@@ -2014,6 +2015,33 @@ def test_resubmit_runs_a_case_named_twice_once(
     assert cli.main(argv) == 0
     assert "Resubmitting 2 case(s): s#1, s#3" in capsys.readouterr().out
     assert submitted == [[0, 2]]
+
+
+@pytest.mark.parametrize("item", ["²", "٣"])
+def test_resubmit_refuses_a_non_ascii_digit_case(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    item: str,
+) -> None:
+    """#1612: ``--cases ²`` raised (``"²".isdigit()`` but not ``int()``)."""
+    from autoware_carla_scenario.slurm import cli
+
+    layout = _batch_on_disk(tmp_path)
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    argv = ["resubmit", str(layout.batch_dir), "--cases", item, "--dry-run"]
+    assert cli.main(argv) == 1
+    assert f"Error: no case {item!r} in the batch" in capsys.readouterr().err
+
+
+def test_non_ascii_digits_are_no_submission_and_no_task(tmp_path: Path) -> None:
+    """#1612: a stray ``².json`` and an ``squeue`` line ``7_²`` are skipped."""
+    from autoware_carla_scenario.slurm.scripts import squeue_task_states
+
+    layout = _batch_on_disk(tmp_path)
+    layout.submission(0).with_name("².json").write_text("{}")
+    assert layout.submissions() == [0]
+    assert squeue_task_states("7", "7_0 RUNNING\n7_² RUNNING\n") == {0: "RUNNING"}
 
 
 def test_concurrent_submissions_get_indices_of_their_own(

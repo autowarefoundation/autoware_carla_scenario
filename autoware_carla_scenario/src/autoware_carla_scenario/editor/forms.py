@@ -226,7 +226,7 @@ def parse_records(spec: FieldSpec, form: Mapping[str, Any]) -> list[dict[str, An
         if not key.startswith(prefix):
             continue
         slot, _, sub = key[len(prefix) :].partition(".")
-        if sub and slot.isdigit() and int(slot) < count:
+        if sub and slot.isascii() and slot.isdigit() and int(slot) < count:
             posted[int(slot)][sub] = value
     rows: list[dict[str, Any]] = []
     for index, row in enumerate(posted):

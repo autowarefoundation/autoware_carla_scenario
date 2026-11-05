@@ -244,7 +244,7 @@ def _bucket_order(labels: set[str]) -> list[str]:
 
 def _case_number(label: str) -> tuple[int, str]:
     number = label.rpartition("#")[2]
-    return (int(number), label) if number.isdigit() else (0, label)
+    return (int(number), label) if number.isascii() and number.isdigit() else (0, label)
 
 
 def _bucket_of(buckets: dict[str, str], attribute: str | None) -> str:

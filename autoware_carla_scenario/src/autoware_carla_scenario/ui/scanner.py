@@ -161,7 +161,11 @@ def _scan_multirun_session(
     """Scan a single multirun session directory."""
     # Multirun directories contain numbered subdirectories (0, 1, 2, ...)
     job_dirs = sorted(
-        (d for d in session_dir.iterdir() if d.is_dir() and d.name.isdigit()),
+        (
+            d
+            for d in session_dir.iterdir()
+            if d.is_dir() and d.name.isascii() and d.name.isdigit()
+        ),
         key=lambda d: int(d.name),
     )
     if not job_dirs:
@@ -310,7 +314,9 @@ def load_session(
         if not directory.is_dir():
             return items
         indices = sorted(
-            int(d.name) for d in directory.iterdir() if d.is_dir() and d.name.isdigit()
+            int(d.name)
+            for d in directory.iterdir()
+            if d.is_dir() and d.name.isascii() and d.name.isdigit()
         )
         for index in indices:
             job = cases.job_dir(base_path, date, time, index)
