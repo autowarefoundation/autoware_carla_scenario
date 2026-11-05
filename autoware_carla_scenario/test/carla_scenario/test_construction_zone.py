@@ -22,9 +22,11 @@ from autoware_carla_scenario import (
 )
 from autoware_carla_scenario.action_state import ActionState
 from autoware_carla_scenario.actions import spawn as prop_module
+from autoware_carla_scenario.adversity import construction as construction_module
 from autoware_carla_scenario.adversity.construction import (
     BARRIER,
     CONE,
+    MAX_ZONE_OBJECTS,
     SIGN,
     construction_layout,
     construction_zones,
@@ -134,6 +136,118 @@ def test_what_the_layout_refuses() -> None:
         construction_layout(50.0, 50.0, 3.5)
     with pytest.raises(ValueError):
         construction_layout(0.0, 100.0, 3.5, ConstructionSettings(spacing=0.0))
+
+
+_INF = float("inf")
+_NAN = float("nan")
+
+
+@pytest.fixture
+def bounded_layout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Fail, not hang, should a layout step on past MAX_ZONE_OBJECTS objects
+    in all: a refusal that regresses would otherwise loop for ever."""
+    made = [0]
+    real = construction_module.ConstructionObject
+
+    def counted(*args: Any) -> Any:
+        made[0] += 1
+        if made[0] > MAX_ZONE_OBJECTS:
+            raise AssertionError("the layout stepped on without end")
+        return real(*args)
+
+    monkeypatch.setattr(construction_module, "ConstructionObject", counted)
+
+
+@pytest.mark.parametrize(
+    ("start", "end"),
+    [(0.0, _INF), (-_INF, 100.0), (-_INF, _INF), (_NAN, 100.0), (0.0, _NAN)],
+)
+@pytest.mark.parametrize("settings", [ConstructionSettings(), URBAN_CONSTRUCTION])
+@pytest.mark.usefixtures("bounded_layout")
+def test_the_layout_refuses_a_zone_that_does_not_end(
+    start: float, end: float, settings: ConstructionSettings
+) -> None:
+    """An infinite zone was stepped through for ever (#1479): refused."""
+    with pytest.raises(ValueError, match="finite s"):
+        construction_layout(start, end, 3.5, settings)
+    with pytest.raises(ValueError, match="finite s"):
+        construction_zones(start, end, settings)
+
+
+_SPACINGS = ("spacing", "warning_zone_spacing")
+_LENGTHS = (
+    "speed_limit_mph",
+    "taper_length_in",
+    "taper_length_out",
+    "warning_zone_length",
+    "buffer_zone_length",
+    "termination_zone_length",
+    "merge_distance",
+)
+_OFFSETS = ("work_zone_offset", "warning_sign_offset")
+
+
+@pytest.mark.parametrize(
+    ("name", "value"),
+    [
+        *[(n, v) for n in _SPACINGS for v in (0.0, -1.0, _INF, -_INF, _NAN)],
+        *[(n, v) for n in _LENGTHS for v in (-1.0, _INF, -_INF, _NAN)],
+        *[(n, v) for n in _OFFSETS for v in (_INF, -_INF, _NAN)],
+        ("merge_signs", -1),
+    ],
+)
+def test_the_settings_refuse_what_would_not_lay_out(name: str, value: float) -> None:
+    """A NaN length placed nothing, an infinite one never ended (#1479)."""
+    with pytest.raises(ValueError, match=name):
+        ConstructionSettings(**{name: value})  # type: ignore[arg-type]
+
+
+def test_the_settings_take_their_bounds() -> None:
+    """No length, no merge sign, an offset of either sign: all taken."""
+    lengths: dict[str, Any] = {name: 0.0 for name in _LENGTHS}
+    settings = ConstructionSettings(
+        **lengths,
+        work_zone_offset=-1.0,
+        warning_sign_offset=-2.0,
+        merge_signs=0,
+    )
+    assert construction_layout(0.0, 100.0, 3.5, settings)
+    urban = _urban(merge_distance=0.0, merge_signs=0)
+    assert construction_layout(0.0, 100.0, 3.5, urban)
+
+
+@pytest.mark.parametrize("layout", ["highway", "urban"])
+@pytest.mark.usefixtures("bounded_layout")
+def test_the_layout_refuses_more_objects_than_it_can_place(layout: str) -> None:
+    """A spacing so fine it would place more than MAX_ZONE_OBJECTS in a zone
+    is refused up front, not stepped through."""
+    fine = ConstructionSettings(spacing=1e-9, layout=layout)
+    with pytest.raises(ValueError, match=str(MAX_ZONE_OBJECTS)):
+        construction_layout(0.0, 1000.0, 3.5, fine)
+    # A coarser spacing is laid out.
+    exact = ConstructionSettings(spacing=1.0, layout=layout)
+    assert construction_layout(0.0, 1000.0, 3.5, exact)
+
+
+@pytest.mark.usefixtures("bounded_layout")
+def test_the_layout_refuses_a_step_below_the_floats_resolution() -> None:
+    """Far along a lane, a step too small to move ``s`` was taken for ever."""
+    far = 1e20  # 16384 m between floats here
+    with pytest.raises(ValueError, match="too fine"):
+        construction_layout(far, far + 1e6, 3.5)
+
+
+@pytest.mark.usefixtures("bounded_layout")
+def test_the_urban_merge_signs_stop_at_the_start() -> None:
+    """Many merge signs on a short approach: those clamped to the start are
+    one sign, and the rest are not stepped through."""
+    many = _urban(merge_signs=10**6)
+    signs = [
+        o.s
+        for o in construction_layout(0.0, 300.0, 3.5, many)
+        if o.zone == "merge_signs"
+    ]
+    assert signs == [100.0, 50.0, 0.0]
 
 
 # -- the urban layout (#445) -------------------------------------------------------
@@ -491,6 +605,16 @@ def test_what_the_action_refuses() -> None:
         ConstructionZoneAction(rm.W_IN1, 20.0, 70.0, start_time=-1.0)
     with pytest.raises(ValueError):
         ConstructionZoneAction(rm.W_IN1, 20.0, 70.0, start_time=5.0, end_time=5.0)
+
+
+@pytest.mark.parametrize(
+    ("start_s", "end_s"),
+    [(0.0, _INF), (-_INF, 70.0), (-_INF, _INF), (_NAN, 70.0), (20.0, _NAN)],
+)
+def test_refuses_a_zone_that_is_not_finite(start_s: float, end_s: float) -> None:
+    """An infinite zone would be laid out for ever when placed (#1479)."""
+    with pytest.raises(ValueError, match="start_s and end_s must be finite"):
+        ConstructionZoneAction(rm.W_IN1, start_s, end_s)
 
 
 @pytest.mark.parametrize("start_time", [float("nan"), float("inf"), float("-inf")])
