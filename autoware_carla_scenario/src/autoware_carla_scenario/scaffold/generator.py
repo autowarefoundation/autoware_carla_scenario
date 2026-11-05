@@ -19,13 +19,19 @@ import argparse
 import ast
 import functools
 import importlib.metadata
-import keyword
-import re
 import sys
 from pathlib import Path
 from typing import NamedTuple
 
 from ..templating import code_environment
+from .names import (
+    _default_scenario_name,
+    _normalise_distribution,
+    _to_hyphen,
+    _to_pascal,
+    _to_snake,
+    _validate_identifier,
+)
 
 
 class ScaffoldResult(NamedTuple):
@@ -218,11 +224,6 @@ _DEPENDENCY_IMPORT_NAMES: frozenset[str] = frozenset(
 )
 
 
-def _normalise_distribution(name: str) -> str:
-    """Return *name* normalised as PEP 503 does (``A_b.c`` -> ``a-b-c``)."""
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
 @functools.cache
 def _dependency_import_names() -> frozenset[str]:
     """Return the import names of the framework's direct run-time dependencies.
@@ -293,37 +294,8 @@ def _check_package_name(package_name: str) -> None:
 
 
 # ---------------------------------------------------------------------------
-# Name handling
+# Name handling (the naming rules themselves are scaffold.names')
 # ---------------------------------------------------------------------------
-
-
-def _to_snake(raw: str) -> str:
-    """Normalise *raw* to a ``snake_case`` Python identifier fragment."""
-    # Split camelCase / PascalCase boundaries, then unify separators.
-    spaced = re.sub(r"(?<=[a-z0-9])(?=[A-Z])", "_", raw)
-    snake = re.sub(r"[\s\-.]+", "_", spaced).strip("_").lower()
-    return re.sub(r"__+", "_", snake)
-
-
-def _to_pascal(snake: str) -> str:
-    """Convert a ``snake_case`` name to ``PascalCase``."""
-    return "".join(part.capitalize() for part in snake.split("_") if part)
-
-
-def _to_hyphen(snake: str) -> str:
-    """Convert a ``snake_case`` name to a ``hyphen-case`` distribution name."""
-    return snake.replace("_", "-")
-
-
-def _validate_identifier(name: str, *, kind: str) -> str:
-    """Return *name* if it is a valid, non-keyword Python identifier, else raise."""
-    if not name:
-        msg = f"{kind} is empty after normalisation; please pass an explicit value."
-        raise ValueError(msg)
-    if not name.isidentifier() or keyword.iskeyword(name):
-        msg = f"{kind} {name!r} is not a valid Python identifier."
-        raise ValueError(msg)
-    return name
 
 
 def resolve_names(
@@ -355,8 +327,7 @@ def resolve_names(
     if scenario_name is None:
         # Default: strip a trailing package-ish suffix so
         # ``my_scenario_package`` yields the scenario ``my_scenario``.
-        stripped = re.sub(r"_(package|pkg|scenarios?)$", "", package_name)
-        scenario = stripped or package_name
+        scenario = _default_scenario_name(package_name)
     else:
         scenario = _to_snake(scenario_name)
     scenario = _validate_identifier(scenario, kind="scenario name")

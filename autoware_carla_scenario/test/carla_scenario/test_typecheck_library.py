@@ -4659,6 +4659,101 @@ def test_the_fnmatch_shim_matches_as_cpython_does() -> None:
 
 
 # ---------------------------------------------------------------------------
+# The keyword shim: kwlist and iskeyword() (#1654)
+# ---------------------------------------------------------------------------
+
+
+_KEYWORD = """
+from __future__ import annotations
+
+import keyword
+from keyword import iskeyword, kwlist
+
+
+def identifier(name: str) -> bool:
+    return name.isidentifier() and not keyword.iskeyword(name)
+
+
+def hard_keywords() -> list[str]:
+    first: str = kwlist[0]
+    return list(keyword.kwlist) if iskeyword(first) else []
+
+
+def no_keyword(number: int) -> bool:
+    return keyword.iskeyword(number)
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_keyword_shim_takes_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (model_dir() / "keyword.codon").is_file()
+    result = _check_case(_KEYWORD, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each fails in CPython 3.10 (the oldest Python the package supports)
+        # and 3.14 when it is called: a TypeError or an AttributeError.
+        ("not keyword.iskeyword(name)", "not keyword.iskeyword(s=name)"),
+        ("not keyword.iskeyword(name)", "not keyword.iskeyword(name, True)"),
+        ("not keyword.iskeyword(name)", "not keyword.iskeyword()"),
+        ("not keyword.iskeyword(name)", "not keyword.iskeywords(name)"),
+        ("first: str = kwlist[0]", "first: str = kwlist[0] + 1"),
+    ],
+    ids=[
+        "iskeyword-keyword",
+        "iskeyword-arguments",
+        "iskeyword-no-argument",
+        "unknown-name",
+        "kwlist-of-str",
+    ],
+)
+def test_the_keyword_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _KEYWORD.replace(right, wrong, 1)
+    assert source != _KEYWORD
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+@pytest.mark.codon_selftest
+def test_the_keyword_shim_lists_cpythons_hard_keywords() -> None:
+    # The shim's kwlist is generated from CPython's keyword.kwlist, the hard
+    # keywords, which every supported Python lists alike; its soft keywords,
+    # which differ between versions, are not declared.
+    import keyword
+
+    tree = ast.parse((model_dir() / "keyword.codon").read_text())
+    assigned = {
+        target.id: node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    assert ast.literal_eval(assigned["kwlist"]) == keyword.kwlist
+    declared = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    assert declared == {"iskeyword"}
+    assert "softkwlist" not in assigned
+
+
+# ---------------------------------------------------------------------------
 # The socket shim: a bound socket, its name and the host's (#1498)
 # ---------------------------------------------------------------------------
 
