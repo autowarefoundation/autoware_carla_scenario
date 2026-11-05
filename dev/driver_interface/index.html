@@ -2712,11 +2712,18 @@ and sweeps all behave exactly as they do for a TrafficManager-driven ego.</p>
 <a id="__codelineno-4-33" name="__codelineno-4-33" href="#__codelineno-4-33"></a><span class="w">    </span><span class="nt">throttle_deadband</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0.3</span><span class="w">      </span><span class="c1"># vehicle interface: least throttle to pull away</span>
 </code></pre></div>
 <p>Each <code>driver.cameras</code> entry needs its own <code>logical_id</code>; two cameras under one id
-are refused. Its <code>image_width</code>, <code>image_height</code> and <code>fps</code> must be positive (and
-<code>fps</code> finite), its <code>fov</code> in (0, 180) degrees -- CARLA renders the pinhole of
-the horizontal <code>fov</code> -- and its mount (<code>position_x/y/z</code>, <code>roll</code>, <code>pitch</code>,
-<code>yaw</code>) finite. A camera out of these bounds is refused as the config is read,
-not when it attaches after the ego spawned.</p>
+are refused. Its <code>image_width</code> and <code>image_height</code> must be positive whole
+numbers, its <code>fps</code> positive and finite, its <code>fov</code> in (0, 180) degrees -- CARLA
+renders the pinhole of the horizontal <code>fov</code> -- and its mount (<code>position_x/y/z</code>,
+<code>roll</code>, <code>pitch</code>, <code>yaw</code>) finite. A camera out of these bounds is refused as the
+config is read, not when it attaches after the ego spawned.</p>
+<p>A whole number is an integral value: <code>960</code>, or <code>960.0</code> (or <code>9.6e2</code>), which is
+kept as the int <code>960</code>, so the policy's <code>CameraSpec</code> resolution (an integer
+protobuf field, which refuses any float) is given <code>960</code> and CARLA
+<code>image_size_x="960"</code>. <code>960.5</code>, NaN, infinity, a boolean and a string are
+refused, naming the field, as the config is read. Every whole-number setting
+of a camera, a LiDAR or the ROS 2 ego follows this rule, as a seed does
+(<code>noise_seed</code>, <code>driver.random_seed</code>).</p>
 <h3 id="a-camera-with-a-lens-of-its-own-drivercameraslens">A camera with a lens of its own: <code>driver.cameras[].lens</code><a class="headerlink" href="#a-camera-with-a-lens-of-its-own-drivercameraslens" title="Permanent link">&para;</a></h3>
 <p>A camera's frames are CARLA's pinhole of its <code>fov</code> unless it says otherwise. A
 <a href="../usage/#rendering-sensors-with-carla_canvas">carla_canvas</a> renderer may draw
@@ -3042,7 +3049,9 @@ both, and <code>session.latest_frame("lidar_top").as_array()</code> unpacks the 
 <a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="w">    </span><span class="p p-Indicator">-</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">logical_id</span><span class="p">:</span><span class="w"> </span><span class="nv">lidar_top</span><span class="p p-Indicator">,</span><span class="nt"> channels</span><span class="p">:</span><span class="w"> </span><span class="nv">64</span><span class="p p-Indicator">,</span><span class="nt"> range_m</span><span class="p">:</span><span class="w"> </span><span class="nv">100.0</span><span class="p p-Indicator">,</span><span class="nt"> position_z</span><span class="p">:</span><span class="w"> </span><span class="nv">2.0</span><span class="p p-Indicator">}</span>
 </code></pre></div>
 <p>LiDAR logical ids must be unique, and every number a LiDAR takes must be finite:
-<code>channels</code>, <code>range_m</code> and <code>points_per_second</code> positive, <code>lower_fov_deg</code> below
+<code>channels</code> and <code>points_per_second</code> positive whole numbers (<code>64</code>, or <code>64.0</code>
+and <code>1.2e6</code>, which YAML reads as floats, kept as the ints <code>64</code> and <code>1200000</code>
+for CARLA; not <code>64.5</code>), <code>range_m</code> positive, <code>lower_fov_deg</code> below
 <code>upper_fov_deg</code>, <code>weather_noise</code> not negative, <code>noise_seed</code> a whole number
 (<code>3</code> or <code>3.0</code>; not <code>1.9</code>, a boolean or a string) not negative,
 <code>fog_density_scale</code> positive.</p>
@@ -3336,7 +3345,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 20:28:38 UTC"><span class="timeago" datetime="2026-11-04T20:28:38+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 20:28:38 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 00:32:15 UTC"><span class="timeago" datetime="2026-11-05T00:32:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 00:32:15 UTC">2026-11-05</span>
   </span>
 
     

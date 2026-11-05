@@ -2414,7 +2414,9 @@ server built without it, the entity publishes them as well:</p>
 <p>A camera in <code>cameras</code> takes the rendering and mount fields of a
 <a href="../driver_interface/">driver camera</a> (<code>image_width</code>, <code>image_height</code>, <code>fov</code>, <code>fps</code>,
 <code>position_x/y/z</code>, <code>roll</code>, <code>pitch</code>, <code>yaw</code>, in CARLA's convention), plus its <code>topic</code> and
-<code>frame_id</code>, and the same bounds: <code>image_width</code>, <code>image_height</code> and <code>fps</code> positive and
+<code>frame_id</code>, and the same bounds: <code>image_width</code> and <code>image_height</code> positive whole
+numbers (<code>960</code>, or <code>960.0</code> kept as the int <code>960</code>, so CARLA is given
+<code>image_size_x="960"</code>; not <code>960.5</code>, a bool or a string), <code>fps</code> positive and
 finite, <code>fov</code> in (0, 180) degrees, and the mount finite. A camera out of these bounds is
 refused as the config is read, not when it attaches after the ego spawned. Its frames go
 out from the sensor's own thread as they are rendered, the way CARLA's own interface
@@ -2522,10 +2524,13 @@ batch's first scenario starts, as well as when the entity is built -- and a bad 
 refused naming its key (<code>ros2: domain_id must be ...</code>), not once the ego has spawned
 and joined the domain:</p>
 <ul>
-<li><code>domain_id</code> is a whole number (not a bool or a string) from 0 to 232, the
+<li><code>domain_id</code> is a whole number from 0 to 232, the
   <code>ROS_DOMAIN_ID</code> range ROS 2 can use, the bound the docker launcher's
   <code>ros_domain_ids</code> share (<a href="../autoware/">autoware.md</a>).</li>
-<li>A source's <code>priority</code> is a whole number (not a bool, a float or a quoted <code>"10"</code>).</li>
+<li>A source's <code>priority</code> is a whole number.</li>
+<li>A whole number, here as for a camera's size, is an integral value: <code>7</code>, or <code>7.0</code>,
+  which is kept as the int <code>7</code>; <code>7.5</code>, NaN, infinity, a bool and a quoted <code>"7"</code> are
+  refused.</li>
 <li><code>stale_s</code>, <code>pair_window_s</code>, <code>steering_sign</code>, <code>speed_horizon_s</code>, <code>jerk_mps3</code>,
   <code>rear_axle_offset_m</code> and a camera's numeric fields are numbers, an int or a float
   (not a bool or a quoted string), and finite, within the bounds above.</li>
@@ -2622,7 +2627,7 @@ installed. They are written in XCDR1, the representation <code>rmw_cyclonedds_cp
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 23:15:22 UTC"><span class="timeago" datetime="2026-11-04T23:15:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 23:15:22 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 00:32:15 UTC"><span class="timeago" datetime="2026-11-05T00:32:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 00:32:15 UTC">2026-11-05</span>
   </span>
 
     
