@@ -4814,8 +4814,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-277 of the package's 400
-modules (69%; about 86,000 of
+278 of the package's 401
+modules (69%; about 86,300 of
 151,000 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4829,7 +4829,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 277 CHECKED modules</summary>
+<summary>The 278 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5543,6 +5543,10 @@ with the first paragraph of its docstring:</p>
 <td>Scenario measures: what a run sets up, read off the world under fixed keys.</td>
 </tr>
 <tr>
+<td><code>metric_frames</code></td>
+<td>The frames a run records for its metrics, one a tick, and the series those metrics are read into once the run is over.</td>
+</tr>
+<tr>
 <td><code>metrics</code></td>
 <td>Metrics: how the ego drove, read off the world per frame.</td>
 </tr>
@@ -5949,8 +5953,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>149 functions and methods of those modules are <code>UNCALLED</code>
-(45 of them protected helpers, see <em>What is
+<p>148 functions and methods of those modules are <code>UNCALLED</code>
+(44 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -5962,7 +5966,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 149 UNCALLED functions and methods, and why</summary>
+<summary>The 148 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6057,9 +6061,8 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>scenario_queue.ScenarioQueue.as_fixture</code>: builds a pytest fixture (pytest, imported inside it), a generator function returned as a <code>Callable[[], Generator[ScenarioQueue, None, None]]</code></li>
 <li><code>scenario_runner._build_condition_status</code>: builds a ConditionStatus, which holds the condition's details (<code>dict[str, Any]</code>), which Codon cannot express; only _collect_condition_statuses, itself uncalled, calls it</li>
 <li><code>scenario_runner._collect_condition_statuses</code>: builds ConditionStatus values, which hold a condition's details (<code>dict[str, Any]</code>), which Codon cannot express; _condition_statuses calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
-<li><code>scenario_runner._judge_metrics</code>: evaluates the recorded frames with metric_batch (duck-typed actors replayed as a world, and the CommonRoad workers, processes spoken to in JSON), which is not checked; run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
-<li><code>scenario_runner._metric_recorder</code>: builds metric_batch's FrameRecorder, which is not checked (it records duck-typed actors); run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
-<li><code>scenario_runner._record_metrics</code>: writes metric_batch's series (not checked) into the trajectory log; only _judge_metrics, itself uncalled, calls it</li>
+<li><code>scenario_runner._judge_metrics</code>: evaluates the recorded frames with metric_batch (the frames replayed as a world of duck-typed actors, and the CommonRoad workers, processes spoken to in JSON), which is not checked; run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>scenario_runner._record_metrics</code>: writes the metric series evaluate_metrics returns into the trajectory log, both held as <code>Any</code>, in rows of mixed float and bool values (<code>dict[str, Optional[Union[float, bool]]]</code>); only _judge_metrics, itself uncalled, calls it</li>
 <li><code>scenario_runner._traffic_record</code>: reads the traffic backend's describe() and fidelity_census(), dicts of mixed value types, which Codon cannot express; run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>scenario_runner._write_gate_record</code>: calls a scenario's gate_record() found with getattr(), a method of no declared type (<code>make(result, file_stem)</code> returns <code>Any</code>), and writes its GateRecord with gate.record's write_gate_record(), itself uncalled (a <code>dict[str, Any]</code> of mixed value types); run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>scenario_runner._write_result</code>: merges the traffic record (<code>Any</code>) and environment.write()'s record (environment is EXCLUDED: platform, importlib.metadata) into the result document, which Codon cannot express; run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6204,7 +6207,7 @@ the first:</p>
 <li><code>hils.protocol</code>: imports more of socket than its shim declares (<code>socket.timeout</code>, and LineReader reads the bridge's socket with <code>settimeout()</code> and <code>recv()</code>), reads JSON messages of any shape, which LineReader.read() returns as <code>List[Dict[str, Any]]</code>, and command_value() takes a field of any type (<code>value: Any</code>), neither of which Codon can express; what needs neither is hils.wire, which it re-exports</li>
 <li><code>hydra_compat</code>: imports argparse and hydra (<code>hydra._internal.utils</code>), which is neither checked nor modelled; derives <code>argparse.ArgumentParser</code> and <code>types.ModuleType</code>, and replaces a module global of <code>hydra._internal.utils</code> at import</li>
 <li><code>maps.road_network_cache</code>: imports io (<code>BytesIO</code>, <code>BufferedIOBase</code>), pickle (<code>Pickler</code>, <code>Unpickler</code>) and weakref (<code>WeakKeyDictionary</code>); pickles pyxodr's objects typed <code>Any</code>, which Codon cannot express; maps/road_network_cache.codon models what MapManager uses of it</li>
-<li><code>metric_batch</code>: replays recorded frames as a world of duck-typed actors (SimpleNamespace transforms, a list subclass for ActorList) through the checked metrics module, and evaluates the CommonRoad metrics with commonroad.session (worker processes), which is not checked</li>
+<li><code>metric_batch</code>: replays the frames metric_frames records as a world of duck-typed actors (SimpleNamespace transforms, a list subclass for ActorList) through the checked metrics module, and evaluates the CommonRoad metrics with commonroad.session (worker processes), which is not checked</li>
 <li><code>odd</code>: <code>from . import backend, probes</code> fails first: Codon reads it as an import of <code>odd</code> from the top-level package's <code>__init__</code>, which the model does not declare ("cannot import name 'odd'"); behind that, it re-exports odd.model, odd.sampler, odd.openodd, odd.sources and odd.backend (openodd, a Rust extension), and odd.route and odd.registry, which are excluded (odd.probes is checked)</li>
 <li><code>odd.backend</code>: derives openodd's Backend (a Rust extension), a dataclass of probe callables and knobs (<code>Mapping[Any, OddKnob]</code>)</li>
 <li><code>odd.cli</code>: imports argparse, openodd (inside a function), and <code>odd_builder()</code> and <code>odd_names()</code> from odd.registry, which the odd model does not declare; inside its commands, it imports <code>combine_route_coverage()</code> from odd.route, which the odd model does not declare either (it declares only <code>plan_route_coverage()</code>), and typecheck (the checker, outside the library check), examples.run (omegaconf, hydra) and registry (omegaconf, importlib), which are neither checked nor modelled</li>
@@ -7713,9 +7716,9 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 - <strong>A call into a module Codon cannot compile, from a function it must</strong>: a
   function <code>UNCALLED</code> names is still compiled when a checked function calls
   it. Call it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code> and check in the
-  first branch what it can (<code>ScenarioRunner</code> calls <code>_metric_recorder()</code>,
-  which builds the unchecked <code>metric_batch</code> recorder, in the <code>else</code> branch,
-  and the check leaves the recorder <code>None</code>). A
+  first branch what it can (<code>ScenarioRunner</code> calls <code>_judge_metrics()</code>,
+  which evaluates the recorded frames with the unchecked <code>metric_batch</code>, in
+  the <code>else</code> branch, and the check leaves the run's result as it is). A
   private helper that imports such a module inside it needs an <code>UNCALLED</code>
   entry of its own: its import is rewritten, and refused, even when nothing
   compiled calls it.
@@ -8097,7 +8100,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 15:11:24 UTC"><span class="timeago" datetime="2026-11-05T15:11:24+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 15:11:24 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 15:45:46 UTC"><span class="timeago" datetime="2026-11-05T15:45:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 15:45:46 UTC">2026-11-05</span>
   </span>
 
     
