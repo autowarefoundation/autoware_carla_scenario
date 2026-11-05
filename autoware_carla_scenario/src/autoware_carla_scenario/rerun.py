@@ -36,6 +36,14 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Optional, Union
 
+# The suffix of the log a recording is made from, and of the recording, and
+# the run a log is of (``_label``): the path rule is the checked
+# run_outputs's (#1678); the names they had here stay importable from here.
+from .run_outputs import RECORDING_SUFFIX as RECORDING_SUFFIX
+from .run_outputs import TRAJECTORY_SUFFIX as TRAJECTORY_SUFFIX
+from .run_outputs import recording_path as _recording_path
+from .run_outputs import trajectory_stem as _label
+
 __all__ = [
     "INSTALL_HINT",
     "RECORDING_SUFFIX",
@@ -54,10 +62,6 @@ logger = logging.getLogger(__name__)
 
 #: How to install what this module needs.
 INSTALL_HINT = "pip install 'autoware-carla-scenario[rerun]'"
-
-#: The suffix of the log a recording is made from, and of the recording.
-TRAJECTORY_SUFFIX = ".trajectory.jsonl"
-RECORDING_SUFFIX = ".rrd"
 
 #: The package that does the conversion.
 _CONVERTER_MODULE = "autoware_carla_scenario_rerun"
@@ -86,20 +90,11 @@ def require_converter() -> ModuleType:
         ) from exc
 
 
-def _label(trajectory: Path) -> str:
-    """The run *trajectory* is the log of: its file stem (``X`` of
-    ``X.trajectory.jsonl``)."""
-    name = trajectory.name
-    if name.endswith(TRAJECTORY_SUFFIX):
-        return name[: -len(TRAJECTORY_SUFFIX)]
-    return trajectory.stem
-
-
 def recording_path(trajectory: Union[str, Path]) -> Path:
     """The recording made of *trajectory*: ``X.rrd`` beside
-    ``X.trajectory.jsonl``, where the converter writes it by default."""
-    path = Path(trajectory)
-    return path.with_name(_label(path) + RECORDING_SUFFIX)
+    ``X.trajectory.jsonl``, where the converter writes it by default
+    (:func:`.run_outputs.recording_path`, which takes a ``Path``)."""
+    return _recording_path(Path(trajectory))
 
 
 @dataclass(frozen=True)
