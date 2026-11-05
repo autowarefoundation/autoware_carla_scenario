@@ -483,6 +483,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.driver.base.DriverClientConfig.from_mapping": _DRIVER_FROM_MAPPING,
     "autoware_carla_scenario.driver.base.DriverLidarConfig.from_mapping": _DRIVER_FROM_MAPPING,
     "autoware_carla_scenario.driver.control.ControlConfig.from_mapping": "takes a Hydra node (`Mapping[str, Any]`) of mixed value types, which Codon cannot express, reads the dataclass's fields from its class (`dataclasses.fields(cls)`) and builds the config with `**` of a dict",
+    "autoware_carla_scenario.driver.control._config_number": "takes a config value of any type (`Any`: a Hydra node's, a bool, a string or an integer too large for a float among them), which Codon cannot express; only ControlConfig.from_mapping, itself uncalled, calls it",
     "autoware_carla_scenario.driver.observation.encode_frame_jpeg": "encodes with cv2 (OpenCV), which Codon cannot compile; cv2 is imported inside it, so it is not compiled",
     "autoware_carla_scenario.hils.wire.encode": "takes a message of any shape (`Mapping[str, Any]`: JSON values of mixed types), which Codon cannot express",
     "autoware_carla_scenario.entity.registry.find_entity_by_role_name": "returns the entity of any kind registered under a role (`Optional[Any]`), which Codon cannot express; find_vehicle_entity and find_pedestrian_entity are its typed lookups",

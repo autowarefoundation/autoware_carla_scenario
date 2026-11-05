@@ -495,7 +495,10 @@ def test_the_run_check_refuses_a_bad_ros2_setting_up_front() -> None:
         run.check_run_config(cfg)
 
     cfg = _composed(["ego.entity=ros2", "+ros2.control.no_such_gain=1"])
-    with pytest.raises(run.RunConfigError, match=r"^ros2: "):
+    with pytest.raises(
+        run.RunConfigError,
+        match=r"^ros2\.control\.no_such_gain: Unknown ControlConfig key",
+    ):
         run.check_run_config(cfg)
 
     # Another ego reads no ros2 settings.

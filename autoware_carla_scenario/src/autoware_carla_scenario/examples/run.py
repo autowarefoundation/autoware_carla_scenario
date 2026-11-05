@@ -42,10 +42,10 @@ import os
 import signal
 import sys
 import threading
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import contextmanager
 from pathlib import Path
-from typing import Any, NamedTuple
+from typing import TYPE_CHECKING, Any, NamedTuple
 
 import typesafe_carla.carla as carla
 import hydra
@@ -157,6 +157,9 @@ from .temporary_stop import TemporaryStopScenario
 from .pedestrian_dart_out import PedestrianDartOutScenario
 from .cut_in import CutInScenario
 from .traffic_light_compliance import TrafficLightComplianceScenario
+
+if TYPE_CHECKING:
+    from autoware_carla_scenario.driver import ControlConfig
 
 logger = logging.getLogger(__name__)
 
@@ -767,7 +770,6 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     if entity == "carla_driver":
         from autoware_carla_scenario import CarlaDriverEntity  # noqa: PLC0415
         from autoware_carla_scenario.driver import (  # noqa: PLC0415
-            ControlConfig,
             DriverClientConfig,
         )
 
@@ -781,7 +783,7 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
 
         driver_dict = _with_fog_density_scale(_to_dict(driver_cfg), cfg)
         # ``driver.control: null`` means the default gains, as ``ros2.control`` does.
-        control = ControlConfig.from_mapping(driver_dict.get("control") or {})
+        control = _control_config(driver_dict, "driver")
         bridge_dict = driver_dict.get("bridge")
         if bridge_dict is None:
             return CarlaDriverEntity(
@@ -818,7 +820,6 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         # ROS 2 nodes drive the ego over DDS (docs/ros2.md). The DDS binding is
         # imported when the scenario starts, so a missing `ros2` extra fails
         # there, with the install hint, rather than here.
-        from autoware_carla_scenario.driver import ControlConfig  # noqa: PLC0415
         from autoware_carla_scenario.entity.ros2_entity import (  # noqa: PLC0415
             Ros2EgoEntity,
         )
@@ -845,7 +846,7 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
                 "server.max_tick_rate_hz=20 (docs/ros2.md, Timing)"
             )
         ros2_dict = _to_dict(ros2_cfg)
-        control = ControlConfig.from_mapping(ros2_dict.get("control") or {})
+        control = _control_config(ros2_dict, "ros2")
         return Ros2EgoEntity(Ros2EgoConfig.from_mapping(ros2_dict), control)
 
     if entity == "hils":
@@ -2515,11 +2516,12 @@ def _check_seeds(cfg: DictConfig) -> None:
 def _check_driver_settings(cfg: DictConfig) -> None:
     """Refuse the ``driver`` settings of an ``ego.entity=carla_driver`` case
     as :func:`build_ego_entity` would (``driver.random_seed``, a LiDAR's
-    ``noise_seed``, ...), building only the config: nothing dials a policy.
+    ``noise_seed``, ``driver.control.kp``, ...), building only the configs:
+    nothing dials a policy.
 
     Raises:
         ValueError: When :class:`~autoware_carla_scenario.driver.DriverClientConfig`
-            refuses them.
+            or the trajectory follower's ``driver.control`` refuses them.
     """
     if str((cfg.get("ego") or {}).get("entity", "autopilot")) != "carla_driver":
         return
@@ -2528,7 +2530,39 @@ def _check_driver_settings(cfg: DictConfig) -> None:
         return  # Refused, with its remedy, by build_ego_entity.
     from autoware_carla_scenario.driver import DriverClientConfig  # noqa: PLC0415
 
-    DriverClientConfig.from_mapping(_with_fog_density_scale(_to_dict(driver_cfg), cfg))
+    driver_dict = _with_fog_density_scale(_to_dict(driver_cfg), cfg)
+    _control_config(driver_dict, "driver")
+    DriverClientConfig.from_mapping(driver_dict)
+
+
+def _control_config(section: Mapping[str, Any], name: str) -> "ControlConfig":
+    """The trajectory follower's gains of the ``control`` entry of
+    *section*, the run's *name* (``driver`` or ``ros2``) settings:
+    ``control: null`` (or none) means the default gains; anything else but a
+    mapping is refused (``driver.control must be a mapping, got 'abc'``).
+
+    :meth:`~autoware_carla_scenario.driver.ControlConfig.from_mapping` names
+    the key it refuses, not the section it is read from, as
+    :class:`~autoware_carla_scenario.AutowareBridgeConfig` does: its error is
+    headed with ``<name>.control.`` here (``driver.control.kp must be a
+    number, got '0.5'``).
+
+    Raises:
+        ValueError: naming ``<name>.control.<key>``.
+    """
+    from autoware_carla_scenario.driver import ControlConfig  # noqa: PLC0415
+    from autoware_carla_scenario.value_text import shown  # noqa: PLC0415
+
+    control = section.get("control")
+    if control is None:
+        control = {}
+    if not isinstance(control, Mapping):
+        # from_mapping's errors start with a key; this one is the section's.
+        raise ValueError(f"{name}.control must be a mapping, got {shown(control)}")
+    try:
+        return ControlConfig.from_mapping(control)
+    except ValueError as exc:
+        raise ValueError(f"{name}.control.{exc}") from None
 
 
 def _check_ros2_settings(cfg: DictConfig) -> None:
@@ -2538,8 +2572,9 @@ def _check_ros2_settings(cfg: DictConfig) -> None:
     which the entity first does once the ego has spawned.
 
     Raises:
-        ValueError: When :class:`~autoware_carla_scenario.ros2.Ros2EgoConfig`
-            or the trajectory follower's ``ros2.control`` refuses them, headed
+        ValueError: When the trajectory follower's ``ros2.control`` refuses
+            them, naming ``ros2.control.<key>``, or
+            :class:`~autoware_carla_scenario.ros2.Ros2EgoConfig` does, headed
             ``ros2:``.
     """
     if str((cfg.get("ego") or {}).get("entity", "autopilot")) != "ros2":
@@ -2547,12 +2582,11 @@ def _check_ros2_settings(cfg: DictConfig) -> None:
     ros2_cfg = cfg.get("ros2")
     if ros2_cfg is None:
         return  # Refused, with its remedy, by build_ego_entity.
-    from autoware_carla_scenario.driver import ControlConfig  # noqa: PLC0415
     from autoware_carla_scenario.ros2 import Ros2EgoConfig  # noqa: PLC0415
 
     ros2_dict = _to_dict(ros2_cfg)
+    _control_config(ros2_dict, "ros2")
     try:
-        ControlConfig.from_mapping(ros2_dict.get("control") or {})
         Ros2EgoConfig.from_mapping(ros2_dict)
     except ValueError as exc:
         raise ValueError(f"ros2: {exc}") from None

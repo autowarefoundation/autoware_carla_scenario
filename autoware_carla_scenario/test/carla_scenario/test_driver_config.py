@@ -147,6 +147,164 @@ def test_control_spec_mirrors_the_control_config() -> None:
     )
 
 
+@pytest.mark.parametrize(
+    ("mapping", "message"),
+    [
+        # Bools and strings (#1662): read as 1, or failing mid-run.
+        ({"wheelbase_m": True}, r"^wheelbase_m must be a number, got True$"),
+        ({"kp": "0.5"}, r"^kp must be a number, got '0\.5'$"),
+        ({"kp": None}, r"^kp must be a number, got None$"),
+        ({"kp": [1.0]}, r"^kp must be a number, got \[1\.0\]$"),
+        # Not finite, an int too large for a float included.
+        ({"kp": math.inf}, r"^kp must be finite, got inf$"),
+        ({"min_acc": -math.inf}, r"^min_acc must be finite, got -inf$"),
+        ({"lookahead_gain_s": math.nan}, r"^lookahead_gain_s must be finite"),
+        ({"ki": 10**400}, r"^ki must be finite, got 1000"),
+        ({"ki": 10**5000}, r"^ki must be finite, got an integer of about 10\*\*"),
+        # Divisors.
+        ({"steer_exponent": 0}, r"^steer_exponent must be positive, got 0\.0$"),
+        ({"max_steer_angle_rad": -0.5}, r"^max_steer_angle_rad must be positive"),
+        ({"max_steer_angle_deg": 0}, r"^max_steer_angle_deg must be positive"),
+        # An alias shows the degrees given, not the radians they make.
+        (
+            {"max_steer_angle_deg": -10},
+            r"^max_steer_angle_deg must be positive, got -10$",
+        ),
+        (
+            {"max_steer_angle_deg": -12.5},
+            r"^max_steer_angle_deg must be positive, got -12\.5$",
+        ),
+        ({"wheelbase_m": 0.0}, r"^wheelbase_m must be positive"),
+        ({"min_lookahead_m": 0.0}, r"^min_lookahead_m must be positive"),
+        ({"velocity_lookahead_time": -1.0}, r"^velocity_lookahead_time must be"),
+        # The lookahead's bounds.
+        (
+            {"min_lookahead_m": 5.0, "max_lookahead_m": 4.0},
+            r"^max_lookahead_m must be at least min_lookahead_m \(5\.0\), got 4\.0$",
+        ),
+        # The *_deg aliases name themselves.
+        ({"max_steer_angle_deg": "56"}, r"^max_steer_angle_deg must be a number"),
+        ({"yaw_rate_trim_limit_deg": True}, r"^yaw_rate_trim_limit_deg must be a"),
+        ({"max_steer_angle_deg": math.inf}, r"^max_steer_angle_deg must be finite"),
+        ({"yaw_rate_trim_limit_deg": [10]}, r"^yaw_rate_trim_limit_deg must be a"),
+        # Switches, the window and the controller.
+        ({"enable_smooth_stop": "false"}, r"^enable_smooth_stop must be true or"),
+        ({"enable_smooth_stop": 0}, r"^enable_smooth_stop must be true or false"),
+        ({"velocity_smoothing_window": 2.5}, r"^velocity_smoothing_window must be"),
+        ({"velocity_smoothing_window": True}, r"^velocity_smoothing_window must be"),
+        ({"longitudinal_controller": "mpc"}, r"^longitudinal_controller must be one"),
+        ({"speed_kx": 1.0}, r"^speed_kx: Unknown ControlConfig key"),
+    ],
+)
+def test_control_mapping_refuses_a_bad_value_by_its_key(
+    mapping: dict, message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        ControlConfig.from_mapping(mapping)
+
+
+def test_control_mapping_reads_an_int_as_a_float() -> None:
+    control = ControlConfig.from_mapping(
+        {"kp": 2, "wheelbase_m": 3, "max_steer_angle_deg": 45, "min_acc": -4}
+    )
+    assert (control.kp, control.wheelbase_m, control.min_acc) == (2.0, 3.0, -4.0)
+    assert all(isinstance(v, float) for v in (control.kp, control.wheelbase_m))
+    assert control.max_steer_angle_rad == pytest.approx(math.radians(45.0))
+    assert ControlConfig.from_mapping({"kp": np.float32(0.5)}).kp == 0.5
+    assert ControlConfig.from_mapping({"velocity_smoothing_window": 4.0}) == (
+        ControlConfig(velocity_smoothing_window=4)
+    )
+    # Equal bounds pin the lookahead; a null alias keeps the default.
+    ControlConfig.from_mapping({"min_lookahead_m": 6, "max_lookahead_m": 6})
+    assert ControlConfig.from_mapping({"max_steer_angle_deg": None}) == ControlConfig()
+
+
+def test_every_shipped_control_section_loads() -> None:
+    """Each ``control:`` block of the shipped config groups still loads."""
+    for name in (
+        "driver/default.yaml",
+        "driver/vision_pilot.yaml",
+        "ros2/default.yaml",
+    ):
+        document = yaml.safe_load((_CONF / name).read_text())
+        section = document.get(name.split("/")[0], document)
+        ControlConfig.from_mapping(section.get("control") or {})
+    for overrides in (
+        [],
+        ["driver=vision_pilot"],
+        ["ego.entity=ros2"],
+        ["ros2=visionpilot_safety_island"],
+    ):
+        cfg = _composed(overrides)
+        for section in (cfg.driver, cfg.ros2):
+            ControlConfig.from_mapping(section.get("control") or {})
+
+
+@pytest.mark.parametrize("section", ["driver", "ros2"])
+@pytest.mark.parametrize(
+    ("control", "shown"), [("abc", r"'abc'"), ([1.0], r"\[1\.0\]"), (0, "0")]
+)
+def test_the_run_refuses_a_control_section_that_is_no_mapping(
+    section: str, control: Any, shown: str
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(
+        ValueError, match=rf"^{section}\.control must be a mapping, got {shown}$"
+    ):
+        run._control_config({"control": control}, section)
+    # Null, or no entry, is the default gains.
+    assert run._control_config({"control": None}, section) == ControlConfig()
+    assert run._control_config({}, section) == ControlConfig()
+
+
+def test_the_run_refuses_a_driver_control_string_up_front() -> None:
+    from autoware_carla_scenario.examples import run
+
+    cfg = _composed(["ego.entity=carla_driver", "driver.control=abc"])
+    with pytest.raises(
+        run.RunConfigError, match=r"^driver\.control must be a mapping, got 'abc'$"
+    ):
+        run.check_run_config(cfg)
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (
+            ["ego.entity=carla_driver", "driver.control.steer_exponent=0"],
+            r"^driver\.control\.steer_exponent must be positive",
+        ),
+        (
+            ["ego.entity=carla_driver", "+driver.control.kp='0.5'"],
+            r"^driver\.control\.kp must be a number, got '0\.5'",
+        ),
+        (
+            ["ego.entity=carla_driver", "driver.control.max_steer_angle_deg=0"],
+            r"^driver\.control\.max_steer_angle_deg must be positive",
+        ),
+        (
+            ["ego.entity=ros2", "+ros2.control.wheelbase_m=true"],
+            r"^ros2\.control\.wheelbase_m must be a number, got True",
+        ),
+        (
+            ["ego.entity=ros2", "+ros2.control.max_lookahead_m=1"],
+            r"^ros2\.control\.max_lookahead_m must be at least",
+        ),
+    ],
+)
+def test_the_run_names_a_refused_control_key_by_its_section(
+    overrides: list[str], message: str
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    cfg = _composed(overrides)
+    with pytest.raises(run.RunConfigError, match=message):
+        run.check_run_config(cfg)
+    with pytest.raises(ValueError, match=message):
+        run.build_ego_entity(cfg)
+
+
 def test_client_mapping_ignores_the_control_section() -> None:
     """``control`` lives in the same YAML node but configures the follower."""
     config = DriverClientConfig.from_mapping(
