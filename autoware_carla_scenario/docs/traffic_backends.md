@@ -815,7 +815,10 @@ self.register_pre_tick(
   whole numbers, not negative (`20` or `20.0`; `max_vehicles` and `seed` may
   be null): `2.9`, `true` or `-5` is refused, naming the key, rather than run
   as 2, 1 or a negative seed. The run refuses all of these before anything
-  starts, whenever `background_traffic.enabled` is true.
+  starts, whenever `background_traffic.enabled` is true. `TrafficSourceAction`
+  applies the same rule to its `initial_vehicles`, `max_vehicles` and `seed`
+  (the last two when given), naming the parameter, so a count of `2.5` or NaN
+  is refused when the action is built rather than mid-run.
 
 The examples take all of this from the config, for any scenario:
 

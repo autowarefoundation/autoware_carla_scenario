@@ -1282,6 +1282,7 @@ register_action_spec(
                 name="seed",
                 label="Seed",
                 kind="int",
+                minimum=0,
                 default=None,
                 required=False,
                 help="Leave empty to follow the run's seed.",

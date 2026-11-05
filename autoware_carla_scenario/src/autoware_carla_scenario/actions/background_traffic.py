@@ -36,7 +36,7 @@ import random
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Union
 
 from ..conditions import BaseCondition, ScenarioResult
-from ..seed import resolve_seed
+from ..seed import check_seed, check_whole_number, resolve_seed
 from ..traffic.base import check_background_speed
 from ..utils.clearance import _HIDDEN_BELOW_M
 from .base import BaseAction, TickTiming
@@ -239,9 +239,12 @@ class TrafficSourceAction(_BackendAction):
             by default: each tick of its run is a tick it may add a vehicle on.
 
     Raises:
-        ValueError: If a count or rate is negative, *vehicles_per_minute* or
-            *min_gap_m* is negative or not finite, or *speed_kmh* is below
-            1 km/h or not finite.
+        ValueError: If *initial_vehicles*, *max_vehicles* (when given) or
+            *seed* (when given) is not a whole number (``2`` or ``2.0``, read
+            as 2; not ``2.5``, NaN, infinity or a boolean) or is negative,
+            *vehicles_per_minute* or *min_gap_m* is negative or not finite,
+            or *speed_kmh* is below 1 km/h or not finite.  The error names
+            the parameter.
     """
 
     _region: LaneletRegion
@@ -276,8 +279,9 @@ class TrafficSourceAction(_BackendAction):
         until: Optional[BaseCondition] = None,
         reissue: Optional[bool] = None,
     ) -> None:
-        if initial_vehicles < 0:
-            raise ValueError("vehicle counts and rates must not be negative")
+        # Whole numbers, read as ints: 2.5, NaN or True passed `< 0` and
+        # reached range() mid-run, after the world was up (#1492).
+        initial_vehicles = _vehicle_count("initial_vehicles", initial_vehicles)
         # NaN passes `< 0`, and NaN or infinity would fail int() on a later
         # tick, mid-run (#1321).
         if not math.isfinite(vehicles_per_minute) or vehicles_per_minute < 0:
@@ -285,8 +289,12 @@ class TrafficSourceAction(_BackendAction):
                 f"vehicles_per_minute must be finite and not negative, "
                 f"not {vehicles_per_minute!r}"
             )
-        if max_vehicles is not None and max_vehicles < 0:
-            raise ValueError("max_vehicles must not be negative")
+        if max_vehicles is not None:
+            max_vehicles = _vehicle_count("max_vehicles", max_vehicles)
+        # Checked as the config's background_traffic.seed is: int() alone
+        # would read 2.5 or True as a seed.
+        if seed is not None:
+            seed = check_seed("seed", seed)
         speed_kmh = check_background_speed(speed_kmh)
         # A NaN gap would let every spot through: no distance is below it.
         if not math.isfinite(min_gap_m) or min_gap_m < 0:
@@ -469,6 +477,19 @@ class TrafficSinkAction(_BackendAction):
             if self._region.contains(x, y):
                 backend.remove_background(world, handle)
                 self.removed += 1
+
+
+def _vehicle_count(key: str, value: int) -> int:
+    """*value*, a source's vehicle count, as an ``int``: a whole number
+    (:func:`~autoware_carla_scenario.seed.check_whole_number`), not negative.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    count = check_whole_number(key, value)
+    if count < 0:
+        raise ValueError(f"{key} must not be negative, got {value!r}")
+    return count
 
 
 def _simulated_seconds(world: "carla.World") -> Optional[float]:
