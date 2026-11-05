@@ -65,7 +65,9 @@ from tqdm import tqdm
 
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..rerun import RerunUnavailableError
-from ..run_outputs import RUN_DIR_SUFFIXES, RUN_FILE_SUFFIXES, remove_run_outputs
+from ..run_outputs import RUN_SUFFIXES as _RUN_SUFFIXES  # noqa: F401
+from ..run_outputs import remove_run_outputs
+from ..run_outputs import run_output_stems as _run_output_stems
 from ..ui.case_paths import last_result_path
 from .expand import (
     EMPTY_SWEEP_MESSAGE,
@@ -181,35 +183,6 @@ def _read_verdict(output_dir: Path) -> bool | None:
     if not isinstance(data, dict):
         return None
     return bool(data.get("passed", True))
-
-
-#: Every suffix of a run output (:mod:`..run_outputs`), longest first, so
-#: that ``X.sensors.rrd`` reads as stem ``X``, not ``X.sensors``.
-_RUN_SUFFIXES: tuple[str, ...] = tuple(
-    sorted(RUN_FILE_SUFFIXES + RUN_DIR_SUFFIXES, key=len, reverse=True)
-)
-
-
-def _run_output_stems(directory: Path, job_log: str | None) -> set[str]:
-    """The stems of the runs that left an output (:mod:`..run_outputs`) in
-    *directory*: what ``scenario_runner._run_file_stem`` skips over.
-
-    *job_log* is the file name of Hydra's job log (``<job name>.log``), which
-    is not a run's CARLA recorder log though it ends as one does.
-    """
-    try:
-        names = [path.name for path in directory.iterdir()]
-    except OSError:
-        return set()
-    stems: set[str] = set()
-    for name in names:
-        if name == job_log:
-            continue
-        for suffix in _RUN_SUFFIXES:
-            if name.endswith(suffix) and len(name) > len(suffix):
-                stems.add(name[: -len(suffix)])
-                break
-    return stems
 
 
 def _get_job_output_dir(ret: JobReturn) -> str | None:
