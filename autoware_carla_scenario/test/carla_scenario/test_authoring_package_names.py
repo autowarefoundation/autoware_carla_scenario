@@ -2,8 +2,7 @@
 checked :mod:`autoware_carla_scenario.authoring.package_names` (#1695).
 
 The move must not rename the package of any id that exported before; the ids
-whose package would be the framework's own are now refused by the validator,
-and ids that share a package directory are warned about.
+whose package would be the framework's own are now refused by the validator.
 """
 
 from __future__ import annotations
@@ -120,7 +119,7 @@ class TestFrameworkName:
         errors = [i for i in report.errors if i.path == "id"]
         assert len(errors) == 1
         assert "framework's own" in errors[0].message
-        # Not also warned about as a shared directory.
+        # The refusal is the only issue the id gets.
         assert not [i for i in report.warnings if i.path == "id"]
 
     def test_the_export_refuses_it(self, tmp_path: Path) -> None:

@@ -2426,7 +2426,7 @@ a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
 and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
 `scontrol`, `sinfo`: `slurm.queue`, #1634), the naming rules of
 `scenario-new` (`scaffold.names`, #1654) and those of the Scenario Editor's
-export, which ids it refuses and warns about and the framework pin's lines in
+export, which ids it refuses and the framework pin's lines in
 the package's README (`authoring.package_names`, #1695; the rule against the
 framework's own name is `scaffold.names`', which both apply), where the viewer keeps its
 recordings and its copy of Rerun's web viewer, and which web viewer it picks
