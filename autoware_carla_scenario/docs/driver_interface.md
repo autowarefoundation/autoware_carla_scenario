@@ -183,6 +183,16 @@ the seconds and metres (`timeout_s`, `policy_timestep_s`, `warmup_s`,
 and for `image_quality`, a whole number (see below) in 1-100: `90`, or `90.0`
 kept as `90`.
 
+The same holds for `driver.control` (and `ros2.control`): each gain and limit
+is a finite int or float (an int is read as a float), each `enable_*` switch a
+boolean and `velocity_smoothing_window` a whole number, and a `*_deg` angle
+must be a number too. What the controller divides by -- `wheelbase_m`,
+`max_steer_angle_deg` (or `_rad`), `steer_exponent`, `min_lookahead_m` and
+`velocity_lookahead_time` -- must be positive, and `max_lookahead_m` at least
+`min_lookahead_m`. A value out of these bounds is refused before the run
+starts, naming its key (`driver.control.steer_exponent must be positive, got
+0.0`), not once the ego first steers.
+
 Each `driver.cameras` entry needs its own `logical_id`; two cameras under one id
 are refused. Its `image_width` and `image_height` must be positive whole
 numbers, its `fps` positive and finite, its `fov` in (0, 180) degrees -- CARLA

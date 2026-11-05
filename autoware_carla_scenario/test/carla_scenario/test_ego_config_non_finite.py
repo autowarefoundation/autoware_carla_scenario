@@ -212,8 +212,11 @@ def test_the_driver_config_keeps_every_valid_value() -> None:
         ("driver.timeout_s=nan", "driver.timeout_s"),
         ("driver.policy_timestep_s=nan", "driver.policy_timestep_s"),
         ("driver.warmup_s=inf", "driver.warmup_s"),
-        ("+driver.control.kp=nan", "kp"),
-        ("driver.control.max_steer_angle_deg=nan", "max_steer_angle_rad"),
+        ("+driver.control.kp=nan", "driver.control.kp"),
+        (
+            "driver.control.max_steer_angle_deg=nan",
+            "driver.control.max_steer_angle_deg",
+        ),
     ],
 )
 def test_a_policy_ego_with_a_nan_setting_is_refused(override: str, key: str) -> None:
