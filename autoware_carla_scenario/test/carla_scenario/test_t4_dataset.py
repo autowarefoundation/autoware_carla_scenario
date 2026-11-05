@@ -117,7 +117,8 @@ def test_settings_take_workers_as_given_and_default_them() -> None:
 
 
 @pytest.mark.parametrize(
-    "distance", [0.0, -1.0, math.nan, math.inf, -math.inf, True, False]
+    "distance",
+    [0.0, -1.0, math.nan, math.inf, -math.inf, True, False, "30", "far", [30]],
 )
 def test_settings_refuse_a_max_distance_that_is_not_positive_and_finite(
     distance: float,
