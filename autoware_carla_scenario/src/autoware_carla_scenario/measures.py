@@ -104,6 +104,7 @@ from .coordinate.map_manager import MapManager
 from .entity_role import find_actor_in_world
 from .kinematics.walker_motion import WalkerVelocities, simulated_seconds
 from .metrics import is_metric
+from .utils.clearance import _level_gap, _vertical_span
 from .utils.stop_line import regulatory_element_stop_lines
 
 if TYPE_CHECKING:
@@ -383,15 +384,22 @@ def _pedestrians_around(
 ) -> list[_Around]:
     """*actors*' walkers in *ego*'s frame, each with its speed measured from
     where it stood when last read (*elapsed* the simulated time now; without
-    one, what CARLA reports)."""
+    one, what CARLA reports).  A walker on another level of road -- on a
+    footbridge over the ego, or in an underpass beneath it -- is not around
+    it (#1587); its speed is still measured, so it reads true once the
+    walker comes down to the ego's level."""
     transform = ego.get_transform()
+    ego_span = _vertical_span(ego, transform)
     found: list[_Around] = []
     for actor in actors:
         if actor.id == ego.id or not actor.type_id.startswith("walker."):
             continue
-        location = actor.get_location()
-        ahead, lateral = in_ego_frame(transform, location)
+        placed = actor.get_transform()
+        location = placed.location
         velocity = _WALKERS.walker(actor, elapsed, location)
+        if _level_gap(ego_span, _vertical_span(actor, placed)) > 0.0:
+            continue
+        ahead, lateral = in_ego_frame(transform, location)
         found.append(
             _Around(
                 actor_id=actor.id,
@@ -1291,19 +1299,26 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Lead]:
         if ego_actor is not None:
             actors = list(world.get_actors().filter("vehicle.*"))
             ego = _moving(ego_actor)
-            ego_z = float(ego_actor.get_location().z)
+            ego_placed = ego_actor.get_transform()
+            ego_z = float(ego_placed.location.z)
+            ego_span = _vertical_span(ego_actor, ego_placed)
             reach = AHEAD_RANGE_M + 2 * _REACH_MARGIN_M
             others: list[_Vehicle] = []
             for actor in actors:
                 if actor.id == ego_actor.id or not actor.type_id.startswith("vehicle."):
                     continue
-                location = actor.get_location()
+                placed = actor.get_transform()
+                location = placed.location
                 # Along the lane is never shorter than the straight line; and
                 # a vehicle far above or below is on no road of the ego's
-                # (vehicle_bumpers()'s probe, for one).
+                # (vehicle_bumpers()'s probe, for one), nor is one on another
+                # level of road: on a bridge over the ego, or in an underpass
+                # beneath it (#1587).
                 if math.hypot(location.x - ego.x, location.y - ego.y) > reach:
                     continue
                 if abs(float(location.z) - ego_z) > _OFF_THE_ROAD_M:
+                    continue
+                if _level_gap(ego_span, _vertical_span(actor, placed)) > 0.0:
                     continue
                 attributes = actor.attributes
                 if "role_name" in attributes and attributes["role_name"] == PROBE_ROLE:
