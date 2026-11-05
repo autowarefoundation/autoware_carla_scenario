@@ -59,7 +59,7 @@ _WATCHDOG = (
     "    except OSError:\n"
     "        return True\n"
     "    for name in names:\n"
-    "        if not name.isdigit() or int(name) == me:\n"
+    "        if not (name.isascii() and name.isdigit()) or int(name) == me:\n"
     "            continue\n"
     "        try:\n"
     "            with open('/proc/%s/stat' % name) as stat:\n"

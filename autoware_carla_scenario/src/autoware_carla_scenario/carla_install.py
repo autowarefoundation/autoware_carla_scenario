@@ -498,7 +498,9 @@ def _content_range(
     unit, _, span = (content_range or "").strip().partition(" ")
     first, _, rest = span.partition("-")
     _, _, total = rest.partition("/")
-    if unit != "bytes" or not first.isdigit() or not total.isdigit():
+    if unit != "bytes" or not (first.isascii() and first.isdigit()):
+        return None, None
+    if not (total.isascii() and total.isdigit()):
         return None, None
     return int(first), int(total)
 

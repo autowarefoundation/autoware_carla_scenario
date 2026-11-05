@@ -88,7 +88,7 @@ def _process_tree_rss_kb(root: int) -> tuple[int, int]:
     parents: dict[int, int] = {}
     rss: dict[int, int] = {}
     for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
+        if not (entry.name.isascii() and entry.name.isdigit()):
             continue
         try:
             status = (entry / "status").read_text()

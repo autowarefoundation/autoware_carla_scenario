@@ -217,7 +217,11 @@ def _resubmit(args: argparse.Namespace) -> int:
             item = item.strip()
             if item in labels:
                 picked[labels[item]] = None
-            elif item.isdigit() and 0 <= int(item) < len(manifest["cases"]):
+            elif (
+                item.isascii()
+                and item.isdigit()
+                and 0 <= int(item) < len(manifest["cases"])
+            ):
                 picked[int(item)] = None
             else:
                 print(f"Error: no case {item!r} in the batch", file=sys.stderr)  # noqa: T201

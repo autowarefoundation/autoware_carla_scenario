@@ -48,7 +48,7 @@ def default_cache_dir() -> Path:
 def _version(text: str) -> tuple[int, ...]:
     parts = []
     for part in text.split(".")[:3]:
-        digits = "".join(c for c in part if c.isdigit())
+        digits = "".join(c for c in part if c.isascii() and c.isdigit())
         parts.append(int(digits or 0))
     return tuple(parts)
 

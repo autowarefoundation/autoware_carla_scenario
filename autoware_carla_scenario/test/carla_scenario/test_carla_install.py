@@ -911,3 +911,10 @@ def test_a_read_only_run_does_not_install(
     assert f"is {expected}, and this run cannot write there" in err
     if state != "not installed":
         assert (install_dir() / "VERSION").read_bytes() == b"nightly"
+
+
+def test_a_content_range_of_non_ascii_digits_is_unknown() -> None:
+    """#1612: ``"²".isdigit()`` is true but ``int("²")`` raises."""
+    assert carla_install._content_range("bytes 5-9/10") == (5, 10)
+    assert carla_install._content_range("bytes ²-9/10") == (None, None)
+    assert carla_install._content_range("bytes 5-9/²") == (None, None)

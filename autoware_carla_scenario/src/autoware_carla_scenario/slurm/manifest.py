@@ -247,7 +247,11 @@ class BatchLayout(BatchPaths):
         directory = self.root / "submissions"
         if not directory.is_dir():
             return []
-        return sorted(int(p.stem) for p in directory.glob("*.json") if p.stem.isdigit())
+        return sorted(
+            int(p.stem)
+            for p in directory.glob("*.json")
+            if p.stem.isascii() and p.stem.isdigit()
+        )
 
     def next_submission(self) -> int:
         """The index after the batch's last submission.  Not reserved: two

@@ -365,7 +365,9 @@ def _job_indices(directory: Path, session_type: str) -> list[int]:
     if session_type != "multirun":
         return [0]
     return sorted(
-        int(p.name) for p in directory.iterdir() if p.is_dir() and p.name.isdigit()
+        int(p.name)
+        for p in directory.iterdir()
+        if p.is_dir() and p.name.isascii() and p.name.isdigit()
     )
 
 

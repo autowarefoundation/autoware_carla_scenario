@@ -199,6 +199,6 @@ def _cgroup_limit() -> int | None:
             text = path.read_text().strip()
         except OSError:
             continue
-        if text.isdigit() and int(text) < (1 << 60):
+        if text.isascii() and text.isdigit() and int(text) < (1 << 60):
             return int(text)
     return None

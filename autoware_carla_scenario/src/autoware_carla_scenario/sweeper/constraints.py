@@ -149,7 +149,7 @@ class EqualsConstraint(Constraint):
         # (`value` is a str there: Codon narrows no union, so it is read
         # through str() -- itself, for a str.)
         value = self.value
-        if isinstance(value, str) and str(value).isdigit():
+        if isinstance(value, str) and str(value).isascii() and str(value).isdigit():
             object.__setattr__(self, "value", int(str(value)))
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:

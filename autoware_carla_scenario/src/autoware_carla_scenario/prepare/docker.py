@@ -244,7 +244,11 @@ class DockerBackend:
         if settings.gpus == "none":
             return replace(settings.resources, gpu_memory_mb=0)
         device = settings.gpus.removeprefix("device=")
-        if settings.gpus.startswith("device=") and device.isdigit():
+        if (
+            settings.gpus.startswith("device=")
+            and device.isascii()
+            and device.isdigit()
+        ):
             return replace(settings.resources, gpu=int(device))
         return settings.resources
 
@@ -365,7 +369,11 @@ class DockerBackend:
         for line in listing.splitlines():
             container, _, owner = line.partition(" ")
             owner_host, _, pid = owner.rpartition(":")
-            if owner_host != host or not pid.isdigit() or _alive(int(pid)):
+            if (
+                owner_host != host
+                or not (pid.isascii() and pid.isdigit())
+                or _alive(int(pid))
+            ):
                 continue
             logger.warning(
                 "Removing backend container %s a stopped run (%s) left",

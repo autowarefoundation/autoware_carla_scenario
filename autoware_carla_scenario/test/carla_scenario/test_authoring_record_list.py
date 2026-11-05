@@ -373,3 +373,20 @@ def test_an_override_reaches_one_record_s_field(
         {"location": "any", "probability": 0.5},
     ]
     assert "no record 7 of nade.adversities" in caplog.text
+
+
+def test_a_non_ascii_digit_names_no_row_and_no_record(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#1612: ``"²".isdigit()`` is true but ``int("²")`` raises."""
+    form = {
+        "adversities.__rows": "1",
+        "adversities.0.probability": "0.5",
+        "adversities.².probability": "0.9",
+    }
+    (row,) = parse_params((ROWS,), form)["adversities"]
+    assert row["probability"] == 0.5
+    records = _records({"location": "any", "probability": 0.1})
+    _merge_records("nade", "adversities", records, {"²": {"probability": 0.5}})
+    assert records == [{"location": "any", "probability": 0.1}]
+    assert "no record '²' of nade.adversities" in caplog.text

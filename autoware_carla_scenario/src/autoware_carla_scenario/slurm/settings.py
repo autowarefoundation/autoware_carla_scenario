@@ -131,7 +131,7 @@ def parse_max_array_size(config: str) -> int | None:
         key, sep, value = line.partition("=")
         if sep and key.strip() == "MaxArraySize":
             text = value.strip()
-            if text.isdigit() and int(text) >= 1:
+            if text.isascii() and text.isdigit() and int(text) >= 1:
                 return int(text)
             return None
     return None

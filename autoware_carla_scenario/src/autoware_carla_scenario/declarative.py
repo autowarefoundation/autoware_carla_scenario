@@ -792,7 +792,8 @@ def _merge_records(
     there are.
     """
     for key, fields in override.items():
-        index = int(key) if str(key).isdigit() else -1
+        text = str(key)
+        index = int(text) if text.isascii() and text.isdigit() else -1
         if not 0 <= index < len(records) or not isinstance(records[index], dict):
             logger.warning(
                 "param_overrides names no record %r of %s.%s; ignoring.",

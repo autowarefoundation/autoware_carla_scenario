@@ -120,6 +120,8 @@ def test_buckets_read_in_order_numeric_ranges_by_their_lower_bound() -> None:
     ]
     assert comparison._case_number("pkg/cut_in#10") == (10, "pkg/cut_in#10")
     assert comparison._case_number("pkg/cut_in") == (0, "pkg/cut_in")
+    # #1612: "²".isdigit() is true but int("²") raises.
+    assert comparison._case_number("pkg/cut_in#²") == (0, "pkg/cut_in#²")
 
 
 def test_sessions_are_compared_by_key_and_by_cell() -> None:
