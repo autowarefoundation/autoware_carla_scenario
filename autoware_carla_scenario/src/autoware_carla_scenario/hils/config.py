@@ -43,6 +43,11 @@ input and step names also take a whole number (RTCM's ``1005``).
 1.1 forms that do not mean what they look like (octal ``0102``, sexagesimal
 ``1:30``, ``yes``/``no``/``on``/``off``), so ``Gear: Off`` in a field value is
 refused too instead of becoming ``False``.
+
+What needs no YAML and no value of any shape -- :class:`SensorSpec`, the
+checks of a LiDAR's attributes, :data:`CLOCKS`, :data:`PHASES` and
+:class:`HilsConfigError` -- lives in :mod:`.sensor_spec`, which the static
+check compiles (docs/typecheck.md); it is re-exported here.
 """
 
 from __future__ import annotations
@@ -62,6 +67,17 @@ from .protocol import (
     command_value,
     parse_address,
 )
+from .sensor_spec import (
+    CAMERA_PREFIX,
+    CLOCKS,
+    LIDAR_BLUEPRINT,
+    PHASES,
+    HilsConfigError,
+    SensorSpec,
+    _lidar_attributes,
+    _relative_file,
+)
+from .sensor_spec import _attribute_number as _attribute_number  # noqa: F401 - re-exported
 from .signals import SIGNALS
 from .yaml11 import YAML_BOOL as _YAML_BOOL  # noqa: F401 - re-exported
 from .yaml11 import YAML_FLOAT as _YAML_FLOAT  # noqa: F401 - re-exported
@@ -93,37 +109,10 @@ __all__ = [
 #: A constant field value.
 Constant = Union[str, int, float, bool]
 
-#: What the devices' time is:
-#:
-#: * ``"simulation"`` -- a ``hilspy.Clock`` advanced by the world's ticks:
-#:   periodic messages and a LiDAR's packets go out as simulated time passes
-#:   them, so a world slower (or faster) than real time stays consistent.
-#: * ``"wall"`` -- real time: periodic messages from hilspy's threads.
-CLOCKS: Tuple[str, ...] = ("simulation", "wall")
-
-#: The sensors a device can carry: a ray-cast LiDAR (with a ``lidar:``
-#: codec) and the cameras (whose frames are BGRA images).
-LIDAR_BLUEPRINT = "sensor.lidar.ray_cast"
-CAMERA_PREFIX = "sensor.camera."
-
 _TRANSFORM_KEYS = ("x", "y", "z", "roll", "pitch", "yaw")
-
-#: When the bridge runs a lifecycle's steps:
-#:
-#: * ``"startup"`` -- once, when the bridge starts (its devices just opened).
-#: * ``"scenario_start"`` -- when a scenario starts: a run's ``start``, or the
-#:   ego appearing.  The run waits for them (the ECUs being initialized).
-#: * ``"scenario_end"`` -- when the scenario ends: a run's ``end``, the run
-#:   going away, or the ego disappearing.
-#: * ``"shutdown"`` -- once, when the bridge stops (Ctrl-C, SIGTERM).
-PHASES: Tuple[str, ...] = ("startup", "scenario_start", "scenario_end", "shutdown")
 
 #: The phases with no ego, whose steps cannot use a signal.
 _EGOLESS_PHASES = ("startup", "shutdown")
-
-
-class HilsConfigError(ValueError):
-    """The configuration is not one the bridge can run."""
 
 
 @dataclass(frozen=True)
@@ -178,7 +167,7 @@ class InputSource:
         ``None`` when the message lacks the field, it is not a number, or it
         (scaled) is not finite (NaN, an infinity: a decoded IEEE-float signal,
         an overflowing scale) or too large for CARLA's 32-bit floats
-        (:func:`~.protocol.command_value`), which CARLA must not get."""
+        (:func:`~.wire.command_value`), which CARLA must not get."""
         value = self.scaled(fields)
         return None if value is None else command_value(value)
 
@@ -281,31 +270,6 @@ class StepSpec:
         if self.kind == "wait":
             return f"wait for {what} from {self.device} (up to {self.seconds} s)"
         return f"send {what} to {self.device}"
-
-
-@dataclass(frozen=True)
-class SensorSpec:
-    """A CARLA sensor the bridge attaches to the ego, forwarding what it measures.
-
-    Attributes:
-        blueprint: ``sensor.lidar.ray_cast`` or a ``sensor.camera.*``.
-        transform: ``(x, y, z, roll, pitch, yaw)`` relative to the ego, in
-            CARLA's convention (metres, degrees; y right).
-        attributes: Blueprint attributes, as strings.
-        encoding: A camera frame's encoding (:data:`CAMERA_ENCODINGS`).
-        intensity_scale: A LiDAR's intensity (0 to 1) times this is the
-            reflectivity byte sent.
-    """
-
-    blueprint: str
-    transform: Tuple[float, float, float, float, float, float] = (0.0,) * 6
-    attributes: Mapping[str, str] = field(default_factory=dict)
-    encoding: str = "bgra"
-    intensity_scale: float = 255.0
-
-    @property
-    def is_lidar(self) -> bool:
-        return self.blueprint == LIDAR_BLUEPRINT
 
 
 @dataclass(frozen=True)
@@ -615,71 +579,6 @@ def _attributes(value: Any, where: str) -> Dict[str, str]:
                 f"got {_described(item)}"
             )
     return attributes
-
-
-def _attribute_number(attributes: Mapping[str, str], key: str, where: str) -> float:
-    """The blueprint attribute *key* of a sensor as a finite number."""
-    text = attributes[key]
-    try:
-        number = float(text)
-    except ValueError:
-        number = math.nan
-    if not math.isfinite(number):
-        raise HilsConfigError(f"{where}.{key}: expected a finite number, got {text!r}")
-    return number
-
-
-def _lidar_attributes(attributes: Mapping[str, str], where: str) -> None:
-    """Refuse the LiDAR attributes the bridge cannot gather revolutions for.
-
-    The bridge gathers a LiDAR's per-tick arcs into revolutions
-    (:class:`~autoware_carla_scenario.hils.lidar_revolution.LidarRevolution`).
-    A revolution is one sweep of ``horizontal_fov`` degrees, which may be
-    anything in (0, 360], at ``rotation_frequency`` revolutions a second, a
-    finite positive number.  ``sensor_tick`` must be left unset (or 0): CARLA
-    sweeps only one world tick per measurement however long the
-    ``sensor_tick``, so a LiDAR measured less often than every tick turns
-    slower than its ``rotation_frequency``, and no device turns that way.
-    """
-    if "horizontal_fov" in attributes:
-        fov = _attribute_number(attributes, "horizontal_fov", where)
-        if not 0.0 < fov <= 360.0:
-            raise HilsConfigError(
-                f"{where}.horizontal_fov: must be in (0, 360] degrees, "
-                f"got {attributes['horizontal_fov']!r}"
-            )
-    if "rotation_frequency" in attributes:
-        frequency = _attribute_number(attributes, "rotation_frequency", where)
-        if frequency <= 0.0:
-            raise HilsConfigError(
-                f"{where}.rotation_frequency: must be positive, "
-                f"got {attributes['rotation_frequency']!r}"
-            )
-    if "sensor_tick" in attributes:
-        if _attribute_number(attributes, "sensor_tick", where) != 0.0:
-            raise HilsConfigError(
-                f"{where}.sensor_tick: a LiDAR measures every world tick; "
-                f"leave sensor_tick unset (or 0), got {attributes['sensor_tick']!r} "
-                "(CARLA sweeps only one world tick per measurement, so with a "
-                "sensor_tick it turns slower than its rotation_frequency)"
-            )
-
-
-def _relative_file(value: str, base: Path) -> str:
-    """*value* with ``~`` expanded, and made absolute when it names a file
-    relative to *base*.
-
-    hilspy expands no ``~``, so an expanded path is returned even when it is
-    absolute; any other absolute *value* is returned as it is, not normalized
-    (a registered codec's argument may not be a path), and so is a relative
-    *value* that names no file under *base* (a LiDAR codec's model name).
-    """
-    path = Path(value).expanduser()
-    if path.is_absolute():
-        return str(path) if value.startswith("~") else value
-    if (base / path).is_file():
-        return str((base / path).resolve())
-    return value
 
 
 def _codec(value: Any, base: Path, where: str) -> str:

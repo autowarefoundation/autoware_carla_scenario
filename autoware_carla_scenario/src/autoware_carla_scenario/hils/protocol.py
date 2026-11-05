@@ -31,15 +31,14 @@ bridge -> runner
 ========================  ===================================================
 
 Only the standard library is needed here, so a run reaches the bridge without
-hilspy installed.  The constants and :func:`encode`, :func:`parse_address` and
-:func:`format_address` live in :mod:`.wire`, which needs no socket (so the
-static check compiles it); they are re-exported here.
+hilspy installed.  The constants and :func:`encode`, :func:`parse_address`,
+:func:`format_address` and :func:`command_value` live in :mod:`.wire`, which
+needs no socket (so the static check compiles it); they are re-exported here.
 """
 
 from __future__ import annotations
 
 import json
-import math
 import socket
 import time
 from typing import Any, Dict, List, NoReturn, Optional
@@ -47,10 +46,12 @@ from typing import Any, Dict, List, NoReturn, Optional
 from .wire import (
     COMMAND_FIELDS,
     COMMAND_MODES,
+    COMMAND_VALUE_LIMIT,
     DEFAULT_PORT,
     LINK_DIRECTIONS,
     PROTOCOL_VERSION,
     RUNNER_MESSAGES,
+    command_value,
     encode,
     format_address,
     parse_address,
@@ -59,34 +60,18 @@ from .wire import (
 __all__ = [
     "COMMAND_FIELDS",
     "COMMAND_MODES",
+    "COMMAND_VALUE_LIMIT",
     "DEFAULT_PORT",
     "LINK_DIRECTIONS",
     "MAX_LINE_BYTES",
     "RUNNER_MESSAGES",
     "PROTOCOL_VERSION",
     "LineReader",
+    "command_value",
     "encode",
     "format_address",
     "parse_address",
 ]
-
-#: The largest magnitude a command field may have: CARLA's controls are 32-bit
-#: floats, which turn a larger (finite) double into an infinity.
-COMMAND_VALUE_LIMIT = 3.4028234663852886e38
-
-
-def command_value(value: Any) -> Optional[float]:
-    """A command field's *value* as a float, or ``None`` when it is not a
-    number CARLA can take: not finite (NaN, an infinity), or beyond
-    :data:`COMMAND_VALUE_LIMIT` (an integer too large for a float included)."""
-    try:
-        number = float(value)
-    except OverflowError:
-        return None
-    if not math.isfinite(number) or abs(number) > COMMAND_VALUE_LIMIT:
-        return None
-    return number
-
 
 #: The longest line :class:`LineReader` buffers, bytes: a peer that sends more
 #: without a newline is refused rather than buffered without bound.

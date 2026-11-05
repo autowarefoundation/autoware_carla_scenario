@@ -406,7 +406,7 @@ class HilsEgoEntity(ExternallyDrivenEgo):
 
         A field that is not a number is left out, and so is a non-finite one
         (NaN, an infinity: JSON's ``NaN``/``Infinity``) or one too large for
-        CARLA's 32-bit floats (:func:`~..hils.protocol.command_value`), which
+        CARLA's 32-bit floats (:func:`~..hils.wire.command_value`), which
         CARLA must not get: the field takes its default,
         as a missing one does.  Those are logged the first time and then once
         in a hundred."""
@@ -414,7 +414,10 @@ class HilsEgoEntity(ExternallyDrivenEgo):
         for key, value in message.items():
             if key not in fields or not isinstance(value, (int, float)):
                 continue
-            number = command_value(value)
+            try:
+                number = command_value(float(value))
+            except OverflowError:  # an integer too large for a float
+                number = None
             if number is not None:
                 values[key] = number
                 continue
