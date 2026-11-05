@@ -575,6 +575,86 @@ def test_sumo_drives_the_npc_and_mirrors_the_ego(
     assert backend.describe()["backend"] == "sumo"
 
 
+@pytest.mark.parametrize(
+    ("sumo_args", "expected"),
+    [
+        ([], ["-a", "own.add.xml", "-r", "own.rou.xml"]),
+        (
+            ["--additional-files", "a.xml,b.xml", "--verbose"],
+            ["-a", "own.add.xml,a.xml,b.xml", "-r", "own.rou.xml", "--verbose"],
+        ),
+        (
+            ["-a", "a.xml", "--additional=b.xml", "--additional", "c.xml"],
+            ["-a", "own.add.xml,a.xml,b.xml,c.xml", "-r", "own.rou.xml"],
+        ),
+        (
+            ["--step-length", "0.1", "-r", "x.rou.xml", "--routes=y.rou.xml"],
+            [
+                "-a",
+                "own.add.xml",
+                "-r",
+                "own.rou.xml,x.rou.xml,y.rou.xml",
+                "--step-length",
+                "0.1",
+            ],
+        ),
+        (
+            ["--route-files", "x.rou.xml", "--additional-files"],
+            ["-a", "own.add.xml", "-r", "own.rou.xml,x.rou.xml", "--additional-files"],
+        ),
+    ],
+)
+def test_sumo_args_files_join_the_backends_own(
+    sumo_args: list[str], expected: list[str]
+) -> None:
+    """SUMO refuses an option twice: sumo_args' files join the backend's own."""
+    from autoware_carla_scenario.traffic.sumo.backend import _merge_file_options
+
+    assert _merge_file_options(sumo_args, ["own.add.xml"], ["own.rou.xml"]) == expected
+
+
+def test_sumo_args_files_alone_keep_their_option() -> None:
+    """Without route files of the backend's own, sumo_args' are passed on alone."""
+    from autoware_carla_scenario.traffic.sumo.backend import _merge_file_options
+
+    assert _merge_file_options(["--routes", "x.rou.xml"], ["own.add.xml"], []) == [
+        "-a",
+        "own.add.xml",
+        "-r",
+        "x.rou.xml",
+    ]
+
+
+@needs_sumo
+def test_sumo_args_may_name_additional_and_route_files(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """SUMO starts with sumo_args' additional and route files, theirs loaded
+    with the backend's own (it refused the option twice, issue #1532)."""
+    from autoware_carla_scenario.traffic.sumo.backend import MOTORCYCLE_TYPE
+
+    additional = tmp_path / "user.add.xml"
+    additional.write_text(
+        '<additional>\n    <vType id="user_additional" vClass="passenger"/>\n'
+        "</additional>\n"
+    )
+    routes = tmp_path / "user.rou.xml"
+    routes.write_text(
+        '<routes>\n    <vType id="user_route" vClass="passenger"/>\n</routes>\n'
+    )
+    backend, *_ = _prepared(
+        crossroads,
+        tmp_path,
+        period_s=2.0,  # ambient traffic: the backend's own route file
+        sumo_args=["--additional-files", str(additional), f"--route-files={routes}"],
+    )
+    try:
+        types = set(backend._traci.vehicletype.getIDList())
+        assert {"user_additional", "user_route", MOTORCYCLE_TYPE} <= types
+    finally:
+        backend.close()
+
+
 @needs_sumo
 def test_a_released_vehicle_is_published_rather_than_driven(
     crossroads: Path, tmp_path: Path

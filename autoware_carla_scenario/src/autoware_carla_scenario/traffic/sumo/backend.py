@@ -368,6 +368,54 @@ def _write_motorcycle_type(path: Path) -> Path:
     return path
 
 
+#: SUMO's spellings of the options naming its additional and route files.
+_ADDITIONAL_OPTIONS = ("-a", "--additional-files", "--additional")
+_ROUTE_OPTIONS = ("-r", "--route-files", "--routes")
+
+
+def _merge_file_options(
+    sumo_args: list[str], additional: list[str], routes: list[str]
+) -> list[str]:
+    """SUMO's command-line arguments for the backend's own *additional* and
+    *routes* files and a configuration's extra *sumo_args*.
+
+    SUMO refuses an option given twice, so an additional or route file option
+    in *sumo_args* (``-a X``, ``--additional-files X``, ``--additional X`` or
+    ``--additional-files=X``; likewise ``-r``, ``--route-files`` and
+    ``--routes``) is taken out of it and its comma-separated files appended to
+    the backend's own: theirs first, so the files given in *sumo_args* can use
+    the types they declare.  Every other argument keeps its order, after the
+    files.  An option without a value is passed on as it is, for SUMO to
+    reject.
+    """
+    files: dict[str, list[str]] = {"-a": list(additional), "-r": list(routes)}
+    rest: list[str] = []
+    index = 0
+    while index < len(sumo_args):
+        arg = sumo_args[index]
+        index += 1
+        name, equals, value = arg.partition("=")
+        if name in _ADDITIONAL_OPTIONS:
+            key = "-a"
+        elif name in _ROUTE_OPTIONS:
+            key = "-r"
+        else:
+            rest.append(arg)
+            continue
+        if not equals:
+            if index >= len(sumo_args):
+                rest.append(arg)
+                continue
+            value = sumo_args[index]
+            index += 1
+        files[key] += [f for f in value.split(",") if f]
+    merged: list[str] = []
+    for key in ("-a", "-r"):
+        if files[key]:
+            merged += [key, ",".join(files[key])]
+    return merged + rest
+
+
 def _write_type_distribution(
     path: Path, type_id: str, vclass: str, members: list[dict[str, float]]
 ) -> Path:
@@ -960,17 +1008,17 @@ class SumoTrafficBackend(TrafficBackend):
         # Always: a scenario's motorcycle may join at any point of the run.
         types.append(str(_write_motorcycle_type(out / "motorcycle_type.add.xml")))
         # Before the demand: SUMO's default types are redefined only before
-        # anything uses them.
-        cmd += ["-a", ",".join(types)]
-        if routes:
-            cmd += ["-r", ",".join(str(r) for r in routes)]
+        # anything uses them.  sumo_args' own additional and route files join
+        # these (SUMO refuses an option twice), after them.
+        cmd += _merge_file_options(
+            list(self._config.sumo_args), types, [str(r) for r in routes]
+        )
         if self._config.fcd_output:
             cmd += ["--fcd-output", str(out / "fcd.xml"), "--fcd-output.geo", "false"]
             # How SUMO's clock maps onto CARLA's, to line the FCD up with
             # anything else recorded on CARLA's (camera frames, a rosbag).
             self._clock_log = (out / "clock.csv").open("w")
             self._clock_log.write("sumo_time,carla_elapsed_seconds,carla_frame\n")
-        cmd += self._config.sumo_args
         try:
             self._traci.start(cmd)
         except Exception as exc:

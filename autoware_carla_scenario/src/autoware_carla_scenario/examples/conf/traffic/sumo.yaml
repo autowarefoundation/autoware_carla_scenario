@@ -127,6 +127,8 @@ traffic:
     fcd_output: false
     use_libsumo: true
     binary: sumo
+    # Extra SUMO arguments; additional (-a) and route (-r) files given here
+    # are loaded after the backend's own.
     sumo_args: []
   # How vehicles drive and pedestrians walk, in the terms every backend
   # shares (VehicleParameters / PedestrianParameters,

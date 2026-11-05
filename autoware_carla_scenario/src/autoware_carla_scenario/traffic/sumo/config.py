@@ -441,7 +441,10 @@ class SumoBackendConfig:
             floating car data) to ``<output_dir>/sumo/fcd.xml``, for replaying
             or plotting a run's traffic afterwards, and the SUMO time each CARLA
             tick maps to in ``<output_dir>/sumo/clock.csv``.
-        sumo_args: Extra command-line arguments for SUMO.
+        sumo_args: Extra command-line arguments for SUMO.  Additional and
+            route files given here (``-a``/``--additional-files``,
+            ``-r``/``--route-files``) join the backend's own, after them, as
+            SUMO takes each option only once.
     """
 
     scenario_vehicles: str = "traffic_manager"
