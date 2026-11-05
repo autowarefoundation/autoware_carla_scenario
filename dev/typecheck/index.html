@@ -4814,9 +4814,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-281 of the package's 404
-modules (70%; about 86,900 of
-151,300 lines) are <code>CHECKED</code>: the kinematics, the
+282 of the package's 405
+modules (70%; about 87,100 of
+151,400 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4827,13 +4827,15 @@ and type files), the signal controllers, the adversity math, the measures,
 the metrics and the ODD's probes, the gate package's <code>__init__</code> and its per-run record and probe (not
 its evaluator), the HILS bridge's wire format (a command's values included)
 and its configuration's sensor spec (not the YAML reading around it), the
-example scenarios and their configs, and the parts of the
+example scenarios and their configs, the SLURM launcher's job scripts and its
+calls of SLURM's command-line tools (<code>sbatch</code>, <code>squeue</code>, <code>scancel</code>,
+<code>scontrol</code>, <code>sinfo</code>: <code>slurm.queue</code>, #1634), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 <code>__init__</code> re-exports what is not checked through models of it (see <em>A class
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 281 CHECKED modules</summary>
+<summary>The 282 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5739,6 +5741,10 @@ with the first paragraph of its docstring:</p>
 <td>The arithmetic of a SLURM task's port slots (docs/slurm.md).</td>
 </tr>
 <tr>
+<td><code>slurm.queue</code></td>
+<td>SLURM's command-line tools, as the submitting side and the viewer run them: <code>sbatch</code>, <code>squeue</code>, <code>scancel</code>, <code>scontrol</code> and <code>sinfo</code> (docs/slurm.md).</td>
+</tr>
+<tr>
 <td><code>slurm.scripts</code></td>
 <td>The text a SLURM batch hands to SLURM, and reads back from it (docs/slurm.md).</td>
 </tr>
@@ -6257,7 +6263,7 @@ the first:</p>
 <li><code>slurm.collect</code>: imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON into dataclass fields typed <code>dict[str, Any]</code>, which Codon cannot express</li>
 <li><code>slurm.manifest</code>: imports errno, and more of os than its shim declares (<code>os.fdopen()</code>, <code>os.link()</code>, <code>os.stat()</code>, <code>os.open()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>); reads and writes JSON documents of values of any type (<code>Any</code>); the paths of its BatchLayout are the checked slurm.scripts' BatchPaths, and the cases' file stems and the names of a config's keys the checked slurm.stems'</li>
 <li><code>slurm.ports</code>: imports fcntl, and more of os and socket than their shims declare (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.access()</code>, <code>os.O_CREAT</code>, <code>os.O_RDONLY</code>, <code>socket.AF_INET6</code>, <code>socket.SOL_SOCKET</code>, <code>socket.SO_REUSEADDR</code>, <code>socket.IPPROTO_IPV6</code>, <code>socket.IPV6_V6ONLY</code>, a socket's <code>setsockopt()</code>); the slot arithmetic, first_slot() and the watchdog's command line are the checked slurm.port_slots'</li>
-<li><code>slurm.submit</code>: imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.O_CREAT</code>, <code>os.O_WRONLY</code>, <code>os.O_TRUNC</code>); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts</li>
+<li><code>slurm.submit</code>: imports omegaconf (inside functions), slurm.manifest and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (<code>os.open()</code>, <code>os.fdopen()</code>, <code>os.O_CREAT</code>, <code>os.O_WRONLY</code>, <code>os.O_TRUNC</code>); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts, and run, as squeue, scancel and scontrol are, by the checked slurm.queue</li>
 <li><code>slurm.worker</code>: imports traceback, errno, uuid, fcntl (inside a function), <code>contextlib.contextmanager</code>, more of os, threading and importlib than their shims declare (<code>os.open()</code>, <code>os.fstat()</code>, <code>os.write()</code>, <code>os.O_CREAT</code>, <code>os.O_EXCL</code>, <code>os.O_WRONLY</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and slurm.manifest, slurm.ports, and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled, and, inside run_task(), typecheck.mode (the checker, outside the library check); imports <code>RerunConverter</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>report()</code> from rerun, which is not checked, and the rerun model declares neither <code>report()</code> nor <code>RerunConverter.close()</code>, and its <code>RerunConverter.wait()</code> returns None, not the RerunConversion records the worker passes to <code>rerun_errors()</code>; compares config values of any type (<code>Any</code>); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's</li>
 <li><code>sweeper</code>: re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)</li>
 <li><code>sweeper.expand</code>: imports omegaconf, and openodd inside a function; imports <code>OddDraws</code> (under <code>TYPE_CHECKING</code>) and <code>ODD_CASE_KEY</code>, <code>check_sample_settings()</code>, <code>encode_case()</code>, <code>sample_seed()</code>, <code>search_from_config()</code>, <code>seed_setting()</code>, <code>with_tire_friction()</code> and <code>with_visibility()</code> from odd.sampler (inside _with_odd_samples(), _config_seed() and expand_config()), <code>lanelet_readings()</code> from odd.route (inside _case_readings()) and <code>ControlsError</code> and <code>validate_controls()</code> from odd.controls (inside scenario_controls()), which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as <code>Any</code> and <code>Mapping[..., Any]</code>, which Codon cannot express; the lanelet a base case is on, whether a drawn case fits a base case and which base case each drawn case is put on are the checked sweeper.case_choice's</li>
@@ -6284,7 +6290,7 @@ the first:</p>
 <li><code>ui.recordings</code>: imports base64, io, tarfile, urllib.request and zlib, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (<code>Any</code>)</li>
 <li><code>ui.results</code>: imports ui.cases, which is not checked and has no model, and yaml inside a function; reads JSON documents and trajectory log records of any type (<code>Any</code>); the comparison of sessions is the checked ui.comparison's, fed the buckets and key read here, and a session's job indices and a case's <code>scenario=</code> override are the checked ui.case_paths's</li>
 <li><code>ui.scanner</code>: imports yaml, the registry (omegaconf, importlib), which is not checked, ui.models (pydantic), whose model declares none of the view models it builds, and ui.cases, which is not checked and has no model; reads JSON documents of any type (<code>Any</code>); <code>_read_raw_log()</code> seeks in a text file, which the shim's IO does not declare, and names ui.runner's <code>RAW_OUTPUT_LOG</code></li>
-<li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest and slurm.submit (omegaconf inside functions), which are not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options', and the state of each case and its message the checked ui.slurm_case_state's</li>
+<li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest, which is not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options', the state of each case and its message the checked ui.slurm_case_state's, and what it asks SLURM (squeue, sinfo, whether sbatch and squeue are on PATH) the checked slurm.queue's</li>
 <li><code>ui.sweep_resolver</code>: imports hydra and the registry (omegaconf, importlib), and, inside resolve_sweep(), authoring.hydra_config (pydantic, through authoring.models), odd.controls and sweeper.expand (omegaconf), which are not checked; imports <code>OddDraws</code> from odd.sampler (under <code>TYPE_CHECKING</code>), which the odd model does not declare</li>
 <li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields), takes the options as <code>Mapping[str, Any]</code> and, in checked_str_list(), a list setting of any type (<code>value: Any</code>), which Codon cannot express</li>
 <li><code>weather_rules</code>: imports openodd (a Rust extension), reads rule files and <code>environment.rules</code> as <code>Mapping[str, Any]</code>, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it</li>
@@ -8129,7 +8135,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 16:24:20 UTC"><span class="timeago" datetime="2026-11-05T16:24:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 16:24:20 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 16:36:59 UTC"><span class="timeago" datetime="2026-11-05T16:36:59+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 16:36:59 UTC">2026-11-05</span>
   </span>
 
     
