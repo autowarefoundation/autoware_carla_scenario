@@ -4817,8 +4817,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 288 of the package's 410
-modules (70%; about 88,300 of
-152,000 lines) are <code>CHECKED</code>: the kinematics, the
+modules (70%; about 88,400 of
+152,100 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6010,8 +6010,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>152 functions and methods of those modules are <code>UNCALLED</code>
-(43 of them protected helpers, see <em>What is
+<p>153 functions and methods of those modules are <code>UNCALLED</code>
+(44 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6023,7 +6023,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 152 UNCALLED functions and methods, and why</summary>
+<summary>The 153 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6077,6 +6077,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>driver.base.DriverClientConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
 <li><code>driver.base.DriverLidarConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>), and builds the config with <code>**</code> of a dict; utils.config is imported inside it, so it is not compiled</li>
 <li><code>driver.control.ControlConfig.from_mapping</code>: takes a Hydra node (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express, reads the dataclass's fields from its class (<code>dataclasses.fields(cls)</code>) and builds the config with <code>**</code> of a dict</li>
+<li><code>driver.control._config_number</code>: takes a config value of any type (<code>Any</code>: a Hydra node's, a bool, a string or an integer too large for a float among them), which Codon cannot express; only ControlConfig.from_mapping, itself uncalled, calls it</li>
 <li><code>driver.observation.encode_frame_jpeg</code>: encodes with cv2 (OpenCV), which Codon cannot compile; cv2 is imported inside it, so it is not compiled</li>
 <li><code>entity.registry.find_entity_by_role_name</code>: returns the entity of any kind registered under a role (<code>Optional[Any]</code>), which Codon cannot express; find_vehicle_entity and find_pedestrian_entity are its typed lookups</li>
 <li><code>entity.registry.register_entity</code>: takes an entity of any kind (<code>Any</code>: a vehicle, a pedestrian or a duck-typed object); Codon resolves its isinstance() dispatch by the static type rather than the class, so a subclass of BackendDriven takes the wrong branch; register_vehicle_entity and register_pedestrian_entity are its typed counterparts, which scenario_base and scenario_runner call</li>
