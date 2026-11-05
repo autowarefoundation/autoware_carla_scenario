@@ -4814,9 +4814,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-286 of the package's 409
-modules (70%; about 87,800 of
-151,800 lines) are <code>CHECKED</code>: the kinematics, the
+287 of the package's 410
+modules (70%; about 87,900 of
+151,900 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4834,13 +4834,17 @@ example scenarios and their configs, the SLURM launcher's job scripts, where
 a batch's files are and which submissions it holds (<code>slurm.scripts</code>, #1648),
 and its calls of SLURM's command-line tools (<code>sbatch</code>, <code>squeue</code>, <code>scancel</code>,
 <code>scontrol</code>, <code>sinfo</code>: <code>slurm.queue</code>, #1634), the naming rules of
-<code>scenario-new</code> (<code>scaffold.names</code>, #1654), and the parts of the
+<code>scenario-new</code> (<code>scaffold.names</code>, #1654), the frame math of the T4Scene
+converter (CARLA's world frame to Autoware's <code>map</code> frame, and the rotations
+and quaternions of its angles: <code>t4_scene.frames</code>, #1665; the converter
+itself, which reads the log's mixed-type records and builds protobuf
+messages, re-exports it), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 <code>__init__</code> re-exports what is not checked through models of it (see <em>A class
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 286 CHECKED modules</summary>
+<summary>The 287 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5806,6 +5810,10 @@ with the first paragraph of its docstring:</p>
 <td>Each run's trajectory log as a T4Scene, as the run ends (<code>t4scene.enabled</code>).</td>
 </tr>
 <tr>
+<td><code>t4_scene.frames</code></td>
+<td>The frame math of a T4Scene: CARLA's left-handed world frame to Autoware's right-handed <code>map</code> frame (docs/trajectory_log.md, <code>coordinate.transform.to_map_frame</code>), and the rotations and quaternions of map-frame roll, pitch and yaw.</td>
+</tr>
+<tr>
 <td><code>t4_scene.grid</code></td>
 <td>The pure pieces of a T4Scene's time grid: the step in ticks, the scene's stem, who the ego is, who is on the scene, the ego's turn indicator and how far from it a road user is still one of the scene's objects.</td>
 </tr>
@@ -6295,7 +6303,7 @@ the first:</p>
 <li><code>t4_scene</code>: re-exports t4_scene.convert and t4_scene.map_resource, which are not checked, and the checked t4_scene.exporter; t4_scene.codon models what scenario_runner, scenario_queue and t4_scene.exporter use of it</li>
 <li><code>t4_scene.__main__</code>: the scenario-t4scene command: imports argparse and t4_scene.convert, which is not checked</li>
 <li><code>t4_scene._proto.t4_scene_pb2</code>: imports google.protobuf</li>
-<li><code>t4_scene.convert</code>: reads JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) with orjson, imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); t4_scene.codon models the write_t4_scene() the checked t4_scene.exporter calls</li>
+<li><code>t4_scene.convert</code>: reads JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) with orjson, imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); its frame math (the map frame's positions and angles, the rotations and quaternions) is the checked t4_scene.frames (#1665), which it re-exports; t4_scene.codon models the write_t4_scene() the checked t4_scene.exporter calls</li>
 <li><code>t4_scene.live</code>: builds the run's scenes with t4_scene.convert, which is not checked, from a subclass of trajectory_recorder's TrajectoryRecorder (excluded), and imports numpy.typing (<code>NDArray</code>); entity.carla_driver_entity (excluded) is all that uses it</li>
 <li><code>t4_scene.map_resource</code>: imports xml.etree.ElementTree, which Codon has no shim for, and more of tempfile than its shim declares (<code>TemporaryDirectory()</code>), and builds protobuf messages (t4_scene._proto)</li>
 <li><code>t4_scene.route</code>: Codon crashes compiling RouteGraph.of(), which builds the lane graph with lanelet2's routing graph (a segmentation fault, or an assertion at translate.cpp:193); imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks; holds the lane graph as <code>Mapping[int, tuple[int, ...]]</code> attributes; and moves a map's points with <code>Lanelet.resetCache()</code> and <code>LineString3d.__setitem__()</code>, which the lanelet2 model does not declare; t4_scene.convert and t4_scene.live, which are not checked, are all that use it</li>
@@ -8177,7 +8185,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 17:44:08 UTC"><span class="timeago" datetime="2026-11-05T17:44:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 17:44:08 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 19:25:59 UTC"><span class="timeago" datetime="2026-11-05T19:25:59+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 19:25:59 UTC">2026-11-05</span>
   </span>
 
     
