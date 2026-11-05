@@ -973,3 +973,112 @@ def test_a_version_reads_ascii_digits_only() -> None:
 
     assert _version("2.1rc3") == (2, 13)
     assert _version("2².1") == (2, 1)
+
+
+#: A worker that answers its ``init`` ok unless told otherwise, and then each
+#: request with the line it was given (``sys.argv[2]``).  With ``init`` as
+#: ``sys.argv[1]``, it answers its ``init`` with that line too.
+_ANSWERS_OUT_OF_PROTOCOL = textwrap.dedent(
+    """
+    import json, sys
+
+    when, answer = sys.argv[1], sys.argv[2]
+    for line in sys.stdin:
+        op = json.loads(line)["op"]
+        if op == "close":
+            break
+        if op == "init" and when != "init":
+            sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+        else:
+            sys.stdout.write(answer + "\\n")
+        sys.stdout.flush()
+    """
+)
+
+
+@pytest.mark.parametrize(
+    ("answer", "message"),
+    [
+        ("Loading CommonRoad...", "not with JSON: 'Loading CommonRoad...'"),
+        ("{not json", "not with JSON: '{not json'"),
+        ('["ok", true]', """not with a JSON object: '["ok", true]'"""),
+        ('"ok"', """not with a JSON object: '"ok"'"""),
+        ("1", "not with a JSON object: '1'"),
+        ("null", "not with a JSON object: 'null'"),
+    ],
+)
+def test_an_answer_out_of_protocol_is_a_worker_error(
+    tmp_path: Path, answer: str, message: str
+) -> None:
+    """#1636: a line that is not a JSON object raises CommonRoadWorkerError,
+    not JSONDecodeError or AttributeError."""
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script), "evaluate", answer], tmp_path / "map.xml"
+    )
+    try:
+        with pytest.raises(cr_worker.CommonRoadWorkerError) as raised:
+            worker.evaluate([CRIME_TTC_S], {}, [])
+        assert "'evaluate' out of protocol" in str(raised.value)
+        assert message in str(raised.value)
+    finally:
+        worker.close()
+    assert not worker.running()
+
+
+def test_an_answer_out_of_protocol_is_quoted_cut_short(tmp_path: Path) -> None:
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script), "evaluate", "x" * 5000], tmp_path / "map.xml"
+    )
+    try:
+        with pytest.raises(cr_worker.CommonRoadWorkerError) as raised:
+            worker.evaluate([CRIME_TTC_S], {}, [])
+    finally:
+        worker.close()
+    assert "'" + "x" * cr_worker._EXCERPT_CHARS + "...'" in str(raised.value)
+    assert "x" * (cr_worker._EXCERPT_CHARS + 1) not in str(raised.value)
+
+
+def test_a_worker_answering_its_init_out_of_protocol_is_not_left_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    started: list[Any] = []
+    popen = cr_worker.subprocess.Popen
+
+    def recording_popen(*args: Any, **kwargs: Any) -> Any:
+        process = popen(*args, **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr(cr_worker.subprocess, "Popen", recording_popen)
+    with pytest.raises(cr_worker.CommonRoadWorkerError, match="'init' out of"):
+        cr_worker.CommonRoadWorker(
+            [sys.executable, str(script), "init", "a banner"], tmp_path / "map.xml"
+        )
+    (process,) = started
+    assert process.poll() is not None
+
+
+def test_a_worker_answering_out_of_protocol_is_not_reused(
+    opendrive: str, tmp_path: Path
+) -> None:
+    """The run fails with the worker's error, and the pool is reset: the
+    worker's answers are out of step, so the next run starts afresh."""
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    cr_session.configure_commonroad_metrics(
+        command=(sys.executable, str(script), "evaluate", "[]"),
+        cache_dir=tmp_path / "maps",
+        workers=1,
+    )
+    world = _following(opendrive)
+    (worker,) = cr_session._workers_for(world.get_map())
+    with pytest.raises(cr_worker.CommonRoadWorkerError, match="not with a JSON"):
+        evaluate_metrics(_recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S])
+    assert cr_session._POOL.workers == []
+    assert not worker.running()
