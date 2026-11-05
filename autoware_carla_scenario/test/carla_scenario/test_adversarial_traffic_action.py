@@ -28,6 +28,7 @@ from autoware_carla_scenario.control_domain import (
     ControlConflictError,
     ControlDomain,
 )
+from autoware_carla_scenario.entity import registry
 from autoware_carla_scenario.seed import run_seed
 from autoware_carla_scenario.trajectory.model import MapPose
 from autoware_carla_scenario.utils.turn_indicator import TurnIndicatorState
@@ -92,6 +93,10 @@ class _Execution:
 @pytest.fixture(autouse=True)
 def stand_ins(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     made.clear()
+    # No entity is registered here: the real execution then finds none to
+    # move, whatever an earlier test left in the registry (#1592).
+    monkeypatch.setattr(registry, "_VEHICLES", {})
+    monkeypatch.setattr(registry, "_PEDESTRIANS", {})
     ego_lights = {"state": TurnIndicatorState.OFF}
     monkeypatch.setattr(executions, "AdversarialExecution", _Execution)
     monkeypatch.setattr(
