@@ -19,6 +19,8 @@ from autoware_carla_scenario.adversity.observation import (
     AgentSnapshot,
     Scene,
     SignalState,
+    on_another_level,
+    vertical_span,
 )
 from autoware_carla_scenario.route.geometry import MapFeatures
 
@@ -178,3 +180,76 @@ def test_a_pedestrian_beside_the_road_sees_its_nearest_point(
         Scene(features, [_person("p", -40.0, -20.0)], {}).pedestrian("p").nearest_road
         is None
     )
+
+
+# -- stacked lanes (#1596) ----------------------------------------------------
+
+#: A car's box: 1.5 m high, its centre 0.75 m above the road it stands on.
+_HEIGHT = 1.5
+
+
+def _on(name: str, x: float, road_z: float) -> AgentSnapshot:
+    """A car on the stacked lanes at *x*, standing on a road at *road_z*."""
+    return AgentSnapshot(
+        name, x, 0.0, 0.0, 10.0, 0.0, CAR, z=road_z + _HEIGHT / 2, height=_HEIGHT
+    )
+
+
+@pytest.fixture(scope="module")
+def stacked() -> MapFeatures:
+    lanelet_map = rm.stacked(8.0)
+    return MapFeatures(lanelet_map, rm.routing_graph(lanelet_map))
+
+
+def test_a_vehicle_is_located_on_its_own_deck(stacked: MapFeatures) -> None:
+    scene = Scene(stacked, [_on("ego", 50.0, 8.0), _on("npc", 70.0, 0.0)], {})
+    ego = scene.lane_of("ego")
+    npc = scene.lane_of("npc")
+    assert ego is not None and int(ego.lanelet.id) == rm.DECK
+    assert npc is not None and int(npc.lanelet.id) == rm.STREET
+
+
+def test_the_leader_on_the_deck_ignores_the_vehicle_below(
+    stacked: MapFeatures,
+) -> None:
+    # The repro of #1596: the NPC on the street below was the ego's leader.
+    below = Scene(stacked, [_on("ego", 50.0, 8.0), _on("npc", 70.0, 0.0)], {})
+    assert below.vehicle("ego").leader is None
+    assert below.vehicle("npc").follower is None
+    # On the same deck it leads, 20 m ahead: a 15 m gap.
+    same = Scene(stacked, [_on("ego", 50.0, 8.0), _on("npc", 70.0, 8.0)], {})
+    leader = same.vehicle("ego").leader
+    assert leader is not None and leader.name == "npc"
+    assert leader.gap == pytest.approx(15.0)
+
+
+def test_a_vehicle_on_another_level_is_no_neighbour_on_one_lanelet(
+    features: MapFeatures,
+) -> None:
+    # Where only one lanelet is mapped -- the bridge left out of the map --
+    # both are located on it, yet the one on the bridge is no leader.
+    bridge = dataclasses.replace(_car("over", -25.0), z=8.75, height=_HEIGHT)
+    ego = dataclasses.replace(_car("ego", -40.0), z=0.75, height=_HEIGHT)
+    assert Scene(features, [ego, bridge], {}).vehicle("ego").leader is None
+    level = dataclasses.replace(bridge, z=0.75)
+    leader = Scene(features, [ego, level], {}).vehicle("ego").leader
+    assert leader is not None and leader.name == "over"
+
+
+def test_a_vehicle_up_a_grade_is_on_the_same_level() -> None:
+    # 3 m higher 35 m ahead is a road climbing under 10 %, not another level,
+    # though the boxes are 1.5 m apart in height; 3 m higher 25 m ahead is.
+    ego = AgentSnapshot("ego", 0.0, 0.0, 0.0, 0.0, 0.0, CAR, z=0.75, height=1.5)
+    up = AgentSnapshot("up", 35.0, 0.0, 0.0, 0.0, 0.0, CAR, z=3.75, height=1.5)
+    assert not on_another_level(ego, up)
+    assert on_another_level(ego, dataclasses.replace(up, x=25.0))
+
+
+def test_without_an_elevation_an_agent_is_on_every_level() -> None:
+    ego = AgentSnapshot("ego", 0.0, 0.0, 0.0, 0.0, 0.0, CAR)
+    over = AgentSnapshot("over", 10.0, 0.0, 0.0, 0.0, 0.0, CAR, z=8.0)
+    assert ego.z is None and ego.height == 0.0
+    assert vertical_span(ego) is None
+    assert vertical_span(over) == (8.0, 8.0)
+    assert not on_another_level(ego, over)
+    assert on_another_level(dataclasses.replace(ego, z=0.0), over)

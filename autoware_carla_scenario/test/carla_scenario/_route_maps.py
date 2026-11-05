@@ -314,6 +314,36 @@ def crossroads(split_path: bool = False, side_turn: bool = False) -> Any:
     return b.map
 
 
+#: The two lanelets of :func:`stacked`: the street, and the deck over it.
+STREET, DECK = 701, 702
+
+
+def stacked(deck_z: float = 8.0) -> Any:
+    """Two identical eastbound lanes on top of each other, each one lanelet
+    (x 0..200, centred on y = 0, 3.5 m wide): ``STREET`` at z = 0 and
+    ``DECK`` at z = *deck_z* (#1596)."""
+    lanelet_map = LaneletMap()
+    ids = iter(range(20_000, 30_000))
+
+    def bound(y: float, z: float) -> Any:
+        return LineString3d(
+            next(ids),
+            [Point3d(next(ids), x, y, z) for x in range(0, 201, 20)],
+            AttributeMap({"type": "line_thin", "subtype": "solid"}),
+        )
+
+    for lanelet_id, z in ((STREET, 0.0), (DECK, deck_z)):
+        lanelet_map.add(
+            Lanelet(
+                lanelet_id,
+                bound(_HALF, z),
+                bound(-_HALF, z),
+                AttributeMap(dict(_ROAD)),
+            )
+        )
+    return lanelet_map
+
+
 def routing_graph(lanelet_map: Any) -> Any:
     rules = lanelet2.traffic_rules.create(
         lanelet2.traffic_rules.Locations.Germany,
