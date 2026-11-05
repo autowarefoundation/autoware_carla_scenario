@@ -263,7 +263,7 @@ A keyframes file lists full-body poses:
 | `speed_ms` | `1.3` | Walking speed along the waypoints, m/s; finite and positive |
 | `keyframes` | `None` | A keyframes file (relative paths are taken from the working directory) |
 | `duration_s` | `None` | Stop after this long (finite and positive); `None`: at the last waypoint or keyframe, whichever is later, or, with neither, at the scenario's end |
-| `seed` | `0` | The generator's draws; a whole number, not negative (`2.5`, `true` or `-1` is refused) |
+| `seed` | `0` | The generator's draws; a whole number from 0 to 2147483647, `2**31 - 1` (`2.5`, `true`, `-1` or `2**31` is refused) |
 | `overrides` | `False` | Take over a domain another action holds, stopping it |
 
 The backend's own settings, including its image, GPU memory and Hugging Face

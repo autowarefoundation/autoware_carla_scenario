@@ -422,6 +422,8 @@ class TestHydraSwitch:
             ("background_traffic.seed=true", "background_traffic.seed"),
             ("background_traffic.seed=-5", "background_traffic.seed"),
             ("background_traffic.seed=abc", "background_traffic.seed"),
+            # Above 2**31 - 1, what CARLA and SUMO take (#1560).
+            ("background_traffic.seed=2147483648", "background_traffic.seed"),
             (
                 "background_traffic.source.initial_vehicles=2.9",
                 "background_traffic.source.initial_vehicles",

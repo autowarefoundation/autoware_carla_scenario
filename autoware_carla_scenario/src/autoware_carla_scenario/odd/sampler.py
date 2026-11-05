@@ -75,7 +75,7 @@ from openodd.sampler import OddDraws, OddKnob, OddSample, knobs_from_mapping
 from openodd.sampler import OddSampler as _OddSampler
 
 from ..route.model import _whole_number
-from ..seed import DEFAULT_SEED
+from ..seed import DEFAULT_SEED, check_seed
 from .backend import CARLA_BACKEND, DEFAULT_KNOBS
 from .model import OddDefinition
 
@@ -296,16 +296,20 @@ def seed_setting(key: str, value: Any) -> Optional[int]:
     A seed is a non-negative whole number, as a route search's counts are
     (docs/logical_scenarios.md): ``2`` or ``2.0``, not ``2.5``, a boolean or
     a string that is no integer -- ``int()`` alone would run ``1.9`` and
-    ``true`` as seed 1 -- and not negative, which CARLA's and SUMO's seeds
-    are not (:func:`~autoware_carla_scenario.seed.set_run_seed`).
+    ``true`` as seed 1 -- and from 0 to
+    :data:`~autoware_carla_scenario.seed.MAX_SEED` (``2**31 - 1``), the range
+    CARLA's pedestrian seed and SUMO's ``--seed`` both take
+    (:func:`~autoware_carla_scenario.seed.check_seed`).
 
     Raises:
         ValueError: naming *key*, when *value* is not such a number.
     """
     number = whole_number_setting(key, value)
-    if number is not None and number < 0:
+    if number is None:
+        return None
+    if number < 0:
         raise ValueError(f"{key} must not be negative, got {value!r}")
-    return number
+    return check_seed(key, number)
 
 
 def whole_number_setting(

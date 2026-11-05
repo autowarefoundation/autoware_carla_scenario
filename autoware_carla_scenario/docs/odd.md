@@ -758,7 +758,7 @@ or in the scenario's YAML:
 sweep:
   odd_sample:
     count: 20              # cases, a whole number >= 1; one per lanelet case when left out
-    seed: null             # a whole number >= 0; the run's (`seed`) when null, `DEFAULT_SEED` (0) when the run has none either; same seed, ODD, knobs and coverage: same cases
+    seed: null             # a whole number in 0..2147483647 (2**31 - 1); the run's (`seed`) when null, `DEFAULT_SEED` (0) when the run has none either; same seed, ODD, knobs and coverage: same cases
     strategy: coverage     # uniform | coverage | weighted (weighted when `weights` is given)
     coverage_from: [outputs]   # earlier runs' *_coverage.json (files or directories)
     weights: null          # module -> share of the cases, or a YAML file of them; see "Sampling by shares of the ODD"
@@ -770,7 +770,7 @@ sweep:
 ```
 
 `count` and `seed` are whole numbers (`20` or `20.0`, not `2.7` or a
-boolean), `count` at least 1 and `seed` not negative; any other value is
+boolean), `count` at least 1 and `seed` from 0 to 2147483647 (`2**31 - 1`); any other value is
 refused, naming the key, before the map is read or anything starts.
 
 Each case is a list of Hydra overrides. A sweep that also has `constraints`

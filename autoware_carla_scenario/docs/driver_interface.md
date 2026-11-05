@@ -153,7 +153,7 @@ driver:
   send_actor_ground_truth: true
   traffic_light_sight_distance_m: 60.0
   actor_horizon_m: 150.0
-  random_seed: null           # null: the run's seed (`seed`); else a whole number >= 0
+  random_seed: null           # null: the run's seed (`seed`); else a whole number in 0..2**31 - 1
   cameras:
     - logical_id: camera_front_wide_120fov
       image_width: 960
@@ -493,7 +493,7 @@ LiDAR logical ids must be unique, and every number a LiDAR takes must be finite:
 and `1.2e6`, which YAML reads as floats, kept as the ints `64` and `1200000`
 for CARLA; not `64.5`), `range_m` positive, `lower_fov_deg` below
 `upper_fov_deg`, `weather_noise` not negative, `noise_seed` a whole number
-(`3` or `3.0`; not `1.9`, a boolean or a string) not negative,
+(`3` or `3.0`; not `1.9`, a boolean or a string) from 0 to 2147483647,
 `fog_density_scale` positive.
 
 CARLA's ray-cast LiDAR ignores the weather, so the sweep sent has the world's rain
