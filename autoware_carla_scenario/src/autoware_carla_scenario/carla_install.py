@@ -54,12 +54,17 @@ from typing import IO, Callable, Iterator, Optional, cast
 from .carla_install_paths import (
     _LAUNCHER,
     _STAMP,
+    _conditions_of,
     _content_range,
+    _current_of,
+    _lock_path,
     _replaced,
+    _room_needed,
     _staging,
     _swap_into_place,
 )
 from .carla_install_paths import _SCHEME as _SCHEME
+from .carla_install_paths import _UNPACKED_PER_PACKED as _UNPACKED_PER_PACKED
 from .carla_install_paths import HOME_ENV as HOME_ENV
 from .carla_install_paths import install_dir as install_dir
 from .carla_install_paths import installed_executable as installed_executable
@@ -76,9 +81,6 @@ NIGHTLY_MACHINES = frozenset({"x86_64"})
 
 LAUNCHER = PurePosixPath(_LAUNCHER)
 """The server's launcher, relative to the unpacked package."""
-
-_UNPACKED_PER_PACKED = 2.0
-"""The nightly unpacks to about twice its archive."""
 
 _TIMEOUT = 60.0
 """Seconds a read may stall before the connection counts as dropped."""
@@ -226,11 +228,6 @@ _NO_FLOCK_ERRNOS = frozenset(
 #: The errors of a lock file that cannot be created or written: a read-only
 #: file system, or a directory of another user's.
 _UNWRITABLE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
-
-
-def _lock_path(target: Path) -> Path:
-    """The file whose ``flock`` lets one run at a time install into *target*."""
-    return target.with_name(target.name + ".lock")
 
 
 @contextlib.contextmanager
@@ -436,43 +433,49 @@ class _ResumingStream:
             pass
 
 
-def _stamp(target: Path) -> dict[str, Optional[str]]:
-    """What *target* was downloaded from, or nothing for an incomplete install."""
+def _stamp(target: Path, shown: tuple[str, ...] = ()) -> dict[str, Optional[str]]:
+    """What *target* was downloaded from, or nothing for an incomplete install.
+
+    The values as the checked ``carla_install_paths`` takes them, strings or
+    ``None``, converted so that it decides as it did on the JSON's own values.
+    A stamp edited by hand can hold other types: such a value never equals the
+    string it is compared with, so it becomes ``None``, which never does either
+    (nor does a key missing). Under the keys in *shown*, whose value a request
+    header carries, a value that is not falsy becomes its ``str()`` instead,
+    which is what the header was given.
+    """
     if not (target / LAUNCHER).is_file():
         return {}
     try:
         stamp = json.loads((target / _STAMP).read_text())
     except (OSError, ValueError):
         return {}
-    return stamp if isinstance(stamp, dict) else {}
+    if not isinstance(stamp, dict):
+        return {}
+    return {
+        str(key): (
+            value
+            if value is None or isinstance(value, str)
+            else str(value)
+            if key in shown and value
+            else None
+        )
+        for key, value in stamp.items()
+    }
 
 
 def _conditions(target: Path, url: str) -> dict[str, str]:
     """Headers that make the server answer 304 for the download *target* holds."""
-    stamp = _stamp(target)
-    if stamp.get("url") != url:
-        return {}
-    headers = {}
-    if stamp.get("etag"):
-        headers["If-None-Match"] = str(stamp["etag"])
-    if stamp.get("last_modified"):
-        headers["If-Modified-Since"] = str(stamp["last_modified"])
-    return headers
+    return _conditions_of(_stamp(target, ("etag", "last_modified")), url)
 
 
 def _current(target: Path, source: dict[str, Optional[str]]) -> bool:
     """Whether *target* holds a complete install of the same download as *source*."""
-    stamp = _stamp(target)
-    if stamp.get("url") != source["url"]:
-        return False
-    if source["etag"]:
-        return bool(stamp.get("etag") == source["etag"])
-    keys = ("last_modified", "size")
-    return all(source[k] for k in keys) and all(stamp.get(k) == source[k] for k in keys)
+    return _current_of(_stamp(target), source)
 
 
 def _check_room(directory: Path, packed: int) -> None:
-    needed = int(packed * _UNPACKED_PER_PACKED)
+    needed = _room_needed(packed, _UNPACKED_PER_PACKED)
     free = shutil.disk_usage(directory).free
     if free < needed:
         raise RuntimeError(
