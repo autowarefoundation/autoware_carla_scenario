@@ -385,6 +385,102 @@ class TestCreateScenarioPackage:
         result = create_scenario_package("dup_pkg", output_dir=tmp_path, force=True)
         assert result.root.is_dir()
 
+    def test_force_replaces_the_whole_package(self, tmp_path: Path) -> None:
+        """An earlier scenario's files do not survive ``force`` (#1696)."""
+        first = create_scenario_package(
+            "dup_pkg", scenario_name="alpha", output_dir=tmp_path
+        )
+        src = first.root / "src" / "dup_pkg"
+        assert (src / "alpha.py").is_file()
+        (first.root / "NOTES.txt").write_text("added by hand", encoding="utf-8")
+
+        result = create_scenario_package(
+            "dup_pkg", scenario_name="beta", output_dir=tmp_path, force=True
+        )
+
+        assert (src / "beta.py").is_file()
+        assert (src / "conf" / "scenario" / "beta" / "default.yaml").is_file()
+        assert not (src / "alpha.py").exists()
+        assert not (src / "conf" / "scenario" / "alpha").exists()
+        assert not (result.root / "NOTES.txt").exists()
+        # No staging or set-aside directory is left beside the package.
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
+
+    def test_force_refuses_a_file_in_the_way(self, tmp_path: Path) -> None:
+        (tmp_path / "dup_pkg").write_text("not a package", encoding="utf-8")
+        with pytest.raises(FileExistsError, match="is not a directory"):
+            create_scenario_package("dup_pkg", output_dir=tmp_path, force=True)
+        assert (tmp_path / "dup_pkg").read_text(encoding="utf-8") == "not a package"
+
+    @staticmethod
+    def _fail_on_write(monkeypatch: pytest.MonkeyPatch, nth: int) -> None:
+        """Make the *nth* ``Path.write_text`` call raise ``OSError``."""
+        real = Path.write_text
+        calls = {"n": 0}
+
+        def write_text(self: Path, *args: Any, **kwargs: Any) -> int:
+            calls["n"] += 1
+            if calls["n"] == nth:
+                raise OSError(28, "No space left on device", str(self))
+            return real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", write_text)
+
+    def test_a_failed_write_leaves_nothing_behind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._fail_on_write(monkeypatch, nth=3)
+        with pytest.raises(OSError, match="No space left"):
+            create_scenario_package("dup_pkg", output_dir=tmp_path)
+        assert list(tmp_path.iterdir()) == []
+
+        # So the next run needs no --force.
+        monkeypatch.undo()
+        assert create_scenario_package("dup_pkg", output_dir=tmp_path).root.is_dir()
+
+    def test_a_failed_forced_write_keeps_the_old_package(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first = create_scenario_package(
+            "dup_pkg", scenario_name="alpha", output_dir=tmp_path
+        )
+        before = sorted(str(p.relative_to(first.root)) for p in first.root.rglob("*"))
+        self._fail_on_write(monkeypatch, nth=3)
+        with pytest.raises(OSError, match="No space left"):
+            create_scenario_package(
+                "dup_pkg", scenario_name="beta", output_dir=tmp_path, force=True
+            )
+        after = sorted(str(p.relative_to(first.root)) for p in first.root.rglob("*"))
+        assert after == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
+
+    def test_main_reports_an_os_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A filesystem error is ``Error: ...`` and exit code 1, not a traceback."""
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        not_a_dir = tmp_path / "a_file"
+        not_a_dir.write_text("", encoding="utf-8")
+        assert main(["dup_pkg", "-o", str(not_a_dir)]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("Error: ")
+        assert str(not_a_dir) in err
+        assert "Traceback" not in err
+
+    def test_main_reports_a_failed_write(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        self._fail_on_write(monkeypatch, nth=1)
+        assert main(["dup_pkg", "-o", str(tmp_path)]) == 1
+        assert capsys.readouterr().err.startswith("Error: [Errno 28] No space left")
+        assert list(tmp_path.iterdir()) == []
+
 
 # ---------------------------------------------------------------------------
 # One goal lanelet (#1068)
