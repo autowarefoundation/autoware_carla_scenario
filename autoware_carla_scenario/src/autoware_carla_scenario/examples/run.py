@@ -92,6 +92,13 @@ from autoware_carla_scenario.rerun import (
 )
 from autoware_carla_scenario.rerun import report as rerun_report
 from autoware_carla_scenario.coordinate.snap import check_ray_distances
+from autoware_carla_scenario.run_dirs import (
+    asks_for_no_job,
+    is_multirun_mode_override as _is_multirun_mode_override,
+    multirun_requested_in_argv as _multirun_requested_in_argv,
+    reserve_timestamped_dir,
+    sets_hydra_key as _sets_hydra_key,
+)
 from autoware_carla_scenario.run_timeout import run_timeout_seconds
 from autoware_carla_scenario.scenario_config import EntityConfig
 from autoware_carla_scenario.seed import DEFAULT_SEED, MAX_SEED, set_run_seed
@@ -1482,27 +1489,6 @@ def _to_dict(cfg_node: DictConfig) -> dict:  # type: ignore[type-arg]
     return container
 
 
-def _is_multirun_mode_override(arg: str) -> bool:
-    """Return ``True`` for a ``hydra.mode=MULTIRUN`` override.
-
-    Hydra's documented alternative to ``--multirun``.  The value is matched as
-    Hydra matches it, by the enum member's name: Hydra refuses
-    ``hydra.mode=multirun``.
-    """
-    return arg.lstrip("+") == "hydra.mode=MULTIRUN"
-
-
-def _multirun_requested_in_argv(argv: list[str]) -> bool:
-    """Return ``True`` when *argv* asks Hydra for a multirun.
-
-    For use before Hydra composes, so a ``hydra.mode: MULTIRUN`` set only in
-    a config file is not seen here.
-    """
-    return any(
-        arg in ("--multirun", "-m") or _is_multirun_mode_override(arg) for arg in argv
-    )
-
-
 def _is_multirun() -> bool:
     """Return ``True`` when the Hydra job running is one of a multirun.
 
@@ -1720,22 +1706,14 @@ def _reserve_output_dir(root: str) -> Path:
     Relative, as Hydra's own ``outputs/...`` and ``multirun/...`` defaults
     are, so it can be handed to Hydra as an override whatever characters the
     working directory's path holds.
+
+    Reads the clock, and reserves the directory with the checked
+    :func:`~autoware_carla_scenario.run_dirs.reserve_timestamped_dir`.
     """
     from datetime import datetime  # noqa: PLC0415
 
     now = datetime.now()  # noqa: DTZ005
-    day = Path(root) / now.strftime("%Y-%m-%d")
-    day.mkdir(parents=True, exist_ok=True)
-    name = now.strftime("%H-%M-%S")
-    suffix = 0
-    while True:
-        output_dir = day / (name if suffix == 0 else f"{name}-{suffix}")
-        try:
-            output_dir.mkdir()
-        except FileExistsError:
-            suffix += 1
-            continue
-        return output_dir
+    return Path(reserve_timestamped_dir(Path("."), root, now))
 
 
 def _make_batch_output_dir() -> Path:
@@ -1750,32 +1728,6 @@ def _make_batch_output_dir() -> Path:
         (e.g. ``outputs/2026-03-13/12-00-00/``).
     """
     return _reserve_output_dir("outputs").resolve()
-
-
-#: Hydra's command-line flags that print something and run no job: a run
-#: directory reserved for them would be left empty.
-_HYDRA_NO_JOB_FLAGS = (
-    "--help",
-    "-h",
-    "--hydra-help",
-    "--version",
-    "--cfg",
-    "-c",
-    "--info",
-    "-i",
-    "--shell-completion",
-    "-sc",
-)
-
-
-def _sets_hydra_key(argv: list[str], key: str) -> bool:
-    """Return ``True`` when an override in *argv* sets *key* (``key=``,
-    ``+key=``, ``++key=`` or ``~key``)."""
-    for arg in argv:
-        name = arg.lstrip("+~").split("=", 1)[0]
-        if name == key:
-            return True
-    return False
 
 
 def _reserve_hydra_output_dir(argv: list[str]) -> tuple[list[str], Path | None]:
@@ -1793,7 +1745,7 @@ def _reserve_hydra_output_dir(argv: list[str]) -> tuple[list[str], Path | None]:
     user's own) or asks Hydra for something other than a job (``--help``,
     ``--cfg``, ...).
     """
-    if any(arg.split("=", 1)[0] in _HYDRA_NO_JOB_FLAGS for arg in argv[1:]):
+    if asks_for_no_job(argv):
         return argv, None
     multirun = _multirun_requested_in_argv(argv)
     key = "hydra.sweep.dir" if multirun else "hydra.run.dir"
