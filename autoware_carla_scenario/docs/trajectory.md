@@ -94,6 +94,12 @@ Positions are converted to CARLA world coordinates when the action first runs,
 through the loaded map. Vertices of different kinds may be mixed in one
 trajectory.
 
+Every number of a `MapPose`, a `RelativeLanePose` or a route pose must be
+finite: `nan` and `inf` are refused when the pose is built, a `yaw` or `z`
+given as `None` excepted. Whatever the frame, a vertex that resolves to a
+non-finite position, heading or time is refused when the trajectory is
+resolved, rather than making the whole path `nan`.
+
 ### Lane-relative vertices
 
 A `RelativeLanePose` writes the shape of a manoeuvre -- pull out, overtake, cut
