@@ -912,8 +912,54 @@ def test_a_construction_zone_closes_and_reopens_the_lane(
         backend.close()
 
 
+@needs_sumo
+def test_a_construction_zone_reopens_a_lane_open_to_every_class(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """A lane with no allow or disallow attribute (netgenerate's, most user
+    nets') lists no allowed class: reopening it must not close it to
+    everything for the rest of the run (#1533)."""
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    tc = backend._traci
+    try:
+        lane = "0.fwd_0"
+        tc.lane.setAllowed(lane, ["all"])
+        assert tuple(tc.lane.getAllowed(lane)) == ()
+        assert tuple(tc.lane.getDisallowed(lane)) == ()
+        assert backend.close_lane(world, _carla_transform(-60.0, 5.25, 0.0)) == lane
+        assert "passenger" in tc.lane.getDisallowed(lane)
+        backend.reopen_lane(world, lane)
+        assert tuple(tc.lane.getAllowed(lane)) == ()
+        assert tuple(tc.lane.getDisallowed(lane)) == ()
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_construction_zone_reopens_a_lane_to_exactly_its_allow_list(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """A lane with an allow list gets exactly that list back (#1533)."""
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    tc = backend._traci
+    try:
+        lane = "0.fwd_0"
+        tc.lane.setAllowed(lane, ["passenger", "bus"])
+        before = (tc.lane.getAllowed(lane), tc.lane.getDisallowed(lane))
+        assert backend.close_lane(world, _carla_transform(-60.0, 5.25, 0.0)) == lane
+        backend.reopen_lane(world, lane)
+        assert (tc.lane.getAllowed(lane), tc.lane.getDisallowed(lane)) == before
+        assert set(tc.lane.getAllowed(lane)) == {"passenger", "bus"}
+    finally:
+        backend.close()
+
+
 class _LaneTraci:
-    """The TraCI calls close_lane / reopen_lane make, on one lane."""
+    """The TraCI calls close_lane / reopen_lane make, on one lane, with
+    SUMO's permissions: getAllowed() lists nothing on a lane open to every
+    class, and setAllowed(lane, []) closes it to everything (#1533)."""
+
+    CLASSES = ("passenger", "truck", "bus", "pedestrian")
 
     def __init__(self) -> None:
         self.allowed = {"0.fwd_0": ["passenger", "truck"]}
@@ -924,10 +970,18 @@ class _LaneTraci:
         self.lane = self
 
     def getAllowed(self, lane: str) -> list[str]:
-        return list(self.allowed[lane])
+        allowed = self.allowed[lane]
+        return [] if sorted(allowed) == sorted(self.CLASSES) else list(allowed)
+
+    def getDisallowed(self, lane: str) -> list[str]:
+        return [c for c in self.CLASSES if c not in self.allowed[lane]]
 
     def setDisallowed(self, lane: str, classes: list[str]) -> None:
-        self.allowed[lane] = []
+        if "all" in classes:
+            self.allowed[lane] = []
+            return
+        self.allowed[lane] = [c for c in self.CLASSES if c not in classes]
+        self.restored.append(list(self.allowed[lane]))
 
     def setAllowed(self, lane: str, classes: list[str]) -> None:
         self.allowed[lane] = list(classes)
@@ -971,6 +1025,17 @@ def test_a_lane_two_zones_close_stays_closed_until_both_reopen() -> None:
     backend.reopen_lane(None, first)
     backend.reopen_lane(None, "1.fwd_0")
     assert traci.restored == [["passenger", "truck"]]
+
+
+def test_a_lane_open_to_every_class_reopens_to_every_class() -> None:
+    """SUMO lists no allowed class on a lane open to every class: reopening it
+    restores what it disallowed (nothing), not an empty allow list (#1533)."""
+    backend, traci = _lane_backend()
+    traci.allowed["0.fwd_0"] = list(_LaneTraci.CLASSES)
+    lane = backend.close_lane(None, _lane_transform(-60.0))
+    assert traci.allowed["0.fwd_0"] == []
+    backend.reopen_lane(None, lane)
+    assert traci.allowed["0.fwd_0"] == list(_LaneTraci.CLASSES)
 
 
 def test_a_construction_zone_cleared_first_leaves_the_other_closed() -> None:
