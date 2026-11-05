@@ -833,6 +833,7 @@ def test_run_batch_gives_each_scenario_its_own_timeout(
 
 def test_a_batch_lets_go_of_each_scenario_once_it_has_run(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A batch keeps each case's result, not the finished scenario: one kept to
     the end keeps everything its run built (entities, conditions, the ego's
@@ -897,7 +898,7 @@ def test_a_batch_lets_go_of_each_scenario_once_it_has_run(
         ),
     )
     monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
-    monkeypatch.setattr(run, "_make_batch_output_dir", lambda: None)
+    monkeypatch.setattr(run, "_make_batch_output_dir", lambda: tmp_path)
     monkeypatch.setattr(run, "_print_summary", fake_summary)
 
     with pytest.raises(SystemExit):

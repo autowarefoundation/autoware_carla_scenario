@@ -97,6 +97,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.adversity.triggers",
     "autoware_carla_scenario.adversity_activity",
     "autoware_carla_scenario.adversity_event",
+    "autoware_carla_scenario.atomic_file",
     "autoware_carla_scenario.authoring.framework_pin",
     "autoware_carla_scenario.authoring.requirements_pin",
     "autoware_carla_scenario.authoring.uv_tool",

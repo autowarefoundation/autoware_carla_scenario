@@ -333,7 +333,11 @@ class ScenarioQueue:
     # ------------------------------------------------------------------
 
     def run_all(
-        self, *, release: bool = False, continue_on_error: bool = False
+        self,
+        *,
+        release: bool = False,
+        continue_on_error: bool = False,
+        on_result: Optional[Callable[[int, ScenarioResult], None]] = None,
     ) -> List[ScenarioResult]:
         """Execute every registered scenario in order.
 
@@ -358,6 +362,12 @@ class ScenarioQueue:
                 failed.  The world is reloaded before the next scenario, as
                 after one that ran.  Off by default: a run that raises ends
                 there.  A :class:`KeyboardInterrupt` ends the run either way.
+            on_result: Called with each scenario's index and result as soon as
+                it has its result (after its last attempt; an errored one is
+                in :meth:`errored_indices` by then), before the next scenario
+                starts.  A batch writes its summary from it, so that a run
+                cut short (Ctrl-C, a SIGTERM) still reports the cases it ran
+                (#1566).
 
         Returns:
             A list of :class:`ScenarioResult` objects in registration order.
@@ -554,6 +564,10 @@ class ScenarioQueue:
                     # before it), so it never reached its own reset: what it
                     # spawned and set is still in the world.
                     self._runner.reset_world()
+            if on_result is not None:
+                # Outside the attempts' try: what it raises is not a failed
+                # attempt to retry.
+                on_result(i, results[-1])
 
         self._results = results
         return results
