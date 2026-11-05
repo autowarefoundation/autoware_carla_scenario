@@ -3942,8 +3942,9 @@ What Codon 0.19 needs that Python does not, beyond
 - **A call into a module Codon cannot compile, from a function it must**: a
   function `UNCALLED` names is still compiled when a checked function calls
   it. Call it in the `else` branch of `if TYPE_CHECKING:` and check in the
-  first branch what it can (`ScenarioRunner` calls `create_ego()`, built
-  on the ego's class, in the `else` branch). A
+  first branch what it can (`ScenarioRunner` calls `_metric_recorder()`,
+  which builds the unchecked `metric_batch` recorder, in the `else` branch,
+  and the check leaves the recorder `None`). A
   private helper that imports such a module inside it needs an `UNCALLED`
   entry of its own: its import is rewritten, and refused, even when nothing
   compiled calls it.
