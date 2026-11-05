@@ -72,7 +72,7 @@ from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
 from autoware_carla_scenario.batch_report import print_summary as _print_summary
 from autoware_carla_scenario.canvas import use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
-from autoware_carla_scenario.constants import DEFAULT_TM_PORT, tick_multiple
+from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import (
@@ -1264,19 +1264,18 @@ def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
     ``step_s`` and ``max_distance_m``; ``None`` otherwise.
 
     Raises:
-        ValueError: ``t4scene.step_s`` is not a positive multiple of the tick,
-            or ``t4scene.max_distance_m`` is not positive and finite.
+        ValueError: ``t4scene.step_s`` is a bool, not a number or not a
+            positive multiple of the tick, or ``t4scene.max_distance_m`` is a
+            bool, not a number or not positive and finite.
     """
     for cfg in cfgs:
         t4scene_cfg = cfg.get("t4scene") or {}
         if not t4scene_cfg.get("enabled", False):
             continue
-        step_s = float(t4scene_cfg.get("step_s", 0.1))
-        tick_multiple(step_s, "t4scene.step_s")
         # Handed over as read: the exporter refuses a bool, which float()
-        # would turn into 1 m.
+        # would turn into a 1 s step or a 1 m distance (#1502, #1231).
         return T4SceneExporter(
-            step_s=step_s,
+            step_s=t4scene_cfg.get("step_s", 0.1),
             max_distance_m=t4scene_cfg.get("max_distance_m", 100.0),
         )
     return None

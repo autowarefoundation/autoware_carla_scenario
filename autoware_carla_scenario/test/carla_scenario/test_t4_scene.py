@@ -1025,6 +1025,78 @@ def test_a_step_that_does_not_fit_the_tick_is_refused_before_anything_runs() -> 
         )
 
 
+# Hydra reads ``true`` as a bool, which float() would take for a 1 s step:
+# every scene would be written at 1 s with no error (#1502).
+@pytest.mark.parametrize("override", ["true", "false", "'0.1'", "[0.1]"])
+def test_a_step_that_is_not_a_number_is_refused_before_anything_runs(
+    override: str,
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    cfg = _shipped(["t4scene.enabled=true", f"t4scene.step_s={override}"])
+    with pytest.raises(ValueError, match=r"^t4scene\.step_s must be a number"):
+        run.build_t4scene_exporter(cfg)
+    with pytest.raises(run.RunConfigError, match=r"^t4scene\.step_s must be a number"):
+        run.check_run_config(cfg)
+
+
+@pytest.mark.parametrize("step_s", [True, False, "0.1", None, [0.1]])
+def test_the_exporter_refuses_a_step_that_is_not_a_number(step_s: Any) -> None:
+    from autoware_carla_scenario.t4_scene import T4SceneExporter
+
+    with pytest.raises(ValueError, match=r"^t4scene\.step_s must be a number"):
+        T4SceneExporter(step_s=step_s)
+
+
+@pytest.mark.parametrize("step_s", [0.07, 0.0, -0.1, math.nan, math.inf])
+def test_the_exporter_refuses_a_step_that_does_not_fit_the_tick(step_s: float) -> None:
+    """Refused when it is built, naming the key, not per run as a logged
+    warning of the best-effort export."""
+    from autoware_carla_scenario.t4_scene import T4SceneExporter
+
+    with pytest.raises(
+        ValueError, match=r"^t4scene\.step_s=.* is not a positive multiple"
+    ):
+        T4SceneExporter(step_s=step_s)
+
+
+@pytest.mark.parametrize("step_s", [0.05, 0.1, 1, 0.15])
+def test_the_exporter_takes_a_multiple_of_the_tick(step_s: float) -> None:
+    from autoware_carla_scenario.t4_scene import T4SceneExporter
+
+    exporter = T4SceneExporter(step_s=step_s)
+    assert exporter.step_s == float(step_s)
+    assert type(exporter.step_s) is float
+
+
+def test_the_runner_takes_a_whole_number_step() -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    exporter = run.build_t4scene_exporter(
+        _shipped(["t4scene.enabled=true", "t4scene.step_s=1"])
+    )
+    assert exporter is not None
+    assert exporter.step_s == 1.0
+
+
+@pytest.mark.parametrize("override", ["'100'", "[100]"])
+def test_a_distance_that_is_not_a_number_is_refused_before_anything_runs(
+    override: str,
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    with pytest.raises(ValueError, match="t4scene.max_distance_m must be positive"):
+        run.build_t4scene_exporter(
+            _shipped(["t4scene.enabled=true", f"t4scene.max_distance_m={override}"])
+        )
+
+
 @pytest.mark.parametrize("seconds", [math.inf, -math.inf, math.nan])
 def test_tick_multiple_refuses_a_value_that_is_not_finite(seconds: float) -> None:
     """#1384: a ValueError naming the key, not round()'s OverflowError (for

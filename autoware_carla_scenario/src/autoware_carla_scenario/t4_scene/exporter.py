@@ -17,7 +17,7 @@ from pathlib import Path
 from typing import Optional
 
 from .convert import write_t4_scene
-from .grid import checked_max_distance
+from .grid import checked_max_distance, checked_step
 
 __all__ = ["T4SceneExporter"]
 
@@ -34,13 +34,16 @@ class T4SceneExporter:
             (``t4scene.max_distance_m``).
 
     Raises:
-        ValueError: If *max_distance_m* is not positive and finite.
+        ValueError: If *step_s* is a bool, not a number or not a positive
+            multiple of the tick, or *max_distance_m* is a bool, not a number
+            or not positive and finite: refused here, naming the
+            ``t4scene`` key, rather than failing each run's export.
     """
 
     def __init__(
         self, *, step_s: float = 0.1, max_distance_m: Optional[float] = 100.0
     ) -> None:
-        self.step_s = step_s
+        self.step_s = checked_step(step_s, "t4scene.step_s")
         self.max_distance_m = checked_max_distance(
             max_distance_m, "t4scene.max_distance_m", "null"
         )

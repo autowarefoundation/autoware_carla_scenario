@@ -129,9 +129,16 @@ class T4Settings:
         values: dict[str, Any] = {}
         if "max_distance_m" in config:
             distance = config["max_distance_m"]
-            if isinstance(distance, bool):  # float() would read true as 1 m
+            # float() would read true as 1 m and parse a string; neither is a
+            # distance, and anything else it cannot read is refused naming
+            # the key rather than with its own message.
+            not_a_number = isinstance(distance, (bool, str))
+            if not_a_number:
                 raise ValueError(_bad_max_distance(distance))
-            values["max_distance_m"] = None if distance is None else float(distance)
+            try:
+                values["max_distance_m"] = None if distance is None else float(distance)
+            except TypeError:
+                raise ValueError(_bad_max_distance(distance)) from None
         if config.get("workers") is not None:
             # As given: __post_init__ refuses a bool or a float, which int()
             # would turn into a count nobody asked for.
