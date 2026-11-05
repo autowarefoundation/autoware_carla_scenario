@@ -6,8 +6,8 @@ When a run that reads a CommonRoad metric is over,
 :func:`evaluate_commonroad` the frames every :attr:`CommonRoadSettings.period_s`
 -- every :meth:`CommonRoadSettings.period_for` a metric, for the slow ones
 (:attr:`CommonRoadSettings.metric_periods_s`).  The heaviest
-(:data:`HEAVY_METRICS`) can be turned off altogether
-(:attr:`CommonRoadSettings.heavy_metrics`).
+(:data:`~autoware_carla_scenario.heavy_metrics.HEAVY_METRICS`) can be turned
+off altogether (:attr:`CommonRoadSettings.heavy_metrics`).
 It converts the world's map to CommonRoad (:mod:`.map`, once per machine),
 starts :attr:`CommonRoadSettings.workers` workers on it (:mod:`.worker`, kept
 for the next run on the map), and shares the frames out among them, each
@@ -22,7 +22,6 @@ from __future__ import annotations
 
 import atexit
 import logging
-import math
 import operator
 import os
 import threading
@@ -31,11 +30,24 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..metrics import COMMONROAD_METRICS, CRIME_TTR_S
+# Re-exported under the names they had: the heavy metrics' settings live in
+# the checked heavy_metrics (#1689).
+from ..heavy_metrics import (  # noqa: F401
+    DEFAULT_METRIC_PERIODS_S,
+    HEAVY_METRICS,
+    HEAVY_METRICS_DECIDED_ENV,
+    HEAVY_METRICS_ENV,
+    _check_period,
+    _heavy_metrics_default,
+    _heavy_metrics_from_user,
+    _heavy_metrics_on,
+    evaluates,
+)
+from ..metrics import COMMONROAD_METRICS
 from .frame import read_frame
 from .map import commonroad_map
-from ..value_text import shown
 from .worker import CommonRoadWorker, CommonRoadWorkerError, worker_command
+
 
 if TYPE_CHECKING:
     from ..metric_batch import Frame
@@ -53,60 +65,6 @@ logger = logging.getLogger(__name__)
 
 def _default_workers() -> int:
     return max(1, min(4, os.cpu_count() or 1))
-
-
-#: The CommonRoad metrics that take seconds a frame: CriMe's TTR simulates
-#: the ego's evasive manoeuvres, about 2 s a frame with a collision ahead.
-HEAVY_METRICS: frozenset[str] = frozenset({CRIME_TTR_S})
-
-#: The metrics evaluated less often than every :attr:`CommonRoadSettings.period_s`
-#: by default, and how often (simulated seconds): the heavy ones every 0.5 s.
-DEFAULT_METRIC_PERIODS_S: dict[str, float] = {key: 0.5 for key in HEAVY_METRICS}
-
-#: Set to ``0`` (or ``false``, ``off``, ``no``) to turn the heavy metrics off
-#: (:attr:`CommonRoadSettings.heavy_metrics`).
-HEAVY_METRICS_ENV = "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS"
-
-#: What the ``scenario`` command decided (``1`` or ``0``), from its configs'
-#: ``metrics.heavy`` and :data:`HEAVY_METRICS_ENV`: set by it, not by the user,
-#: to carry the decision to the runs' own processes.  Read before
-#: :data:`HEAVY_METRICS_ENV` when set; the command never changes the user's
-#: :data:`HEAVY_METRICS_ENV`.
-HEAVY_METRICS_DECIDED_ENV = "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED"
-
-
-def _heavy_metrics_on(value: Optional[str]) -> bool:
-    """Whether *value* (an environment variable's, ``None``: unset) leaves
-    the heavy metrics on: unless it is ``0``, ``false``, ``off`` or ``no``."""
-    return (value or "").strip().lower() not in ("0", "false", "off", "no")
-
-
-def _heavy_metrics_from_user() -> bool:
-    """Whether :data:`HEAVY_METRICS_ENV`, as the user set it, leaves the heavy
-    metrics on."""
-    return _heavy_metrics_on(os.environ.get(HEAVY_METRICS_ENV))
-
-
-def _heavy_metrics_default() -> bool:
-    """Whether the heavy metrics are on by default: as the ``scenario``
-    command decided (:data:`HEAVY_METRICS_DECIDED_ENV`), else as
-    :data:`HEAVY_METRICS_ENV` says."""
-    decided = os.environ.get(HEAVY_METRICS_DECIDED_ENV, "").strip()
-    if decided:
-        return _heavy_metrics_on(decided)
-    return _heavy_metrics_from_user()
-
-
-def _check_period(name: str, period: float) -> None:
-    try:
-        finite = math.isfinite(period)
-    except OverflowError:
-        # An int too big for a float (10**400), which str() may refuse (#1652).
-        raise ValueError(
-            f"{name} must be positive and finite, got {shown(period)}"
-        ) from None
-    if not (finite and period > 0.0):
-        raise ValueError(f"{name} must be positive and finite, got {period}")
 
 
 def _check_workers(workers: Any) -> int:
@@ -179,8 +137,8 @@ class CommonRoadSettings:
 
     def evaluates(self, key: str) -> bool:
         """Whether the metric *key* is evaluated: not when it is heavy and the
-        heavy metrics are off."""
-        return self.heavy_metrics or key not in HEAVY_METRICS
+        heavy metrics are off (:func:`~autoware_carla_scenario.heavy_metrics.evaluates`)."""
+        return evaluates(self.heavy_metrics, key)
 
     def period_for(self, key: str) -> float:
         """Simulated seconds between two frames the metric *key* is evaluated
