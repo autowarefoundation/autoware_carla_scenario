@@ -2869,7 +2869,7 @@ class _Rewriter(ShadowScopes):
             and isinstance(value, ast.Subscript)
             and _dotted(value.value) in _CALLABLE_NAMES
         ):
-            # A Callable alias, `GroundHeight = Callable[[float, float], R]`,
+            # A Callable alias, `GroundHeight = Callable[[float, float, float], R]`,
             # which Codon 0.19 reads as an expression and refuses ("expected
             # type expression"): None, on as many lines.  An annotation must
             # spell the callable out, which the check then reads.

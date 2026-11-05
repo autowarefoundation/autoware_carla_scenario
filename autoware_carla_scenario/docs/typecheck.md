@@ -2561,8 +2561,8 @@ the transform, with no change to a module:
   `NoneType`, which has no elements and no call, and a body that tests it
   for `None` first is compiled with it all the same. The transform makes
   such a default the `None` of the `Optional` the library check calls with:
-  `Optional[List[Lanelet2Pose]]()`, `Optional[Callable[[float, float],
-  Optional[float]]]()`, and for a `Callable` with a union among its
+  `Optional[List[Lanelet2Pose]]()`, `Optional[Callable[[float, float,
+  float], Optional[float]]]()`, and for a `Callable` with a union among its
   arguments `Optional[_acs_Returning[CarlaWorldPose, 1]]()` (the transform's
   prelude imports `_acs_Returning`; the check's own function does not import
   it again, which Codon 0.19 cannot type: "cannot typecheck").

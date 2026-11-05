@@ -129,7 +129,7 @@ def test_a_prop_is_not_a_spawn_of_an_entity() -> None:
         ),
     )
     try:
-        assert action.apply(world, ground=lambda x, y: 0.0)  # type: ignore[arg-type]
+        assert action.apply(world, ground=lambda x, y, z: 0.0)  # type: ignore[arg-type]
     finally:
         spawn_module.remove_prop("cone")
     assert action.take_spawns() == []
