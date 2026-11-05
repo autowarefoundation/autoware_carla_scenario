@@ -21,7 +21,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 import numpy as np
 
 from ..constants import tick_multiple
-from ..seed import check_seed
+from ..seed import check_seed, check_whole_number
 from ..sensor.carla_camera import CarlaCameraSensorConfig
 from ..sensor.carla_lidar import CarlaLidarSensorConfig
 from .geometry import Pose, Trajectory
@@ -149,8 +149,11 @@ class DriverCameraConfig:
     :func:`~autoware_carla_scenario.driver.observation.sensor_pose_in_rig` moves it.
 
     Raises:
-        ValueError: If the image size or fps is not positive and finite, the
-            ``fov`` is outside (0, 180) degrees, or the mount is not finite.
+        ValueError: If the image size is not a positive whole number
+            (:func:`~autoware_carla_scenario.seed.check_whole_number`: ``960``
+            or ``960.0``, kept as the int ``960``; not ``960.5``, a bool or a
+            string), the fps is not positive and finite, the ``fov`` is outside (0, 180)
+            degrees, or the mount is not finite.
     """
 
     logical_id: str = DEFAULT_CAMERA_LOGICAL_ID
@@ -169,13 +172,26 @@ class DriverCameraConfig:
     lens: Optional[DriverCameraLens] = None
 
     def __post_init__(self) -> None:
+        # The mapping is not coerced, so an int field may hold a float, a
+        # bool or a string.  The size is the egodriver contract's integer
+        # ``resolution_w``/``_h``, which refuses any float, even 960.0, only
+        # when the session starts, after the ego has spawned (#1472): a whole
+        # number is kept as an int, anything else refused here.
+        owner = f"camera {self.logical_id!r}"
+        object.__setattr__(
+            self,
+            "image_width",
+            check_whole_number(f"{owner}: image_width", self.image_width),
+        )
+        object.__setattr__(
+            self,
+            "image_height",
+            check_whole_number(f"{owner}: image_height", self.image_height),
+        )
         # A zero, negative, NaN or infinite fps would only fail (or misbehave)
-        # as the camera attaches, after the ego has spawned (#1391).  The
-        # mapping is not coerced, so an int field may hold a float NaN too.
+        # as the camera attaches, after the ego has spawned (#1391).
         if (
-            not math.isfinite(float(self.image_width))
-            or not math.isfinite(float(self.image_height))
-            or self.image_width <= 0
+            self.image_width <= 0
             or self.image_height <= 0
             or not math.isfinite(self.fps)
             or self.fps <= 0.0

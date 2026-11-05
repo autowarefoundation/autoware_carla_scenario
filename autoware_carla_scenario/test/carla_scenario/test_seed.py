@@ -284,6 +284,45 @@ def test_check_seed_refuses_a_negative_or_non_finite_seed() -> None:
         check_seed("x.seed", float("nan"))  # type: ignore[arg-type]
 
 
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [(960, 960), (960.0, 960), (1.2e6, 1_200_000), (-3.0, -3), (2**62, 2**62)],
+)
+def test_check_whole_number_returns_an_int(value: object, expected: int) -> None:
+    from autoware_carla_scenario.seed import check_whole_number
+
+    number = check_whole_number("x.n", value)  # type: ignore[arg-type]
+    assert type(number) is int
+    assert number == expected
+
+
+def test_check_whole_number_takes_a_numpy_integer() -> None:
+    import numpy as np
+
+    from autoware_carla_scenario.seed import check_whole_number
+
+    for value in (np.int64(64), np.int32(64), np.uint16(64), np.float64(64.0)):
+        number = check_whole_number("x.n", value)  # type: ignore[arg-type]
+        assert type(number) is int
+        assert number == 64
+
+
+@pytest.mark.parametrize("value", [960.5, 64.5, True, False, "960", None, [1]])
+def test_check_whole_number_refuses_what_is_no_whole_number(value: object) -> None:
+    from autoware_carla_scenario.seed import check_whole_number
+
+    with pytest.raises(ValueError, match=r"^x\.n must be a whole number"):
+        check_whole_number("x.n", value)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("value", [float("nan"), float("inf"), float("-inf")])
+def test_check_whole_number_refuses_what_is_not_finite(value: float) -> None:
+    from autoware_carla_scenario.seed import check_whole_number
+
+    with pytest.raises(ValueError, match=r"^x\.n must be finite"):
+        check_whole_number("x.n", value)  # type: ignore[arg-type]
+
+
 def test_check_seed_takes_a_whole_number() -> None:
     from autoware_carla_scenario.seed import check_seed
 

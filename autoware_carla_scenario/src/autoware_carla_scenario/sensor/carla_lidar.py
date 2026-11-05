@@ -28,7 +28,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union
 import numpy as np
 
 from ..constants import FIXED_DELTA_SECONDS, tick_multiple
-from ..seed import check_seed, resolve_seed
+from ..seed import check_seed, check_whole_number, resolve_seed
 from .base import sensor_tick_s
 from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
@@ -90,12 +90,21 @@ class CarlaLidarSensorConfig:
     yaw: float = 0.0
 
     def __post_init__(self) -> None:
+        # The mapping is not coerced, so an int field may hold a float (a NaN
+        # too), a bool or a string, and YAML reads 1.2e6 as a float.  A whole
+        # number is kept as an int, so CARLA is handed "1200000", not
+        # "1200000.0"; 64.5 is refused (#1472).
+        object.__setattr__(
+            self, "channels", check_whole_number("LiDAR channels", self.channels)
+        )
+        object.__setattr__(
+            self,
+            "points_per_second",
+            check_whole_number("LiDAR points_per_second", self.points_per_second),
+        )
         # Hydra reads ``=nan`` as a float, and a NaN fails every comparison
-        # below, so the numbers are refused unless finite first (#1391).  The
-        # mapping is not coerced, so an int field may hold a float NaN too.
+        # below, so the numbers are refused unless finite first (#1391).
         for key, value in (
-            ("channels", float(self.channels)),
-            ("points_per_second", float(self.points_per_second)),
             ("range_m", self.range_m),
             ("upper_fov_deg", self.upper_fov_deg),
             ("lower_fov_deg", self.lower_fov_deg),
@@ -114,8 +123,8 @@ class CarlaLidarSensorConfig:
         seed = self.noise_seed
         if seed is not None:
             # A whole number, not negative: not 1.9 or True, which int()
-            # would seed as 1.
-            check_seed("LiDAR noise_seed", seed)
+            # would seed as 1.  Kept as an int, as the counts above are.
+            object.__setattr__(self, "noise_seed", check_seed("LiDAR noise_seed", seed))
         if self.channels < 1:
             raise ValueError("LiDAR channels must be positive")
         if self.range_m <= 0.0 or self.points_per_second <= 0:

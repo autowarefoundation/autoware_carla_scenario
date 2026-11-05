@@ -102,6 +102,40 @@ def test_a_nan_from_yaml_in_an_int_field_is_refused(field: str) -> None:
         DriverClientConfig.from_mapping({"lidars": [{field: float("nan")}]})
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "expected"),
+    [
+        ("channels", 64.0, 64),
+        ("channels", np.int64(32), 32),
+        # YAML reads 1.2e6 as a float.
+        ("points_per_second", 1.2e6, 1_200_000),
+        ("points_per_second", np.int32(600_000), 600_000),
+        ("noise_seed", 3.0, 3),
+    ],
+)
+def test_a_whole_number_count_is_kept_as_an_int(
+    field: str, value: Any, expected: int
+) -> None:
+    """CARLA's int attributes take "64.0" (atoi), so 64.0 worked: it still
+    does, and CARLA is handed "64" (#1472)."""
+    for config in (
+        DriverLidarConfig(**{field: value}),
+        DriverClientConfig.from_mapping({"lidars": [{field: value}]}).lidars[0],
+    ):
+        assert type(getattr(config, field)) is int
+        assert getattr(config, field) == expected
+
+
+@pytest.mark.parametrize("field", ["channels", "points_per_second"])
+@pytest.mark.parametrize("value", [64.5, True, "64", None])
+def test_a_count_that_is_no_whole_number_is_refused(field: str, value: Any) -> None:
+    """Not truncated to 64 or 1 (#1472)."""
+    with pytest.raises(ValueError, match=f"^LiDAR {field} must be a whole number"):
+        DriverLidarConfig(**{field: value})
+    with pytest.raises(ValueError, match=f"^LiDAR {field} must be a whole number"):
+        DriverClientConfig.from_mapping({"lidars": [{field: value}]})
+
+
 @pytest.mark.parametrize("seed", [1.9, 0.5, True, False, "3"])
 def test_a_noise_seed_that_is_no_whole_number_is_refused(seed: Any) -> None:
     """Only finite and not negative was checked, so 1.9 and True seeded the
@@ -280,6 +314,25 @@ def test_sweeps_stay_bounded_while_the_bridged_stack_boots() -> None:
     assert entity._handshake is not None and not entity._handshake.ready
     newest = max(frame for frame, _ in list(lidar._sweeps.queue))  # noqa: SLF001
     assert newest == world.frame - 1
+
+
+def test_attach_hands_carla_whole_number_counts_as_ints() -> None:
+    blueprint = SimpleNamespace(attributes={}, has_attribute=lambda name: True)
+    blueprint.set_attribute = blueprint.attributes.__setitem__
+    world = SimpleNamespace(
+        get_blueprint_library=lambda: SimpleNamespace(find=lambda name: blueprint),
+        spawn_actor=lambda bp, transform, attach_to: SimpleNamespace(
+            listen=lambda cb: None
+        ),
+    )
+    config = DriverClientConfig.from_mapping(
+        {"lidars": [{"channels": 32.0, "points_per_second": 1.2e6}]}
+    ).lidars[0]
+    CarlaLidarSensor(config).attach(
+        world, SimpleNamespace(type_id="vehicle.lincoln.mkz")
+    )
+    assert blueprint.attributes["channels"] == "32"
+    assert blueprint.attributes["points_per_second"] == "1200000"
 
 
 def test_attach_pins_one_revolution_per_tick() -> None:
