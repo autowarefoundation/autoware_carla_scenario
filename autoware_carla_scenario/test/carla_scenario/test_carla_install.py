@@ -5,6 +5,7 @@ from __future__ import annotations
 import io
 import json
 import os
+import shutil
 import tarfile
 import threading
 from collections.abc import Iterator
@@ -535,3 +536,75 @@ def test_a_permanent_http_error_is_not_retried(home: Path, origin: _Origin) -> N
         install(origin.url)
     assert len(origin.ranges) == 2
     assert not install_dir().with_name("carla.partial").exists()
+
+
+def test_an_interrupted_swap_never_passes_for_a_current_install(
+    home: Path,
+    origin: _Origin,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ctrl-C while the old tree is deleted: the next run ends complete (#1567)."""
+    install(origin.url)
+    real_rmtree = shutil.rmtree
+
+    def interrupted(path: Path, ignore_errors: bool = False) -> None:
+        tree = Path(path)
+        if (tree / "noise").is_file():  # an install, old or new, being deleted
+            (tree / "noise").unlink()  # part way through: launcher and stamp remain
+            raise KeyboardInterrupt
+        real_rmtree(tree, ignore_errors)
+
+    monkeypatch.setattr(shutil, "rmtree", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        install(origin.url, force=True)  # a reinstall, Ctrl-C mid-swap
+    monkeypatch.setattr(shutil, "rmtree", real_rmtree)
+    capsys.readouterr()
+
+    install(origin.url)  # the next run
+    assert installed_executable() is not None
+    assert len((install_dir() / "noise").read_bytes()) == 256 * 1024
+    assert (install_dir() / ".download.json").is_file()
+    assert sorted(p.name for p in install_dir().parent.iterdir()) == ["carla"]
+
+
+def test_an_interrupt_between_the_renames_leaves_no_install_to_trust(
+    home: Path, origin: _Origin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install(origin.url)
+    real_rename = Path.rename
+
+    def interrupted(self: Path, target: Path) -> Path:
+        if self.name == "carla.partial":
+            raise KeyboardInterrupt
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        install(origin.url, force=True)
+    monkeypatch.setattr(Path, "rename", real_rename)
+    assert installed_executable() is None  # moved aside, not half there
+
+    install(origin.url)
+    assert len((install_dir() / "noise").read_bytes()) == 256 * 1024
+    assert sorted(p.name for p in install_dir().parent.iterdir()) == ["carla"]
+
+
+def test_a_failed_swap_puts_the_previous_install_back(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "carla.tar.gz"
+    install(_carla(archive))
+    real_rename = Path.rename
+
+    def failing(self: Path, target: Path) -> Path:
+        if self.name == "carla.partial":
+            raise OSError("rename failed")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", failing)
+    _carla(archive, b"a later night" * 10)
+    with pytest.raises(OSError, match="rename failed"):
+        install(archive.as_uri())
+    assert (install_dir() / "VERSION").read_bytes() == b"nightly"
+    assert (install_dir() / ".download.json").is_file()

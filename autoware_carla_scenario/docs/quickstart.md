@@ -50,7 +50,11 @@ it again at any time: an install that is still the current nightly is kept, a
 newer one replaces it. If the connection drops partway, the download picks up
 where it stopped (with an HTTP range request) instead of starting over; it gives
 up after several reconnections in a row that deliver nothing, and stops (the next
-run fetches it whole) if the nightly was replaced in the meantime.
+run fetches it whole) if the nightly was replaced in the meantime. A new install
+is unpacked next to the old one (`carla.partial`) and swapped in by renames once
+it is complete, so stopping `scenario-setup` (Ctrl-C) at any point leaves either
+the previous install or none, never a half-deleted one; the next run deletes
+whatever the interrupted one left beside it.
 
 | Option | Meaning |
 | --- | --- |
