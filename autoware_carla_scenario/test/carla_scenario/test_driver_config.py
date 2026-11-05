@@ -381,3 +381,130 @@ def test_a_carla_driver_run_is_refused_for_it_before_anything_is_built() -> None
         run.check_run_config(cfg)
     # Another ego reads no driver settings.
     run.check_run_config(_shipped(["driver.random_seed=1.9"]))
+
+
+# ---------------------------------------------------------------------------
+# A number field holding a bool or a string (#1506)
+# ---------------------------------------------------------------------------
+
+_DRIVER_NUMBERS = (
+    "timeout_s",
+    "policy_timestep_s",
+    "warmup_s",
+    "route_horizon_m",
+    "route_resolution_m",
+    "rear_axle_offset_m",
+    "traffic_light_sight_distance_m",
+    "actor_horizon_m",
+    "t4_scene_history_s",
+    "t4_scene_wheel_base_m",
+    "image_quality",
+)
+
+
+@pytest.mark.parametrize("value", [True, False, "0.1", "90", None, [1.0]])
+@pytest.mark.parametrize("key", _DRIVER_NUMBERS)
+def test_a_driver_number_that_is_no_number_is_refused(key: str, value: Any) -> None:
+    if value is None and key in ("rear_axle_offset_m", "t4_scene_wheel_base_m"):
+        pytest.skip("None is this key's own value")
+    with pytest.raises(ValueError, match=rf"^driver\.{key} must be "):
+        DriverClientConfig(**{key: value})
+    with pytest.raises(ValueError, match=rf"^driver\.{key} must be "):
+        DriverClientConfig.from_mapping({key: value})
+
+
+@pytest.mark.parametrize("quality", [0, 101, -5, 90.5, float("nan")])
+def test_an_image_quality_out_of_range_or_fractional_is_refused(
+    quality: Any,
+) -> None:
+    with pytest.raises(ValueError, match=r"^driver\.image_quality must be "):
+        DriverClientConfig(image_quality=quality)
+
+
+@pytest.mark.parametrize(
+    ("quality", "expected"), [(90, 90), (90.0, 90), (1, 1), (100.0, 100)]
+)
+def test_a_whole_image_quality_is_kept_as_an_int(quality: Any, expected: int) -> None:
+    kept = DriverClientConfig(image_quality=quality).image_quality
+    assert kept == expected
+    assert type(kept) is int
+
+
+@pytest.mark.parametrize(
+    ("key", "value"), [("timeout_s", 30), ("policy_timestep_s", np.float64(0.2))]
+)
+def test_an_int_or_a_numpy_float_is_a_number(key: str, value: Any) -> None:
+    assert getattr(DriverClientConfig(**{key: value}), key) == value
+
+
+@pytest.mark.parametrize("value", [True, "1.0"])
+@pytest.mark.parametrize(
+    "key",
+    ["fov", "fps", "position_x", "position_y", "position_z", "roll", "pitch", "yaw"],
+)
+def test_a_camera_number_that_is_no_number_is_refused(key: str, value: Any) -> None:
+    with pytest.raises(ValueError, match=rf"{key} must be a number"):
+        DriverCameraConfig(**{key: value})
+
+
+@pytest.mark.parametrize("value", [True, "1.0"])
+@pytest.mark.parametrize(
+    "key",
+    ["range_m", "upper_fov_deg", "dropoff_general_rate", "weather_noise", "yaw"],
+)
+def test_a_lidar_number_that_is_no_number_is_refused(key: str, value: Any) -> None:
+    from autoware_carla_scenario.driver.base import DriverLidarConfig
+
+    with pytest.raises(ValueError, match=rf"^LiDAR {key} must be a number"):
+        DriverLidarConfig.from_mapping({key: value})
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "principal_point",
+        "pixeldist_to_angle_poly",
+        "angle_to_pixeldist_poly",
+        "linear_cde",
+        "max_angle",
+    ],
+)
+def test_a_lens_number_that_is_no_number_is_refused(key: str) -> None:
+    from autoware_carla_scenario.driver.base import DriverCameraLens
+
+    lens: dict[str, Any] = {
+        "principal_point": [480.0, 302.0],
+        "pixeldist_to_angle_poly": [0.0, 0.002],
+        "angle_to_pixeldist_poly": [0.0, 500.0],
+        "max_angle": 1.5,
+        "linear_cde": [1.0, 0.0, 0.0],
+    }
+    DriverCameraLens.from_mapping(lens)
+    lens[key] = True if key == "max_angle" else [True] * len(lens[key])
+    with pytest.raises(ValueError, match=rf"^lens\.{key} must be a number"):
+        DriverCameraLens.from_mapping(lens)
+    with pytest.raises(ValueError, match=rf"^lens\.{key} must be a number"):
+        DriverCameraLens(**lens)
+
+
+@pytest.mark.parametrize(
+    "override", ["driver.policy_timestep_s=true", "driver.image_quality=true"]
+)
+def test_a_carla_driver_run_refuses_a_bool_number(override: str) -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    key = override.split("=")[0].replace(".", r"\.")
+    cfg = _shipped(["ego.entity=carla_driver", override])
+    with pytest.raises(run.RunConfigError, match=rf"^{key} must be "):
+        run.check_run_config(cfg)
+
+
+@pytest.mark.parametrize("preset", ["default", "vision_pilot"])
+def test_every_shipped_driver_preset_passes_the_run_check(preset: str) -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    run.check_run_config(_shipped(["ego.entity=carla_driver", f"driver={preset}"]))
