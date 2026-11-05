@@ -48,12 +48,13 @@ class _Placed:
         velocity: tuple[float, float] = (0.0, 0.0),
         yaw: float = 0.0,
         role: str = "",
+        z: float = 0.0,
     ) -> None:
         self.id = actor_id
         self.is_alive = True
         self.type_id = type_id
         self.attributes = {"role_name": role}
-        self._at = _Vec(x=at[0], y=at[1], z=0.0)
+        self._at = _Vec(x=at[0], y=at[1], z=z)
         self._v = _Vec(x=velocity[0], y=velocity[1], z=0.0)
         self._yaw = yaw
 
@@ -155,6 +156,69 @@ def test_a_pedestrian_counts_once_it_sets_off() -> None:
     assert read_measure(CROSSING_PEDESTRIAN_GAP_M, standing) is None
     assert read_measure(CROSSING_PEDESTRIAN_GAP_M, running) == pytest.approx(20.0)
     assert read_measure(CROSSING_PEDESTRIAN_SPEED_MS, running) == pytest.approx(2.0)
+
+
+def test_a_vehicle_on_another_level_is_not_ahead() -> None:
+    # On a bridge 8 m over the ego, or in an underpass 8 m beneath it (#1587).
+    for z in (8.0, -8.0):
+        world = _world_of(_Placed(2, "vehicle.npc", (12.0, 0.0), (12.0, 0.0), z=z))
+
+        assert read_measure(VEHICLE_AHEAD_GAP_M, world) is None
+        assert read_measure(VEHICLE_AHEAD_RELATIVE_SPEED_KPH, world) is None
+
+
+def test_the_vehicle_ahead_on_the_egos_level_is_read_past_one_above() -> None:
+    world = _world_of(
+        _Placed(2, "vehicle.on_bridge", (12.0, 0.0), z=8.0),
+        _Placed(3, "vehicle.on_road", (30.0, 0.0), z=0.5),  # a slight slope
+    )
+
+    assert read_measure(VEHICLE_AHEAD_GAP_M, world) == pytest.approx(30.0)
+
+
+def test_a_pedestrian_on_another_level_is_not_crossing() -> None:
+    # On a footbridge 8 m over the ego (#1587).
+    above = _world_of(
+        _Placed(2, "walker.pedestrian.1", (20.0, -3.0), (0.0, 2.0), z=8.0)
+    )
+    level = _world_of(
+        _Placed(2, "walker.pedestrian.1", (20.0, -3.0), (0.0, 2.0), z=0.5)
+    )
+
+    assert read_measure(CROSSING_PEDESTRIAN_GAP_M, above) is None
+    assert read_measure(CROSSING_PEDESTRIAN_SPEED_MS, above) is None
+    assert read_measure(CROSSING_PEDESTRIAN_GAP_M, level) == pytest.approx(20.0)
+
+
+def test_a_lead_vehicle_up_a_grade_is_still_ahead() -> None:
+    # 100 m ahead and 3 m up: a 3 % grade, not a bridge.
+    world = _world_of(_Placed(2, "vehicle.npc", (100.0, 0.0), z=3.0))
+
+    assert read_measure(VEHICLE_AHEAD_GAP_M, world) == pytest.approx(100.0)
+
+
+def test_a_vehicle_close_and_far_above_is_not_ahead() -> None:
+    # 10 m ahead and 8 m up: an overpass, not a slope.
+    world = _world_of(_Placed(2, "vehicle.npc", (10.0, 0.0), z=8.0))
+
+    assert read_measure(VEHICLE_AHEAD_GAP_M, world) is None
+
+
+def test_a_pedestrian_up_a_grade_is_still_crossing() -> None:
+    # 60 m ahead and 3 m up: a 5 % grade.
+    world = _world_of(
+        _Placed(2, "walker.pedestrian.1", (60.0, -3.0), (0.0, 2.0), z=3.0)
+    )
+
+    assert read_measure(CROSSING_PEDESTRIAN_GAP_M, world) == pytest.approx(60.0)
+
+
+def test_a_pedestrian_close_and_far_above_is_not_crossing() -> None:
+    world = _world_of(
+        _Placed(2, "walker.pedestrian.1", (10.0, -3.0), (0.0, 2.0), z=8.0)
+    )
+
+    assert read_measure(CROSSING_PEDESTRIAN_GAP_M, world) is None
 
 
 def test_nothing_there_is_missing() -> None:
