@@ -2622,8 +2622,8 @@ manoeuvres: about 2 s a frame with a collision ahead.</p>
 <p>A slow metric is evaluated less often than every <code>period_s</code> (0.1 s): at its
 own period, <code>metric_periods_s</code>, by default 0.5 s for <code>crime_ttr_s</code>
 (<code>DEFAULT_METRIC_PERIODS_S</code>). A frame is asked only the metrics due on it, and
-a metric condition counts each NG sample until the next, so <code>max_ng_seconds</code>
-is still simulated time. Set the periods of any CommonRoad metric; the
+a metric condition counts each NG sample until the next (the last until the
+run's end), so <code>max_ng_seconds</code> is still simulated time. Set the periods of any CommonRoad metric; the
 dictionary given replaces the one set, so start from it to keep the others':</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.commonroad</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a>    <span class="n">commonroad_settings</span><span class="p">,</span>
@@ -2724,8 +2724,11 @@ run fails when its NG frames add up to more than <code>max_ng_seconds</code> of
 simulated time -- with the default <code>0</code>, at its first NG frame -- at the time
 they do. "More than" means by over <code>1e-9</code> s, the tolerance the other time
 conditions use: the clock is a running sum of ticks, so a metric NG for
-exactly <code>max_ng_seconds</code> can add up to a hair over it, and that holds. Each NG frame counts until the next frame evaluated (the last, the
-run's end, counts nothing); a frame the metric reads nothing in is not NG.</p>
+exactly <code>max_ng_seconds</code> can add up to a hair over it, and that holds. Each NG frame counts until the next frame evaluated, and the last until the
+run's end, its last recorded frame: a metric evaluated every tick reads its
+last sample then, so that one counts nothing, while one sampled at a coarser
+period (<code>crime_ttr_s</code>, the CommonRoad metrics) counts its last sample for the
+time left to the end. A frame the metric reads nothing in is not NG.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">ComparisonRule</span><span class="p">,</span> <span class="n">MetricCondition</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.metrics</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>    <span class="n">COLLISION_AT_FAULT</span><span class="p">,</span>
@@ -2854,7 +2857,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 4, 2026 03:47:08 UTC"><span class="timeago" datetime="2026-11-04T03:47:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 4, 2026 03:47:08 UTC">2026-11-04</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 12:15:23 UTC"><span class="timeago" datetime="2026-11-05T12:15:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 12:15:23 UTC">2026-11-05</span>
   </span>
 
     
