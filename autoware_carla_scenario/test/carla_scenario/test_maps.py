@@ -1503,6 +1503,73 @@ class TestResolveDirectory:
         assert paths.opendrive_path is not None
         assert cache.root in paths.opendrive_path.parents
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "/Game/Carla/Maps/Town10HD_Opt",
+            "Carla/Maps/Town10HD_Opt",
+            "/Game/Carla/Maps/Town10HD_Opt/",
+        ],
+    )
+    def test_a_full_asset_path_names_the_opendrive_by_its_town(
+        self,
+        name: str,
+        local_map: Path,
+        cache: GitMapCache,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Joined whole, ``/Game/...`` escaped the cache, ``Carla/...`` nested (#1559)."""
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        plain = resolve_map_paths({"directory": str(local_map), "name": "Town10HD_Opt"})
+        paths = resolve_map_paths({"directory": str(local_map), "name": name})
+
+        assert paths.resolved is not None
+        destination = paths.opendrive_path
+        assert destination == plain.opendrive_path
+        assert destination == paths.resolved.derived / "Town10HD_Opt.xodr"
+        assert cache.root in destination.parents
+
+        # Captured there by a run, it is found again under either spelling.
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("<OpenDRIVE/>")
+        again = resolve_map_paths({"directory": str(local_map), "name": name})
+        assert again.xodr_path == destination and again.xodr_is_derived
+        assert paths.resolved.cached_derived_xodr(name) == destination
+
+    def test_a_full_asset_path_of_the_directorys_town_is_that_town(
+        self, local_map: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``/Game/Carla/Maps/TownL`` reads the same derived file as ``TownL``."""
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        resolved = resolve_directory(local_map, cache=cache)
+        resolved.derived.mkdir(parents=True, exist_ok=True)
+        resolved.derived_xodr().write_text("<OpenDRIVE/>")
+
+        paths = resolve_map_paths(
+            {"directory": str(local_map), "name": "/Game/Carla/Maps/TownL"}
+        )
+        assert paths.xodr_path == resolved.derived / "TownL.xodr"
+        assert paths.xodr_is_derived
+
+    def test_a_full_asset_path_takes_the_installed_opendrive_by_its_town(
+        self,
+        local_map: Path,
+        cache: GitMapCache,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        asset = tmp_path / "Town10HD_Opt.xodr"
+        asset.write_text("<OpenDRIVE/>")
+        monkeypatch.setenv("TOWN10_HD_OPT_PATH", str(asset))
+        resolved = resolve_directory(local_map, cache=cache)
+
+        written = ensure_xodr(
+            resolved, map_name="/Game/Carla/Maps/Town10HD_Opt", allow_server=False
+        )
+
+        assert written == resolved.derived / "Town10HD_Opt.xodr"
+        assert written.read_text() == "<OpenDRIVE/>"
+
     def test_it_wins_over_a_source_and_fetches_nothing(
         self,
         local_map: Path,
@@ -1665,6 +1732,27 @@ class TestOpenDrive:
         assert map_asset_env_var("NishishinjukuMap") == "NISHISHINJUKU_MAP_PATH"
         assert map_asset_env_var("Town01") == "TOWN01_PATH"
         assert map_asset_env_var("Town10HD_Opt") == "TOWN10_HD_OPT_PATH"
+
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "/Game/Carla/Maps/Town10HD_Opt",
+            "Carla/Maps/Town10HD_Opt",
+            "/Game/Carla/Maps/Town10HD_Opt/",
+            "Game\\Carla\\Maps\\Town10HD_Opt",
+        ],
+    )
+    def test_a_full_asset_path_names_its_towns_variable(self, name: str) -> None:
+        """Not ``/GAME/CARLA/MAPS/TOWN10_HD_OPT_PATH`` (#1559)."""
+        assert map_asset_env_var(name) == "TOWN10_HD_OPT_PATH"
+
+    def test_a_full_asset_path_reads_its_towns_variable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        asset = tmp_path / "Town10HD_Opt.xodr"
+        asset.write_text("<OpenDRIVE/>")
+        monkeypatch.setenv("TOWN10_HD_OPT_PATH", str(asset))
+        assert installed_xodr("/Game/Carla/Maps/Town10HD_Opt") == asset
 
     def test_an_unset_variable_names_no_file(
         self, monkeypatch: pytest.MonkeyPatch

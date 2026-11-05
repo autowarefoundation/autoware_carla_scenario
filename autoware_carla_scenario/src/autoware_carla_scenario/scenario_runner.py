@@ -39,6 +39,7 @@ from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkers
 from .failure import Failure, FailureCategory, progress_detail
 from .maps.opendrive import map_asset_env_var, map_asset_path
+from .maps.resolver import _short_map_name
 from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
@@ -1173,7 +1174,7 @@ class ScenarioRunner:
                 f"Environment variable '{env_var}' is not set. "
                 f"Set it to the path of the internal .xodr file for map '{map_name}' "
                 f"inside the CARLA installation "
-                f"(e.g. /opt/carla/CarlaUE5/Content/Carla/Maps/{map_name}.xodr)."
+                f"(e.g. /opt/carla/CarlaUE5/Content/Carla/Maps/{_short_map_name(map_name)}.xodr)."
             )
         shutil.copy2(xodr_path, dest)
         self._xodr_path = xodr_path

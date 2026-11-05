@@ -19,7 +19,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Optional
 
-from .resolver import ResolvedMap, cached_map, resolve_directory, resolve_map
+from .resolver import (
+    ResolvedMap,
+    _short_map_name,
+    cached_map,
+    resolve_directory,
+    resolve_map,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -180,7 +186,7 @@ def resolve_map_paths(
     if (
         resolved is not None
         and name
-        and name != resolved.name
+        and _short_map_name(name) != _short_map_name(resolved.name)
         and (resolved.xodr_path is None or resolved.xodr_is_derived)
     ):
         # The resolver looks for an OpenDRIVE taken from CARLA under the map
