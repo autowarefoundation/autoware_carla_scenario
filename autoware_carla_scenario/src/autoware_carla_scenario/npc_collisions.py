@@ -13,8 +13,10 @@ the vehicle is first seen (the world's actors are listed once a second, not
 every tick).  A vehicle's sensor hears it hit another vehicle, a walker, or
 the ego; walker-to-walker contact and contact with map geometry are not
 recorded.  The two vehicles of one crash each report it, and a contact keeps
-reporting while it lasts: one pair is recorded once per
-:data:`REPEAT_S` seconds.
+reporting while it lasts: one pair's contact is recorded when it begins and
+again when it ends -- once no event has come from the pair for
+:data:`REPEAT_S` seconds, or when the run ends with it still going
+(:meth:`NpcCollisionMonitor.finish`) -- with how long it lasted.
 
 **A fallen walker** is told from one world snapshot every few ticks: a walker
 tipped over more than :data:`FALLEN_TILT_DEG`, or more than half its height
@@ -183,9 +185,10 @@ def release_actor(actor_id: int) -> None:
 class NpcCollisionMonitor:
     """Hears the collisions of every vehicle but the ego; sees walkers fall.
 
-    Call :meth:`tick` once per world tick and :meth:`close` before the world
-    goes, as the runner does for the conditions' sensors: a sensor is only
-    stopped through the handle that started it listening.
+    Call :meth:`tick` once per world tick, :meth:`finish` once the ticks
+    are over, and :meth:`close` before the world goes, as the runner does for
+    the conditions' sensors: a sensor is only stopped through the handle that
+    started it listening.
     """
 
     _ego_role: str
@@ -203,6 +206,7 @@ class NpcCollisionMonitor:
     _gone: set[int]
     _fallen: set[int]
     _broken: bool
+    _finished: bool
     _backend: Optional["TrafficBackend"]
 
     def __init__(
@@ -230,6 +234,8 @@ class NpcCollisionMonitor:
         self._gone: set[int] = set()
         self._fallen: set[int] = set()
         self._broken = False
+        #: Whether :meth:`finish` has closed the contacts.
+        self._finished = False
         #: The run's traffic backend, which a fallen walker no entity stands
         #: for (a SUMO pedestrian's mirror) is taken back from.
         self._backend = traffic_backend
@@ -253,6 +259,39 @@ class NpcCollisionMonitor:
             )
             self._broken = True
             return [], [], []
+
+    def finish(self, elapsed: float) -> list[NpcCollision]:
+        """The run is over at *elapsed* (the last tick's time): the records of
+        the contacts it ends.
+
+        The events heard since the last tick are taken up first, as
+        :meth:`tick` would; then each contact still under way is ended, as one
+        is that goes quiet for :data:`REPEAT_S`, with how long it had lasted
+        and its strongest impulse.  Only the first call does anything.
+        """
+        if self._broken or self._finished:
+            return []
+        self._finished = True
+        try:
+            out = self._collisions(elapsed)
+            for contact in self._contacts.values():
+                out.append(
+                    contact.record(
+                        contact.frame,
+                        elapsed,
+                        "end",
+                        contact.last - contact.start,
+                        self._ego_role,
+                    )
+                )
+            self._contacts.clear()
+            return out
+        except Exception:  # noqa: BLE001 - a log aid never fails the run
+            logger.warning(
+                "NPC collision logging stopped after an error", exc_info=True
+            )
+            self._broken = True
+            return []
 
     def release(self, actor_id: int) -> None:
         """Stop hearing *actor_id* and forget it: it is leaving the world."""
