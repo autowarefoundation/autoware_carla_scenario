@@ -2414,7 +2414,8 @@ and its configuration's sensor spec (not the YAML reading around it), the
 example scenarios and their configs, the SLURM launcher's job scripts, where
 a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
 and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
-`scontrol`, `sinfo`: `slurm.queue`, #1634), and the parts of the
+`scontrol`, `sinfo`: `slurm.queue`, #1634), the naming rules of
+`scenario-new` (`scaffold.names`, #1654), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 `__init__` re-exports what is not checked through models of it (see *A class
 a checked package only re-exports* below). Each checked module is listed here
@@ -3007,7 +3008,7 @@ What Codon 0.19 needs that Python does not, beyond
 
   <!-- shims:start -->
   `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `fnmatch`, `hashlib`,
-  `importlib.metadata`, `json`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
+  `importlib.metadata`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions` and `urllib.parse`
   <!-- shims:end -->
@@ -3236,6 +3237,12 @@ What Codon 0.19 needs that Python does not, beyond
   `os.PathLike` for either, read through `os.fspath()` as CPython's
   `normcase()` reads it on POSIX, and `fnmatchcase()` two `str`s, as
   CPython's does. `filter()` and `translate()` are not declared (#728).
+  `keyword` declares `kwlist`, CPython's hard keywords (the same on every
+  supported Python, generated from `keyword.kwlist`), and `iskeyword(s)`,
+  which takes one value by position, as CPython's
+  `frozenset(kwlist).__contains__` does, and is `False` for any value that is
+  no `str`; `softkwlist` and `issoftkeyword()`, which differ between
+  versions, are not declared (#1654).
   `socket` declares `create_connection(address, timeout=None)`,
   `gethostname()`, `AF_INET`, `SOCK_STREAM` and `socket(family=AF_INET,
   type=SOCK_STREAM, proto=0)`, whose socket has `bind(address, /)` and
@@ -3295,7 +3302,7 @@ What Codon 0.19 needs that Python does not, beyond
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
   `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata`,
-  `urllib.parse`, `signal`, `atexit`, `shlex`, `fnmatch` and `sys` and call what they
+  `urllib.parse`, `signal`, `atexit`, `shlex`, `fnmatch`, `keyword` and `sys` and call what they
   declare,
   file-system queries and the two writes included (`Path(...).exists()`, `Path(...).write_text(...)`), read
   and set the environment (`os.environ.get()`), copy, move and remove files
