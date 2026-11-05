@@ -628,6 +628,242 @@ def test_sumo_args_files_alone_keep_their_option() -> None:
     ]
 
 
+# The command lines traffic.sumo.network built before they moved into the
+# checked traffic.sumo.options (#1679), copied verbatim: the argv must not
+# change by a byte.
+
+
+def _old_random_trips_cmd(
+    python: str,
+    tool: Path,
+    net_file: Path,
+    out: Path,
+    *,
+    seed: int,
+    period: float,
+    end: float,
+    prefix: str,
+    options: list[str],
+) -> list[str]:
+    return [
+        python,
+        str(tool),
+        "-n",
+        str(net_file),
+        "-o",
+        str(out.with_suffix(".trips.xml")),
+        "-r",
+        str(out),
+        "-b",
+        "0",
+        "-e",
+        str(end),
+        "-p",
+        str(period),
+        "--seed",
+        str(seed),
+        "--validate",
+        "--prefix",
+        prefix,
+        *options,
+    ]
+
+
+def _old_trip_options(
+    weights_prefix: Path, safe_weights: bool, fringe_factor: float
+) -> list[str]:
+    if safe_weights:
+        weights = ["--weights-prefix", str(weights_prefix)]
+    else:
+        weights = ["--fringe-factor", f"{fringe_factor:g}"]
+    return ["--vehicle-class", "passenger", *weights]
+
+
+def _old_walk_options(max_distance: float) -> list[str]:
+    return ["--pedestrians", "--max-distance", f"{max_distance:g}"]
+
+
+def _old_ride_options(
+    out: Path,
+    min_distance: float,
+    max_distance: float | None,
+    bicycle_type: Path | None,
+) -> list[str]:
+    options = [
+        "--vclass",
+        "bicycle",
+        "--trip-attributes",
+        'type="DEFAULT_BIKETYPE"',
+        "--min-distance",
+        f"{min_distance:g}",
+    ]
+    if max_distance is not None:
+        options += ["--max-distance", f"{max_distance:g}"]
+    if bicycle_type is not None:
+        options += [
+            "--additional-files",
+            str(bicycle_type),
+            "--vtype-output",
+            str(out.with_suffix(".vtypes.xml")),
+        ]
+    return options
+
+
+@pytest.mark.parametrize(
+    ("seed", "period", "end", "prefix", "options"),
+    [
+        (0, 1.0, 3600.0, "sumo", []),
+        (42, 0.25, 600, "sumoped", ["--pedestrians", "--max-distance", "300"]),
+        (
+            7,
+            2,
+            1e6,
+            "sumobike",
+            ["--vclass", "bicycle", "--trip-attributes", 'type="x"'],
+        ),
+        (-1, 1.5e-3, 0.1, "", ["--fringe-factor", "5"]),
+    ],
+)
+def test_random_trips_argv_is_the_command_network_built(
+    seed: int, period: float, end: float, prefix: str, options: list[str]
+) -> None:
+    """randomTrips.py's argv, now built in the checked options, is unchanged."""
+    from autoware_carla_scenario.traffic.sumo.options import random_trips_argv
+
+    python = "/usr/bin/python3"
+    tool = Path("/opt/sumo/tools/randomTrips.py")
+    net_file = Path("/cache/abc/network.net.xml")
+    out = Path("/run/out.sumo/ambient.rou.xml")
+    given = list(options)
+    assert random_trips_argv(
+        python, tool, net_file, out, seed, period, end, prefix, given
+    ) == _old_random_trips_cmd(
+        python,
+        tool,
+        net_file,
+        out,
+        seed=seed,
+        period=period,
+        end=end,
+        prefix=prefix,
+        options=options,
+    )
+    assert given == options  # the options are not changed
+
+
+@pytest.mark.parametrize("safe_weights", [True, False])
+@pytest.mark.parametrize("fringe_factor", [5.0, 1, 0.5, 1e-7, 12345678.0])
+def test_trip_options_are_the_ones_network_built(
+    safe_weights: bool, fringe_factor: float
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.options import trip_options
+
+    prefix = Path("/cache/abc/network.safe")
+    assert trip_options(prefix, safe_weights, fringe_factor) == _old_trip_options(
+        prefix, safe_weights, fringe_factor
+    )
+
+
+@pytest.mark.parametrize("max_distance", [300.0, 0, 2.5, 1e9])
+def test_walk_options_are_the_ones_network_built(max_distance: float) -> None:
+    from autoware_carla_scenario.traffic.sumo.options import walk_options
+
+    assert walk_options(max_distance) == _old_walk_options(max_distance)
+
+
+@pytest.mark.parametrize("min_distance", [0.0, 50, 12.75])
+@pytest.mark.parametrize("max_distance", [None, 0.0, 800.0, 1e6])
+@pytest.mark.parametrize("bicycle_type", [None, Path("/run/out.sumo/bicycle.add.xml")])
+def test_ride_options_are_the_ones_network_built(
+    min_distance: float, max_distance: float | None, bicycle_type: Path | None
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.options import ride_options
+
+    out = Path("/run/out.sumo/bicycles.rou.xml")
+    assert ride_options(
+        out, min_distance, max_distance, bicycle_type
+    ) == _old_ride_options(out, min_distance, max_distance, bicycle_type)
+
+
+def test_generate_demand_runs_the_command_network_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """generate_trips/walks/rides still hand subprocess.run the old argv,
+    with sys.executable and sumo_home() as network finds them."""
+    import subprocess
+    import sys
+
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    home = tmp_path / "sumo_home"
+    monkeypatch.setattr(network_module, "sumo_home", lambda: home)
+    commands: list[list[str]] = []
+
+    def run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(cmd)
+        Path(cmd[cmd.index("-r") + 1]).write_text("<routes/>")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(network_module.subprocess, "run", run)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    network = network_module.SumoNetwork(
+        cache / "network.net.xml", cache / "network.safe"
+    )
+    out = tmp_path / "out"
+    tool = home / "tools" / "randomTrips.py"
+    bicycle_type = tmp_path / "bicycle.add.xml"
+
+    def old(name: str, prefix: str, options: list[str]) -> list[str]:
+        return _old_random_trips_cmd(
+            sys.executable,
+            tool,
+            network.net_file,
+            out / name,
+            seed=3,
+            period=1.5,
+            end=900.0,
+            prefix=prefix,
+            options=options,
+        )
+
+    timing: dict[str, Any] = {"seed": 3, "period": 1.5, "end": 900.0}
+    network_module.generate_trips(network, out / "a.rou.xml", **timing)
+    (cache / "network.safe.src.xml").write_text("<edgedata/>")
+    network_module.generate_trips(network, out / "b.rou.xml", **timing)
+    network_module.generate_trips(
+        network, out / "c.rou.xml", safe_weights=False, fringe_factor=2.0, **timing
+    )
+    network_module.generate_walks(
+        network, out / "d.rou.xml", max_distance=250.0, **timing
+    )
+    network_module.generate_rides(network, out / "e.rou.xml", **timing)
+    network_module.generate_rides(
+        network,
+        out / "f.rou.xml",
+        min_distance=20.0,
+        max_distance=900.0,
+        bicycle_type=bicycle_type,
+        **timing,
+    )
+    assert commands == [
+        old("a.rou.xml", "sumo", _old_trip_options(network.weights_prefix, False, 5.0)),
+        old("b.rou.xml", "sumo", _old_trip_options(network.weights_prefix, True, 5.0)),
+        old("c.rou.xml", "sumo", _old_trip_options(network.weights_prefix, False, 2.0)),
+        old("d.rou.xml", "sumoped", _old_walk_options(250.0)),
+        old(
+            "e.rou.xml",
+            "sumobike",
+            _old_ride_options(out / "e.rou.xml", 0.0, None, None),
+        ),
+        old(
+            "f.rou.xml",
+            "sumobike",
+            _old_ride_options(out / "f.rou.xml", 20.0, 900.0, bicycle_type),
+        ),
+    ]
+
+
 @needs_sumo
 def test_sumo_args_may_name_additional_and_route_files(
     crossroads: Path, tmp_path: Path

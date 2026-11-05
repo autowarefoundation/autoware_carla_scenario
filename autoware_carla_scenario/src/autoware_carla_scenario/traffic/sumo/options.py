@@ -2,11 +2,14 @@
 
 Where a run's SUMO outputs go, the speed and lane-change mode bits the backend
 sets, the types a scenario's vehicle joins SUMO as, the additional files that
-declare them, and SUMO's command line merged with a configuration's extra
-arguments.  :mod:`.backend` re-exports all of it; it is split out because it
-is plain-typed, so the library check (``typecheck/library.py``) compiles it,
-while the backend holds SUMO's connection and CARLA's actors typed ``Any``.
-Like :mod:`.signal_states`, it imports neither simulator.
+declare them, SUMO's command line merged with a configuration's extra
+arguments, and the command line of ``randomTrips.py`` with the options of
+each demand it generates.  :mod:`.backend` re-exports the backend's part of
+it, and :mod:`.network` runs ``randomTrips.py`` with the rest; it is split out
+because it is plain-typed, so the library check (``typecheck/library.py``)
+compiles it, while the backend holds SUMO's connection and CARLA's actors
+typed ``Any`` and the network imports roadgen and sumo.  Like
+:mod:`.signal_states`, it imports neither simulator.
 """
 
 from __future__ import annotations
@@ -22,7 +25,11 @@ __all__ = [
     "LANE_CHANGE_SETTLED_M",
     "MOTORCYCLE_TYPE",
     "OUTPUT_SUFFIX",
+    "random_trips_argv",
+    "ride_options",
     "run_output_dir",
+    "trip_options",
+    "walk_options",
 ]
 
 #: What a run's SUMO outputs (its log, the generated demand, the FCD and the
@@ -197,3 +204,102 @@ def _write_type_distribution(
         "</additional>\n"
     )
     return path
+
+
+def random_trips_argv(
+    python: str,
+    tool: Path,
+    net_file: Path,
+    out: Path,
+    seed: int,
+    period: float,
+    end: float,
+    prefix: str,
+    options: list[str],
+) -> list[str]:
+    """The command running SUMO's ``randomTrips.py`` (*tool*, with the
+    interpreter *python*) on *net_file*, validated routes into *out* (a
+    ``.rou.xml``, its trips beside it), with *options* after the ones every
+    demand shares (:func:`trip_options`, :func:`walk_options`,
+    :func:`ride_options`)."""
+    cmd = [
+        python,
+        str(tool),
+        "-n",
+        str(net_file),
+        "-o",
+        str(out.with_suffix(".trips.xml")),
+        "-r",
+        str(out),
+        "-b",
+        "0",
+        "-e",
+        str(end),
+        "-p",
+        str(period),
+        "--seed",
+        str(seed),
+        "--validate",
+        "--prefix",
+        prefix,
+    ]
+    cmd.extend(options)
+    return cmd
+
+
+def trip_options(
+    weights_prefix: Path, safe_weights: bool, fringe_factor: float
+) -> list[str]:
+    """``randomTrips.py``'s options for ambient demand: passenger cars,
+    weighted by roadgen's files at *weights_prefix* when *safe_weights* (the
+    caller found them), by *fringe_factor* otherwise."""
+    options = ["--vehicle-class", "passenger"]
+    if safe_weights:
+        options.extend(["--weights-prefix", str(weights_prefix)])
+    else:
+        options.extend(["--fringe-factor", f"{fringe_factor:g}"])
+    return options
+
+
+def walk_options(max_distance: float) -> list[str]:
+    """``randomTrips.py``'s options for pedestrian demand, of walks no longer
+    than *max_distance* metres."""
+    return ["--pedestrians", "--max-distance", f"{max_distance:g}"]
+
+
+def ride_options(
+    out: Path,
+    min_distance: float,
+    max_distance: float | None,
+    bicycle_type: Path | None,
+) -> list[str]:
+    """``randomTrips.py``'s options for bicycle demand written to *out*: rides
+    of SUMO's default bicycle type, ``DEFAULT_BIKETYPE``, between edges a
+    bicycle may use, at least *min_distance* metres long and at most
+    *max_distance* (``None``: no bound); *bicycle_type* is an additional file
+    redefining that type, which the routing has to know."""
+    options = [
+        # From and to edges a bicycle may use; the type is SUMO's own, which
+        # --vehicle-class would shadow with one of randomTrips'.
+        "--vclass",
+        "bicycle",
+        "--trip-attributes",
+        'type="DEFAULT_BIKETYPE"',
+        "--min-distance",
+        f"{min_distance:g}",
+    ]
+    if max_distance is not None:
+        options.extend(["--max-distance", f"{max_distance:g}"])
+    if bicycle_type is not None:
+        # The routing writes the types its rides drew beside them rather than
+        # into them: SUMO loads the type file itself, and refuses a type
+        # defined twice.
+        options.extend(
+            [
+                "--additional-files",
+                str(bicycle_type),
+                "--vtype-output",
+                str(out.with_suffix(".vtypes.xml")),
+            ]
+        )
+    return options
