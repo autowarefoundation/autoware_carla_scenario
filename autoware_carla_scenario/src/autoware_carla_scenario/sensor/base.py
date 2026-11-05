@@ -49,23 +49,6 @@ def sensor_interval_ticks(interval_s: float) -> int:
     return max(1, int(ticks))
 
 
-def check_whole_number(key: str, value: int) -> None:
-    """Refuse *value* unless it is an ``int``, not a bool.
-
-    For a field CARLA or the egodriver contract only takes as an integer: an
-    image size (protobuf's ``resolution_w``), a LiDAR's ``channels``.  A config
-    dataclass is not coerced, so a field typed ``int`` may hold whatever its
-    mapping did; ``960.0`` is refused too, as the Hydra schema refuses it
-    (#1472), rather than reaching the sensor as ``"960.0"`` once the ego has
-    spawned.
-
-    Raises:
-        ValueError: naming *key*.
-    """
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{key} must be a whole number, got {value!r}")
-
-
 @dataclass(frozen=True)
 class CameraSensorConfig:
     """Simulator-agnostic camera configuration.

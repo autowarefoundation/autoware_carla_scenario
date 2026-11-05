@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 
 from autoware_carla_scenario.driver.control import ControlConfig
@@ -198,10 +199,25 @@ def test_a_camera_refuses_a_bad_image_size(key: str, value: Any) -> None:
 
 
 @pytest.mark.parametrize("key", ["image_width", "image_height"])
-@pytest.mark.parametrize("value", [960.0, 960.5, math.nan, math.inf, True, "960"])
-def test_a_camera_refuses_a_size_that_is_no_int(key: str, value: Any) -> None:
-    """CARLA's image_size_x is an integer: 960.0 reached it as "960.0", as a
-    driver camera's refused it only once the session started (#1472)."""
+@pytest.mark.parametrize("value", [960, 960.0, 9.6e2, np.int64(960)])
+def test_a_camera_keeps_a_whole_number_size_as_an_int(key: str, value: Any) -> None:
+    """CARLA's image_size_x reads "960.0" as 960 (atoi), so 960.0 worked; it
+    still does, and CARLA is handed "960", as a driver camera's protobuf
+    resolution is handed 960 (#1472)."""
+    for camera in (
+        Ros2CameraConfig(topic=_CAMERA_TOPIC, **{key: value}),
+        Ros2EgoConfig.from_mapping(
+            {"cameras": [{"topic": _CAMERA_TOPIC, key: value}]}
+        ).cameras[0],
+    ):
+        assert type(getattr(camera, key)) is int
+        assert str(getattr(camera.to_sensor_config(), key)) == "960"
+
+
+@pytest.mark.parametrize("key", ["image_width", "image_height"])
+@pytest.mark.parametrize("value", [960.5, True, "960", None])
+def test_a_camera_refuses_a_size_that_is_no_whole_number(key: str, value: Any) -> None:
+    """Not truncated to 960 or 1 (#1472)."""
     match = rf"^camera 'camera': {key} must be a whole number"
     with pytest.raises(ValueError, match=match):
         Ros2CameraConfig(topic=_CAMERA_TOPIC, **{key: value})
@@ -225,9 +241,9 @@ def test_a_camera_hands_carla_an_int_size() -> None:
         ("fov", 180.0, r"fov must be in \(0, 180\) degrees"),
         ("fov", 270.0, r"fov must be in \(0, 180\) degrees"),
         ("fov", math.nan, "fov must be finite"),
-        ("image_width", math.nan, "image_width must be a whole number"),
-        ("image_height", math.nan, "image_height must be a whole number"),
-        ("image_width", math.inf, "image_width must be a whole number"),
+        ("image_width", math.nan, "image_width must be finite"),
+        ("image_height", math.nan, "image_height must be finite"),
+        ("image_width", math.inf, "image_width must be finite"),
         ("image_height", 0, "image size and fps must be positive and finite"),
     ],
 )
@@ -365,7 +381,17 @@ def test_domain_id_takes_a_ros_domain_id(domain_id: int) -> None:
     assert Ros2EgoConfig(domain_id=domain_id).domain_id == domain_id
 
 
-@pytest.mark.parametrize("domain_id", [-1, 233, 300, True, False, "7", 1.0, None])
+@pytest.mark.parametrize("domain_id", [7.0, np.int64(7)])
+def test_domain_id_keeps_a_whole_number_as_an_int(domain_id: Any) -> None:
+    """A whole number as a camera's size is (#1472), handed DDS as an int."""
+    config = Ros2EgoConfig.from_mapping({"domain_id": domain_id})
+    assert type(config.domain_id) is int
+    assert config.domain_id == 7
+
+
+@pytest.mark.parametrize(
+    "domain_id", [-1, 233, 300, True, False, "7", 1.5, math.nan, -1.0, None]
+)
 def test_domain_id_refuses_what_is_no_ros_domain_id(domain_id: Any) -> None:
     with pytest.raises(ValueError, match=r"^domain_id must be a ROS domain id"):
         Ros2EgoConfig.from_mapping({"domain_id": domain_id})
@@ -386,11 +412,18 @@ def test_priority_takes_an_int(priority: int) -> None:
     )
 
 
-@pytest.mark.parametrize("priority", ["10", True, 10.0, math.nan, None])
-def test_priority_refuses_what_is_no_int(priority: Any) -> None:
+@pytest.mark.parametrize("priority", [10.0, np.int64(10)])
+def test_priority_keeps_a_whole_number_as_an_int(priority: Any) -> None:
+    source = CommandSourceConfig.from_mapping(_source(priority=priority))
+    assert type(source.priority) is int
+    assert source.priority == 10
+
+
+@pytest.mark.parametrize("priority", ["10", True, 10.5, math.nan, None])
+def test_priority_refuses_what_is_no_whole_number(priority: Any) -> None:
     with pytest.raises(
         ValueError,
-        match=r"^command source 'planner': priority must be a whole number",
+        match=r"^command source 'planner': priority must be (a whole number|finite)",
     ):
         CommandSourceConfig.from_mapping(_source(priority=priority))
 

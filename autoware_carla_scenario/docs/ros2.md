@@ -99,7 +99,8 @@ A camera in `cameras` takes the rendering and mount fields of a
 [driver camera](driver_interface.md) (`image_width`, `image_height`, `fov`, `fps`,
 `position_x/y/z`, `roll`, `pitch`, `yaw`, in CARLA's convention), plus its `topic` and
 `frame_id`, and the same bounds: `image_width` and `image_height` positive whole
-numbers (`960`, not `960.0`: CARLA's `image_size_x` is an integer), `fps` positive and
+numbers (`960`, or `960.0` kept as the int `960`, so CARLA is given
+`image_size_x="960"`; not `960.5`, a bool or a string), `fps` positive and
 finite, `fov` in (0, 180) degrees, and the mount finite. A camera out of these bounds is
 refused as the config is read, not when it attaches after the ego spawned. Its frames go
 out from the sensor's own thread as they are rendered, the way CARLA's own interface
@@ -204,10 +205,13 @@ batch's first scenario starts, as well as when the entity is built -- and a bad 
 refused naming its key (`ros2: domain_id must be ...`), not once the ego has spawned
 and joined the domain:
 
-* `domain_id` is a whole number (not a bool or a string) from 0 to 232, the
+* `domain_id` is a whole number from 0 to 232, the
   `ROS_DOMAIN_ID` range ROS 2 can use, the bound the docker launcher's
   `ros_domain_ids` share ([autoware.md](autoware.md)).
-* A source's `priority` is a whole number (not a bool, a float or a quoted `"10"`).
+* A source's `priority` is a whole number.
+* A whole number, here as for a camera's size, is an integral value: `7`, or `7.0`,
+  which is kept as the int `7`; `7.5`, NaN, infinity, a bool and a quoted `"7"` are
+  refused.
 * `stale_s`, `pair_window_s`, `steering_sign`, `speed_horizon_s`, `jerk_mps3`,
   `rear_axle_offset_m` and a camera's numeric fields are numbers, an int or a float
   (not a bool or a quoted string), and finite, within the bounds above.

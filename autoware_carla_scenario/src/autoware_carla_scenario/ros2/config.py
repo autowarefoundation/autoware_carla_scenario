@@ -13,6 +13,7 @@ from dataclasses import dataclass, field
 from typing import Any, List, Mapping, Optional, Tuple
 
 from ..constants import MAX_ROS_DOMAIN_ID, US_PER_S
+from ..seed import check_whole_number
 from ..sensor.carla_camera import CarlaCameraSensorConfig
 
 __all__ = [
@@ -54,10 +55,11 @@ def _check_number(owner: str, key: str, value: float) -> None:
         raise ValueError(f"{owner}: {key} must be a number, got {value!r}")
 
 
-def _check_whole_number(owner: str, key: str, value: int) -> None:
-    """Refuse *value* unless it is an int, not a bool."""
-    if isinstance(value, bool) or not isinstance(value, int):
-        raise ValueError(f"{owner}: {key} must be a whole number, got {value!r}")
+def _whole_number(owner: str, key: str, value: int) -> int:
+    """*value* as an int, refused unless a whole number: ``7`` or ``7.0``, not
+    ``7.5``, a bool or a string
+    (:func:`~autoware_carla_scenario.seed.check_whole_number`)."""
+    return check_whole_number(f"{owner}: {key}", value)
 
 
 @dataclass(frozen=True)
@@ -73,8 +75,9 @@ class CommandSourceConfig:
         topic: The command topic, for ``trajectory`` and ``control``.
         steering_topic: The steering topic, for ``steer_accel``.
         acceleration_topic: The acceleration topic, for ``steer_accel``.
-        priority: Higher wins among the fresh sources.  An ``int`` (not a
-            bool, a float or a string).
+        priority: Higher wins among the fresh sources.  A whole number
+            (``10``, or ``10.0`` kept as ``10``; not a bool, ``10.5`` or a
+            string).
         stale_s: Simulated seconds after its last command that a source stops
             counting as fresh.
         steering_sign: Multiplies a ``steer_accel`` steering angle before it
@@ -125,7 +128,9 @@ class CommandSourceConfig:
         owner = f"command source {self.name!r}"
         # The arbiter compares priorities: a quoted "10" would only fail there,
         # on the first tick two sources are fresh, and a NaN would never win.
-        _check_whole_number(owner, "priority", self.priority)
+        object.__setattr__(
+            self, "priority", _whole_number(owner, "priority", self.priority)
+        )
         for key, value in (
             ("stale_s", self.stale_s),
             ("steering_sign", self.steering_sign),
@@ -205,9 +210,10 @@ class Ros2CameraConfig:
 
     Raises:
         ValueError: If the topic is empty, the image size is not a positive
-            whole number (an ``int``, not ``960.0``), the fps is not positive
-            and finite, the ``fov`` is outside (0, 180) degrees, or the mount
-            is not finite.
+            whole number (``960``, or ``960.0`` kept as the int ``960``; not
+            ``960.5``, a bool or a string), the fps is not positive and
+            finite, the ``fov`` is outside (0, 180) degrees, or the mount is
+            not finite.
     """
 
     topic: str = ""
@@ -228,11 +234,17 @@ class Ros2CameraConfig:
         if not self.topic:
             raise ValueError(f"camera {self.logical_id!r} needs a topic")
         owner = f"camera {self.logical_id!r}"
-        # A whole number, as a driver camera's (DriverCameraConfig): CARLA's
-        # image_size_x is an integer, so a float, even 960.0, is refused
-        # (#1472), as are a bool and a string.
-        _check_whole_number(owner, "image_width", self.image_width)
-        _check_whole_number(owner, "image_height", self.image_height)
+        # A whole number, as a driver camera's (DriverCameraConfig), kept as
+        # an int: CARLA is handed str(image_width), so "960", never "960.0";
+        # 960.5, a bool and a string are refused (#1472).
+        object.__setattr__(
+            self, "image_width", _whole_number(owner, "image_width", self.image_width)
+        )
+        object.__setattr__(
+            self,
+            "image_height",
+            _whole_number(owner, "image_height", self.image_height),
+        )
         for key, value in (
             ("fov", self.fov),
             ("fps", self.fps),
@@ -327,8 +339,9 @@ class Ros2EgoConfig:
     the origin on the rear axle, Autoware's ``base_link``.
 
     Attributes:
-        domain_id: The DDS domain (``ROS_DOMAIN_ID``): an ``int`` (not a
-            bool) from 0 to :data:`~autoware_carla_scenario.constants.MAX_ROS_DOMAIN_ID`
+        domain_id: The DDS domain (``ROS_DOMAIN_ID``): a whole number (``7``,
+            or ``7.0`` kept as ``7``; not a bool or a string) from 0 to
+            :data:`~autoware_carla_scenario.constants.MAX_ROS_DOMAIN_ID`
             (232), the domains ROS 2 can use.
         frame_id: ``header.frame_id`` of the published odometry.
         child_frame_id: Its ``child_frame_id``.
@@ -372,16 +385,17 @@ class Ros2EgoConfig:
         # Checked here: the domain is first used as the entity joins it, once
         # the scenario has started and the ego has spawned, where 233 fails
         # with an opaque DDSException and "7" with a ctypes TypeError.
-        domain_id = self.domain_id
-        if (
-            isinstance(domain_id, bool)
-            or not isinstance(domain_id, int)
-            or not 0 <= domain_id <= MAX_ROS_DOMAIN_ID
-        ):
+        # Kept as an int, as the DDS bindings take it.
+        try:
+            domain_id = check_whole_number("domain_id", self.domain_id)
+        except ValueError:
+            domain_id = -1
+        if not 0 <= domain_id <= MAX_ROS_DOMAIN_ID:
             raise ValueError(
                 "domain_id must be a ROS domain id, a whole number from 0 to "
-                f"{MAX_ROS_DOMAIN_ID}, got {domain_id!r}"
+                f"{MAX_ROS_DOMAIN_ID}, got {self.domain_id!r}"
             )
+        object.__setattr__(self, "domain_id", domain_id)
         if self.on_stale not in ON_STALE_ACTIONS:
             raise ValueError(
                 f"unknown on_stale {self.on_stale!r}, expected one of "

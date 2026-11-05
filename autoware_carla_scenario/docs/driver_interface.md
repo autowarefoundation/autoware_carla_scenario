@@ -179,10 +179,13 @@ renders the pinhole of the horizontal `fov` -- and its mount (`position_x/y/z`,
 `roll`, `pitch`, `yaw`) finite. A camera out of these bounds is refused as the
 config is read, not when it attaches after the ego spawned.
 
-A whole number is an integer as YAML writes one: `960`, not `960.0`, which the
-policy's `CameraSpec` resolution (an integer field) and CARLA's `image_size_x`
-do not take. `960.0`, `960.5`, a boolean and a string are refused, naming the
-field, as the `driver` config schema refuses them.
+A whole number is an integral value: `960`, or `960.0` (or `9.6e2`), which is
+kept as the int `960`, so the policy's `CameraSpec` resolution (an integer
+protobuf field, which refuses any float) is given `960` and CARLA
+`image_size_x="960"`. `960.5`, NaN, infinity, a boolean and a string are
+refused, naming the field, as the config is read. Every whole-number setting
+of a camera, a LiDAR or the ROS 2 ego follows this rule, as a seed does
+(`noise_seed`, `driver.random_seed`).
 
 ### A camera with a lens of its own: `driver.cameras[].lens`
 
@@ -475,8 +478,9 @@ driver:
 ```
 
 LiDAR logical ids must be unique, and every number a LiDAR takes must be finite:
-`channels` and `points_per_second` positive whole numbers (`64`, not `64.0`,
-which CARLA takes as integers), `range_m` positive, `lower_fov_deg` below
+`channels` and `points_per_second` positive whole numbers (`64`, or `64.0`
+and `1.2e6`, which YAML reads as floats, kept as the ints `64` and `1200000`
+for CARLA; not `64.5`), `range_m` positive, `lower_fov_deg` below
 `upper_fov_deg`, `weather_noise` not negative, `noise_seed` a whole number
 (`3` or `3.0`; not `1.9`, a boolean or a string) not negative,
 `fog_density_scale` positive.

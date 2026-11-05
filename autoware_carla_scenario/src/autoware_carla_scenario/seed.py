@@ -32,6 +32,7 @@ from typing import Optional
 __all__ = [
     "DEFAULT_SEED",
     "check_seed",
+    "check_whole_number",
     "resolve_seed",
     "run_seed",
     "set_run_seed",
@@ -62,28 +63,51 @@ def set_run_seed(seed: int) -> int:
     return previous
 
 
-def check_seed(key: str, seed: int) -> int:
-    """*seed*, a component's own seed as its config holds it, checked: a
-    whole number (``2``, or ``2.0`` read as 2), not negative, as the run's
-    ``seed`` is.
+def check_whole_number(key: str, value: int) -> int:
+    """*value*, a config's integer field as it holds it, checked and returned
+    as an ``int``: a whole number (``2``, ``2.0`` or ``2e6`` read as an int,
+    or a numpy integer).
 
     A config dataclass is not coerced, so a field typed ``int`` may hold
-    whatever its mapping did: ``int()`` alone would seed ``1.9`` and ``True``
-    as 1, so a boolean, a string, a fraction, NaN or infinity is refused.
+    whatever its mapping did, and YAML reads ``1.2e6`` as a float.  ``int()``
+    alone would take ``1.9`` and ``True`` as 1, so a boolean, a string, a
+    fraction, NaN or infinity is refused.  A config normalises its field to
+    what this returns, so a protobuf integer field or a CARLA attribute
+    (``str(value)``) is given ``2``, never ``2.0``.
 
     Raises:
         ValueError: naming *key*.
     """
-    if isinstance(seed, bool) or isinstance(seed, str):
-        raise ValueError(f"{key} must be a whole number, got {seed!r}")
-    number = float(seed)
+    if isinstance(value, bool) or isinstance(value, str):
+        raise ValueError(f"{key} must be a whole number, got {value!r}")
+    if isinstance(value, int):
+        return int(value)
+    # A float, or a number that is no int (numpy's integers): float() takes
+    # anything with __float__ or __index__, and refuses the rest (None, a
+    # list) with a TypeError.
+    try:
+        number = float(value)
+    except TypeError:
+        raise ValueError(f"{key} must be a whole number, got {value!r}")
     if not math.isfinite(number):
-        raise ValueError(f"{key} must be finite, got {seed!r}")
+        raise ValueError(f"{key} must be finite, got {value!r}")
     if math.floor(number) != number:
-        raise ValueError(f"{key} must be a whole number, got {seed!r}")
-    if number < 0.0:
+        raise ValueError(f"{key} must be a whole number, got {value!r}")
+    return int(value)
+
+
+def check_seed(key: str, seed: int) -> int:
+    """*seed*, a component's own seed as its config holds it, checked: a
+    whole number (:func:`check_whole_number`: ``2``, or ``2.0`` read as 2),
+    not negative, as the run's ``seed`` is.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    number = check_whole_number(key, seed)
+    if number < 0:
         raise ValueError(f"{key} must not be negative, got {seed!r}")
-    return int(seed)
+    return number
 
 
 def resolve_seed(seed: Optional[int]) -> int:

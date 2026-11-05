@@ -11,6 +11,7 @@ import math
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import pytest
 import yaml  # type: ignore[import-untyped]
 
@@ -202,17 +203,40 @@ def test_camera_refuses_a_non_positive_or_non_finite_size_or_fps(
 
 
 @pytest.mark.parametrize("key", ["image_width", "image_height"])
-@pytest.mark.parametrize(
-    "value", [960.0, 960.5, float("nan"), float("inf"), True, "960"]
-)
-def test_camera_refuses_a_size_that_is_no_int(key: str, value: Any) -> None:
+@pytest.mark.parametrize("value", [960, 960.0, 9.6e2, np.int64(960), np.int32(960)])
+def test_camera_keeps_a_whole_number_size_as_an_int(key: str, value: Any) -> None:
     """The egodriver contract's resolution is an integer field, which refused
     even 960.0 with a TypeError as the session started, after the ego spawned
-    (#1472); as the Hydra schema does, the config refuses it as it is read."""
+    (#1472): a whole number is kept as the int it is."""
+    for camera in (
+        DriverCameraConfig(logical_id="front", **{key: value}),
+        DriverClientConfig.from_mapping(
+            {"cameras": [{"logical_id": "front", key: value}]}
+        ).cameras[0],
+    ):
+        size = getattr(camera, key)
+        assert type(size) is int
+        assert size == 960
+        assert type(getattr(camera.to_sensor_config(), key)) is int
+
+
+@pytest.mark.parametrize("key", ["image_width", "image_height"])
+@pytest.mark.parametrize("value", [960.5, True, "960", None])
+def test_camera_refuses_a_size_that_is_no_whole_number(key: str, value: Any) -> None:
+    """Not truncated to 960 or 1, as the config is read (#1472)."""
     match = rf"^camera 'front': {key} must be a whole number"
     with pytest.raises(ValueError, match=match):
         DriverCameraConfig(logical_id="front", **{key: value})
     with pytest.raises(ValueError, match=match):
+        DriverClientConfig.from_mapping(
+            {"cameras": [{"logical_id": "front", key: value}]}
+        )
+
+
+@pytest.mark.parametrize("key", ["image_width", "image_height"])
+@pytest.mark.parametrize("value", [float("nan"), float("inf")])
+def test_camera_refuses_a_size_that_is_not_finite(key: str, value: Any) -> None:
+    with pytest.raises(ValueError, match=rf"^camera 'front': {key} must be finite"):
         DriverClientConfig.from_mapping(
             {"cameras": [{"logical_id": "front", key: value}]}
         )
