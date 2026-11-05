@@ -138,3 +138,47 @@ def test_prune_keeps_what_numpy_testing_imports(
     (suite / "__pycache__").mkdir()
     slim.prune(tmp_path)
     assert sorted(p.name for p in suite.iterdir()) == ["_natype.py"]
+
+
+def test_prune_keeps_mypys_typeshed(slim: ModuleType, tmp_path: Path) -> None:
+    """The image runs mypy, which reads the standard library from its typeshed.
+
+    Pruning those stubs leaves mypy stopping with "Failed to find builtin
+    module 'typing', perhaps typeshed is broken?", and the scenario check's
+    None check skipped (#1542).  The whole tree stays -- stubs, the
+    ``VERSIONS`` table, and directories with pruned names alike -- while the
+    other stubs, mypy's own included, still go.
+    """
+    typeshed = tmp_path / "mypy" / "typeshed"
+    kept = [
+        typeshed / "stdlib" / "typing.pyi",
+        typeshed / "stdlib" / "VERSIONS",
+        typeshed / "stdlib" / "collections" / "abc.pyi",
+        typeshed / "stubs" / "mypy-extensions" / "mypy_extensions.pyi",
+        typeshed / "stdlib" / "include" / "kept.pyi",
+    ]
+    pruned = [
+        tmp_path / "mypy" / "nodes.pyi",
+        tmp_path / "mypy" / "__pycache__" / "nodes.cpython-312.pyc",
+        tmp_path / "pkg" / "__init__.pyi",
+    ]
+    for path in kept + pruned:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+    slim.prune(tmp_path)
+    assert [path for path in kept if not path.is_file()] == []
+    assert [path for path in pruned if path.exists()] == []
+
+
+def test_kept_tree_survives_a_pruned_parent(
+    slim: ModuleType, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A kept tree inside a directory the directory pass removes stays whole."""
+    monkeypatch.setattr(slim, "PRUNE_KEEP_TREES", frozenset({"pkg/tests/typeshed"}))
+    stub = tmp_path / "pkg" / "tests" / "typeshed" / "stdlib" / "typing.pyi"
+    stub.parent.mkdir(parents=True)
+    stub.write_text("")
+    (tmp_path / "pkg" / "tests" / "test_pkg.py").write_text("")
+    slim.prune(tmp_path)
+    assert stub.is_file()
+    assert not (tmp_path / "pkg" / "tests" / "test_pkg.py").exists()
