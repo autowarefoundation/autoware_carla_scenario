@@ -4814,9 +4814,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-272 of the package's 398
-modules (68%; about 85,000 of
-150,000 lines) are <code>CHECKED</code>: the kinematics, the
+273 of the package's 399
+modules (68%; about 85,500 of
+150,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4828,7 +4828,7 @@ re-exports what is not checked through models of it (see <em>A class a checked
 package only re-exports</em> below). Each checked module is listed here with the
 first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 272 CHECKED modules</summary>
+<summary>The 273 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -4892,6 +4892,10 @@ first paragraph of its docstring:</p>
 <tr>
 <td><code>actions.despawn</code></td>
 <td>Take a road user out of the world for good.</td>
+</tr>
+<tr>
+<td><code>actions.emergency</code></td>
+<td>Emergency action: put an emergency vehicle on a call, or take it off one.</td>
 </tr>
 <tr>
 <td><code>actions.environment</code></td>

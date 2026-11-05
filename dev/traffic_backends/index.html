@@ -3802,6 +3802,11 @@ by roadgen's validation.</p>
 <td>as the scenario's other vehicles</td>
 <td>published or driven, as a SUMO <code>motorcycle</code></td>
 </tr>
+<tr>
+<td>Scenario emergency vehicles (<code>EmergencyVehicleEntity</code>, or any vehicle whose blueprint's <code>special_type</code> is <code>emergency</code>)</td>
+<td>as the scenario's other vehicles</td>
+<td>published or driven, as a SUMO <code>emergency</code> vehicle with a bluelight device</td>
+</tr>
 </tbody>
 </table>
 <p>A published vehicle has SUMO's speed and lane-change control switched off, so
@@ -3932,6 +3937,81 @@ manoeuvres (speed, lane changes, turns, routes) as every NPC is.</p>
 <a id="__codelineno-21-13" name="__codelineno-21-13" href="#__codelineno-21-13"></a><span class="n">rider</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">world</span><span class="p">)</span>
 <a id="__codelineno-21-14" name="__codelineno-21-14" href="#__codelineno-21-14"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_entity</span><span class="p">(</span><span class="n">rider</span><span class="p">)</span>
 </code></pre></div>
+<p><strong>Emergency vehicles</strong>: a scenario's emergency vehicle -- an
+<code>EmergencyVehicleEntity</code>, or any vehicle whose blueprint's <code>special_type</code> is
+<code>emergency</code> (CARLA's police cars, ambulances and fire engines) -- joins SUMO as
+a vehicle of the class <code>emergency</code>, of the type <code>acs_emergency</code> that every run
+declares, with SUMO's bluelight device (<code>has.bluelight.device</code>).
+It joins off duty: the device silent (<code>reactiondist</code> 0) and SUMO's own speed
+mode (31), not the 7 the device gives it, so it stops at red lights as any car
+does. <code>EmergencyVehicleEntity.set_emergency(True)</code> puts it on a call:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>TrafficManager</th>
+<th>SUMO</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Siren lights (<code>VehicleLightState.Special1</code>)</td>
+<td>on</td>
+<td>on</td>
+</tr>
+<tr>
+<td>Red lights, stop signs</td>
+<td>runs them (<code>ignore_lights_percentage</code> / <code>ignore_signs_percentage</code> 100)</td>
+<td>one SUMO drives runs red lights (speed mode 15: no red-light braking, still giving way at the junction)</td>
+</tr>
+<tr>
+<td>Other traffic</td>
+<td>does not make way</td>
+<td>SUMO's vehicles within <code>reactiondist</code> (25 m) make way: a rescue lane</td>
+</tr>
+</tbody>
+</table>
+<p><code>set_emergency(False)</code> puts it off duty again: lights off, and under the
+TrafficManager back to its own draw of <code>traffic.vehicles.ignore_lights</code> /
+<code>ignore_signs</code> (else 0). A call before the run starts (the config's
+<code>emergency=True</code>, or <code>set_emergency</code> in <code>setup()</code>) holds: the vehicle joins the
+run on it. A backend that has no notion of an emergency vehicle (<code>none</code>) warns
+and drives it as before; the lights are switched all the same.</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>    <span class="n">EmergencyVehicleEntity</span><span class="p">,</span>
+<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a>    <span class="n">EmergencyVehicleEntityConfig</span><span class="p">,</span>
+<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a>    <span class="n">SpawnPointIndex</span><span class="p">,</span>
+<a id="__codelineno-22-5" name="__codelineno-22-5" href="#__codelineno-22-5"></a><span class="p">)</span>
+<a id="__codelineno-22-6" name="__codelineno-22-6" href="#__codelineno-22-6"></a>
+<a id="__codelineno-22-7" name="__codelineno-22-7" href="#__codelineno-22-7"></a><span class="c1"># Whichever emergency vehicle the CARLA server has, off duty ...</span>
+<a id="__codelineno-22-8" name="__codelineno-22-8" href="#__codelineno-22-8"></a><span class="n">ambulance</span> <span class="o">=</span> <span class="n">EmergencyVehicleEntity</span><span class="p">(</span>
+<a id="__codelineno-22-9" name="__codelineno-22-9" href="#__codelineno-22-9"></a>    <span class="n">EmergencyVehicleEntityConfig</span><span class="p">(</span><span class="s2">"ambulance"</span><span class="p">,</span> <span class="n">SpawnPointIndex</span><span class="p">(</span><span class="mi">8</span><span class="p">))</span>
+<a id="__codelineno-22-10" name="__codelineno-22-10" href="#__codelineno-22-10"></a><span class="p">)</span>
+<a id="__codelineno-22-11" name="__codelineno-22-11" href="#__codelineno-22-11"></a><span class="c1"># ... or one by name, on a call from its spawn.</span>
+<a id="__codelineno-22-12" name="__codelineno-22-12" href="#__codelineno-22-12"></a><span class="n">police</span> <span class="o">=</span> <span class="n">EmergencyVehicleEntity</span><span class="p">(</span>
+<a id="__codelineno-22-13" name="__codelineno-22-13" href="#__codelineno-22-13"></a>    <span class="n">EmergencyVehicleEntityConfig</span><span class="p">(</span>
+<a id="__codelineno-22-14" name="__codelineno-22-14" href="#__codelineno-22-14"></a>        <span class="s2">"police"</span><span class="p">,</span> <span class="n">SpawnPointIndex</span><span class="p">(</span><span class="mi">9</span><span class="p">),</span> <span class="n">vehicle_type</span><span class="o">=</span><span class="s2">"vehicle.dodge.charger_police"</span><span class="p">,</span>
+<a id="__codelineno-22-15" name="__codelineno-22-15" href="#__codelineno-22-15"></a>        <span class="n">emergency</span><span class="o">=</span><span class="kc">True</span><span class="p">,</span>
+<a id="__codelineno-22-16" name="__codelineno-22-16" href="#__codelineno-22-16"></a>    <span class="p">)</span>
+<a id="__codelineno-22-17" name="__codelineno-22-17" href="#__codelineno-22-17"></a><span class="p">)</span>
+<a id="__codelineno-22-18" name="__codelineno-22-18" href="#__codelineno-22-18"></a><span class="n">ambulance</span><span class="o">.</span><span class="n">spawn</span><span class="p">(</span><span class="n">world</span><span class="p">)</span>
+<a id="__codelineno-22-19" name="__codelineno-22-19" href="#__codelineno-22-19"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_entity</span><span class="p">(</span><span class="n">ambulance</span><span class="p">)</span>
+<a id="__codelineno-22-20" name="__codelineno-22-20" href="#__codelineno-22-20"></a>
+<a id="__codelineno-22-21" name="__codelineno-22-21" href="#__codelineno-22-21"></a><span class="c1"># Later, when the scenario's emergency begins (on_tick, ...):</span>
+<a id="__codelineno-22-22" name="__codelineno-22-22" href="#__codelineno-22-22"></a><span class="n">ambulance</span><span class="o">.</span><span class="n">set_emergency</span><span class="p">(</span><span class="kc">True</span><span class="p">)</span>
+</code></pre></div>
+<p><code>EmergencyAction</code> does the same from a trigger, and is what the scenario
+editor offers (<em>Vehicle / Lights</em> &gt; <em>Emergency</em>):</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="n">EmergencyAction</span><span class="p">,</span> <span class="n">ElapsedTimeCondition</span>
+<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a>
+<a id="__codelineno-23-3" name="__codelineno-23-3" href="#__codelineno-23-3"></a><span class="c1"># On a call 3 s in, off duty again 20 s in.</span>
+<a id="__codelineno-23-4" name="__codelineno-23-4" href="#__codelineno-23-4"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-23-5" name="__codelineno-23-5" href="#__codelineno-23-5"></a>    <span class="n">EmergencyAction</span><span class="p">(</span><span class="s2">"ambulance"</span><span class="p">,</span> <span class="kc">True</span><span class="p">,</span> <span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">3.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"siren_on"</span><span class="p">))</span>
+<a id="__codelineno-23-6" name="__codelineno-23-6" href="#__codelineno-23-6"></a><span class="p">)</span>
+<a id="__codelineno-23-7" name="__codelineno-23-7" href="#__codelineno-23-7"></a><span class="bp">self</span><span class="o">.</span><span class="n">register_pre_tick</span><span class="p">(</span>
+<a id="__codelineno-23-8" name="__codelineno-23-8" href="#__codelineno-23-8"></a>    <span class="n">EmergencyAction</span><span class="p">(</span><span class="s2">"ambulance"</span><span class="p">,</span> <span class="kc">False</span><span class="p">,</span> <span class="n">ElapsedTimeCondition</span><span class="p">(</span><span class="mf">20.0</span><span class="p">,</span> <span class="n">label</span><span class="o">=</span><span class="s2">"siren_off"</span><span class="p">))</span>
+<a id="__codelineno-23-9" name="__codelineno-23-9" href="#__codelineno-23-9"></a><span class="p">)</span>
+</code></pre></div>
 <p><strong>Stepping</strong>: one SUMO step per CARLA tick, with the step length set to the
 world's <code>fixed_delta_seconds</code> and the seed to the scenario's. CARLA poses are
 published before SUMO steps; SUMO's result is applied to the actors after it.
@@ -3952,10 +4032,10 @@ change still moves across continuously, over <code>lane_change_duration_s</code>
 unset, <code>--lanechange.duration</code>) and no faster than <code>max_lateral_speed_mps</code>.
 SUMO takes one or the other, so <code>lane_change_duration_s</code> with a sublane width
 is an error.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-22-1" name="__codelineno-22-1" href="#__codelineno-22-1"></a><span class="c1"># Gentler lane changes, five SUMO steps per 0.05 s tick.</span>
-<a id="__codelineno-22-2" name="__codelineno-22-2" href="#__codelineno-22-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.step_length_s<span class="o">=</span><span class="m">0</span>.01<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-22-3" name="__codelineno-22-3" href="#__codelineno-22-3"></a><span class="w">    </span>traffic.vehicles.max_lateral_speed_mps.mean<span class="o">=</span><span class="m">0</span>.8<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-22-4" name="__codelineno-22-4" href="#__codelineno-22-4"></a><span class="w">    </span>traffic.vehicles.max_lateral_accel.mean<span class="o">=</span><span class="m">0</span>.6
+<div class="highlight"><pre><span></span><code><a id="__codelineno-24-1" name="__codelineno-24-1" href="#__codelineno-24-1"></a><span class="c1"># Gentler lane changes, five SUMO steps per 0.05 s tick.</span>
+<a id="__codelineno-24-2" name="__codelineno-24-2" href="#__codelineno-24-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.step_length_s<span class="o">=</span><span class="m">0</span>.01<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-24-3" name="__codelineno-24-3" href="#__codelineno-24-3"></a><span class="w">    </span>traffic.vehicles.max_lateral_speed_mps.mean<span class="o">=</span><span class="m">0</span>.8<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-24-4" name="__codelineno-24-4" href="#__codelineno-24-4"></a><span class="w">    </span>traffic.vehicles.max_lateral_accel.mean<span class="o">=</span><span class="m">0</span>.6
 </code></pre></div>
 <p>How a CARLA vehicle follows its SUMO vehicle is <code>vehicle_control</code>:</p>
 <ul>
@@ -4043,8 +4123,8 @@ drives, and CARLA holds an actor only for that, so a large demand costs what
 the traffic around the ego costs. This is a <code>sumo</code> option only: the
 TrafficManager backend keeps every vehicle in CARLA
 (<a href="#simulating-far-traffic-mesoscopically">why</a>).</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-23-1" name="__codelineno-23-1" href="#__codelineno-23-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.mesoscopic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-23-2" name="__codelineno-23-2" href="#__codelineno-23-2"></a><span class="w">    </span>traffic.options.mesoscopic.micro_radius_m<span class="o">=</span><span class="m">150</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-25-1" name="__codelineno-25-1" href="#__codelineno-25-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.mesoscopic.enabled<span class="o">=</span><span class="nb">true</span><span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-25-2" name="__codelineno-25-2" href="#__codelineno-25-2"></a><span class="w">    </span>traffic.options.mesoscopic.micro_radius_m<span class="o">=</span><span class="m">150</span>
 </code></pre></div>
 <table>
 <thead>
@@ -4198,7 +4278,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 13:12:45 UTC"><span class="timeago" datetime="2026-11-05T13:12:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 13:12:45 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 14:35:28 UTC"><span class="timeago" datetime="2026-11-05T14:35:28+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 14:35:28 UTC">2026-11-05</span>
   </span>
 
     
