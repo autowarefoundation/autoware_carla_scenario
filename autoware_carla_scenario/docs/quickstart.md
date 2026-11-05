@@ -54,7 +54,10 @@ run fetches it whole) if the nightly was replaced in the meantime. A new install
 is unpacked next to the old one (`carla.partial`) and swapped in by renames once
 it is complete, so stopping `scenario-setup` (Ctrl-C) at any point leaves either
 the previous install or none, never a half-deleted one; the next run deletes
-whatever the interrupted one left beside it.
+whatever the interrupted one left beside it. Only one `scenario-setup` at a time
+installs into a directory: a second one started meanwhile says it is waiting for
+the first (a lock on `carla.lock`, which stays beside the install), then usually
+finds the first one's install up to date; Ctrl-C stops it while it waits.
 
 | Option | Meaning |
 | --- | --- |
