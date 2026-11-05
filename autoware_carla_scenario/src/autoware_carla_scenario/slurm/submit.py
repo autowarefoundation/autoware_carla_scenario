@@ -334,8 +334,10 @@ def _run_sbatch(command: list[str]) -> str:
             f"sbatch failed ({completed.returncode}): "
             f"{(completed.stderr or completed.stdout).strip()}"
         )
-    # --parsable: "<job id>" or "<job id>;<cluster>".
-    job = completed.stdout.strip().splitlines()[-1].split(";")[0].strip()
+    # --parsable: "<job id>" or "<job id>;<cluster>".  Nothing printed is no
+    # job id, not an IndexError past callers catching RuntimeError (#1630).
+    lines = completed.stdout.strip().splitlines()
+    job = lines[-1].split(";")[0].strip() if lines else ""
     if not job:
         raise RuntimeError(f"sbatch printed no job id: {completed.stdout!r}")
     return job

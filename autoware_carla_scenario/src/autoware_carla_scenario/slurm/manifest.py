@@ -151,6 +151,18 @@ def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
+def _read_object(path: Path) -> dict[str, Any] | None:
+    """The JSON object in *path*, or ``None`` when it is missing, cannot be
+    read, is not JSON, or holds JSON that is not an object."""
+    if not path.is_file():
+        return None
+    try:
+        data = read_json(path)
+    except (OSError, ValueError):
+        return None
+    return data if isinstance(data, dict) else None
+
+
 def read_submission_record(path: Path) -> dict[str, Any] | None:
     """The submission record *path*, or ``None`` when there is none to read.
 
@@ -281,15 +293,22 @@ class BatchLayout(BatchPaths):
 
         Raises:
             FileNotFoundError: *batch_dir* holds no SLURM batch.
-            ValueError: The manifest is of a version this framework cannot read.
+            ValueError: The manifest is not JSON, not a JSON object, or of a
+                version this framework cannot read (#1630).
         """
         if not self.manifest.is_file():
             raise FileNotFoundError(
                 f"{self.batch_dir} holds no SLURM batch (no {self.manifest})"
             )
         manifest = read_json(self.manifest)
+        if not isinstance(manifest, dict):
+            raise ValueError(
+                f"{self.manifest} is not a SLURM batch manifest "
+                "(it holds JSON that is not an object)"
+            )
         version = manifest.get("version")
-        if version not in MANIFEST_VERSIONS:
+        # ``True == 1``: a bool is no version, though ``in`` would match it.
+        if isinstance(version, bool) or version not in MANIFEST_VERSIONS:
             raise ValueError(
                 f"{self.manifest} is a version {version} manifest; this "
                 "autoware_carla_scenario reads version(s) "
@@ -306,19 +325,12 @@ class BatchLayout(BatchPaths):
         return read_submission_record(self.submission(index))
 
     def read_result(self, case: int) -> dict[str, Any] | None:
-        path = self.result(case)
-        if not path.is_file():
-            return None
-        try:
-            return read_json(path)
-        except (OSError, ValueError):
-            return None
+        """Case *case*'s outcome, or ``None`` when there is none to read:
+        missing, not JSON, or JSON that is not an object (#1630)."""
+        return _read_object(self.result(case))
 
     def read_task(self, submission: int, task: int) -> dict[str, Any] | None:
-        path = self.task(submission, task)
-        if not path.is_file():
-            return None
-        try:
-            return read_json(path)
-        except (OSError, ValueError):
-            return None
+        """Task *task* of submission *submission*'s status, or ``None`` when
+        there is none to read: missing, not JSON, or JSON that is not an
+        object (#1630)."""
+        return _read_object(self.task(submission, task))

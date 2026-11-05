@@ -2329,6 +2329,80 @@ def test_wait_and_the_worker_refuse_an_unreadable_submission_record(
     assert f"the submission record {path} is missing" in capsys.readouterr().err
 
 
+@pytest.mark.parametrize(
+    "content",
+    ["[]", "null", "2", '"manifest"', '{"version": true}', '{"version": "1"}'],
+    ids=["list", "null", "number", "string", "bool-version", "str-version"],
+)
+def test_a_manifest_that_is_not_a_readable_object_is_a_value_error(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], content: str
+) -> None:
+    """#1630: JSON that is not an object, or a version that is a bool
+    (``True == 1``), is the ValueError read_manifest documents, which the
+    CLI reports, not an AttributeError."""
+    from autoware_carla_scenario.slurm import cli
+
+    layout = _batch_on_disk(tmp_path)
+    layout.manifest.write_text(content)
+    with pytest.raises(ValueError, match=re.escape(str(layout.manifest))):
+        layout.read_manifest()
+    for command in ("status", "collect"):
+        assert cli.main([command, str(layout.batch_dir)]) == 1
+        assert f"Error: {layout.manifest}" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "content",
+    ["", "{not json", "[1, 2]", "null", "3", '"done"'],
+    ids=["empty", "bad", "list", "null", "number", "string"],
+)
+def test_a_result_or_task_status_that_is_not_an_object_is_none(
+    tmp_path: Path, content: str
+) -> None:
+    """#1630: read_result and read_task return a JSON object or None, as
+    their callers expect: such a case counts as missing, its task as never
+    started."""
+    from autoware_carla_scenario.slurm.collect import collect
+
+    layout = _batch_on_disk(tmp_path)
+    result = layout.result(1)
+    result.parent.mkdir(parents=True, exist_ok=True)
+    result.write_text(content)
+    task = layout.task(0, 0)
+    task.parent.mkdir(parents=True, exist_ok=True)
+    task.write_text(content)
+    assert layout.read_result(1) is None
+    assert layout.read_task(0, 0) is None
+    assert missing_cases(layout) == [0, 1, 2]
+    assert unfinished_cases(layout) == [0, 1, 2]
+    assert collect(layout, quiet_hint=True) == 1
+    summary = json.loads((layout.batch_dir / "batch_results.json").read_text())
+    assert ["task 0 of job 77 never started" in e["message"] for e in summary] == [
+        True
+    ] * 3
+
+
+def test_sbatch_that_prints_no_job_id_is_a_runtime_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """#1630: sbatch exiting 0 without output is the RuntimeError callers
+    catch, not an IndexError."""
+    from autoware_carla_scenario.slurm import submit
+
+    monkeypatch.setattr(submit, "require_sbatch", lambda: "sbatch")
+    stdout = ""
+
+    def run(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+
+    monkeypatch.setattr(submit.subprocess, "run", run)
+    for stdout in ("", "\n \n", ";cluster\n"):
+        with pytest.raises(RuntimeError, match="sbatch printed no job id"):
+            submit._run_sbatch(["sbatch", "--parsable", "job.sh"])
+    stdout = "warning: something\n4242;cluster\n"
+    assert submit._run_sbatch(["sbatch", "--parsable", "job.sh"]) == "4242"
+
+
 @pytest.mark.parametrize("stale", [False, True], ids=["in-flight", "stale"])
 def test_wait_neither_follows_nor_collects_a_submission_with_no_job(
     tmp_path: Path,
