@@ -43,6 +43,7 @@ __all__ = [
     "RerunConverter",
     "RerunUnavailableError",
     "convert_outputs",
+    "latest",
     "main",
     "recording_path",
     "report",
@@ -341,8 +342,27 @@ class RerunConverter:
         self.close()
 
 
+def latest(conversions: list[RerunConversion]) -> list[RerunConversion]:
+    """*conversions* with only the last of each recording's, in the order the
+    recordings were first converted.
+
+    A retried run is converted again into the recording of the attempt it
+    replaces, so :meth:`RerunConverter.wait` returns that recording twice;
+    the earlier conversion no longer says how it went.
+    """
+    last: dict[str, RerunConversion] = {}
+    for conversion in conversions:
+        last[str(conversion.recording)] = conversion
+    return list(last.values())
+
+
 def report(conversions: list[RerunConversion]) -> str:
-    """One line on *conversions*, then one per failure, for a run's summary."""
+    """One line on *conversions*, then one per failure, for a run's summary.
+
+    A recording converted more than once (a retried run) counts once, by its
+    last conversion (:func:`latest`).
+    """
+    conversions = latest(conversions)
     failed = [c for c in conversions if not c.ok]
     lines = [
         f"Rerun recordings: {len(conversions) - len(failed)}/{len(conversions)} "

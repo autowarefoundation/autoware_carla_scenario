@@ -23,6 +23,7 @@ from autoware_carla_scenario.rerun import (
     RerunConverter,
     RerunUnavailableError,
     convert_outputs,
+    latest,
     main,
     recording_path,
     report,
@@ -297,6 +298,44 @@ def test_the_report_counts_the_recordings_and_names_each_failure(
     assert text.splitlines()[0].startswith("Rerun recordings: 1/2 written")
     assert "rerun <file.rrd>" in text
     assert "[FAILED] B: E: x" in text
+
+
+class _FailsOnce(_FakeConverter):
+    """Fails the first conversion of each log, as a run that is retried."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: set[str] = set()
+
+    def convert(self, jsonl: str, out_rrd: str, *, strict: bool = False) -> dict:
+        if jsonl not in self.seen:
+            self.seen.add(jsonl)
+            raise ValueError(f"cannot read {Path(jsonl).name}")
+        return super().convert(jsonl, out_rrd, strict=strict)
+
+
+def test_a_retried_recording_is_reported_by_its_last_conversion(
+    tmp_path: Path,
+) -> None:
+    # The queue waits for the conversions, removes the failed attempt's
+    # outputs and runs it again, which submits the same log a second time
+    # (#1510).
+    log = tmp_path / "A.trajectory.jsonl"
+    with RerunConverter(converter=_FailsOnce()) as converter:
+        converter.submit(log, "A")
+        assert [c.ok for c in converter.wait()] == [False]
+        converter.submit(log, "A")
+        converter.submit(tmp_path / "B.trajectory.jsonl", "B")
+        conversions = converter.wait()
+    assert [c.ok for c in conversions] == [False, True, False]
+    assert [(c.label, c.ok) for c in latest(conversions)] == [
+        ("A", True),
+        ("B", False),
+    ]
+    text = report(conversions)
+    assert text.splitlines()[0].startswith("Rerun recordings: 1/2 written")
+    assert "[FAILED] A" not in text
+    assert "[FAILED] B: ValueError: cannot read B.trajectory.jsonl" in text
 
 
 # ---------------------------------------------------------------------------
