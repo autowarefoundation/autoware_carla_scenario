@@ -2404,7 +2404,9 @@ the trajectories, the conditions, the actions and the entities, the scenario
 base, its runner and its queue, the traffic backends' interface, the signal
 controllers, the adversity math, the measures, the metrics and the ODD's
 probes, the gate package's `__init__` and its per-run record and probe (not
-its evaluator), the example scenarios and their configs, and the parts of the
+its evaluator), the HILS bridge's wire format (a command's values included)
+and its configuration's sensor spec (not the YAML reading around it), the
+example scenarios and their configs, and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 `__init__` re-exports what is not checked through models of it (see *A class
 a checked package only re-exports* below). Each checked module is listed here

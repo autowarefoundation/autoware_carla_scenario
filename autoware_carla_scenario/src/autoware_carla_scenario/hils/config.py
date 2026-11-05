@@ -43,6 +43,11 @@ input and step names also take a whole number (RTCM's ``1005``).
 1.1 forms that do not mean what they look like (octal ``0102``, sexagesimal
 ``1:30``, ``yes``/``no``/``on``/``off``), so ``Gear: Off`` in a field value is
 refused too instead of becoming ``False``.
+
+What needs no YAML and no value of any shape -- :class:`SensorSpec`, the
+checks of a LiDAR's attributes, :data:`CLOCKS`, :data:`PHASES` and
+:class:`HilsConfigError` -- lives in :mod:`.sensor_spec`, which the static
+check compiles (docs/typecheck.md); it is re-exported here.
 """
 
 from __future__ import annotations
@@ -62,6 +67,17 @@ from .protocol import (
     command_value,
     parse_address,
 )
+from .sensor_spec import (
+    CAMERA_PREFIX,
+    CLOCKS,
+    LIDAR_BLUEPRINT,
+    PHASES,
+    HilsConfigError,
+    SensorSpec,
+    _lidar_attributes,
+    _relative_file,
+)
+from .sensor_spec import _attribute_number as _attribute_number  # noqa: F401 - re-exported
 from .signals import SIGNALS
 from .yaml11 import YAML_BOOL as _YAML_BOOL  # noqa: F401 - re-exported
 from .yaml11 import YAML_FLOAT as _YAML_FLOAT  # noqa: F401 - re-exported
@@ -93,37 +109,10 @@ __all__ = [
 #: A constant field value.
 Constant = Union[str, int, float, bool]
 
-#: What the devices' time is:
-#:
-#: * ``"simulation"`` -- a ``hilspy.Clock`` advanced by the world's ticks:
-#:   periodic messages and a LiDAR's packets go out as simulated time passes
-#:   them, so a world slower (or faster) than real time stays consistent.
-#: * ``"wall"`` -- real time: periodic messages from hilspy's threads.
-CLOCKS: Tuple[str, ...] = ("simulation", "wall")
-
-#: The sensors a device can carry: a ray-cast LiDAR (with a ``lidar:``
-#: codec) and the cameras (whose frames are BGRA images).
-LIDAR_BLUEPRINT = "sensor.lidar.ray_cast"
-CAMERA_PREFIX = "sensor.camera."
-
 _TRANSFORM_KEYS = ("x", "y", "z", "roll", "pitch", "yaw")
-
-#: When the bridge runs a lifecycle's steps:
-#:
-#: * ``"startup"`` -- once, when the bridge starts (its devices just opened).
-#: * ``"scenario_start"`` -- when a scenario starts: a run's ``start``, or the
-#:   ego appearing.  The run waits for them (the ECUs being initialized).
-#: * ``"scenario_end"`` -- when the scenario ends: a run's ``end``, the run
-#:   going away, or the ego disappearing.
-#: * ``"shutdown"`` -- once, when the bridge stops (Ctrl-C, SIGTERM).
-PHASES: Tuple[str, ...] = ("startup", "scenario_start", "scenario_end", "shutdown")
 
 #: The phases with no ego, whose steps cannot use a signal.
 _EGOLESS_PHASES = ("startup", "shutdown")
-
-
-class HilsConfigError(ValueError):
-    """The configuration is not one the bridge can run."""
 
 
 @dataclass(frozen=True)
@@ -178,7 +167,7 @@ class InputSource:
         ``None`` when the message lacks the field, it is not a number, or it
         (scaled) is not finite (NaN, an infinity: a decoded IEEE-float signal,
         an overflowing scale) or too large for CARLA's 32-bit floats
-        (:func:`~.protocol.command_value`), which CARLA must not get."""
+        (:func:`~.wire.command_value`), which CARLA must not get."""
         value = self.scaled(fields)
         return None if value is None else command_value(value)
 
@@ -284,31 +273,6 @@ class StepSpec:
 
 
 @dataclass(frozen=True)
-class SensorSpec:
-    """A CARLA sensor the bridge attaches to the ego, forwarding what it measures.
-
-    Attributes:
-        blueprint: ``sensor.lidar.ray_cast`` or a ``sensor.camera.*``.
-        transform: ``(x, y, z, roll, pitch, yaw)`` relative to the ego, in
-            CARLA's convention (metres, degrees; y right).
-        attributes: Blueprint attributes, as strings.
-        encoding: A camera frame's encoding (:data:`CAMERA_ENCODINGS`).
-        intensity_scale: A LiDAR's intensity (0 to 1) times this is the
-            reflectivity byte sent.
-    """
-
-    blueprint: str
-    transform: Tuple[float, float, float, float, float, float] = (0.0,) * 6
-    attributes: Mapping[str, str] = field(default_factory=dict)
-    encoding: str = "bgra"
-    intensity_scale: float = 255.0
-
-    @property
-    def is_lidar(self) -> bool:
-        return self.blueprint == LIDAR_BLUEPRINT
-
-
-@dataclass(frozen=True)
 class DeviceSpec:
     """One hilspy channel toward a device under test.
 
@@ -360,15 +324,15 @@ def _mapping(value: Any, where: str) -> Mapping[str, Any]:
     if value is None:
         return {}
     if not isinstance(value, Mapping):
-        raise HilsConfigError(f"{where}: expected a mapping, got {value!r}")
+        raise HilsConfigError(f"{where}: expected a mapping, got {_shown(value)}")
     return value
 
 
 def _only(section: Mapping[str, Any], allowed: Tuple[str, ...], where: str) -> None:
-    unknown = sorted(set(section) - set(allowed))
+    unknown = sorted(_label(key) for key in set(section) - set(allowed))
     if unknown:
         raise HilsConfigError(
-            f"{where}: unknown key(s) {', '.join(map(str, unknown))}; "
+            f"{where}: unknown key(s) {', '.join(unknown)}; "
             f"expected {', '.join(allowed)}"
         )
 
@@ -387,7 +351,7 @@ def _text(value: Any, where: str, *, number: bool = False) -> str:
     if number and isinstance(value, int) and not isinstance(value, bool):
         return _decimal(value, where)
     raise HilsConfigError(
-        f"{where}: expected text, got the {type(value).__name__} {value!r}; "
+        f"{where}: expected text, got {_described(value)}; "
         "YAML reads an unquoted number or yes/no/on/off as that type, so quote it "
         '(e.g. "0102")'
     )
@@ -398,6 +362,43 @@ def _huge(value: int) -> str:
     one of more digits than ``sys.get_int_max_str_digits()``."""
     sign = "-" if value < 0 else ""
     return f"an integer of about {sign}10**{int(abs(value).bit_length() * 0.30103)}"
+
+
+def _shown(value: Any) -> str:
+    """``repr(value)`` for an error message, or, for an integer too long for
+    ``repr()`` (:func:`_huge`) or a value holding one, a description of it."""
+    try:
+        return repr(value)
+    except ValueError:
+        if isinstance(value, int):
+            return _huge(value)
+        return f"a {type(value).__name__} holding an integer too long to show"
+
+
+def _described(value: Any) -> str:
+    """*value* with its type, for an error message: ``the int 66``."""
+    try:
+        return f"the {type(value).__name__} {value!r}"
+    except ValueError:
+        return _shown(value)
+
+
+def _label(key: Any) -> str:
+    """A mapping's *key* as an error message names it: its text."""
+    if isinstance(key, str):
+        return key
+    try:
+        return str(key)
+    except ValueError:
+        return _shown(key)
+
+
+def _key_text(key: Any, where: str) -> str:
+    """A mapping's *key* as the text a name takes: an integer is its decimal
+    text (:func:`_decimal`), anything else ``str()``."""
+    if isinstance(key, int) and not isinstance(key, bool):
+        return _decimal(key, f"{where}: key")
+    return str(key)
 
 
 def _decimal(value: int, where: str) -> str:
@@ -415,30 +416,26 @@ def _keys(section: Mapping[Any, Any], where: str) -> Dict[str, Any]:
     """*section* with its keys checked to be strings (:func:`_text`)."""
     for key in section:
         if not isinstance(key, str):
-            _text(key, f"{where}: key {key!r}")
+            _text(key, f"{where}: key {_shown(key)}")
     return dict(section)
 
 
 def _number(value: Any, where: str) -> float:
     if isinstance(value, bool) or not isinstance(value, (int, float)):
-        raise HilsConfigError(f"{where}: expected a number, got {value!r}")
+        raise HilsConfigError(f"{where}: expected a number, got {_shown(value)}")
     try:
         return float(value)
     except OverflowError:
         # Only an integer overflows a float; one too long for repr() as well.
-        try:
-            shown = repr(value)
-        except ValueError:
-            shown = _huge(int(value))
         raise HilsConfigError(
-            f"{where}: expected a number a float can hold, got {shown}"
+            f"{where}: expected a number a float can hold, got {_shown(value)}"
         ) from None
 
 
 def _finite(value: Any, where: str) -> float:
     number = _number(value, where)
     if not math.isfinite(number):
-        raise HilsConfigError(f"{where}: expected a finite number, got {value!r}")
+        raise HilsConfigError(f"{where}: expected a finite number, got {_shown(value)}")
     return number
 
 
@@ -448,7 +445,7 @@ def _seconds(value: Any, where: str, *, zero: bool = False) -> float:
     if seconds < 0.0 or (seconds == 0.0 and not zero):
         raise HilsConfigError(
             f"{where}: must {'not be negative' if zero else 'be positive'}, "
-            f"got {value!r}"
+            f"got {_shown(value)}"
         )
     return seconds
 
@@ -456,9 +453,9 @@ def _seconds(value: Any, where: str, *, zero: bool = False) -> float:
 def _port(value: Any, where: str) -> int:
     """A TCP port: an integer (not a bool) in 1..65535."""
     if isinstance(value, bool) or not isinstance(value, int):
-        raise HilsConfigError(f"{where}: expected an integer port, got {value!r}")
+        raise HilsConfigError(f"{where}: expected an integer port, got {_shown(value)}")
     if not 1 <= value <= 65535:
-        raise HilsConfigError(f"{where}: must be within 1-65535, got {value!r}")
+        raise HilsConfigError(f"{where}: must be within 1-65535, got {_shown(value)}")
     return value
 
 
@@ -489,7 +486,8 @@ def _field(value: Any, where: str) -> FieldSource:
     if isinstance(value, (bool, int, float)):
         return FieldSource(constant=value)
     raise HilsConfigError(
-        f"{where}: expected a constant, $signal or {{signal: ...}}, got {value!r}"
+        f"{where}: expected a constant, $signal or {{signal: ...}}, "
+        f"got {_shown(value)}"
     )
 
 
@@ -568,83 +566,19 @@ def _attributes(value: Any, where: str) -> Dict[str, str]:
     """
     attributes: Dict[str, str] = {}
     for key, item in _mapping(value, where).items():
+        name = _key_text(key, where)
         if isinstance(item, bool):
-            attributes[str(key)] = str(item).lower()
+            attributes[name] = str(item).lower()
         elif isinstance(item, int):
-            attributes[str(key)] = _decimal(item, f"{where}.{key}")
+            attributes[name] = _decimal(item, f"{where}.{name}")
         elif isinstance(item, (str, float)):
-            attributes[str(key)] = str(item)
+            attributes[name] = str(item)
         else:
             raise HilsConfigError(
-                f"{where}.{key}: expected text, a number or a bool, "
-                f"got the {type(item).__name__} {item!r}"
+                f"{where}.{name}: expected text, a number or a bool, "
+                f"got {_described(item)}"
             )
     return attributes
-
-
-def _attribute_number(attributes: Mapping[str, str], key: str, where: str) -> float:
-    """The blueprint attribute *key* of a sensor as a finite number."""
-    text = attributes[key]
-    try:
-        number = float(text)
-    except ValueError:
-        number = math.nan
-    if not math.isfinite(number):
-        raise HilsConfigError(f"{where}.{key}: expected a finite number, got {text!r}")
-    return number
-
-
-def _lidar_attributes(attributes: Mapping[str, str], where: str) -> None:
-    """Refuse the LiDAR attributes the bridge cannot gather revolutions for.
-
-    The bridge gathers a LiDAR's per-tick arcs into revolutions
-    (:class:`~autoware_carla_scenario.hils.lidar_revolution.LidarRevolution`).
-    A revolution is one sweep of ``horizontal_fov`` degrees, which may be
-    anything in (0, 360], at ``rotation_frequency`` revolutions a second, a
-    finite positive number.  ``sensor_tick`` must be left unset (or 0): CARLA
-    sweeps only one world tick per measurement however long the
-    ``sensor_tick``, so a LiDAR measured less often than every tick turns
-    slower than its ``rotation_frequency``, and no device turns that way.
-    """
-    if "horizontal_fov" in attributes:
-        fov = _attribute_number(attributes, "horizontal_fov", where)
-        if not 0.0 < fov <= 360.0:
-            raise HilsConfigError(
-                f"{where}.horizontal_fov: must be in (0, 360] degrees, "
-                f"got {attributes['horizontal_fov']!r}"
-            )
-    if "rotation_frequency" in attributes:
-        frequency = _attribute_number(attributes, "rotation_frequency", where)
-        if frequency <= 0.0:
-            raise HilsConfigError(
-                f"{where}.rotation_frequency: must be positive, "
-                f"got {attributes['rotation_frequency']!r}"
-            )
-    if "sensor_tick" in attributes:
-        if _attribute_number(attributes, "sensor_tick", where) != 0.0:
-            raise HilsConfigError(
-                f"{where}.sensor_tick: a LiDAR measures every world tick; "
-                f"leave sensor_tick unset (or 0), got {attributes['sensor_tick']!r} "
-                "(CARLA sweeps only one world tick per measurement, so with a "
-                "sensor_tick it turns slower than its rotation_frequency)"
-            )
-
-
-def _relative_file(value: str, base: Path) -> str:
-    """*value* with ``~`` expanded, and made absolute when it names a file
-    relative to *base*.
-
-    hilspy expands no ``~``, so an expanded path is returned even when it is
-    absolute; any other absolute *value* is returned as it is, not normalized
-    (a registered codec's argument may not be a path), and so is a relative
-    *value* that names no file under *base* (a LiDAR codec's model name).
-    """
-    path = Path(value).expanduser()
-    if path.is_absolute():
-        return str(path) if value.startswith("~") else value
-    if (base / path).is_file():
-        return str((base / path).resolve())
-    return value
 
 
 def _codec(value: Any, base: Path, where: str) -> str:
@@ -672,7 +606,8 @@ def _input_source(value: Any, where: str) -> InputSource:
     if isinstance(value, (int, float)):
         return InputSource(constant=_finite(value, where))
     raise HilsConfigError(
-        f"{where}: expected a field name, a number or {{field: ...}}, got {value!r}"
+        f"{where}: expected a field name, a number or {{field: ...}}, "
+        f"got {_shown(value)}"
     )
 
 
@@ -688,7 +623,7 @@ def _input(value: Any, mode: str, where: str) -> InputSpec:
     for key in command:
         if key not in allowed:
             raise HilsConfigError(
-                f"{where}.command: {key!r} is not a field of a {mode} command; "
+                f"{where}.command: {_shown(key)} is not a field of a {mode} command; "
                 f"expected {', '.join(allowed)}"
             )
     return InputSpec(
@@ -709,7 +644,8 @@ def _step(
     kinds = [k for k in _STEP_KINDS if k in section]
     if len(kinds) != 1:
         raise HilsConfigError(
-            f"{where}: a step is one of {', '.join(_STEP_KINDS)}, got {sorted(section)}"
+            f"{where}: a step is one of {', '.join(_STEP_KINDS)}, "
+            f"got {sorted(_label(key) for key in section)}"
         )
     kind = kinds[0]
     if kind == "sleep":
@@ -735,7 +671,8 @@ def _step(
         for key, expected in match.items():
             if not isinstance(expected, (str, int, float, bool)):
                 raise HilsConfigError(
-                    f"{where}.fields.{key}: expected a constant, got {expected!r}"
+                    f"{where}.fields.{key}: expected a constant, "
+                    f"got {_shown(expected)}"
                 )
         timeout = _seconds(section.get("timeout", 10.0), f"{where}.timeout")
         return StepSpec(
@@ -783,14 +720,14 @@ def _data(raw: Any, where: str) -> bytes:
             for b in raw
         ):
             raise HilsConfigError(
-                f"{where}: a list holds byte values (0-255), got {raw!r}"
+                f"{where}: a list holds byte values (0-255), got {_shown(raw)}"
             )
         return bytes(raw)
     if not isinstance(raw, str):
         raise HilsConfigError(
             f"{where}: expected the bytes as a quoted hex string "
-            f'(data: "02 10 01") or a list (data: [0x02, 0x10, 0x01]), got the '
-            f"{type(raw).__name__} {raw!r}; YAML reads unquoted digits as a "
+            f'(data: "02 10 01") or a list (data: [0x02, 0x10, 0x01]), got '
+            f"{_described(raw)}; YAML reads unquoted digits as a "
             "number (0102 is octal 66, 0x10 is 16), so quote it"
         )
     try:
@@ -824,7 +761,9 @@ def _device(name: str, value: Any, base: Path, mode: str) -> DeviceSpec:
         raise HilsConfigError(f"{where}: a device has a url")
     codec = _codec(section.get("codec", "raw"), base, f"{where}.codec")
     options = {
-        str(k): _relative_file(v, base) if k == "profiles" and isinstance(v, str) else v
+        _key_text(k, f"{where}.options"): _relative_file(v, base)
+        if k == "profiles" and isinstance(v, str)
+        else v
         for k, v in _mapping(section.get("options"), f"{where}.options").items()
     }
     messages_value = section.get("messages") or []
@@ -900,7 +839,7 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
     listen = runner.get("listen", f"0.0.0.0:{DEFAULT_PORT}")
     if listen is not None and not isinstance(listen, str):
         raise HilsConfigError(
-            f"runner.listen: expected host:port text, got {listen!r}; quote it "
+            f"runner.listen: expected host:port text, got {_shown(listen)}; quote it "
             f'(listen: "0.0.0.0:{DEFAULT_PORT}"), or null for no run link'
         )
     listen = "" if listen is None else listen
@@ -958,7 +897,13 @@ def load_config(path: Union[str, Path]) -> HilsConfig:
         if node is not None:
             _refuse_yaml11_scalars(node, path)
         document = None if node is None else loader.construct_document(node)
+    except HilsConfigError:
+        raise
     except yaml.YAMLError as exc:
+        raise HilsConfigError(f"{path}: {exc}") from exc
+    except ValueError as exc:
+        # PyYAML's int constructor: an integer of more digits than Python
+        # turns from text (sys.get_int_max_str_digits()).
         raise HilsConfigError(f"{path}: {exc}") from exc
     finally:
         loader.dispose()
