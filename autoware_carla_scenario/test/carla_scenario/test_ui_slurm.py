@@ -522,6 +522,21 @@ def test_a_batch_with_an_unreadable_submission_record_is_shown_with_a_note(
     assert client.get("/session/batch/2026-10-19/12-00-00").status_code == 200
 
 
+@pytest.mark.parametrize(
+    "content", ["[]", "null", '{"version": true}'], ids=["list", "null", "bool"]
+)
+def test_a_batch_whose_manifest_is_not_an_object_is_not_a_slurm_batch(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str
+) -> None:
+    """#1630: a manifest that is not an object is a 404, not a 500."""
+    batch = _manifest_batch(tmp_path)
+    (batch / "slurm" / "manifest.json").write_text(content)
+    _fake_squeue(tmp_path, monkeypatch, "")
+    assert slurm_launch.batch_status(batch) is None
+    response = client.get("/api/slurm/2026-10-19/12-00-00/status")
+    assert response.status_code == 404
+
+
 def test_collect_writes_the_summary(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
