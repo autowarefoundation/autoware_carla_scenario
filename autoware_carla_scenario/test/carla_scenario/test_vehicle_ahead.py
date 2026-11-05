@@ -28,6 +28,7 @@ from autoware_carla_scenario.measures import (
     set_measured_scenario,
     vehicle_ahead_definition,
     vehicle_ahead_definitions,
+    vehicle_ahead_gap_between,
 )
 
 from . import _lane_maps
@@ -896,6 +897,24 @@ def test_a_vehicle_far_above_the_ego_is_not_on_its_road(
 
     assert _gap(ego, probe) is None
     assert _gap(ego, by_role) is None
+
+
+def test_the_gap_between_skips_a_vehicle_on_another_level(
+    straight_road: LaneMap,
+) -> None:
+    """vehicle_ahead_gap_between() (place_at_vehicle_ahead_gap()'s reading)
+    drops a vehicle on a deck 8 m over the ego's lane, as the live measure
+    does, and still reads one on the ego's level (#1604)."""
+    ego = _ego(_on(straight_road, "ego", 0, 50.0)).get_transform()
+    level = _vehicle(2, _on(straight_road, "ego", 0, 70.0))
+    deck = _vehicle(3, _on(straight_road, "ego", 0, 70.0))
+    deck._location.z = level.get_transform().location.z + 8.0
+
+    assert vehicle_ahead_gap_between(
+        ego, EGO, level.get_transform(), LEAD
+    ) == pytest.approx(70.0 - 1.8 - 52.6, abs=1e-6)
+    assert vehicle_ahead_gap_between(ego, EGO, deck.get_transform(), LEAD) is None
+    assert _gap(_ego(_on(straight_road, "ego", 0, 50.0)), deck) is None
 
 
 def test_an_overlap_within_one_long_segment_is_found() -> None:
