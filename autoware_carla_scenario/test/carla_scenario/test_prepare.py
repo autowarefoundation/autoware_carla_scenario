@@ -473,6 +473,128 @@ class TestDockerBackend:
         assert removed == ["dead"]
 
 
+class TestDockerSettingsAreChecked:
+    """A backend's settings are refused, naming their key, before any image
+    is pulled or container started (#1486)."""
+
+    @pytest.mark.parametrize(
+        ("key", "value", "message"),
+        [
+            ("pull", "sometimes", "must be one of missing, always, never"),
+            ("pull", True, "must be one of"),
+            ("docker_args", "--shm-size=8g", "must be a list"),
+            ("docker_args", {"a": 1}, "must be a list"),
+            ("docker_args", [["--shm-size", "8g"]], "must be a list of strings"),
+            ("startup_timeout_s", -1, "must be finite and above 0"),
+            ("startup_timeout_s", 0, "must be finite and above 0"),
+            ("startup_timeout_s", float("nan"), "must be finite and above 0"),
+            ("startup_timeout_s", float("inf"), "must be finite and above 0"),
+            ("startup_timeout_s", "600", "must be a number of seconds"),
+            ("startup_timeout_s", True, "must be a number of seconds"),
+            ("timeout_s", float("nan"), "must be finite and above 0"),
+            ("timeout_s", -5.0, "must be finite and above 0"),
+            ("timeout_s", None, "must be a number of seconds"),
+            ("gpu_memory_mb", -1, "must not be negative"),
+            ("gpu_memory_mb", 1.5, "must be a whole number"),
+            ("memory_mb", "16000", "must be a whole number"),
+            ("memory_mb", float("inf"), "must be finite"),
+        ],
+    )
+    def test_a_bad_ardy_setting_is_refused_naming_its_key(
+        self, key: str, value: object, message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=rf"^backends\.ardy\.{key} {message}"):
+            ArdyBackend.from_settings({key: value})
+
+    def test_the_shipped_and_documented_settings_are_taken(self) -> None:
+        backend = ArdyBackend.from_settings(
+            {
+                "image": DEFAULT_IMAGE,
+                "gpu_memory_mb": 24000.0,
+                "memory_mb": 16000,
+                "startup_timeout_s": 1800,
+                "timeout_s": 120,
+                "pull": "never",
+                "docker_args": ["--shm-size=8g", 1],
+            }
+        )
+        settings = backend._settings
+        assert settings.pull == "never"
+        assert settings.docker_args == ("--shm-size=8g", "1")
+        assert settings.startup_timeout_s == 1800.0
+        assert backend.timeout_s == 120.0
+        assert backend.resources() == Resources(gpu_memory_mb=24000, memory_mb=16000)
+        assert ArdyBackend.from_settings({"docker_args": None})._settings == (
+            ArdyBackend.from_settings({})._settings
+        )
+
+    def test_the_shared_reader_names_any_backend(self) -> None:
+        with pytest.raises(ValueError, match=r"^backends\.soma\.pull must"):
+            docker_module.read_docker_settings(
+                "soma", {"pull": "always!"}, image="img:1", container_port=1
+            )
+        settings = docker_module.read_docker_settings(
+            "soma", {"pull": "always"}, image="img:1", container_port=1
+        )
+        assert settings.pull == "always" and settings.image == "img:1"
+
+    def test_nothing_is_pulled_or_started_for_a_bad_setting(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        recorded = _Docker(image_present=False)
+        monkeypatch.setattr(docker_module.subprocess, "run", recorded)
+
+        @need_prepare(_Answering)
+        class Scenario:
+            pass
+
+        pool = BackendPool({"ardy": {"startup_timeout_s": -1}}, check_resources=False)
+        with pytest.raises(ValueError, match=r"backends\.ardy\.startup_timeout_s"):
+            pool.prepare_scenarios([Scenario()])
+        assert recorded.calls == []
+        assert pool.backend("ardy") is None
+
+
+class TestBackendSettingsInTheBatchCheck:
+    """``check_batch_configs`` refuses a bad ``backends.ardy`` setting before
+    anything starts (#1486)."""
+
+    @pytest.mark.parametrize(
+        ("override", "key"),
+        [
+            ("backends.ardy.pull=sometimes", "pull"),
+            ("backends.ardy.startup_timeout_s=-1", "startup_timeout_s"),
+            ("backends.ardy.timeout_s=nan", "timeout_s"),
+            ("backends.ardy.docker_args='--shm-size=8g'", "docker_args"),
+            ("backends.ardy.memory_mb=1.5", "memory_mb"),
+        ],
+    )
+    def test_a_bad_setting_is_refused(self, override: str, key: str) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = run._compose_config("adversity/nade", ["map=town10hd_opt", override])
+        with pytest.raises(run.RunConfigError, match=rf"backends\.ardy\.{key} must"):
+            run.check_batch_configs([cfg])
+
+    def test_a_backend_block_that_is_no_mapping_is_refused(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = run._compose_config(
+            "adversity/nade", ["map=town10hd_opt", "backends.ardy=5"]
+        )
+        with pytest.raises(run.RunConfigError, match=r"backends\.ardy must be"):
+            run.check_batch_configs([cfg])
+
+    def test_the_shipped_config_passes(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = run._compose_config(
+            "adversity/nade",
+            ["map=town10hd_opt", "backends.ardy.docker_args=['--shm-size=8g']"],
+        )
+        run.check_batch_configs([cfg])
+
+
 #: A docker whose ``logs`` (and every other command) print bytes that are not
 #: UTF-8, as a backend's own output may (#1346).
 _UNDECODABLE_DOCKER = """\
