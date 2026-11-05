@@ -1385,6 +1385,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#the-packages-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The package's name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#what-the-wheelhouse-is-built-from" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2748,6 +2759,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#the-packages-name" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        The package's name
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#what-the-wheelhouse-is-built-from" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -3707,6 +3729,26 @@ with neither uv nor, on a vehicle, a network route. A uv project needs all three
 <p>The scenario's document and Hydra config travel <strong>inside</strong> its wheel, so an
 installed scenario is self-contained: there is no directory that has to be kept
 beside it.</p>
+<h3 id="the-packages-name">The package's name<a class="headerlink" href="#the-packages-name" title="Permanent link">&para;</a></h3>
+<p>The package is named after the document's <strong>id</strong>, which is lower-case letters,
+digits and <code>_</code>, starting with a letter (<code>^[a-z][a-z0-9_]*$</code>). Repeated and
+trailing <code>_</code> are collapsed and <code>_scenario</code> is appended unless the id already
+ends with it: <code>cut_in</code> exports the package <code>cut_in_scenario</code> (distribution
+<code>cut-in-scenario</code>, directory <code>cut_in_scenario/</code>), and the id itself stays the
+scenario's name (<code>scenario=cut_in</code>).</p>
+<p>The validator (<code>authoring/package_names.py</code>) <strong>refuses</strong> an id whose package
+would be the framework's own, <code>autoware_carla_scenario</code>: the ids
+<code>autoware_carla</code> and <code>autoware_carla_scenario</code>. Such a package depends on
+itself and replaces the installed framework, so it is an <code>id</code> error, shown
+before an export starts, by the same rule <code>scenario-new</code> refuses that name
+with.</p>
+<p>Ids that differ only by a trailing <code>_scenario</code>, or by doubled or trailing
+<code>_</code>, export to the same package and so the same directory: <code>cut_in</code>,
+<code>cut_in_scenario</code>, <code>cut__in</code> and <code>cut_in_</code> all export as <code>cut_in_scenario/</code>.
+Exporting one of them with force (replacing an existing package) replaces the
+package another of them exported there. The validator does not warn about
+this, since it cannot know whether the other package exists; pick one id per
+scenario and keep to it.</p>
 <h3 id="what-the-wheelhouse-is-built-from">What the wheelhouse is built from<a class="headerlink" href="#what-the-wheelhouse-is-built-from" title="Permanent link">&para;</a></h3>
 <p>The exporter still generates the uv project it always did -- <code>pyproject.toml</code>
 with the framework pinned to an exact commit, <code>uv.lock</code>, the document, the Hydra
@@ -3980,7 +4022,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 10:08:40 UTC"><span class="timeago" datetime="2026-11-05T10:08:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 10:08:40 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 23:07:16 UTC"><span class="timeago" datetime="2026-11-05T23:07:16+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 23:07:16 UTC">2026-11-05</span>
   </span>
 
     
