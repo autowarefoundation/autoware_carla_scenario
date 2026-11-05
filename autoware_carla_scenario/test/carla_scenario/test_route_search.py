@@ -9,6 +9,7 @@ pattern is found on a real one.
 
 from __future__ import annotations
 
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -186,6 +187,27 @@ class TestParsing:
                 Range.parse("segments[0].lanes_left", float("inf"), whole=whole)
             with pytest.raises(ValueError, match=r"^segments\[0\]\.length: a range"):
                 Range.parse("segments[0].length", float("-inf"), whole=whole)
+
+    def test_a_whole_number_too_big_for_a_float_is_refused_with_its_name(
+        self,
+    ) -> None:
+        """#1652: ``float()`` raises OverflowError on ``10**400``."""
+        for value in (10**400, {"min": 10**400}, {"max": -(10**400)}):
+            with pytest.raises(
+                ValueError,
+                match=r"^segments\[0\]\.length: a range bound must be finite",
+            ):
+                Range.parse("segments[0].length", value)
+        for field in ("ego_spawn_s", "ego_goal_margin"):
+            with pytest.raises(
+                ValueError, match=rf"^{field} must be finite, got 1000+$"
+            ):
+                parse_route_search({"segments": [_lane()], field: 10**400})
+        # A number no int whose float() overflows (an int is taken as it is).
+        with pytest.raises(ValueError, match=r"^match_index must be a whole number"):
+            parse_route_search(
+                {"segments": [_lane()], "match_index": Fraction(10**400)}
+            )
 
     def test_anchors(self) -> None:
         assert parse_anchor("start") == ("start", -1, "")

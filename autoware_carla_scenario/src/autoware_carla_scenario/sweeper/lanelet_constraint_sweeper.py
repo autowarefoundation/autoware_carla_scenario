@@ -67,6 +67,7 @@ from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
 from ..rerun import RerunUnavailableError
 from ..run_outputs import RUN_DIR_SUFFIXES, RUN_FILE_SUFFIXES, remove_run_outputs
 from ..ui.case_paths import last_result_path
+from ..value_text import shown
 from .expand import (
     EMPTY_SWEEP_MESSAGE,
     _config_seed,
@@ -137,13 +138,14 @@ def _job_timeout_seconds(value: Any) -> int:
         return _DEFAULT_JOB_TIMEOUT
     message = (
         "sweep.job_timeout_seconds must be a whole number of seconds from 0 "
-        f"(no timeout) to {_MAX_JOB_TIMEOUT}, got {value!r}"
+        f"(no timeout) to {_MAX_JOB_TIMEOUT}, got {shown(value)}"
     )
     if isinstance(value, bool):
         raise ValueError(message)
     try:
         seconds = float(value)
-    except (TypeError, ValueError):
+    except (TypeError, ValueError, OverflowError):
+        # OverflowError: an int too big for a float (10**400) (#1652).
         raise ValueError(message) from None
     if (
         not math.isfinite(seconds)

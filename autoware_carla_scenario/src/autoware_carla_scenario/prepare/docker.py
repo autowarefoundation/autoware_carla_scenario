@@ -22,6 +22,7 @@ from pathlib import Path
 from typing import IO, Any, ClassVar, Mapping, Optional
 
 from ..seed import check_whole_number
+from ..value_text import shown
 from . import BackendError, Resources
 
 logger = logging.getLogger(__name__)
@@ -106,6 +107,11 @@ def positive_seconds(key: str, value: Any) -> float:
         seconds = float(value)
     except (TypeError, ValueError):
         raise ValueError(f"{key} must be a number of seconds, got {value!r}")
+    except OverflowError:
+        # An int too big for a float (10**400): not finite (#1652).
+        raise ValueError(
+            f"{key} must be finite and above 0, got {shown(value)}"
+        ) from None
     if not math.isfinite(seconds) or seconds <= 0.0:
         raise ValueError(f"{key} must be finite and above 0, got {value!r}")
     return seconds

@@ -1232,6 +1232,21 @@ class TestTheDefaultTimeout:
         with pytest.raises(ValueError, match="scenario.timeout_seconds"):
             run_timeout_seconds(cfg)
 
+    @pytest.mark.parametrize(
+        "timeout",
+        [10**400, -(10**400), 10**5000],
+        ids=["huge", "-huge", "too-long-for-repr"],
+    )
+    def test_the_command_line_refuses_a_timeout_too_big_for_a_float(self, timeout):
+        """#1652: ``float()`` raised OverflowError on it, and ``repr()`` refuses
+        one of more than ``sys.get_int_max_str_digits()`` digits."""
+        from autoware_carla_scenario.run_timeout import run_timeout_seconds
+
+        with pytest.raises(
+            ValueError, match="^scenario.timeout_seconds must be positive and finite"
+        ):
+            run_timeout_seconds({"scenario": {"timeout_seconds": timeout}})
+
     def test_the_command_line_timeout_is_read_as_given(self):
         from omegaconf import OmegaConf
 

@@ -224,6 +224,13 @@ def test_number_of_document_values(cell: Any, required: bool) -> None:
     assert _same(got[1], expected[1])
 
 
+@pytest.mark.parametrize("cell", [10**400, -(10**400)], ids=["huge", "-huge"])
+def test_a_whole_number_too_big_for_a_float_is_not_a_finite_number(cell: int) -> None:
+    """#1652: ``float()`` raises OverflowError on it; refused by vertex."""
+    with pytest.raises(ValueError, match=r"^vertex 2: -?1000+ is not a finite number$"):
+        authoring._number(2, cell, "x", True)
+
+
 @pytest.mark.parametrize(
     "value",
     [None, 0.0, -0.0, 1.0, 0.1, 1 / 3, 123456789.123456789, 1e-12, 1e20, -2.5, 1e300],

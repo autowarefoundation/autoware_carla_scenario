@@ -1179,6 +1179,23 @@ def test_a_word_is_no_numeric_value() -> None:
         VehicleParameters.from_mapping({"speed_factor": "fast"})
 
 
+@pytest.mark.parametrize(
+    "value, key",
+    [
+        pytest.param(10**400, "speed_factor", id="huge"),
+        pytest.param(
+            {"mean": 1.0, "std": 10**400}, r"speed_factor\.std", id="huge-std"
+        ),
+    ],
+)
+def test_a_whole_number_too_big_for_a_float_is_refused_naming_its_key(
+    value: Any, key: str
+) -> None:
+    """#1652: ``float()`` raises OverflowError on it."""
+    with pytest.raises(ValueError, match=rf"traffic\.vehicles\.{key} must be a number"):
+        VehicleParameters.from_mapping({"speed_factor": value})
+
+
 def test_a_bool_is_no_numeric_value_when_constructed_directly() -> None:
     from autoware_carla_scenario.traffic.parameters import (
         BicycleParameters,

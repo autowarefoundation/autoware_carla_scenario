@@ -31,6 +31,8 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
+from ..value_text import shown
+
 __all__ = [
     "ANCHOR_PATTERN",
     "APPROACHES",
@@ -149,7 +151,11 @@ class Range:
         if value is None:
             return cls()
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            number = float(value)
+            try:
+                number = float(value)
+            except OverflowError:
+                # An int too big for a float (10**400): not finite (#1652).
+                raise ValueError(f"{name}: a range bound must be finite") from None
             # Built inside the try, as a mapping's is: an infinite bare number
             # is refused with the field's name.
             try:
@@ -177,6 +183,9 @@ class Range:
                 number = float(raw)
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"{name}.{key} must be a number, got {raw!r}") from exc
+            except OverflowError:
+                # An int too big for a float (10**400): not finite (#1652).
+                raise ValueError(f"{name}: a range bound must be finite") from None
             if whole and not number.is_integer():
                 raise ValueError(f"{name}.{key} is a count, a whole number")
             bounds.append(number)
@@ -537,6 +546,9 @@ def _distance(name: str, value: Any) -> float:
         number = float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name} must be a number, got {value!r}") from exc
+    except OverflowError:
+        # An int too big for a float (10**400): not finite (#1652).
+        raise ValueError(f"{name} must be finite, got {shown(value)}") from None
     if not math.isfinite(number):
         raise ValueError(f"{name} must be finite, got {value!r}")
     if number < 0.0:
@@ -565,6 +577,9 @@ def _whole_number(name: str, value: Any) -> Optional[int]:
         number = float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name} must be a whole number, got {value!r}") from exc
+    except OverflowError:
+        # A number too big for a float, but no int (Fraction(10**400)) (#1652).
+        raise ValueError(f"{name} must be a whole number, got {shown(value)}") from None
     if not math.isfinite(number) or not number.is_integer():
         raise ValueError(f"{name} must be a whole number, got {value!r}")
     return int(number)

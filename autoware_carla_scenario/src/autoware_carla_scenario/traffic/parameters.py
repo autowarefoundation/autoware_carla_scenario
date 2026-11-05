@@ -111,6 +111,8 @@ import random
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Union
 
+from ..value_text import shown
+
 __all__ = [
     "BICYCLE_BOUNDS",
     "BICYCLE_PARAMETER_BACKENDS",
@@ -417,6 +419,9 @@ def _number_of(name: str, value: Any) -> float:
         return float(value)
     except (TypeError, ValueError):
         raise ValueError(f"{name} must be a number (got {value!r})") from None
+    except OverflowError:
+        # An int too big for a float (10**400), which repr() may refuse (#1652).
+        raise ValueError(f"{name} must be a number (got {shown(value)})") from None
 
 
 def _spread_of(name: str, value: Any) -> Optional[Spread]:
