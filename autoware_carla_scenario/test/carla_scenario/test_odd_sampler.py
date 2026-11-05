@@ -412,14 +412,16 @@ def test_bad_weights_are_refused(weights: Any, message: str, tmp_path: Path) -> 
         pytest.param(b"urban: [0.5\n", id="unclosed-flow-sequence"),
         pytest.param(b"urban: 0.5\n  rural: 0.2\n", id="bad-indentation"),
         pytest.param(b"urban: \xff\n", id="not-utf-8"),
+        pytest.param(b"urban: " + b"1" * 5000 + b"\n", id="huge-integer"),
     ],
 )
 def test_an_unreadable_weights_file_is_refused_with_the_key(
     content: bytes, tmp_path: Path
 ) -> None:
-    """#1703: a weights file that is not YAML, or not UTF-8, is the keyed
-    ``ValueError`` the docstring promises, not a ``yaml.YAMLError`` (a
-    traceback in scenario-expand) or a bare ``UnicodeDecodeError``."""
+    """#1703: a weights file that is not YAML, not UTF-8, or holds an integer
+    too long to read is the keyed one-line ``ValueError`` the docstring
+    promises, not a ``yaml.YAMLError`` (a traceback in scenario-expand) or a
+    bare ``UnicodeDecodeError`` or ``ValueError``."""
     path = tmp_path / "shares.yaml"
     path.write_bytes(content)
     with pytest.raises(
@@ -427,6 +429,8 @@ def test_an_unreadable_weights_file_is_refused_with_the_key(
     ) as e:
         weights_from_config("shares.yaml", tmp_path)
     assert str(path) in str(e.value)
+    # One line: a YAML error's text (a caret diagram) is collapsed.
+    assert "\n" not in str(e.value)
     with pytest.raises(ValueError, match="^sweep.odd_sample.weights: cannot read "):
         sampler_from_config({"weights": str(path)}, odd=_regions_odd())
 
