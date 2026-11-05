@@ -11,6 +11,7 @@ yaw rate change sign (:func:`to_commonroad`).
 from __future__ import annotations
 
 import math
+from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Optional
 
 from ..constants import EGO_ROLE_NAME
@@ -68,7 +69,27 @@ def _kind(actor: "carla.Actor") -> str:
     return _KINDS.get(base, "car")
 
 
-def _state(actor: "carla.Actor", commonroad_id: int) -> ActorState:
+@dataclass(frozen=True)
+class _Kinematics:
+    """Where a road user's box is centred and how it moves, in the CommonRoad
+    frame: the typed part of its state (:func:`_kinematics`)."""
+
+    x: float
+    y: float
+    yaw: float
+    vx: float
+    vy: float
+    ax: float
+    ay: float
+    yaw_rate: float
+    length: float
+    width: float
+
+
+def _kinematics(actor: "carla.Actor") -> _Kinematics:
+    """*actor*'s box centre, heading, velocity, acceleration, yaw rate and box
+    size in the CommonRoad frame.  An acceleration or an angular velocity that
+    cannot be read is zero."""
     transform = actor.get_transform()
     yaw = math.radians(transform.rotation.yaw)
     box = actor.bounding_box
@@ -87,30 +108,44 @@ def _state(actor: "carla.Actor", commonroad_id: int) -> ActorState:
         yaw_rate = -math.radians(float(actor.get_angular_velocity().z))
     except Exception:
         yaw_rate = 0.0
+    return _Kinematics(
+        x=x,
+        y=y,
+        yaw=-yaw,
+        vx=float(velocity.x),
+        vy=-float(velocity.y),
+        ax=ax,
+        ay=ay,
+        yaw_rate=yaw_rate,
+        length=max(2.0 * float(box.extent.x), 0.1),
+        width=max(2.0 * float(box.extent.y), 0.1),
+    )
+
+
+def _state(actor: "carla.Actor", commonroad_id: int) -> ActorState:
+    k = _kinematics(actor)
     return {
         "id": commonroad_id,
         "kind": _kind(actor),
-        "x": x,
-        "y": y,
-        "yaw": -yaw,
-        "vx": float(velocity.x),
-        "vy": -float(velocity.y),
-        "ax": ax,
-        "ay": ay,
-        "yaw_rate": yaw_rate,
-        "length": max(2.0 * float(box.extent.x), 0.1),
-        "width": max(2.0 * float(box.extent.y), 0.1),
+        "x": k.x,
+        "y": k.y,
+        "yaw": k.yaw,
+        "vx": k.vx,
+        "vy": k.vy,
+        "ax": k.ax,
+        "ay": k.ay,
+        "yaw_rate": k.yaw_rate,
+        "length": k.length,
+        "width": k.width,
     }
 
 
-def read_frame(world: "carla.World", radius_m: float) -> Optional[Frame]:
-    """The ego and the road users within *radius_m* of it; ``None`` without an
-    ego.  Ids are CARLA's, which are positive, as CommonRoad's must be."""
-    ego = find_actor_in_world(world, EGO_ROLE_NAME)
-    if ego is None:
-        return None
-    ego_state = _state(ego, int(ego.id))
-    others: list[ActorState] = []
+def _road_users_near(
+    world: "carla.World", ego: "carla.Actor", radius_m: float
+) -> list["carla.Actor"]:
+    """The vehicles and walkers of *world* other than *ego*, within *radius_m*
+    of it (in the plane) and not hidden under the map, in the world's order."""
+    near: list["carla.Actor"] = []
     centre = ego.get_transform().location
     for actor in world.get_actors():
         type_id = str(actor.type_id)
@@ -124,5 +159,18 @@ def read_frame(world: "carla.World", radius_m: float) -> Optional[Frame]:
             continue
         if math.hypot(location.x - centre.x, location.y - centre.y) > radius_m:
             continue
-        others.append(_state(actor, int(actor.id)))
+        near.append(actor)
+    return near
+
+
+def read_frame(world: "carla.World", radius_m: float) -> Optional[Frame]:
+    """The ego and the road users within *radius_m* of it; ``None`` without an
+    ego.  Ids are CARLA's, which are positive, as CommonRoad's must be."""
+    ego = find_actor_in_world(world, EGO_ROLE_NAME)
+    if ego is None:
+        return None
+    ego_state = _state(ego, int(ego.id))
+    others: list[ActorState] = [
+        _state(actor, int(actor.id)) for actor in _road_users_near(world, ego, radius_m)
+    ]
     return Frame(ego_state, others)
