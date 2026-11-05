@@ -9,6 +9,7 @@ the conversions that do not compile.
 
 from __future__ import annotations
 
+import math
 from typing import List, Optional
 
 import numpy as np
@@ -152,6 +153,13 @@ class LidarRevolution:
     def __init__(
         self, rotation_frequency: float, first_dt: float, horizontal_fov: float = 360.0
     ) -> None:
+        # NaN compares false with everything, so it passes the check below,
+        # and an infinite frequency or tick sweeps an infinite arc.
+        if not (math.isfinite(rotation_frequency) and math.isfinite(first_dt)):
+            raise ValueError(
+                "rotation_frequency and first_dt must be finite, "
+                f"not {rotation_frequency} and {first_dt}"
+            )
         if rotation_frequency <= 0.0 or first_dt <= 0.0:
             raise ValueError("rotation_frequency and first_dt must be positive")
         if not 0.0 < horizontal_fov <= 360.0:

@@ -118,6 +118,8 @@ def _lidar(attributes: dict[str, Any]) -> dict[str, Any]:
         {"sensor_tick": "0.0"},
         {"horizontal_fov": 360},
         {"horizontal_fov": 90.5, "sensor_tick": 0.0},
+        {"rotation_frequency": 10, "horizontal_fov": 360},
+        {"rotation_frequency": "20.0"},
     ],
 )
 def test_a_lidar_sweeping_its_field_of_view_every_tick_is_read(
@@ -281,6 +283,22 @@ def test_fields_are_constants_signals_or_scaled_signals() -> None:
         (_lidar({"horizontal_fov": 400}), r"horizontal_fov: must be in \(0, 360\]"),
         (_lidar({"horizontal_fov": 0}), r"horizontal_fov: must be in \(0, 360\]"),
         (_lidar({"horizontal_fov": "nan"}), "horizontal_fov: .*finite"),
+        # It turns a finite number of times a second, forward (#1478).
+        (_lidar({"rotation_frequency": 0}), "rotation_frequency: must be positive"),
+        (_lidar({"rotation_frequency": -10}), "rotation_frequency: must be positive"),
+        (_lidar({"rotation_frequency": math.nan}), "rotation_frequency: .*finite"),
+        (_lidar({"rotation_frequency": math.inf}), "rotation_frequency: .*finite"),
+        (_lidar({"rotation_frequency": "abc"}), "rotation_frequency: .*finite"),
+        # An attribute is text, a number or a bool, not "None" or "[1, 2]".
+        (_lidar({"rotation_frequency": None}), "rotation_frequency: expected text"),
+        (_lidar({"channels": [16, 32]}), "attributes.channels: expected text"),
+        (
+            _device(
+                codec="raw",
+                sensor={"blueprint": "sensor.camera.rgb", "attributes": {"fov": {}}},
+            ),
+            "attributes.fov: expected text",
+        ),
     ],
 )
 def test_a_bad_configuration_is_refused(document: Any, message: str) -> None:
@@ -779,6 +797,62 @@ def test_lidar_revolutions_go_out_as_the_sensors_packets(world: _World) -> None:
     finally:
         bridge.close()
         receiver.close()
+
+
+class _BrokenListen(Exception):
+    pass
+
+
+def _nan_frequency(sensor: _Sensor) -> None:
+    # What CARLA reports, which the configuration did not see.
+    sensor.attributes["rotation_frequency"] = "nan"
+
+
+def _failing_listen(sensor: _Sensor) -> None:
+    def listen(callback: Callable[[Any], None]) -> None:
+        raise _BrokenListen("listen failed")
+
+    sensor.listen = listen  # type: ignore[method-assign]
+
+
+@pytest.mark.parametrize(
+    ("breaks", "error"),
+    [(_nan_frequency, ValueError), (_failing_listen, _BrokenListen)],
+)
+def test_a_sensor_that_fails_to_attach_is_destroyed(
+    world: _World,
+    monkeypatch: pytest.MonkeyPatch,
+    breaks: Callable[[_Sensor], None],
+    error: type[BaseException],
+) -> None:
+    # Spawned but never the device's, it would stay on the ego (#1478).
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+
+    spawn = world.spawn_actor
+
+    def spawn_broken(blueprint: _Blueprint, transform: Any, attach_to: Any) -> Any:
+        sensor = spawn(blueprint, transform, attach_to)
+        breaks(sensor)
+        return sensor
+
+    monkeypatch.setattr(world, "spawn_actor", spawn_broken)
+    bridge = HilsBridge(
+        parse_config(
+            _lidar({"rotation_frequency": 10, "channels": 16}),
+        ),
+        carla_module=_carla(world),
+    )
+    bridge.connect()
+    bridge.open_devices()
+    [device] = bridge._sensors
+    try:
+        with pytest.raises(error):
+            device.attach(_carla(world), world, world.actors[0], 0.05)
+        assert not device.attached
+        [sensor] = world.sensors
+        assert not sensor.is_alive and sensor.callback is None
+    finally:
+        bridge.close()
 
 
 def _fov_measurement(time: float, angles: np.ndarray, fov: float) -> Any:

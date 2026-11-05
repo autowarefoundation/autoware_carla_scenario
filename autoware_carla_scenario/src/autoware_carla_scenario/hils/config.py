@@ -504,12 +504,7 @@ def _sensor(value: Any, codec: str, where: str) -> SensorSpec:
             _finite(transform.get(k, 0.0), f"{where}.transform.{k}")
             for k in _TRANSFORM_KEYS
         ),
-        attributes={
-            str(k): str(v).lower() if isinstance(v, bool) else str(v)
-            for k, v in _mapping(
-                section.get("attributes"), f"{where}.attributes"
-            ).items()
-        },
+        attributes=_attributes(section.get("attributes"), f"{where}.attributes"),
         encoding=_text(section.get("encoding", "bgra"), f"{where}.encoding"),
         intensity_scale=_finite(
             section.get("intensity_scale", 255.0), f"{where}.intensity_scale"
@@ -541,6 +536,27 @@ def _sensor(value: Any, codec: str, where: str) -> SensorSpec:
     return spec
 
 
+def _attributes(value: Any, where: str) -> Dict[str, str]:
+    """A sensor's blueprint attributes, as the strings CARLA takes.
+
+    A value is text, a number or a bool (``true``/``false``, as CARLA writes
+    them); anything else (an empty value, which YAML reads as null, a list, a
+    mapping) is refused rather than turned into its Python text (``"None"``).
+    """
+    attributes: Dict[str, str] = {}
+    for key, item in _mapping(value, where).items():
+        if isinstance(item, bool):
+            attributes[str(key)] = str(item).lower()
+        elif isinstance(item, (str, int, float)):
+            attributes[str(key)] = str(item)
+        else:
+            raise HilsConfigError(
+                f"{where}.{key}: expected text, a number or a bool, "
+                f"got the {type(item).__name__} {item!r}"
+            )
+    return attributes
+
+
 def _attribute_number(attributes: Mapping[str, str], key: str, where: str) -> float:
     """The blueprint attribute *key* of a sensor as a finite number."""
     text = attributes[key]
@@ -559,7 +575,8 @@ def _lidar_attributes(attributes: Mapping[str, str], where: str) -> None:
     The bridge gathers a LiDAR's per-tick arcs into revolutions
     (:class:`~autoware_carla_scenario.hils.lidar_revolution.LidarRevolution`).
     A revolution is one sweep of ``horizontal_fov`` degrees, which may be
-    anything in (0, 360].  ``sensor_tick`` must be left unset (or 0): CARLA
+    anything in (0, 360], at ``rotation_frequency`` revolutions a second, a
+    finite positive number.  ``sensor_tick`` must be left unset (or 0): CARLA
     sweeps only one world tick per measurement however long the
     ``sensor_tick``, so a LiDAR measured less often than every tick turns
     slower than its ``rotation_frequency``, and no device turns that way.
@@ -570,6 +587,13 @@ def _lidar_attributes(attributes: Mapping[str, str], where: str) -> None:
             raise HilsConfigError(
                 f"{where}.horizontal_fov: must be in (0, 360] degrees, "
                 f"got {attributes['horizontal_fov']!r}"
+            )
+    if "rotation_frequency" in attributes:
+        frequency = _attribute_number(attributes, "rotation_frequency", where)
+        if frequency <= 0.0:
+            raise HilsConfigError(
+                f"{where}.rotation_frequency: must be positive, "
+                f"got {attributes['rotation_frequency']!r}"
             )
     if "sensor_tick" in attributes:
         if _attribute_number(attributes, "sensor_tick", where) != 0.0:

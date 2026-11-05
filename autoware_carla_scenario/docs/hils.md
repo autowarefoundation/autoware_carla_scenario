@@ -276,7 +276,9 @@ networks, SOME/IP, SBF, NMEA, UBX, RTCM).
 ### Sensor devices
 
 The bridge spawns the sensor on the ego (its `role_name` is the device's
-name), listens to it, and sends each measurement:
+name), listens to it, and sends each measurement. A blueprint attribute is
+text, a number or a bool; an empty value (YAML's null), a list or a mapping
+is refused. A sensor that fails to attach is destroyed, not left on the ego:
 
 ```yaml
 lidar_top:
@@ -307,7 +309,8 @@ front_camera:
   packets, paced over the revolution as the sensor streams them. A
   revolution is one sweep of `horizontal_fov` (360 degrees by default; CARLA
   turns the rays through azimuths [-fov/2, fov/2)), which may be anything in
-  (0, 360]. A `sensor_tick` other than 0 is refused: CARLA sweeps only one
+  (0, 360], at `rotation_frequency` revolutions a second, which must be a
+  finite positive number. A `sensor_tick` other than 0 is refused: CARLA sweeps only one
   world tick per measurement, so a LiDAR measured less often turns slower
   than its `rotation_frequency`. Points go from CARLA's sensor frame (y
   right) to the sensor's (y left). Match `channels`, the field of view and
