@@ -434,7 +434,7 @@ class TestResolve:
                 return position.x, -position.y, None, None
             return position.x, position.y, position.z, position.yaw
 
-        resolved = resolve_trajectory(trajectory, lambda x, y: 2.5, resolve=resolve)
+        resolved = resolve_trajectory(trajectory, lambda x, y, z: 2.5, resolve=resolve)
         assert resolved.zs == pytest.approx([7.0, 2.5])
         assert resolved.times == [0.0, 1.0]
 

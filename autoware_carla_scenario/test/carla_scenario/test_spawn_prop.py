@@ -132,7 +132,7 @@ def test_many_props_share_the_library_and_the_ground() -> None:
         _add(f"c{i}", CarlaWorldPose(float(i), 0.0, 0.0)).apply(
             world,  # type: ignore[arg-type]
             library,
-            ground=lambda x, y: 2.0,
+            ground=lambda x, y, z: 2.0,
         )
     assert [p.transform.location.z for p in world.spawned] == pytest.approx([2.05] * 3)
 
