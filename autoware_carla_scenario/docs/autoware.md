@@ -162,11 +162,27 @@ The values the launcher's type reads are checked there too, naming the key:
   domain's DDS ports are past 65535 (see
   [The ROS_DOMAIN_ID](https://docs.ros.org/en/rolling/Concepts/Intermediate/About-Domain-ID.html)).
   On Linux, that page advises 0 to 101, below the kernel's ephemeral ports.
+- the argument lists -- `launch`, `colcon_args`, `docker_args` and `command`
+  -- must be lists (or null, for none) of strings or numbers, each made a
+  string. A string is refused, not split and not taken as one argument:
+  `"autoware.launcher.docker_args='--shm-size=8g'"` used to run
+  `docker run - - s h m ...`, a character per argument, and
+  `'ros2 launch x y'` may be one argument (a `bash -c` script) or four, which
+  only you know. Write a list, quoting an item that holds spaces:
+  `'autoware.launcher.docker_args=[--shm-size=8g]'`,
+  `'autoware.launcher.command=[bash,-c,"ros2 launch x y"]'`. An item that is
+  a list, a mapping, null or a boolean is refused too.
+- `env` and `mounts` must be mappings (or null) of strings or numbers, and
+  `bridge_parameters` a mapping (or null) of ROS parameters. An `env` value is
+  given as text or a number (`ROS_LOCALHOST_ONLY: 1`, not `true`).
 
-`+autoware.launcher.stop_timeout_s=nan` or
-`'autoware.launcher.ros_domain_ids=[-3,999]'` fails the run the same way.
+`+autoware.launcher.stop_timeout_s=nan`,
+`'autoware.launcher.ros_domain_ids=[-3,999]'` or
+`"autoware.launcher.docker_args='--shm-size=8g'"` fails the run the same way.
 `DockerAutowareConfig`, `CommandAutowareLauncher` and `ProcessGroup` refuse
-such a `stop_timeout_s`, and `DockerAutowareConfig` such a domain id, with a
+such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
+`DockerAutowareConfig` a `str` (or `bytes`) `launch`, `colcon_args` or
+`docker_args`, and `CommandAutowareLauncher` a `str` `argv`, with a
 `ValueError` when they are built from Python.
 
 ### Settings
