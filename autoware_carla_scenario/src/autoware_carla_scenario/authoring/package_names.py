@@ -17,7 +17,7 @@ On top of that:
 * ids that differ only by a ``_scenario`` suffix or by repeated or trailing
   underscores (``cut_in``, ``cut_in_scenario``, ``cut__in``) share one package
   name, and so one directory: :func:`shared_package_id` names the shortest of
-  them, which the validator warns about.
+  them (``cut_in``), which the validator warns about.
 """
 
 from __future__ import annotations
@@ -73,16 +73,40 @@ def framework_name_problem(scenario_id: str) -> Optional[str]:
     )
 
 
+def _canonical_id(package_name: str) -> str:
+    """Return the shortest id that exports to *package_name*.
+
+    That is the name without its ``_scenario`` suffix when that id maps back
+    to it (``cut_in`` for ``cut_in_scenario``), and the package name itself
+    otherwise (``a_scenario_scenario``: the id ``a_scenario`` exports as
+    ``a_scenario``).  Every id exporting to *package_name* sanitises to one
+    of the two, and sanitising never makes an id longer, so no id is shorter.
+    """
+    stripped = package_name[: len(package_name) - len(PACKAGE_SUFFIX)]
+    if stripped and _package_name(stripped) == package_name:
+        return stripped
+    return package_name
+
+
 def shared_package_id(scenario_id: str) -> Optional[str]:
     """Return the shortest other id exporting to *scenario_id*'s package.
 
     ``cut_in_scenario`` returns ``cut_in``, whose package and directory are
     also ``cut_in_scenario``, so exporting one with ``force`` replaces the
-    other.  ``None`` when *scenario_id* is that shortest id itself.
+    other; ``a_scenario__scenario_`` returns ``a_scenario_scenario``.  The id
+    returned always exports to the same package and is never refused.
+    ``None`` when *scenario_id* is that shortest id itself, or is refused
+    (:func:`framework_name_problem`).
     """
+    if framework_name_problem(scenario_id) is not None:
+        return None
     package_name = _package_name(scenario_id)
-    short_id = package_name[: len(package_name) - len(PACKAGE_SUFFIX)]
-    if not short_id or short_id == scenario_id:
+    short_id = _canonical_id(package_name)
+    if short_id == scenario_id:
+        return None
+    if _package_name(short_id) != package_name:
+        return None
+    if framework_name_problem(short_id) is not None:
         return None
     return short_id
 

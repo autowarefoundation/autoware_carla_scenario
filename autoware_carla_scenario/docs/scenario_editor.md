@@ -896,7 +896,10 @@ scenario's name (`scenario=cut_in`). On top of that pattern, the validator
 - **warns** about an id that shares its package, and so its directory, with a
   shorter id: `cut_in_scenario` and `cut__in` both export as
   `cut_in_scenario`, as `cut_in` does, so exporting one with force replaces
-  the other's package. Prefer the shorter id.
+  the other's package. Prefer the shorter id. The warning names the shortest
+  id that really exports to the same package: `a_scenario__scenario_` is
+  pointed at `a_scenario_scenario`, not at `a_scenario` (which exports as
+  `a_scenario`), and an id is never pointed at a refused one.
 
 ### What the wheelhouse is built from
 

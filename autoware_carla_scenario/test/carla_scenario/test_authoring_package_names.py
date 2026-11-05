@@ -59,6 +59,20 @@ def _random_ids(count: int) -> list[str]:
     return ids
 
 
+def _suffix_ids(count: int) -> list[str]:
+    """Ids built from ``_scenario`` suffixes, underscores and the framework name."""
+    rng = random.Random(16952)
+    heads = ["a", "cut_in", "scenario", "autoware_carla", "autoware"]
+    parts = ["_", "__", "scenario", "_scenario", "__scenario", "carla", "a"]
+    ids: list[str] = []
+    while len(ids) < count:
+        candidate = rng.choice(heads) + "".join(
+            rng.choice(parts) for _ in range(rng.randint(0, 4))
+        )
+        ids.append(candidate)
+    return ids
+
+
 _FIXED_IDS = [
     "cut_in",
     "cut_in_scenario",
@@ -147,6 +161,13 @@ class TestSharedDirectory:
             ("scenario_scenario", "scenario"),
             ("cut_in", None),
             ("scenario", None),
+            ("a_scenario_scenario", None),
+            ("a_scenario__scenario_", "a_scenario_scenario"),
+            ("a_scenario", "a"),
+            ("autoware_carla_scenario_scenario", None),
+            ("autoware_carla_scenario__scenario", "autoware_carla_scenario_scenario"),
+            ("autoware_carla", None),
+            ("autoware_carla_scenario", None),
         ],
     )
     def test_shared_package_id(self, scenario_id: str, short_id: str | None) -> None:
@@ -156,6 +177,24 @@ class TestSharedDirectory:
                 package_names.names_for_id(scenario_id)["package_name"]
                 == package_names.names_for_id(short_id)["package_name"]
             )
+
+    def test_a_returned_id_shares_the_package(self) -> None:
+        returned = 0
+        for scenario_id in _suffix_ids(20000) + _random_ids(2000):
+            short_id = package_names.shared_package_id(scenario_id)
+            if short_id is None:
+                continue
+            returned += 1
+            assert short_id != scenario_id, scenario_id
+            assert len(short_id) <= len(scenario_id), scenario_id
+            assert _ID.match(short_id), scenario_id
+            assert package_names.framework_name_problem(short_id) is None, scenario_id
+            assert (
+                package_names.names_for_id(short_id)["package_name"]
+                == package_names.names_for_id(scenario_id)["package_name"]
+            ), scenario_id
+            assert package_names.shared_package_id(short_id) is None, scenario_id
+        assert returned > 1000
 
     def test_the_validator_warns(self) -> None:
         report = validate_document(new_document("cut_in_scenario"))
