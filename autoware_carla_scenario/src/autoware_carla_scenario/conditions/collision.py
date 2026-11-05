@@ -78,7 +78,9 @@ class CollisionCondition(BaseCondition):
     Args:
         min_impulse: Minimum collision impulse magnitude (in N·s) required to
             trigger the condition.  Collisions below this threshold are ignored.
-            Defaults to ``0.0`` (all collisions trigger).
+            Defaults to ``0.0`` (all collisions trigger).  Must be
+            non-negative and finite: an infinite or NaN threshold would
+            ignore every collision, so a crashing run would pass (#1501).
         target: ``role_name`` of the entity the ego must hit.  ``None`` (the
             default) accepts a collision with anything.
         target_type: A class of object the ego must hit.  Defaults to
@@ -86,6 +88,7 @@ class CollisionCondition(BaseCondition):
         label: Human-readable identifier for this condition.
 
     Raises:
+        ValueError: If *min_impulse* is negative or not finite.
         ValueError: If both *target* and a *target_type* other than
             :attr:`~CollisionTargetType.ANY` are given.  OpenSCENARIO's
             ``CollisionCondition`` takes an ``EntityRef`` *or* a ``ByType``,
@@ -130,7 +133,11 @@ class CollisionCondition(BaseCondition):
                 "not both"
             )
         super().__init__(label=label)
-        self._min_impulse = min_impulse
+        # A NaN slips past ``< 0`` and an infinity past every collision:
+        # either way the condition never fires (#1501).
+        if not math.isfinite(min_impulse) or min_impulse < 0.0:
+            raise ValueError("min_impulse must be non-negative and finite")
+        self._min_impulse = float(min_impulse)
         self._target = str(target) if target is not None else None
         self._target_type = target_type
         self._sensor: Optional["carla.Actor"] = None
