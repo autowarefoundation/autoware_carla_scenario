@@ -166,6 +166,11 @@ self.register_pre_tick(
 )
 ```
 
+`seed` (as the adversarial actions' and `AdversityFeasibleCondition`'s) is a
+whole number, not negative; `None`, the default, follows the run's seed. A
+seed of `2.5`, `True` or `-1` is refused when the action is built, naming
+`seed`, rather than read as 2 or 1.
+
 It drives the NPCs and pedestrians a scenario registers, and with
 `drive_background` (the default) the traffic backend's background vehicles in
 the world too (#417): the TrafficManager's background traffic

@@ -38,6 +38,7 @@ from ..pedestrian.poser import WalkerPoser
 from ..pedestrian.skeleton import Vector, directions_from_joints
 from ..prepare.declare import need_prepare
 from ..prepare.pool import running_backend
+from ..seed import check_seed
 from .base import BaseAction, TickTiming
 
 logger = logging.getLogger(__name__)
@@ -123,7 +124,9 @@ class SmartPedestrianControllerAction(BaseAction):
             positive, a prompt's time is not finite or is negative, a
             waypoint is not finite, or the keyframes file is malformed (a
             keyframe's ``time_s``, joints, ``x``, ``y`` or ``yaw_deg`` not
-            finite included).
+            finite included), or *seed* is not a whole number (``2`` or
+            ``2.0``, read as 2; not ``2.5``, NaN, infinity or a boolean) or
+            is negative.  The error names the parameter.
     """
 
     _entity_name: str
@@ -172,6 +175,9 @@ class SmartPedestrianControllerAction(BaseAction):
             raise ValueError(
                 f"duration_s must be finite and positive, not {duration_s!r}"
             )
+        # Checked as TrafficSourceAction's seed is: int() alone would read
+        # 2.5 or True as a seed, and take a negative one (#1495).
+        seed = check_seed("seed", seed)
         texts = [(0.0, prompt)] if prompt else []
         for timed in prompts:
             if not math.isfinite(timed.time_s) or timed.time_s < 0:
@@ -204,7 +210,7 @@ class SmartPedestrianControllerAction(BaseAction):
         self._speed_ms = float(speed_ms)
         self._keyframes = () if keyframes is None else _read_keyframes(keyframes)
         self._duration_s = duration_s
-        self._seed = int(seed)
+        self._seed = seed
         self._poser = WalkerPoser(self._entity_name, "SmartPedestrianControllerAction")
         self._client = None
         self._session = ""
