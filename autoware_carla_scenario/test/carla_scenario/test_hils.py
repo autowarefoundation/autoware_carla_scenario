@@ -2495,6 +2495,39 @@ def test_a_scale_too_large_for_a_float_is_refused(dbc: Path) -> None:
         parse_config(document)
 
 
+@pytest.mark.parametrize(
+    "value", [10**400, -(10**400), 10**5000], ids=["huge", "-huge", "too-long"]
+)
+def test_a_constant_too_large_for_a_float_is_refused(dbc: Path, value: int) -> None:
+    # float() ran before the check, raising a bare OverflowError (#1618).
+    document = _hils_config(_mem(), dbc, commands={"mode": "control"})
+    document["devices"]["can"]["inputs"][0]["command"] = {"throttle": value}
+    with pytest.raises(
+        HilsConfigError,
+        match=r"inputs\[0\]\.command\.throttle: expected a number a float can hold",
+    ):
+        parse_config(document)
+
+
+@pytest.mark.parametrize(("value", "constant"), [(True, 1.0), (False, 0.0), (1, 1.0)])
+def test_a_bool_or_integer_constant_is_a_float(
+    dbc: Path, value: Any, constant: float
+) -> None:
+    document = _hils_config(_mem(), dbc, commands={"mode": "control"})
+    document["devices"]["can"]["inputs"][0]["command"] = {"throttle": value}
+    source = parse_config(document).devices[0].inputs[0].command["throttle"]
+    assert source.constant == constant
+    assert type(source.constant) is float
+
+
+def test_an_integer_too_long_for_text_is_refused_naming_the_key() -> None:
+    # str() of an integer of more than sys.get_int_max_str_digits() digits
+    # raises a bare ValueError (#1618).
+    huge = 10**5000
+    with pytest.raises(HilsConfigError, match=r"attributes\.channels: .*10\*\*5000"):
+        parse_config(_lidar({"channels": huge}))
+
+
 # -- forwarding the ECUs' commands from several receiving threads ------------------
 
 

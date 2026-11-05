@@ -385,12 +385,30 @@ def _text(value: Any, where: str, *, number: bool = False) -> str:
     if isinstance(value, str):
         return value
     if number and isinstance(value, int) and not isinstance(value, bool):
-        return str(value)
+        return _decimal(value, where)
     raise HilsConfigError(
         f"{where}: expected text, got the {type(value).__name__} {value!r}; "
         "YAML reads an unquoted number or yes/no/on/off as that type, so quote it "
         '(e.g. "0102")'
     )
+
+
+def _huge(value: int) -> str:
+    """How an error shows an integer too long for ``repr()``, which refuses
+    one of more digits than ``sys.get_int_max_str_digits()``."""
+    sign = "-" if value < 0 else ""
+    return f"an integer of about {sign}10**{int(abs(value).bit_length() * 0.30103)}"
+
+
+def _decimal(value: int, where: str) -> str:
+    """The decimal text of the integer *value*, or a :class:`HilsConfigError`
+    naming *where* when it has too many digits for ``str()``."""
+    try:
+        return str(value)
+    except ValueError:
+        raise HilsConfigError(
+            f"{where}: expected an integer of fewer digits, got {_huge(value)}"
+        ) from None
 
 
 def _keys(section: Mapping[Any, Any], where: str) -> Dict[str, Any]:
@@ -407,8 +425,13 @@ def _number(value: Any, where: str) -> float:
     try:
         return float(value)
     except OverflowError:
+        # Only an integer overflows a float; one too long for repr() as well.
+        try:
+            shown = repr(value)
+        except ValueError:
+            shown = _huge(int(value))
         raise HilsConfigError(
-            f"{where}: expected a number a float can hold, got {value!r}"
+            f"{where}: expected a number a float can hold, got {shown}"
         ) from None
 
 
@@ -547,7 +570,9 @@ def _attributes(value: Any, where: str) -> Dict[str, str]:
     for key, item in _mapping(value, where).items():
         if isinstance(item, bool):
             attributes[str(key)] = str(item).lower()
-        elif isinstance(item, (str, int, float)):
+        elif isinstance(item, int):
+            attributes[str(key)] = _decimal(item, f"{where}.{key}")
+        elif isinstance(item, (str, float)):
             attributes[str(key)] = str(item)
         else:
             raise HilsConfigError(
@@ -642,8 +667,10 @@ def _input_source(value: Any, where: str) -> InputSource:
         )
     if isinstance(value, str):
         return InputSource(field=value)
-    if isinstance(value, (bool, int, float)):
+    if isinstance(value, bool):
         return InputSource(constant=_finite(float(value), where))
+    if isinstance(value, (int, float)):
+        return InputSource(constant=_finite(value, where))
     raise HilsConfigError(
         f"{where}: expected a field name, a number or {{field: ...}}, got {value!r}"
     )
