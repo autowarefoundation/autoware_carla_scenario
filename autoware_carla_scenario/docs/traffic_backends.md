@@ -149,6 +149,22 @@ uv run scenario traffic=sumo traffic.pedestrians.walking_speed_mps.mean=1.0
 An ODD can draw both the mean and the std of each, per case
 ([Traffic parameters from the ODD](odd.md#traffic-parameters-from-the-odd)).
 
+A numeric field takes a number, never a bool: `ignore_lights: true` or
+`{mean: true}` is an error naming the field
+(`traffic.vehicles.ignore_lights must be a number, not a bool`), not a
+probability of 1. The two bool fields, `lane_changes` and
+`follow_visibility`, take `true` or `false`, or one of the spellings
+`1`/`true`/`on`/`yes` and `0`/`false`/`off`/`no` (any case, surrounding
+spaces ignored), which is what Hydra leaves an override such as
+`traffic.vehicles.lane_changes=no` as. Each is stored as a real bool, so every
+backend reads the same value; anything else (`enabled`, `2`, `0.5`) is an
+error naming `traffic.vehicles.<field>` before the run starts, from the config,
+a `TrafficParametersAction` and the scenario editor alike.
+
+```bash
+uv run scenario traffic.vehicles.lane_changes=no traffic.vehicles.follow_visibility=off
+```
+
 `traffic.vehicles`:
 
 | Field | Meaning | `traffic_manager` | `sumo` |
