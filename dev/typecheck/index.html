@@ -4818,7 +4818,7 @@ lists here. -->
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 288 of the package's 410
 modules (70%; about 88,300 of
-151,900 lines) are <code>CHECKED</code>: the kinematics, the
+152,000 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6176,7 +6176,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>trajectory.model._vertex_advance</code>: takes a TrajectoryVertex call's <code>*args</code> and <code>**kwargs</code> as written (<code>tuple[Any, ...]</code>, <code>dict[str, Any]</code>), which Codon cannot express; only _refusing_vertex_times, itself uncalled, calls it</li>
 <li><code>trajectory.model._whole</code>: checks that a value of any type (<code>value: Any</code>: whatever a YAML document or a caller wrote for a lane or junction index) is a whole number, which Codon cannot express; the route poses' __post_init__ call it with their own fields, so its body is compiled through them</li>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
-<li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; only validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it</li>
+<li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number, which checks the traffic options, calls it with the float the check types the option with</li>
 </ul>
 </details>
 <p>The 122 <code>EXCLUDED</code> modules fall in three groups. Many fit
