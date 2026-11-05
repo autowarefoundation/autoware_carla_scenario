@@ -3,8 +3,8 @@
 A run names everything it writes after one stem (``CutInScenario``, then
 ``CutInScenario-1`` ...): its result, trajectory log, coverage file and so on
 are files, its T4 dataset (``{stem}.t4``) and SUMO's outputs
-(``{stem}.sumo``) directories.  Two places need the
-whole list, and both read it from here:
+(``{stem}.sumo``) directories.  Three places need the
+whole list, and all read it from here:
 
 * ``scenario_runner._run_file_stem``, which takes the first stem none of them
   exists under, so a run never writes over an earlier one's outputs;
@@ -12,7 +12,9 @@ whole list, and both read it from here:
   case under the stem its manifest gives it, and ``scenario_queue`` before it
   retries a failed attempt under the stem that attempt had, so a case run
   again leaves none of its last attempt's behind -- and the T4 writer, which
-  refuses a directory already holding a dataset, records the new one.
+  refuses a directory already holding a dataset, records the new one;
+* :func:`run_output_stems`, its inverse, which the Hydra sweeper calls to
+  learn which stems its case runs took in a directory.
 
 The modules that write each output keep their own name for its suffix
 (``rerun.RECORDING_SUFFIX``, ``t4_settings.DATASET_SUFFIX``,
@@ -31,9 +33,11 @@ from pathlib import Path
 __all__ = [
     "RUN_DIR_SUFFIXES",
     "RUN_FILE_SUFFIXES",
+    "RUN_SUFFIXES",
     "run_output_paths",
     "run_outputs_exist",
     "remove_run_outputs",
+    "run_output_stems",
 ]
 
 #: The files a run writes as ``{stem}{suffix}``.
@@ -64,6 +68,16 @@ RUN_DIR_SUFFIXES: tuple[str, ...] = (
     ".t4",
     # The SUMO backend's log, generated demand, FCD and clock (traffic=sumo).
     ".sumo",
+)
+
+#: Every suffix of a run output, longest first, so that ``X.sensors.rrd``
+#: reads as stem ``X``, not ``X.sensors``.
+RUN_SUFFIXES: tuple[str, ...] = tuple(
+    sorted(
+        RUN_FILE_SUFFIXES + RUN_DIR_SUFFIXES,
+        key=lambda suffix: len(suffix),
+        reverse=True,
+    )
 )
 
 
@@ -99,3 +113,26 @@ def remove_run_outputs(directory: Path, stem: str) -> None:
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
+
+
+def run_output_stems(directory: Path, job_log: str | None) -> set[str]:
+    """The stems of the runs that left an output in *directory*: the inverse
+    of :func:`run_output_paths`, what ``scenario_runner._run_file_stem``
+    skips over.
+
+    *job_log* is the file name of Hydra's job log (``<job name>.log``), which
+    is not a run's CARLA recorder log though it ends as one does.
+    """
+    try:
+        names = [path.name for path in directory.iterdir()]
+    except OSError:
+        return set[str]()
+    stems: set[str] = set()
+    for name in names:
+        if job_log is not None and name == job_log:
+            continue
+        for suffix in RUN_SUFFIXES:
+            if name.endswith(suffix) and len(name) > len(suffix):
+                stems.add(name[: -len(suffix)])
+                break
+    return stems
