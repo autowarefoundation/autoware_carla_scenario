@@ -36,6 +36,7 @@ from ..trajectory.authoring import (
     vertex_problems,
 )
 from ..constants import MIN_BACKGROUND_SPEED_KMH
+from .hydra_config import MAP_EXCLUSION_REF
 from ._builders_generated import (
     FAILURE_ONLY_CONDITIONS,
     ONCE_ACTIONS,
@@ -58,10 +59,6 @@ from .registry import (
 __all__ = ["Issue", "Severity", "ValidationReport", "validate_document"]
 
 Severity = Literal["error", "warning"]
-
-#: Value accepted by ``in_set`` in place of a literal list, resolved from the
-#: map config exactly as the existing sweep YAML does.
-MAP_EXCLUSION_REF = "${map.no_3d_model_lanelet_ids}"
 
 #: The signal states that let traffic through.  Amber is one of them: a junction
 #: showing amber to one movement still has vehicles in it, which is exactly why

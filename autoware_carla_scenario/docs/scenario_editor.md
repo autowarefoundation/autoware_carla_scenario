@@ -478,13 +478,27 @@ The id the field shows stays in the document under a search: it is the default a
 run that does not sweep falls back to, and the value the exported config
 declares so that Hydra's struct mode accepts the override at all.
 
+**Excluded lanelet IDs** (Scenario inspector) is what
+`${map.no_3d_model_lanelet_ids}` means for this scenario. Left empty, it
+inherits the map group's own list (`conf/map/nishishinjuku.yaml`'s, for the
+starter), resolved by Hydra at run time. A list typed there replaces the
+group's. On a built-in group the `map` keys a scenario config writes lose to
+the group, composed after the scenario, so the export writes such a list in
+place of every reference instead -- `values: [1, 2]` where the document says
+`${map.no_3d_model_lanelet_ids}` -- and a `map.no_3d_model_lanelet_ids=...`
+override on the command line no longer reaches those constraints. A scenario
+on its own map group (a source or a **Map directory**, below) writes its list,
+empty or not, into that group. The match count below follows the same rule,
+reading the built-in group's list from its file when the field is empty, so it
+counts what the sweep will enumerate.
+
 **One search per run.** The sweeper enumerates a single target key, so a
 document may search for one lanelet; a second search is a validation *warning*
 rather than an error — the scenario still runs, with everything else pinned to
 its default — and names which slot is being driven.
 
 **Preview matches** evaluates that tree against the real Lanelet2 map and
-reports, for example, `133 matched of 979 lanelets`. It is counted when the
+reports, for example, `121 matched of 979 lanelets`. It is counted when the
 picker is opened, not on every render: each lanelet field on the inspector has a
 picker in the page at once, and counting means parsing a city. Loading a map is
 opt-in and cached; if the map files are missing the count is unavailable but the
