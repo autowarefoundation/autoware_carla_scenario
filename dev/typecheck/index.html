@@ -4816,8 +4816,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-289 of the package's 411
-modules (70%; about 88,800 of
+290 of the package's 412
+modules (70%; about 88,900 of
 152,400 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4826,7 +4826,9 @@ base, its runner and its queue, the traffic backends' interface, the
 plain-typed parts of the SUMO backend (its geometry, its physics control, the
 signal states it sets, and its command-line options, mode bits, vehicle types
 and type files), the signal controllers, the adversity math, the measures,
-the metrics and the ODD's probes, the gate package's <code>__init__</code>, its per-run record and probe,
+the metrics and the ODD's probes (and the names, knob keys, limits and
+ranges of the traffic parameters' probes: <code>odd.traffic_ranges</code>, #1680; not
+the probes themselves, <code>odd.traffic_probes</code>, which builds openodd's knobs), the gate package's <code>__init__</code>, its per-run record and probe,
 and the typed criteria its evaluator judges (<code>gate.criteria</code>: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
 baseline; not the evaluator itself, which reads the gate's pydantic model and
@@ -4848,7 +4850,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 289 CHECKED modules</summary>
+<summary>The 290 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5602,6 +5604,10 @@ with the first paragraph of its docstring:</p>
 <td>Map an ODD attribute onto a scenario measure.</td>
 </tr>
 <tr>
+<td><code>odd.traffic_ranges</code></td>
+<td>The traffic parameters' probes by name: their knob keys and their ranges.</td>
+</tr>
+<tr>
 <td><code>odd.unit_names</code></td>
 <td>How units are spelled: the canonical spelling of an alias (<code>kph</code> -&gt; <code>km/h</code>).</td>
 </tr>
@@ -6290,7 +6296,7 @@ the first:</p>
 <li><code>odd.route</code>: the route-coverage half of checking a planned route against an ODD (it imports the planning, <code>PlannedRoute</code>, <code>RouteError</code> and <code>plan_route()</code>, from odd.route_plan, which is checked, and re-exports it), built on openodd's model: each lanelet's attribute values are a <code>dict[str, Any]</code> (whatever a probe reads, a bool, int, float or str, <code>None</code>, or the <code>UNDECIDED</code> sentinel, compared by identity) that it hands to openodd's <code>OddDefinition.complete()</code> and <code>evaluate()</code> (a Rust extension, with no model) and to a cover item's <code>bucket_of()</code>, so a typed record of them would be converted back to that mapping at the boundary, which the check cannot see past; a probe's <code>on_lanelet</code> reader is an attribute of any callable (<code>getattr</code> with a default), which Codon has no attributes of on a function; the <code>describe()</code> reports are <code>dict[str, Any]</code> of mixed values; and it names what the odd and coverage models do not declare (<code>coverage.items.value_label()</code>, and the probe, cover item and derivation of <code>OddAttribute</code> and the attributes, <code>complete()</code>, <code>evaluate()</code>, <code>situations()</code> and <code>outside_buckets()</code> of <code>OddDefinition</code>)</li>
 <li><code>odd.sampler</code>: wraps openodd's sampler and openodd.flaky's search (a Rust extension), imports base64 and yaml, and reads <code>Mapping[str, Any]</code> config nodes (<code>sampler_from_config()</code>), which Codon cannot express</li>
 <li><code>odd.sources</code>: re-exports openodd's git sources (a Rust extension)</li>
-<li><code>odd.traffic_probes</code>: builds openodd's OddKnob (a Rust extension) for each probe, and each probe reads a traffic parameter by name (<code>getattr</code> on the recorded parameters) and is a callable object keyed in a <code>dict[Callable[..., Any], OddKnob]</code>, which Codon cannot express</li>
+<li><code>odd.traffic_probes</code>: builds openodd's OddKnob (a Rust extension) for each probe, and each probe reads a traffic parameter by name (<code>getattr</code> on the recorded parameters) and is a callable object keyed in a <code>dict[Callable[..., Any], OddKnob]</code>, which Codon cannot express; the probes' names, their knob keys and limits and the parameters' ranges are the checked odd.traffic_ranges's</li>
 <li><code>odd.units</code>: re-exports openodd's units (a Rust extension)</li>
 <li><code>pedestrian._proto.pedestrian_motion_pb2</code>: imports google.protobuf</li>
 <li><code>pedestrian._proto.pedestrian_motion_pb2_grpc</code>: imports grpc</li>
@@ -8224,7 +8230,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 20:19:37 UTC"><span class="timeago" datetime="2026-11-05T20:19:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 20:19:37 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 21:02:00 UTC"><span class="timeago" datetime="2026-11-05T21:02:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 21:02:00 UTC">2026-11-05</span>
   </span>
 
     
