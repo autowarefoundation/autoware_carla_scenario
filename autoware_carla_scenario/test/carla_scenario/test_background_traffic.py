@@ -33,7 +33,7 @@ class _Backend(TrafficBackend):
     name = "fake"
 
     def __init__(self) -> None:
-        self.vehicles: dict[str, tuple[float, float]] = {}
+        self.vehicles: dict[str, tuple[float, float, float]] = {}
         self.removed: list[str] = []
 
     def spawn_background(
@@ -45,10 +45,14 @@ class _Backend(TrafficBackend):
         blueprint: Optional[str] = None,
     ) -> Optional[str]:
         handle = f"bg{len(self.vehicles) + len(self.removed) + 1}"
-        self.vehicles[handle] = (transform.location.x, transform.location.y)
+        self.vehicles[handle] = (
+            transform.location.x,
+            transform.location.y,
+            transform.location.z,
+        )
         return handle
 
-    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
+    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float, float]]:
         return dict(self.vehicles)
 
     def remove_background(self, world: Any, handle: str) -> None:
@@ -92,7 +96,9 @@ def _map(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(coordinate, "to_carla_world", to_carla_world)
     # On the region: lanelets 1 and 2 only, i.e. y < 15.
     monkeypatch.setattr(
-        background_traffic.LaneletRegion, "contains", lambda self, x, y: y < 15.0
+        background_traffic.LaneletRegion,
+        "contains",
+        lambda self, x, y, z=None: y < 15.0,
     )
 
 
@@ -200,7 +206,7 @@ class TestSource:
                 assert ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 >= 20.0
 
     def test_the_same_seed_places_the_same_vehicles(self) -> None:
-        def placed(seed: int) -> list[tuple[float, float]]:
+        def placed(seed: int) -> list[tuple[float, float, float]]:
             backend = _Backend()
             source = TrafficSourceAction(_NOT_JUNCTION, initial_vehicles=5, seed=seed)
             source.set_traffic_backend(backend)
@@ -288,7 +294,11 @@ class TestSource:
 class TestSink:
     def test_it_removes_the_vehicles_on_its_lanelets_only(self) -> None:
         backend, world = _Backend(), _World()
-        backend.vehicles = {"a": (5.0, 0.0), "b": (5.0, 10.0), "c": (5.0, 20.0)}
+        backend.vehicles = {
+            "a": (5.0, 0.0, 0.0),
+            "b": (5.0, 10.0, 0.0),
+            "c": (5.0, 20.0, 0.0),
+        }
         sink = TrafficSinkAction(_NOT_JUNCTION)
         sink.set_traffic_backend(backend)
         _run(sink, world, 0.2)
@@ -302,11 +312,11 @@ class TestSink:
         )
         sink.set_traffic_backend(backend)
         _run(sink, world, 1.0)
-        backend.vehicles["late"] = (5.0, 0.0)
+        backend.vehicles["late"] = (5.0, 0.0, 0.0)
         _run(sink, world, 0.5)
         assert "late" not in backend.vehicles
         _run(sink, world, 1.0)  # past 2 s: the sink has ended
-        backend.vehicles["after"] = (5.0, 0.0)
+        backend.vehicles["after"] = (5.0, 0.0, 0.0)
         _run(sink, world, 1.0)
         assert "after" in backend.vehicles
 

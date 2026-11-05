@@ -1368,7 +1368,7 @@ def test_background_vehicles_are_sumo_traffic_mirrored_into_carla(
         # Mirrored into CARLA like the rest of SUMO's traffic.
         mirror = backend._ambient[handle]
         assert mirror in world.spawned
-        (x, y) = backend.background_vehicles(world)[handle]
+        (x, y, _z) = backend.background_vehicles(world)[handle]
         assert -60.0 < x < -50.0 and y == pytest.approx(5.25, abs=1.0)
 
         backend.remove_background(world, handle)
@@ -2275,7 +2275,7 @@ def test_background_vehicles_are_where_their_mirrors_origins_are(
         for i in range(5):
             backend.tick(world, i * 0.05)
         assert handle in backend._ambient
-        x, y = backend.background_vehicles(world)[handle]
+        x, y, _z = backend.background_vehicles(world)[handle]
         yaw = math.radians(_carla_yaw(backend, handle))
         reach = float(tc.vehicle.getLength(handle)) / 2.0 + (
             box_location[0] if box_location else 0.0

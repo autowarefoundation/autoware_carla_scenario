@@ -21,6 +21,7 @@ from autoware_carla_scenario.coordinate import (
     to_map_frame,
     to_opendrive,
 )
+from autoware_carla_scenario.coordinate.transform import lanelet_length, on_lanelet
 from autoware_carla_scenario.coordinate.map_manager import _parse_geo_reference
 from autoware_carla_scenario.coordinate.projection import (
     LOCAL_XY,
@@ -725,6 +726,68 @@ class TestRoundTripLanelet2:
             map_manager, lanelet_id, s=0.0, t=0.5
         )
         assert error < 1.0
+
+
+# ---------------------------------------------------------------------------
+# TestOnLaneletStacked -- an overpass and the road beneath it (#1586)
+# ---------------------------------------------------------------------------
+
+#: A lanelet of the fixture map that runs over another, about 6.8 m above it.
+_OVERPASS = 132
+#: The lanelet beneath it.
+_UNDERPASS = 552
+#: How far below the overpass the road beneath it is, where they cross.
+_CLEARANCE_M = 6.8
+
+
+class TestOnLaneletStacked:
+    def _over(self, dz: float) -> CarlaWorldPose:
+        """The point halfway along the overpass, *dz* above it."""
+        pose = to_carla_world(
+            Lanelet2Pose(lanelet_id=_OVERPASS, s=lanelet_length(_OVERPASS) / 2)
+        )
+        return CarlaWorldPose(x=pose.x, y=pose.y, z=pose.z + dz, yaw=pose.yaw)
+
+    def test_the_lanelets_are_stacked_there(self, map_manager):
+        flat = self._over(0.0)
+        assert on_lanelet(flat, _OVERPASS, by_height=False)
+        assert on_lanelet(flat, _UNDERPASS, by_height=False)
+
+    def test_a_point_on_the_overpass_is_not_on_the_road_beneath(self, map_manager):
+        pose = self._over(0.0)
+        assert to_lanelet2(pose).lanelet_id == _OVERPASS
+        assert on_lanelet(pose, _OVERPASS)
+        assert not on_lanelet(pose, _UNDERPASS)
+
+    def test_a_point_on_the_road_beneath_is_not_on_the_overpass(self, map_manager):
+        pose = self._over(-_CLEARANCE_M)
+        assert to_lanelet2(pose).lanelet_id == _UNDERPASS
+        assert not on_lanelet(pose, _OVERPASS)
+        assert on_lanelet(pose, _UNDERPASS)
+
+    def test_a_vehicle_off_its_road_by_a_little_is_still_on_it(self, map_manager):
+        assert on_lanelet(self._over(1.0), _OVERPASS)
+        assert on_lanelet(self._over(-_CLEARANCE_M + 1.0), _UNDERPASS)
+        assert not on_lanelet(self._over(-_CLEARANCE_M + 1.0), _OVERPASS)
+
+    def test_without_height_a_point_is_on_both(self, map_manager):
+        pose = self._over(-_CLEARANCE_M)
+        assert on_lanelet(pose, _OVERPASS, by_height=False)
+        assert on_lanelet(pose, _UNDERPASS, by_height=False)
+
+    def test_lanelets_crossing_on_one_level_both_hold_a_point(self, map_manager):
+        # Two of a junction's lanelets, crossing: the height rules out only a
+        # lanelet at another level.
+        pose = to_carla_world(Lanelet2Pose(lanelet_id=294, s=lanelet_length(294) / 2))
+        assert on_lanelet(pose, 294)
+        assert on_lanelet(pose, 299)
+
+    def test_every_lanelet_holds_its_own_midpoint(self, map_manager):
+        for lanelet in map_manager.lanelet_map.laneletLayer:
+            pose = to_carla_world(
+                Lanelet2Pose(lanelet_id=lanelet.id, s=lanelet_length(lanelet.id) / 2)
+            )
+            assert on_lanelet(pose, lanelet.id), lanelet.id
 
 
 # ---------------------------------------------------------------------------

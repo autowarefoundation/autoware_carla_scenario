@@ -67,7 +67,7 @@ class _Backend(TrafficBackend):
     name = "fake"
 
     def __init__(self) -> None:
-        self.vehicles: dict[str, tuple[float, float]] = {}
+        self.vehicles: dict[str, tuple[float, float, float]] = {}
         self.removed: list[str] = []
 
     def spawn_background(
@@ -79,10 +79,14 @@ class _Backend(TrafficBackend):
         blueprint: Optional[str] = None,
     ) -> Optional[str]:
         handle = f"bg{len(self.vehicles) + len(self.removed) + 1}"
-        self.vehicles[handle] = (transform.location.x, transform.location.y)
+        self.vehicles[handle] = (
+            transform.location.x,
+            transform.location.y,
+            transform.location.z,
+        )
         return handle
 
-    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
+    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float, float]]:
         return dict(self.vehicles)
 
     def remove_background(self, world: Any, handle: str) -> None:
@@ -90,20 +94,20 @@ class _Backend(TrafficBackend):
         self.removed.append(handle)
 
 
-def _sink_with(x: float, y: float) -> tuple[TrafficSinkAction, _Backend]:
+def _sink_with(x: float, y: float, z: float) -> tuple[TrafficSinkAction, _Backend]:
     sink = TrafficSinkAction(_defaults()["sink"]["constraints"])
     backend = _Backend()
-    backend.vehicles["bg1"] = (x, y)
+    backend.vehicles["bg1"] = (x, y, z)
     sink.set_traffic_backend(backend)
     sink.execute(None)  # type: ignore[arg-type]
     return sink, backend
 
 
-def _at(lanelet_id: int, s: float) -> tuple[float, float]:
+def _at(lanelet_id: int, s: float) -> tuple[float, float, float]:
     from autoware_carla_scenario.coordinate import Lanelet2Pose, to_carla_world
 
     pose = to_carla_world(Lanelet2Pose(lanelet_id=lanelet_id, s=s))
-    return pose.x, pose.y
+    return pose.x, pose.y, pose.z
 
 
 class TestDefaultSink:
@@ -162,3 +166,41 @@ class TestDefaultSource:
         action.execute(None)  # type: ignore[arg-type]
         assert len(backend.vehicles) == 40
         assert {_subtype(loaded_map, i) for i in picked}.isdisjoint(_NOT_FOR_VEHICLES)
+
+
+class TestStackedRegion:
+    """A region's lanelet with another lanelet beneath it (#1586): lanelet 132
+    runs over 552, about 6.8 m above it."""
+
+    def _region(self) -> LaneletRegion:
+        region = LaneletRegion(_defaults()["sink"]["constraints"])
+        region._ids = [132]
+        return region
+
+    def _over(self, dz: float) -> tuple[float, float, float]:
+        from autoware_carla_scenario.coordinate import lanelet_length
+
+        x, y, z = _at(132, lanelet_length(132) / 2)
+        return x, y, z + dz
+
+    def test_a_vehicle_on_the_overpass_is_on_it(self, loaded_map: MapManager) -> None:
+        assert self._region().contains(*self._over(0.0))
+
+    def test_a_vehicle_beneath_it_is_not(self, loaded_map: MapManager) -> None:
+        assert not self._region().contains(*self._over(-6.8))
+
+    def test_without_its_height_it_is(self, loaded_map: MapManager) -> None:
+        x, y, _z = self._over(-6.8)
+        assert self._region().contains(x, y)
+
+    def test_a_sink_on_the_overpass_leaves_the_road_beneath_alone(
+        self, loaded_map: MapManager
+    ) -> None:
+        sink = TrafficSinkAction(_defaults()["sink"]["constraints"])
+        sink._region._ids = [132]
+        backend = _Backend()
+        backend.vehicles["over"] = self._over(0.0)
+        backend.vehicles["under"] = self._over(-6.8)
+        sink.set_traffic_backend(backend)
+        sink.execute(None)  # type: ignore[arg-type]
+        assert backend.removed == ["over"]

@@ -295,8 +295,8 @@ class ConstructionZoneAction(_BackendAction):
         spans: list[tuple[int, float, float]],
     ) -> None:
         """Take the backend's background vehicles in *spans* off the road."""
-        for handle, (x, y) in backend.background_vehicles(world).items():
-            pose = CarlaWorldPose(x, y, 0.0)
+        for handle, (x, y, z) in backend.background_vehicles(world).items():
+            pose = CarlaWorldPose(x, y, z)
             for lanelet_id, s_from, s_to in spans:
                 if not on_lanelet(pose, lanelet_id):
                     continue

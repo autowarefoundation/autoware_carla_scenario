@@ -1010,8 +1010,10 @@ class TrafficBackend:
 
     def background_vehicles(
         self, world: "carla.World"
-    ) -> dict[str, tuple[float, float]]:
-        """Every live background vehicle, by handle, at its CARLA ``(x, y)``."""
+    ) -> dict[str, tuple[float, float, float]]:
+        """Every live background vehicle, by handle, at its CARLA
+        ``(x, y, z)``: the elevation tells the road under an overpass from
+        the one over it (:func:`~autoware_carla_scenario.coordinate.on_lanelet`)."""
         return {}
 
     def remove_background(self, world: "carla.World", handle: str) -> None:

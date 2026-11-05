@@ -470,12 +470,15 @@ class _World:
 
 class _Backend:
     def __init__(self) -> None:
-        self.vehicles = {"in_zone": (-80.0, 1.75), "elsewhere": (-80.0, -1.75)}
+        self.vehicles = {
+            "in_zone": (-80.0, 1.75, 0.0),
+            "elsewhere": (-80.0, -1.75, 0.0),
+        }
         self.removed: list[str] = []
         self.closed: list[Any] = []
         self.reopened: list[str] = []
 
-    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
+    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float, float]]:
         return dict(self.vehicles)
 
     def remove_background(self, world: Any, handle: str) -> None:
