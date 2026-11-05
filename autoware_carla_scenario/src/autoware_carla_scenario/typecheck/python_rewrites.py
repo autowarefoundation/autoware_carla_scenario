@@ -2169,18 +2169,20 @@ class _Pass(ShadowScopes):
                 elif is_attribute:
                     # str.format does getattr(x, name) with any text; an
                     # f-string spells only an identifier, and one NFKC leaves
-                    # as it is (Python reads `x.ﬁ` as `x.fi`) (#1614).
+                    # as it is (Python reads `x.ﬁ` as `x.fi`), and not a
+                    # private name, which a class body would mangle (#1614).
                     if (
                         not name.isidentifier()
                         or keyword.iskeyword(name)
                         or unicodedata.normalize("NFKC", name) != name
+                        or (name.startswith("__") and not name.endswith("__"))
                     ):
                         self._refuse(
                             node,
                             f"the format field {field!r} reads attribute "
-                            f"{name!r}, which is no Python identifier: an "
-                            "f-string cannot spell it; use getattr(x, "
-                            f"{name!r}) in an f-string",
+                            f"{name!r}, which an f-string cannot spell as "
+                            f"x.{name}; use getattr(x, {name!r}) in an "
+                            "f-string",
                         )
                         return None
                     access += "." + name
