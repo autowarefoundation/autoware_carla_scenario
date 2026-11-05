@@ -147,9 +147,9 @@ command line (`launcher.mem=12G`), or in a config.
 
 | Key | Default | |
 |---|---|---|
-| `partition`, `account`, `qos` | `null` | `sbatch --partition/--account/--qos` |
-| `time` | `null` | `sbatch --time`; the task is sent SIGTERM `signal_grace_seconds` before it runs out |
-| `mem`, `cpus_per_task`, `gres` | `null` | `sbatch --mem/--cpus-per-task/--gres` (`gpu:1`, or `shard:1` to share a GPU) |
+| `partition`, `account`, `qos` | `null` | `sbatch --partition/--account/--qos`; `partition` may list several (`gpu,cpu`) |
+| `time` | `null` | `sbatch --time` in any of its forms (`90`, `120:00`, `168:00:00`, `2-00`, `1-12:30`, `1-00:00:00`, `UNLIMITED`); the task is sent SIGTERM `signal_grace_seconds` before it runs out |
+| `mem`, `cpus_per_task`, `gres` | `null` | `sbatch --mem/--cpus-per-task/--gres` (`gpu:1`, or `shard:1` to share a GPU; a list: `gpu:1,shard:2`) |
 | `array_parallelism` | `null` | at most this many tasks at once (`--array=...%K`); `null`: no cap |
 | `cases_per_task` | `null` | cases a task runs on its CARLA; `null`: the cases spread evenly over `array_parallelism` tasks (one case a task without a cap), in no more tasks than the cluster's `MaxArraySize` ([Array size](#array-size)) |
 | `job_name` | `null` | `acs-<date>-<time>` of the output directory |
