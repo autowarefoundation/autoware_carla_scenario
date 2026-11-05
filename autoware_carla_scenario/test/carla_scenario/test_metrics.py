@@ -108,7 +108,8 @@ class _Actor:
 
     def get_transform(self) -> Any:
         return SimpleNamespace(
-            location=self._at, rotation=SimpleNamespace(yaw=self._yaw)
+            location=self._at,
+            rotation=SimpleNamespace(roll=0.0, pitch=0.0, yaw=self._yaw),
         )
 
 
