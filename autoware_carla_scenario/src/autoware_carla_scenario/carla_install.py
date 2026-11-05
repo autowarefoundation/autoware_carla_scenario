@@ -19,7 +19,11 @@ on ``<target>.lock`` beside it from the clean-up of what an interrupted run left
 to the swap, so a second ``scenario-setup`` for the same directory waits for the
 first (and then usually finds its install up to date) instead of deleting the
 first one's download. The lock file stays: deleting it would let a run lock the
-deleted file while another locks its replacement.
+deleted file while another locks its replacement. A run that cannot open the
+lock file for writing (an install of another user's, or on a read-only file
+system) can only check the install: it takes a shared lock, which still waits
+for a writer, and reports an install it would have to replace rather than
+trying to.
 ``AUTOWARE_CARLA_SCENARIO_HOME`` moves ``~/.autoware_carla_scenario``.
 
 CARLA publishes its server for Linux x86_64 only, so on any other machine
@@ -146,21 +150,28 @@ def install(
             f"{target} is not empty and not a CARLA scenario-setup installed; "
             "pick an empty or new directory"
         )
-    with _locked(target):
-        return _install(url, target, force)
+    with _locked(target) as writable:
+        return _install(url, target, force, writable)
 
 
-def _install(url: str, target: Path, force: bool) -> Path:
-    """:func:`install`'s work, with the lock on *target* held."""
+def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path:
+    """:func:`install`'s work, with the lock on *target* held.
+
+    Not *writable* (see :func:`_locked`), it only checks the install, and raises
+    ``RuntimeError`` where it would have to download.
+    """
     import urllib.error  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
 
     from tqdm import tqdm  # noqa: PLC0415
 
-    # What an interrupted run left: an unfinished download and an old install
-    # moved aside but not yet deleted. Neither is ever trusted as an install.
-    for leftover in (_staging(target), _replaced(target)):
-        shutil.rmtree(leftover, ignore_errors=True)
+    if not writable and force:
+        raise _cannot_install(target)
+    if writable:
+        # What an interrupted run left: an unfinished download and an old install
+        # moved aside but not yet deleted. Neither is ever trusted as an install.
+        for leftover in (_staging(target), _replaced(target)):
+            shutil.rmtree(leftover, ignore_errors=True)
     request = urllib.request.Request(
         url, headers={} if force else _conditions(target, url)
     )
@@ -181,6 +192,8 @@ def _install(url: str, target: Path, force: bool) -> Path:
         if not force and _current(target, source):
             print(f"CARLA at {target} is up to date.")
             return target / LAUNCHER
+        if not writable:
+            raise _cannot_install(target)
         size = int(source["size"]) if source["size"] else None
         target.parent.mkdir(parents=True, exist_ok=True)
         staging = _staging(target)
@@ -213,6 +226,16 @@ def _install(url: str, target: Path, force: bool) -> Path:
     return target / LAUNCHER
 
 
+def _cannot_install(target: Path) -> RuntimeError:
+    """The error of a run that can only check *target* but would have to install."""
+    state = "out of date" if (target / LAUNCHER).is_file() else "not installed"
+    return RuntimeError(
+        f"CARLA at {target} is {state}, and this run cannot write there "
+        f"({_lock_path(target)} cannot be opened for writing); run scenario-setup "
+        "as a user who can write to it, or pass --dir to install elsewhere"
+    )
+
+
 #: The errors of a ``flock`` the file system does not support (some NFS mounts).
 _NO_FLOCK_ERRNOS = frozenset(
     {errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOLCK, errno.EINVAL}
@@ -230,8 +253,11 @@ def _lock_path(target: Path) -> Path:
 
 
 @contextlib.contextmanager
-def _locked(target: Path) -> Iterator[None]:
-    """Hold the exclusive lock on installing into *target*, waiting for it if taken.
+def _locked(target: Path) -> Iterator[bool]:
+    """Hold the lock on installing into *target*, waiting for it if taken.
+
+    Yields whether the run may write *target*: ``False`` where the lock file
+    could be opened read-only only.
 
     A ``flock`` on :func:`_lock_path`, released when the file is closed, so also
     when the process dies. The file is never deleted: a run that opened it just
@@ -241,36 +267,42 @@ def _locked(target: Path) -> Iterator[None]:
 
     Checking an install needs no write access: where the lock file cannot be
     opened for writing (a read-only or another user's install), an existing one
-    is locked through a read-only descriptor, which ``flock`` takes as well, and
-    without one the run goes ahead unlocked, as it can only find the install up
-    to date or fail to write it.
+    is opened read-only and locked shared, which still waits for a writer's
+    exclusive lock: an NFS client emulates ``flock`` with byte-range locks, and
+    refuses an exclusive one on a read-only descriptor (``EBADF``, which on such
+    a descriptor counts as no ``flock``). Without a lock file the run goes ahead
+    unlocked, as it can only find the install up to date or fail to write it.
     """
     import fcntl  # noqa: PLC0415
 
     lock = _lock_path(target)
     stream = _open_lock(lock)
     if stream is None:
-        yield
+        yield True
         return
+    writable = stream.mode != "r"
+    mode = fcntl.LOCK_EX if writable else fcntl.LOCK_SH
     with stream:
         try:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            fcntl.flock(stream.fileno(), mode | fcntl.LOCK_NB)
         except BlockingIOError:
             print(
                 f"Waiting for another scenario-setup on {target} to finish "
                 f"(lock {lock}) ...",
                 flush=True,
             )
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX)
+            fcntl.flock(stream.fileno(), mode)
         except OSError as exc:
-            if exc.errno not in _NO_FLOCK_ERRNOS:
+            if exc.errno not in _NO_FLOCK_ERRNOS and (
+                writable or exc.errno != errno.EBADF
+            ):
                 raise
             print(
                 f"scenario-setup: no flock on {lock.parent} ({exc}); installing "
                 "unlocked, so run only one scenario-setup for it at a time",
                 file=sys.stderr,
             )
-        yield
+        yield writable
 
 
 def _open_lock(lock: Path) -> Optional[IO[str]]:
@@ -288,7 +320,7 @@ def _open_lock(lock: Path) -> Optional[IO[str]]:
             raise
         error = exc
     try:
-        return open(lock)  # noqa: SIM115 -- flock takes a read-only descriptor too
+        return open(lock)  # noqa: SIM115 -- for a shared lock, see _locked
     except OSError:
         print(
             f"scenario-setup: cannot create {lock} ({error}); going ahead "
