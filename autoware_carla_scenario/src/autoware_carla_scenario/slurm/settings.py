@@ -20,6 +20,8 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..seed import check_whole_number
+
 __all__ = [
     "DEFAULT_ENV_PASSTHROUGH",
     "LAUNCHER_TYPES",
@@ -174,8 +176,29 @@ def snapshot_environment(
     }
 
 
-def _optional_str(value: Any) -> str | None:
-    return None if value is None or value == "" else str(value)
+def _optional_str(value: Any, name: str) -> str | None:
+    """A text setting: ``None`` when null or blank; a number is its text.
+
+    A boolean (``partition: true``), a list or a mapping is no text an
+    ``sbatch`` option takes, so it is refused rather than written as
+    ``True`` or ``['a']``.
+    """
+    if value is None or value == "":
+        return None
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise ValueError(f"launcher.{name} must be text, got {value!r}")
+    return str(value)
+
+
+def _str_list(value: Any, name: str) -> tuple[str, ...]:
+    """A list setting: a list of text, or one string as a list of one."""
+    if value is None:
+        return ()
+    if isinstance(value, str):
+        return (value,)
+    if not isinstance(value, (list, tuple)):
+        raise ValueError(f"launcher.{name} must be a list, got {value!r}")
+    return tuple(_optional_str(v, name) or "" for v in value)
 
 
 def _check_remote_path(value: str, name: str) -> None:
@@ -189,13 +212,85 @@ def _check_remote_path(value: str, name: str) -> None:
         )
 
 
+#: The spellings of a true and a false flag in a string (or an int), as
+#: authoring.registry's TRUTHY_VALUES and FALSY_VALUES (read_bool): a Hydra
+#: override or an ``${oc.env:...}`` may give a flag as text.  Repeated here,
+#: not imported, so that this module stays free of the authoring package.
+_TRUE_TEXT = frozenset({"1", "true", "on", "yes"})
+_FALSE_TEXT = frozenset({"0", "false", "off", "no"})
+
+
+def _whole_number(value: Any, name: str, minimum: int = 1) -> int:
+    """A whole-number setting, at least *minimum*.
+
+    ``2``, ``2.0`` or the text ``"2"`` (seed.check_whole_number, as every
+    whole-number setting of a run is read): ``int()`` alone took ``2.7`` as
+    2 and ``true`` as 1.  A boolean, a fraction, NaN, infinity, a blank or
+    other text, or null is refused.
+    """
+    key = f"launcher.{name}"
+    number = value
+    if isinstance(value, str):
+        text = value.strip()
+        try:
+            number = int(text)
+        except ValueError:
+            try:
+                number = float(text)
+            except ValueError:
+                raise ValueError(f"{key} must be a whole number, got {value!r}")
+    whole = check_whole_number(key, number)
+    if whole < minimum:
+        raise ValueError(f"{key} must be at least {minimum} (got {value!r})")
+    return whole
+
+
 def _optional_int(value: Any, name: str, minimum: int = 1) -> int | None:
+    """:func:`_whole_number`, or ``None`` when null."""
     if value is None:
         return None
-    number = int(value)
-    if number < minimum:
-        raise ValueError(f"launcher.{name} must be at least {minimum} (got {number})")
-    return number
+    return _whole_number(value, name, minimum)
+
+
+def _seconds(value: Any, name: str) -> float:
+    """A number of seconds: finite, at least 0; a number or its text.
+
+    A boolean is no number of seconds (``float(True)`` is 1.0); inf would
+    make a task wait (or the poll sleep) forever, NaN would read as 0
+    (#784).
+    """
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise ValueError(
+            f"launcher.{name} must be a finite number of seconds, "
+            f"at least 0 (got {value!r})"
+        )
+    try:
+        seconds = float(value)
+    except ValueError:
+        seconds = math.nan
+    if not math.isfinite(seconds) or seconds < 0:
+        raise ValueError(
+            f"launcher.{name} must be a finite number of seconds, "
+            f"at least 0 (got {value!r})"
+        )
+    return seconds
+
+
+def _flag(value: Any, name: str) -> bool:
+    """A true/false setting: a boolean, or its spelling (``"false"``, ``0``).
+
+    ``bool()`` read ``"false"`` as true; anything that spells neither (a
+    float, a list, null, ``"ture"``) is refused.
+    """
+    if isinstance(value, bool):
+        return value
+    if isinstance(value, (str, int)):
+        text = str(value).strip().lower()
+        if text in _TRUE_TEXT:
+            return True
+        if text in _FALSE_TEXT:
+            return False
+    raise ValueError(f"launcher.{name} must be true or false, got {value!r}")
 
 
 @dataclass(frozen=True)
@@ -272,7 +367,8 @@ class SlurmSettings:
         """Read ``launcher`` (a plain mapping, resolved); unknown keys refused.
 
         Raises:
-            ValueError: A key no field has, or a value out of range.
+            ValueError: A key no field has, or a value of the wrong type or
+                out of range, naming it (``launcher.<key>``).
         """
         data = dict(launcher or {})
         data.pop("type", None)
@@ -286,10 +382,10 @@ class SlurmSettings:
         options: dict[str, Any] = {}
         for key in ("partition", "account", "qos", "time", "mem", "gres"):
             if key in data:
-                options[key] = _optional_str(data[key])
+                options[key] = _optional_str(data[key], key)
         for key in ("job_name", "python", "collect_mem", "port_lock_dir", "remote_cwd"):
             if key in data:
-                options[key] = _optional_str(data[key])
+                options[key] = _optional_str(data[key], key)
         for key in ("cpus_per_task", "array_parallelism", "cases_per_task"):
             if key in data:
                 options[key] = _optional_int(data[key], key)
@@ -299,11 +395,12 @@ class SlurmSettings:
                 if value is None and key == "env_passthrough":
                     options[key] = None  # the mode's default, below
                     continue
-                if isinstance(value, str):
-                    value = [value]
-                options[key] = tuple(str(v) for v in (value or ()))
+                options[key] = _str_list(value, key)
         if "env" in data:
-            options["env"] = {str(k): str(v) for k, v in (data["env"] or {}).items()}
+            env = data["env"] or {}
+            if not isinstance(env, Mapping):
+                raise ValueError(f"launcher.env must be a mapping, got {env!r}")
+            options["env"] = {str(k): str(v) for k, v in env.items()}
         remote = options.get("remote_cwd") is not None
         if remote:
             _check_remote_path(options["remote_cwd"], "remote_cwd")
@@ -319,8 +416,9 @@ class SlurmSettings:
             _check_remote_path(options["python"], "python")
         # null: the default of the mode.  With remote_cwd nothing of the
         # submitting host's environment is the nodes' (docs/slurm.md).
-        if data.get("export") is not None and data.get("export") != "":
-            options["export"] = str(data["export"])
+        export = _optional_str(data.get("export"), "export")
+        if export is not None:
+            options["export"] = export
         elif remote:
             options["export"] = "NONE"
         if options.get("env_passthrough") is None:
@@ -329,32 +427,28 @@ class SlurmSettings:
                 options["env_passthrough"] = ()
         for key in ("wait", "headless", "collect_job", "cancel_on_interrupt"):
             if key in data:
-                options[key] = bool(data[key])
+                options[key] = _flag(data[key], key)
         for key in ("start_stagger_seconds", "poll_seconds"):
             if key not in data:
                 continue
             raw = data[key]
             if raw is None and key == "start_stagger_seconds":
                 raw = 0.0  # null: no stagger
-            seconds = float(raw)
-            # inf would make a task wait (or the poll sleep) forever, NaN
-            # would read as 0; neither is a number of seconds (#784).
-            if not math.isfinite(seconds) or seconds < 0:
-                raise ValueError(
-                    f"launcher.{key} must be a finite number of seconds, "
-                    f"at least 0 (got {raw!r})"
-                )
+            seconds = _seconds(raw, key)
             # A poll that never sleeps would spin: at least 0.1 s.
             options[key] = max(0.1, seconds) if key == "poll_seconds" else seconds
-        for key in ("signal_grace_seconds", "port_base", "port_slots"):
-            if key in data:
-                options[key] = int(data[key])
-        settings = cls(**options)
-        if settings.port_slots < 1:
-            raise ValueError(
-                f"launcher.port_slots must be at least 1 (got {settings.port_slots}): "
-                "each task takes a slot of ports"
+        # SIGTERM 0 s before the end is allowed (sbatch takes @0); a
+        # negative grace only sbatch refused, after the batch was written.
+        if "signal_grace_seconds" in data:
+            options["signal_grace_seconds"] = _whole_number(
+                data["signal_grace_seconds"], "signal_grace_seconds", 0
             )
+        if "port_base" in data:
+            options["port_base"] = _whole_number(data["port_base"], "port_base", 1024)
+        if "port_slots" in data:
+            # At least 1: each task takes a slot of ports.
+            options["port_slots"] = _whole_number(data["port_slots"], "port_slots")
+        settings = cls(**options)
         if (
             settings.port_base < 1024
             or settings.port_base + (settings.port_slots * 10) > 65535

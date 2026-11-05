@@ -1174,6 +1174,118 @@ def test_settings_read_the_seconds_they_take() -> None:
     assert SlurmSettings.from_mapping(settings.to_dict()) == settings
 
 
+@pytest.mark.parametrize(
+    "key", ["cpus_per_task", "array_parallelism", "cases_per_task"]
+)
+@pytest.mark.parametrize(
+    "value", [2.7, True, False, "2.5", "two", "", float("nan"), float("inf"), [2]]
+)
+def test_settings_refuse_counts_that_are_not_whole_numbers(
+    key: str, value: Any
+) -> None:
+    # int() read 2.7 as 2 and true as 1 (#1485).
+    with pytest.raises(ValueError, match=rf"launcher\.{key} must be"):
+        SlurmSettings.from_mapping({key: value})
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("signal_grace_seconds", -30),
+        ("signal_grace_seconds", 1.5),
+        ("signal_grace_seconds", True),
+        ("signal_grace_seconds", None),
+        ("port_base", 20000.5),
+        ("port_base", True),
+        ("port_base", 80),
+        ("port_base", "x"),
+        ("port_slots", 2.5),
+        ("port_slots", True),
+        ("port_slots", 0),
+    ],
+)
+def test_settings_refuse_grace_and_ports_out_of_range(key: str, value: Any) -> None:
+    # A negative grace became --signal=B:TERM@-30, which only sbatch refused,
+    # after the batch was written (#1485).
+    with pytest.raises(ValueError, match=rf"launcher\.{key} must be"):
+        SlurmSettings.from_mapping({key: value})
+
+
+def test_settings_read_whole_numbers_as_ints() -> None:
+    settings = SlurmSettings.from_mapping(
+        {
+            "cpus_per_task": 4.0,
+            "array_parallelism": "3",
+            "cases_per_task": 2,
+            "signal_grace_seconds": 0,
+            "port_base": 3e4,
+            "port_slots": "10",
+        }
+    )
+    assert (
+        settings.cpus_per_task,
+        settings.array_parallelism,
+        settings.cases_per_task,
+        settings.signal_grace_seconds,
+        settings.port_base,
+        settings.port_slots,
+    ) == (4, 3, 2, 0, 30000, 10)
+    assert all(
+        type(v) is int
+        for v in (settings.cpus_per_task, settings.port_base, settings.port_slots)
+    )
+    assert SlurmSettings.from_mapping({"cases_per_task": None}).cases_per_task is None
+
+
+@pytest.mark.parametrize(
+    "key", ["wait", "headless", "collect_job", "cancel_on_interrupt"]
+)
+def test_settings_read_flags_strictly(key: str) -> None:
+    # bool() read "false" as true (#1485).
+    for value in (False, "false", "False", " no ", "off", "0", 0):
+        assert getattr(SlurmSettings.from_mapping({key: value}), key) is False
+    for value in (True, "true", "yes", "on", "1", 1):
+        assert getattr(SlurmSettings.from_mapping({key: value}), key) is True
+    for bad in ("ture", "", None, 2, 0.0, [True]):
+        with pytest.raises(ValueError, match=rf"launcher\.{key} must be true or false"):
+            SlurmSettings.from_mapping({key: bad})
+
+
+@pytest.mark.parametrize("key", ["start_stagger_seconds", "poll_seconds"])
+@pytest.mark.parametrize("value", [True, False, [1], "soon"])
+def test_settings_refuse_seconds_that_are_not_numbers(key: str, value: Any) -> None:
+    # float(True) read a flag as 1 s (#1485).
+    with pytest.raises(ValueError, match=rf"launcher\.{key} must be a finite"):
+        SlurmSettings.from_mapping({key: value})
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("partition", True),
+        ("mem", ["12G"]),
+        ("export", {"ALL": 1}),
+        ("extra_sbatch_args", 5),
+        ("setup", {"a": "b"}),
+        ("env", ["A=1"]),
+    ],
+)
+def test_settings_refuse_text_and_lists_of_another_type(key: str, value: Any) -> None:
+    with pytest.raises(ValueError, match=rf"launcher\.{key} must be"):
+        SlurmSettings.from_mapping({key: value})
+
+
+def test_shipped_launcher_config_is_read() -> None:
+    import yaml
+
+    import autoware_carla_scenario.examples as examples
+
+    path = Path(examples.__file__).parent / "conf" / "launcher" / "slurm.yaml"
+    assert SlurmSettings.from_mapping(yaml.safe_load(path.read_text())) == (
+        SlurmSettings()
+    )
+
+
 class _FrozenClock:
     """``worker.time`` with ``time()`` fixed at *now* and ``sleep`` recorded."""
 

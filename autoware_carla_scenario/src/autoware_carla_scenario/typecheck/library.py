@@ -370,7 +370,7 @@ _CONSTRAINT_SPECS = (
 _LAUNCHER_VALUE = (
     "takes a value of the `launcher` config of any type (`Any`: a Hydra "
     "node's), which Codon cannot express; only SlurmSettings.from_mapping, "
-    "itself uncalled, calls it"
+    "itself uncalled, calls it (or another of its readers)"
 )
 
 #: The reason of a function that reads a YAML document's values.
@@ -494,6 +494,10 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.slurm.settings.launcher_type": "takes the run's config (`Mapping[str, Any]`: a Hydra node of mixed value types), which Codon cannot express",
     "autoware_carla_scenario.slurm.settings._optional_str": _LAUNCHER_VALUE,
     "autoware_carla_scenario.slurm.settings._optional_int": _LAUNCHER_VALUE,
+    "autoware_carla_scenario.slurm.settings._str_list": _LAUNCHER_VALUE,
+    "autoware_carla_scenario.slurm.settings._whole_number": _LAUNCHER_VALUE,
+    "autoware_carla_scenario.slurm.settings._seconds": _LAUNCHER_VALUE,
+    "autoware_carla_scenario.slurm.settings._flag": _LAUNCHER_VALUE,
     "autoware_carla_scenario.slurm.settings.SlurmSettings.from_mapping": "takes the `launcher` config (`Mapping[str, Any]`: a Hydra node of mixed value types), which Codon cannot express, reads the dataclass's fields from its class (`dataclasses.fields(cls)`) and builds the settings with `**` of a `dict[str, Any]`",
     "autoware_carla_scenario.slurm.settings.SlurmSettings.to_dict": "returns the settings as the manifest stores them (`dataclasses.asdict()`), a `dict[str, Any]` of mixed value types, which Codon cannot express",
     "autoware_carla_scenario.slurm.settings.SlurmSettings.replace": "takes `**changes: Any` and reads them, merged into to_dict()'s `dict[str, Any]`, back with from_mapping, which Codon cannot express",
