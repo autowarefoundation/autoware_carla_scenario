@@ -261,7 +261,7 @@ asked of the ones it did. See [Traffic Backends](traffic_backends.md).
 | `CarlaDriverEntity` | Drives the ego from an external policy's plan over the `egodriver` gRPC contract; given a `bridge`, starts the policy once a stack serving its world is ready. See [External Driver Interface](driver_interface.md). |
 | `SpawnLocation` (Protocol) | Tag interface implemented by spawn-point providers. |
 | `SpawnTransform` | Spawn at an explicit `carla.Transform`. |
-| `SpawnPointIndex` | Spawn at the N-th map spawn point. |
+| `SpawnPointIndex` | Spawn at the N-th map spawn point: a whole number from 0 to the map's spawn-point count - 1 (`3.0` is read as 3). A negative index, a boolean or a fraction is refused when it is built, an index past the last spawn point when the vehicle spawns. |
 
 ## Kinematics (`autoware_carla_scenario.kinematics`)
 
