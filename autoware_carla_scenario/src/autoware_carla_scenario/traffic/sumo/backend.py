@@ -175,7 +175,31 @@ logger = logging.getLogger(__name__)
 #: turn: the lowest CARLA takes, so it does not drop onto the road (#1003).
 _SPAWN_LIFTS_M = (0.05, 0.2, 0.5)
 
-__all__ = ["SumoTrafficBackend", "is_bicycle", "is_motorcycle"]
+__all__ = [
+    "OUTPUT_SUFFIX",
+    "SumoTrafficBackend",
+    "is_bicycle",
+    "is_motorcycle",
+    "run_output_dir",
+]
+
+#: What a run's SUMO outputs (its log, the generated demand, the FCD and the
+#: clock) are named by: the directory ``{output_dir}/{file_stem}.sumo``, listed
+#: in ``run_outputs.RUN_DIR_SUFFIXES``.
+OUTPUT_SUFFIX = ".sumo"
+
+
+def run_output_dir(context: TrafficContext) -> Path:
+    """Where the run *context* names writes its SUMO outputs.
+
+    ``{output_dir}/{file_stem}.sumo``: a batch shares the output directory, so
+    each run keeps its own, beside its result (#1544).  A context naming no run
+    (a backend prepared on its own) writes to ``{output_dir}/sumo``.
+    """
+    if context.file_stem:
+        return Path(context.output_dir) / f"{context.file_stem}{OUTPUT_SUFFIX}"
+    return Path(context.output_dir) / "sumo"
+
 
 #: SUMO's lane-change duration for a manoeuvre a scenario asks for, seconds.
 LANE_CHANGE_DURATION_S: float = 3.0
@@ -928,7 +952,7 @@ class SumoTrafficBackend(TrafficBackend):
         if self._config.mesoscopic.enabled:
             self._meso = self._build_mesoscopic()
 
-        out = Path(context.output_dir) / "sumo"
+        out = run_output_dir(context)
         out.mkdir(parents=True, exist_ok=True)
         binary = self._config.binary
         if "/" not in binary:

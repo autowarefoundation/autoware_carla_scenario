@@ -40,7 +40,8 @@ inputs:
   slim:
     description: >
       Strip the virtualenv: drop byte-code caches, vendored test suites, C
-      headers and type stubs, and strip symbols from bundled shared objects.
+      headers and type stubs (but not mypy's typeshed, which the image's
+      scenario check reads), and strip symbols from bundled shared objects.
       Worth roughly 100 MB. Turn it off to debug a native crash with gdb.
     required: false
     default: "true"

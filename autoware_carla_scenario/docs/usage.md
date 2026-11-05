@@ -1049,6 +1049,7 @@ started in the same second as another run or a batch gets `HH-MM-SS-1`, then
 | `{ScenarioName}.sensors.rrd` | The driver's sensors recorded during the run (`rerun.lidar`, `rerun.cameras`); merged into `{ScenarioName}.rrd` and removed, so only left behind by a run or merge that did not finish ([Sensors in the recording](#sensors-in-the-recording)) |
 | `{ScenarioName}.t4scene.pb`, `{ScenarioName}.t4scene.map.pb` | The trajectory log as a T4Scene and the map it names, with `t4scene.enabled=true` ([T4 Scene](t4_scene.md)) |
 | `{ScenarioName}.t4/` | The run as a T4 dataset (a directory, its version `0` inside), with `t4.enabled=true` ([T4 Dataset](t4_dataset.md)) |
+| `{ScenarioName}.sumo/` | The SUMO backend's log, generated demand and, with `fcd_output`, its floating car data (`fcd.xml`) and clock (`clock.csv`), with `traffic=sumo` ([Traffic Backends](traffic_backends.md)) |
 | `batch_results.json` | Batch summary (glob/batch mode only) |
 
 **Result JSON format:**

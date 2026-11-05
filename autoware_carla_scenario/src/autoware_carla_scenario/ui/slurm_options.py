@@ -28,8 +28,18 @@ __all__ = [
 ]
 
 _ENV_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
-_TIME = re.compile(r"^(\d+-)?\d{1,2}(:\d{2}){0,2}$|^\d+$")
+#: sbatch's ``--time`` forms: ``minutes``, ``minutes:seconds``,
+#: ``hours:minutes:seconds`` (the leading field of any width: ``168:00:00``),
+#: ``days-hours``, ``days-hours:minutes`` and ``days-hours:minutes:seconds``.
+_TIME = re.compile(r"^(\d+|\d+-\d{1,2})(:\d{2}){0,2}$")
+#: The ``--time`` that sets no limit, in any case (``unlimited``).
+_TIME_NO_LIMIT = ("UNLIMITED", "INFINITE")
 _SIMPLE = re.compile(r"^[A-Za-z0-9_.:/@+-]+$")
+#: A comma-separated list of :data:`_SIMPLE` words: what ``--partition``
+#: (``gpu,cpu``) and ``--gres`` (``gpu:1,shard:2``) take.
+_SIMPLE_LIST = re.compile(r"^[A-Za-z0-9_.:/@+-]+(,[A-Za-z0-9_.:/@+-]+)*$")
+#: The sbatch keys whose value may be such a list (``--mem`` takes one size).
+_LIST_KEYS = ("partition", "gres")
 #: A path on the nodes (``launcher.remote_cwd``, ``launcher.python``).
 _NODE_PATH = re.compile(r"^~?[A-Za-z0-9_.:/@+-]*$")
 
@@ -101,19 +111,30 @@ def check_time(time: str | None) -> None:
     Raises:
         ValueError: It is not.
     """
-    if time is not None and not _TIME.match(time):
+    if time is None or time.upper() in _TIME_NO_LIMIT:
+        return
+    if not _TIME.fullmatch(time):
         raise ValueError(
-            f"time is sbatch's --time ([D-]HH:MM:SS or minutes), not {time!r}"
+            "time is sbatch's --time (minutes, minutes:seconds, "
+            "hours:minutes:seconds, days-hours, days-hours:minutes, "
+            f"days-hours:minutes:seconds or UNLIMITED), not {time!r}"
         )
 
 
 def check_sbatch_value(key: str, value: str | None) -> None:
-    """``partition``, ``mem`` or ``gres``: a word sbatch takes, if set.
+    """``partition``, ``mem`` or ``gres``: a word sbatch takes, if set, or a
+    comma-separated list of them for ``partition`` and ``gres``.
+
+    A value with a comma is quoted in its override (:func:`_quote`), so
+    Hydra reads it as one string, not as a sweep over its items.
 
     Raises:
         ValueError: It is not.
     """
-    if value is not None and not _SIMPLE.match(value):
+    if value is None:
+        return
+    pattern = _SIMPLE_LIST if key in _LIST_KEYS else _SIMPLE
+    if not pattern.fullmatch(value):
         raise ValueError(f"{key} {value!r} has characters sbatch does not take")
 
 

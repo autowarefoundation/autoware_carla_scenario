@@ -182,9 +182,15 @@ adds to these totals):
   15.0.0).
 - **The `slim` pass** (on by default, `slim: "false"` to disable) drops
   byte-code caches, vendored test suites, C headers, Cython sources and type
-  stubs (29 MB), then runs `strip --strip-unneeded` over every bundled shared
-  object (64 MB) — the manylinux wheels for scipy, numpy and OpenCV ship
-  unstripped. Stripping leaves the dynamic symbol table intact.
+  stubs (about 26 MB), then runs `strip --strip-unneeded` over every bundled
+  shared object (64 MB) — the manylinux wheels for scipy, numpy and OpenCV
+  ship unstripped. Stripping leaves the dynamic symbol table intact. The
+  stubs of mypy's bundled typeshed (`mypy/typeshed/`, about 3 MB) are kept:
+  the image runs mypy for the scenario check's None check, and without the
+  standard library's stubs mypy stops with *"Failed to find builtin module
+  'typing', perhaps typeshed is broken?"*, which the check reports only as
+  skipped. The build checks a small program with mypy and fails if mypy does
+  not report its error.
 
     GNU binutils up to 2.40 — the version in Debian bookworm — rewrites some
     objects into a layout the kernel's ELF loader rejects with *"ELF load

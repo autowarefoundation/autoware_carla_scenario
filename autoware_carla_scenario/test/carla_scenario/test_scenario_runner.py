@@ -1351,3 +1351,44 @@ class TestRunScenarioForgetsTheLastRunsWeather:
 
         assert world_visibility(795) is None
         assert world_tire_friction(795) is None
+
+
+class TestRunScenarioNamesTheTrafficBackendsRun:
+    """The traffic backend is told the run's file stem, so what it writes per
+    run (SUMO's FCD and clock) is not overwritten by the next run of a batch
+    sharing the output directory (#1544)."""
+
+    @staticmethod
+    def _context(tmp_path, file_stem=None):
+        from autoware_carla_scenario.traffic.base import TrafficContext
+
+        contexts: list[TrafficContext] = []
+
+        def prepare(context: TrafficContext) -> None:
+            contexts.append(context)
+            raise _Stop
+
+        runner = _make_runner(None)
+        runner.output_dir = tmp_path
+        runner._world = MagicMock()
+        runner._traffic_backend = MagicMock()
+        runner._traffic_backend.prepare.side_effect = prepare
+        scenario = MagicMock()
+        scenario.STABILIZE_TICKS = 0
+        with (
+            patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
+            pytest.raises(_Stop),
+        ):
+            runner.run_scenario(scenario, reset_world=False, file_stem=file_stem)
+        (context,) = contexts
+        assert context.output_dir == tmp_path
+        return context
+
+    def test_the_stem_given_is_the_backends(self, tmp_path):
+        assert self._context(tmp_path, "CutInScenario-3").file_stem == (
+            "CutInScenario-3"
+        )
+
+    def test_the_stem_taken_skips_an_earlier_runs_sumo_outputs(self, tmp_path):
+        (tmp_path / "MagicMock.sumo").mkdir()
+        assert self._context(tmp_path).file_stem == "MagicMock-1"

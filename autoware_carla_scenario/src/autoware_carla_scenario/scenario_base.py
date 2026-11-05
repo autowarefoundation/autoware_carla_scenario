@@ -309,7 +309,12 @@ class BaseScenario(ABC):
         """
         if self.ego_entity is not None:
             return self.ego_entity
-        return self.ego_type()
+        if TYPE_CHECKING:
+            # Codon cannot hold a class as a value (docs/typecheck.md), so the
+            # check has no `ego_type`: it builds a plain EgoVehicle.
+            return EgoVehicle()
+        else:
+            return self.ego_type()
 
     # ------------------------------------------------------------------
     # Client injection

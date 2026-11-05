@@ -150,7 +150,8 @@ def _render(
         )
     out_dir = Path(json_paths[-1]).parent
     net = nets[-1]
-    sumo_out = out_dir / "sumo"
+    # The run's SUMO outputs are named by its stem, as its result is (#1544).
+    sumo_out = out_dir / (Path(json_paths[-1]).name[: -len("_result.json")] + ".sumo")
     with (run_dir / "replay.log").open("w") as log:
         replay = subprocess.run(
             [

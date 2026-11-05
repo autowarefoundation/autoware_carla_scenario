@@ -55,6 +55,7 @@ __all__ = [
     "GateCoverageItem",
     "GateSpec",
     "EntityKind",
+    "actor_kind",
     "GoalSpec",
     "JunctionPath",
     "JunctionSegment",
@@ -89,7 +90,7 @@ __all__ = [
 #: Bumped whenever the on-disk shape of a document changes incompatibly.
 DOCUMENT_FORMAT_VERSION = 1
 
-EntityKind = Literal["ego", "vehicle", "pedestrian"]
+EntityKind = Literal["ego", "vehicle", "motorcycle", "pedestrian"]
 #: The CARLA blueprint an entity of each kind gets when nothing says otherwise.
 #: A pedestrian is not a vehicle with a different model -- it spawns from a
 #: different blueprint family, is driven by nothing, and has no goal -- so the
@@ -97,9 +98,24 @@ EntityKind = Literal["ego", "vehicle", "pedestrian"]
 DEFAULT_MODELS: dict[str, str] = {
     "ego": "vehicle.mini.cooper",
     "vehicle": "vehicle.mini.cooper",
+    # Whichever motorcycle the running CARLA has: which ones a build has
+    # differs between builds (``entity.MotorcycleEntity``).
+    "motorcycle": "auto",
     # 0001-0014 are gone from CARLA 0.10; 0015 is in every release.
     "pedestrian": "walker.pedestrian.0015",
 }
+#: A kind that performs actions as another kind does: an action spec names the
+#: kinds it is for (``ActionSpec.actor_kinds``), and a motorcycle may do
+#: whatever a vehicle may.
+_ACTS_AS: dict[str, str] = {"motorcycle": "vehicle"}
+
+
+def actor_kind(kind: str) -> str:
+    """The kind an entity of *kind* is matched against an action's
+    ``actor_kinds`` as."""
+    return _ACTS_AS.get(kind, kind)
+
+
 #: Which stack drives the ego, rendered as the framework's ``ego.entity`` key.
 #:
 #: ``autopilot`` is CARLA's TrafficManager, which is driven for the ego and
@@ -399,9 +415,10 @@ class GoalSpec(LaneletChoice):
     s: float = 0.0
 
 
-#: An entity's ``vehicle_type`` that names no blueprint: the vehicle of the
-#: running CARLA nearest the entity's :attr:`Entity.size`, chosen when it is
-#: spawned (:mod:`autoware_carla_scenario.entity.fit`).
+#: An entity's ``vehicle_type`` that names no blueprint: for a vehicle, the
+#: vehicle of the running CARLA nearest the entity's :attr:`Entity.size`,
+#: chosen when it is spawned (:mod:`autoware_carla_scenario.entity.fit`); for a
+#: motorcycle, whichever motorcycle the running CARLA has.
 AUTO_MODEL = "auto"
 
 
@@ -428,6 +445,11 @@ class Entity(_Node):
     thing it can be asked to do is walk -- so :attr:`vehicle_type` follows the
     kind's default (see :data:`DEFAULT_MODELS`) and the actions it may perform
     are the ones whose spec names its kind.
+
+    A ``motorcycle`` is an NPC vehicle on a motorcycle's blueprint
+    (:class:`~autoware_carla_scenario.entity.MotorcycleEntity`): it does
+    whatever a ``vehicle`` may, and its :attr:`vehicle_type` is by default
+    ``auto``, whichever motorcycle the running CARLA has.
 
     A vehicle other than the ego may have ``vehicle_type: auto`` and a
     :attr:`size`: it is then the vehicle of the running CARLA whose bounding

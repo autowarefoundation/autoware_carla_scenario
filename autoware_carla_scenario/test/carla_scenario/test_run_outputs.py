@@ -19,6 +19,8 @@ from autoware_carla_scenario.scenario_runner import _run_file_stem
 from autoware_carla_scenario.slurm import manifest
 from autoware_carla_scenario.slurm.worker import _remove_outputs
 from autoware_carla_scenario.t4_scene import convert
+from autoware_carla_scenario.traffic.base import TrafficContext
+from autoware_carla_scenario.traffic.sumo import backend as sumo_backend
 
 STEM = "CutInScenario"
 
@@ -46,8 +48,40 @@ def test_the_suffixes_are_the_writers_own() -> None:
         environment.LOCK_SUFFIX,
         gate_record.GATE_RECORD_SUFFIX,
     }
-    assert RUN_DIR_SUFFIXES == (t4_settings.DATASET_SUFFIX,)
+    assert RUN_DIR_SUFFIXES == (
+        t4_settings.DATASET_SUFFIX,
+        sumo_backend.OUTPUT_SUFFIX,
+    )
     assert not set(RUN_FILE_SUFFIXES) & set(RUN_DIR_SUFFIXES)
+
+
+def test_sumos_outputs_are_the_runs_own(tmp_path: Path) -> None:
+    # A batch shares the output directory: the SUMO backend writes each run's
+    # FCD, clock and log under the run's stem, so its stem is not reused while
+    # they exist and a retry clears them (#1544).
+    context = TrafficContext(output_dir=tmp_path, file_stem=STEM)
+    sumo_dir = sumo_backend.run_output_dir(context)
+    assert sumo_dir == tmp_path / f"{STEM}.sumo"
+    assert sumo_dir in run_output_paths(tmp_path, STEM)
+    sumo_dir.mkdir()
+    (sumo_dir / "fcd.xml").write_text("<fcd-export/>")
+    assert _run_file_stem(tmp_path, STEM) == f"{STEM}-1"
+    other = sumo_backend.run_output_dir(
+        TrafficContext(output_dir=tmp_path, file_stem=f"{STEM}-1")
+    )
+    assert other != sumo_dir
+
+    _remove_outputs(tmp_path, STEM)
+
+    assert not sumo_dir.exists()
+    assert _run_file_stem(tmp_path, STEM) == STEM
+
+
+def test_a_context_naming_no_run_keeps_sumos_shared_directory(
+    tmp_path: Path,
+) -> None:
+    context = TrafficContext(output_dir=tmp_path)
+    assert sumo_backend.run_output_dir(context) == tmp_path / "sumo"
 
 
 def test_the_manifest_re_exports_the_list() -> None:

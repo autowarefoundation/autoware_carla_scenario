@@ -1523,15 +1523,7 @@ class ScenarioRunner:
         # The ego is built before the cleanup, not after it: an entity that
         # attaches to an actor someone else spawned has to be able to say so
         # before that actor would be destroyed.
-        if TYPE_CHECKING:
-            # create_ego() instantiates the ego's class (`ego_type`), which
-            # Codon cannot hold as a value: the check takes the entity a
-            # scenario was given, or a plain EgoVehicle.
-            ego = EgoVehicle()
-            if scenario.ego_entity is not None:
-                ego = scenario.ego_entity
-        else:
-            ego = scenario.create_ego()
+        ego = scenario.create_ego()
         # Handed on as the vehicle it is (a typed local: the static check
         # upcasts there); anything else (a test double) goes through
         # register_entity, which keeps it as it always has.  Codon resolves
@@ -1622,6 +1614,9 @@ class ScenarioRunner:
                     fixed_delta_seconds=settings.fixed_delta_seconds,
                     random_seed=scenario.random_seed,
                     output_dir=self.output_dir,
+                    # A batch shares output_dir: what the backend writes per
+                    # run goes under the run's stem (run_outputs).
+                    file_stem=file_stem,
                 )
             )
             # What the run's road users draw their parameters from, for the

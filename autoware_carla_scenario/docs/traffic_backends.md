@@ -211,7 +211,7 @@ vehicle parameters are a driver's and never reach a bicycle:
 
 SUMO's default bicycle type (`DEFAULT_BIKETYPE`) is redefined as a
 distribution of 100 types, each its own draw of them
-(`<output>/sumo/bicycle_type.add.xml`, loaded before the demand), which
+(`<output>/{stem}.sumo/bicycle_type.add.xml`, loaded before the demand), which
 SUMO's own bicycles (`traffic.options.bicycles`), a `route_path` demand's of
 that type and the scenario's bicycles are all of.
 
@@ -339,7 +339,7 @@ defaults.
 
 SUMO's default pedestrian type is redefined as a distribution of 100 types,
 each its own draw of them (`vTypeDistribution`, in
-`<output>/sumo/pedestrian_type.add.xml` loaded before the demand); SUMO gives
+`<output>/{stem}.sumo/pedestrian_type.add.xml` loaded before the demand); SUMO gives
 each person one of them as it is added, so each walks as its own draw says.
 They apply to SUMO's own pedestrians (`traffic.options.pedestrians`) and to a
 `route_path` demand's that names no type of its own. On types, not on each
@@ -961,8 +961,19 @@ uv run scenario scenario=lane_change/left map=town10hd_opt traffic=sumo
 uv run scenario ... traffic=sumo traffic.options.ambient.vehicles_per_hour=1800
 uv run scenario ... traffic=sumo traffic.options.scenario_vehicles=sumo
 uv run scenario ... traffic=sumo traffic.options.scenario_pedestrians=sumo
-uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/sumo/fcd.xml
+uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/{stem}.sumo/fcd.xml
 ```
+
+**Its outputs** are the run's own: everything the backend writes -- SUMO's
+log (`sumo.log`), the demand it generates (`ambient.rou.xml`,
+`pedestrians.rou.xml`, `bicycles.rou.xml`), the type files below and, with
+`fcd_output`, the floating car data (`fcd.xml`) and the SUMO time of each CARLA
+tick (`clock.csv`) -- goes in `<output>/{stem}.sumo/`, named by the run's file
+stem like its `_result.json` (`CutInScenario.sumo/`, then
+`CutInScenario-1.sumo/` ...). A batch shares one output directory, so each run
+keeps its own; the directory counts as one of the run's outputs, so a later
+run never takes its stem and a retried run clears it first
+(`run_outputs.RUN_DIR_SUFFIXES`).
 
 **The network** is the world's own road network. The backend takes the
 OpenDRIVE the world runs (the file the run installed, or
