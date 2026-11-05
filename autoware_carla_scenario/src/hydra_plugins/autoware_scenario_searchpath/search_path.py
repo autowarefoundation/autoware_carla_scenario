@@ -37,9 +37,15 @@ class AutowareScenarioSearchPathPlugin(SearchPathPlugin):
         # entries -- so we simply append them all rather than tracking which is
         # primary.
         for conf_dir in get_conf_dirs():
-            # ``get_conf_dirs`` returns resolved (absolute) paths, so ``as_uri``
-            # is safe and yields a correct ``file:///...`` URI on every platform.
+            # Not ``conf_dir.as_uri()``: Hydra's ``ConfigSource`` only strips
+            # the ``file://`` prefix and never unquotes the rest, so the
+            # percent-encoding ``as_uri`` applies (a space, a non-ASCII
+            # character, a literal ``%``) would name a directory that does not
+            # exist (#1543).  The prefix is still spelled out rather than
+            # passing the bare path: Hydra takes everything before the first
+            # ``://`` as the scheme, so a bare path containing one would be
+            # misread.
             search_path.append(
                 provider="autoware-carla-scenario",
-                path=conf_dir.as_uri(),
+                path=f"file://{conf_dir}",
             )

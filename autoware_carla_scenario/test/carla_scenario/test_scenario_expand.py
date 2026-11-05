@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
+from pathlib import Path
 from types import SimpleNamespace
 
 import pytest
@@ -632,6 +634,33 @@ def test_a_glob_listing_is_the_cases_the_batch_runs(
 
     # The second scenario does not draw the first one's settings again.
     assert not draws(expanded[0][1]) & draws(expanded[1][1])
+
+
+# A scenario package's conf dir reached Hydra's search path as a
+# percent-encoded ``file:`` URI, which Hydra never unquotes, so a package under a
+# path with a space or a non-ASCII character could not be composed although the
+# glob resolver listed its names (#1543).
+@pytest.mark.usefixtures("at_repo_root")
+@pytest.mark.parametrize("directory", ["my pkgs é", "100% #1 ?x"])
+def test_the_cli_composes_a_package_under_a_path_a_uri_would_escape(
+    directory: str,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario import registry
+    from autoware_carla_scenario.examples.expand import main
+
+    template = Path("examples/scenario_package_template/src/my_scenario_package")
+    conf_dir = tmp_path / directory / "my_scenario_package" / "conf"
+    shutil.copytree(template / "conf", conf_dir)
+    monkeypatch.setattr(registry, "_CONF_DIRS", list(registry.get_conf_dirs()))
+    registry.register_conf_dir(conf_dir)
+
+    assert main(["scenario=reach_goal/default", "map=nishishinjuku"]) == 0
+    captured = capsys.readouterr()
+    assert "Could not find" not in captured.err
+    assert json.loads(captured.out)["scenario"] == "reach_goal/default"
 
 
 def test_a_bad_scenario_in_a_glob_prints_no_listing(
