@@ -4814,9 +4814,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-284 of the package's 407
-modules (70%; about 87,600 of
-151,500 lines) are <code>CHECKED</code>: the kinematics, the
+285 of the package's 408
+modules (70%; about 87,700 of
+151,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4840,7 +4840,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 284 CHECKED modules</summary>
+<summary>The 285 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5674,6 +5674,10 @@ with the first paragraph of its docstring:</p>
 <td>Find the routes of a map that match a route search.</td>
 </tr>
 <tr>
+<td><code>run_dirs</code></td>
+<td>What a run's Hydra command line asks for, and the run directory it gets.</td>
+</tr>
+<tr>
 <td><code>run_outputs</code></td>
 <td>What one run leaves under its file stem: the single list of them.</td>
 </tr>
@@ -6232,7 +6236,7 @@ the first:</p>
 <li><code>examples</code>: re-exports examples.run (omegaconf, hydra) and the registry (omegaconf, importlib)</li>
 <li><code>examples.compose_errors</code>: imports difflib, and, inside functions, hydra and omegaconf (their errors), the registry (omegaconf, importlib) and examples.run (hydra, omegaconf), which are neither checked nor modelled; reads a composed config of any shape (<code>Any</code>), which Codon cannot express</li>
 <li><code>examples.expand</code>: imports the registry (omegaconf, importlib) and sweeper.expand (omegaconf), and, inside main(), authoring.hydra_config (pydantic, through authoring.models), odd.controls (omegaconf, difflib) and examples.compose_errors (difflib, and hydra, omegaconf and examples.run inside its functions), which are not checked, and <code>OddDraws</code> from odd.sampler, which the odd model does not declare; holds the composed config as <code>Any</code>, which Codon cannot express</li>
-<li><code>examples.run</code>: imports omegaconf, hydra, and typecheck and typecheck.mode (the checker, outside the library check), registry (omegaconf, importlib), prepare.pool (<code>BackendPool</code>) and hydra_compat (argparse, hydra) and, inside functions, pedestrian.ardy (grpc; <code>ArdyBackend</code>, inside _check_backend_settings()), authoring.hydra_config (pydantic, through authoring.models; inside check_scenario_maps()), sweeper.expand (omegaconf), commonroad.session (concurrent.futures), odd.controls (omegaconf, difflib), slurm.submit (omegaconf, slurm.manifest), utils.config (a dataclass's fields read from its class) and entity.hils_entity (hils.protocol), which are neither checked nor modelled, and, inside _cap_malloc_arenas(), ctypes, ctypes.util and platform, which Codon has nothing for; imports <code>ScenarioQueue</code> (and, inside build_ego_entity(), <code>AutowareBridgeConfig</code> and <code>AutowareEgoEntity</code>) from the package, <code>PlannedRoute</code>, <code>RouteError</code>, <code>ODD_CASE_KEY</code>, <code>check_sample_settings()</code>, <code>decode_case()</code>, <code>seed_setting()</code> and <code>whole_number_setting()</code> (and, inside a function, <code>OddDraws</code>) from odd.route and odd.sampler, which the package and odd models do not declare, <code>RerunConversion</code>, <code>RerunUnavailableError</code> and <code>report()</code> from rerun, which the rerun model does not declare, <code>T4Settings</code> and <code>T4UnavailableError</code> from t4, which the t4 model does not declare, and, inside functions, <code>use_weather_rules()</code> and <code>check_weather_rules()</code> from weather_rules, which the weather_rules model does not declare; imports more of contextlib and threading than their shims declare (<code>contextlib.contextmanager</code>, <code>threading.main_thread()</code>, <code>threading.current_thread()</code>); reads the fields of <code>DockerAutowareConfig</code> from its class (<code>__dataclass_fields__</code>), and those of <code>AutowareBridgeConfig</code> through utils.config, and builds them, <code>EnvironmentAction</code> and <code>RerunConverter</code> with <code>**</code> of a dict; holds a registered scenario's config class as a value (<code>config_cls</code>, from <code>get_scenario_classes()</code>) and builds it with <code>config_cls(**_to_dict(scenario))</code> in _check_scenario_config(); none of which Codon compiles; takes a launcher setting of any type (<code>value: object</code>) in _launcher_str_list() and _launcher_str_mapping(), which Codon cannot express; holds settings as <code>dict[str, Any]</code> of mixed value types (a case's settings, the video, sensor and environment settings, <code>_to_dict()</code>, <code>_rules_locations(spec: Any) -&gt; Any</code>), which Codon cannot express; what it reads off the command line and the environment is the checked examples.argv's</li>
+<li><code>examples.run</code>: imports omegaconf, hydra, and typecheck and typecheck.mode (the checker, outside the library check), registry (omegaconf, importlib), prepare.pool (<code>BackendPool</code>) and hydra_compat (argparse, hydra) and, inside functions, pedestrian.ardy (grpc; <code>ArdyBackend</code>, inside _check_backend_settings()), authoring.hydra_config (pydantic, through authoring.models; inside check_scenario_maps()), sweeper.expand (omegaconf), commonroad.session (concurrent.futures), odd.controls (omegaconf, difflib), slurm.submit (omegaconf, slurm.manifest), utils.config (a dataclass's fields read from its class) and entity.hils_entity (hils.protocol), which are neither checked nor modelled, and, inside _cap_malloc_arenas(), ctypes, ctypes.util and platform, which Codon has nothing for; imports <code>ScenarioQueue</code> (and, inside build_ego_entity(), <code>AutowareBridgeConfig</code> and <code>AutowareEgoEntity</code>) from the package, <code>PlannedRoute</code>, <code>RouteError</code>, <code>ODD_CASE_KEY</code>, <code>check_sample_settings()</code>, <code>decode_case()</code>, <code>seed_setting()</code> and <code>whole_number_setting()</code> (and, inside a function, <code>OddDraws</code>) from odd.route and odd.sampler, which the package and odd models do not declare, <code>RerunConversion</code>, <code>RerunUnavailableError</code> and <code>report()</code> from rerun, which the rerun model does not declare, <code>T4Settings</code> and <code>T4UnavailableError</code> from t4, which the t4 model does not declare, and, inside functions, <code>use_weather_rules()</code> and <code>check_weather_rules()</code> from weather_rules, which the weather_rules model does not declare; imports more of contextlib and threading than their shims declare (<code>contextlib.contextmanager</code>, <code>threading.main_thread()</code>, <code>threading.current_thread()</code>); reads the fields of <code>DockerAutowareConfig</code> from its class (<code>__dataclass_fields__</code>), and those of <code>AutowareBridgeConfig</code> through utils.config, and builds them, <code>EnvironmentAction</code> and <code>RerunConverter</code> with <code>**</code> of a dict; holds a registered scenario's config class as a value (<code>config_cls</code>, from <code>get_scenario_classes()</code>) and builds it with <code>config_cls(**_to_dict(scenario))</code> in _check_scenario_config(); none of which Codon compiles; takes a launcher setting of any type (<code>value: object</code>) in _launcher_str_list() and _launcher_str_mapping(), which Codon cannot express; holds settings as <code>dict[str, Any]</code> of mixed value types (a case's settings, the video, sensor and environment settings, <code>_to_dict()</code>, <code>_rules_locations(spec: Any) -&gt; Any</code>), which Codon cannot express; what it reads off the command line and the environment is the checked examples.argv's, and what its Hydra argv asks for and the run directory it reserves are the checked run_dirs'</li>
 <li><code>gate.evaluate</code>: imports argparse, authoring.models (pydantic) and, inside functions, openodd's coverage merge (a Rust extension) and authoring.persistence (yaml), which are neither checked nor modelled; the criteria it judges, the trajectory consistency, the case coverage, finding the records and the changes from a baseline are the checked gate.criteria's, which it re-exports</li>
 <li><code>hils</code>: re-exports hils.config (yaml), which is neither checked nor modelled</li>
 <li><code>hils.bridge</code>: imports hilspy (a Rust extension) at module level under TYPE_CHECKING, for its <code>Channel</code>, <code>Periodic</code> and <code>Clock</code> annotations, and inside _require_hilspy(), which hands the module on as a <code>types.ModuleType</code> value, and typesafe_carla's CPython package inside HilsBridge, which it holds as <code>_carla: Any</code>; uses more of threading than its shim declares (<code>Event</code>); holds hilspy's messages, CARLA's measurements and the queues that carry them typed <code>Any</code>; and builds on hils.link and hils.protocol (socket), hils.measurements (cv2) and hils.config (yaml), which are neither checked nor modelled</li>
@@ -7858,7 +7862,13 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 - <strong>A datetime is formatted from its fields</strong>: Codon's <code>datetime</code> has no
   <code>__format__</code>, so <code>f"{now:%Y-%m-%d}"</code> is
   <code>f"{now.year:04d}-{now.month:02d}-{now.day:02d}"</code>, the same string for
-  every year from 1000 on (<code>ui.runner._multirun_dir()</code>).
+  every year from 1000 on (<code>run_dirs.timestamped_dir()</code>, which
+  <code>examples.run</code> and <code>ui.runner</code> share, #1653).
+- <strong><code>FileExistsError</code> is <code>OSError</code> and a test of the path</strong>: Codon does not
+  name <code>FileExistsError</code>, so <code>except FileExistsError:</code> around a <code>mkdir()</code> is
+  <code>except OSError:</code> that raises again unless the path exists, or is a
+  symbolic link (one that resolves to nothing fails <code>mkdir()</code> with
+  <code>FileExistsError</code> too) (<code>run_dirs.reserve_timestamped_dir()</code>).
 - <strong>A dataclass derived from a dataclass</strong> is constructed with its base's
   fields first, as Python's constructor and Codon's take them, wherever the
   base is checked (<code>CarlaCameraSensorConfig(CameraSensorConfig)</code>). Of two
@@ -8162,7 +8172,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 17:42:39 UTC"><span class="timeago" datetime="2026-11-05T17:42:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 17:42:39 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 17:44:08 UTC"><span class="timeago" datetime="2026-11-05T17:44:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 17:44:08 UTC">2026-11-05</span>
   </span>
 
     
