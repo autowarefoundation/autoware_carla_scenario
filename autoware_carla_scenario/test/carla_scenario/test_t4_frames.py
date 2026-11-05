@@ -145,3 +145,8 @@ def test_convert_re_exports_and_calls_the_frames() -> None:
         frame.positions(xyz), _old_positions(np.array([81655.0, 50045.0, 4.5]), xyz)
     )
     assert np.array_equal(convert._MapFrame.angles(rpy_deg), _old_angles(rpy_deg))
+
+
+def test_convert_re_exports_the_checked_rear_axle_offset() -> None:
+    """#1697: the check moved to frames; convert (and live, __main__) keep it."""
+    assert convert.checked_rear_axle_offset is frames.checked_rear_axle_offset

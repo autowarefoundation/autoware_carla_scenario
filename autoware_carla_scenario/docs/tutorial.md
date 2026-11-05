@@ -400,7 +400,7 @@ Instead of copying the template by hand, generate a fresh package (the files
 below are rendered from Jinja2 templates):
 
 ```bash
-# scenario-new <package-name> [--scenario NAME] [--output-dir DIR]
+# scenario-new <package-name> [--scenario NAME] [--output-dir DIR] [--force]
 scenario-new reach_goal_pkg --scenario reach_goal
 ```
 
@@ -415,6 +415,18 @@ reach_goal_pkg/
     ├── configs.py                     # ReachGoalConfig
     └── conf/scenario/reach_goal/default.yaml
 ```
+
+`scenario-new` refuses a package directory that already exists. With
+`--force` (`force=True` in the Python API) it replaces the whole directory, as
+the scenario editor's package export (`export_package(..., force=True)`) does:
+nothing under it is
+kept, neither the files of a scenario generated there before (which would
+still be registered through `register_conf_dir` but no longer import) nor files
+added by hand. The package is written into a temporary directory beside the
+target and moved into place once complete, so a run that fails (a read-only
+directory, an `--output-dir` that is a file) leaves nothing half-written, and
+under `--force` the earlier package as it was; `scenario-new` prints
+`Error: ...` and exits with 1.
 
 The scenario module sits beside `__init__.py`, `configs.py` and `conf/`, and
 importing it binds its name in `__init__.py`, so `configs`, `conf` and the

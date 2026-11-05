@@ -53,7 +53,10 @@ from autoware_carla_scenario.typecheck.library_driver import (
     render_library_driver,
     workspace_module,
 )
-from autoware_carla_scenario.typecheck.transform import redirect_imports
+from autoware_carla_scenario.typecheck.transform import (
+    module_constants,
+    redirect_imports,
+)
 
 _PACKAGE = "autoware_carla_scenario"
 
@@ -517,6 +520,124 @@ def test_an_import_of_a_checked_module_names_its_workspace_module() -> None:
     )
     assert lines[6] == "import math"
     assert len(lines) == 7  # every statement kept its line
+
+
+def _vector_constant(module: str, name: str) -> bool:
+    return module == f"{_PACKAGE}.kinematics.vector" and name in ("ZERO", "UNIT_M")
+
+
+@pytest.mark.codon_selftest
+def test_an_imported_constant_is_read_through_its_module() -> None:
+    # Codon 0.19 can report a constant imported by name, and read at module
+    # level, as not defined (#1693): it is read through the module instead,
+    # on the import's line, and the other names stay imported by name.
+    source = """
+        from .vector import (
+            Vector3,
+            ZERO,
+            UNIT_M as UNIT,
+        )
+        from .vector import ZERO as ZERO
+        from ..coordinate.frames import ZERO
+        X = ZERO
+        """
+    out, problems = redirect_imports(
+        textwrap.dedent(source),
+        f"{_PACKAGE}.kinematics.velocity",
+        False,
+        _target,
+        _MODULES.__contains__,
+        constant=_vector_constant,
+    )
+    assert problems == []
+    lines = out.splitlines()
+    vector = "_acs_lib.autoware_carla_scenario__kinematics__vector"
+    assert lines[1] == (
+        f"from {vector} import Vector3; import {vector} as _acs_const_2; "
+        "ZERO = _acs_const_2.ZERO; UNIT = _acs_const_2.UNIT_M"
+    )
+    # A re-export binds the name too.
+    assert lines[6] == f"import {vector} as _acs_const_7; ZERO = _acs_const_7.ZERO"
+    # Only the constants *constant* names: frames' ZERO is a plain import.
+    assert lines[7] == (
+        "from _acs_lib.autoware_carla_scenario__coordinate__frames import ZERO"
+    )
+    assert lines[8] == "X = ZERO"
+    assert len(lines) == 9  # every statement kept its line
+
+
+@pytest.mark.codon_selftest
+def test_two_imports_of_constants_on_a_line_get_two_module_names() -> None:
+    out, problems = redirect_imports(
+        "from .vector import ZERO; from .vector import UNIT_M\n",
+        f"{_PACKAGE}.kinematics.velocity",
+        False,
+        _target,
+        _MODULES.__contains__,
+        constant=_vector_constant,
+    )
+    assert problems == []
+    assert "as _acs_const_1;" in out
+    assert "as _acs_const_1_1;" in out
+    assert "UNIT_M = _acs_const_1_1.UNIT_M" in out
+
+
+def test_module_constants_are_plain_upper_case_assignments_and_re_exports() -> None:
+    def tree(source: str) -> ast.Module:
+        return ast.parse(textwrap.dedent(source))
+
+    constants = module_constants(
+        {
+            f"{_PACKAGE}.metrics": (
+                tree(
+                    """
+                    from typing import TypeAlias, TypeVar
+                    T = TypeVar("T")
+                    CRIME_TTR_S = "crime_ttr_s"
+                    _PRIVATE_M: float = 0.5
+                    JSON: TypeAlias = dict
+                    lower = 1
+                    A, B = 1, 2
+                    if True:
+                        HIDDEN = 1
+                    class UPPER:
+                        pass
+                    """
+                ),
+                False,
+            ),
+            f"{_PACKAGE}.commonroad": (
+                tree("from ..metrics import CRIME_TTR_S as CRIME_TTR_S, lower\n"),
+                True,
+            ),
+            f"{_PACKAGE}.heavy": (
+                tree(
+                    "from .commonroad import CRIME_TTR_S as TTR\n"
+                    "from .metrics import _PRIVATE_M as private\n"
+                ),
+                False,
+            ),
+        }
+    )
+    assert constants == {
+        f"{_PACKAGE}.metrics": {"CRIME_TTR_S", "_PRIVATE_M"},
+        f"{_PACKAGE}.commonroad": {"CRIME_TTR_S"},
+        f"{_PACKAGE}.heavy": {"TTR"},
+    }
+
+
+def test_heavy_metrics_reads_the_metrics_constant_through_its_module() -> None:
+    heavy, metrics = f"{_PACKAGE}.heavy_metrics", f"{_PACKAGE}.metrics"
+    every = package_modules()
+    sources = check._Sources()
+    for name in (heavy, metrics):
+        text = every[name].read_text(encoding="utf-8")
+        sources.modules[name] = check._Module(every[name], False, text, ast.parse(text))
+    files = check._library_files([heavy, metrics], sources, every)
+    text = next(f.text for f in files if f.module == heavy)
+    assert f"import {workspace_module(metrics)} as _acs_const_" in text
+    assert "CRIME_TTR_S = _acs_const_" in text
+    assert f"from {workspace_module(metrics)} import" not in text
 
 
 @pytest.mark.codon_selftest

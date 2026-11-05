@@ -2436,11 +2436,12 @@ the stem a log is of, its recording and its sensor recording, which `rerun`,
 `rerun_lidar` and `ui.web_viewer_paths` all name them with; `ui.case_paths`
 names a case's log and recording with it too), the typed core of the sensors
 in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
-entities are the sensors' and the parse of `rerun rrd print`:
-`rerun_sensor_mount`, #1688; not `rerun_lidar`, which holds the Rerun SDK as
+entities are the sensors', the parse of `rerun rrd print` and the scan of a
+recording's bytes for those entities: `rerun_sensor_mount`, #1688, #1697; not `rerun_lidar`, which holds the Rerun SDK as
 `Any` and re-exports it), the frame math
 of the T4Scene converter (CARLA's world frame to Autoware's `map` frame, and the rotations
-and quaternions of its angles: `t4_scene.frames`, #1665; the converter
+and quaternions of its angles, and the check of the ego's rear-axle offset:
+`t4_scene.frames`, #1665, #1697; the converter
 itself, which reads the log's mixed-type records and builds protobuf
 messages, re-exports it), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
@@ -2874,6 +2875,26 @@ function: `autoware_stack.bridge_node` finds the installed
 `autoware_bridge` package with `from ..autoware_bridge import __file__`.
 Codon has no module object, so `from .. import autoware_bridge` and
 `autoware_bridge.__file__` do not compile.
+
+A **constant** imported from another checked module is read through that
+module (#1693): Codon 0.19 can report a constant imported with `from M import
+NAME` and read at module level as not defined, depending on what precedes it
+in `M` (`heavy_metrics` reading `metrics.CRIME_TTR_S`). So, on the import's
+own line, `from .metrics import CRIME_TTR_S, ego_progress` becomes
+
+```python
+from _acs_lib.autoware_carla_scenario__metrics import ego_progress; import _acs_lib.autoware_carla_scenario__metrics as _acs_const_12; CRIME_TTR_S = _acs_const_12.CRIME_TTR_S
+```
+
+(`from M import X as NAME` binds `NAME`). A constant is an UPPER_CASE name of
+more than one letter (not a `T` TypeVar) that the imported module binds with a
+plain assignment at module level (`NAME = ...` or `NAME: type = ...`, not
+`NAME: TypeAlias = ...`), or re-exports from another checked module that has
+it as a constant (`from .metrics import CRIME_TTR_S as CRIME_TTR_S`);
+`module_constants()` in `typecheck/transform.py` finds them. Every other name,
+and an import through the model (`MODELLED_IMPORTS`), stays a `from M import`.
+An UPPER_CASE assignment that holds a type (`JSON = dict[str, Any]`) would
+read as a variable, not a type, through the module: annotate it `TypeAlias`.
 
 Two checked modules that import each other can each need the other's types
 the moment Codon reads it: `BaseScenario` declares `_measures: dict[str,
