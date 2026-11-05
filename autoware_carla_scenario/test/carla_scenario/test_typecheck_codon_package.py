@@ -148,7 +148,26 @@ def test_a_batch_refuses_a_wrong_value_before_reading_the_config(
         raise AssertionError("the map was resolved before the scenarios were checked")
 
     monkeypatch.setattr(run, "resolve_map_paths", must_not_run)
-    with pytest.raises(ScenarioTypeError, match=re.escape("scenario.timeout_seconds")):
+    # A value the run's own config checks let through and only the scenario
+    # check refuses: run_timeout_seconds() refuses a timeout that is not a
+    # number itself (a RunConfigError), so a field of the scenario's own.
+    with pytest.raises(ScenarioTypeError, match=re.escape("scenario.hold_seconds")):
+        run.run_batch(
+            ["cut_in/left", "cut_in/right"],
+            ["scenario.hold_seconds=fast"],
+        )
+
+
+def test_a_batch_refuses_a_timeout_that_is_not_a_number_before_reading_the_config(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    def must_not_run(_cfg: Any) -> Any:
+        raise AssertionError("the map was resolved before the configs were checked")
+
+    monkeypatch.setattr(run, "resolve_map_paths", must_not_run)
+    with pytest.raises(run.RunConfigError, match=re.escape("scenario.timeout_seconds")):
         run.run_batch(
             ["lane_change/left", "lane_change/right"],
             ["scenario.timeout_seconds=fast"],
