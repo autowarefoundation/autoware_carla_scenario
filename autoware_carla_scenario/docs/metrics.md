@@ -185,8 +185,8 @@ manoeuvres: about 2 s a frame with a collision ahead.
 A slow metric is evaluated less often than every `period_s` (0.1 s): at its
 own period, `metric_periods_s`, by default 0.5 s for `crime_ttr_s`
 (`DEFAULT_METRIC_PERIODS_S`). A frame is asked only the metrics due on it, and
-a metric condition counts each NG sample until the next, so `max_ng_seconds`
-is still simulated time. Set the periods of any CommonRoad metric; the
+a metric condition counts each NG sample until the next (the last until the
+run's end), so `max_ng_seconds` is still simulated time. Set the periods of any CommonRoad metric; the
 dictionary given replaces the one set, so start from it to keep the others':
 
 ```python
@@ -275,8 +275,11 @@ run fails when its NG frames add up to more than `max_ng_seconds` of
 simulated time -- with the default `0`, at its first NG frame -- at the time
 they do. "More than" means by over `1e-9` s, the tolerance the other time
 conditions use: the clock is a running sum of ticks, so a metric NG for
-exactly `max_ng_seconds` can add up to a hair over it, and that holds. Each NG frame counts until the next frame evaluated (the last, the
-run's end, counts nothing); a frame the metric reads nothing in is not NG.
+exactly `max_ng_seconds` can add up to a hair over it, and that holds. Each NG frame counts until the next frame evaluated, and the last until the
+run's end, its last recorded frame: a metric evaluated every tick reads its
+last sample then, so that one counts nothing, while one sampled at a coarser
+period (`crime_ttr_s`, the CommonRoad metrics) counts its last sample for the
+time left to the end. A frame the metric reads nothing in is not NG.
 
 ```python
 from autoware_carla_scenario import ComparisonRule, MetricCondition

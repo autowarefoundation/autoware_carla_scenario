@@ -265,8 +265,8 @@ generically around the ego:
 |---|---|---|---|
 | `vehicle_ahead_gap_m` | m | 2 | The free road to the nearest vehicle ahead on the ego's lane or a lane beside it: its rear bumper less the ego's front bumper, along the ego's lane on the Lanelet2 map (up to `AHEAD_RANGE_M`); a vehicle about to cut in is measured from before it changes lanes |
 | `vehicle_ahead_relative_speed_kph` | km/h | 2 | That vehicle's speed along the ego's lane less the ego's |
-| `crossing_pedestrian_gap_m` | m | How far ahead the nearest pedestrian ahead that is moving was when it set off, held while it crosses |
-| `crossing_pedestrian_speed_ms` | m/s | That pedestrian's speed |
+| `crossing_pedestrian_gap_m` | m | 1 | How far ahead the nearest pedestrian ahead that is moving was when it set off, held while it crosses |
+| `crossing_pedestrian_speed_ms` | m/s | 1 | That pedestrian's speed |
 | `stop_line_distance_m` | m | 1 | Along the ego's lane, from its front bumper to the nearest stop line ahead -- a traffic light's, a traffic sign's, a detection area's or a road marking's, as a `stop_line_offset` binding finds them -- up to `AHEAD_RANGE_M`, on any branch of the lane where it forks (the measure does not know the route); nothing without a lane to read along |
 
 The pedestrian measures read in the ego's frame: ahead along its heading,
