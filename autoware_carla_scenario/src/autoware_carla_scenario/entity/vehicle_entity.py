@@ -185,3 +185,119 @@ class VehicleEntity(BackendDriven):
         if self._vehicle is not None:
             self._vehicle.destroy()
             self._vehicle = None
+
+
+#: The ``base_type`` CARLA gives a motorcycle's blueprint
+#: (``vehicle.yamaha.yzf``, ``vehicle.kawasaki.ninja``, ...).
+MOTORCYCLE_BASE_TYPE: str = "motorcycle"
+#: :class:`MotorcycleEntityConfig`'s ``vehicle_type`` when it names no
+#: blueprint: the first motorcycle, by blueprint id, of the server the run is
+#: on -- which motorcycles a CARLA build has differs between builds.
+ANY_MOTORCYCLE: str = ""
+
+
+def is_motorcycle_blueprint(blueprint: "carla.ActorBlueprint") -> bool:
+    """Whether *blueprint* is a motorcycle's: its ``base_type`` says so."""
+    if not blueprint.has_attribute("base_type"):
+        return False
+    base_type = blueprint.get_attribute("base_type").as_str()
+    return base_type.lower() == MOTORCYCLE_BASE_TYPE
+
+
+def motorcycle_blueprints(world: "carla.World") -> list[str]:
+    """The ids of *world*'s motorcycle blueprints, sorted."""
+    found: list[str] = []
+    for blueprint in world.get_blueprint_library().filter("vehicle.*"):
+        if is_motorcycle_blueprint(blueprint):
+            found.append(str(blueprint.id))
+    return sorted(found)
+
+
+def resolve_motorcycle_type(world: "carla.World", vehicle_type: str) -> str:
+    """The motorcycle blueprint a :class:`MotorcycleEntity` of
+    *vehicle_type* is spawned as on *world*.
+
+    :data:`ANY_MOTORCYCLE` (empty) is the first of
+    :func:`motorcycle_blueprints`; a blueprint named is checked to be one.
+
+    Raises:
+        ValueError: If *world* has no motorcycle, or *vehicle_type* names a
+            blueprint that is not one of its motorcycles.
+    """
+    motorcycles = motorcycle_blueprints(world)
+    if vehicle_type == ANY_MOTORCYCLE:
+        if not motorcycles:
+            raise ValueError(
+                "This CARLA server has no motorcycle blueprint (no vehicle "
+                f"blueprint has base_type {MOTORCYCLE_BASE_TYPE!r})"
+            )
+        return motorcycles[0]
+    if vehicle_type not in motorcycles:
+        raise ValueError(
+            f"Vehicle blueprint {vehicle_type!r} is not a motorcycle of this "
+            f"CARLA server. Available motorcycles: {motorcycles}"
+        )
+    return vehicle_type
+
+
+class MotorcycleEntityConfig(VehicleEntityConfig):
+    """Configuration for spawning a :class:`MotorcycleEntity`.
+
+    A :class:`VehicleEntityConfig` whose ``vehicle_type`` must be a
+    motorcycle's blueprint (:func:`is_motorcycle_blueprint`), and is by
+    default :data:`ANY_MOTORCYCLE`: whichever motorcycle the server has.
+    """
+
+    def __init__(
+        self,
+        role_name: str,
+        spawn_location: SpawnLocation,
+        vehicle_type: str = ANY_MOTORCYCLE,
+        initial_speed_kmh: float = 0.0,
+        spawn_retry_max_count: int = 0,
+        spawn_retry_t_step: float = 0.1,
+        spawn_retry_z_step: float = 0.5,
+        od_pose: Optional["OpenDrivePose"] = None,
+        ground_projection: Optional["GroundProjectionConfig"] = None,
+    ) -> None:
+        super().__init__(
+            role_name=role_name,
+            spawn_location=spawn_location,
+            vehicle_type=vehicle_type,
+            initial_speed_kmh=initial_speed_kmh,
+            spawn_retry_max_count=spawn_retry_max_count,
+            spawn_retry_t_step=spawn_retry_t_step,
+            spawn_retry_z_step=spawn_retry_z_step,
+            od_pose=od_pose,
+            ground_projection=ground_projection,
+        )
+
+
+class MotorcycleEntity(VehicleEntity):
+    """An NPC motorcycle: a :class:`VehicleEntity` ridden on a motorcycle's
+    blueprint.
+
+    It is driven as every NPC vehicle is, by the run's traffic backend: the
+    TrafficManager puts it on autopilot like any other vehicle, and SUMO
+    takes it on as a vehicle of its ``motorcycle`` class rather than a
+    passenger car (docs/traffic_backends.md).  :meth:`spawn` refuses a
+    blueprint that is not a motorcycle's, and picks one when the config names
+    none (:data:`ANY_MOTORCYCLE`); :attr:`vehicle_type` is the one spawned
+    from then on.
+    """
+
+    def spawn(self, world: "carla.World") -> "carla.Actor":
+        """Spawn the motorcycle in the CARLA world, as
+        :meth:`VehicleEntity.spawn` spawns a vehicle.
+
+        Raises:
+            ValueError: If the world has no motorcycle, or the configured
+                blueprint is not one (:func:`resolve_motorcycle_type`).
+        """
+        if _warmup_done:
+            # Before the blueprint is looked up: too late is the error.
+            return super().spawn(world)
+        self._config.vehicle_type = resolve_motorcycle_type(
+            world, self._config.vehicle_type
+        )
+        return super().spawn(world)

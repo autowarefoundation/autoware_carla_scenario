@@ -994,6 +994,7 @@ mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
 | SUMO's pedestrians (`randomTrips.py --pedestrians`, `pedestrians.enabled`) | SUMO | native; mirrored into CARLA as walkers near the ego |
 | Scenario bicycles (a vehicle whose blueprint's `base_type` is `bicycle`) | as the scenario's other vehicles | published or driven, as a SUMO `bicycle` |
 | SUMO's bicycles (`randomTrips.py --vclass bicycle`, `bicycles.enabled`) | SUMO | native; mirrored into CARLA as bicycles near the ego |
+| Scenario motorcycles (`MotorcycleEntity`, or any vehicle whose blueprint's `base_type` is `motorcycle`) | as the scenario's other vehicles | published or driven, as a SUMO `motorcycle` |
 
 A published vehicle has SUMO's speed and lane-change control switched off, so
 SUMO traffic sees it where CARLA has it and reacts to it. With the default the
@@ -1110,6 +1111,34 @@ drives (`scenario_vehicles=sumo`) only where bicycles may go.
 uv run scenario ... traffic=sumo traffic.options.cycle_on_sidewalks=true \
     traffic.options.bicycles.enabled=true traffic.options.bicycles.max_bicycles=20 \
     traffic.bicycles.max_speed_mps.mean=4.0 traffic.bicycles.max_speed_mps.std=0.8
+```
+
+**Motorcycles**: a scenario's motorcycle -- a `MotorcycleEntity`, or any
+vehicle whose blueprint's `base_type` is `motorcycle` -- joins SUMO as a
+vehicle of the class `motorcycle`, of the type `acs_motorcycle` that every run
+declares (SUMO has no default one; it has SUMO's defaults for the class), with
+its CARLA bounding box as its length and width. It rides the carriageway, is
+published or driven like the scenario's other vehicles, takes the drivers'
+parameters (`traffic.vehicles`) as a car does, and may leave for the
+mesoscopic model like them. Under the TrafficManager backend a motorcycle is a
+vehicle like any other: put on autopilot at the start of the run and given its
+manoeuvres (speed, lane changes, turns, routes) as every NPC is.
+
+```python
+from autoware_carla_scenario import (
+    MotorcycleEntity,
+    MotorcycleEntityConfig,
+    SpawnPointIndex,
+)
+
+# Whichever motorcycle the CARLA server has (`vehicle_type` names none) ...
+rider = MotorcycleEntity(MotorcycleEntityConfig("rider", SpawnPointIndex(6)))
+# ... or one by name, refused at spawn if it is not a motorcycle's blueprint.
+named = MotorcycleEntity(
+    MotorcycleEntityConfig("rider2", SpawnPointIndex(7), vehicle_type="vehicle.yamaha.yzf")
+)
+rider.spawn(world)
+self.register_entity(rider)
 ```
 
 **Stepping**: one SUMO step per CARLA tick, with the step length set to the

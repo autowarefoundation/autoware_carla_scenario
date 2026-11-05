@@ -157,3 +157,31 @@ class VehicleEntity:
 
     def forget_lane_change(self) -> None:
         raise NotImplementedError()
+
+
+# A MotorcycleEntityConfig's vehicle_type naming no blueprint: whichever
+# motorcycle the server has.
+ANY_MOTORCYCLE: str = ""
+
+
+class MotorcycleEntityConfig(VehicleEntityConfig):
+    def __init__(self, role_name, spawn_location: SpawnLocation, vehicle_type: str = ANY_MOTORCYCLE,
+                 initial_speed_kmh: float = 0.0, spawn_retry_max_count: int = 0,
+                 spawn_retry_t_step: float = 0.1, spawn_retry_z_step: float = 0.5,
+                 od_pose: Optional[OpenDrivePose] = None, ground_projection = None):
+        super().__init__(role_name, spawn_location, vehicle_type, initial_speed_kmh,
+                         spawn_retry_max_count, spawn_retry_t_step, spawn_retry_z_step,
+                         od_pose, ground_projection)
+
+
+# A VehicleEntity ridden on a motorcycle's blueprint: everything else is
+# VehicleEntity's.
+class MotorcycleEntity(VehicleEntity):
+    def __init__(self):
+        compile_error("MotorcycleEntity(): no constructor takes these arguments (required: config)")
+
+    def __init__(self, config: VehicleEntityConfig):
+        super().__init__(config)
+
+    def spawn(self, world: carla.World) -> carla.Actor:
+        raise NotImplementedError()
