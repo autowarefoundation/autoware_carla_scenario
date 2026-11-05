@@ -35,6 +35,7 @@ __all__ = [
     "box_centre",
     "claim_spot",
     "first_in_way",
+    "on_another_level",
     "overlaps",
 ]
 
@@ -52,13 +53,15 @@ _HIDDEN_BELOW_M = -100.0
 #: wheels of a car on it.
 _SAME_LEVEL_MARGIN_M = 1.0
 
-#: The steepest grade (rise per metre along) of a road taken as one level
-#: when looking along it (#1588), as ``measures._MAX_GRADE`` (#1587):
-#: :data:`_SAME_LEVEL_MARGIN_M` is sized for actors within reach of each
-#: other, but a road climbing 10 % rises a metre every 10 m, and
-#: :func:`first_in_way` looks tens of metres ahead.  A road user that far
-#: off is on another level only when where it stands is higher or lower
-#: than this grade would climb over the distance to it.
+#: The steepest grade (rise over run) a road two road users share is taken
+#: to have, between them (#1587, #1588, #1597).  Highways are built to
+#: about 4-6 % and urban streets to about 8-10 %; 10 % covers both, while a
+#: road stacked over another (7-8 m apart) is still told apart within some
+#: 70 m.  A height gap within this grade of the planar distance is the same
+#: road climbing or falling, not another level: :data:`_SAME_LEVEL_MARGIN_M`
+#: is sized for actors within reach of each other, but a road climbing 10 %
+#: rises a metre every 10 m, and :func:`first_in_way`, the vehicle ahead and
+#: the CommonRoad frame look tens of metres away (:func:`on_another_level`).
 _MAX_GRADE = 0.10
 
 
@@ -92,6 +95,22 @@ def _level_gap(one: tuple[float, float], other: tuple[float, float]) -> float:
     ``0.0`` when the two are on the same level of road."""
     gap = max(other[0] - one[1], one[0] - other[1], 0.0)
     return gap if gap > _SAME_LEVEL_MARGIN_M else 0.0
+
+
+def on_another_level(
+    one: tuple[float, float], other: tuple[float, float], planar_distance: float
+) -> bool:
+    """Whether a road user whose vertical span (bottom, top) is *other*,
+    *planar_distance* metres from one whose span is *one* in the plane, is
+    on another level of road than it: on a bridge over it, or in an
+    underpass beneath it.  Its box clear of *one* by more than
+    :data:`_SAME_LEVEL_MARGIN_M` (:func:`_level_gap`), and their bottoms
+    (where each stands on its road) apart by more than a road of
+    :data:`_MAX_GRADE` climbs over the distance between them -- the bottoms,
+    not the gap, which a tall box shortens (#1587, #1597)."""
+    if _level_gap(one, other) <= 0.0:
+        return False
+    return abs(other[0] - one[0]) > _MAX_GRADE * max(planar_distance, 0.0)
 
 
 class Obstacle:
@@ -262,17 +281,10 @@ def _elsewhere(
     distance: float,
 ) -> bool:
     """Whether road user *actor_id*, its origin at height *oz*, is on
-    another level of road than the vertical span *mine*: on a bridge over
-    it, or in an underpass beneath it.  Its box clear of *mine* by more than
-    :data:`_SAME_LEVEL_MARGIN_M` (:func:`_level_gap`), and their bottoms
-    (where each stands on its road) apart by more than a road of
-    :data:`_MAX_GRADE` climbs over the *distance* (m, in plan) between the
-    two -- the bottoms, not the gap, which a tall box shortens -- as
-    ``measures._on_another_level`` tells them apart (#1587)."""
-    other = _span_at(world, actor_id, oz, False)
-    if _level_gap(mine, other) <= 0.0:
-        return False
-    return abs(other[0] - mine[0]) > _MAX_GRADE * max(distance, 0.0)
+    another level of road than the vertical span *mine*, *distance* metres
+    (in plan) from it: on a bridge over it, or in an underpass beneath it
+    (:func:`on_another_level`)."""
+    return on_another_level(mine, _span_at(world, actor_id, oz, False), distance)
 
 
 def box_centre(

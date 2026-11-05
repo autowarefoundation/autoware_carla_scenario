@@ -104,7 +104,7 @@ from .coordinate.map_manager import MapManager
 from .entity_role import find_actor_in_world
 from .kinematics.walker_motion import WalkerVelocities, simulated_seconds
 from .metrics import is_metric
-from .utils.clearance import _level_gap, _vertical_span
+from .utils.clearance import _vertical_span, on_another_level
 from .utils.stop_line import regulatory_element_stop_lines
 
 if TYPE_CHECKING:
@@ -196,13 +196,6 @@ _BLOCK = 16
 #: How far above or below the ego a vehicle is on no road of the ego's, in
 #: metres.
 _OFF_THE_ROAD_M = 100.0
-#: The steepest grade (rise over run) a road the ego and another road user
-#: share is taken to have, between them (#1587).  Highways are built to
-#: about 4-6 % and urban streets to about 8-10 %; 10 % covers both, while a
-#: road stacked over another (7-8 m apart) is still told apart within some
-#: 70 m.  A height gap within this grade of the planar distance is the same
-#: road climbing or falling, not another level.
-_MAX_GRADE = 0.10
 #: The role name of the vehicle placement.vehicle_bumpers() spawns, high
 #: above the map, to measure a blueprint; never a vehicle ahead.  The same
 #: name as :data:`~autoware_carla_scenario.constants.BUMPER_PROBE_ROLE_NAME`,
@@ -386,24 +379,6 @@ def in_ego_frame(
     return dx * forward_x + dy * forward_y, -dx * forward_y + dy * forward_x
 
 
-def _on_another_level(
-    ego_span: tuple[float, float],
-    other_span: tuple[float, float],
-    planar_distance: float,
-) -> bool:
-    """Whether a road user whose vertical span (bottom, top) is *other_span*,
-    *planar_distance* metres from the ego in the plane, is on another level
-    of road than the ego's (*ego_span*): on a bridge over it, or in an
-    underpass beneath it.  Its boxes clear of the ego's by more than
-    ``utils.clearance._SAME_LEVEL_MARGIN_M``, and their bottoms (where each
-    stands on its road) differ by more than a road of :data:`_MAX_GRADE`
-    climbs over the distance between them (#1587)."""
-    if _level_gap(ego_span, other_span) <= 0.0:
-        return False
-    rise = abs(other_span[0] - ego_span[0])
-    return rise > _MAX_GRADE * planar_distance
-
-
 def _pedestrians_around(
     ego: "carla.Actor", actors: "list[carla.Actor]", elapsed: Optional[float] = None
 ) -> list[_Around]:
@@ -413,7 +388,8 @@ def _pedestrians_around(
     footbridge over the ego, or in an underpass beneath it -- is not around
     it (#1587); its speed is still measured, so it reads true once the
     walker comes down to the ego's level.  One on the same road climbing or
-    falling away is around (:func:`_on_another_level`)."""
+    falling away is around
+    (:func:`~autoware_carla_scenario.utils.clearance.on_another_level`)."""
     transform = ego.get_transform()
     ego_span = _vertical_span(ego, transform)
     found: list[_Around] = []
@@ -424,7 +400,7 @@ def _pedestrians_around(
         location = placed.location
         velocity = _WALKERS.walker(actor, elapsed, location)
         ahead, lateral = in_ego_frame(transform, location)
-        if _on_another_level(
+        if on_another_level(
             ego_span, _vertical_span(actor, placed), math.hypot(ahead, lateral)
         ):
             continue
@@ -1347,7 +1323,7 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Lead]:
                     continue
                 if abs(float(location.z) - ego_z) > _OFF_THE_ROAD_M:
                     continue
-                if _on_another_level(ego_span, _vertical_span(actor, placed), planar):
+                if on_another_level(ego_span, _vertical_span(actor, placed), planar):
                     continue
                 attributes = actor.attributes
                 if "role_name" in attributes and attributes["role_name"] == PROBE_ROLE:
