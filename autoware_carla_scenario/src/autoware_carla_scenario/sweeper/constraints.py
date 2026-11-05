@@ -60,6 +60,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
+from ..value_text import shown
+
 if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet, LaneletMap
     from lanelet2.routing import RoutingGraph
@@ -179,6 +181,15 @@ def _lanelet_ids(owner: str, name: str, values: Any) -> tuple[int, ...]:
         raise ValueError(
             f"{owner}.{name}: a list of lanelet ids, got the string {values!r}"
         )
+    if TYPE_CHECKING:
+        pass
+    else:
+        try:
+            iter(values)
+        except TypeError:
+            raise ValueError(
+                f"{owner}.{name}: a list of lanelet ids, got {shown(values)}"
+            ) from None
     return tuple(_lanelet_id(owner, name, value) for value in values)
 
 
@@ -423,15 +434,7 @@ class LaneletLengthConstraint(Constraint):
         valid = {r.name.lower() for r in rules}
         if self.rule not in valid:
             raise ValueError(f"Unknown rule {self.rule!r}. Available: {sorted(valid)}")
-        value = self.value
-        if (
-            isinstance(value, bool)
-            or not (isinstance(value, int) or isinstance(value, float))
-            or not math.isfinite(float(value))
-        ):
-            raise ValueError(
-                f"lanelet_length.value: a finite number of metres, got {value!r}"
-            )
+        _check_length(self.value)
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Return ``True`` if lanelet length satisfies the comparison rule."""
@@ -442,6 +445,39 @@ class LaneletLengthConstraint(Constraint):
         length = lanelet2.geometry.length2d(lanelet)
         rule_enum = _comparison_rule(self.rule.upper())
         return compare(length, rule_enum, self.value)
+
+
+def _check_length(value: Any) -> None:
+    """Refuse a ``lanelet_length`` value that is no finite number of metres.
+
+    An int or a float, or another real number (numpy's ``int64`` or
+    ``float32``, say), as ``compare`` takes one; never a bool.  An int too
+    large for a float is no finite length either.
+    """
+    number = math.nan
+    if isinstance(value, bool):
+        pass
+    elif isinstance(value, int) or isinstance(value, float):
+        try:
+            number = float(value)
+        except OverflowError:
+            number = math.inf
+    elif TYPE_CHECKING:
+        pass
+    else:
+        import numbers  # noqa: PLC0415 -- run time only
+
+        # numpy registers its integers and floats as numbers.Real, and its
+        # bool_ as none of them.
+        if isinstance(value, numbers.Real):
+            try:
+                number = float(value)
+            except OverflowError:
+                number = math.inf
+    if not math.isfinite(number):
+        raise ValueError(
+            f"lanelet_length.value: a finite number of metres, got {shown(value)}"
+        )
 
 
 def _comparison_rule(name: str) -> ComparisonRule:

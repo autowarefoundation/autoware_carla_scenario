@@ -233,3 +233,44 @@ def test_lanelet_length_refuses_a_value_that_is_no_finite_number(bad: Any) -> No
 def test_lanelet_length_keeps_a_valid_value() -> None:
     assert LaneletLengthConstraint(value=10).value == 10
     assert LaneletLengthConstraint("less_than", 5.5).value == 5.5
+
+
+def test_lanelet_length_refuses_an_int_too_large_for_a_float() -> None:
+    """Not a bare OverflowError: refused by key, the value described."""
+    for huge in (10**400, -(10**400)):
+        with pytest.raises(ValueError, match=r"lanelet_length\.value"):
+            LaneletLengthConstraint(value=huge)
+    # Too long for repr(): shown by its size.
+    with pytest.raises(ValueError, match=r"lanelet_length\.value.*about 10\*\*"):
+        LaneletLengthConstraint(value=10**5000)
+
+
+def test_lanelet_length_takes_numpy_numbers_but_no_bool() -> None:
+    np = pytest.importorskip("numpy")
+    for number in (np.int64(10), np.float32(5.5), np.float64(2.0)):
+        assert LaneletLengthConstraint(value=number).value == number
+    for bad in (np.bool_(True), np.float32("nan"), np.float64("inf")):
+        with pytest.raises(ValueError, match=r"lanelet_length\.value"):
+            LaneletLengthConstraint(value=bad)
+
+
+@pytest.mark.parametrize(
+    ("type_id", "key"), [("in_set", "values"), ("on_route", "lanelet_ids")]
+)
+@pytest.mark.parametrize("bad", [None, 5, 2.0, True])
+def test_a_non_iterable_is_no_list_of_ids(type_id: str, key: str, bad: Any) -> None:
+    with pytest.raises(ValueError, match=rf"{type_id}\.{key}"):
+        parse_constraint({"type": type_id, key: bad})
+
+
+def test_an_empty_route_is_still_no_route() -> None:
+    empties: tuple[Any, ...] = ([], ())
+    for empty in empties:
+        assert _match(parse_constraint({"type": "on_route", "lanelet_ids": empty})) == [
+            1,
+            2,
+            3,
+            4,
+            5,
+        ]
+        assert _match(parse_constraint({"type": "in_set", "values": empty})) == []
