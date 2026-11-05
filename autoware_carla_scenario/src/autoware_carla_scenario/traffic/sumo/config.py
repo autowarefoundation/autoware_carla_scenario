@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from ...constants import DEFAULT_TM_PORT
-from ..fidelity import MesoscopicConfig
+from ..fidelity import MesoscopicConfig, _number
 from ..parameters import BICYCLE_PARAMETER_BACKENDS
 
 __all__ = [
@@ -48,36 +48,66 @@ def _check_count(key: str, value: Optional[int]) -> None:
         raise ValueError(f"{key} must be an integer >= 0 or null (got {value!r})")
 
 
-def _check_positive(key: str, value: Optional[float]) -> None:
-    """Refuse a value that is not finite and > 0 (``None`` passes)."""
-    if value is not None and not (math.isfinite(value) and value > 0.0):
-        raise ValueError(f"{key} must be positive and finite or null (got {value!r})")
+def _check_positive(key: str, value: float) -> float:
+    """*value* as a float, refused unless finite and > 0."""
+    number = _number(key, value, "positive and finite")
+    if not (math.isfinite(number) and number > 0.0):
+        raise ValueError(f"{key} must be positive and finite (got {number!r})")
+    return number
 
 
-def _check_positive_or_inf(key: str, value: Optional[float]) -> None:
-    """Refuse a value that is not > 0 (``None`` and ``inf`` pass).
+def _check_positive_or_null(key: str, value: Optional[float]) -> Optional[float]:
+    """*value* as a float, refused unless finite and > 0 (``None`` passes)."""
+    if value is None:
+        return None
+    requirement = "positive and finite or null"
+    number = _number(key, value, requirement)
+    if not (math.isfinite(number) and number > 0.0):
+        raise ValueError(f"{key} must be {requirement} (got {number!r})")
+    return number
+
+
+def _check_positive_or_inf(key: str, value: float) -> float:
+    """*value* as a float, refused unless > 0 (``inf`` passes).
 
     For a distance where ``inf`` has a meaning -- no bound -- that SUMO's
     tools and the backend read as such: NaN and 0 or below are refused.
     """
-    if value is not None and not value > 0.0:
-        raise ValueError(f"{key} must be positive or null (got {value!r})")
+    number = _number(key, value, "positive")
+    if not number > 0.0:
+        raise ValueError(f"{key} must be positive (got {number!r})")
+    return number
 
 
-def _check_not_negative(key: str, value: float) -> None:
-    """Refuse a value that is not finite and >= 0."""
-    if not (math.isfinite(value) and value >= 0.0):
-        raise ValueError(f"{key} must be finite and not negative (got {value!r})")
+def _check_positive_or_inf_or_null(key: str, value: Optional[float]) -> Optional[float]:
+    """As :func:`_check_positive_or_inf`, where ``None`` passes too."""
+    if value is None:
+        return None
+    number = _number(key, value, "positive or null")
+    if not number > 0.0:
+        raise ValueError(f"{key} must be positive or null (got {number!r})")
+    return number
+
+
+def _check_not_negative(key: str, value: float) -> float:
+    """*value* as a float, refused unless finite and >= 0."""
+    number = _number(key, value, "finite and not negative")
+    if not (math.isfinite(number) and number >= 0.0):
+        raise ValueError(f"{key} must be finite and not negative (got {number!r})")
+    return number
 
 
 def _check_demand(
     group: str, rate: str, per_hour: float, period_s: Optional[float], end_s: float
-) -> None:
-    """Refuse a generated demand's rate, period or end that is not a number
-    SUMO's ``randomTrips.py`` can use: a NaN rate would make a NaN period."""
-    _check_not_negative(f"{group}.{rate}", per_hour)
-    _check_positive(f"{group}.period_s", period_s)
-    _check_positive(f"{group}.end_s", end_s)
+) -> tuple[float, Optional[float], float]:
+    """A generated demand's rate, period and end as floats, refused unless
+    numbers SUMO's ``randomTrips.py`` can use: a NaN rate would make a NaN
+    period."""
+    return (
+        _check_not_negative(f"{group}.{rate}", per_hour),
+        _check_positive_or_null(f"{group}.period_s", period_s),
+        _check_positive(f"{group}.end_s", end_s),
+    )
 
 
 @dataclass
@@ -108,14 +138,16 @@ class AmbientTrafficConfig:
     use_safe_weights: bool = True
 
     def __post_init__(self) -> None:
-        _check_demand(
+        self.vehicles_per_hour, self.period_s, self.end_s = _check_demand(
             "ambient",
             "vehicles_per_hour",
             self.vehicles_per_hour,
             self.period_s,
             self.end_s,
         )
-        _check_not_negative("ambient.fringe_factor", self.fringe_factor)
+        self.fringe_factor = _check_not_negative(
+            "ambient.fringe_factor", self.fringe_factor
+        )
 
     def period(self) -> float:
         """Seconds between two generated trips."""
@@ -167,15 +199,17 @@ class PedestrianConfig:
     blueprint: str = "walker.pedestrian.0015"
 
     def __post_init__(self) -> None:
-        _check_demand(
+        self.persons_per_hour, self.period_s, self.end_s = _check_demand(
             "pedestrians",
             "persons_per_hour",
             self.persons_per_hour,
             self.period_s,
             self.end_s,
         )
-        _check_positive_or_inf("pedestrians.max_distance_m", self.max_distance_m)
-        _check_positive("pedestrians.radius_m", self.radius_m)
+        self.max_distance_m = _check_positive_or_inf(
+            "pedestrians.max_distance_m", self.max_distance_m
+        )
+        self.radius_m = _check_positive_or_null("pedestrians.radius_m", self.radius_m)
         _check_count("pedestrians.max_persons", self.max_persons)
 
     def period(self) -> float:
@@ -250,15 +284,19 @@ class BicycleConfig:
                 "bicycles.vehicle_control must be one of "
                 f"{', '.join(_VEHICLE_CONTROLS)} (got {self.vehicle_control!r})"
             )
-        _check_demand(
+        self.bicycles_per_hour, self.period_s, self.end_s = _check_demand(
             "bicycles",
             "bicycles_per_hour",
             self.bicycles_per_hour,
             self.period_s,
             self.end_s,
         )
-        _check_not_negative("bicycles.min_distance_m", self.min_distance_m)
-        _check_positive_or_inf("bicycles.max_distance_m", self.max_distance_m)
+        self.min_distance_m = _check_not_negative(
+            "bicycles.min_distance_m", self.min_distance_m
+        )
+        self.max_distance_m = _check_positive_or_inf_or_null(
+            "bicycles.max_distance_m", self.max_distance_m
+        )
         # randomTrips.py keeps a ride min <= distance < max: an equal or
         # inverted pair keeps none, and generates no ride without a word.
         max_distance = self.max_distance_m
@@ -268,7 +306,7 @@ class BicycleConfig:
                 f"bicycles.max_distance_m (got {self.min_distance_m!r} and "
                 f"{max_distance!r})"
             )
-        _check_positive("bicycles.radius_m", self.radius_m)
+        self.radius_m = _check_positive_or_null("bicycles.radius_m", self.radius_m)
         _check_count("bicycles.max_bicycles", self.max_bicycles)
 
     def period(self) -> float:
@@ -497,14 +535,28 @@ class SumoBackendConfig:
             raise ValueError(
                 f"tm_port must be an integer within 1-65535 (got {self.tm_port!r})"
             )
-        _check_not_negative("feedback_distance_m", self.feedback_distance_m)
-        _check_positive_or_inf("resync_distance_m", self.resync_distance_m)
-        _check_positive("curve_lateral_acceleration", self.curve_lateral_acceleration)
-        _check_positive("lateral_resolution_m", self.lateral_resolution_m)
-        _check_positive("lane_change_duration_s", self.lane_change_duration_s)
-        _check_positive("step_length_s", self.step_length_s)
-        _check_not_negative("warmup_s", self.warmup_s)
-        _check_positive("spawn_radius_m", self.spawn_radius_m)
+        self.feedback_distance_m = _check_not_negative(
+            "feedback_distance_m", self.feedback_distance_m
+        )
+        self.resync_distance_m = _check_positive_or_inf(
+            "resync_distance_m", self.resync_distance_m
+        )
+        self.curve_lateral_acceleration = _check_positive_or_null(
+            "curve_lateral_acceleration", self.curve_lateral_acceleration
+        )
+        self.lateral_resolution_m = _check_positive_or_null(
+            "lateral_resolution_m", self.lateral_resolution_m
+        )
+        self.lane_change_duration_s = _check_positive_or_null(
+            "lane_change_duration_s", self.lane_change_duration_s
+        )
+        self.step_length_s = _check_positive_or_null(
+            "step_length_s", self.step_length_s
+        )
+        self.warmup_s = _check_not_negative("warmup_s", self.warmup_s)
+        self.spawn_radius_m = _check_positive_or_null(
+            "spawn_radius_m", self.spawn_radius_m
+        )
         _check_count("max_vehicles", self.max_vehicles)
         if (
             self.lane_change_duration_s is not None

@@ -577,7 +577,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.prepare.docker.whole_mib": f"{_BACKEND_VALUE} (an amount of memory); only read_docker_settings, itself uncalled, calls it",
     "autoware_carla_scenario.prepare.docker.string_list": f"{_BACKEND_VALUE} (a list setting, `docker_args`); only read_docker_settings, itself uncalled, calls it",
     "autoware_carla_scenario.prepare.docker.read_docker_settings": "takes a backend's block of the run's config (`Mapping[str, Any]`: a Hydra node of mixed value types), which Codon cannot express; only the excluded pedestrian.ardy calls it",
-    "autoware_carla_scenario.value_text.shown": "takes a config value of any type (`Any`: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; only validators that take `Any` themselves, uncalled or in excluded modules, call it",
+    "autoware_carla_scenario.value_text.shown": "takes a config value of any type (`Any`: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take `Any` themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number, which checks the traffic options, calls it with the float the check types the option with",
 }
 
 #: Every other module, with the reason it is not compiled.
