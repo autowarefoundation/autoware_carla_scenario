@@ -143,7 +143,7 @@ driver:
   transport: tcp             # tcp | unix | direct; see "How the run reaches the policy"
   timeout_s: 60.0
   policy_timestep_s: 0.1     # a positive multiple of the 0.05 s tick; others are refused
-  image_quality: 90
+  image_quality: 90          # JPEG quality, a whole number in 1-100
   warmup_s: 0.0              # run-up onto the spawn pose; see "Warming up a policy"
   route_horizon_m: 80.0
   route_resolution_m: 2.0
@@ -171,6 +171,17 @@ driver:
     delay_compensation_time: 0.17 # ... and any of its parameters, by name
     throttle_deadband: 0.3      # vehicle interface: least throttle to pull away
 ```
+
+Every number in `driver` must be a number: an int or a float, never a boolean
+or a string. Hydra reads `driver.policy_timestep_s=true` as a boolean, which
+would otherwise be taken as 1 (a 1 s policy step), and a quoted `"0.1"` as a
+string; both are refused as the config is read, naming the key. This holds for
+the seconds and metres (`timeout_s`, `policy_timestep_s`, `warmup_s`,
+`route_horizon_m`, `route_resolution_m`, `rear_axle_offset_m`,
+`traffic_light_sight_distance_m`, `actor_horizon_m`, `t4_scene_history_s`,
+`t4_scene_wheel_base_m`), for every number of a camera, its lens and a LiDAR,
+and for `image_quality`, a whole number (see below) in 1-100: `90`, or `90.0`
+kept as `90`.
 
 Each `driver.cameras` entry needs its own `logical_id`; two cameras under one id
 are refused. Its `image_width` and `image_height` must be positive whole
