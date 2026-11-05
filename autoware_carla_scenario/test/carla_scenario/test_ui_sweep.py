@@ -9,6 +9,7 @@ rather than run as "no lanelets matched".
 from __future__ import annotations
 
 import asyncio
+import json
 import threading
 from pathlib import Path
 from typing import Any
@@ -349,3 +350,117 @@ def test_hydra_is_composed_under_the_shared_lock(
     assert sweep_resolver.resolve_sweep("cut_in/left") == [["scenario=cut_in/left"]]
     assert held == [True]
     assert not sweep_resolver.HYDRA_LOCK.locked()
+
+
+# ── The run body's types (#1500) ───────────────────────────────────────────
+
+#: Bodies /api/run and /api/run/preview refuse, and what the refusal names.
+_BAD_BODIES = [
+    pytest.param([1], "JSON object", id="not-an-object"),
+    pytest.param("x", "JSON object", id="a-string-body"),
+    pytest.param(None, "JSON object", id="null-body"),
+    pytest.param(
+        {"scenario": "a", "extra_overrides": "carla.port=2001"},
+        "extra_overrides",
+        id="overrides-a-string",
+    ),
+    pytest.param(
+        {"scenario": "a", "extra_overrides": ["x=1", 2]},
+        "extra_overrides",
+        id="overrides-a-non-string-item",
+    ),
+    pytest.param(
+        {"scenario": "a", "extra_overrides": {"x": "1"}},
+        "extra_overrides",
+        id="overrides-an-object",
+    ),
+    pytest.param({"scenario": ["a"]}, "scenario", id="scenario-a-list"),
+    pytest.param({"scenario": None}, "scenario", id="scenario-null"),
+    pytest.param({"scenario": "a", "sweeper": 1}, "sweeper", id="sweeper-a-number"),
+    pytest.param({"scenario": "a", "launcher": "ssh"}, "launcher", id="launcher"),
+    pytest.param({"scenario": "a", "launcher": 1}, "launcher", id="launcher-number"),
+    pytest.param(
+        {"scenario": "a", "launcher": "slurm", "slurm": ["main"]},
+        "slurm",
+        id="slurm-a-list",
+    ),
+    pytest.param(
+        {"scenario": "a", "launcher": "slurm", "slurm": {"partition": ["main"]}},
+        "slurm.partition",
+        id="slurm-text-a-list",
+    ),
+    pytest.param(
+        {"scenario": "a", "launcher": "slurm", "slurm": {"cases_per_task": True}},
+        "slurm.cases_per_task",
+        id="slurm-number-a-bool",
+    ),
+    pytest.param(
+        {"scenario": "a", "launcher": "slurm", "slurm": {"setup": [1]}},
+        "slurm.setup",
+        id="slurm-setup-a-number",
+    ),
+    pytest.param(
+        {"scenario": "a", "launcher": "slurm", "slurm": {"env": ["A=1"]}},
+        "slurm.env",
+        id="slurm-env-a-list",
+    ),
+]
+
+
+#: Sent as written (``json=None`` would send no body at all).
+_JSON = {"Content-Type": "application/json"}
+
+
+@pytest.mark.parametrize(("body", "names"), _BAD_BODIES)
+def test_a_run_body_of_the_wrong_type_is_refused_before_it_runs(
+    started: dict[str, Any], client: TestClient, body: Any, names: str
+) -> None:
+    """A wrong body is a 400 with the run's error shape, not a 500 nor a run
+    of a string's characters as overrides."""
+    response = client.post("/api/run", content=json.dumps(body), headers=_JSON)
+    assert response.status_code == 400
+    assert response.json()["status"] == "error"
+    assert names in response.json()["message"]
+    assert started == {}
+
+
+@pytest.mark.parametrize(("body", "names"), _BAD_BODIES)
+def test_a_preview_body_of_the_wrong_type_is_refused(
+    client: TestClient, body: Any, names: str
+) -> None:
+    response = client.post("/api/run/preview", content=json.dumps(body), headers=_JSON)
+    assert response.status_code == 400
+    command = response.json()["command"]
+    assert command.startswith("# ") and names in command
+
+
+def test_the_run_panel_s_body_is_accepted(
+    started: dict[str, Any], client: TestClient
+) -> None:
+    """What base.html's collectRunOptions() and scenario.html send."""
+    panel = {
+        "scenario": "a/one",
+        "extra_overrides": ["carla.port=2001"],
+        "sweeper": "",
+        "launcher": "local",
+    }
+    assert client.post("/api/run", json=panel).json() == {"status": "started"}
+    assert started["jobs"] == [["scenario=a/one"]]
+    assert started["extra"] == ["carla.port=2001"]
+    preview = client.post("/api/run/preview", json=panel)
+    assert preview.status_code == 200
+    assert preview.json()["command"] == "uv run scenario scenario=a/one carla.port=2001"
+    rerun = {"scenario": "a/one", "extra_overrides": [], "sweeper": ""}
+    assert client.post("/api/run", json=rerun).json() == {"status": "started"}
+
+
+def test_null_or_absent_overrides_and_sweeper_are_none(
+    started: dict[str, Any], client: TestClient
+) -> None:
+    body = {"scenario": "a/one", "extra_overrides": None, "sweeper": None}
+    assert client.post("/api/run", json=body).json() == {"status": "started"}
+    assert started["extra"] == []
+    assert client.post("/api/run", json={"scenario": "a/two"}).json() == {
+        "status": "started"
+    }
+    assert started["extra"] == []
