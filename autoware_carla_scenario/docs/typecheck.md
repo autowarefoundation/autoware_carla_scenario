@@ -2415,7 +2415,11 @@ example scenarios and their configs, the SLURM launcher's job scripts, where
 a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
 and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
 `scontrol`, `sinfo`: `slurm.queue`, #1634), the naming rules of
-`scenario-new` (`scaffold.names`, #1654), and the parts of the
+`scenario-new` (`scaffold.names`, #1654), the frame math of the T4Scene
+converter (CARLA's world frame to Autoware's `map` frame, and the rotations
+and quaternions of its angles: `t4_scene.frames`, #1665; the converter
+itself, which reads the log's mixed-type records and builds protobuf
+messages, re-exports it), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 `__init__` re-exports what is not checked through models of it (see *A class
 a checked package only re-exports* below). Each checked module is listed here
