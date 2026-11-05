@@ -289,19 +289,37 @@ def _check_bounds(
     out.error(f"{path}.{spec.name}", f"{spec.label} {_bounds_text(spec)}.", object_id)
 
 
+def _bound_text(spec: FieldSpec, bound: float) -> str:
+    """*bound* as the message prints it: a whole number field's in full (a
+    seed's ``2147483647``, not ``2.14748e+09``), any other's with ``:g``."""
+    if spec.kind == "int" and float(bound).is_integer():
+        return str(int(bound))
+    return f"{bound:g}"
+
+
 def _bounds_text(spec: FieldSpec) -> str:
     """What :func:`_check_bounds` asks of *spec*'s value, as a predicate."""
     low, inclusive, high = spec.exclusive_minimum, spec.minimum, spec.maximum
     if high is not None and (low is not None or inclusive is not None):
-        opening = f"({low:g}" if low is not None else f"[{inclusive:g}"
-        return f"must be in {opening}, {high:g}]"
+        if low is not None:
+            opening = f"({_bound_text(spec, low)}"
+        else:
+            assert inclusive is not None  # noqa: S101 -- by the test above
+            opening = f"[{_bound_text(spec, inclusive)}"
+        return f"must be in {opening}, {_bound_text(spec, high)}]"
     if high is not None:
-        return f"must be at most {high:g}"
+        return f"must be at most {_bound_text(spec, high)}"
     if low is not None:
-        return "must be positive" if low == 0 else f"must be above {low:g}"
+        return (
+            "must be positive"
+            if low == 0
+            else f"must be above {_bound_text(spec, low)}"
+        )
     assert inclusive is not None  # noqa: S101 -- only called out of bounds
     return (
-        "must not be negative" if inclusive == 0 else f"must be at least {inclusive:g}"
+        "must not be negative"
+        if inclusive == 0
+        else f"must be at least {_bound_text(spec, inclusive)}"
     )
 
 

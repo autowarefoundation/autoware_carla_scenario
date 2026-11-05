@@ -606,6 +606,34 @@ class TestConstruction:
         scenario = _SimpleScenario(_make_ego_config())
         assert scenario.random_seed == BaseScenario.DEFAULT_RANDOM_SEED
 
+    def test_a_random_seed_on_the_bounds_is_kept(self) -> None:
+        for seed in (0, 2**31 - 1):
+            scenario = BaseScenario.__new__(_SimpleScenario)
+            BaseScenario.__init__(scenario, _make_ego_config(), random_seed=seed)
+            assert scenario.random_seed == seed
+
+    @pytest.mark.parametrize(
+        ("seed", "message"),
+        [
+            (-1, r"^random_seed must not be negative"),
+            (2**31, r"^random_seed must be at most 2147483647"),
+            (2**32 - 1, r"^random_seed must be at most 2147483647"),
+            (1.5, r"^random_seed must be a whole number"),
+            (True, r"^random_seed must be a whole number"),
+        ],
+    )
+    def test_a_random_seed_carla_and_sumo_refuse_is_refused_at_construction(
+        self, seed: object, message: str
+    ) -> None:
+        # #1576: refused here, not once the run has made the world synchronous.
+        scenario = BaseScenario.__new__(_SimpleScenario)
+        with pytest.raises(ValueError, match=message):
+            BaseScenario.__init__(
+                scenario,
+                _make_ego_config(),
+                random_seed=seed,  # type: ignore[arg-type]
+            )
+
     @pytest.mark.parametrize(
         "given",
         [

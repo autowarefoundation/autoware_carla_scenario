@@ -56,7 +56,7 @@ from .coordinate.transform import to_opendrive
 from .entity.vehicle_entity import _clear_entry_speeds, _set_warmup_done
 from .ego_base_link import clear_ego_base_link
 from .scenario_base import BaseScenario
-from .seed import set_run_seed
+from .seed import check_seed, set_run_seed
 from .server import CarlaServerManager
 from .traffic.base import TrafficBackend, TrafficContext
 from .traffic.driven import BackendDriven
@@ -1496,10 +1496,21 @@ class ScenarioRunner:
 
         Returns:
             The outcome of the scenario execution.
+
+        Raises:
+            ValueError: If the scenario's ``random_seed`` is not a whole
+                number from 0 to :data:`~autoware_carla_scenario.seed.MAX_SEED`
+                (:func:`~autoware_carla_scenario.seed.check_seed`), before the
+                world is touched.
         """
         if timeout_seconds is None:
             timeout_seconds = self.timeout_seconds
         scenario_name = type(scenario).__name__
+        # Checked before the world is touched (autoware_carla_scenario.seed):
+        # a scenario's random_seed may be assigned after it was built, and a
+        # seed CARLA or SUMO refuses would otherwise raise once the world is
+        # synchronous, outside the cleanup that puts it back.
+        seed = check_seed("random_seed", scenario.random_seed)
         world = self._world_for_next_run(scenario_name)
         if file_stem is None:
             file_stem = _run_file_stem(self.output_dir, scenario_name)
@@ -1584,7 +1595,6 @@ class ScenarioRunner:
         # The scenario's seed is the run's (autoware_carla_scenario.seed): what
         # setup() builds with no seed of its own draws from it.  The one before
         # comes back when the run ends.
-        seed = int(scenario.random_seed)
         previous_seed = set_run_seed(seed)
         logger.info("[%s] Seed: %d", scenario_name, seed)
 
@@ -1613,7 +1623,7 @@ class ScenarioRunner:
                     # happens to match it: a backend stepping a second simulator
                     # against the wrong number drifts silently.
                     fixed_delta_seconds=settings.fixed_delta_seconds,
-                    random_seed=scenario.random_seed,
+                    random_seed=seed,
                     output_dir=self.output_dir,
                     # A batch shares output_dir: what the backend writes per
                     # run goes under the run's stem (run_outputs).

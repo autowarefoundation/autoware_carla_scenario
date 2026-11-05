@@ -43,6 +43,7 @@ from .entity.registry import register_vehicle_entity as _register_vehicle_entity
 from .entity.vehicle_entity import VehicleEntity
 from .failure import FailureCategory
 from .measures import BUILT_IN_MEASURES, Measure, check_measure_key
+from .seed import check_seed
 from .traffic.base import TrafficBackend, WalkedEntity
 from .traffic.driven import BackendDriven
 
@@ -170,6 +171,8 @@ class BaseScenario(ABC):
                 of its own.  A fixed seed makes the run's random draws the
                 same every run.  Defaults to :attr:`DEFAULT_RANDOM_SEED`
                 (``0``); ``scenario`` sets it from the config's ``seed``.
+                A whole number from 0 to
+                :data:`~autoware_carla_scenario.seed.MAX_SEED` (``2**31 - 1``).
             ego_type: :class:`EgoVehicle` subclass to instantiate for the ego
                 actor.  Pass
                 :class:`~autoware_carla_scenario.entity.externally_driven.ExternallyDrivenEgo`
@@ -180,6 +183,12 @@ class BaseScenario(ABC):
                 arguments, such as
                 :class:`~autoware_carla_scenario.entity.carla_driver_entity.CarlaDriverEntity`
                 and its driver configuration.  Takes precedence over *ego_type*.
+
+        Raises:
+            ValueError: If *random_seed* is not a whole number from 0 to
+                :data:`~autoware_carla_scenario.seed.MAX_SEED`
+                (:func:`~autoware_carla_scenario.seed.check_seed`), which CARLA
+                and SUMO would refuse once the run had started.
         """
         from .entity.ego import EgoVehicle as _EgoVehicle  # noqa: PLC0415
 
@@ -191,7 +200,7 @@ class BaseScenario(ABC):
         self.ego_entity = ego_entity
         self._spawn_pose = spawn_pose
         self._ground_projection = ground_projection or GroundProjectionConfig()
-        self.random_seed = random_seed
+        self.random_seed = check_seed("random_seed", random_seed)
         self._client = None
         self._tm_port = DEFAULT_TM_PORT
         self._traffic_backend = None
