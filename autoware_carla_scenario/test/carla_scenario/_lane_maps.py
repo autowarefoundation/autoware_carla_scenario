@@ -88,6 +88,8 @@ def build_road(
     lanes: dict[str, tuple[int, bool]],
     *,
     step: float = 0.25,
+    z: float = 0.0,
+    first_id: int = 100_000,
 ) -> LaneMap:
     """A road along *path*, cut into lanelets at *cuts* (arc lengths of the
     reference path, from 0 to its length).
@@ -95,9 +97,11 @@ def build_road(
     *boundaries* are the lane lines' offsets from the reference, right to
     left; *lanes* names each lane by the index of its right boundary, and
     whether it runs against the path (``True``: the opposite direction).
+    The road is at height *z*; its ids count up from *first_id*, so a second
+    road built from another can join it (:func:`stacked`).
     """
     along, length = path
-    next_id = iter(range(100_000, 10_000_000))
+    next_id = iter(range(first_id, first_id + 10_000_000))
     lanelet_map = LaneletMap()
     samples = sorted(
         {round(i * step, 9) for i in range(int(length / step) + 1)}
@@ -112,7 +116,7 @@ def build_road(
             x, y, heading = along(u)
             d = boundaries[b]
             points[key] = Point3d(
-                next(next_id), x - d * math.sin(heading), y + d * math.cos(heading), 0.0
+                next(next_id), x - d * math.sin(heading), y + d * math.cos(heading), z
             )
         return points[key]
 
@@ -156,6 +160,21 @@ def build_road(
     )
     built.graph = lanelet2.routing.RoutingGraph(lanelet_map, rules)
     return built
+
+
+def stacked(lower: LaneMap, upper: LaneMap) -> LaneMap:
+    """*upper*'s lanelets added to *lower*'s map, its lanes renamed
+    ``"upper:<lane>"``: one road over another, as an elevated road over the
+    street beneath it.  Build them with different ``first_id`` and ``z``."""
+    for (lane, segment), lanelet_id in upper.ids.items():
+        lower.map.add(upper.map.laneletLayer[lanelet_id])
+        lower.ids[(f"upper:{lane}", segment)] = lanelet_id
+    rules = lanelet2.traffic_rules.create(
+        lanelet2.traffic_rules.Locations.Germany,
+        lanelet2.traffic_rules.Participants.Vehicle,
+    )
+    lower.graph = lanelet2.routing.RoutingGraph(lower.map, rules)
+    return lower
 
 
 def loaded(built: LaneMap) -> Iterator[LaneMap]:
