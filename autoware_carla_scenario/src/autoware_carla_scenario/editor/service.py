@@ -585,6 +585,33 @@ class EditorService:
             group.conflicts_with = [
                 str(value) for value in values if str(value) in names
             ]
+            self._drop_unticked_conflicts(document, group)
+
+    @staticmethod
+    def _drop_unticked_conflicts(document: ScenarioDocument, group: Any) -> None:
+        """Take *group* out of the conflicts of every group its form left unticked.
+
+        The form ticks a box when either side lists the other, so a box left
+        unticked means "these two do not cross" -- which only holds once the
+        other side stops listing this group too.  Otherwise the untick would
+        be ignored: the box comes back ticked and the validator still reads
+        the two as crossing.  While another group shares this group's name (a
+        hand-written duplicate), an entry naming it may mean that other group,
+        so the references are left alone, as a rename or a delete leaves them.
+        """
+        if any(
+            other is not group and other.name == group.name
+            for other in document.map.signal_groups
+        ):
+            return
+        ticked = set(group.conflicts_with)
+        for other in document.map.signal_groups:
+            if other is group or other.name in ticked:
+                continue
+            if group.name in other.conflicts_with:
+                other.conflicts_with = [
+                    name for name in other.conflicts_with if name != group.name
+                ]
 
     @staticmethod
     def _rename_signal_group(document: ScenarioDocument, old: str, new: str) -> None:

@@ -2522,13 +2522,90 @@ class TestTheJunctionEditor:
             },
         )
 
+        # The form ticks "ew" on ns's side too, so a browser posts it back.
         client.post(
             f"/draft/{draft_id}/signal-group/0",
-            data={"name": "north_south", "lanelet2_regulatory_element_ids": "1330"},
+            data={
+                "name": "north_south",
+                "lanelet2_regulatory_element_ids": "1330",
+                "conflicts_with": "ew",
+            },
         )
 
         groups = self._map(store, draft_id).signal_groups
         assert groups[1].conflicts_with == ["north_south"]
+
+    def test_unticking_a_conflict_declared_on_the_other_side_removes_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The box reads both sides, so unticking it clears both (#1517)."""
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(
+            f"/draft/{draft_id}/signal-group/1",
+            data={
+                "name": "ew",
+                "lanelet2_regulatory_element_ids": "1331",
+                "conflicts_with": "ns",
+            },
+        )
+
+        client.post(
+            f"/draft/{draft_id}/signal-group/0",
+            data={"name": "ns", "lanelet2_regulatory_element_ids": "1330"},
+        )
+
+        groups = self._map(store, draft_id).signal_groups
+        assert groups[0].conflicts_with == []
+        assert groups[1].conflicts_with == []
+        body = client.get(f"/draft/{draft_id}/inspector/environment").text
+        first = body.split('name="conflicts_with" value="ew"')[1].split(">")[0]
+        assert "checked" not in first
+
+    def test_unticking_one_conflict_keeps_the_ticked_ones(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Only the groups left unticked lose their reference to this one."""
+        self._groups(client, draft_id, "ns", "ew", "diag")
+        document = _document(store, draft_id)
+        document.map.signal_groups[1].conflicts_with = ["ns", "diag"]
+        document.map.signal_groups[2].conflicts_with = ["ns"]
+
+        EditorService(store).update_signal_group(
+            document, 0, {"name": "ns", "conflicts_with": ["diag"]}
+        )
+
+        groups = document.map.signal_groups
+        assert groups[0].conflicts_with == ["diag"]
+        assert groups[1].conflicts_with == ["diag"]
+        assert groups[2].conflicts_with == ["ns"]
+
+    def test_renaming_and_unticking_in_one_post_drops_the_renamed_reference(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The rename carries the reference first; the untick then removes it."""
+        self._groups(client, draft_id, "ns", "ew")
+        document = _document(store, draft_id)
+        document.map.signal_groups[1].conflicts_with = ["ns"]
+
+        EditorService(store).update_signal_group(
+            document, 0, {"name": "north_south", "conflicts_with": []}
+        )
+
+        assert document.map.signal_groups[1].conflicts_with == []
+
+    def test_unticking_on_one_of_two_same_named_groups_leaves_the_references(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """An ``ns`` in another group's list may mean the other ``ns``."""
+        self._same_named_groups(client, store, draft_id)
+        document = _document(store, draft_id)
+
+        EditorService(store).update_signal_group(
+            document, 0, {"name": "ns", "conflicts_with": []}
+        )
+
+        assert document.map.signal_groups[1].conflicts_with == ["ns"]
+        assert document.map.signal_groups[2].conflicts_with == ["ns", "ew"]
 
     def test_a_conflict_reads_the_same_from_either_side(
         self, client: TestClient, store: DraftStore, draft_id: str
