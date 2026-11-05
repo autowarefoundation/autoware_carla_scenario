@@ -24,7 +24,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..authoring.models import ConstraintNode, LaneletSlot, ScenarioDocument
-from ..authoring.validator import MAP_EXCLUSION_REF
+from ..authoring.hydra_config import (
+    MAP_EXCLUSION_REF,
+    effective_no_3d_model_lanelet_ids,
+)
 from ..maps import MapCacheError, MapPaths, MapSource, MapSourceError, map_root
 from ..maps.config import resolve_map_paths
 from ..maps.resolver import MapResolutionError
@@ -172,17 +175,20 @@ def materialize_constraints(
     ``${map.no_3d_model_lanelet_ids}`` is an OmegaConf interpolation that only
     resolves once Hydra composes the config.  The editor has no Hydra in the
     loop, so the one reference the constraint vocabulary uses is substituted
-    from the document's own map here -- keeping the stored YAML identical to
-    what an exported package ships.
+    here -- keeping the stored YAML identical to what an exported package
+    ships -- with the list a run of the export resolves it to
+    (:func:`~..authoring.hydra_config.effective_no_3d_model_lanelet_ids`): the
+    document's own when it lists any, else the built-in map group's, so the
+    preview matches what a sweep enumerates (#1523).
     """
-    exclusions = list(document.map.no_3d_model_lanelet_ids)
+    exclusions = effective_no_3d_model_lanelet_ids(document)
 
     def _resolve(raw: Any) -> Any:
         if isinstance(raw, dict):
             return {key: _resolve(value) for key, value in raw.items()}
         if isinstance(raw, list):
             return [_resolve(value) for value in raw]
-        if raw == MAP_EXCLUSION_REF:
+        if isinstance(raw, str) and raw.strip() == MAP_EXCLUSION_REF:
             return exclusions
         return raw
 

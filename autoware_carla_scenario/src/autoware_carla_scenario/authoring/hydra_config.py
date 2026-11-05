@@ -53,12 +53,31 @@ the default one, when ``map=<own_map_group>`` is left out -- is refused before
 anything starts (:func:`own_map_mismatch`, :func:`scenario_map_refusal`), on
 every path that composes it: a run, a batch, a sweep, ``scenario-expand``, the
 viewer's sweep resolver and ``scenario-odd route``.
+
+Excluded lanelets
+-----------------
+``in_set`` constraints name the map's exclusion list by reference,
+``${map.no_3d_model_lanelet_ids}``, and the document's own list
+(:attr:`MapRef.no_3d_model_lanelet_ids <.models.MapRef>`, the editor's
+"Excluded lanelet IDs") decides what that reference means: a non-empty list
+replaces the map group's, an empty one inherits it
+(:func:`effective_no_3d_model_lanelet_ids`, which the editor's preview reads
+too).  On a built-in group the ``map`` keys a scenario config writes lose to
+the group, so a non-empty list cannot reach the run as ``map.*``: the export
+writes it in place of every reference instead (:func:`build_scenario_config`),
+exactly as a hand-written scenario writes ``values: [3, 4, 41]``.  An empty
+list leaves the reference for Hydra to resolve against the group.  A document
+on its own map group writes its list (empty or not) into that group, and its
+references stay as they are.
 """
 
 from __future__ import annotations
 
 import logging
+from pathlib import Path
 from typing import Any
+
+import yaml
 
 from .models import Entity, LaneletSlot, ScenarioDocument
 from .persistence import dump_yaml
@@ -66,11 +85,14 @@ from .persistence import dump_yaml
 _logger = logging.getLogger(__name__)
 
 __all__ = [
+    "MAP_EXCLUSION_REF",
     "PACKAGE_GLOBAL_HEADER",
     "ROUTE_CONFIG_DEFAULTS",
     "build_map_group_config",
     "build_scenario_config",
     "dump_map_group_config",
+    "effective_no_3d_model_lanelet_ids",
+    "map_group_no_3d_model_lanelet_ids",
     "dump_scenario_config",
     "own_map_group",
     "own_map_mismatch",
@@ -87,6 +109,16 @@ __all__ = [
 
 #: Hydra needs this on the first line for a config that writes into the root.
 PACKAGE_GLOBAL_HEADER = "# @package _global_"
+
+#: Value accepted by ``in_set`` in place of a literal list: the map's exclusion
+#: list, resolved from the composed ``map`` config as the sweep YAML does (see
+#: "Excluded lanelets" above for what an export writes instead).
+MAP_EXCLUSION_REF = "${map.no_3d_model_lanelet_ids}"
+
+#: The framework's own Hydra config directory, whose ``map`` groups are the
+#: built-in ones.  It is the primary config directory of every run, so a group
+#: found here wins over one of the same name a scenario package registers.
+_FRAMEWORK_CONF_DIR = Path(__file__).resolve().parent.parent / "examples" / "conf"
 
 #: The ``scenario.route`` keys a route match is carried in, empty: declared so
 #: Hydra's struct mode accepts the overrides an expansion writes (see
@@ -226,18 +258,19 @@ def _map_overrides(document: ScenarioDocument) -> dict[str, Any]:
     """Return the ``map`` keys the document actually pins.
 
     Only non-empty values are emitted so that everything else still falls
-    through to whichever built-in ``map`` group the run selects -- notably
-    ``no_3d_model_lanelet_ids``, which sweep constraints reference through
-    ``${map.no_3d_model_lanelet_ids}``.
+    through to whichever built-in ``map`` group the run selects.
 
-    A document that names its own map by ``source`` or ``directory`` is the
-    exception: a built-in group describes a *different* map, and inheriting
-    that map's exclusion list would hand this scenario a set of lanelet ids
-    that mean nothing on the map it actually runs on.  So the list is written
-    out even when it is empty.  The ``map`` group is composed after the
-    scenario, though, so these keys alone do not keep a built-in group's
-    paths, name and list out of the run: that is what the document's own map
-    group (:func:`build_map_group_config`) is for.
+    ``no_3d_model_lanelet_ids`` is written only for a document that names its
+    own map by ``source`` or ``directory``, and then even when it is empty: a
+    built-in group describes a *different* map, and inheriting that map's
+    exclusion list would hand this scenario a set of lanelet ids that mean
+    nothing on the map it actually runs on.  The ``map`` group is composed
+    after the scenario, though, so these keys alone do not keep a built-in
+    group's paths, name and list out of the run: that is what the document's
+    own map group (:func:`build_map_group_config`) is for.  On a built-in group
+    the key would lose to the group's own list whatever it said, so a
+    non-empty list reaches the run through the constraints that reference it
+    instead (:func:`_pinned_exclusions`).
     """
     map_ref = document.map
     overrides: dict[str, Any] = {}
@@ -251,9 +284,96 @@ def _map_overrides(document: ScenarioDocument) -> dict[str, Any]:
         overrides["xodr_path"] = map_ref.xodr_path
     if map_ref.lanelet2_path:
         overrides["lanelet2_path"] = map_ref.lanelet2_path
-    if map_ref.no_3d_model_lanelet_ids or map_ref.source or map_ref.directory:
+    if map_ref.source or map_ref.directory:
         overrides["no_3d_model_lanelet_ids"] = list(map_ref.no_3d_model_lanelet_ids)
     return overrides
+
+
+def map_group_no_3d_model_lanelet_ids(group: str) -> list[int] | None:
+    """Return the ``no_3d_model_lanelet_ids`` the ``map`` group *group* sets.
+
+    Read from ``map/<group>.yaml`` in the framework's config directory, else in
+    the first scenario package's that ships one
+    (:func:`~autoware_carla_scenario.registry.get_conf_dirs`), the order a run
+    searches them in.  Nothing is composed: the list is read as written,
+    under the file's ``map:`` section when it has one.
+
+    Returns:
+        The ids, or ``None`` when no such group is found or it sets no literal
+        list (an interpolation, say) -- nothing this side of Hydra can resolve.
+    """
+    from ..registry import get_conf_dirs  # noqa: PLC0415
+
+    name = (group or "").strip()
+    if not name or "/" in name or "\\" in name or name.startswith("."):
+        return None
+    for conf_dir in (_FRAMEWORK_CONF_DIR, *get_conf_dirs()):
+        path = Path(conf_dir) / "map" / f"{name}.yaml"
+        if not path.is_file():
+            continue
+        try:
+            data = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except (OSError, yaml.YAMLError):
+            _logger.debug("map group %s: %s did not load", name, path, exc_info=True)
+            return None
+        if not isinstance(data, dict):
+            return None
+        nested = data.get("map")
+        section: dict[Any, Any] = nested if isinstance(nested, dict) else data
+        ids = section.get("no_3d_model_lanelet_ids")
+        if ids is None:
+            return []
+        if not isinstance(ids, list):
+            return None
+        try:
+            return [int(value) for value in ids]
+        except (TypeError, ValueError):
+            return None
+    return None
+
+
+def effective_no_3d_model_lanelet_ids(document: ScenarioDocument) -> list[int]:
+    """Return the list ``${map.no_3d_model_lanelet_ids}`` means for a run of
+    *document*.
+
+    The document's own list when it is not empty, or when the document ships
+    its own map group (:func:`own_map_group`), which carries the list as it
+    is; otherwise the built-in group's (:func:`map_group_no_3d_model_lanelet_ids`),
+    empty when that cannot be read.  The editor's preview evaluates
+    constraints with this, so a search matches there what a run of the export
+    enumerates.
+    """
+    ids = list(document.map.no_3d_model_lanelet_ids)
+    if ids or own_map_group(document) is not None:
+        return ids
+    return map_group_no_3d_model_lanelet_ids(document.map.group) or []
+
+
+def _pinned_exclusions(document: ScenarioDocument) -> list[int] | None:
+    """Return the literal list an export writes for ``${map.no_3d_model_lanelet_ids}``.
+
+    ``None`` leaves the reference for Hydra: when the document's list is empty
+    (the built-in group's is inherited), and when the document ships its own
+    map group, whose list is the document's.  A non-empty list on a built-in
+    group cannot reach the run as ``map.no_3d_model_lanelet_ids`` -- the group
+    is composed after the scenario and its own list wins -- so it is written
+    into the constraints themselves.
+    """
+    if own_map_group(document) is not None:
+        return None
+    ids = list(document.map.no_3d_model_lanelet_ids)
+    return ids or None
+
+
+def _substitute_exclusions(tree: Any, ids: list[int]) -> Any:
+    """Return *tree* with every ``${map.no_3d_model_lanelet_ids}`` set to *ids*."""
+    if isinstance(tree, dict):
+        return {key: _substitute_exclusions(value, ids) for key, value in tree.items()}
+    if isinstance(tree, list):
+        return [_substitute_exclusions(value, ids) for value in tree]
+    if isinstance(tree, str) and tree.strip() == MAP_EXCLUSION_REF:
+        return list(ids)
+    return tree
 
 
 def own_map_group(document: ScenarioDocument) -> str | None:
@@ -512,7 +632,7 @@ def build_scenario_config(
             for key, value in ROUTE_CONFIG_DEFAULTS.items()
         }
         config["sweep"] = {"route": document.route.to_sweep_dict()}
-        return config
+        return _with_pinned_exclusions(config, document)
 
     slot = swept_slot(document)
     if slot is not None:
@@ -535,7 +655,22 @@ def build_scenario_config(
             sweep["bindings"] = bindings
         config["sweep"] = sweep
 
-    return config
+    return _with_pinned_exclusions(config, document)
+
+
+def _with_pinned_exclusions(
+    config: dict[str, Any], document: ScenarioDocument
+) -> dict[str, Any]:
+    """Return *config* with the document's exclusion list written in place of
+    the references to it, when a run would not see it otherwise
+    (:func:`_pinned_exclusions`)."""
+    ids = _pinned_exclusions(document)
+    if ids is None:
+        return config
+    return {
+        key: value if key == "map" else _substitute_exclusions(value, ids)
+        for key, value in config.items()
+    }
 
 
 def dump_scenario_config(
