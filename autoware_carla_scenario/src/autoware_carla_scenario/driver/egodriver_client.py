@@ -524,13 +524,20 @@ def _serve_on_unix_socket(spec: str) -> str:
     -- SLURM tasks, say -- never share a socket, and nothing else can dial it.
     """
     _require_in_process_support("unix")
+    # Loaded before the directory exists: a policy that fails to load leaves none.
+    policy = _policy(spec)
     directory = tempfile.mkdtemp(prefix="acs-policy-")
     if len(os.path.join(directory, "policy.sock")) > _MAX_SOCKET_PATH:
         shutil.rmtree(directory, ignore_errors=True)
         directory = tempfile.mkdtemp(prefix="acs-policy-", dir="/tmp")
     address = f"unix://{os.path.join(directory, 'policy.sock')}"
-    server, _ = build_server(_policy(spec), host=address)
-    server.start()
+    try:
+        server, _ = build_server(policy, host=address)
+        server.start()
+    except BaseException:
+        # lru_cache keeps no exception, so every case retries: leave nothing behind.
+        shutil.rmtree(directory, ignore_errors=True)
+        raise
     # Stopped before the directory goes: atexit runs in reverse order.
     atexit.register(shutil.rmtree, directory, True)
     atexit.register(server.stop, None)
