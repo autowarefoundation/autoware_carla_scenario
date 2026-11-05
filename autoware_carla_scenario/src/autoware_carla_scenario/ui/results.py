@@ -55,7 +55,7 @@ from .drive_metrics import box as _box
 from .drive_metrics import box_distance as _box_distance
 
 # Below this height (m) a road user is parked under the map, out of the scene.
-from ..utils.clearance import _HIDDEN_BELOW_M
+from ..utils.clearance import _HIDDEN_BELOW_M, _level_gap
 
 __all__ = [
     "CaseResult",
@@ -245,6 +245,10 @@ class _TrajectoryMetrics:
         self.extents: dict[int, tuple[float, float]] = {}
         # Each box's offset from its actor's origin (none in older logs).
         self.centers: dict[int, tuple[float, float]] = {}
+        # Each box's height above its actor's origin and its half height
+        # (m); none for an actor whose log records no ``extent`` z (an older
+        # one), whose gaps are on the ground alone.
+        self.heights: dict[int, tuple[float, float]] = {}
         self.ego: int | None = None
         self.drive = DriveMetrics()
 
@@ -258,8 +262,17 @@ class _TrajectoryMetrics:
             actor = int(record["id"])
             box = (float(extent[0]), float(extent[1]))
             offset = (float(center[0]), float(center[1]))
+            # No z in an older log: its gaps are on the ground alone.
+            height: tuple[float, float] | None = None
+            if len(extent) > 2:
+                lift = float(center[2]) if len(center) > 2 else 0.0
+                height = (lift, float(extent[2]))
             self.extents[actor] = box
             self.centers[actor] = offset
+            if height is None:
+                self.heights.pop(actor, None)
+            else:
+                self.heights[actor] = height
             if str(record.get("role", "")).lower() == "ego":
                 self.ego = actor
             return
@@ -289,27 +302,45 @@ class _TrajectoryMetrics:
             self.extents.get(ego, (2.4, 1.0)),
             self.centers.get(ego, (0.0, 0.0)),
         )
+        ego_span = self._span(ego, me)
         # Every gap first, so a tick that breaks halfway adds none of them.
         gaps: list[float] = []
         for other, state in states.items():
             # A road user parked under the map (hidden) is out of the scene.
             if other == ego or float(state[3]) < _HIDDEN_BELOW_M:
                 continue
-            gaps.append(
-                _box_distance(
-                    ego_box,
-                    _box(
-                        state[1],
-                        state[2],
-                        state[6],
-                        self.extents.get(other, (0.3, 0.3)),
-                        self.centers.get(other, (0.0, 0.0)),
-                    ),
-                )
+            # One on another level of road -- on a bridge over the ego, in an
+            # underpass beneath it -- may overlap the ego's box on the ground,
+            # but is as far from it as the height between them, as
+            # ``metrics._Frame.distance`` measures it (#1584, #1598).
+            span = self._span(other, state)
+            level = 0.0
+            if ego_span is not None and span is not None:
+                level = _level_gap(ego_span, span)
+            planar = _box_distance(
+                ego_box,
+                _box(
+                    state[1],
+                    state[2],
+                    state[6],
+                    self.extents.get(other, (0.3, 0.3)),
+                    self.centers.get(other, (0.0, 0.0)),
+                ),
             )
+            gaps.append(math.hypot(planar, level))
         for gap in gaps:
             self.drive.gap(gap)
         self.drive.tick(t, x, y, speed)
+
+    def _span(self, actor: int, state: Any) -> tuple[float, float] | None:
+        """The bottom and top (m) of *actor*'s box at its tick *state*, as
+        ``utils.clearance._vertical_span`` reads them off a live actor, pitch
+        and roll ignored; ``None`` where its log records no height."""
+        height = self.heights.get(actor)
+        if height is None:
+            return None
+        centre = float(state[3]) + height[0]
+        return centre - height[1], centre + height[1]
 
 
 # ── A session's cases ───────────────────────────────────────────────────────
