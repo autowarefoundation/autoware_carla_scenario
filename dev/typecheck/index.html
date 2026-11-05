@@ -4769,8 +4769,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 270 of the package's 393
-modules (69%; about 83,000 of
-145,700 lines) are <code>CHECKED</code>: the kinematics, the
+modules (69%; about 83,100 of
+145,800 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5874,8 +5874,8 @@ first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>133 functions and methods of those modules are <code>UNCALLED</code>
-(39 of them protected helpers, see <em>What is
+<p>134 functions and methods of those modules are <code>UNCALLED</code>
+(40 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -5887,7 +5887,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 133 UNCALLED functions and methods, and why</summary>
+<summary>The 134 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6011,6 +6011,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>traffic.parameters.VehicleParameters.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>traffic.parameters.VehicleParameters.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
 <li><code>traffic.parameters._described</code>: takes and returns a value of any type (<code>Any</code>: a Spread's describe() or the value unchanged), which Codon cannot express; only the describe() methods, themselves uncalled, call it</li>
+<li><code>traffic.parameters._number_of</code>: takes one config value of any type (<code>Any</code>: a number, or a bool or string to refuse), which Codon cannot express; only _spread_of, itself uncalled, calls it</li>
 <li><code>traffic.parameters._spread_of</code>: takes one config value of any type (<code>Any</code>: None, a Spread, a <code>{mean, std}</code> mapping or a number), which Codon cannot express; only _spreads_from, itself uncalled, calls it</li>
 <li><code>traffic.parameters._spreads_from</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
 <li><code>traffic.sumo.config.AmbientTrafficConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
