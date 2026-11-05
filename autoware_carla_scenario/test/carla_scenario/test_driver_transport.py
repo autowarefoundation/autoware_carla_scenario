@@ -281,6 +281,59 @@ def test_the_runs_unix_socket_is_its_own(policies: Dict[str, BaseDriver]) -> Non
     assert egodriver_client._serve_on_unix_socket("records") == address
 
 
+@pytest.fixture
+def short_tmpdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
+    """*tmp_path* as ``$TMPDIR``, with the unix transport's checks out of the way.
+
+    The socket path limit is lifted so a long *tmp_path* never falls back to a real
+    ``/tmp`` directory.
+    """
+    monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
+    monkeypatch.setattr(egodriver_client, "_MAX_SOCKET_PATH", 1 << 16)
+    monkeypatch.setattr(egodriver_client, "_require_in_process_support", lambda t: None)
+    yield tmp_path
+
+
+def test_a_policy_that_fails_to_load_leaves_no_socket_directory(
+    policies: Dict[str, BaseDriver],
+    short_tmpdir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def bad(spec: str) -> BaseDriver:
+        raise ImportError("no such policy")
+
+    monkeypatch.setattr(egodriver_client, "load_policy", bad)
+    for _ in range(3):  # every case of a batch retries: lru_cache keeps no exception
+        with pytest.raises(ImportError, match="no such policy"):
+            egodriver_client._serve_on_unix_socket("foo:Bar")
+    assert list(short_tmpdir.iterdir()) == []
+
+
+@pytest.mark.parametrize("failing", ["build", "start"])
+def test_a_server_that_fails_to_start_leaves_no_socket_directory(
+    policies: Dict[str, BaseDriver],
+    short_tmpdir: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    failing: str,
+) -> None:
+    class _Server:
+        def start(self) -> None:
+            raise RuntimeError("cannot bind")
+
+    def build(policy: BaseDriver, **kwargs: Any) -> Any:
+        assert Path(kwargs["host"].removeprefix("unix://")).parent.is_dir()
+        if failing == "build":
+            raise RuntimeError("cannot bind")
+        return _Server(), 0
+
+    monkeypatch.setattr(egodriver_client, "build_server", build)
+    for _ in range(3):
+        with pytest.raises(RuntimeError, match="cannot bind"):
+            egodriver_client._serve_on_unix_socket("records")
+    assert list(short_tmpdir.iterdir()) == []
+    assert list(policies) == ["records"]  # the policy itself loaded, once
+
+
 def test_unix_dials_a_policy_in_another_process() -> None:
     """A policy serving on a Unix socket is dialled at driver.address; any release serves one."""
     stub = _StubPolicy()
