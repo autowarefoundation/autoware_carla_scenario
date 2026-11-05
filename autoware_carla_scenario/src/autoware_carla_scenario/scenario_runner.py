@@ -1579,6 +1579,9 @@ class ScenarioRunner:
                     fixed_delta_seconds=settings.fixed_delta_seconds,
                     random_seed=scenario.random_seed,
                     output_dir=self.output_dir,
+                    # A batch shares output_dir: what the backend writes per
+                    # run goes under the run's stem (run_outputs).
+                    file_stem=file_stem,
                 )
             )
             # What the run's road users draw their parameters from, for the

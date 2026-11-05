@@ -119,6 +119,7 @@ class TrafficContext:
     fixed_delta_seconds: float = 0.05
     random_seed: int = 0
     output_dir: str = "scenario_outputs"
+    file_stem: str = ""
 
 
 # traffic.registry: a factory takes a mapping of any values (Hydra's options

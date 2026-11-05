@@ -123,7 +123,8 @@ traffic:
     # extra demand beside the ambient traffic.
     net_path: null
     route_path: null
-    # Record SUMO's floating car data to <output_dir>/sumo/fcd.xml.
+    # Record SUMO's floating car data to <output_dir>/<stem>.sumo/fcd.xml
+    # (<stem>: the run's, as in <stem>_result.json).
     fcd_output: false
     use_libsumo: true
     binary: sumo

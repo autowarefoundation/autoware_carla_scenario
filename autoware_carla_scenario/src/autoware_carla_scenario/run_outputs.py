@@ -2,7 +2,8 @@
 
 A run names everything it writes after one stem (``CutInScenario``, then
 ``CutInScenario-1`` ...): its result, trajectory log, coverage file and so on
-are files, its T4 dataset (``{stem}.t4``) a directory.  Two places need the
+are files, its T4 dataset (``{stem}.t4``) and SUMO's outputs
+(``{stem}.sumo``) directories.  Two places need the
 whole list, and both read it from here:
 
 * ``scenario_runner._run_file_stem``, which takes the first stem none of them
@@ -14,7 +15,8 @@ whole list, and both read it from here:
   refuses a directory already holding a dataset, records the new one.
 
 The modules that write each output keep their own name for its suffix
-(``rerun.RECORDING_SUFFIX``, ``t4_settings.DATASET_SUFFIX`` ...);
+(``rerun.RECORDING_SUFFIX``, ``t4_settings.DATASET_SUFFIX``,
+``traffic.sumo.backend.OUTPUT_SUFFIX`` ...);
 ``test_run_outputs.py`` keeps them equal to the ones here.
 
 Free of imports beyond ``pathlib`` and ``shutil``: the SLURM worker and the
@@ -54,9 +56,13 @@ RUN_FILE_SUFFIXES: tuple[str, ...] = (
     ".t4scene.map.pb",
 )
 
-#: The directories a run writes as ``{stem}{suffix}``: its T4 dataset
-#: (t4.enabled), its version ``0`` inside.
-RUN_DIR_SUFFIXES: tuple[str, ...] = (".t4",)
+#: The directories a run writes as ``{stem}{suffix}``.
+RUN_DIR_SUFFIXES: tuple[str, ...] = (
+    # Its T4 dataset (t4.enabled), its version ``0`` inside.
+    ".t4",
+    # The SUMO backend's log, generated demand, FCD and clock (traffic=sumo).
+    ".sumo",
+)
 
 
 def run_output_paths(directory: Path, stem: str) -> list[Path]:

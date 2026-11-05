@@ -438,9 +438,10 @@ class SumoBackendConfig:
             they came from; ``~/.cache/autoware_carla_scenario/sumo`` by
             default.
         fcd_output: Record every SUMO vehicle's state each step (SUMO's
-            floating car data) to ``<output_dir>/sumo/fcd.xml``, for replaying
-            or plotting a run's traffic afterwards, and the SUMO time each CARLA
-            tick maps to in ``<output_dir>/sumo/clock.csv``.
+            floating car data) to ``<output_dir>/{stem}.sumo/fcd.xml``, for
+            replaying or plotting a run's traffic afterwards, and the SUMO time
+            each CARLA tick maps to in ``<output_dir>/{stem}.sumo/clock.csv``;
+            ``{stem}`` is the run's file stem, as in ``{stem}_result.json``.
         sumo_args: Extra command-line arguments for SUMO.  Additional and
             route files given here (``-a``/``--additional-files``,
             ``-r``/``--route-files``) join the backend's own, after them, as
