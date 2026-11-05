@@ -155,3 +155,42 @@ def test_an_ordinary_value_is_still_shown_by_repr() -> None:
         parse_config({**_device(), "carla": {"port": 70000}})
     with pytest.raises(HilsConfigError, match=r"clock: expected text, got the int 5;"):
         parse_config({**_device(), "clock": 5})
+
+
+@pytest.mark.parametrize(
+    "value",
+    [HUGE, -HUGE, 10**6000, 10**4300 + 1, -(10**4300 + 1), 2**20000, 2**20000 - 1],
+    # The default ids are repr(), which refuses these.
+    ids=[
+        "1e5000",
+        "-1e5000",
+        "1e6000",
+        "1e4300+1",
+        "-1e4300-1",
+        "2^20000",
+        "2^20000-1",
+    ],
+)
+def test_a_huge_integer_is_shown_as_bit_length_says(value: int) -> None:
+    # hils.config's _huge is the checked value_text.huge_integer (#1704); its
+    # text is the one bit_length() gives, as it was.
+    from autoware_carla_scenario.hils import config
+    from autoware_carla_scenario.value_text import huge_integer, shown
+
+    sign = "-" if value < 0 else ""
+    expected = f"an integer of about {sign}10**{int(abs(value).bit_length() * 0.30103)}"
+    assert config._huge is huge_integer
+    assert huge_integer(value) == expected
+    assert shown(value) == expected
+    assert config._shown(value) == expected
+
+
+def test_the_signal_check_is_the_sensor_specs() -> None:
+    from autoware_carla_scenario.hils import config, sensor_spec
+
+    assert config._signal is sensor_spec.checked_signal
+    assert config._signal("speed", "x") == "speed"
+    with pytest.raises(
+        HilsConfigError, match=r"^x: unknown signal 'nope'; signals: time, frame, "
+    ):
+        config._signal("nope", "x")

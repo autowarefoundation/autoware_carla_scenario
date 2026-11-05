@@ -24,8 +24,14 @@ from pathlib import Path
 from typing import Optional
 
 # A case's trajectory log and its recording are named by the checked
-# run_outputs's rule (#1678), as rerun and ui.web_viewer_paths name them.
-from ..run_outputs import RECORDING_SUFFIX, TRAJECTORY_SUFFIX
+# run_outputs's rule (#1678), as rerun and ui.web_viewer_paths name them; its
+# result and coverage file by run_outputs's suffixes too (#1704).
+from ..run_outputs import (
+    COVERAGE_SUFFIX,
+    RECORDING_SUFFIX,
+    RESULT_SUFFIX,
+    TRAJECTORY_SUFFIX,
+)
 
 __all__ = [
     "SESSION_TYPES",
@@ -48,7 +54,8 @@ SESSION_TYPES = ("multirun", "batch", "single")
 _COMPONENT = re.compile(r"^[A-Za-z0-9_.:+-]{1,255}$")
 
 _TRAJECTORY = TRAJECTORY_SUFFIX
-_RESULT = "_result.json"
+_RESULT = RESULT_SUFFIX
+_COVERAGE = COVERAGE_SUFFIX
 _STEM_NUMBER = re.compile(r"^(?P<base>.*?)-(?P<n>\d+)$")
 
 
@@ -72,7 +79,7 @@ class CaseFiles:
 
     @property
     def coverage(self) -> Path:
-        return self.path("_coverage.json")
+        return self.path(_COVERAGE)
 
     @property
     def odd_archive(self) -> Path:

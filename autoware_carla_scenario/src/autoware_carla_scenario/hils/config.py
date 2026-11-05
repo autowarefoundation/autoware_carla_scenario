@@ -45,9 +45,11 @@ input and step names also take a whole number (RTCM's ``1005``).
 refused too instead of becoming ``False``.
 
 What needs no YAML and no value of any shape -- :class:`SensorSpec`, the
-checks of a LiDAR's attributes, :data:`CLOCKS`, :data:`PHASES` and
-:class:`HilsConfigError` -- lives in :mod:`.sensor_spec`, which the static
-check compiles (docs/typecheck.md); it is re-exported here.
+checks of a LiDAR's attributes and of a field's signal name, :data:`CLOCKS`,
+:data:`PHASES` and :class:`HilsConfigError` -- lives in :mod:`.sensor_spec`,
+which the static check compiles (docs/typecheck.md); it is re-exported here,
+as is the checked :mod:`~autoware_carla_scenario.value_text`'s
+:func:`~autoware_carla_scenario.value_text.huge_integer`.
 """
 
 from __future__ import annotations
@@ -59,6 +61,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from ..constants import EGO_ROLE_NAME
+from ..value_text import huge_integer
 from .measurements import CAMERA_ENCODINGS
 from .protocol import (
     COMMAND_FIELDS,
@@ -76,9 +79,10 @@ from .sensor_spec import (
     SensorSpec,
     _lidar_attributes,
     _relative_file,
+    checked_signal,
 )
 from .sensor_spec import _attribute_number as _attribute_number  # noqa: F401 - re-exported
-from .signals import SIGNALS
+from .signals import SIGNALS as SIGNALS  # noqa: F401 - re-exported
 from .yaml11 import YAML_BOOL as _YAML_BOOL  # noqa: F401 - re-exported
 from .yaml11 import YAML_FLOAT as _YAML_FLOAT  # noqa: F401 - re-exported
 from .yaml11 import YAML_INT as _YAML_INT  # noqa: F401 - re-exported
@@ -357,11 +361,9 @@ def _text(value: Any, where: str, *, number: bool = False) -> str:
     )
 
 
-def _huge(value: int) -> str:
-    """How an error shows an integer too long for ``repr()``, which refuses
-    one of more digits than ``sys.get_int_max_str_digits()``."""
-    sign = "-" if value < 0 else ""
-    return f"an integer of about {sign}10**{int(abs(value).bit_length() * 0.30103)}"
+#: How an error shows an integer too long for ``repr()``: the checked
+#: value_text's (#1704).
+_huge = huge_integer
 
 
 def _shown(value: Any) -> str:
@@ -459,12 +461,9 @@ def _port(value: Any, where: str) -> int:
     return value
 
 
-def _signal(name: str, where: str) -> str:
-    if name not in SIGNALS:
-        raise HilsConfigError(
-            f"{where}: unknown signal {name!r}; signals: {', '.join(SIGNALS)}"
-        )
-    return name
+#: That a field's signal is one of SIGNALS: the checked hils.sensor_spec's
+#: (#1704).
+_signal = checked_signal
 
 
 def _field(value: Any, where: str) -> FieldSource:

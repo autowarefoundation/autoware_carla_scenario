@@ -99,6 +99,7 @@ from autoware_carla_scenario.run_dirs import (
     reserve_timestamped_dir,
     sets_hydra_key as _sets_hydra_key,
 )
+from autoware_carla_scenario.run_outputs import RESULT_SUFFIX
 from autoware_carla_scenario.run_timeout import run_timeout_seconds
 from autoware_carla_scenario.scenario_config import EntityConfig
 from autoware_carla_scenario.seed import DEFAULT_SEED, MAX_SEED, set_run_seed
@@ -3161,7 +3162,7 @@ def _run_scenario(
 def _result_json_line(output_dir: Path, file_stem: str) -> str:
     """The line naming the result a run named *file_stem* wrote in
     *output_dir*, or saying it wrote none (writing it failed)."""
-    json_path = (output_dir / f"{file_stem}_result.json").resolve()
+    json_path = (output_dir / f"{file_stem}{RESULT_SUFFIX}").resolve()
     if json_path.is_file():
         return f"Result JSON: {json_path}"
     return f"Result JSON: not written ({json_path})"
