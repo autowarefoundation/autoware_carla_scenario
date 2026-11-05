@@ -38,7 +38,7 @@
              pedestrian can do neither -- the kinds an action is for are the
              spec's, so this list needs no per-type branching of its own. #}
           {%- set actor_entity = draft.document.entity(actor) if actor else None -%}
-          {%- set actor_kind = actor_entity.kind if actor_entity else '' -%}
+          {%- set actor_kind = acts_as(actor_entity.kind) if actor_entity else '' -%}
           {% for spec in action_specs() %}
             {% if (spec.actor_required == (actor != '') or spec.actor_optional)
                   and (actor == '' or actor_kind in spec.actor_kinds) %}
@@ -180,6 +180,7 @@
           style="display:flex; align-items:center; gap:7px">
       <select name="kind" class="ed-input-sm">
         <option value="vehicle">Vehicle</option>
+        <option value="motorcycle">Motorcycle</option>
         <option value="pedestrian">Pedestrian</option>
         <option value="ego" {% if document.ego %}disabled{% endif %}>Ego</option>
       </select>
@@ -217,7 +218,7 @@
              hx-get="/draft/{{ draft.id }}/inspector/{{ entity.id }}"
              hx-target="#inspector" hx-swap="innerHTML">
           <div class="ed-actor">
-            <span class="ed-avatar">{{ ic.icon('user' if entity.kind == 'ego' else 'car', 13) }}</span>
+            <span class="ed-avatar">{{ ic.icon({'ego': 'user', 'motorcycle': 'motorcycle'}.get(entity.kind, 'car'), 13) }}</span>
             <span style="min-width:0">
               <span class="ed-actor-name" style="display:block">{{ entity.display_name }}</span>
               <span class="ed-actor-role">{{ 'Ego' if entity.kind == 'ego' else entity.id }}</span>

@@ -23,6 +23,7 @@ import yaml
 from fastapi.testclient import TestClient
 
 from autoware_carla_scenario.authoring.models import (
+    AUTO_MODEL,
     ActionNode,
     ConditionNode,
     Entity,
@@ -2029,6 +2030,29 @@ class TestEnvironmentTrack:
             "traffic_source",
             "urban_construction_zone",
         }
+
+    def test_a_motorcycle_track_offers_what_a_vehicles_does(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A motorcycle is a vehicle on a motorcycle's blueprint: added from
+        the canvas as one, it is offered every action an NPC vehicle is."""
+        client.post(f"/draft/{draft_id}/entity", data={"kind": "motorcycle"})
+        rider = _entity(store, draft_id, "moto1")
+        assert rider.kind == "motorcycle"
+        assert rider.vehicle_type == AUTO_MODEL
+        body = client.get(f"/draft/{draft_id}").text
+        assert '<option value="motorcycle">Motorcycle</option>' in body
+
+        forms = re.findall(r'<form[^>]*?/action"[\s\S]*?</form>', body)
+        offers = {}
+        for form in forms:
+            actor = re.search(r'name="actor" value="([^"]*)"', form)
+            assert actor is not None
+            offers[actor.group(1)] = set(re.findall(r'<option value="([^"]+)"', form))
+        assert offers["moto1"] == offers["npc1"]
+        inspector = client.get(f"/draft/{draft_id}/inspector/moto1").text
+        assert ">Motorcycle<" in inspector
+        assert 'name="initial_speed_kmh"' in inspector
 
     def test_a_pedestrian_track_offers_walking_and_following_a_path(
         self, client: TestClient, draft_id: str

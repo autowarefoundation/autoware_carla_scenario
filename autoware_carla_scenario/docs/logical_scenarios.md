@@ -374,6 +374,11 @@ far enough away.
   With none fitting, it is the kind's default. `auto` on a pedestrian, or
   without a size, is a validation error, and so is a size on an entity that
   names its blueprint: nothing would read it.
+* A `motorcycle` (`kind: motorcycle`) is an NPC vehicle on a motorcycle's
+  blueprint (`MotorcycleEntity`) and may do whatever a `vehicle` may. Its
+  `vehicle_type` is `auto` by default: whichever motorcycle the running CARLA
+  has. It takes no size; a blueprint it names must be a motorcycle's, which
+  the run checks when it spawns it.
 
 ## Matching semantics
 
