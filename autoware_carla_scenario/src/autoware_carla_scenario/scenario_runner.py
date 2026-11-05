@@ -522,36 +522,55 @@ def _judge_metrics(
     statuses = _condition_statuses(
         scenario, world, result.elapsed_seconds, scenario_name
     )
-    if first is None or (
-        not result.passed and result.elapsed_seconds <= first[2].elapsed_seconds
-    ):
-        # The run's own outcome stands; its statuses now hold the judgements.
-        judged_labels = {_status_label("fail", i, c) for i, c in judged}
-        result.condition_statuses = [
-            s for s in result.condition_statuses if s.label not in judged_labels
-        ] + [s for s in statuses if s.label in judged_labels]
-        if result.failure is not None:
-            also = result.failure.also_triggered
-            also.extend(
-                s.label
-                for s in statuses
-                if s.label in judged_labels and s.satisfied and s.label not in also
+    judged_labels = {_status_label("fail", i, c) for i, c in judged}
+    return _merge_metric_verdicts(scenario, result, judged_labels, first, statuses)
+
+
+def _merge_metric_verdicts(
+    scenario: BaseScenario,
+    result: ScenarioResult,
+    judged_labels: set[str],
+    first: Optional[tuple[int, BaseCondition, ScenarioResult]],
+    statuses: list[ConditionStatus],
+) -> ScenarioResult:
+    """The run's *result* once its MetricConditions are judged
+    (:func:`_judge_metrics`): failed by *first*, the earliest failing one
+    (its index, the condition and its verdict; ``None`` when none failed),
+    when it fails earlier than the run did, or a run that passed; otherwise
+    the run's own result, its statuses of the conditions *judged_labels*
+    names now from *statuses*, and those that held added to its failure's
+    other conditions."""
+    if first is not None:
+        earliest: tuple[int, BaseCondition, ScenarioResult] = first
+        if not (
+            not result.passed and result.elapsed_seconds <= earliest[2].elapsed_seconds
+        ):
+            i, condition, verdict = earliest
+            return ScenarioResult(
+                passed=False,
+                message=verdict.message,
+                elapsed_seconds=verdict.elapsed_seconds,
+                condition_statuses=statuses,
+                failure=_failure(
+                    _status_label("fail", i, condition),
+                    scenario.fail_category(i),
+                    verdict.elapsed_seconds,
+                    verdict.message,
+                    statuses,
+                ),
             )
-        return result
-    i, condition, verdict = first
-    return ScenarioResult(
-        passed=False,
-        message=verdict.message,
-        elapsed_seconds=verdict.elapsed_seconds,
-        condition_statuses=statuses,
-        failure=_failure(
-            _status_label("fail", i, condition),
-            scenario.fail_category(i),
-            verdict.elapsed_seconds,
-            verdict.message,
-            statuses,
-        ),
-    )
+    # The run's own outcome stands; its statuses now hold the judgements.
+    result.condition_statuses = [
+        s for s in result.condition_statuses if s.label not in judged_labels
+    ] + [s for s in statuses if s.label in judged_labels]
+    failure = result.failure
+    if failure is not None:
+        also = failure.also_triggered
+        # One at a time, as extend() took them: a label is added once.
+        for s in statuses:
+            if s.label in judged_labels and s.satisfied and s.label not in also:
+                also.append(s.label)
+    return result
 
 
 def _traffic_record(backend: TrafficBackend, scenario_name: str) -> Optional[Any]:

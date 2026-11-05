@@ -3950,7 +3950,9 @@ What Codon 0.19 needs that Python does not, beyond
   it. Call it in the `else` branch of `if TYPE_CHECKING:` and check in the
   first branch what it can (`ScenarioRunner` calls `_judge_metrics()`,
   which evaluates the recorded frames with the unchecked `metric_batch`, in
-  the `else` branch, and the check leaves the run's result as it is). A
+  the `else` branch, and the check leaves the run's result as it is; how
+  the verdicts merge into that result is a helper of its own,
+  `_merge_metric_verdicts()`, which the check compiles). A
   private helper that imports such a module inside it needs an `UNCALLED`
   entry of its own: its import is rewritten, and refused, even when nothing
   compiled calls it.
