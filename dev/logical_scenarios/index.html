@@ -16,7 +16,7 @@
         <link rel="prev" href="../adversity/">
       
       
-        <link rel="next" href="../slurm/">
+        <link rel="next" href="../gate/">
       
       
         
@@ -634,6 +634,25 @@
     
   
   Logical Scenarios from Routes
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
+      <a href="../gate/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  Gates for Logical Scenarios
 
       </a>
     </li>
@@ -1904,6 +1923,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#passing-as-a-whole-the-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Passing as a whole: the gate
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#python-api" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -1929,6 +1959,33 @@
   
 </nav>
       
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../gate/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Gates for Logical Scenarios
+  
+
+    
+  </span>
+  
+  
+
+      </a>
     </li>
   
 
@@ -2389,6 +2446,17 @@
     <span class="md-ellipsis">
       
         Running it
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
+  <a href="#passing-as-a-whole-the-gate" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Passing as a whole: the gate
       
     </span>
   </a>
@@ -3099,6 +3167,7 @@ read the document's <code>sweep.route</code> and emit, per match:</p>
 <a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>scenario.route.segment_ends=[60.0,78.5,118.5]           # route s where each segment ends
 <a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>scenario.route.segment_lanelet_counts=[2,1,1]
 <a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>scenario.route.junction_turns=[left]
+<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>scenario.route.case_count=4                             # cases on this map, for the gate
 </code></pre></div>
 <p>A match the ego cannot be placed on (spawn past the end, goal not ahead of the
 spawn) is skipped and logged. The exported Hydra config declares every
@@ -3122,6 +3191,13 @@ and the ego is sent along it:</p>
   the junction's actual <code>turn_direction</code>, triggered when it is 100 m short of
   the junction (or past the previous one).</li>
 </ul>
+<h2 id="passing-as-a-whole-the-gate">Passing as a whole: the gate<a class="headerlink" href="#passing-as-a-whole-the-gate" title="Permanent link">&para;</a></h2>
+<p>Each match runs as a concrete scenario and passes or fails on its own. A
+<code>gate:</code> block in the document says when the logical scenario passes over all
+its runs -- a minimum number of runs, success rate, case and cover coverage,
+and how consistently the ego drives the pattern. Each run records what the
+gate needs (<code>{stem}_gate.json</code>) and <code>scenario-gate</code> judges it afterwards: see
+<a href="../gate/">Gates for Logical Scenarios</a>.</p>
 <h2 id="python-api">Python API<a class="headerlink" href="#python-api" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>    <span class="n">RouteLanePose</span><span class="p">,</span> <span class="n">RouteOppositePose</span><span class="p">,</span> <span class="n">RouteCrossingPose</span><span class="p">,</span> <span class="n">RouteCrosswalkPose</span><span class="p">,</span>
@@ -3181,7 +3257,7 @@ so a hand-written scenario using them passes the <a href="../typecheck/">static 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 08:36:35 UTC"><span class="timeago" datetime="2026-11-05T08:36:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 08:36:35 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 10:08:40 UTC"><span class="timeago" datetime="2026-11-05T10:08:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 10:08:40 UTC">2026-11-05</span>
   </span>
 
     
