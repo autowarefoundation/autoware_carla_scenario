@@ -52,7 +52,7 @@ import signal
 import sys
 import time
 from pathlib import Path
-from typing import Any
+from typing import Any, NoReturn
 
 from hydra.core.hydra_config import HydraConfig
 from hydra.core.plugins import Plugins
@@ -366,6 +366,29 @@ def _refuse_before_forking(cfg: DictConfig) -> None:
         sys.exit(_REFUSED_EXIT_CODE)
 
 
+def _refuse_invalid_sweep(cfg: DictConfig, exc: ValueError) -> NoReturn:
+    """Report *exc*, the sweep's own refusal of its config, and exit 1.
+
+    One line on stderr, ``Error: <scenario>: <message>``, as
+    ``scenario-expand`` and a ``--multirun`` batch print it
+    (``examples/expand.py``), and exit 1: a configuration error
+    (docs/usage.md, "Exit Codes").  The scenario is the config's
+    ``scenario`` choice; without one the line names none.  With
+    ``HYDRA_FULL_ERROR=1`` *exc* is raised again, traceback and all, as
+    ``scenario-expand`` does.
+
+    Raises:
+        ValueError: *exc*, with ``HYDRA_FULL_ERROR=1``.
+        SystemExit: With status 1, otherwise.
+    """
+    if os.environ.get("HYDRA_FULL_ERROR") == "1":
+        raise exc
+    name = OmegaConf.select(cfg, "hydra.runtime.choices.scenario", default=None)
+    where = f"{name}: " if name else ""
+    print(f"Error: {where}{exc}", file=sys.stderr)  # noqa: T201
+    sys.exit(1)
+
+
 class LaneletConstraintSweeper(Sweeper):
     """Sweep over lanelets that satisfy declarative constraints."""
 
@@ -463,9 +486,14 @@ class LaneletConstraintSweeper(Sweeper):
                 datasets without the extra, or when a case is refused;
                 with status 130 (``SIGINT``) or 143 (``SIGTERM``) when the
                 sweep is interrupted.
+            SystemExit: With status 1, at once, before any case runs, when
+                :func:`.expand.expand_sweep` refuses the sweep's config (a
+                ``ValueError``), after printing ``Error: <scenario>:
+                <message>`` to stderr, as ``scenario-expand`` does
+                (``HYDRA_FULL_ERROR=1`` raises the ``ValueError`` instead).
             ValueError: At once, before any case runs, when the sweep is
-                invalid -- among others, when its Lanelet2 map is not named,
-                is missing, or cannot be resolved, fetched or read
+                invalid otherwise -- among others, when its Lanelet2 map is
+                not named, is missing, or cannot be resolved, fetched or read
                 (:func:`.expand.load_sweep_map`), the message naming it.
         """
         self._current_case = None
@@ -538,17 +566,27 @@ class LaneletConstraintSweeper(Sweeper):
         )
 
         # -- 4-6. Expand: matching lanelets -> one override batch each -----
-        batches: list[tuple[str, ...]] = [
-            tuple(case)
-            for case in expand_sweep(
-                sweep_dict,
-                lanelet_map,
-                arguments,
-                odd=OmegaConf.select(cfg, "odd"),
-                controls=scenario_controls(cfg),
-                seed=_config_seed(cfg),
-            )
-        ]
+        odd = OmegaConf.select(cfg, "odd")
+        controls = scenario_controls(cfg)
+        seed = _config_seed(cfg)
+        try:
+            batches: list[tuple[str, ...]] = [
+                tuple(case)
+                for case in expand_sweep(
+                    sweep_dict,
+                    lanelet_map,
+                    arguments,
+                    odd=odd,
+                    controls=controls,
+                    seed=seed,
+                )
+            ]
+        except ValueError as exc:
+            # An invalid sweep (a weights file that does not parse or names
+            # no module, a constraint that does not parse, a case_index past
+            # its cases, ...): one line, as scenario-expand reports it, not
+            # Hydra's traceback (#1705).  Other errors keep their traceback.
+            _refuse_invalid_sweep(cfg, exc)
         if not batches:
             # Exit 0 means every case passed: a sweep that tests nothing
             # (a misspelt constraint, the wrong map) must not look like one.

@@ -432,6 +432,9 @@ with the same message, naming the scenario. They refuse an invalid sweep (a
 Lanelet2 map that is missing, unreadable or cannot be resolved, ...) the same
 way, `Error: <scenario>: <why>`; a batch or `scenario-expand` of a glob
 reports every scenario refused, not just the first, and runs or lists nothing.
+So does the sweeper (`hydra/sweeper=lanelet_constraint`): one line on stderr,
+exit 1, no traceback, before any case runs (`HYDRA_FULL_ERROR=1` shows the
+traceback); an error that is not a refusal of the sweep keeps its traceback.
 The sweeper refuses such a map too, before anything runs, exit 1:
 `LaneletConstraintSweeper: <why>`, naming the map -- a `map.directory` that
 does not exist, a `map.source` that cannot be fetched, a map cache whose root
