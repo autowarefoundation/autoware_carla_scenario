@@ -25,7 +25,9 @@ from typing import NamedTuple
 
 from ..templating import code_environment
 from .names import (
+    _FRAMEWORK_DISTRIBUTION,
     _default_scenario_name,
+    _is_framework_name,
     _normalise_distribution,
     _to_hyphen,
     _to_pascal,
@@ -186,9 +188,6 @@ def _reserved_scenario_names() -> frozenset[str]:
     return frozenset(name for name in reserved if name == name.lower())
 
 
-#: The framework's distribution name, which a scaffolded package depends on.
-_FRAMEWORK_DISTRIBUTION = "autoware-carla-scenario"
-
 #: Import names of the framework's direct run-time dependencies, kept as a
 #: floor under what :func:`_dependency_import_names` reads off the installed
 #: metadata (which is absent when the framework runs from a bare source tree).
@@ -268,9 +267,7 @@ def _check_package_name(package_name: str) -> None:
     module or a dependency of the framework shadows it (#1451).
     """
     framework_import = _FRAMEWORK_DISTRIBUTION.replace("-", "_")
-    if _normalise_distribution(package_name) == _normalise_distribution(
-        _FRAMEWORK_DISTRIBUTION
-    ):
+    if _is_framework_name(package_name):
         msg = (
             f"package name {package_name!r} is reserved: it is the framework's "
             f"own ({framework_import!r} / {_FRAMEWORK_DISTRIBUTION!r}), so the "
