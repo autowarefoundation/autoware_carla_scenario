@@ -21,7 +21,6 @@ heavy imports: the ``scenario-slurm`` commands only read these.
 from __future__ import annotations
 
 import errno
-import hashlib
 import json
 import logging
 import os
@@ -32,7 +31,7 @@ from pathlib import Path
 from typing import Any
 
 from ..run_outputs import RUN_FILE_SUFFIXES
-from .scripts import BatchPaths
+from .scripts import BatchPaths, file_sha256
 from .stems import config_key, sequential_stems
 
 __all__ = [
@@ -68,15 +67,6 @@ MANIFEST_VERSION = 2
 
 #: The versions this framework reads.
 MANIFEST_VERSIONS: tuple[int, ...] = (1, 2)
-
-
-def file_sha256(path: Path) -> str:
-    """The SHA-256 of the file *path*, hex."""
-    digest = hashlib.sha256()
-    with open(path, "rb") as stream:
-        for block in iter(lambda: stream.read(1 << 20), b""):
-            digest.update(block)
-    return digest.hexdigest()
 
 
 def config_files(
@@ -250,26 +240,10 @@ class BatchLayout(BatchPaths):
     """Where the launcher's files of the batch in *batch_dir* are, and what
     they hold.
 
-    The paths are :class:`~.scripts.BatchPaths`', which the library check
-    compiles (#732); this reads the files.
+    The paths, and which submissions the batch holds (:meth:`submissions`,
+    :meth:`next_submission`), are :class:`~.scripts.BatchPaths`', which the
+    library check compiles (#732, #1648); this reads the files.
     """
-
-    def submissions(self) -> list[int]:
-        """The indices of the batch's submissions, in order."""
-        directory = self.root / "submissions"
-        if not directory.is_dir():
-            return []
-        return sorted(
-            int(p.stem)
-            for p in directory.glob("*.json")
-            if p.stem.isascii() and p.stem.isdigit()
-        )
-
-    def next_submission(self) -> int:
-        """The index after the batch's last submission.  Not reserved: two
-        submitters may both be told it (:meth:`reserve_submission`)."""
-        existing = self.submissions()
-        return existing[-1] + 1 if existing else 0
 
     def reserve_submission(self, record: dict[str, Any]) -> int:
         """Create the batch's next submission record from *record* (its
