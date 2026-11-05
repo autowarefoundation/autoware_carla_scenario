@@ -133,13 +133,19 @@ def _text(value: Any) -> str:
 
 
 def _read_overrides(job_dir: Path) -> list[str]:
-    """Read ``.hydra/overrides.yaml`` from a job directory."""
+    """Read ``.hydra/overrides.yaml`` from a job directory.
+
+    Empty when the file cannot be read or is no YAML list: a file that is not
+    UTF-8 (a ``UnicodeDecodeError``, a ``ValueError``) must not break the
+    session and case pages (#1631). Each item is a string, as
+    ``results._hydra_overrides`` reads it.
+    """
     try:
         raw = (job_dir / ".hydra" / "overrides.yaml").read_text(encoding="utf-8")
         data = yaml.safe_load(raw)
-        return data if isinstance(data, list) else []
-    except (yaml.YAMLError, OSError):
+    except (yaml.YAMLError, OSError, ValueError):
         return []
+    return [str(o) for o in data] if isinstance(data, list) else []
 
 
 def _extract_scenario_name(result: dict[str, Any] | None, job_dir: Path) -> str:
