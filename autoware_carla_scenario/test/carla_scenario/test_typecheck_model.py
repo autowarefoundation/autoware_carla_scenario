@@ -39,7 +39,6 @@ from pyxodr.road_objects.road import Road as PyxodrRoad
 import autoware_carla_scenario as acs
 from autoware_carla_scenario import (
     action_state,
-    carla_install,
     conditions,
     constants,
     coordinate,
@@ -929,7 +928,6 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What ActionStateCondition takes and BaseAction.state returns; the model
     # of actions imports it from here, as Python's actions.base does.
     "action_state": (action_state, ("ActionState",)),
-    "carla_install": (carla_install, ("installed_executable",)),
     # What an ego entity a scenario defines returns from debug_markers().
     "debug_markers": (
         debug_markers,

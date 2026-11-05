@@ -40,9 +40,7 @@ import contextlib
 import errno
 import http.client
 import json
-import os
 import platform
-import re
 import shutil
 import sys
 import tarfile
@@ -51,8 +49,21 @@ from email.message import Message
 from pathlib import Path, PurePosixPath
 from typing import IO, Callable, Iterator, Optional, cast
 
-HOME_ENV = "AUTOWARE_CARLA_SCENARIO_HOME"
-"""Overrides the framework's home directory, ``~/.autoware_carla_scenario``."""
+# The path logic, which the library check compiles from its own module; every
+# name of it is re-exported here, where it has always been imported from.
+from .carla_install_paths import (
+    _LAUNCHER,
+    _STAMP,
+    _content_range,
+    _replaced,
+    _staging,
+    _swap_into_place,
+)
+from .carla_install_paths import _SCHEME as _SCHEME
+from .carla_install_paths import HOME_ENV as HOME_ENV
+from .carla_install_paths import install_dir as install_dir
+from .carla_install_paths import installed_executable as installed_executable
+from .carla_install_paths import package_url as package_url
 
 NIGHTLY_URL = (
     "https://s3.us-east-005.backblazeb2.com/carla-releases/Linux/Dev/"
@@ -63,11 +74,8 @@ NIGHTLY_URL = (
 NIGHTLY_MACHINES = frozenset({"x86_64"})
 """The machines (``platform.machine()``) the nightly build runs on."""
 
-LAUNCHER = PurePosixPath("Linux/CarlaUnreal.sh")
+LAUNCHER = PurePosixPath(_LAUNCHER)
 """The server's launcher, relative to the unpacked package."""
-
-_STAMP = ".download.json"
-"""What the install was downloaded from, to tell whether it is still current."""
 
 _UNPACKED_PER_PACKED = 2.0
 """The nightly unpacks to about twice its archive."""
@@ -80,33 +88,6 @@ _RETRIES = 8
 
 _RETRY_DELAY = 2.0
 """Seconds before the first reconnection; each failed one doubles it, up to 60."""
-
-_SCHEME = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://|file:)", re.IGNORECASE)
-"""The ``scheme://`` (or ``file:``, which urllib takes without ``//``) that tells
-a URL from a local path."""
-
-
-def install_dir() -> Path:
-    """Where ``scenario-setup`` puts CARLA: ``<home>/bin/carla``."""
-    home = os.environ.get(HOME_ENV, "").strip() or "~/.autoware_carla_scenario"
-    return Path(home).expanduser() / "bin" / "carla"
-
-
-def installed_executable() -> Optional[Path]:
-    """The launcher of the CARLA ``scenario-setup`` installed, if there is one."""
-    launcher = install_dir() / LAUNCHER
-    return launcher if launcher.is_file() else None
-
-
-def package_url(url: str) -> str:
-    """*url* itself, or the ``file://`` URL of a local path given instead.
-
-    A value without a ``scheme://`` (or ``file:``) is a path: ``~`` expands
-    and a relative path is taken from the current directory.
-    """
-    if _SCHEME.match(url):
-        return url
-    return Path(url).expanduser().resolve().as_uri()
 
 
 def install(
@@ -131,7 +112,7 @@ def install(
         ValueError: *url* has a scheme urllib cannot open.
     """
     _require_extraction_filters()  # before anything is downloaded
-    # The runner imports this module for install_dir() alone; these it does not need.
+    # Imported here: only a download needs them, not the commands that check an install.
     import urllib.parse  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
 
@@ -330,42 +311,6 @@ def _open_lock(lock: Path) -> Optional[IO[str]]:
         return None
 
 
-def _staging(target: Path) -> Path:
-    """Where the download into *target* is unpacked until it is complete."""
-    return target.with_name(target.name + ".partial")
-
-
-def _replaced(target: Path) -> Path:
-    """Where the install *target* held is moved while it is being deleted."""
-    return target.with_name(target.name + ".replaced")
-
-
-def _swap_into_place(staging: Path, target: Path) -> None:
-    """Replace the install at *target* with the complete one at *staging*.
-
-    Deleting ~30 GB takes seconds, long enough for a Ctrl-C, and a tree deleted
-    in place could be left with its launcher and stamp but not much else, which
-    the next run would take for a current install. So the old tree is renamed
-    aside first and deleted only once *staging* is in its place: *target* is
-    always either a complete install or missing, never half of one. What an
-    interrupt leaves aside, :func:`install` deletes on its next run.
-    """
-    old = _replaced(target)
-    shutil.rmtree(old, ignore_errors=True)
-    if not target.exists():
-        staging.rename(target)
-        return
-    target.rename(old)
-    try:
-        staging.rename(target)
-    except OSError:
-        old.rename(target)  # the previous install, as it was
-        raise
-    # Not an install any more, whatever is left of it if this is cut short.
-    (old / _STAMP).unlink(missing_ok=True)
-    shutil.rmtree(old, ignore_errors=True)
-
-
 class _ResumingStream:
     """The body of *response*, reconnecting with a range request when it drops.
 
@@ -489,20 +434,6 @@ class _ResumingStream:
             self._response.close()
         except (OSError, http.client.HTTPException):
             pass
-
-
-def _content_range(
-    content_range: Optional[str],
-) -> tuple[Optional[int], Optional[int]]:
-    """First byte and size of a ``Content-Range: bytes <first>-<last>/<size>``."""
-    unit, _, span = (content_range or "").strip().partition(" ")
-    first, _, rest = span.partition("-")
-    _, _, total = rest.partition("/")
-    if unit != "bytes" or not (first.isascii() and first.isdigit()):
-        return None, None
-    if not (total.isascii() and total.isdigit()):
-        return None, None
-    return int(first), int(total)
 
 
 def _stamp(target: Path) -> dict[str, Optional[str]]:

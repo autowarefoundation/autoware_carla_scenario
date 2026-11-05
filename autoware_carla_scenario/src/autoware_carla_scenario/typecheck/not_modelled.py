@@ -119,11 +119,6 @@ _GRPC = (
     "the model declares the class only by name, so the checked package's "
     "re-export resolves"
 )
-_CARLA_INSTALL = (
-    "the CARLA installer and its command line (tqdm, urllib.request, tarfile, "
-    "argparse); carla_install.codon models only installed_executable(), "
-    "which the checked server manager uses"
-)
 _CYCLONE = (
     "converts ROS 2 messages (ros2.messages: cyclonedds's IdlStruct, which "
     "has no model); ros2/cyclone.codon models the transport "
@@ -184,11 +179,6 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "AutowareStackError CommandAutowareLauncher DEFAULT_BRIDGE_PARAMETERS "
         "ProcessGroup episode_log_path fill_placeholders",
         _STACK_LAUNCHER,
-    ),
-    f"{_PACKAGE}.carla_install": _each(
-        "HOME_ENV LAUNCHER NIGHTLY_MACHINES NIGHTLY_URL install install_dir main "
-        "package_url",
-        _CARLA_INSTALL,
     ),
     f"{_PACKAGE}.debug_markers": _each(
         "plan_markers plan_polyline world_point",

@@ -17,7 +17,7 @@ import typesafe_carla.carla as carla
 
 from dotenv import load_dotenv
 
-from .carla_install import installed_executable
+from .carla_install_paths import installed_executable
 
 load_dotenv(override=False)
 
