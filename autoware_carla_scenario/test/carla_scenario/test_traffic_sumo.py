@@ -4194,6 +4194,82 @@ def test_the_bicycle_ride_distances_must_be_an_interval() -> None:
     )
 
 
+def test_a_string_is_refused_where_a_sumo_list_setting_belongs() -> None:
+    # A string was iterated into its characters: `sumo_args=--verbose` became
+    # ['-', '-', 'v', ...] and failed SUMO only once CARLA was up, and a
+    # blueprint became ['v', 'e', ...], so no bicycle was mirrored (#1534).
+    for bad in ("--verbose", b"--verbose", 3, True, {"a": "b"}):
+        with pytest.raises(
+            ValueError, match=r"^traffic\.options\.sumo_args must be a list, not"
+        ):
+            SumoBackendConfig.from_mapping({"sumo_args": bad})
+        with pytest.raises(
+            ValueError,
+            match=r"^traffic\.options\.bicycles\.blueprints must be a list, not",
+        ):
+            BicycleConfig.from_mapping({"blueprints": bad})
+        with pytest.raises(
+            ValueError,
+            match=r"^traffic\.options\.bicycles\.blueprints must be a list, not",
+        ):
+            SumoBackendConfig.from_mapping({"bicycles": {"blueprints": bad}})
+    # An item that is not a string or a number has no str() that was meant.
+    for item in (None, True, ["--verbose"], {"a": "b"}):
+        with pytest.raises(
+            ValueError,
+            match=r"^traffic\.options\.sumo_args\[1\] must be a string or a number",
+        ):
+            SumoBackendConfig.from_mapping({"sumo_args": ["--verbose", item]})
+        with pytest.raises(
+            ValueError,
+            match=r"^traffic\.options\.bicycles\.blueprints\[0\] must be a string",
+        ):
+            BicycleConfig.from_mapping({"blueprints": [item]})
+    # A list, a tuple or a ListConfig is read; null is empty.
+    from omegaconf import OmegaConf
+
+    for args in (
+        ["--verbose", 1],
+        ("--verbose", 1),
+        OmegaConf.create(["--verbose", 1]),
+    ):
+        assert SumoBackendConfig.from_mapping({"sumo_args": args}).sumo_args == [
+            "--verbose",
+            "1",
+        ]
+    assert SumoBackendConfig.from_mapping({"sumo_args": None}).sumo_args == []
+    assert BicycleConfig.from_mapping(
+        {"blueprints": ("vehicle.bh.crossbike",)}
+    ).blueprints == ["vehicle.bh.crossbike"]
+    assert BicycleConfig.from_mapping({"blueprints": None}).blueprints == []
+
+
+@pytest.mark.parametrize(
+    ("override", "key"),
+    [
+        ("traffic.options.sumo_args=--verbose", "traffic.options.sumo_args"),
+        (
+            "traffic.options.bicycles.blueprints=vehicle.bh.crossbike",
+            "traffic.options.bicycles.blueprints",
+        ),
+    ],
+)
+def test_a_run_with_a_string_sumo_list_setting_is_refused_up_front(
+    override: str, key: str
+) -> None:
+    import re
+
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    cfg = _shipped(["traffic=sumo", override])
+    with pytest.raises(
+        run.RunConfigError, match=f"{re.escape(key)} must be a list, not str"
+    ):
+        run.check_run_config(cfg)
+
+
 def test_a_run_with_inverted_bicycle_ride_distances_is_refused_up_front() -> None:
     from autoware_carla_scenario.examples import run
 

@@ -280,7 +280,7 @@ class BicycleConfig:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "BicycleConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
-        from ...utils.config import checked_options  # noqa: PLC0415
+        from ...utils.config import checked_options, checked_str_list  # noqa: PLC0415
 
         moved = sorted(set(mapping) & set(BICYCLE_PARAMETER_BACKENDS))
         if moved:
@@ -291,7 +291,10 @@ class BicycleConfig:
             )
         checked = checked_options(cls, mapping)
         if "blueprints" in checked:
-            checked["blueprints"] = [str(b) for b in checked["blueprints"] or []]
+            # A string is refused, not split into characters (#1534).
+            checked["blueprints"] = checked_str_list(
+                "traffic.options.bicycles.blueprints", checked["blueprints"]
+            )
         return cls(**checked)
 
 
@@ -525,7 +528,7 @@ class SumoBackendConfig:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "SumoBackendConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
-        from ...utils.config import checked_options  # noqa: PLC0415
+        from ...utils.config import checked_options, checked_str_list  # noqa: PLC0415
 
         if "follow_visibility" in mapping:
             raise ValueError(
@@ -545,7 +548,10 @@ class SumoBackendConfig:
         if isinstance(checked.get("mesoscopic"), Mapping):
             checked["mesoscopic"] = MesoscopicConfig.from_mapping(checked["mesoscopic"])
         if "sumo_args" in checked:
-            checked["sumo_args"] = [str(a) for a in checked["sumo_args"] or []]
+            # A string is refused, not split into characters (#1534).
+            checked["sumo_args"] = checked_str_list(
+                "traffic.options.sumo_args", checked["sumo_args"]
+            )
         if checked.get("tm_port") is None:
             checked.pop("tm_port", None)  # `${oc.select:...,null}`: the default
         return cls(**checked)
