@@ -2538,7 +2538,8 @@ def _check_driver_settings(cfg: DictConfig) -> None:
 def _control_config(section: Mapping[str, Any], name: str) -> "ControlConfig":
     """The trajectory follower's gains of the ``control`` entry of
     *section*, the run's *name* (``driver`` or ``ros2``) settings:
-    ``control: null`` (or none) means the default gains.
+    ``control: null`` (or none) means the default gains; anything else but a
+    mapping is refused (``driver.control must be a mapping, got 'abc'``).
 
     :meth:`~autoware_carla_scenario.driver.ControlConfig.from_mapping` names
     the key it refuses, not the section it is read from, as
@@ -2550,9 +2551,16 @@ def _control_config(section: Mapping[str, Any], name: str) -> "ControlConfig":
         ValueError: naming ``<name>.control.<key>``.
     """
     from autoware_carla_scenario.driver import ControlConfig  # noqa: PLC0415
+    from autoware_carla_scenario.value_text import shown  # noqa: PLC0415
 
+    control = section.get("control")
+    if control is None:
+        control = {}
+    if not isinstance(control, Mapping):
+        # from_mapping's errors start with a key; this one is the section's.
+        raise ValueError(f"{name}.control must be a mapping, got {shown(control)}")
     try:
-        return ControlConfig.from_mapping(section.get("control") or {})
+        return ControlConfig.from_mapping(control)
     except ValueError as exc:
         raise ValueError(f"{name}.control.{exc}") from None
 

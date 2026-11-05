@@ -165,6 +165,15 @@ def test_control_spec_mirrors_the_control_config() -> None:
         ({"steer_exponent": 0}, r"^steer_exponent must be positive, got 0\.0$"),
         ({"max_steer_angle_rad": -0.5}, r"^max_steer_angle_rad must be positive"),
         ({"max_steer_angle_deg": 0}, r"^max_steer_angle_deg must be positive"),
+        # An alias shows the degrees given, not the radians they make.
+        (
+            {"max_steer_angle_deg": -10},
+            r"^max_steer_angle_deg must be positive, got -10$",
+        ),
+        (
+            {"max_steer_angle_deg": -12.5},
+            r"^max_steer_angle_deg must be positive, got -12\.5$",
+        ),
         ({"wheelbase_m": 0.0}, r"^wheelbase_m must be positive"),
         ({"min_lookahead_m": 0.0}, r"^min_lookahead_m must be positive"),
         ({"velocity_lookahead_time": -1.0}, r"^velocity_lookahead_time must be"),
@@ -229,6 +238,34 @@ def test_every_shipped_control_section_loads() -> None:
         cfg = _composed(overrides)
         for section in (cfg.driver, cfg.ros2):
             ControlConfig.from_mapping(section.get("control") or {})
+
+
+@pytest.mark.parametrize("section", ["driver", "ros2"])
+@pytest.mark.parametrize(
+    ("control", "shown"), [("abc", r"'abc'"), ([1.0], r"\[1\.0\]"), (0, "0")]
+)
+def test_the_run_refuses_a_control_section_that_is_no_mapping(
+    section: str, control: Any, shown: str
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(
+        ValueError, match=rf"^{section}\.control must be a mapping, got {shown}$"
+    ):
+        run._control_config({"control": control}, section)
+    # Null, or no entry, is the default gains.
+    assert run._control_config({"control": None}, section) == ControlConfig()
+    assert run._control_config({}, section) == ControlConfig()
+
+
+def test_the_run_refuses_a_driver_control_string_up_front() -> None:
+    from autoware_carla_scenario.examples import run
+
+    cfg = _composed(["ego.entity=carla_driver", "driver.control=abc"])
+    with pytest.raises(
+        run.RunConfigError, match=r"^driver\.control must be a mapping, got 'abc'$"
+    ):
+        run.check_run_config(cfg)
 
 
 @pytest.mark.parametrize(

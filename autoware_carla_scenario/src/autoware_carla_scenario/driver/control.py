@@ -488,13 +488,16 @@ class ControlConfig:
             if name.endswith("_rad")
         }
         values = dict(mapping)
-        # The key each value was given under, for the errors.
+        # The key each value was given under, and the degrees an alias gave,
+        # for the errors: they show what the mapping held.
         keys = {name: name for name in known}
+        given: dict[str, Any] = {}
         for alias, name in aliases.items():
             degrees = values.pop(alias, None)
             if degrees is not None:
                 values[name] = math.radians(_config_number(alias, degrees))
                 keys[name] = alias
+                given[name] = degrees
 
         unknown = sorted(set(values) - known)
         if unknown:
@@ -533,7 +536,8 @@ class ControlConfig:
         ):
             value = getattr(config, name)
             if value <= 0.0:
-                raise ValueError(f"{keys[name]} must be positive, got {value}")
+                shown_value = shown(given[name]) if name in given else value
+                raise ValueError(f"{keys[name]} must be positive, got {shown_value}")
         if config.max_lookahead_m < config.min_lookahead_m:
             raise ValueError(
                 f"max_lookahead_m must be at least min_lookahead_m "
