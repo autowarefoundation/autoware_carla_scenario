@@ -107,6 +107,33 @@ class TestParseGeoReference:
         assert lat == pytest.approx(10.0)
         assert lon == pytest.approx(20.0)
 
+    @pytest.mark.parametrize(
+        ("proj", "expected_lat", "expected_lon"),
+        [
+            # Odaiba: MGRS 54SUE with an offset of (92008.5, 45335.1).
+            (
+                "+proj=tmerc +lat_0=0 +lon_0=141 +k_0=0.9996 +x_0=107991.5 "
+                "+y_0=-3945335.1 +datum=WGS84 +units=m +no_defs",
+                35.64594654618858,
+                139.80713066320524,
+            ),
+            # A nonzero lat_0, and a false origin away from the central meridian.
+            (
+                "+proj=tmerc +lat_0=30 +lon_0=135 +k=1 +x_0=-20000 +y_0=-40000 +datum=WGS84",
+                30.36066457173659,
+                135.20803952321458,
+            ),
+        ],
+    )
+    def test_false_origin_gives_the_frames_origin(
+        self, proj, expected_lat, expected_lon
+    ):
+        xodr = f"<geoReference><![CDATA[{proj}]]></geoReference>"
+        lat, lon, _ = _parse_geo_reference(xodr)
+        # 1e-8 degrees is about a millimetre.
+        assert lat == pytest.approx(expected_lat, abs=1e-8)
+        assert lon == pytest.approx(expected_lon, abs=1e-8)
+
 
 # ---------------------------------------------------------------------------
 # TestReadProjectorType – the projection comes from the map, not from a guess
