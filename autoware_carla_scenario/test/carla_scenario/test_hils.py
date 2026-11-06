@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import os
 import threading
 import time
 import types
@@ -439,6 +440,58 @@ def test_a_relative_profiles_option_is_relative_to_the_configuration(
 def test_a_missing_file_is_refused(tmp_path: Path) -> None:
     with pytest.raises(HilsConfigError, match="not a file"):
         load_config(tmp_path / "absent.yaml")
+
+
+def test_a_file_that_is_not_utf8_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_bytes(b"devices: {d: {url: mem://x, codec: nmea}}\n# \xff\xfe\n")
+    with pytest.raises(HilsConfigError, match="not UTF-8") as info:
+        load_config(path)
+    assert str(path) in str(info.value)
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="root reads a file whatever its mode",
+)
+def test_an_unreadable_file_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_text(example_config())
+    path.chmod(0)
+    try:
+        with pytest.raises(HilsConfigError, match="cannot be read") as info:
+            load_config(path)
+    finally:
+        path.chmod(0o600)
+    assert str(path) in str(info.value)
+
+
+def test_a_failing_read_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_text(example_config())
+
+    def refuse(self: Path, *args: Any, **kwargs: Any) -> str:
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "read_text", refuse)
+    with pytest.raises(HilsConfigError, match="cannot be read") as info:
+        load_config(path)
+    assert str(path) in str(info.value)
+
+
+def test_the_command_reports_an_undecodable_file_on_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_bytes(b"\xff\xfe\x00")
+    assert main([str(path)]) == 2
+    captured = capsys.readouterr()
+    lines = captured.err.splitlines()
+    assert len(lines) == 1, captured.err
+    assert lines[0].startswith(f"scenario-hils: {path}: not UTF-8")
+    assert "Traceback" not in captured.err
 
 
 # -- measurements ---------------------------------------------------------------
