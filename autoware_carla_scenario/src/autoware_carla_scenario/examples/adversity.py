@@ -71,7 +71,7 @@ from autoware_carla_scenario import (
     to_opendrive,
 )
 
-from .configs import AdversityConfig
+from .configs import ADVERSITY_KINDS, ADVERSITY_VEHICLE_KINDS, AdversityConfig
 
 logger = logging.getLogger(__name__)
 
@@ -82,8 +82,9 @@ ADVERSARY_ROLE = EntityRole.npc(1)
 PEDESTRIAN_ROLE = EntityRole("pedestrian1")
 
 #: The kinds an NPC carries out; ``jaywalking`` is a pedestrian's, ``nade``
-#: NADE's.
-VEHICLE_KINDS = ("brake_check", "ignore_leader", "cut_in", "traffic_rule")
+#: NADE's (every kind: :data:`~.configs.ADVERSITY_KINDS`, which the config
+#: checks when it is built).
+VEHICLE_KINDS = ADVERSITY_VEHICLE_KINDS
 
 #: How far above the ground a pedestrian's spawn point is (m): CARLA places a
 #: walker by its middle, so one at the road's height has its feet in the kerb.
@@ -114,11 +115,11 @@ class AdversityScenario(BaseScenario):
         spawn = self._spawn_pose
         if spawn is None:
             raise ValueError("adversity needs an ego spawn pose")
-        known = cfg.kind in VEHICLE_KINDS or cfg.kind in ("jaywalking", "nade")
-        if not known:
+        # A backstop: AdversityConfig refuses another kind when it is built.
+        if cfg.kind not in ADVERSITY_KINDS:
             raise ValueError(
-                f"adversity kind must be one of {', '.join(VEHICLE_KINDS)}, "
-                f"jaywalking or nade, not {cfg.kind!r}"
+                f"scenario.kind must be one of {', '.join(ADVERSITY_KINDS)}, "
+                f"not {cfg.kind!r}"
             )
         self._setup_ego_spawn()
         light = carla.TrafficLightState.Green

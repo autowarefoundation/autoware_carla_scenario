@@ -946,6 +946,24 @@ scenario's YAML omits it (the dataclass default in `examples/configs.py`), and
 or — when it ships the default. Every shipped config lists every key of its
 config class, so a `scenario.<key>=` override reaches any of them without `+`.
 
+A run or batch refuses a value out of its key's bounds before anything starts,
+naming the key (`Error: scenario.walk_speed_ms must be finite and positive, not
+0.0`): the config class checks it when it is built (#1815, #1816). Every
+`timeout_seconds`, and the thresholds, distances and durations a check
+compares against -- `min_speed_kmh`, `speed_check_delay_seconds`,
+`turn_indicator_grace_seconds`, `light_switch_delay_seconds`,
+`moving_speed_kmh`, `departure_speed_kmh`, `timeout_after_green_seconds`,
+`standstill_seconds`, `s_margin`, `stop_duration`, `restart_speed_kmh`,
+`trigger_distance_m`, `walk_speed_ms`, `cut_in_after_seconds` and
+`hold_seconds` -- must be finite and positive: at 0 or below the check would
+never fire, or always hold, and the run pass or fail on nothing. Speeds and
+margins that may be 0 -- `npc_initial_speed_kmh`, `npc_speed_kmh`,
+`ego_speed_kmh`, `speed_threshold`, `standstill_speed_mps`,
+`stop_line_tolerance_m`, `pass_beyond_m`, `turn_back_within_m`,
+`turn_back_ttc_s` and `turn_back_distance_m` -- must be finite and not
+negative, and `stop_zone_min_m` must not be past `stop_zone_max_m`. A
+`null` still turns an optional check off.
+
 #### Intersection Passing
 
 Tests ego vehicle traversal through an intersection. Verifies that the ego passes through the expected OpenDRIVE road sequence.
@@ -956,7 +974,7 @@ Tests ego vehicle traversal through an intersection. Verifies that the ego passe
 | `intersection_passing/left_turn` | `left` | `20.0` | — | Left turn at intersection |
 | `intersection_passing/right_turn` | `right` | `20.0` | — | Right turn at intersection |
 | `intersection_passing/right_turn_sweep` | `right` | `60.0` | — | Right turn from a standstill; its sweep takes right turns behind a traffic-light stop line |
-| `intersection_passing/straight_3npc` | — (`null`) | `10.0` | `0.0` | Straight with 3 NPC vehicles, no `TurnAction` |
+| `intersection_passing/straight_3npc` | — (`null`) | `10.0` | — | Straight with 3 NPC vehicles, no `TurnAction` |
 
 **Scenario-specific parameters:**
 
@@ -964,7 +982,7 @@ Tests ego vehicle traversal through an intersection. Verifies that the ego passe
 |-----------|------|---------|---------|-------------|
 | `scenario.expected_route_lanelet_ids` | list[int] | `[460, 265]` | per config | Lanelet IDs the ego must traverse; a junction's lanelets are judged by the roads before and after it |
 | `scenario.timeout_seconds` | float | `5.0` | per config (above) | Maximum scenario duration |
-| `scenario.min_speed_kmh` | float \| null | null | per config (above) | Minimum ego speed (fail if below). `null` disables check |
+| `scenario.min_speed_kmh` | float \| null | null | per config (above) | Minimum ego speed (fail if below; positive). `null` disables check |
 | `scenario.speed_check_delay_seconds` | float | `0.3` | — | Grace period before speed check starts |
 | `scenario.turn_direction` | str \| null | null | per config (above) | `"left"`, `"right"` or `"straight"` registers a `TurnAction` for that direction; `null` registers none |
 | `scenario.turn_indicator_before_m` | float \| null | null | — | From this many metres before the junction (the stop line at the start of the route's first lanelet) until it is on that lanelet, the ego must show the indicator of `turn_direction` (`left` or `right`); it fails once it has not for `turn_indicator_grace_seconds`. `null` disables the check |
@@ -985,8 +1003,8 @@ npc_vehicles:
 
 An NPC's `spawn_s` must be finite and its `initial_speed_kmh` finite and not
 negative; a run or batch refuses another value before anything starts
-(`Error: npc_vehicles[0].initial_speed_kmh must be finite and at least 0, got
-nan`).
+(`Error: scenario.npc_vehicles[0].initial_speed_kmh must be finite and at
+least 0, got nan`).
 
 **Behavior:**
 - Sets all traffic lights to GREEN

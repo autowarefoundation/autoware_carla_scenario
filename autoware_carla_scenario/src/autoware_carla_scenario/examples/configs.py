@@ -33,6 +33,44 @@ from ..scenario_config import (
 )
 
 # ---------------------------------------------------------------------------
+# Bounds shared by the scenario configs
+# ---------------------------------------------------------------------------
+
+#: The kinds of adversity an NPC carries out
+#: (:class:`~autoware_carla_scenario.examples.adversity.AdversityScenario`).
+ADVERSITY_VEHICLE_KINDS = ("brake_check", "ignore_leader", "cut_in", "traffic_rule")
+
+#: Every ``AdversityConfig.kind``: the NPC's, ``jaywalking`` (a pedestrian's)
+#: and ``nade``.  The config refuses another kind when it is built, and the
+#: scenario's setup again, as a backstop.
+ADVERSITY_KINDS = (
+    "brake_check",
+    "ignore_leader",
+    "cut_in",
+    "traffic_rule",
+    "jaywalking",
+    "nade",
+)
+
+
+def _require_positive(key: str, value: float) -> None:
+    """Refuse *value* of ``scenario.<key>`` unless it is finite and above 0.
+
+    A threshold, distance or duration at 0 or below makes the check that
+    reads it vacuous (#1815), or is refused only once CARLA is up (#1816);
+    NaN fails every comparison, and so the ``<=`` too.
+    """
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(f"scenario.{key} must be finite and positive, not {value}")
+
+
+def _require_not_negative(key: str, value: float) -> None:
+    """Refuse *value* of ``scenario.<key>`` unless it is finite and at least 0."""
+    if not math.isfinite(value) or value < 0.0:
+        raise ValueError(f"scenario.{key} must be finite and not negative, not {value}")
+
+
+# ---------------------------------------------------------------------------
 # Scenario-specific configs
 # ---------------------------------------------------------------------------
 
@@ -100,31 +138,41 @@ class IntersectionPassingConfig:
     npc_vehicles: list[NpcVehicleConfig] = field(default_factory=list)
 
     def __post_init__(self) -> None:
-        """Convert raw dicts from OmegaConf into NpcVehicleConfig instances."""
+        """Convert raw dicts from OmegaConf into NpcVehicleConfig instances,
+        and refuse a value the scenario would refuse or never act on, naming
+        its key (#1815, #1816)."""
         npc_vehicles: list[NpcVehicleConfig] = []
         for i, v in enumerate(self.npc_vehicles):
             try:
                 npc_vehicles.append(NpcVehicleConfig(**v) if isinstance(v, dict) else v)
             except ValueError as exc:
                 # Named by its key, as a run's other refusals are (#1809).
-                raise ValueError(f"npc_vehicles[{i}].{exc}") from None
+                raise ValueError(f"scenario.npc_vehicles[{i}].{exc}") from None
         self.npc_vehicles = npc_vehicles
+        _require_positive("timeout_seconds", self.timeout_seconds)
+        min_speed_kmh = self.min_speed_kmh
+        if min_speed_kmh is not None:
+            # At 0 or below the ego is never slower: the check never fires.
+            _require_positive("min_speed_kmh", min_speed_kmh)
+        # ElapsedTimeCondition's bound, whether or not min_speed_kmh is set.
+        _require_positive("speed_check_delay_seconds", self.speed_check_delay_seconds)
         if self.turn_indicator_before_m is not None and self.turn_direction not in (
             "left",
             "right",
         ):
             raise ValueError(
-                "turn_indicator_before_m needs turn_direction left or right, "
-                f"not {self.turn_direction!r}"
+                "scenario.turn_indicator_before_m needs scenario.turn_direction "
+                f"left or right, not {self.turn_direction!r}"
             )
-        if self.turn_indicator_grace_seconds <= 0:
-            raise ValueError("turn_indicator_grace_seconds must be positive")
+        _require_positive(
+            "turn_indicator_grace_seconds", self.turn_indicator_grace_seconds
+        )
         for name, limit in (
             ("max_steering_reversals", self.max_steering_reversals),
             ("max_turn_indicator_changes", self.max_turn_indicator_changes),
         ):
             if limit is not None and limit < 1:
-                raise ValueError(f"{name} must be at least 1")
+                raise ValueError(f"scenario.{name} must be at least 1, not {limit}")
         if (
             self.turn_indicator_before_m is not None
             and self.max_turn_indicator_changes is not None
@@ -132,9 +180,9 @@ class IntersectionPassingConfig:
         ):
             # Its own on and off are two changes of a turn that signals.
             raise ValueError(
-                "max_turn_indicator_changes must be at least 3 with "
-                "turn_indicator_before_m: the turn's own indicator on and off "
-                "are two changes"
+                "scenario.max_turn_indicator_changes must be at least 3 with "
+                "scenario.turn_indicator_before_m: the turn's own indicator on "
+                "and off are two changes"
             )
 
 
@@ -215,6 +263,41 @@ class TrafficLightComplianceConfig:
     #: ``sweep.job_timeout_seconds`` still guards each job on the wall clock.
     timeout_after_green_seconds: float | None = None
 
+    def __post_init__(self) -> None:
+        """Refuse a value the scenario would refuse once CARLA is up, or one
+        that passes an ego standing still at the green, naming its key
+        (#1815, #1816)."""
+        _require_positive("timeout_seconds", self.timeout_seconds)
+        # The green's ElapsedTimeCondition.
+        _require_positive("light_switch_delay_seconds", self.light_switch_delay_seconds)
+        # At 0 or below an ego standing still has "reached" it.
+        _require_positive("moving_speed_kmh", self.moving_speed_kmh)
+        departure_speed_kmh = self.departure_speed_kmh
+        if departure_speed_kmh is not None:
+            _require_positive("departure_speed_kmh", departure_speed_kmh)
+        timeout_after_green_seconds = self.timeout_after_green_seconds
+        if timeout_after_green_seconds is not None:
+            # Below 0 the run times out before the light turns green.
+            _require_positive(
+                "timeout_after_green_seconds", timeout_after_green_seconds
+            )
+        # StopLineWatch's, which takes a NaN zone that nothing is ever in.
+        for key, value in (
+            ("stop_zone_min_m", self.stop_zone_min_m),
+            ("stop_zone_max_m", self.stop_zone_max_m),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(f"scenario.{key} must be finite, not {value}")
+        if self.stop_zone_min_m > self.stop_zone_max_m:
+            raise ValueError(
+                f"scenario.stop_zone_min_m ({self.stop_zone_min_m}) is past "
+                f"scenario.stop_zone_max_m ({self.stop_zone_max_m})"
+            )
+        _require_not_negative("stop_line_tolerance_m", self.stop_line_tolerance_m)
+        # The StandstillCondition's.
+        _require_positive("standstill_seconds", self.standstill_seconds)
+        _require_not_negative("standstill_speed_mps", self.standstill_speed_mps)
+
 
 @dataclass
 class LaneChangeConfig:
@@ -234,20 +317,22 @@ class LaneChangeConfig:
     timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
-        """Refuse an unknown ``direction`` or ``expect``.
+        """Refuse an unknown ``direction`` or ``expect``, or a timeout that is
+        not positive, naming its key.
 
         ``lane_change.py`` checks the failure outcome only for ``"fail"``, so
         without this a typo (``"fial"``) would check the opposite outcome.
         """
         if self.direction not in ("left", "right"):
             raise ValueError(
-                "lane_change direction must be 'left' or 'right', "
+                "scenario.direction must be 'left' or 'right', "
                 f"not {self.direction!r}"
             )
         if self.expect not in ("success", "fail"):
             raise ValueError(
-                f"lane_change expect must be 'success' or 'fail', not {self.expect!r}"
+                f"scenario.expect must be 'success' or 'fail', not {self.expect!r}"
             )
+        _require_positive("timeout_seconds", self.timeout_seconds)
 
 
 @dataclass
@@ -295,6 +380,26 @@ class PedestrianDartOutConfig:
 
     #: Fail-safe timeout in seconds.
     timeout_seconds: float = 25.0
+
+    def __post_init__(self) -> None:
+        """Refuse a value the scenario would refuse once CARLA is up, or one
+        with which the pedestrian never darts out, naming its key (#1815,
+        #1816)."""
+        # A distance (unsigned) never below 0: the trigger would never fire.
+        _require_positive("trigger_distance_m", self.trigger_distance_m)
+        # At 0 the pedestrian stays at the kerb.
+        _require_positive("walk_speed_ms", self.walk_speed_ms)
+        # Below 0 the pass point lies before the crossing.
+        _require_not_negative("pass_beyond_m", self.pass_beyond_m)
+        # WalkStraightAction's.
+        turn_back_ttc_s = self.turn_back_ttc_s
+        if turn_back_ttc_s is not None:
+            _require_not_negative("turn_back_ttc_s", turn_back_ttc_s)
+        turn_back_distance_m = self.turn_back_distance_m
+        if turn_back_distance_m is not None:
+            _require_not_negative("turn_back_distance_m", turn_back_distance_m)
+        _require_not_negative("turn_back_within_m", self.turn_back_within_m)
+        _require_positive("timeout_seconds", self.timeout_seconds)
 
 
 @dataclass
@@ -355,6 +460,16 @@ class CutInConfig:
     #: ``False`` fails only on a collision with the cut-in vehicle.
     fail_on_any_collision: bool = True
 
+    def __post_init__(self) -> None:
+        """Refuse a value the scenario would refuse once CARLA is up, naming
+        its key (#1816)."""
+        # VehicleEntityConfig's and SetSpeedAction's.
+        _require_not_negative("npc_initial_speed_kmh", self.npc_initial_speed_kmh)
+        # The cut-in's ElapsedTimeCondition, and the PersistentCondition held.
+        _require_positive("cut_in_after_seconds", self.cut_in_after_seconds)
+        _require_positive("hold_seconds", self.hold_seconds)
+        _require_positive("timeout_seconds", self.timeout_seconds)
+
 
 @dataclass
 class TemporaryStopConfig:
@@ -376,6 +491,18 @@ class TemporaryStopConfig:
 
     #: Fail-safe timeout in seconds.
     timeout_seconds: float = 30.0
+
+    def __post_init__(self) -> None:
+        """Refuse a value the scenario would refuse once CARLA is up, or one
+        that passes an ego which never pulls away, naming its key (#1815,
+        #1816)."""
+        # TemporaryStopCondition's.
+        _require_positive("s_margin", self.s_margin)
+        _require_not_negative("speed_threshold", self.speed_threshold)
+        _require_positive("stop_duration", self.stop_duration)
+        # At 0 or below an ego standing still has restarted.
+        _require_positive("restart_speed_kmh", self.restart_speed_kmh)
+        _require_positive("timeout_seconds", self.timeout_seconds)
 
 
 # ---------------------------------------------------------------------------
@@ -452,29 +579,35 @@ class AdversityConfig:
     nade_seed: int = 7
 
     def __post_init__(self) -> None:
-        """Refuse a NADE number outside its bounds, naming its key (#1458).
+        """Refuse an unknown kind, or a number outside its bounds, naming its
+        key (#1458, #1816).
 
-        As :class:`~autoware_carla_scenario.NadeSettings` and the
-        adversarial traffic action (which refuses a ``probability`` outside
-        [0, 1]) would once the scenario is set up, but when the config is built: a run checks it
-        before anything starts (``examples.run.check_batch_configs``).
+        As :class:`~autoware_carla_scenario.NadeSettings`, the adversarial
+        traffic action (which refuses a ``probability`` outside [0, 1]), the
+        NPC's ``VehicleEntityConfig``, ``SetSpeedAction``,
+        ``TimeoutCondition`` and the scenario's setup (an unknown ``kind``)
+        would once the scenario is set up, but when the config is built: a
+        run checks it before anything starts
+        (``examples.run.check_batch_configs``).
         """
+        if self.kind not in ADVERSITY_KINDS:
+            raise ValueError(
+                f"scenario.kind must be one of {', '.join(ADVERSITY_KINDS)}, "
+                f"not {self.kind!r}"
+            )
+        _require_not_negative("npc_speed_kmh", self.npc_speed_kmh)
+        ego_speed_kmh = self.ego_speed_kmh
+        if ego_speed_kmh is not None:
+            _require_not_negative("ego_speed_kmh", ego_speed_kmh)
+        _require_positive("timeout_seconds", self.timeout_seconds)
         for key, value in (
             ("nade_probability", self.nade_probability),
             ("nade_is_probability", self.nade_is_probability),
         ):
             if not (0.0 <= value <= 1.0):  # NaN fails it too
                 raise ValueError(f"scenario.{key} must be in [0, 1], not {value}")
-        if not math.isfinite(self.nade_cooldown) or self.nade_cooldown < 0.0:
-            raise ValueError(
-                "scenario.nade_cooldown must be finite and not negative, "
-                f"not {self.nade_cooldown}"
-            )
-        if not math.isfinite(self.nade_seconds) or self.nade_seconds <= 0.0:
-            raise ValueError(
-                "scenario.nade_seconds must be finite and positive, "
-                f"not {self.nade_seconds}"
-            )
+        _require_not_negative("nade_cooldown", self.nade_cooldown)
+        _require_positive("nade_seconds", self.nade_seconds)
 
 
 @dataclass
