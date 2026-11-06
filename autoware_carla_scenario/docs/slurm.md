@@ -97,8 +97,14 @@ A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message
 saying so, and `collect` lists them. So is a case whose recorded outcome holds
 no verdict -- no `result` object, or a `passed` that is not `true` or `false`
-(`"false"` and `1` are none): it did not pass, and `collect` names its file;
-`status` and the viewer count it as not passed. `resubmit` submits again the
+(`"false"` and `1` are none) -- or a result that cannot be reported: a
+`message` that is missing or not a string, an `elapsed_seconds` that is not a
+number (`true` is none), `condition_statuses` that are not a list of objects
+each with a string `label` and `message` and a boolean `satisfied`, or a
+`failure` that is not an object (what the worker writes always is all of
+these; `rerun_recording` and `failure` may be missing). It did not pass, and
+`collect` names its file, along with a `rerun_error` the task recorded;
+`status`, `wait` and the viewer count it as not passed. `resubmit` submits again the
 cases with no outcome or no verdict and those that raised on every attempt
 (`ERROR`); `--failed` adds the
 ones that ran and failed, `--cases a,b` names them (labels or indices; a case
