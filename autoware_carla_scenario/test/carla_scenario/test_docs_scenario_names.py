@@ -51,6 +51,7 @@ _NOT_SHIPPED: dict[str, str] = {
     "reach_goal/*": "examples/scenario_package_template's scenarios",
     "my_package/*": "any package author's scenarios (docs/typecheck.md)",
     "my_cut_in": "the package docs/scenario_editor.md exports (conf/scenario/my_cut_in.yaml)",
+    "new_scenario": "the blank draft's id, in docs/scenario_editor.md's migration note (#1358)",
     "*": "scenario-check's every config (typecheck/cli.py), not a runner glob",
     "X": "any scenario, in a diagram (docs/architecture.md)",
     "a": "any scenario, in a Hydra list (docs/metrics.md: scenario=a,b)",
