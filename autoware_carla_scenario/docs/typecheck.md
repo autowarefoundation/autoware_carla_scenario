@@ -2449,7 +2449,9 @@ of the T4Scene converter (CARLA's world frame to Autoware's `map` frame, and the
 and quaternions of its angles, and the check of the ego's rear-axle offset:
 `t4_scene.frames`, #1665, #1697; the converter
 itself, which reads the log's mixed-type records and builds protobuf
-messages, re-exports it), and the parts of the
+messages, re-exports it), the file names of a driver policy's map set and the
+id it is written under (`driver.hdmap_files`, #1728; `driver.hdmap_export`,
+which writes the set with roadgen, re-exports them), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 `__init__` re-exports what is not checked through models of it (see *A class
 a checked package only re-exports* below). Each checked module is listed here

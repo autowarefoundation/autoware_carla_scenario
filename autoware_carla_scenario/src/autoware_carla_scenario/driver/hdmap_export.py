@@ -32,61 +32,26 @@ import errno
 import hashlib
 import json
 import logging
-import re
 import shutil
 import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple, Union
 
 from ..utils.opendrive import sanitize_opendrive
+from .hdmap_files import (
+    IR_FILE,
+    MANIFEST_FILE,
+    MAP_FORMATS,
+    PROJECTOR_FILE,
+    READ_FILE,
+    READ_TRACE_FILE,
+    SOURCE_FILE,
+    map_id_for,
+)
 
 __all__ = ["MANIFEST_FILE", "MAP_FORMATS", "export_map", "map_id_for"]
 
 logger = logging.getLogger(__name__)
-
-#: The file listing what a map set holds; written last, so a set without it is
-#: incomplete.
-MANIFEST_FILE = "manifest.json"
-SOURCE_FILE = "map.xodr"
-IR_FILE = "map.ir.json"
-#: What roadgen actually read: the source with CARLA's departures fixed. Kept,
-#: because the read trace names it and records its digest.
-READ_FILE = "map.roadgen.xodr"
-READ_TRACE_FILE = "map.roadgen.xodr.read.trace.json"
-#: The projection a given Lanelet2 map is read with, copied when it sits beside it.
-PROJECTOR_FILE = "map_projector_info.yaml"
-
-#: Where each format is written, relative to the set's directory.
-MAP_FORMATS: Dict[str, str] = {
-    "lanelet2": "lanelet2_map.osm",
-    "opendrive": "roadgen.xodr",
-    "osm": "openstreetmap.osm",
-    "clipgt": "clipgt",
-    # A CommonRoad 2020a scenario: the lanelets, signs, lights and
-    # intersections, with the planning problem its schema requires.
-    "commonroad": "commonroad.xml",
-    # The run's Lanelet2 map as a tier4/e2e-devkit MapResource, for a policy
-    # reading T4Scenes (``driver.t4_scene``); never converted by roadgen.
-    "t4": "t4_map.pb",
-}
-
-
-def map_id_for(
-    map_name: str, opendrive: str, provided: Optional[Mapping[str, bytes]] = None
-) -> str:
-    """``<map name>-<first 12 hex digits of a SHA-256 of the map's content>``.
-
-    The content is the OpenDRIVE, and with ``provided`` -- format name to the
-    SHA-256 of a file given rather than converted -- those digests too; without
-    it the id digests the OpenDRIVE alone. Either way the id names the map's
-    content, so a driver holding an older copy of a map with the same name (or
-    one given another Lanelet2 file) cannot mistake it for this one.
-    """
-    name = re.sub(r"[^A-Za-z0-9_.-]+", "_", map_name.rsplit("/", 1)[-1]) or "map"
-    digest = hashlib.sha256(opendrive.encode())
-    for format_name, file_digest in sorted((provided or {}).items()):
-        digest.update(b"\0" + format_name.encode() + b"\0" + file_digest)
-    return f"{name}-{digest.hexdigest()[:12]}"
 
 
 def export_map(
