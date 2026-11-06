@@ -97,8 +97,18 @@ def _attribute_number(attributes: Mapping[str, str], key: str, where: str) -> fl
     return number
 
 
+#: The LiDAR attributes CARLA takes as a proportion of the points, from 0 to
+#: 1: ``dropoff_general_rate`` (the share of points dropped at random) and
+#: ``dropoff_zero_intensity`` (the probability a point of zero intensity is
+#: dropped).  CARLA clamps neither, so 45 empties every sweep and a negative
+#: one drops nothing, both without a word (#1770).  ``dropoff_intensity_limit``
+#: is a threshold, not a proportion, and is passed as it is.
+_LIDAR_PROPORTIONS: Tuple[str, ...] = ("dropoff_general_rate", "dropoff_zero_intensity")
+
+
 def _lidar_attributes(attributes: Mapping[str, str], where: str) -> None:
-    """Refuse the LiDAR attributes the bridge cannot gather revolutions for.
+    """Refuse the LiDAR attributes the bridge cannot gather revolutions for,
+    and the drop-off proportions (:data:`_LIDAR_PROPORTIONS`) outside [0, 1].
 
     The bridge gathers a LiDAR's per-tick arcs into revolutions
     (:class:`~autoware_carla_scenario.hils.lidar_revolution.LidarRevolution`).
@@ -131,6 +141,14 @@ def _lidar_attributes(attributes: Mapping[str, str], where: str) -> None:
                 "(CARLA sweeps only one world tick per measurement, so with a "
                 "sensor_tick it turns slower than its rotation_frequency)"
             )
+    for key in _LIDAR_PROPORTIONS:
+        if key in attributes:
+            proportion = _attribute_number(attributes, key, where)
+            if not 0.0 <= proportion <= 1.0:
+                raise HilsConfigError(
+                    f"{where}.{key}: must be in [0, 1] (a proportion of the "
+                    f"points), got {attributes[key]!r}"
+                )
 
 
 def _relative_file(value: str, base: Path) -> str:

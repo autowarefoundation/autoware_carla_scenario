@@ -312,7 +312,12 @@ front_camera:
   (0, 360], at `rotation_frequency` revolutions a second, which must be a
   finite positive number. A `sensor_tick` other than 0 is refused: CARLA sweeps only one
   world tick per measurement, so a LiDAR measured less often turns slower
-  than its `rotation_frequency`. Points go from CARLA's sensor frame (y
+  than its `rotation_frequency`. `dropoff_general_rate` (the proportion of
+  points CARLA drops at random) and `dropoff_zero_intensity` (the probability
+  a point of zero intensity is dropped) must be in [0, 1]: CARLA clamps
+  neither, so `45` would empty every sweep without a word.
+  `dropoff_intensity_limit`, an intensity threshold rather than a proportion,
+  is passed as it is. Points go from CARLA's sensor frame (y
   right) to the sensor's (y left). Match `channels`, the field of view and
   `rotation_frequency` to the model.
 - **Cameras** (`sensor.camera.*`, codec `raw`). Each image is one frame,
