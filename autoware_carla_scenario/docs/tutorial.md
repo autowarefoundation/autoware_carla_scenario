@@ -434,6 +434,19 @@ names `__init__.py` defines (`register`, `register_scenario`,
 `register_conf_dir`) cannot be scenario names; `scenario-new` refuses them
 (including when they come from the package name, as in `configs_package`).
 
+Nor can a scenario take the name of a built-in scenario (`adversity`,
+`cut_in`, `intersection_passing`, `lane_change`, `pedestrian_dart_out`,
+`temporary_stop`, `traffic_light_compliance`): once installed, the package's
+`register()` would replace the built-in, while Hydra still finds the
+built-in's configs first, so `scenario=lane_change/left` would hand
+`LaneChangeConfig`'s keys to the package's scenario and fail.
+`scenario-new --scenario lane_change` (or a package name such as
+`lane_change_pkg`) is refused with `Error: scenario name 'lane_change' is
+reserved: it names a built-in scenario ...`. The list is
+`autoware_carla_scenario.scaffold.names.BUILTIN_SCENARIO_NAMES`, a plain
+constant so that `scenario-new` need not import the runner or CARLA; a test
+checks it against what the runner registers.
+
 The package name is the import name and, hyphenated, the distribution name of
 what gets installed, so `scenario-new` also refuses one that would clash once
 installed: the framework's own (`autoware_carla_scenario` /
@@ -533,6 +546,18 @@ every registered `conf/` directory to Hydra's search path. The `map`, `ego`,
 The result viewer (`uv run viewer`) loads the packages the same way: its Run
 panel lists your scenarios, matches them in globs such as `my_scenario/*`,
 and expands their sweeps.
+
+Scenario names share one registry, so give yours a name nothing else uses.
+A plugin that registers a name already taken -- a built-in scenario's, or
+another installed package's -- replaces that registration (the last entry
+point loaded wins, in an order that depends on the environment), and
+`load_scenario_plugins()` logs a warning naming the entry point and every
+scenario name it replaced:
+
+```
+WARNING ... The scenario plugin 'my_scenario_package' (my_scenario_package:register)
+replaced what was already registered as 'lane_change': ...
+```
 
 !!! tip "No entry point? Register explicitly."
     If you prefer not to rely on entry-point discovery (e.g. from a custom

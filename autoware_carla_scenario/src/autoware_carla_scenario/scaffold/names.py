@@ -58,6 +58,25 @@ def _normalise_distribution(name: str) -> str:
     return re.sub(r"[-_.]+", "-", name).lower()
 
 
+#: The scenarios the framework registers itself (``examples.run`` does, at
+#: import), which a generated package may not take (#1802).  A plugin that
+#: registers one of these names replaces the built-in builder, while Hydra
+#: still finds the built-in's configs first: ``scenario=lane_change/left``
+#: then hands ``LaneChangeConfig``'s keys to the plugin's scenario.  A plain
+#: constant, so ``scenario-new`` need not import the runner (and CARLA) to
+#: read it; ``test_scaffold.py`` checks it against the registry the runner
+#: fills, so it cannot go stale.
+BUILTIN_SCENARIO_NAMES = (
+    "adversity",
+    "cut_in",
+    "intersection_passing",
+    "lane_change",
+    "pedestrian_dart_out",
+    "temporary_stop",
+    "traffic_light_compliance",
+)
+
+
 #: The framework's distribution name, which a generated package depends on.
 _FRAMEWORK_DISTRIBUTION = "autoware-carla-scenario"
 

@@ -29,6 +29,7 @@ from typing import NamedTuple
 
 from ..templating import code_environment
 from .names import (
+    BUILTIN_SCENARIO_NAMES,
     _FRAMEWORK_DISTRIBUTION,
     _default_scenario_name,
     _is_framework_name,
@@ -339,6 +340,15 @@ def resolve_names(
             f"already has a {scenario!r} module, directory or global (reserved "
             f"names: "
             f"{', '.join(sorted(reserved))}). Pass a different --scenario."
+        )
+        raise ValueError(msg)
+    if scenario in BUILTIN_SCENARIO_NAMES:
+        msg = (
+            f"scenario name {scenario!r} is reserved: it names a built-in "
+            f"scenario, which the installed package would replace while the "
+            f"built-in configs (scenario={scenario}/...) still select it "
+            f"(built-in scenarios: {', '.join(BUILTIN_SCENARIO_NAMES)}). Pass a "
+            f"different --scenario."
         )
         raise ValueError(msg)
 

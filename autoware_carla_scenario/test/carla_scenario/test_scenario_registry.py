@@ -175,6 +175,91 @@ class TestScenarioRegistry:
             unregister_scenario(name)
 
 
+class TestPluginReplacement:
+    """A plugin that takes a registered name is reported (#1802)."""
+
+    @staticmethod
+    def _load(
+        monkeypatch: pytest.MonkeyPatch, register: Any, name: str = "my_pkg"
+    ) -> None:
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        entry_point = MagicMock()
+        entry_point.name = name
+        entry_point.value = f"{name}:register"
+        entry_point.load.return_value = register
+        monkeypatch.setattr(
+            "importlib.metadata.entry_points", lambda *, group: [entry_point]
+        )
+        monkeypatch.setattr(registry, "_plugins_loaded", False)
+        registry.load_scenario_plugins()
+
+    @staticmethod
+    def _keep(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+        """Restore the registration of *name* once the test is over."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        for table in (registry._SCENARIO_REGISTRY, registry._SCENARIO_CLASSES):
+            if name in table:
+                monkeypatch.setitem(table, name, table[name])
+            else:
+                monkeypatch.delitem(table, name, raising=False)
+
+    def test_a_plugin_replacing_a_built_in_is_warned_about(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import autoware_carla_scenario.examples.run  # noqa: F401, PLC0415
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        self._keep(monkeypatch, "lane_change")
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                lambda: register_scenario("lane_change", _DummyScenario, _DummyConfig),
+            )
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "'my_pkg'" in message
+        assert "my_pkg:register" in message
+        assert "'lane_change'" in message
+
+    def test_a_plugin_adding_a_new_name_is_quiet(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        name = "__test_plugin_new_name__"
+        self._keep(monkeypatch, name)
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                lambda: register_scenario(name, _DummyScenario, _DummyConfig),
+            )
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_a_failing_plugin_is_still_checked(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """What a plugin registered before it raised stays registered."""
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        name = "__test_plugin_taken__"
+        self._keep(monkeypatch, name)
+        register_scenario(name, _DummyScenario, _DummyConfig)
+
+        def register() -> None:
+            register_scenario(name, _DummyScenario, _DummyConfig)
+            raise RuntimeError("boom")
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(monkeypatch, register, name="broken_pkg")
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert f"'{name}'" in warnings[0].getMessage()
+        assert "'broken_pkg'" in warnings[0].getMessage()
+
+
 # ---------------------------------------------------------------------------
 # Tests for build_scenario with injectable builder
 # ---------------------------------------------------------------------------
