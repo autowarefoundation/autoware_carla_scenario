@@ -4861,7 +4861,9 @@ names a case's log and recording with it too; the suffixes of a run's result
 and coverage file are its too, which <code>scenario_runner</code>, <code>ui.case_paths</code>,
 <code>ui.scanner</code> and <code>examples/run.py</code> name them with, #1704; so are those of a
 run's environment and lock and of its T4Scene and map, which <code>environment</code> and
-<code>t4_scene.convert</code> re-export, #1713), the typed core of the sensors
+<code>t4_scene.convert</code> re-export, #1713; so are those of the metrics' scratch
+recording, which <code>rerun_metrics</code> re-exports, and of the ODD archive, which
+<code>ui.case_paths</code> names, #1748), the typed core of the sensors
 in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
 entities are the sensors', the parse of <code>rerun rrd print</code> and the scan of a
 recording's bytes for those entities: <code>rerun_sensor_mount</code>, #1688, #1697; not <code>rerun_lidar</code>, which holds the Rerun SDK as
@@ -6385,7 +6387,7 @@ the first:</p>
 <li><code>registry</code>: imports omegaconf (<code>DictConfig</code>) and authoring.models (<code>ScenarioDocument</code>; pydantic), both under <code>TYPE_CHECKING</code>, which are neither checked nor modelled, and more of importlib.metadata than its shim declares (<code>entry_points()</code>); holds scenario classes (<code>type[BaseScenario]</code>) and their config classes as values, which Codon cannot hold, and document loaders (<code>Callable[[], ScenarioDocument]</code>) that return a pydantic model as values</li>
 <li><code>rerun</code>: imports concurrent.futures, errno, importlib, types and argparse, and more of os than its shim declares (<code>os.strerror()</code>), and holds the converter package (imported at run time) as <code>Any</code>; the path rule of a log and its recording (<code>TRAJECTORY_SUFFIX</code>, <code>RECORDING_SUFFIX</code>, <code>_label()</code> and <code>recording_path()</code>) is the checked run_outputs's (#1678), which it re-exports; rerun.codon models what scenario_runner, scenario_queue and t4_scene.grid use of it</li>
 <li><code>rerun_lidar</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; the name and place of a run's sensor recording (<code>SENSORS_SUFFIX</code> and <code>lidar_recording_path()</code>) are the checked run_outputs's (#1678), which it re-exports; so are a camera's mount, the colours of a sweep, the sensors' entities and the parse of <code>rerun rrd print</code> (<code>CameraMount</code>, <code>_height_colours()</code>, <code>SENSOR_ENTITIES</code>, <code>_is_sensor_entity()</code>, <code>_CHUNK_LINE</code> and <code>chunk_entities()</code>) the checked rerun_sensor_mount's (#1688), as is the scan of a recording's bytes for the sensors' entity paths (<code>_SCAN_BLOCK</code> and <code>carries_sensors()</code>, #1697), which it re-exports too; entity.carla_driver_entity (itself excluded), rerun and rerun_metrics (itself excluded) use it</li>
-<li><code>rerun_metrics</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; reads the log's metric records as JSON objects of mixed value types (<code>dict[str, Any]</code>)</li>
+<li><code>rerun_metrics</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; reads the log's metric records as JSON objects of mixed value types (<code>dict[str, Any]</code>); the name of its scratch recording (<code>METRICS_SUFFIX</code>) is the checked run_outputs's (#1748), which it re-exports</li>
 <li><code>ros2.cyclone</code>: imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds</li>
 <li><code>ros2.messages</code>: imports cyclonedds (the IdlStruct base of every message, and the IDL field types <code>array[float64, 36]</code> and <code>sequence[TrajectoryPoint]</code>, which Codon cannot express)</li>
 <li><code>scaffold</code>: re-exports scaffold.generator (argparse, jinja2)</li>
@@ -8327,7 +8329,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 02:52:53 UTC"><span class="timeago" datetime="2026-11-06T02:52:53+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 02:52:53 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 03:15:57 UTC"><span class="timeago" datetime="2026-11-06T03:15:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 03:15:57 UTC">2026-11-06</span>
   </span>
 
     
