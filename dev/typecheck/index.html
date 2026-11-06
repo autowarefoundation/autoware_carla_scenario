@@ -4816,8 +4816,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-299 of the package's 421
-modules (71%; about 90,000 of
+300 of the package's 422
+modules (71%; about 90,100 of
 153,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4870,15 +4870,18 @@ and quaternions of its angles, and the check of the ego's rear-axle offset:
 itself, which reads the log's mixed-type records and builds protobuf
 messages, re-exports it), the file names of a driver policy's map set and the
 id it is written under (<code>driver.hdmap_files</code>, #1728; <code>driver.hdmap_export</code>,
-which writes the set with roadgen, re-exports them), the fields of a control
-and of <code>sweep.odd_sample</code> and the keys a sweep sets (<code>odd.control_fields</code>,</p>
-<h1 id="1733-oddcontrols-and-oddsampler-re-export-them-and-the-parts-of-the">1733; <code>odd.controls</code> and <code>odd.sampler</code> re-export them), and the parts of the<a class="headerlink" href="#1733-oddcontrols-and-oddsampler-re-export-them-and-the-parts-of-the" title="Permanent link">&para;</a></h1>
-<p>tooling around a run that need nothing Codon lacks. A checked package's
+which writes the set with roadgen, re-exports them), what the weather rules
+read and which <code>vehicles</code> entry of <code>environment.rules</code> a vehicle follows
+(<code>weather_inputs</code>, #1732; <code>weather_rules</code>, which reads the rules with openodd,
+re-exports it), the fields of a control and of <code>sweep.odd_sample</code> and the keys
+a sweep sets (<code>odd.control_fields</code>, #1733; <code>odd.controls</code> and <code>odd.sampler</code>
+re-export them), and the parts of the
+tooling around a run that need nothing Codon lacks. A checked package's
 <code>__init__</code> re-exports what is not checked through models of it (see <em>A class
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 299 CHECKED modules</summary>
+<summary>The 300 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -6080,6 +6083,10 @@ with the first paragraph of its docstring:</p>
 <td>When an entity reached a waypoint, against when it was meant to (#521).</td>
 </tr>
 <tr>
+<td><code>weather_inputs</code></td>
+<td>What the weather rules read and which vehicle entry a vehicle follows.</td>
+</tr>
+<tr>
 <td><code>world_reset</code></td>
 <td>Reset the CARLA world between scenarios.</td>
 </tr>
@@ -6412,7 +6419,7 @@ the first:</p>
 <li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest, which is not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options', the state of each case and its message the checked ui.slurm_case_state's, and what it asks SLURM (squeue, sinfo, whether sbatch and squeue are on PATH) the checked slurm.queue's</li>
 <li><code>ui.sweep_resolver</code>: imports hydra and the registry (omegaconf, importlib), and, inside resolve_sweep(), authoring.hydra_config (pydantic, through authoring.models), odd.controls and sweeper.expand (omegaconf), which are not checked; imports <code>OddDraws</code> from odd.sampler (under <code>TYPE_CHECKING</code>), which the odd model does not declare</li>
 <li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields), takes the options as <code>Mapping[str, Any]</code> and, in checked_str_list(), a list setting of any type (<code>value: Any</code>), which Codon cannot express</li>
-<li><code>weather_rules</code>: imports openodd (a Rust extension), reads rule files and <code>environment.rules</code> as <code>Mapping[str, Any]</code>, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it</li>
+<li><code>weather_rules</code>: imports openodd (a Rust extension), reads rule files and <code>environment.rules</code> as <code>Mapping[str, Any]</code>, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it; the quantities, the weather inputs, <code>rule_values()</code> and which <code>vehicles</code> entry a vehicle follows (<code>vehicle_entry()</code>) are the checked weather_inputs's (#1732)</li>
 </ul>
 </details>
 <p>The scenario check is not limited by this: it compiles every scenario against
@@ -8314,7 +8321,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 02:30:42 UTC"><span class="timeago" datetime="2026-11-06T02:30:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 02:30:42 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 02:31:57 UTC"><span class="timeago" datetime="2026-11-06T02:31:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 02:31:57 UTC">2026-11-06</span>
   </span>
 
     
