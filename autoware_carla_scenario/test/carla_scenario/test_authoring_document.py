@@ -6,6 +6,11 @@ deleting or reshuffling it must never change what a scenario does.
 
 from __future__ import annotations
 
+import logging
+import os
+from pathlib import Path
+from typing import Any
+
 import pytest
 import yaml
 
@@ -124,6 +129,106 @@ class TestRoundTrip:
         (tmp_path / "notes.yaml").write_text("just some text\n", encoding="utf-8")
         (tmp_path / "items.yaml").write_text("- a\n- b\n", encoding="utf-8")
         assert [d.id for d in store.list()] == [draft.id]
+
+
+_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _refuse_reading(monkeypatch: pytest.MonkeyPatch, refused: Path) -> None:
+    """Make reading *refused* fail as a missing read permission would.
+
+    A monkeypatch rather than ``chmod``, so it also holds as root, whom no
+    permission bit stops.
+    """
+    read_text = Path.read_text
+
+    def _read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == refused:
+            raise PermissionError(13, "Permission denied", str(self))
+        return read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _read_text)
+
+
+class TestUnusableDraftFiles:
+    """A drafts directory the server cannot fully read or write (#1747)."""
+
+    def test_get_reports_an_unreadable_file_as_a_value_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = DraftStore(tmp_path)
+        draft = store.create(new_document())
+        _refuse_reading(monkeypatch, store.path_for(draft.id))
+        with pytest.raises(ValueError, match="cannot be read"):
+            store.get(draft.id)
+
+    def test_get_reports_a_file_that_is_not_utf8_as_a_value_error(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "binary.yaml").write_bytes(b"\xff\xfe\x00garbage")
+        with pytest.raises(ValueError, match="cannot be read"):
+            DraftStore(tmp_path).get("binary")
+
+    def test_list_skips_an_unreadable_file_and_lists_the_rest(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        store = DraftStore(tmp_path)
+        kept = store.create(new_document())
+        locked = store.create(new_document())
+        (tmp_path / "binary.yaml").write_bytes(b"\xff\xfe\x00garbage")
+        _refuse_reading(monkeypatch, store.path_for(locked.id))
+        with caplog.at_level(logging.WARNING):
+            assert [d.id for d in store.list()] == [kept.id]
+        assert locked.id in caplog.text
+        assert "binary.yaml" in caplog.text
+
+    @pytest.mark.skipif(_AS_ROOT, reason="root reads files whatever their mode")
+    def test_list_skips_a_file_without_read_permission(self, tmp_path: Path) -> None:
+        store = DraftStore(tmp_path)
+        kept = store.create(new_document())
+        locked = store.create(new_document())
+        path = store.path_for(locked.id)
+        path.chmod(0)
+        try:
+            assert [d.id for d in store.list()] == [kept.id]
+            with pytest.raises(ValueError, match="cannot be read"):
+                store.get(locked.id)
+        finally:
+            path.chmod(0o644)
+
+    def test_a_failed_write_leaves_the_draft_and_no_partial_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import autoware_carla_scenario.authoring.persistence as persistence
+
+        store = DraftStore(tmp_path)
+        draft = store.create(new_document())
+        before = store.path_for(draft.id).read_text(encoding="utf-8")
+
+        def _replace(*_: Any) -> None:
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(persistence.os, "replace", _replace)
+        draft.document.title = "Changed"
+        with pytest.raises(OSError, match="No space left"):
+            store.save(draft)
+        assert store.path_for(draft.id).read_text(encoding="utf-8") == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == [f"{draft.id}.yaml"]
+
+    @pytest.mark.skipif(_AS_ROOT, reason="root writes whatever the mode")
+    def test_writing_into_a_read_only_directory_raises_os_error(
+        self, tmp_path: Path
+    ) -> None:
+        tmp_path.chmod(0o555)
+        try:
+            with pytest.raises(PermissionError):
+                DraftStore(tmp_path).create(new_document())
+            assert list(tmp_path.iterdir()) == []
+        finally:
+            tmp_path.chmod(0o755)
 
 
 class TestLayoutIsPresentationOnly:

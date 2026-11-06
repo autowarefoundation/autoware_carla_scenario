@@ -1017,6 +1017,15 @@ An option defaults to its variable, so a flag on the command line wins over the
 environment (`uv run scenario-editor --host 0.0.0.0 --port 9200`). An unknown
 option is an error (exit 2) and serves nothing.
 
+The drafts directory holds every `*.yaml` the editor finds there, drafts or
+not. A file that is not a draft is left out of the list, and so is one the
+editor cannot read (a permission it lacks, a file that is not UTF-8), with a
+warning in the log naming it; opening either by its id is a 404 that says why.
+A drafts directory the editor may not write to -- or a read-only file system --
+turns creating, saving or deleting a draft into a page that names the directory
+(status 500; 507 when its disk is full) instead of a traceback, and the stored
+draft is left as it was.
+
 !!! warning "The editor listens on this machine only by default"
     The editor has no authentication, so it binds `127.0.0.1` unless told
     otherwise. It used to bind `0.0.0.0`, every interface; to serve other

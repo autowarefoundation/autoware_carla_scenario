@@ -11,6 +11,7 @@ an architecture.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 from pathlib import Path
@@ -41,6 +42,7 @@ from .service import (
     GATE_ITEM_FIELD,
     EditorError,
     EditorService,
+    EditorStorageError,
     condition_actions,
     route_yaml,
 )
@@ -240,6 +242,30 @@ def create_app(
             name="error.html",
             context={"heading": "Not found", "message": str(exc), "page": "error"},
             status_code=404,
+        )
+
+    @application.exception_handler(EditorStorageError)
+    def _storage_error(request: Request, exc: Exception) -> Response:
+        """Render a drafts directory that refused a write as a page, not a 500 traceback.
+
+        The server's fault, not the request's, so a 5xx: 507 Insufficient
+        Storage when the disk is full (what that status means), and 500
+        otherwise -- a permission the editor lacks or a read-only file system
+        is a misconfiguration, which 507 would misdescribe (#1747).  The page
+        names the directory, which is what the person running the editor
+        has to fix.
+        """
+        full = getattr(exc, "errno", None) in (errno.ENOSPC, errno.EDQUOT)
+        logger.error("%s", exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="error.html",
+            context={
+                "heading": "Cannot save drafts",
+                "message": str(exc),
+                "page": "error",
+            },
+            status_code=507 if full else 500,
         )
 
     from .routes import router  # noqa: PLC0415 -- avoids an import cycle
