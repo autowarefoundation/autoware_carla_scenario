@@ -381,7 +381,7 @@ The resume point comes from `--resume-from N` on the command line or from
 `sweep.resume_from: 5` in the config, `--resume-from 10` resumes at job 10.
 (`--resume-from` reaches the sweeper as the `SWEEP_RESUME_FROM` environment
 variable, which you may also set yourself; it wins over the config the same
-way.) `--resume-from` takes a whole number of at least 1: `0`, a negative
+way, so unset a `SWEEP_RESUME_FROM` left over in your shell.) `--resume-from` takes a whole number of at least 1: `0`, a negative
 value or one that is not an integer is a usage error, `Error: --resume-from
 ...` and exit 2, before anything runs. `sweep.resume_from` is a whole number
 too; `0` or `null` (or leaving it out) means it is not set, and every job runs

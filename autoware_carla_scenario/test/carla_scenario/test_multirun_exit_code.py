@@ -453,9 +453,6 @@ def test_lanelet_sweeper_resumes_at_its_last_case(tmp_path: Path) -> None:
     assert "case 1" not in output, output
     assert "case 2" in output, output
 
-    assert "case 1" not in output, output
-    assert "case 2" in output, output
-
 
 @pytest.mark.parametrize(
     ("config", "env", "first_case"),
