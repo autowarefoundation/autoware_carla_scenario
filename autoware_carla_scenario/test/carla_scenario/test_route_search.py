@@ -85,6 +85,35 @@ class TestParsing:
         assert junction.crosswalk_exit == "no"
         assert (spec.ego_spawn_s, spec.ego_goal_margin, spec.seed) == (5.0, 2.0, 7)
 
+    # ego_goal is read strictly, not by truthiness: "false" hands over no
+    # goal, as the docs say, and a typo is refused, named (#1756).
+    @pytest.mark.parametrize(
+        ("value", "goal"),
+        [
+            (False, False),
+            ("false", False),
+            ("off", False),
+            (0, False),
+            (True, True),
+            ("yes", True),
+            (1, True),
+            (None, True),
+        ],
+    )
+    def test_ego_goal_is_read_strictly(self, value: Any, goal: bool) -> None:
+        spec = parse_route_search({"segments": [_lane()], "ego_goal": value})
+        assert spec.ego_goal is goal
+
+    def test_ego_goal_defaults_to_true(self) -> None:
+        assert parse_route_search({"segments": [_lane()]}).ego_goal is True
+
+    @pytest.mark.parametrize(("value", "shown"), [("ture", "'ture'"), (2, "2")])
+    def test_a_bad_ego_goal_is_refused_naming_it(self, value: Any, shown: str) -> None:
+        with pytest.raises(
+            ValueError, match=f"^ego_goal must be true or false, got {shown}$"
+        ):
+            parse_route_search({"segments": [_lane()], "ego_goal": value})
+
     @pytest.mark.parametrize(
         ("search", "message"),
         [

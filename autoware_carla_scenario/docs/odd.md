@@ -1018,7 +1018,11 @@ among the case's overrides, recorded in its coverage file), from the sweep's
 `seed` and the case, so the same sweep draws the same grip. The weather comes
 from the ODD and the grip from the range that weather allows: a heavy-rain
 case never runs on a dry road's grip. `tire_friction: false` in the
-`odd_sample` leaves every case at the median, and
+`odd_sample` leaves every case at the median (`true` or `false`, or one of
+their spellings, as [the run's switches](usage.md#the-switches) take: `"off"`,
+`"no"` and `0` are false; a missing or null one is true; anything else, such
+as `ture` or `2`, is refused, naming `sweep.odd_sample.tire_friction`, before
+any case is drawn), and
 `environment.tire_friction` fixes the grip whatever the weather (it wins over
 the quantile, and a case that names one draws no quantile; the ODD's
 `tire_friction` probe draws it through that knob).
@@ -1085,7 +1089,8 @@ high end; the median when not set); `environment.visibility_m` fixes it whatever
 the weather. A `sweep.odd_sample` draws the quantile for every case, as it
 draws the grip, so the ODD's `rain`, `fog` and `illumination` knobs are what
 shorten it: a night case's drivers see 50-150 m, a heavy-fog case's 15-40 m.
-`visibility: false` in the `odd_sample` leaves every case at the median. An ODD that names the visibility itself (the `visibility` probe)
+`visibility: false` in the `odd_sample` leaves every case at the median
+(read as `tire_friction` is, [strictly](usage.md#the-switches)). An ODD that names the visibility itself (the `visibility` probe)
 sets it through its own knob, `environment.visibility_m`, and a case with one
 keeps it. A run that sets no weather records none, and its traffic sees as
 it always did; each run starts with none, whatever the last left.
