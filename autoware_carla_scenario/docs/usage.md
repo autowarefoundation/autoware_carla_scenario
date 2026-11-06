@@ -117,7 +117,15 @@ Python version, and the viewer's Run form reads it the same way.
   `Error: <scenario>: <key> ...`
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
   (a batch started in the same second as another gets `HH-MM-SS-1`,
-  then `HH-MM-SS-2`, ...: every batch has a directory of its own)
+  then `HH-MM-SS-2`, ...: every batch has a directory of its own). The file
+  is rewritten as each case ends, the cases not run yet listed as
+  `"passed": null, "pending": true` (as a SLURM batch's cases without an
+  outcome are), so a batch that dies after its first case ends still lists
+  every case, and
+  [`scenario-gate`](gate.md#cases-that-raised-no-record-so-the-set-is-refused)
+  refuses to judge it from the cases that finished alone. A batch that dies
+  during its first case writes no summary at all. The summary written when
+  the batch ends lists no pending case
 - A summary table is printed at the end with per-scenario pass/fail status
 - A case that cannot run at all -- its run raises on every attempt
   (`server.cooldown_max_retries`), e.g. a spawn point with no ground under it --
@@ -416,6 +424,16 @@ takes the same file stem, so the viewer and the coverage merge read the
 retry's outputs alone. Only the outputs the case's own attempts wrote are
 removed; Hydra's job log and anything already in the directory before the
 case started (one `hydra.sweep.dir=` names again) are kept.
+
+A case given up -- it raised, timed out or crashed on every attempt, or was
+refused -- leaves `case_errored.json` in its job directory (its overrides,
+last exit code, attempts and why): it wrote no result, so no gate record, and
+[`scenario-gate`](gate.md#cases-that-raised-no-record-so-the-set-is-refused)
+refuses the sweep's runs for it. A case of Hydra's basic sweeper (a
+`--multirun` without `hydra/sweeper=lanelet_constraint`) whose run raised
+leaves one too. A case whose scenario ran and failed leaves none, nor does one
+a retry passed; one run again in the same directory removes the marker an
+earlier run left before it starts.
 
 A case that timed out or crashed had no chance to stop the CARLA server it
 launched; that server's watchdog stops it within about a second, giving it

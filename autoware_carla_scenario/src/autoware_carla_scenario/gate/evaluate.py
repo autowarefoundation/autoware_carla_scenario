@@ -29,10 +29,13 @@ decides the exit code; ``--fail-on-regression`` makes a regression fail it
 too.
 
 A case of a batch that raised rather than ran (``ERROR`` in its summary,
-``batch_results.json``) or, under SLURM, has no outcome, wrote no record: the
-success rate would be judged over the runs that survived.  A set of runs
-holding such a batch is refused (:func:`unrecorded_cases`) unless
-``--allow-unrecorded`` is given.
+``batch_results.json``), that a batch cut short never finished (``pending``)
+or, under SLURM, has no outcome, wrote no record; nor did a ``--multirun``
+job given up (``case_errored.json``, :mod:`.errored`): the success rate would
+be judged over the runs that survived.  A set of runs holding such a batch or
+job is refused (:func:`unrecorded_cases`) unless ``--allow-unrecorded`` is
+given.  A batch summary or manifest that cannot be read refuses the set
+whatever ``--allow-unrecorded`` says (:func:`batch_read_errors`).
 
 See ``docs/gate.md``.
 """
@@ -62,6 +65,7 @@ from .criteria import (
     find_gate_records,
     station_values,
 )
+from .errored import find_case_errored, read_case_errored
 from .record import GATE_RECORD_SUFFIX, GateRecord, read_gate_record
 from .report import (
     case_changes,
@@ -81,6 +85,7 @@ __all__ = [
     "compare_all",
     "CriterionResult",
     "GateVerdict",
+    "batch_read_errors",
     "consistency",
     "find_gate_records",
     "judge",
@@ -247,7 +252,9 @@ def _slurm_unrecorded(directory: Path) -> tuple[list[str], int] | str:
 
 def _summary_unrecorded(directory: Path) -> tuple[list[str], int] | str:
     """The names of a local batch's errored cases (``"error": true`` in its
-    ``batch_results.json``), which raised and so wrote no gate record; and
+    ``batch_results.json``), which raised and so, but for one that raised
+    only once its run had ended, wrote no gate record, and of its pending
+    ones (``"pending": true``: a batch cut short never finished them); and
     how many cases it has.  Why the summary cannot be read, instead."""
     path = directory / BATCH_RESULTS
     try:
@@ -259,35 +266,65 @@ def _summary_unrecorded(directory: Path) -> tuple[list[str], int] | str:
     unrecorded = [
         str(entry.get("scenario") or i)
         for i, entry in enumerate(entries)
-        if not isinstance(entry, dict) or entry.get("error") is True
+        if not isinstance(entry, dict)
+        or entry.get("error") is True
+        or entry.get("pending") is True
     ]
     return unrecorded, len(entries)
 
 
-def unrecorded_cases(path: Path) -> list[str]:
-    """Why the runs under *path* cannot be judged as they are: one line per
-    batch under it whose cases raised rather than ran, or (SLURM) have no
-    outcome, and left no gate record.
+def _has_gate_record(directory: Path) -> bool:
+    """Whether *directory* holds a gate record."""
+    try:
+        return any(
+            p.name.endswith(GATE_RECORD_SUFFIX) and p.is_file()
+            for p in directory.iterdir()
+        )
+    except OSError:
+        return False
 
-    A run that raises writes no record, so judging the records there are
-    would compute ``min_success_rate`` over the runs that survived.  A
-    SLURM batch (``slurm/manifest.json``) is read from its tasks' outcomes,
-    collected or not, and a case with a record at its stem is not counted; a
-    local batch is read from its ``batch_results.json``, whose errored
-    entries wrote no record.  A summary or manifest that cannot be read is
-    reported too.  Empty for a gate record (a file), and for a directory
-    holding no batch.
-    """
-    if not path.is_dir():
-        return []
+
+def _errored_jobs(path: Path) -> list[str]:
+    """One line per sweep under *path* whose ``--multirun`` jobs were given up
+    (``case_errored.json``, :mod:`.errored`) and left no gate record."""
+    by_sweep: dict[Path, list[str]] = {}
+    for marker in find_case_errored(path):
+        job = marker.parent
+        if _has_gate_record(job):
+            # The run wrote its record before the job failed: it is judged.
+            continue
+        data = read_case_errored(marker)
+        reason = data.get("reason") if data is not None else None
+        name = (
+            f"{job.name} ({reason})" if isinstance(reason, str) and reason else job.name
+        )
+        by_sweep.setdefault(job.parent, []).append(name)
     lines: list[str] = []
+    for sweep, names in sorted(by_sweep.items()):
+        shown = ", ".join(names[:_NAMED])
+        more = f", and {len(names) - _NAMED} more" if len(names) > _NAMED else ""
+        lines.append(
+            f"{sweep}: {len(names)} job(s) of the sweep raised, timed out or "
+            f"crashed, and left no gate record ({shown}{more}); the gate would "
+            "be judged over the runs that survived"
+        )
+    return lines
+
+
+def _scan_batches(path: Path) -> tuple[list[str], list[str]]:
+    """What :func:`unrecorded_cases` and :func:`batch_read_errors` return for
+    *path*, read once."""
+    if not path.is_dir():
+        return [], []
+    lines: list[str] = []
+    unreadable: list[str] = []
     for directory in _batch_dirs(path):
         if (directory / "slurm" / "manifest.json").is_file():
             found = _slurm_unrecorded(directory)
         else:
             found = _summary_unrecorded(directory)
         if isinstance(found, str):
-            lines.append(found)
+            unreadable.append(found)
             continue
         names, total = found
         if not names:
@@ -299,7 +336,36 @@ def unrecorded_cases(path: Path) -> list[str]:
             f"outcome, and left no gate record ({shown}{more}); the gate would "
             "be judged over the runs that survived"
         )
-    return lines
+    lines.extend(_errored_jobs(path))
+    return lines, unreadable
+
+
+def unrecorded_cases(path: Path) -> list[str]:
+    """Why the runs under *path* cannot be judged as they are: one line per
+    batch under it whose cases raised rather than ran, were never finished
+    or (SLURM) have no outcome, and left no gate record, and one per
+    ``--multirun`` sweep whose jobs were given up.
+
+    A run that raises writes no record, so judging the records there are
+    would compute ``min_success_rate`` over the runs that survived.  A
+    SLURM batch (``slurm/manifest.json``) is read from its tasks' outcomes,
+    collected or not, and a case with a record at its stem is not counted; a
+    local batch is read from its ``batch_results.json``, whose errored and
+    pending entries count (its entries name no stem, so an errored case that
+    did write a record is counted too); a sweep is read from its jobs'
+    markers (``case_errored.json``), and a job whose directory holds a gate
+    record is not counted.  Empty for a gate record (a file), and for a
+    directory holding no batch and no marker.  A summary or manifest that
+    cannot be read is not reported here but by :func:`batch_read_errors`.
+    """
+    return _scan_batches(path)[0]
+
+
+def batch_read_errors(path: Path) -> list[str]:
+    """One line per batch under *path* whose summary (``batch_results.json``)
+    or SLURM manifest cannot be read: what it left unrecorded cannot be told,
+    and ``scenario-gate`` exits 2 whatever ``--allow-unrecorded`` says."""
+    return _scan_batches(path)[1]
 
 
 # ---------------------------------------------------------------------------
@@ -705,9 +771,11 @@ def _parser(prog: Optional[str]) -> argparse.ArgumentParser:
         action="store_true",
         help=(
             "judge the records there are even when a batch among the runs "
-            "lists cases that raised (ERROR) or, under SLURM, have no outcome, "
-            "and left no gate record; warned of on stderr. By default such a "
-            "set is refused (exit 2)"
+            "lists cases that raised (ERROR), were never finished (pending) "
+            "or, under SLURM, have no outcome, or a --multirun job was given "
+            "up (case_errored.json), and left no gate record; warned of on "
+            "stderr. By default such a set is refused (exit 2). A batch "
+            "summary or manifest that cannot be read is refused either way"
         ),
     )
     parser.add_argument("--scenario", help="judge only the runs of this scenario id")
@@ -739,8 +807,10 @@ def main(
 
     0 when every gate passes (on the candidate, with two sets), 1 when one
     fails -- or, with ``--fail-on-regression``, something regressed -- and 2
-    when there is nothing to judge, a file cannot be read, a batch among the
-    runs lists cases that left no record (:func:`unrecorded_cases`; unless
+    when there is nothing to judge, a file cannot be read (a batch summary or
+    SLURM manifest among the runs too, :func:`batch_read_errors`, whatever
+    ``--allow-unrecorded`` says), a batch or sweep among the runs lists cases
+    that left no record (:func:`unrecorded_cases`; unless
     ``--allow-unrecorded``), or an output (``--markdown``, ``--json``)
     cannot be written.
     """
@@ -769,7 +839,16 @@ def main(
             return EXIT_ERROR
         gate = document.gate
         scenario = scenario or document.id
-    unrecorded = [line for path in args.runs for line in unrecorded_cases(path)]
+    scans = [_scan_batches(path) for path in args.runs]
+    unrecorded = [line for found, _ in scans for line in found]
+    unreadable = [line for _, failed in scans for line in failed]
+    for line in unreadable:
+        print(
+            f"scenario-gate: {line}; the cases it left without a record cannot "
+            "be told, so the runs are not judged (--allow-unrecorded does not "
+            "apply). Repair the file, or run the batch again",
+            file=sys.stderr,
+        )
     if unrecorded and not args.allow_unrecorded:
         for line in unrecorded:
             print(
@@ -777,6 +856,8 @@ def main(
                 "--allow-unrecorded to judge the records there are",
                 file=sys.stderr,
             )
+        return EXIT_ERROR
+    if unreadable:
         return EXIT_ERROR
     for line in unrecorded:
         print(f"scenario-gate: warning: {line}", file=sys.stderr)

@@ -184,3 +184,50 @@ def test_the_file_is_what_the_dict_merge_wrote(
     text = path.read_text(encoding="utf-8")
     assert text == _merged(["case"], results, overrides, errored, rerun_errors)
     assert len(json.loads(text)[0]) == text.count('\n    "')
+
+
+def test_pending_writes_the_cases_not_run_yet_as_slurm_does(tmp_path: Path) -> None:
+    # A batch cut short lists the cases it did not run, so scenario-gate
+    # does not judge the ones that finished alone (#1831).
+    path = write_batch_result_json(
+        ["a", "b ü", "c"],
+        [_Result({"passed": True})],
+        tmp_path,
+        overrides=[["x=1"], ["x=2"], ["x=3"]],
+        pending=True,
+    )
+    text = path.read_text(encoding="utf-8")
+    pending = {
+        "passed": None,
+        "message": "No result yet (the batch has not run this case)",
+        "elapsed_seconds": None,
+        "pending": True,
+    }
+    entries = [
+        {"scenario": "a", "overrides": ["x=1"], "passed": True},
+        {"scenario": "b ü", "overrides": ["x=2"], **pending},
+        {"scenario": "c", "overrides": ["x=3"], **pending},
+    ]
+    assert text == json.dumps(entries, indent=2, ensure_ascii=False)
+
+
+def test_pending_without_overrides_or_with_every_case_run(tmp_path: Path) -> None:
+    path = write_batch_result_json(["a", "b"], [], tmp_path, pending=True)
+    assert [e.get("overrides", "none") for e in json.loads(path.read_text())] == [
+        "none",
+        "none",
+    ]
+    assert all(e["pending"] for e in json.loads(path.read_text()))
+    # Every case run: nothing pending, the file as it always was.
+    with_pending = write_batch_result_json(
+        ["a"], [_Result({"passed": True})], tmp_path / "p", pending=True
+    ).read_text()
+    without = write_batch_result_json(
+        ["a"], [_Result({"passed": True})], tmp_path / "q"
+    ).read_text()
+    assert with_pending == without
+
+
+def test_names_past_the_results_are_left_out_without_pending(tmp_path: Path) -> None:
+    path = write_batch_result_json(["a", "b"], [_Result({"passed": True})], tmp_path)
+    assert [e["scenario"] for e in json.loads(path.read_text())] == ["a"]

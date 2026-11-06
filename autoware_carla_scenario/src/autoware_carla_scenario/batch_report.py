@@ -107,6 +107,33 @@ def _member(member_json: str) -> str:
     return "\n".join("  " + line for line in member_json.split("\n")[1:-1])
 
 
+#: The message of a pending entry (:func:`write_batch_result_json`).
+PENDING_MESSAGE = "No result yet (the batch has not run this case)"
+
+
+def _pending_entry(name: str, overrides: list[list[str]] | None, index: int) -> str:
+    """The entry of case *index*, *name*, which the batch has not run: as
+    ``json.dumps`` lays out ``{"scenario": name, "overrides": ...,
+    "passed": None, "message": PENDING_MESSAGE, "elapsed_seconds": None,
+    "pending": True}`` at an entry's depth."""
+    members = [_member(json.dumps({"scenario": name}, indent=2, ensure_ascii=False))]
+    if overrides is not None:
+        members.append(
+            _member(
+                json.dumps(
+                    {"overrides": overrides[index]}, indent=2, ensure_ascii=False
+                )
+            )
+        )
+    members.append('    "passed": null')
+    members.append(
+        _member(json.dumps({"message": PENDING_MESSAGE}, indent=2, ensure_ascii=False))
+    )
+    members.append('    "elapsed_seconds": null')
+    members.append('    "pending": true')
+    return "  {\n" + ",\n".join(members) + "\n  }"
+
+
 def write_batch_result_json(
     names: list[str],
     results: Sequence[_Result],
@@ -114,6 +141,7 @@ def write_batch_result_json(
     overrides: list[list[str]] | None = None,
     errored: Collection[int] = (),
     rerun_errors: Mapping[int, str] | None = None,
+    pending: bool = False,
 ) -> Path:
     """Write a machine-readable JSON summary to *output_dir* and return the path.
 
@@ -123,6 +151,12 @@ def write_batch_result_json(
     ``"error": true``.  A case in *rerun_errors* (index -> why) has a Rerun
     recording (``rerun_recording``) that failed to convert, and its entry
     says why in ``rerun_error``.
+
+    With *pending*, each name past *results* (a case the batch has not run,
+    or never will: it was cut short) is written too, as SLURM's cases without
+    an outcome are (``ui.cases``): ``"passed": null``, ``"pending": true``,
+    its *overrides* when they are given.  Without it those names are left
+    out.
 
     The file is what ``json.dumps(entries, indent=2, ensure_ascii=False)``
     gives, laid out as text a member at a time, since an entry's values (a
@@ -186,6 +220,9 @@ def write_batch_result_json(
             if key in own and key not in data:
                 members.append(own[key])
         entries.append("  {\n" + ",\n".join(members) + "\n  }")
+    if pending:
+        for i in range(len(results), len(names)):
+            entries.append(_pending_entry(names[i], overrides, i))
     text = "[\n" + ",\n".join(entries) + "\n]" if entries else "[]"
     write_text_atomically(json_path, text)
     return json_path
