@@ -217,7 +217,7 @@ scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no ou
   at its stem -- its run wrote one before the task failed, and that record is
   judged.
 - A **`--multirun` sweep** has no summary, so each job given up -- the
-  lanelet sweeper's, once it raised, timed out or crashed on every attempt
+  lanelet sweeper's, once it raised, timed out, crashed or was refused on every attempt
   (`server.cooldown_max_retries`), and Hydra's basic sweeper's, once its run
   raised -- leaves `case_errored.json` in its job directory, with its
   overrides, last exit code, attempts and why. Each counts, unless the job's

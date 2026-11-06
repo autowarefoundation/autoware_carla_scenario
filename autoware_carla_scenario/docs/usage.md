@@ -120,10 +120,12 @@ Python version, and the viewer's Run form reads it the same way.
   then `HH-MM-SS-2`, ...: every batch has a directory of its own). The file
   is rewritten as each case ends, the cases not run yet listed as
   `"passed": null, "pending": true` (as a SLURM batch's cases without an
-  outcome are), so a batch that dies mid-run still lists every case, and
+  outcome are), so a batch that dies after its first case ends still lists
+  every case, and
   [`scenario-gate`](gate.md#cases-that-raised-no-record-so-the-set-is-refused)
-  refuses to judge it from the cases that finished alone. The summary written
-  when the batch ends lists no pending case
+  refuses to judge it from the cases that finished alone. A batch that dies
+  during its first case writes no summary at all. The summary written when
+  the batch ends lists no pending case
 - A summary table is printed at the end with per-scenario pass/fail status
 - A case that cannot run at all -- its run raises on every attempt
   (`server.cooldown_max_retries`), e.g. a spawn point with no ground under it --
