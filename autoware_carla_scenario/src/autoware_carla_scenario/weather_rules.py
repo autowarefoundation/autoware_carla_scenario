@@ -37,13 +37,18 @@ vehicle's (:func:`vehicle_range`); how far drivers see is the default rules'.
 
 from __future__ import annotations
 
-import fnmatch
 import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from openodd import Rules, RulesError
+
+from .weather_inputs import EGO_KEY as EGO_KEY
+from .weather_inputs import QUANTITIES as QUANTITIES
+from .weather_inputs import WEATHER_INPUTS as WEATHER_INPUTS
+from .weather_inputs import rule_values as rule_values
+from .weather_inputs import vehicle_entry
 
 if TYPE_CHECKING:
     from .odd.backend import CarlaBackend
@@ -71,29 +76,6 @@ __all__ = [
 #: The rules a run follows unless it names others.
 DEFAULT_RULES: Path = Path(__file__).resolve().parent / "weather_rules.yaml"
 
-#: The quantities the framework reads.
-QUANTITIES: tuple[str, ...] = ("tire_friction", "visibility", "sight_speed")
-
-#: The weather's fields a part may read, as CARLA's ``WeatherParameters``
-#: name them, and ``water``: the larger of ``wetness`` and
-#: ``precipitation_deposits``, which the road's grip follows.
-WEATHER_INPUTS: tuple[str, ...] = (
-    "cloudiness",
-    "precipitation",
-    "precipitation_deposits",
-    "wetness",
-    "wind_intensity",
-    "fog_density",
-    "fog_distance",
-    "sun_altitude_angle",
-    "sun_azimuth_angle",
-    "water",
-)
-
-#: The ``vehicles`` key naming the ego (``role_name`` ``Ego``).
-EGO_KEY = "ego"
-_EGO_ROLE = "Ego"
-
 #: The packaged rules, read once.
 _DEFAULT: Optional[Rules] = None
 #: Blueprint pattern (or :data:`EGO_KEY`) -> its rules, for the run.
@@ -106,17 +88,6 @@ def default_rules() -> Rules:
     if _DEFAULT is None:
         _DEFAULT = Rules.read(DEFAULT_RULES)
     return _DEFAULT
-
-
-def rule_values(values: Mapping[str, float]) -> dict[str, float]:
-    """What the rules read of the weather *values*: those, and ``water``
-    from ``wetness`` and ``precipitation_deposits`` when not given."""
-    out = {str(k): float(v) for k, v in values.items()}
-    if "water" not in out and ("wetness" in out or "precipitation_deposits" in out):
-        out["water"] = max(
-            out.get("wetness", 0.0), out.get("precipitation_deposits", 0.0)
-        )
-    return out
 
 
 def _backend() -> "CarlaBackend":
@@ -231,13 +202,9 @@ def weather_at(quantity: str, inputs: dict[str, float], quantile: float) -> floa
 
 
 def _rules_for(type_id: str, role: str) -> Optional[Rules]:
-    for pattern, rules in _VEHICLE_RULES:
-        if pattern.lower() == EGO_KEY:
-            if role == _EGO_ROLE:
-                return rules
-        elif fnmatch.fnmatchcase(type_id, pattern):
-            return rules
-    return None
+    # Which entry is the checked weather_inputs's (vehicle_entry()).
+    index = vehicle_entry([pattern for pattern, _ in _VEHICLE_RULES], type_id, role)
+    return None if index < 0 else _VEHICLE_RULES[index][1]
 
 
 def vehicle_range(

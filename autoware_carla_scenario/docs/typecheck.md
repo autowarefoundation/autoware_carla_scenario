@@ -2451,7 +2451,10 @@ and quaternions of its angles, and the check of the ego's rear-axle offset:
 itself, which reads the log's mixed-type records and builds protobuf
 messages, re-exports it), the file names of a driver policy's map set and the
 id it is written under (`driver.hdmap_files`, #1728; `driver.hdmap_export`,
-which writes the set with roadgen, re-exports them), and the parts of the
+which writes the set with roadgen, re-exports them), what the weather rules
+read and which `vehicles` entry of `environment.rules` a vehicle follows
+(`weather_inputs`, #1732; `weather_rules`, which reads the rules with openodd,
+re-exports it), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 `__init__` re-exports what is not checked through models of it (see *A class
 a checked package only re-exports* below). Each checked module is listed here
