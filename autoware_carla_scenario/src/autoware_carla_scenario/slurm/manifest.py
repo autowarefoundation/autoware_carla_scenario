@@ -299,8 +299,8 @@ def recorded_verdict(record: dict[str, Any] | None) -> bool | None:
     not passed (#1718), never ``"false"`` or ``1`` as a pass.
 
     A ``result`` that cannot be reported (:func:`readable_result`: its
-    ``message``, ``elapsed_seconds`` or ``condition_statuses`` missing or of
-    the wrong type) holds no verdict either (#1726), so that the counts of
+    ``message``, ``elapsed_seconds``, ``condition_statuses`` or ``failure``
+    missing or of the wrong type) holds no verdict either (#1726), so that the counts of
     ``scenario-slurm status`` and ``wait``, the viewer, ``collect`` and
     ``resubmit`` all agree that it did not pass."""
     if not isinstance(record, dict):

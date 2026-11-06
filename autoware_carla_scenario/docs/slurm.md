@@ -101,8 +101,8 @@ no verdict -- no `result` object, or a `passed` that is not `true` or `false`
 `message` that is missing or not a string, an `elapsed_seconds` that is not a
 number (`true` is none), `condition_statuses` that are not a list of objects
 each with a string `label` and `message` and a boolean `satisfied`, or a
-`failure` that is not an object or cannot be read (an `at` that is not a
-number, say). What the worker writes always is readable; `rerun_recording`
+`failure` that is not an object or cannot be read (an `at` of the wrong
+type, say). What the worker writes always is readable; `rerun_recording`
 and `failure` may be missing. It did not pass, and `collect` reports it as
 `ERROR` naming its file; a `rerun_error` the task recorded for it is kept in
 `batch_results.json`. `status`, `wait` and the viewer count it as not

@@ -7,8 +7,8 @@ and when.  A case with no outcome is reported as one: ``ERROR``, with a message
 saying it has none and how to run it again (``scenario-slurm resubmit``).
 So is a case whose outcome holds no verdict -- no ``result`` object, a
 ``passed`` that is not a boolean (#1718), or a result that cannot be reported
-(``readable_result()``: its ``message``, ``elapsed_seconds`` or
-``condition_statuses`` missing or of the wrong type, #1726): it did not pass.
+(``readable_result()``: its ``message``, ``elapsed_seconds``,
+``condition_statuses`` or ``failure`` missing or of the wrong type, #1726): it did not pass.
 """
 
 from __future__ import annotations
