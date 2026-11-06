@@ -1385,10 +1385,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-packages-name" class="md-nav__link">
+  <a href="#the-scenario-id-names-the-package" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The package's name
+        The scenario id names the package
       
     </span>
   </a>
@@ -2759,10 +2759,10 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
-  <a href="#the-packages-name" class="md-nav__link">
+  <a href="#the-scenario-id-names-the-package" class="md-nav__link">
     <span class="md-ellipsis">
       
-        The package's name
+        The scenario id names the package
       
     </span>
   </a>
@@ -3733,20 +3733,21 @@ with neither uv nor, on a vehicle, a network route. A uv project needs all three
 <p>The scenario's document and Hydra config travel <strong>inside</strong> its wheel, so an
 installed scenario is self-contained: there is no directory that has to be kept
 beside it.</p>
-<h3 id="the-packages-name">The package's name<a class="headerlink" href="#the-packages-name" title="Permanent link">&para;</a></h3>
+<h3 id="the-scenario-id-names-the-package">The scenario id names the package<a class="headerlink" href="#the-scenario-id-names-the-package" title="Permanent link">&para;</a></h3>
 <p>The package is named after the document's <strong>id</strong>, which is lower-case letters,
-digits and <code>_</code>, starting with a letter (<code>^[a-z][a-z0-9_]*$</code>). Repeated and
-trailing <code>_</code> are collapsed and <code>_scenario</code> is appended unless the id already
-ends with it: <code>my_cut_in</code> (the <strong>Cut-in example</strong> starter's id) exports the
-package <code>my_cut_in_scenario</code> (distribution <code>my-cut-in-scenario</code>, directory
+digits and <code>_</code>, starting with a letter (<code>^[a-z][a-z0-9_]*$</code>). The id is the
+name <code>scenario=&lt;id&gt;</code> selects, and the exported package is named after it with
+<code>_scenario</code> added: <code>my_cut_in</code> (the <strong>Cut-in example</strong> starter's id) exports
+the module <code>my_cut_in_scenario</code> (distribution <code>my-cut-in-scenario</code>, directory
 <code>my_cut_in_scenario/</code>), and the id itself stays the scenario's name
-(<code>scenario=my_cut_in</code>).</p>
+(<code>scenario=my_cut_in</code>). The suffix is added even to an id that already ends in
+it, so <code>new_scenario</code> is exported as <code>new_scenario_scenario</code>, never as the
+package of the id <code>new</code>.</p>
 <p>The validator (<code>authoring/package_names.py</code>) <strong>refuses</strong> an id whose package
-would be the framework's own, <code>autoware_carla_scenario</code>: the ids
-<code>autoware_carla</code> and <code>autoware_carla_scenario</code>. Such a package depends on
-itself and replaces the installed framework, so it is an <code>id</code> error, shown
-before an export starts, by the same rule <code>scenario-new</code> refuses that name
-with.</p>
+would be the framework's own, <code>autoware_carla_scenario</code>: the id
+<code>autoware_carla</code> (and <code>autoware__carla</code> or <code>autoware_carla_</code>). Such a package depends on itself and replaces the installed
+framework, so it is an <code>id</code> error, shown before an export starts, by the same
+rule <code>scenario-new</code> refuses that name with.</p>
 <p>It also <strong>refuses</strong> an id that names a built-in scenario (<code>adversity</code>,
 <code>cut_in</code>, <code>intersection_passing</code>, <code>lane_change</code>, <code>pedestrian_dart_out</code>,
 <code>temporary_stop</code>, <code>traffic_light_compliance</code>: <code>scaffold/names.py</code>'s
@@ -3756,18 +3757,101 @@ builder while the built-in configs (<code>scenario=cut_in/left</code>, ...) stil
 it and hand it the built-in's config keys. It is an <code>id</code> error, <code>The id
 'cut_in' is reserved: it names a built-in scenario ...</code>, worded as
 <code>scenario-new</code>'s refusal of the same <code>--scenario</code>.</p>
-<p><code>export_package</code> and <code>names_for_id</code>, called directly, refuse it too, before
+<p><code>export_package</code> and <code>names_for_id</code>, called directly, refuse both too, before
 writing anything. That is why the Cut-in example starts as <code>my_cut_in</code>, not
 <code>cut_in</code>. A draft saved from the Cut-in example before this change
 has the id <code>cut_in</code>: rename it in the Scenario inspector before exporting it.</p>
-<p>Ids that differ only by a trailing <code>_scenario</code>, or by doubled or trailing
-<code>_</code>, export to the same package and so the same directory: <code>my_cut_in</code>,
-<code>my_cut_in_scenario</code>, <code>my_cut__in</code> and <code>my_cut_in_</code> all export as
-<code>my_cut_in_scenario/</code>.
-Exporting one of them with force (replacing an existing package) replaces the
-package another of them exported there. The validator does not warn about
-this, since it cannot know whether the other package exists; pick one id per
-scenario and keep to it.</p>
+<p>Package installers compare distribution names with every run of <code>_</code>, <code>-</code> and
+<code>.</code> folded into one <code>-</code>, so an id that differs from another only in its
+underscores would be the <em>same</em> package -- installing one would silently
+uninstall the other. <code>export_package</code> refuses these ids, writing nothing; the
+validator reports them as <strong>warnings</strong> on the <code>id</code> field, so the draft -- and a
+package exported with such an id before #1358 -- still compiles and runs:</p>
+<table>
+<thead>
+<tr>
+<th>Id</th>
+<th>Would be packaged as</th>
+<th>Use instead</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>stop__line</code> (a <code>__</code>)</td>
+<td><code>stop_line_scenario</code>, the package of <code>stop_line</code></td>
+<td><code>stop_line</code></td>
+</tr>
+<tr>
+<td><code>stop_line_</code> (a trailing <code>_</code>)</td>
+<td><code>stop_line_scenario</code>, the package of <code>stop_line</code></td>
+<td><code>stop_line</code></td>
+</tr>
+</tbody>
+</table>
+<p>A draft that already uses such an id still opens and saves; rename it before
+exporting. Every id the export accepts gets a package of its own.</p>
+<div class="admonition warning">
+<p class="admonition-title">Ids ending in <code>_scenario</code> are exported under a new name since #1358</p>
+<p>Earlier exports did not add the suffix to an id that already ended in
+<code>_scenario</code>, so <code>stop_line_scenario</code> and <code>stop_line</code> both became the
+package <code>stop_line_scenario</code>. Re-exporting such an id -- the editor's
+default <code>new_scenario</code> among them -- now gives it a package of its own.
+For the id <code>new_scenario</code>:</p>
+<table>
+<thead>
+<tr>
+<th></th>
+<th>Before</th>
+<th>Now</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>Distribution (<code>pip install ...</code>)</td>
+<td><code>new-scenario</code></td>
+<td><code>new-scenario-scenario</code></td>
+</tr>
+<tr>
+<td>Import module and <code>src/</code> directory</td>
+<td><code>new_scenario</code></td>
+<td><code>new_scenario_scenario</code></td>
+</tr>
+<tr>
+<td>Entry point in <code>autoware_carla_scenario.scenarios</code></td>
+<td><code>new_scenario</code></td>
+<td><code>new_scenario_scenario</code></td>
+</tr>
+<tr>
+<td>Export directory and wheelhouse directory</td>
+<td><code>new_scenario/</code>, <code>new_scenario_wheelhouse/</code></td>
+<td><code>new_scenario_scenario/</code>, <code>new_scenario_scenario_wheelhouse/</code></td>
+</tr>
+<tr>
+<td>Document override variable</td>
+<td><code>NEW_SCENARIO_DOCUMENT_PATH</code></td>
+<td><code>NEW_SCENARIO_SCENARIO_DOCUMENT_PATH</code></td>
+</tr>
+</tbody>
+</table>
+<p>What selects and configures the scenario does <strong>not</strong> change: it is still
+<code>scenario=new_scenario</code>, from the conf file <code>conf/scenario/new_scenario.yaml</code>
+whose <code>scenario.name</code> is <code>new_scenario</code>, and the downloaded archive is still
+<code>new_scenario-wheelhouse.zip</code>.</p>
+<p>Because the distribution name changed, installing the re-export does not
+replace the old one. Uninstall the old distribution first:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a>.venv/bin/pip<span class="w"> </span>uninstall<span class="w"> </span>new-scenario<span class="w">     </span><span class="c1"># or: uv pip uninstall new-scenario</span>
+<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a>.venv/bin/pip<span class="w"> </span>install<span class="w"> </span>--no-index<span class="w"> </span>--find-links<span class="w"> </span>new_scenario_scenario_wheelhouse<span class="w"> </span>new-scenario-scenario
+</code></pre></div>
+<p>With both installed, both register a builder named <code>new_scenario</code> (the
+one loaded last silently wins) and both put a <code>scenario/new_scenario.yaml</code>
+on Hydra's search path (the one registered first wins), so a run can mix
+one package's builder with the other's config, depending on the order the
+entry points happen to load in.</p>
+<p>The id <code>autoware_carla_scenario</code>, refused before because it exported as
+the framework's own package, now exports as <code>autoware_carla_scenario_scenario</code>
+and is accepted. Every id that does not end in <code>_scenario</code> keeps exactly the
+package name it always had.</p>
+</div>
 <h3 id="what-the-wheelhouse-is-built-from">What the wheelhouse is built from<a class="headerlink" href="#what-the-wheelhouse-is-built-from" title="Permanent link">&para;</a></h3>
 <p>The exporter still generates the uv project it always did -- <code>pyproject.toml</code>
 with the framework pinned to an exact commit, <code>uv.lock</code>, the document, the Hydra
@@ -3848,23 +3932,23 @@ the current checkout's commit.</p>
 package whose dependencies never resolved, or that no environment can install,
 is not a successful export.</p>
 <p>The manifest records only values that were actually observed:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-14-1" name="__codelineno-14-1" href="#__codelineno-14-1"></a><span class="nt">format_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
-<a id="__codelineno-14-2" name="__codelineno-14-2" href="#__codelineno-14-2"></a><span class="nt">scenario</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="nv">my_cut_in</span><span class="p p-Indicator">,</span><span class="nt"> title</span><span class="p">:</span><span class="w"> </span><span class="nv">Cut in</span><span class="p p-Indicator">,</span><span class="nt"> document_version</span><span class="p">:</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="nt"> package</span><span class="p">:</span><span class="w"> </span><span class="nv">my-cut-in-scenario</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-14-3" name="__codelineno-14-3" href="#__codelineno-14-3"></a><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="nv">3.12.10</span><span class="p p-Indicator">,</span><span class="nt"> uv</span><span class="p">:</span><span class="w"> </span><span class="nv">0.12.0</span><span class="p p-Indicator">,</span><span class="nt"> requires_python</span><span class="p">:</span><span class="w"> </span><span class="s">'&gt;=3.10,&lt;3.15'</span><span class="p p-Indicator">}</span>
-<a id="__codelineno-14-4" name="__codelineno-14-4" href="#__codelineno-14-4"></a><span class="nt">wheelhouse</span><span class="p">:</span>
-<a id="__codelineno-14-5" name="__codelineno-14-5" href="#__codelineno-14-5"></a><span class="w">  </span><span class="nt">directory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_cut_in_scenario_wheelhouse</span>
-<a id="__codelineno-14-6" name="__codelineno-14-6" href="#__codelineno-14-6"></a><span class="w">  </span><span class="nt">install</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pip install --no-index --find-links my_cut_in_scenario_wheelhouse my-cut-in-scenario</span>
-<a id="__codelineno-14-7" name="__codelineno-14-7" href="#__codelineno-14-7"></a><span class="w">  </span><span class="nt">wheels</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">104</span>
-<a id="__codelineno-14-8" name="__codelineno-14-8" href="#__codelineno-14-8"></a><span class="w">  </span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">'3.10'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.11'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.12'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.13'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.14'</span><span class="p p-Indicator">]</span>
-<a id="__codelineno-14-9" name="__codelineno-14-9" href="#__codelineno-14-9"></a><span class="nt">autoware_carla_scenario</span><span class="p">:</span>
-<a id="__codelineno-14-10" name="__codelineno-14-10" href="#__codelineno-14-10"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">git</span>
-<a id="__codelineno-14-11" name="__codelineno-14-11" href="#__codelineno-14-11"></a><span class="w">  </span><span class="nt">repository</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://github.com/autowarefoundation/autoware_carla_scenario</span>
-<a id="__codelineno-14-12" name="__codelineno-14-12" href="#__codelineno-14-12"></a><span class="w">  </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0123456789abcdef0123456789abcdef01234567</span>
-<a id="__codelineno-14-13" name="__codelineno-14-13" href="#__codelineno-14-13"></a><span class="w">  </span><span class="nt">subdirectory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">autoware_carla_scenario</span>
-<a id="__codelineno-14-14" name="__codelineno-14-14" href="#__codelineno-14-14"></a><span class="nt">files</span><span class="p">:</span>
-<a id="__codelineno-14-15" name="__codelineno-14-15" href="#__codelineno-14-15"></a><span class="w">  </span><span class="nt">document</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/my_cut_in_scenario/document.yaml</span>
-<a id="__codelineno-14-16" name="__codelineno-14-16" href="#__codelineno-14-16"></a><span class="w">  </span><span class="nt">hydra_config</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/my_cut_in_scenario/conf/scenario/my_cut_in.yaml</span>
-<a id="__codelineno-14-17" name="__codelineno-14-17" href="#__codelineno-14-17"></a><span class="nt">notes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a><span class="nt">format_version</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">3</span>
+<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a><span class="nt">scenario</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">id</span><span class="p">:</span><span class="w"> </span><span class="nv">my_cut_in</span><span class="p p-Indicator">,</span><span class="nt"> title</span><span class="p">:</span><span class="w"> </span><span class="nv">Cut in</span><span class="p p-Indicator">,</span><span class="nt"> document_version</span><span class="p">:</span><span class="w"> </span><span class="nv">1</span><span class="p p-Indicator">,</span><span class="nt"> package</span><span class="p">:</span><span class="w"> </span><span class="nv">my-cut-in-scenario</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="nt">runtime</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="nv">3.12.10</span><span class="p p-Indicator">,</span><span class="nt"> uv</span><span class="p">:</span><span class="w"> </span><span class="nv">0.12.0</span><span class="p p-Indicator">,</span><span class="nt"> requires_python</span><span class="p">:</span><span class="w"> </span><span class="s">'&gt;=3.10,&lt;3.15'</span><span class="p p-Indicator">}</span>
+<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a><span class="nt">wheelhouse</span><span class="p">:</span>
+<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">  </span><span class="nt">directory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">my_cut_in_scenario_wheelhouse</span>
+<a id="__codelineno-15-6" name="__codelineno-15-6" href="#__codelineno-15-6"></a><span class="w">  </span><span class="nt">install</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">pip install --no-index --find-links my_cut_in_scenario_wheelhouse my-cut-in-scenario</span>
+<a id="__codelineno-15-7" name="__codelineno-15-7" href="#__codelineno-15-7"></a><span class="w">  </span><span class="nt">wheels</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">104</span>
+<a id="__codelineno-15-8" name="__codelineno-15-8" href="#__codelineno-15-8"></a><span class="w">  </span><span class="nt">python</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[</span><span class="s">'3.10'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.11'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.12'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.13'</span><span class="p p-Indicator">,</span><span class="w"> </span><span class="s">'3.14'</span><span class="p p-Indicator">]</span>
+<a id="__codelineno-15-9" name="__codelineno-15-9" href="#__codelineno-15-9"></a><span class="nt">autoware_carla_scenario</span><span class="p">:</span>
+<a id="__codelineno-15-10" name="__codelineno-15-10" href="#__codelineno-15-10"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">git</span>
+<a id="__codelineno-15-11" name="__codelineno-15-11" href="#__codelineno-15-11"></a><span class="w">  </span><span class="nt">repository</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">https://github.com/autowarefoundation/autoware_carla_scenario</span>
+<a id="__codelineno-15-12" name="__codelineno-15-12" href="#__codelineno-15-12"></a><span class="w">  </span><span class="nt">commit</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0123456789abcdef0123456789abcdef01234567</span>
+<a id="__codelineno-15-13" name="__codelineno-15-13" href="#__codelineno-15-13"></a><span class="w">  </span><span class="nt">subdirectory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">autoware_carla_scenario</span>
+<a id="__codelineno-15-14" name="__codelineno-15-14" href="#__codelineno-15-14"></a><span class="nt">files</span><span class="p">:</span>
+<a id="__codelineno-15-15" name="__codelineno-15-15" href="#__codelineno-15-15"></a><span class="w">  </span><span class="nt">document</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/my_cut_in_scenario/document.yaml</span>
+<a id="__codelineno-15-16" name="__codelineno-15-16" href="#__codelineno-15-16"></a><span class="w">  </span><span class="nt">hydra_config</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">src/my_cut_in_scenario/conf/scenario/my_cut_in.yaml</span>
+<a id="__codelineno-15-17" name="__codelineno-15-17" href="#__codelineno-15-17"></a><span class="nt">notes</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 </code></pre></div>
 <p>A scenario whose map is a source or a directory also lists
 <code>map_config: src/my_cut_in_scenario/conf/map/my_cut_in_map.yaml</code>, the map group it
@@ -3983,29 +4067,29 @@ viewer (<a href="../usage/">usage</a>), also refuses them:</p>
 <p>An exported scenario plugs in through the same entry point any scenario package
 uses (see <a href="../architecture/">Architecture</a>) -- installed from its wheelhouse, the
 <code>scenario</code> command is on the venv's <code>PATH</code>:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-15-1" name="__codelineno-15-1" href="#__codelineno-15-1"></a>.venv/bin/scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>my_cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
-<a id="__codelineno-15-2" name="__codelineno-15-2" href="#__codelineno-15-2"></a>
-<a id="__codelineno-15-3" name="__codelineno-15-3" href="#__codelineno-15-3"></a><span class="c1"># Sweep every lanelet the spawn constraints match:</span>
-<a id="__codelineno-15-4" name="__codelineno-15-4" href="#__codelineno-15-4"></a>.venv/bin/scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>my_cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-15-5" name="__codelineno-15-5" href="#__codelineno-15-5"></a><span class="w">    </span>hydra/sweeper<span class="o">=</span>lanelet_constraint
+<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>.venv/bin/scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>my_cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
+<a id="__codelineno-16-2" name="__codelineno-16-2" href="#__codelineno-16-2"></a>
+<a id="__codelineno-16-3" name="__codelineno-16-3" href="#__codelineno-16-3"></a><span class="c1"># Sweep every lanelet the spawn constraints match:</span>
+<a id="__codelineno-16-4" name="__codelineno-16-4" href="#__codelineno-16-4"></a>.venv/bin/scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>my_cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-16-5" name="__codelineno-16-5" href="#__codelineno-16-5"></a><span class="w">    </span>hydra/sweeper<span class="o">=</span>lanelet_constraint
 </code></pre></div>
 <p><code>map=nishishinjuku</code> is the starter's map, the scenario's <strong>Hydra map group</strong>. A
 scenario whose map is named by a source (picked from the Map library) or a
 <strong>Map directory</strong> is on no built-in group, so its package ships one of its own,
 <code>src/&lt;package&gt;/conf/map/&lt;id&gt;_map.yaml</code>, and is run with it -- the export log,
 the package's README and the Scenario inspector all name it:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-16-1" name="__codelineno-16-1" href="#__codelineno-16-1"></a>.venv/bin/scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>my_cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>my_cut_in_map
+<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>.venv/bin/scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>my_cut_in<span class="w"> </span><span class="nv">map</span><span class="o">=</span>my_cut_in_map
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a><span class="c1"># @package _global_</span>
-<a id="__codelineno-17-2" name="__codelineno-17-2" href="#__codelineno-17-2"></a><span class="nt">map</span><span class="p">:</span>
-<a id="__codelineno-17-3" name="__codelineno-17-3" href="#__codelineno-17-3"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Town10HD_Opt</span>
-<a id="__codelineno-17-4" name="__codelineno-17-4" href="#__codelineno-17-4"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@&lt;commit&gt;#autoware_maps/Town10HD_Opt</span>
-<a id="__codelineno-17-5" name="__codelineno-17-5" href="#__codelineno-17-5"></a><span class="w">  </span><span class="nt">directory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
-<a id="__codelineno-17-6" name="__codelineno-17-6" href="#__codelineno-17-6"></a><span class="w">  </span><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
-<a id="__codelineno-17-7" name="__codelineno-17-7" href="#__codelineno-17-7"></a><span class="w">  </span><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
-<a id="__codelineno-17-8" name="__codelineno-17-8" href="#__codelineno-17-8"></a><span class="w">  </span><span class="nt">projector_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
-<a id="__codelineno-17-9" name="__codelineno-17-9" href="#__codelineno-17-9"></a><span class="w">  </span><span class="nt">overwrite_xodr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
-<a id="__codelineno-17-10" name="__codelineno-17-10" href="#__codelineno-17-10"></a><span class="w">  </span><span class="nt">no_3d_model_lanelet_ids</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a><span class="c1"># @package _global_</span>
+<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a><span class="nt">map</span><span class="p">:</span>
+<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a><span class="w">  </span><span class="nt">name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">Town10HD_Opt</span>
+<a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a><span class="w">  </span><span class="nt">source</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@&lt;commit&gt;#autoware_maps/Town10HD_Opt</span>
+<a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a><span class="w">  </span><span class="nt">directory</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-18-6" name="__codelineno-18-6" href="#__codelineno-18-6"></a><span class="w">  </span><span class="nt">lanelet2_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-18-7" name="__codelineno-18-7" href="#__codelineno-18-7"></a><span class="w">  </span><span class="nt">xodr_path</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-18-8" name="__codelineno-18-8" href="#__codelineno-18-8"></a><span class="w">  </span><span class="nt">projector_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">null</span>
+<a id="__codelineno-18-9" name="__codelineno-18-9" href="#__codelineno-18-9"></a><span class="w">  </span><span class="nt">overwrite_xodr</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">false</span>
+<a id="__codelineno-18-10" name="__codelineno-18-10" href="#__codelineno-18-10"></a><span class="w">  </span><span class="nt">no_3d_model_lanelet_ids</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 </code></pre></div>
 <p>It sets every <code>map</code> key, the ones the document leaves empty as <code>null</code>. A run
 that selects a built-in group instead -- or none, which selects the default,
@@ -4019,9 +4103,9 @@ lanelet sweep alike -- and names the group to run with. So do the paths that
 search the map without running: a <code>--multirun</code> batch and <code>scenario-expand</code>
 before their sweep reads any map (<code>Error: &lt;name&gt;: ...</code>, exit 1), the viewer's
 <strong>Run</strong> of a sweep, and <code>scenario-odd route</code> (the scenario is not planned):</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>Error: scenario 'my_cut_in' runs on the map its document names, but map.name is
-<a id="__codelineno-18-2" name="__codelineno-18-2" href="#__codelineno-18-2"></a>'NishishinjukuMap', not the document's 'Town10HD_Opt'.  Run it with
-<a id="__codelineno-18-3" name="__codelineno-18-3" href="#__codelineno-18-3"></a>map=my_cut_in_map, the map group its package ships
+<div class="highlight"><pre><span></span><code><a id="__codelineno-19-1" name="__codelineno-19-1" href="#__codelineno-19-1"></a>Error: scenario 'my_cut_in' runs on the map its document names, but map.name is
+<a id="__codelineno-19-2" name="__codelineno-19-2" href="#__codelineno-19-2"></a>'NishishinjukuMap', not the document's 'Town10HD_Opt'.  Run it with
+<a id="__codelineno-19-3" name="__codelineno-19-3" href="#__codelineno-19-3"></a>map=my_cut_in_map, the map group its package ships
 </code></pre></div>
 <p>The package's <code>register()</code> registers its document with its builder
 (<code>register_scenario_document</code>), and the run compares the composed <code>map</code> with
@@ -4089,7 +4173,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 15:03:48 UTC"><span class="timeago" datetime="2026-11-06T15:03:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 15:03:48 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 16:39:16 UTC"><span class="timeago" datetime="2026-11-06T16:39:16+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 16:39:16 UTC">2026-11-06</span>
   </span>
 
     
