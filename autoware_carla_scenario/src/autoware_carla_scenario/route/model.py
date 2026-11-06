@@ -31,6 +31,7 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
+from ..config_flags import check_flag
 from ..value_text import shown
 
 __all__ = [
@@ -516,11 +517,12 @@ def parse_route_search(raw: Mapping[str, Any]) -> RouteSearchSpec:
         max_matches = DEFAULT_MAX_MATCHES
     if not 1 <= max_matches <= MAX_MATCHES_LIMIT:
         raise ValueError(f"max_matches must be between 1 and {MAX_MATCHES_LIMIT}")
-    goal = raw.get("ego_goal", True)
+    goal = raw.get("ego_goal")
     return RouteSearchSpec(
         segments=segments,
         ego_spawn_s=spawn_s,
-        ego_goal=True if goal is None else bool(goal),
+        # Strictly: "false" hands over no goal, "ture" is refused (#1756).
+        ego_goal=True if goal is None else check_flag("ego_goal", goal),
         ego_goal_margin=margin,
         match_index=match_index,
         max_matches=max_matches,

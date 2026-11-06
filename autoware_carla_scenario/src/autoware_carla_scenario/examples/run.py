@@ -2531,8 +2531,9 @@ def config_seed(cfg: DictConfig) -> int | None:
 def _check_seeds(cfg: DictConfig) -> None:
     """Refuse the run's ``seed`` and its sweep's ``odd_sample`` ``seed`` and
     ``count`` unless each is a whole number (a seed from 0 to ``2**31 - 1``,
-    a count at least 1), naming the key, as expanding the sweep and building the scenario
-    would refuse them.
+    a count at least 1), and its ``odd_sample`` ``tire_friction`` and
+    ``visibility`` unless each is true or false, naming the key, as expanding
+    the sweep and building the scenario would refuse them.
 
     Raises:
         ValueError: naming the key of the value refused.
