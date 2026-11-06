@@ -70,8 +70,13 @@ def _default_workers() -> int:
 def _check_workers(workers: Any) -> int:
     """*workers* as an ``int``: an integer (a NumPy one too, not a bool) of at
     least 1."""
+    # numpy's bool_ too: the numpy that runs on Python 3.10 still takes it
+    # as an index, with a warning (#1900).
+    is_bool = isinstance(workers, bool) or (
+        getattr(getattr(workers, "dtype", None), "kind", None) == "b"
+    )
     try:
-        count = None if isinstance(workers, bool) else operator.index(workers)
+        count = None if is_bool else operator.index(workers)
     except TypeError:
         count = None
     if count is None or count < 1:

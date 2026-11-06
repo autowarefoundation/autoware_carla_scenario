@@ -34,7 +34,7 @@ This module imports nothing but the standard library.
 from __future__ import annotations
 
 import math
-from typing import Optional
+from typing import TYPE_CHECKING, Optional
 
 __all__ = [
     "DEFAULT_SEED",
@@ -95,6 +95,12 @@ def check_whole_number(key: str, value: int) -> int:
         raise ValueError(f"{key} must be a whole number, got {value!r}")
     if isinstance(value, int):
         return int(value)
+    if TYPE_CHECKING:
+        pass
+    elif getattr(getattr(value, "dtype", None), "kind", None) == "b":
+        # numpy's bool_ (or a 0-d bool array): float() takes it as 0 or 1
+        # (#1900).
+        raise ValueError(f"{key} must be a whole number, got {value!r}")
     # A float, or a number that is no int (numpy's integers): float() takes
     # anything with __float__ or __index__, and refuses the rest (None, a
     # list) with a TypeError.
