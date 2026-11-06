@@ -572,6 +572,23 @@ class TestProbes:
         assert hits["odd.scenery.road_type"] == ["road"]
         assert hits["odd.scenery.speed_limit"] == ["[40, 50)"]
 
+    @pytest.mark.parametrize("tag", ["nan", "inf", "0", "-5"])
+    def test_a_bad_speed_limit_tag_falls_back_to_carla(
+        self, tag: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A tag that is not a finite number above 0 reads as no tag (#1798):
+        # CARLA's 50 km/h, never the tag, and no NaN in the output.
+        monkeypatch.setattr(probes, "_lanelet_tags", lambda world: {"speed_limit": tag})
+        world = _odd_world()
+        assert probes.lanelet_speed_limit_kph(world) is None
+        assert probes.speed_limit_kph(world) == 50.0
+        collector = CoverageCollector([], odd=default_odd())
+        collector.tick(world, 0.05)
+        out = collector.to_dict("S")
+        hits = {i["name"]: [b for b, n in i["hits"].items() if n] for i in out["items"]}
+        assert hits["odd.scenery.speed_limit"] == ["[50, 60)"]
+        json.dumps(out, allow_nan=False)
+
     def test_a_server_without_weather_leaves_the_weather_unknown(self) -> None:
         collector = CoverageCollector([], odd=default_odd())
         collector.tick(_odd_world(weather=None), 0.05)

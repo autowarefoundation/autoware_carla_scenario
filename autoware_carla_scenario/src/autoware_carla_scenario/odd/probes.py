@@ -41,6 +41,7 @@ it.  The others (speed, weather, traffic) have no ``on_lanelet``.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional, Union
 
@@ -439,10 +440,24 @@ def lanelet_speed_limit_kph(world: carla.World) -> Optional[float]:
     tags = _lanelet_tags(world)
     if tags is None or "speed_limit" not in tags:
         return None
+    return _speed_limit_tag(tags["speed_limit"])
+
+
+def _speed_limit_tag(tag: str) -> Optional[float]:
+    """A ``speed_limit`` tag's km/h, or None unless a finite number above 0.
+
+    A tag of ``nan``, ``inf``, ``0`` or a negative number (a hand-edited or
+    converted map) reads as no tag at all: the run falls back to CARLA's
+    limit and the map leaves the lanelet undecided, rather than counting it
+    under a bogus bucket or writing NaN to the output.
+    """
     try:
-        return float(tags["speed_limit"])
+        limit = float(tag)
     except ValueError:
         return None
+    if not math.isfinite(limit) or limit <= 0.0:
+        return None
+    return limit
 
 
 def speed_limit_kph(world: carla.World) -> Optional[float]:
@@ -672,15 +687,14 @@ def _in_junction_on_lanelet(
 def lanelet_speed_limit(lanelet: ConstLanelet) -> Optional[float]:
     """*lanelet*'s ``speed_limit`` tag in km/h, or None untagged or not a number.
 
-    What ``lanelet_speed_limit_kph`` reads off a lanelet.
+    What ``lanelet_speed_limit_kph`` reads off a lanelet.  A tag that is not
+    a finite number above 0 (``nan``, ``inf``, ``0``, ``-30``) reads as None,
+    as a missing one does.
     """
     tag = _tag(lanelet, "speed_limit")
     if tag is None:
         return None
-    try:
-        return float(tag)
-    except ValueError:
-        return None
+    return _speed_limit_tag(tag)
 
 
 def lanelet_road_type(lanelet: ConstLanelet) -> Optional[str]:
@@ -701,7 +715,8 @@ def _lanelet_speed_limit_on_lanelet(
 def _speed_limit_on_lanelet(
     lanelet: ConstLanelet, lanelet_map: LaneletMap, routing_graph: RoutingGraph
 ) -> _SpeedLimitOnLanelet:
-    # Without a tag it can read as a number, the run reads CARLA's limit,
+    # Without a tag it can read as a number (none, or one that is not a
+    # finite number above 0: _speed_limit_tag), the run reads CARLA's limit,
     # which the map cannot tell.
     limit = _lanelet_speed_limit_on_lanelet(lanelet, lanelet_map, routing_graph)
     if limit is None:
