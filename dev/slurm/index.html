@@ -2346,7 +2346,8 @@ table at the end. A case's outputs do not depend on which task ran it or when.</
    (not <code>missing</code>), and <code>wait</code> says it has no job id to follow and where to
    look for the job (and, within those 600 s, that a <code>resubmit</code> is refused);
    <code>collect</code> reports each of its cases as <code>task &lt;n&gt; of submission &lt;i&gt; never
-   started</code> with the same note, never <code>job None</code>.</li>
+   started</code> with the same note, never <code>job None</code>, and (within those 600 s)
+   that a <code>resubmit</code> is refused.</li>
 <li>By default <code>scenario</code> follows the array (<code>squeue</code>, and the outcome each task
    records) until it ends, then prints the summary and writes
    <code>batch_results.json</code>, as a local batch does, and exits 0 when every case
@@ -2464,28 +2465,37 @@ options of the others (<code>scenario-slurm &lt;command&gt; --help</code> says t
 </table>
 <p>A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as <code>ERROR</code> with a message
-saying so, and <code>collect</code> lists them. So is a case whose recorded outcome holds
-no verdict -- no <code>result</code> object, or a <code>passed</code> that is not <code>true</code> or <code>false</code>
-(<code>"false"</code> and <code>1</code> are none) -- or a result that cannot be reported: a
-<code>message</code> that is missing or not a string, an <code>elapsed_seconds</code> that is not a
-number (<code>true</code> is none), <code>condition_statuses</code> that are not a list of objects
-each with a string <code>label</code> and <code>message</code> and a boolean <code>satisfied</code>, or a
-<code>failure</code> that is not an object or cannot be read (an <code>at</code> of the wrong
-type, say). What the worker writes always is readable; <code>rerun_recording</code>
-and <code>failure</code> may be missing. It did not pass, and <code>collect</code> reports it as
-<code>ERROR</code> naming its file; a <code>rerun_error</code> the task recorded for it is kept in
-<code>batch_results.json</code>. <code>status</code>, <code>wait</code> and the viewer count it as not
-passed: the results pages show it as an error. <code>resubmit</code> submits again the
-cases with no outcome or no verdict and those that raised on every attempt
-(<code>ERROR</code>); <code>--failed</code> adds the
-ones that ran and failed, <code>--cases a,b</code> names them (labels or indices; a case
-named twice runs once), and <code>--array-parallelism</code>/<code>--cases-per-task</code> change
-how they are spread. A case run again replaces its earlier files: before it
-runs, the task removes every output of its stem (<code>run_outputs</code>), its T4
-dataset directory (<code>{stem}.t4</code>) included, so none of the last attempt's is left
-beside the new result. So <code>resubmit</code> refuses while a job of the batch is queued
-or running, while <code>squeue</code> cannot tell whether one is, or while another
-submission of the batch is in flight (<code>--force</code> submits all the same).</p>
+saying so, and <code>collect</code> lists them, saying what to do about them, chosen from
+the batch's records alone (#1803): where the case's task may still be queued
+or running (it has a job, and it has no status yet, or its status says
+<code>starting</code>, <code>waiting</code>, <code>building</code> or <code>running</code>), to wait for it with
+<code>scenario-slurm wait</code> (with <code>--submission &lt;k&gt;</code> when its submission is not the
+latest) if <code>squeue --me</code> still lists it and to <code>resubmit</code> once it has ended;
+where its submission is in flight, to try again once sbatch returns; where its
+sbatch timed out less than 600 s ago, to <code>collect</code> once the job ends if
+<code>squeue --me</code> lists it, and otherwise to <code>resubmit</code>, which is refused until
+those 600 s have passed unless with <code>--force</code>; and otherwise to <code>resubmit</code>. So
+is a case whose recorded outcome holds no verdict -- no <code>result</code> object, or a
+<code>passed</code> that is not <code>true</code> or <code>false</code> (<code>"false"</code> and <code>1</code> are none) -- or a
+result that cannot be reported: a <code>message</code> that is missing or not a string,
+an <code>elapsed_seconds</code> that is not a number (<code>true</code> is none),
+<code>condition_statuses</code> that are not a list of objects each with a string <code>label</code>
+and <code>message</code> and a boolean <code>satisfied</code>, or a <code>failure</code> that is not an object
+or cannot be read (an <code>at</code> of the wrong type, say). What the worker writes
+always is readable; <code>rerun_recording</code> and <code>failure</code> may be missing. It did not
+pass, and <code>collect</code> reports it as <code>ERROR</code> naming its file; a <code>rerun_error</code> the
+task recorded for it is kept in <code>batch_results.json</code>. <code>status</code>, <code>wait</code> and the
+viewer count it as not passed: the results pages show it as an error.
+<code>resubmit</code> submits again the cases with no outcome or no verdict and those
+that raised on every attempt (<code>ERROR</code>); <code>--failed</code> adds the ones that ran and
+failed, <code>--cases a,b</code> names them (labels or indices; a case named twice runs
+once), and <code>--array-parallelism</code>/<code>--cases-per-task</code> change how they are
+spread. A case run again replaces its earlier files: before it runs, the task
+removes every output of its stem (<code>run_outputs</code>), its T4 dataset directory
+(<code>{stem}.t4</code>) included, so none of the last attempt's is left beside the new
+result. So <code>resubmit</code> refuses while a job of the batch is queued or running,
+while <code>squeue</code> cannot tell whether one is, or while another submission of the
+batch is in flight (<code>--force</code> submits all the same).</p>
 <p>A batch directory that <code>scenario-slurm</code> cannot read or write -- a manifest it
 may not read, or shared storage mounted read-only -- is one <code>Error: ...</code> line
 naming the file, and the command exits 1, as for a directory that holds no
@@ -2907,7 +2917,7 @@ dialled by every task, as a TCP one is.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 07:14:50 UTC"><span class="timeago" datetime="2026-11-06T07:14:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 07:14:50 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 08:00:42 UTC"><span class="timeago" datetime="2026-11-06T08:00:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 08:00:42 UTC">2026-11-06</span>
   </span>
 
     
