@@ -39,13 +39,15 @@ from .environment_pin import fragment as _fragment  # noqa: F401
 from .environment_pin import normalize as _normalize
 from .environment_pin import pin as _pin
 
+# Beside a run's result: its environment, and its lock -- the checked
+# run_outputs's suffixes (#1713), re-exported under the names they had here.
+from .run_outputs import ENVIRONMENT_SUFFIX as ENVIRONMENT_SUFFIX
+from .run_outputs import LOCK_SUFFIX as LOCK_SUFFIX
+
 __all__ = ["ENVIRONMENT_SUFFIX", "LOCK_SUFFIX", "RunEnvironment", "capture", "write"]
 
 logger = logging.getLogger(__name__)
 
-#: Beside a run's result: its environment, and its lock.
-ENVIRONMENT_SUFFIX = "_environment.json"
-LOCK_SUFFIX = "_requirements.lock"
 #: Written to every environment file.
 ENVIRONMENT_SCHEMA = "autoware_carla_scenario.environment/1"
 #: The framework's own distribution.

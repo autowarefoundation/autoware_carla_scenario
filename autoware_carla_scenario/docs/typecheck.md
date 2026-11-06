@@ -2438,7 +2438,9 @@ the stem a log is of, its recording and its sensor recording, which `rerun`,
 `rerun_lidar` and `ui.web_viewer_paths` all name them with; `ui.case_paths`
 names a case's log and recording with it too; the suffixes of a run's result
 and coverage file are its too, which `scenario_runner`, `ui.case_paths`,
-`ui.scanner` and `examples/run.py` name them with, #1704), the typed core of the sensors
+`ui.scanner` and `examples/run.py` name them with, #1704; so are those of a
+run's environment and lock and of its T4Scene and map, which `environment` and
+`t4_scene.convert` re-export, #1713), the typed core of the sensors
 in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
 entities are the sensors', the parse of `rerun rrd print` and the scan of a
 recording's bytes for those entities: `rerun_sensor_mount`, #1688, #1697; not `rerun_lidar`, which holds the Rerun SDK as
