@@ -181,23 +181,30 @@ for milliseconds), so no one holding it can stall the checks, and a lock found
 replaced while it is checked or waited for is let go and the one in place
 tried instead.
 
-Only the gate's own directories (the default and the fallbacks) are ever
-changed, and every change to one is made under an exclusive lock on the
-directory itself (no one else can open it once it is `0o700`), after checking
-again what it changes, so no two builds change it at once. One that its group
-or others can use at all (as an older gate left it, `0o755`, or `0o775` under
-a umask of `002`) is made `0o700`, if it holds nothing but `gate.lock` and
-holds. On every use, the gate's files another user owns are removed from it,
-and it is used only if nothing of another user's remains and its `gate.lock`,
-if any, is a regular file of yours, so a repair that failed once keeps falling
-back. A `gate.lock` there that is not trusted (`0o644`, or a hard link, whose
-other file stays as it is) is removed and made afresh by the next build, so a
-descriptor kept on the old one no longer contends; the gate first tries for
-it for a second, so that a build of its own inside it finishes first. So is,
-once per build, a lock still held after two minutes (a descriptor opened
-before an earlier gate made it `0o600` in place). A build of an older gate, or
-one stalled inside the old lock for over that second, may then decide while
-the next build does in the fresh one: once per machine.
+Only the gate's own directories (the default and the fallbacks; a configured
+path that is one of them counts as one) are ever changed, and every removal
+from one is made under an exclusive lock on the directory itself, after
+checking again what it removes, so no two builds change it at once. The
+gate's builds hold that lock for microseconds. No one else can open the
+directory once it is `0o700`, but a descriptor someone opened while it was
+open to others survives; if the lock cannot be taken within a second, the
+process gives that directory up for good and falls back to the next one, so
+its builds stay gated. One that its group or others can use at all (as an
+older gate left it, `0o755`, or `0o775` under a umask of `002`) is made
+`0o700`, if it holds nothing but `gate.lock` and holds. On every use, the
+gate's files another user owns are removed from it, and it is used only if
+nothing of another user's remains and its `gate.lock`, if any, is a regular
+file of yours, so a repair that failed once keeps falling back. A `gate.lock`
+there that is not trusted (`0o644`, or a hard link, whose other file stays as
+it is) is removed and made afresh by the next build, so a descriptor kept on
+the old one no longer contends; the gate first tries for it for a second, so
+that a build of its own inside it finishes first. So is, once per build, a
+lock still held after two minutes (a descriptor opened before an earlier gate
+made it `0o600` in place). A build that finds the lock replaced while it
+waits waits afresh for the new one, at most twice, so no build waits more
+than about six minutes in all. A build of an older gate, or one stalled
+inside the old lock for over that second, may then decide while the next
+build does in the fresh one: once per machine.
 
 A directory set with `AUTOWARE_CARLA_SCENARIO_CODON_GATE` must be private in
 the same way (yours, mode `0o700` or at least not group- or other-writable),

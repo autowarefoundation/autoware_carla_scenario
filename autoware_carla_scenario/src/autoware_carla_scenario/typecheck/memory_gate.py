@@ -30,10 +30,14 @@ A lock found replaced while it is checked is let go and the one in place
 tried instead.
 
 Only the gate's own directories (the default and the fallbacks) are ever
-changed, and every change to one -- its repair, removing what other users
-own, removing a lock that is not trusted -- is made under an exclusive lock
-on the directory itself (no one else can open it once it is private), after
-checking again what it changes, so no two builds change it at once.  One its
+changed (a configured path that is one of them counts as one), and every
+removal from one -- of what other users own, of a lock that is not trusted
+-- is made under an exclusive lock on the directory itself, after checking
+again what it removes, so no two builds change it at once.  The gate's builds
+hold that lock for microseconds; no one else can open the directory once it
+is 0o700, but a descriptor opened while it was open to others survives, so
+one that cannot take it within :data:`_REPLACE_WAIT_S` is given up for the
+rest of the process, which falls back to the next directory.  One its
 group or others may use (an older gate's 0o755) is made 0o700, if it holds
 nothing but the gate's files; on every use the gate's files other users own
 are removed from it, and it is used only if nothing of another user's
@@ -43,7 +47,11 @@ hard link) is removed -- after trying for it for :data:`_REPLACE_WAIT_S`, so
 a build inside it finishes first -- and made afresh by the next build, so a
 descriptor someone kept on the old one no longer contends; so is, once per
 build, one held for over :data:`LOCK_TIMEOUT_S` (through a descriptor opened
-before it was made private).  A configured directory is never changed but
+before it was made private); a build that finds the lock replaced while it
+waits gets a fresh :data:`LOCK_TIMEOUT_S` for the new one, at most
+:data:`_DEADLINE_RESETS` times, so it waits at most about
+``(1 + _DEADLINE_RESETS) * LOCK_TIMEOUT_S`` in all.  A configured directory
+is never changed but
 for the gate's lock and holds created in it and holds removed from it (of
 builds that died, of other users): a lock there that is not trusted runs the
 build ungated, as does one held for over :data:`LOCK_TIMEOUT_S`, after which
@@ -123,6 +131,17 @@ _REPLACE_WAIT_S = 1.0
 #: How often a build waiting for the lock checks it was not replaced (s).
 _NAMES_CHECK_S = 0.5
 
+#: How many times a build's wait starts afresh because the lock was replaced.
+_DEADLINE_RESETS = 2
+
+#: How long a build pauses before it tries a lock it found replaced (s).
+_RETRY_S = 0.002
+
+#: The gate's own directories whose lock this process could not take in time
+#: (:func:`_dir_locked`): given up on, for the next fallback.
+_FORSAKEN: set[str] = set()
+_FORSAKEN_LOCK = threading.Lock()
+
 #: Set while the last try of this process for a configured directory's lock
 #: timed out: later builds there then try for it only for
 #: :data:`_REPLACE_WAIT_S` before they run ungated; cleared once one takes it.
@@ -157,7 +176,8 @@ def gate_dir() -> Path | None:
     *directory*) is held to the same rule as the default: :func:`admitted`
     uses it only if it is a private directory of this user's, and falls back
     otherwise -- without ever changing it, or anything in it but the gate's
-    own lock and holds."""
+    own lock and holds.  A configured path that is the default directory or
+    a fallback is treated as the gate's own (repaired and cleared)."""
     configured = os.environ.get(GATE_ENV, "")
     if configured == "0":
         return None
@@ -211,34 +231,51 @@ def admitted(
     if configured is None:
         yield
         return
-    gate = _private_dir(configured)
-    if gate is None:
-        yield  # no private directory to gate in: run ungated (warned)
-        return
-    where, dir_fd, own = gate
-    try:
-        name = f"{os.getpid()}-{threading.get_ident()}-{next(_COUNTER)}.hold"
-        try:
-            recorded = _wait_for_room(fcntl, dir_fd, own, name, need, budget, sleep)
-        except (OSError, ValueError) as error:  # ValueError: a file's contents
-            _warn(f"Codon memory gate: {where}: {error}; the build runs ungated")
-            recorded = False
-        if not recorded:
-            yield  # the gate failed (warned): run ungated
+    while True:  # once more for each directory given up on (_DirectoryHeld)
+        gate = _private_dir(configured)
+        if gate is None:
+            yield  # no private directory to gate in: run ungated (warned)
             return
+        where, dir_fd, own = gate
         try:
-            yield
-        finally:
-            # Never masks what the block raised: a failure here is only logged.
+            name = f"{os.getpid()}-{threading.get_ident()}-{next(_COUNTER)}.hold"
             try:
-                os.unlink(name, dir_fd=dir_fd)
-            except FileNotFoundError:
-                pass
-            except OSError as error:
-                _warn(f"Codon memory gate: cannot remove {where / name} ({error})")
-    finally:
-        with suppress(OSError):
-            os.close(dir_fd)
+                recorded = _wait_for_room(fcntl, dir_fd, own, name, need, budget, sleep)
+            except _DirectoryHeld as error:
+                _forsake(where, error)
+                continue
+            except (OSError, ValueError) as error:  # ValueError: a file's contents
+                _warn(f"Codon memory gate: {where}: {error}; the build runs ungated")
+                recorded = False
+            if not recorded:
+                yield  # the gate failed (warned): run ungated
+                return
+            try:
+                yield
+            finally:
+                # Never masks what the block raised: a failure here is logged.
+                try:
+                    os.unlink(name, dir_fd=dir_fd)
+                except FileNotFoundError:
+                    pass
+                except OSError as error:
+                    _warn(f"Codon memory gate: cannot remove {where / name} ({error})")
+            return
+        finally:
+            with suppress(OSError):
+                os.close(dir_fd)
+
+
+class _DirectoryHeld(TimeoutError):
+    """The lock of one of the gate's own directories was not taken in time."""
+
+
+def _forsake(where: Path, error: OSError) -> None:
+    """Give up on the gate's own directory *where* for the rest of the
+    process (its lock is held elsewhere: *error*)."""
+    with _FORSAKEN_LOCK:
+        _FORSAKEN.add(str(where))
+    _warn(f"Codon memory gate: not using {where} any more ({error})")
 
 
 def _wait_for_room(
@@ -298,9 +335,18 @@ def _take_lock(fcntl: ModuleType, dir_fd: int, own: bool) -> int:
     directory, the first raises :class:`PermissionError`, and the second
     :class:`TimeoutError`, as does one still held after
     :data:`_REPLACE_WAIT_S` once a build of this process has timed out there
-    (:data:`_LOCK_TIMED_OUT`)."""
+    (:data:`_LOCK_TIMED_OUT`).
+
+    A lock found replaced (by another build, or removed here) starts the wait
+    afresh, for the new lock, at most :data:`_DEADLINE_RESETS` times: the
+    whole wait is bounded by ``(1 + _DEADLINE_RESETS)`` times the window
+    (:data:`LOCK_TIMEOUT_S`, or the shorter one above), plus a second for
+    each untrusted lock let finish.  Raises :class:`_DirectoryHeld` when the
+    directory's own lock cannot be taken (:func:`_dir_locked`)."""
     flagged = not own and _LOCK_TIMED_OUT.is_set()
-    deadline = time.monotonic() + (_REPLACE_WAIT_S if flagged else LOCK_TIMEOUT_S)
+    window = _REPLACE_WAIT_S if flagged else LOCK_TIMEOUT_S
+    deadline = time.monotonic() + window
+    resets = 0
     dropped = False
     while True:
         fd = os.open(
@@ -309,6 +355,7 @@ def _take_lock(fcntl: ModuleType, dir_fd: int, own: bool) -> int:
             0o600,
             dir_fd=dir_fd,
         )
+        replaced = True  # unless it is taken, or found held too long
         try:
             info = os.fstat(fd)
             if info.st_nlink == 0 or not _names_lock(dir_fd, info):
@@ -332,7 +379,6 @@ def _take_lock(fcntl: ModuleType, dir_fd: int, own: bool) -> int:
                 # before an earlier gate made it 0o600 in place.
                 _drop_lock(fcntl, dir_fd, fd, info, None)
                 dropped = True
-                deadline = time.monotonic() + LOCK_TIMEOUT_S
             else:
                 raise _timed_out(own, flagged)
         except BaseException:
@@ -340,8 +386,13 @@ def _take_lock(fcntl: ModuleType, dir_fd: int, own: bool) -> int:
                 os.close(fd)
             raise
         os.close(fd)
+        if replaced and resets < _DEADLINE_RESETS:
+            # A new lock: wait for it afresh (bounded: see the docstring).
+            resets += 1
+            deadline = max(deadline, time.monotonic() + window)
         if time.monotonic() >= deadline:
             raise _timed_out(own, flagged)
+        time.sleep(_RETRY_S)
 
 
 def _timed_out(own: bool, flagged: bool) -> TimeoutError:
@@ -389,13 +440,14 @@ def _names_lock(dir_fd: int, info: os.stat_result) -> bool:
 @contextmanager
 def _dir_locked(fcntl: ModuleType, dir_fd: int) -> Iterator[None]:
     """Hold the exclusive lock on the gate's own directory *dir_fd*, which
-    every change to it is made under; raises :class:`TimeoutError` if it is
-    not taken within :data:`LOCK_TIMEOUT_S` (held through a descriptor of
-    the directory someone opened while it was open to others)."""
-    if not _try_lock(fcntl, dir_fd, time.monotonic() + LOCK_TIMEOUT_S):
-        raise TimeoutError(
+    every removal from it is made under (for microseconds); raises
+    :class:`_DirectoryHeld` if it is not taken within :data:`_REPLACE_WAIT_S`
+    -- held through a descriptor of the directory someone opened while it was
+    open to others, so the directory is given up on (:func:`_forsake`)."""
+    if not _try_lock(fcntl, dir_fd, time.monotonic() + _REPLACE_WAIT_S):
+        raise _DirectoryHeld(
             errno.ETIMEDOUT,
-            f"the gate's directory held elsewhere for over {LOCK_TIMEOUT_S:g} s",
+            f"its lock held elsewhere for over {_REPLACE_WAIT_S:g} s",
         )
     try:
         yield
@@ -409,14 +461,14 @@ def _drop_lock(
     """Remove ``gate.lock`` -- the file *fd*, which *info* describes -- from
     the gate's own directory *dir_fd*, so the next build makes it afresh; but
     only if it still names that file, checked under the directory's lock,
-    which every change to it is made under.  It is tried for first, for
+    which every removal from it is made under.  It is tried for first, for
     *wait* (``None``: not at all), so that a build inside it finishes first;
     a build that waited for it then finds it replaced and takes the new one.
     A build inside it for longer (a gate stalled for over *wait*, or an
     older gate's) may decide while the next build in the fresh one does."""
+    if wait is not None:
+        _try_lock(fcntl, fd, time.monotonic() + wait)  # outside: keep it short
     with _dir_locked(fcntl, dir_fd):
-        if wait is not None:
-            _try_lock(fcntl, fd, time.monotonic() + wait)
         if _names_lock(dir_fd, info):
             os.unlink("gate.lock", dir_fd=dir_fd)
 
@@ -467,8 +519,9 @@ def _private_dir(configured: Path) -> tuple[Path, int, bool] | None:
     user's; else the first per-user fallback that is; else ``None``.  With
     the directory comes a descriptor of it, which every later use of the
     directory goes through, so it cannot be swapped once checked, and whether
-    it is one of the gate's own."""
-    own = configured == _default_dir()
+    it is one of the gate's own (*configured* is when it is the default or a
+    fallback path, however it was given)."""
+    own = configured == _default_dir() or configured in _fallback_dirs()
     opened = _open_private(configured, own=own)
     if isinstance(opened, int):
         return configured, opened, own
@@ -503,6 +556,9 @@ def _open_private(where: Path, *, own: bool) -> int | str:
     nothing of another user's survives and its ``gate.lock``, if any, is a
     regular file of this user's: a repair that failed once is not trusted the
     next time."""
+    with _FORSAKEN_LOCK:
+        if str(where) in _FORSAKEN:
+            return "its lock was held elsewhere earlier in this process"
     try:
         where.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd = os.open(where, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -524,6 +580,9 @@ def _open_private(where: Path, *, own: bool) -> int | str:
             problem = _clear(fd)
         else:
             problem = ""
+    except _DirectoryHeld as error:
+        _forsake(where, error)
+        problem = str(error)
     except (OSError, ValueError) as error:
         problem = f"cannot be checked or made private ({error})"
     if not problem:

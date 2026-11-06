@@ -41,6 +41,7 @@ def _budget(n: int):  # type: ignore[no-untyped-def]
 def _no_earlier_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
     """Each test starts as a process whose builds never timed out on a lock."""
     monkeypatch.setattr(memory_gate, "_LOCK_TIMED_OUT", threading.Event())
+    monkeypatch.setattr(memory_gate, "_FORSAKEN", set())
 
 
 def test_the_need_grows_with_the_source() -> None:
@@ -1192,3 +1193,55 @@ def test_after_a_timeout_builds_in_the_gate_s_own_directory_are_all_gated(
     assert crowd.gated and all(crowd.gated)
     assert crowd.most == 1
     assert not fallbacks.exists()
+
+
+def test_builds_waiting_out_a_stuck_lock_together_all_take_the_fresh_one(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Made 0o600 in place by an earlier gate while someone held it open: the
+    # build that removes it, and every other one that waited as long, are
+    # gated with the fresh lock -- one at a time.
+    monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(memory_gate, "_NAMES_CHECK_S", 0.05)
+    default_gate.mkdir(mode=0o700)
+    fd = _hold_lock(default_gate / "gate.lock")
+    try:
+        crowd = _Crowd(default_gate, inside_s=0.005)
+        began = time.monotonic()
+        crowd.run(6, crowd.build)
+        assert time.monotonic() - began < 0.5 * (1 + memory_gate._DEADLINE_RESETS)
+    finally:
+        os.close(fd)
+    assert crowd.gated == [True] * 6
+    assert crowd.most == 1
+    assert not fallbacks.exists()
+
+
+def test_the_gate_s_own_directory_whose_lock_is_held_elsewhere_is_given_up(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Someone kept a descriptor of the directory from before it was private,
+    # and locks it: the builds fall back -- once after a short wait, then at
+    # once -- rather than run ungated.
+    monkeypatch.setattr(memory_gate, "_REPLACE_WAIT_S", 0.2)
+    default_gate.mkdir(mode=0o700)
+    lock = default_gate / "gate.lock"
+    lock.write_text("")
+    lock.chmod(0o644)  # to be removed, under the directory's lock
+    held = os.open(default_gate, os.O_RDONLY | os.O_DIRECTORY)
+    fcntl.flock(held, fcntl.LOCK_EX)
+    try:
+        crowd = _Crowd(fallbacks)
+        began = time.monotonic()
+        crowd.build()
+        assert time.monotonic() - began < 2.0
+        began = time.monotonic()
+        crowd.build()
+        assert time.monotonic() - began < 0.15  # given up on: not tried again
+        crowd.run(6, crowd.build)
+    finally:
+        os.close(held)
+    assert crowd.gated == [True] * 8  # gated, in the fallback
+    assert crowd.most == 1
+    assert (lock.stat().st_mode & 0o777) == 0o644  # left as it was
+    assert not list(default_gate.glob("*.hold"))
