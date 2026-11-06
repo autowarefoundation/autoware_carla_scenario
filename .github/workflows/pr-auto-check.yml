@@ -38,9 +38,13 @@ jobs:
 
       - name: Display changed workflow files
         if: steps.changed-workflows.outputs.has_changes == 'true'
+        # Through the environment, not `${{ }}` in the script: a file name is
+        # text a pull request chooses, and `$(...)` in one would run (#1895).
+        env:
+          CHANGED_FILES: ${{ steps.changed-workflows.outputs.changed_files }}
         run: |
           echo "Changed workflow files:"
-          echo "${{ steps.changed-workflows.outputs.changed_files }}"
+          printf '%s\n' "${CHANGED_FILES}"
 
       - name: Install actionlint
         if: steps.changed-workflows.outputs.has_changes == 'true'
@@ -50,9 +54,11 @@ jobs:
 
       - name: Run actionlint on changed workflows
         if: steps.changed-workflows.outputs.has_changes == 'true'
+        env:
+          CHANGED_FILES: ${{ steps.changed-workflows.outputs.changed_files }}
         run: |
           echo "Running actionlint on changed workflow files..."
-          echo "${{ steps.changed-workflows.outputs.changed_files }}" | tr '\n' '\0' | xargs -0 -I {} ./actionlint {}
+          printf '%s\n' "${CHANGED_FILES}" | tr '\n' '\0' | xargs -0 -I {} ./actionlint {}
 
       - name: Summary
         if: steps.changed-workflows.outputs.has_changes == 'false'

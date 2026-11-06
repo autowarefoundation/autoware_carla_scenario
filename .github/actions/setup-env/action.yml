@@ -1,6 +1,6 @@
 name: Setup Environment
 description: >
-  Common CI environment setup: Python, uv, an optional 'uv sync --dev', and
+  Common CI environment setup: Python, uv, an optional 'uv sync' (with or without the dev group), and
   optional pre-commit execution. Every dependency installs from a wheel, so
   there is no apt step and no compiler in the loop.
 
@@ -13,7 +13,7 @@ inputs:
     # The 'test' job overrides it per matrix entry to cover the whole range.
     default: "3.12"
   install-dev-deps:
-    description: Run 'uv sync --dev' to install Python dependencies
+    description: Run 'uv sync' to install Python dependencies
     required: false
     default: "true"
   run-precommit:
@@ -92,7 +92,9 @@ runs:
         # wins and the rest restore a cache full of another interpreter's
         # wheels, then re-download most of the closure. uv's cache is per wheel
         # tag, so the interpreter is the part that has to be in the key.
-        cache-suffix: ${{ inputs.python-version }}-${{ steps.uv-lock.outputs.digest }}
+        # The dev group too: a job without it saves a smaller cache, which a
+        # job with it would otherwise restore under the same key.
+        cache-suffix: ${{ inputs.python-version }}-${{ inputs.sync-dev-group == 'true' && 'dev' || 'nodev' }}-${{ steps.uv-lock.outputs.digest }}
 
     - name: Install Python dependencies
       if: inputs.install-dev-deps == 'true'
@@ -101,11 +103,13 @@ runs:
         SYNC_DEV_GROUP: ${{ inputs.sync-dev-group }}
       run: |
         set -euo pipefail
-        args=()
+        # A bare 'uv sync' already installs the dev group: only '--no-dev'
+        # leaves it out (#1895).
         if [ "${SYNC_DEV_GROUP}" = "true" ]; then
-          args+=(--dev)
+          uv sync --dev
+        else
+          uv sync --no-dev
         fi
-        uv sync ${args[@]+"${args[@]}"}
 
     - name: Run pre-commit hooks
       if: inputs.run-precommit == 'true' && inputs.precommit-continue-on-error == 'false'

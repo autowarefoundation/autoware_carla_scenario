@@ -444,12 +444,13 @@ jobs:
       with:
         install-dev-deps: "true"
         # The job only runs one console script; the dev group (mkdocs,
-        # weasyprint, mypy, ...) would be installed and never touched.
+        # weasyprint, mypy, ...) would be installed and never touched. Its
+        # 'uv run's pass --no-dev too: a bare one syncs the group back in.
         sync-dev-group: "false"
         run-precommit: "false"
 
     - name: Scaffold a scenario package
-      run: uv run scenario-new ci_probe_package --output-dir "${RUNNER_TEMP}/packages"
+      run: uv run --no-dev scenario-new ci_probe_package --output-dir "${RUNNER_TEMP}/packages"
 
     - name: Pack it into an image
       uses: ./.github/actions/pack-scenario-image
@@ -471,7 +472,7 @@ jobs:
     # every consumer starts pulling the whole virtualenv again, and nothing
     # else in this suite would notice.
     - name: Scaffold a second scenario package
-      run: uv run scenario-new ci_probe_variant --output-dir "${RUNNER_TEMP}/packages"
+      run: uv run --no-dev scenario-new ci_probe_variant --output-dir "${RUNNER_TEMP}/packages"
 
     - name: Pack the second package
       uses: ./.github/actions/pack-scenario-image
