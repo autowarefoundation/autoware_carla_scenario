@@ -8,7 +8,8 @@ A Hydra override (``rerun.enabled=false``, quoted or not) or an
 1 and 0, and refuses anything else (a float, a list, null, other text) with a
 one-line ``ValueError`` naming the key.  The ``launcher.*`` switches of a
 SLURM run (``slurm.settings``) and the run's ``rerun``, ``t4``, ``t4scene``
-and ``background_traffic`` switches (``examples.run``) are read with it, as
+and ``background_traffic`` switches, ``autoware.launcher.rosdep`` and
+``metrics.heavy`` (``examples.run``, #1761) are read with it, as
 are ``sweep.odd_sample``'s ``tire_friction`` and ``visibility``
 (``odd.sampler``), a route search's ``ego_goal`` (``route.model``, #1756),
 the traffic options' (``traffic.sumo.config``, ``traffic.fidelity``),

@@ -152,8 +152,8 @@ class DockerAutowareConfig:
             :data:`BuildPolicy`, ``launch``, ``colcon_args`` or
             ``docker_args`` is a ``str`` (or ``bytes``) rather than a sequence
             of arguments, ``launch`` is empty, ``stop_timeout_s`` is not
-            positive and finite, or a ``ros_domain_ids`` entry is a boolean or
-            outside 0 to 232.
+            positive and finite, a ``ros_domain_ids`` entry is a boolean or
+            outside 0 to 232, or ``rosdep`` is not a ``bool``.
     """
 
     workspace: Path
@@ -206,6 +206,11 @@ class DockerAutowareConfig:
                     f"to {MAX_ROS_DOMAIN_ID}, got {domain_id}"
                 )
         _check_stop_timeout_s(self.stop_timeout_s)
+        # Read by truthiness (it runs rosdep and feeds the image's hash): a
+        # "false" would run it.  The run's config reads its spellings
+        # strictly (config_flags.check_flag) before it gets here (#1761).
+        if not isinstance(self.rosdep, bool):
+            raise ValueError(f"rosdep must be true or false, got {self.rosdep!r}")
 
 
 class DockerAutowareLauncher:
