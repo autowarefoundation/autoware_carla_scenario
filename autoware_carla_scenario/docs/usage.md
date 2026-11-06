@@ -1275,7 +1275,9 @@ collects it. A sweep runs every case before it exits, so 1 means at least
 one case failed; the summary names how many. A refusal ends a sweep at once
 with 2, since every case after it would be refused too. A run with no case
 to run (nothing expanded, or `--resume-from` past the last case) exits 1:
-exit 0 always means something ran and passed. The exceptions:
+exit 0 always means something ran and passed. In a lanelet sweep, a case
+whose result JSON is unreadable or has no boolean `passed` (a missing key,
+`"false"`, `1`) has no verdict and counts as failed. The exceptions:
 
 - Under Hydra's own sweeper (`scenario --multirun key=a,b`, no
   `hydra/sweeper=`), a case that raises an exception ends the sweep at once
