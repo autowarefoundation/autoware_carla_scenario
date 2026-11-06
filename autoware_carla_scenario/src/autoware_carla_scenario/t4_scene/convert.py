@@ -527,9 +527,10 @@ def _fill_metadata(scene: pb.T4Scene, log: _Log, stem: str) -> None:
     if log.map is not None and log.map.get("name"):
         metadata.tags.append(f"map:{log.map['name']}")
     if log.result is not None:
-        metadata.tags.append(
-            "result:passed" if log.result.get("passed") else "result:failed"
-        )
+        # Only a JSON true is a pass: bool("false") would tag a failed run
+        # as passed.
+        passed = log.result.get("passed") is True
+        metadata.tags.append("result:passed" if passed else "result:failed")
 
 
 def _fill_ego(

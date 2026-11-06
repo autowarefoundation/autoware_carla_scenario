@@ -152,6 +152,35 @@ def test_ego_is_its_rear_axle_in_the_map_frame(tmp_path: Path) -> None:
     assert not shape.HasField("wheel_base")
 
 
+@pytest.mark.parametrize(
+    ("passed", "tag"),
+    [
+        (True, "result:passed"),
+        (False, "result:failed"),
+        ("false", "result:failed"),
+        ("true", "result:failed"),
+        (1, "result:failed"),
+        ([0], "result:failed"),
+        (None, "result:failed"),
+    ],
+)
+def test_only_a_boolean_true_tags_the_scene_passed(
+    tmp_path: Path, passed: Any, tag: str
+) -> None:
+    # bool("false") is True: a truthy value must not tag a run as passed.
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        _tick(100, _state(1, 10.0, 20.0)),
+        {"type": "result", "passed": passed},
+    )
+    tags = list(
+        trajectory_log_to_t4_scene(log, with_map=False).scene.scene_metadata.tags
+    )
+    assert tag in tags
+    assert [t for t in tags if t.startswith("result:")] == [tag]
+
+
 def test_ego_velocity_flips_y_and_speed_is_along_the_heading(tmp_path: Path) -> None:
     # CARLA -y: the map's +y, the way it faces.
     state = _state(1, 0.0, 0.0, yaw=-90.0, vy=-5.0)

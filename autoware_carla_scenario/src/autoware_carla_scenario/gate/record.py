@@ -213,7 +213,9 @@ class GateRecord:
             ValueError: If *raw* is not a gate record of this format: another
                 schema, no ``gate`` object, or a part that is not of its JSON
                 type (``case``, ``outcome``, ``files`` and ``ego`` objects,
-                the ego's rows arrays).
+                the ego's rows arrays), or an outcome whose ``passed`` is not
+                a JSON boolean (missing, ``"false"``, ``0``, ...: counting it
+                as a pass or a failure would guess the run's result).
         """
         if not isinstance(raw, dict):
             raise ValueError("not a gate record (not a JSON object)")
@@ -248,6 +250,14 @@ class GateRecord:
                     "lateral offset or speed)"
                 )
             rows.append((values[0], values[1], values[2], values[3]))
+        passed = outcome.get("passed")
+        if not isinstance(passed, bool):
+            # bool("false") and bool([0]) are True: a run is passed only by a
+            # JSON true, as to_dict() writes it, never by a truthy value.
+            raise ValueError(
+                f"outcome 'passed' is not a JSON boolean ({passed!r}, "
+                f"{type(passed).__name__})"
+            )
         category = outcome.get("failure_category")
         return cls(
             scenario=str(raw.get("scenario") or ""),
@@ -255,7 +265,7 @@ class GateRecord:
             digest=str(raw.get("digest") or ""),
             gate=dict(gate),
             case=GateCase.from_dict(case),
-            passed=bool(outcome.get("passed")),
+            passed=passed,
             message=str(outcome.get("message") or ""),
             elapsed_seconds=float(outcome.get("elapsed_seconds") or 0.0),
             failure_category=None if category is None else str(category),
