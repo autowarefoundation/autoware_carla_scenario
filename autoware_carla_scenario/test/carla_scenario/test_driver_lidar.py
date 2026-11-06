@@ -95,6 +95,26 @@ def test_lidar_config_rejects_non_finite_numbers(field: str, value: float) -> No
         DriverLidarConfig(**changes)
 
 
+@pytest.mark.parametrize("rate", [45, 45.0, -0.1, 1.01])
+def test_a_dropoff_rate_that_is_no_fraction_is_refused(rate: float) -> None:
+    """CARLA drops that fraction of points: 45 emptied every sweep and a
+    negative rate dropped none, both silently (#1767)."""
+    match = r"^LiDAR dropoff_general_rate must be in \[0, 1\], got "
+    with pytest.raises(ValueError, match=match):
+        DriverLidarConfig(dropoff_general_rate=rate)
+    with pytest.raises(ValueError, match=match):
+        DriverClientConfig.from_mapping({"lidars": [{"dropoff_general_rate": rate}]})
+
+
+@pytest.mark.parametrize("rate", [0, 0.0, 0.45, 1, 1.0])
+def test_a_dropoff_rate_from_0_to_1_is_accepted(rate: float) -> None:
+    assert DriverLidarConfig(dropoff_general_rate=rate).dropoff_general_rate == rate
+    config = DriverClientConfig.from_mapping(
+        {"lidars": [{"dropoff_general_rate": rate}]}
+    )
+    assert config.lidars[0].dropoff_general_rate == rate
+
+
 @pytest.mark.parametrize("field", ["channels", "points_per_second", "noise_seed"])
 def test_a_nan_from_yaml_in_an_int_field_is_refused(field: str) -> None:
     """``checked_options`` does not coerce, so ``channels: .nan`` arrives a float."""
