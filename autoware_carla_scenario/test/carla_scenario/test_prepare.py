@@ -823,6 +823,96 @@ class TestDockerThatStopsAnswering:
         assert backend._container == "c0ffee"
 
 
+class TestDockerThatCannotBeRun:
+    """An OSError from docker (a removed binary, a fork that fails with
+    EMFILE or ENOMEM) is a :class:`BackendError`, and the container started
+    is removed (#1790)."""
+
+    @staticmethod
+    def _failing_run(recorded: _Docker, command: str) -> Any:
+        def run(argv: list[str], **kwargs: Any) -> Any:
+            if argv[1] == command:
+                raise OSError(24, "Too many open files")
+            return recorded(argv, **kwargs)
+
+        return run
+
+    def test_an_inspect_that_cannot_run_fails_the_start_and_closes(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        recorded = _Docker()
+        monkeypatch.setattr(
+            docker_module.subprocess, "run", self._failing_run(recorded, "inspect")
+        )
+        closed: list[str] = []
+        close = _Answering.close
+
+        def counted(backend: _Answering) -> None:
+            closed.append(backend.name)
+            close(backend)
+
+        monkeypatch.setattr(_Answering, "close", counted)
+
+        @need_prepare(_Answering)
+        class Scenario:
+            pass
+
+        pool = BackendPool({}, check_resources=False)
+        with pytest.raises(docker_module.BackendError, match="Too many open files"):
+            pool.prepare_scenarios([Scenario()])
+        assert closed == ["ardy"]
+        assert ["docker", "rm", "--force", "c0ffee"] in recorded.calls
+        assert pool.backend("ardy") is None
+
+    def test_a_log_that_cannot_be_read_is_a_note(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        recorded = _Docker()
+        monkeypatch.setattr(
+            docker_module.subprocess, "run", self._failing_run(recorded, "logs")
+        )
+        backend = _silent_backend("docker", 0.0)
+        assert backend._tail() == (
+            "(no log: could not run docker: [Errno 24] Too many open files)"
+        )
+        with pytest.raises(docker_module.BackendError, match="did not answer") as err:
+            backend._wait_ready()
+        assert "(no log: could not run docker" in str(err.value)
+        assert backend._container is None
+
+    def test_a_log_follower_that_cannot_start_fails_the_start_and_closes(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        recorded = _Docker()
+        monkeypatch.setattr(docker_module.subprocess, "run", recorded)
+
+        def popen(*args: Any, **kwargs: Any) -> Any:
+            raise OSError(12, "Cannot allocate memory")
+
+        monkeypatch.setattr(docker_module.subprocess, "Popen", popen)
+        started: list[_Answering] = []
+        start = _Answering.start
+
+        def recorded_start(backend: _Answering, *args: Any) -> None:
+            started.append(backend)
+            start(backend, *args)
+
+        monkeypatch.setattr(_Answering, "start", recorded_start)
+
+        @need_prepare(_Answering)
+        class Scenario:
+            pass
+
+        pool = BackendPool({}, check_resources=False)
+        with pytest.raises(docker_module.BackendError, match="follow the log"):
+            pool.prepare_scenarios([Scenario()], log_dir=tmp_path)
+        assert ["docker", "rm", "--force", "c0ffee"] in recorded.calls
+        (backend,) = started
+        assert backend._container is None
+        assert backend._log is None
+        assert pool.backend("ardy") is None
+
+
 class TestQueue:
     def test_a_scenario_added_after_the_start_is_prepared_then(
         self, tmp_path: Path

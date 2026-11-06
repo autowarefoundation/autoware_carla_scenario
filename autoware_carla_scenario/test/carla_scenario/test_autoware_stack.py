@@ -35,6 +35,8 @@ from autoware_carla_scenario.autoware_stack import (
     read_devcontainer,
 )
 
+from autoware_carla_scenario.autoware_stack import docker as docker_module
+
 from ._stale_pids import signal_group, signal_unreaped_group
 
 
@@ -382,6 +384,13 @@ args = sys.argv[1:]
 with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
     log.write(json.dumps(args) + "\\n")
 
+# A daemon that stops answering (#1790): the commands that start with one of
+# FAKE_DOCKER_HANGS (comma-separated) sleep here, in this process, for a
+# bounded time -- subprocess.run() kills this process on its timeout.
+for hang in filter(None, os.environ.get("FAKE_DOCKER_HANGS", "").split(",")):
+    if " ".join(args).startswith(hang):
+        time.sleep(30)
+
 if args[0] == "ps":
     print(os.environ.get("FAKE_DOCKER_PS", ""))
 elif args[:2] == ["image", "inspect"]:
@@ -604,6 +613,88 @@ def test_docker_launcher_starts_and_removes_a_container_per_scenario(
 
     assert len(set(names)) == 3
     assert launcher.poll() is None
+
+
+def test_a_docker_rm_that_hangs_does_not_hang_stop(
+    tmp_path: Path,
+    fake_docker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A stuck daemon: stop()'s `docker rm --force` is given up on with a
+    # warning, and the batch goes on to its next scenario (#1790).
+    docker, calls = fake_docker
+    monkeypatch.setattr(docker_module, "_DOCKER_TIMEOUT_S", 1.0)
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    launcher = _docker_launcher(ws, docker)
+    launcher.start(name="x", bridge_address="localhost:1")
+    try:
+        _wait_for(lambda: len(_stack_runs(calls())) == 1)
+        # Only now: the dependency image's own cleanup removes a container.
+        monkeypatch.setenv("FAKE_DOCKER_HANGS", "rm")
+        began = time.monotonic()
+        launcher.stop()
+        assert time.monotonic() - began < 2.0 + 15.0
+    finally:
+        launcher.close()
+    assert any(c[:2] == ["rm", "--force"] for c in calls())
+    assert "did not finish within 1 s" in caplog.text
+    assert launcher._container_name is None
+
+
+def test_a_docker_ps_that_hangs_warns_instead_of_hanging_prepare(
+    tmp_path: Path,
+    fake_docker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The leftover containers' removal is best effort: a `docker ps` that does
+    # not answer is logged and prepare() goes on (#1790).
+    docker, calls = fake_docker
+    monkeypatch.setattr(docker_module, "_DOCKER_TIMEOUT_S", 1.0)
+    monkeypatch.setenv("FAKE_DOCKER_HANGS", "ps")
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    began = time.monotonic()
+    _docker_launcher(ws, docker).prepare()
+    assert time.monotonic() - began < 15.0
+    assert any(c[0] == "ps" for c in calls())
+    assert "did not finish within 1 s" in caplog.text
+
+
+def test_an_image_inspect_that_hangs_fails_prepare_in_bounded_time(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The base image's id is needed for the dependency image: a call that
+    # does not answer fails prepare() rather than hang it (#1790).
+    docker, calls = fake_docker
+    monkeypatch.setattr(docker_module, "_DOCKER_TIMEOUT_S", 1.0)
+    monkeypatch.setenv("FAKE_DOCKER_HANGS", "image inspect")
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    began = time.monotonic()
+    with pytest.raises(AutowareStackError, match="did not finish within 1 s"):
+        _docker_launcher(ws, docker).prepare()
+    assert time.monotonic() - began < 15.0
+    assert not any(c[0] == "run" for c in calls())
+
+
+def test_the_dependency_image_commit_gets_the_longer_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launcher = _docker_launcher(_workspace(tmp_path), tmp_path / "docker")
+    timeouts: dict[str, float] = {}
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        timeouts[argv[1]] = kwargs["timeout"]  # type: ignore[assignment]
+        code = 1 if argv[1:3] == ["image", "inspect"] and len(argv) == 4 else 0
+        return subprocess.CompletedProcess(argv, code, "sha256:x\n", "")
+
+    monkeypatch.setattr(docker_module.subprocess, "run", run)
+    monkeypatch.setattr(launcher, "_stream", lambda argv, log_name: 0)
+    launcher._container = launcher._resolve_container()
+    launcher._dependency_image("img:1")
+    assert timeouts["commit"] == docker_module._DOCKER_COMMIT_TIMEOUT_S
+    assert timeouts["image"] == timeouts["rm"] == docker_module._DOCKER_TIMEOUT_S
+    assert docker_module._DOCKER_COMMIT_TIMEOUT_S > docker_module._DOCKER_TIMEOUT_S
 
 
 def _stack_runs(calls: list[list[str]]) -> list[list[str]]:

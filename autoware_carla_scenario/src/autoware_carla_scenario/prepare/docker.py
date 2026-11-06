@@ -440,13 +440,22 @@ class DockerBackend:
     def _follow(self, log_dir: Optional[Path]) -> None:
         if log_dir is None or self._container is None:
             return
-        log_dir.mkdir(parents=True, exist_ok=True)
-        self._log = (log_dir / f"backend_{self.name}.log").open("ab")
-        self._follower = subprocess.Popen(
-            [self._settings.docker, "logs", "--follow", self._container],
-            stdout=self._log,
-            stderr=subprocess.STDOUT,
-        )
+        # An OSError (no docker binary, a fork that fails with EMFILE or
+        # ENOMEM, a log dir that cannot be written) is the backend's error,
+        # not a raw traceback (#1790); the caller's close() removes the
+        # container and closes the log.
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            self._log = (log_dir / f"backend_{self.name}.log").open("ab")
+            self._follower = subprocess.Popen(
+                [self._settings.docker, "logs", "--follow", self._container],
+                stdout=self._log,
+                stderr=subprocess.STDOUT,
+            )
+        except OSError as error:
+            raise BackendError(
+                f"could not follow the log of backend '{self.name}': {error}"
+            ) from None
 
     def _wait_ready(self) -> None:
         settings = self._settings
@@ -504,11 +513,16 @@ class DockerBackend:
                 self.name,
             )
             return False
+        except OSError as error:
+            # The caller's close() removes the container (#1790).
+            raise BackendError(
+                f"could not ask docker whether backend '{self.name}' runs: {error}"
+            ) from None
         return not (state.returncode == 0 and state.stdout.strip() == "true")
 
     def _tail(self) -> str:
         """The end of the container's log, or a note that docker did not give
-        it within :data:`_TAIL_TIMEOUT_S`."""
+        it within :data:`_TAIL_TIMEOUT_S` or could not be run."""
         if self._container is None:
             return ""
         timeout_s = _TAIL_TIMEOUT_S
@@ -519,6 +533,8 @@ class DockerBackend:
             )
         except subprocess.TimeoutExpired:
             return f"(no log: docker did not give it within {timeout_s:.0f} s)"
+        except OSError as error:
+            return f"(no log: could not run docker: {error})"
         return (logs.stdout + logs.stderr).strip()
 
 
