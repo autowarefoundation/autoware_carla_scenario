@@ -11,6 +11,7 @@ neither CARLA nor lanelet2 -- the editor validates on every keystroke.
 from __future__ import annotations
 
 import math
+import re
 from dataclasses import dataclass, field
 from typing import Any, Literal, Optional
 
@@ -37,6 +38,7 @@ from ..trajectory.authoring import (
     vertex_problems,
 )
 from ..constants import MIN_BACKGROUND_SPEED_KMH
+from ..scaffold.names import SCENARIO_NAME_PATTERN
 from .hydra_config import MAP_EXCLUSION_REF
 from .package_names import framework_name_problem, scenario_id_problem
 from ._builders_generated import (
@@ -66,6 +68,11 @@ Severity = Literal["error", "warning"]
 #: showing amber to one movement still has vehicles in it, which is exactly why
 #: a real one never shows amber to a movement that crosses it either.
 PERMISSIVE_SIGNAL_STATES = frozenset({"green", "yellow"})
+
+#: The rule an action or condition node id follows (#1889): the one entity ids
+#: and the document id follow (``models._ID_PATTERN``), since a node id is a
+#: Hydra key (``scenario.param_overrides.<node id>.<field>``) as they are.
+_NODE_ID_PATTERN = re.compile(SCENARIO_NAME_PATTERN)
 
 #: Appended to a :func:`scenario_id_problem` reported as a validation warning.
 EXPORT_REFUSAL_NOTE = (
@@ -1710,13 +1717,9 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
         entity_kinds={e.id: e.kind for e in document.entities},
     )
 
-    seen_actions: set[str] = set()
+    _check_node_ids(out, document)
     for index, action in enumerate(document.actions):
-        path = f"actions[{index}]"
-        if action.id in seen_actions:
-            out.error(path, f"Duplicate action id {action.id!r}.", action.id)
-        seen_actions.add(action.id)
-        _check_action(out, path, action, refs)
+        _check_action(out, f"actions[{index}]", action, refs)
 
     _check_step_order(out, document)
     _check_untriggered_actions(out, document)
@@ -1754,6 +1757,78 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     _check_gate(out, document)
 
     return ValidationReport(issues=tuple(out.issues))
+
+
+def _condition_ids(path: str, node: ConditionNode) -> list[tuple[str, str, str]]:
+    """Return ``(path, "condition", id)`` for *node* and every descendant."""
+    found = [(path, "condition", node.id)]
+    for index, child in enumerate(node.children):
+        found.extend(_condition_ids(f"{path}.children[{index}]", child))
+    return found
+
+
+def _node_ids(document: ScenarioDocument) -> list[tuple[str, str, str]]:
+    """Return ``(path, kind, id)`` for every action and condition node (#1889).
+
+    Actions first, then each action's trigger and waypoint conditions, then the
+    assertions -- every tree :meth:`ScenarioDocument.condition_roots` returns,
+    each with the path the rest of the validator reports it under.
+    """
+    found: list[tuple[str, str, str]] = []
+    for index, action in enumerate(document.actions):
+        found.append((f"actions[{index}]", "action", action.id))
+    for index, action in enumerate(document.actions):
+        path = f"actions[{index}]"
+        if action.trigger is not None:
+            found.extend(_condition_ids(f"{path}.trigger", action.trigger))
+        for gate_index, gate in enumerate(action.advance_conditions):
+            found.extend(
+                _condition_ids(
+                    f"{path}.advance_conditions[{gate_index}].condition",
+                    gate.condition,
+                )
+            )
+    for index, condition in enumerate(document.assertions.pass_conditions):
+        found.extend(_condition_ids(f"assertions.pass[{index}]", condition))
+    for index, condition in enumerate(document.assertions.fail_conditions):
+        found.extend(_condition_ids(f"assertions.fail[{index}]", condition))
+    return found
+
+
+def _check_node_ids(out: _Collector, document: ScenarioDocument) -> None:
+    """Check every action and condition node id (#1889).
+
+    A node id is a key in more than one place: a sweep writes
+    ``scenario.param_overrides.<node id>.<field>``, a lanelet slot is
+    ``<node id>.<field>``, and a run looks the node a ``param_overrides``
+    entry names up among the actions first, then the conditions
+    (``declarative``), so a condition sharing an action's id would never get
+    its override.  So each must be
+    an identifier -- the rule entity ids follow, which the editor's own
+    ``a_xxxxxxxx`` / ``p_xxxxxxxx`` ids do -- and no two nodes, an action and
+    a condition included, may share one.
+    """
+    first: dict[str, tuple[str, str]] = {}
+    for path, kind, node_id in _node_ids(document):
+        if not _NODE_ID_PATTERN.fullmatch(node_id):
+            out.error(
+                path,
+                f"{kind.capitalize()} id {node_id!r} must be lower_snake_case "
+                "starting with a letter: it names the node's Hydra overrides "
+                "(scenario.param_overrides.<id>.<field>).",
+                node_id,
+            )
+        earlier = first.get(node_id)
+        if earlier is None:
+            first[node_id] = (path, kind)
+            continue
+        earlier_path, earlier_kind = earlier
+        out.error(
+            path,
+            f"Duplicate {kind} id {node_id!r}: the {earlier_kind} at "
+            f"{earlier_path} has it too.",
+            node_id,
+        )
 
 
 def _check_gate(out: _Collector, document: ScenarioDocument) -> None:
