@@ -329,8 +329,9 @@ class LaneChangeAction(BaseAction):
 
     def __init__(self, entity_name, direction: LaneChangeDirection, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw, label: str = "lane_change",
-                 once: bool = True, overrides: bool = False, until = None):
-        _keyword_only(_kw, "LaneChangeAction(): label, once, overrides and until")
+                 once: bool = True, overrides: bool = False, until = None,
+                 start_after_m: float = 0.0, lane_change_length_m: float = 0.0):
+        _keyword_only(_kw, "LaneChangeAction(): label, once, overrides, until, start_after_m and lane_change_length_m")
         _expect_role(entity_name)
         super().__init__(label, condition, timing, once=once, until=until)
 

@@ -64,6 +64,13 @@ class LaneChangeAction(BaseAction):
     request starts the manoeuvre, and sending it again every tick would restart
     it.
 
+    By default the manoeuvre's place and shape are the backend's own.
+    *start_after_m* and *lane_change_length_m* ask for them, in metres the
+    vehicle drives, so a slower vehicle takes longer over the same geometry and
+    a stopped one waits.  The vehicle then also slows for what is ahead of it
+    between it and the lane it goes to, on the TrafficManager and SUMO backends
+    (SUMO's stretched crossing needs its sublane model).
+
     Args:
         entity_name: ``role_name`` of the vehicle actor to control.
         direction: :class:`LaneChangeDirection` — ``LEFT`` or ``RIGHT``.
@@ -74,11 +81,17 @@ class LaneChangeAction(BaseAction):
             holds (:attr:`~BaseAction.overrides`).
         until: Overrides what counts as the manoeuvre having settled.  Defaults
             to :class:`LaneChangeSettledCondition` on *entity_name*.
+        start_after_m: How far to drive after the trigger before starting to
+            cross, m.  ``0.0`` (default): at once.
+        lane_change_length_m: How far to drive while crossing, m.  ``0.0``
+            (default): as far as the backend takes.
     """
 
     # Declared for the static check (docs/typecheck.md).
     _entity_name: str
     _direction: LaneChangeDirection
+    _start_after_m: float
+    _lane_change_length_m: float
 
     def __init__(
         self,
@@ -91,7 +104,15 @@ class LaneChangeAction(BaseAction):
         once: bool = True,
         overrides: bool = False,
         until: Optional[BaseCondition] = None,
+        start_after_m: float = 0.0,
+        lane_change_length_m: float = 0.0,
     ) -> None:
+        if start_after_m < 0.0:
+            raise ValueError(f"start_after_m must not be negative: {start_after_m}")
+        if lane_change_length_m < 0.0:
+            raise ValueError(
+                f"lane_change_length_m must not be negative: {lane_change_length_m}"
+            )
         if until is None:
             settled: BaseCondition = LaneChangeSettledCondition(
                 entity_name, label=f"{label}_settled"
@@ -107,6 +128,8 @@ class LaneChangeAction(BaseAction):
         )
         self._entity_name = str(entity_name)
         self._direction = direction
+        self._start_after_m = start_after_m
+        self._lane_change_length_m = lane_change_length_m
 
     @property
     def needs_tick_loop(self) -> bool:
@@ -132,7 +155,9 @@ class LaneChangeAction(BaseAction):
             )
             return
 
-        entity.change_lane(world, self._direction)
+        entity.change_lane(
+            world, self._direction, self._start_after_m, self._lane_change_length_m
+        )
 
 
 def _fail_if_pedestrian(entity_name: str) -> None:
