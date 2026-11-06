@@ -104,9 +104,9 @@ options of the others (`scenario-slurm <command> --help` says the same):
 | `resubmit` | `--cases a,b` | these cases instead, by label or index; a case named twice runs once |
 | `resubmit` | `--array-parallelism K` | at most this many tasks at once (at least 1); default: the batch's `launcher.array_parallelism` |
 | `resubmit` | `--cases-per-task N` | cases a task runs (at least 1); default: the batch's `launcher.cases_per_task` |
-| `resubmit` | `--wait`, `--no-wait` | follow the new submission until it ends and collect, or submit and exit; default: the batch's `launcher.wait`. With `--wait` and nothing to resubmit, it collects at once |
+| `resubmit` | `--wait`, `--no-wait` | follow the new submission until it ends and collect, or submit and exit; default: the batch's `launcher.wait`. With nothing to resubmit, it collects at once, but only with an explicit `--wait` (and not with `--dry-run`) |
 | `resubmit` | `--force` | submit even while a job of the batch is queued or running, `squeue` cannot tell whether one is, or another submission of the batch is in flight |
-| `resubmit` | `--dry-run` | print the cases it would resubmit and exit 0, submitting nothing (a busy batch still refuses, unless with `--force`) |
+| `resubmit` | `--dry-run` | print the cases it would resubmit and exit 0, submitting and collecting nothing, even with `--wait` (a busy batch still refuses, unless with `--force`) |
 
 A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message

@@ -236,7 +236,8 @@ def _resubmit(args: argparse.Namespace) -> int:
         chosen = unfinished_cases(layout, failed=args.failed)
     if not chosen:
         print("Nothing to resubmit: every case has a verdict.")  # noqa: T201
-        return collect(layout) if args.wait else 0
+        # A dry run never collects: it writes nothing (#1768).
+        return collect(layout) if args.wait and not args.dry_run else 0
     settings = SlurmSettings.from_mapping(manifest["launcher"]).replace(
         array_parallelism=args.array_parallelism,
         cases_per_task=args.cases_per_task,
@@ -368,14 +369,16 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         default=None,
         help="follow the new submission until it ends, then collect "
-        "(collect at once when there is nothing to resubmit); "
-        "default: the batch's launcher.wait",
+        "(collect at once when there is nothing to resubmit, unless with "
+        "--dry-run); default: the batch's launcher.wait (with nothing to "
+        "resubmit, it collects only with an explicit --wait)",
     )
     group.add_argument(
         "--no-wait",
         dest="wait",
         action="store_false",
-        help="submit and exit; default: the batch's launcher.wait",
+        help="submit and exit; default: the batch's launcher.wait (with "
+        "nothing to resubmit, it collects only with an explicit --wait)",
     )
     resubmit.add_argument(
         "--force",
@@ -386,7 +389,8 @@ def _parser() -> argparse.ArgumentParser:
     resubmit.add_argument(
         "--dry-run",
         action="store_true",
-        help="print the cases it would resubmit and exit 0, submitting nothing",
+        help="print the cases it would resubmit and exit 0, submitting "
+        "and collecting nothing (even with --wait)",
     )
 
     cancel = commands.add_parser("cancel", help="scancel the batch's jobs")
