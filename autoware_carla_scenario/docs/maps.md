@@ -46,6 +46,15 @@ Because the last `@` decides, a ref may not contain an `@`, and neither may
 the path of a remote repository (write one as `%40`:
 `https://example.com/o/a%40b@v1`).
 
+A ref must be a name `git check-ref-format` accepts (a branch, a tag,
+`refs/...`, `HEAD`, or a full or abbreviated commit hash), and it may not begin
+with `-`, which git would read as an option. So no space, control character,
+`~`, `^`, `:`, `?`, `*`, `[`, `\`, `..` or `@{`; no empty, leading or
+trailing `/`; no trailing `.`; and no `/`-separated part that begins with `.`
+or ends in `.lock`. A repository may not begin with `-` either, and an `@`
+must be followed by a ref. Such a source is refused when it is parsed, before
+any git command runs.
+
 A local repository — a plain absolute path or a `file://` URL — may have an
 `@` in a directory name (a Nix store path, a `user@domain` home directory), so
 there the filesystem decides:

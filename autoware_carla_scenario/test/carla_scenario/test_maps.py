@@ -444,6 +444,161 @@ class TestMapSource:
         with pytest.raises(MapSourceError):
             MapSource.parse("not a url")
 
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            "main",
+            "feature/x",
+            "release/1.0",
+            "v1.0",
+            "v%201",
+            "HEAD",
+            "refs/heads/main",
+            "refs/pr/3",
+            "1a2b3c4",
+            "a1" * 20,
+            "my-branch_2",
+        ],
+    )
+    def test_accepts_the_refs_git_accepts(self, ref: str) -> None:
+        source = MapSource.parse(f"git+https://example.com/o/n@{ref}#m")
+        assert source.ref == ref
+        assert MapSource.parse(source.uri) == source
+
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            # Read by git as an option of the command it is handed to (#1848).
+            "-x",
+            "--foo=bar",
+            "-",
+            # What `git check-ref-format` refuses.
+            "a..b",
+            "a b",
+            "a\tb",
+            "a~1",
+            "a^",
+            "a:b",
+            "a?",
+            "a*",
+            "a[b",
+            "a\\b",
+            "/a",
+            "a/",
+            "a//b",
+            "a.",
+            "a.lock",
+            "refs/heads/x.lock",
+            ".hidden",
+            "refs/.hidden",
+        ],
+    )
+    def test_refuses_a_ref_git_would_not_take_as_one(self, ref: str) -> None:
+        with pytest.raises(MapSourceError, match="not a usable git ref"):
+            MapSource.parse(f"git+https://example.com/o/n@{ref}#m")
+        with pytest.raises(MapSourceError):
+            MapSource(repo_url="https://example.com/o/n", ref=ref)
+
+    @pytest.mark.parametrize("ref", ["a@{1}", "@"])
+    def test_refuses_an_at_ref_built_directly(self, ref: str) -> None:
+        # parse() never yields these -- the last '@' splits the ref off -- but
+        # a MapSource can be built from its fields.
+        with pytest.raises(MapSourceError, match="not a usable git ref"):
+            MapSource(repo_url="https://example.com/o/n", ref=ref)
+
+    def test_refuses_a_ref_read_out_of_a_page_url(self) -> None:
+        with pytest.raises(MapSourceError, match="begins with '-'"):
+            MapSource.parse("https://github.com/o/n/tree/--foo=bar/maps/T")
+
+    def test_refuses_an_at_with_no_ref_after_it(self) -> None:
+        with pytest.raises(MapSourceError, match="names no ref"):
+            MapSource.parse("https://example.com/o/n@")
+
+    def test_refuses_a_repository_that_begins_with_a_dash(self) -> None:
+        with pytest.raises(MapSourceError, match="begins with '-'"):
+            MapSource.parse("-oProxyCommand@host:repo.git")
+        with pytest.raises(MapSourceError):
+            MapSource(repo_url="--upload-pack=x")
+
+
+class TestGitArguments:
+    """Every user-supplied argument reaches git after ``--`` (#1848).
+
+    git is never run: ``subprocess.run`` is replaced by a recorder, so these
+    tests execute nothing whatever the cache hands it.
+    """
+
+    _COMMIT = "a1" * 20
+
+    @pytest.fixture
+    def argv(self, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        seen: list[list[str]] = []
+
+        def _record(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+            seen.append(list(args))
+            out = ""
+            if "ls-remote" in args:
+                out = f"{self._COMMIT}\trefs/heads/main\n"
+            elif "rev-parse" in args:
+                out = f"{self._COMMIT}\n"
+            return subprocess.CompletedProcess(args, 0, out, "")
+
+        monkeypatch.setattr(cache_module.subprocess, "run", _record)
+        return seen
+
+    @staticmethod
+    def _after_end_of_options(argv: list[str], *values: str) -> None:
+        assert "--" in argv, argv
+        end = argv.index("--")
+        for value in values:
+            assert argv.index(value) > end, argv
+
+    def test_at_tip(self, argv: list[list[str]], cache: GitMapCache) -> None:
+        source = MapSource(repo_url="https://example.invalid/o/n", ref="main")
+        assert cache.at_tip(source).ref == self._COMMIT
+        (call,) = argv
+        assert call[:2] == ["git", "ls-remote"]
+        self._after_end_of_options(call, source.repo_url, "main", "main^{}")
+
+    def test_fetch_ref(
+        self, argv: list[list[str]], cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        # Handed straight to the method, past MapSource's own check: the
+        # option-shaped ref still lands where git reads it as a ref.
+        cache._fetch_ref(tmp_path / "w", "https://example.invalid/o/n", "-x")
+        (remote,) = [call for call in argv if call[1:3] == ["remote", "add"]]
+        self._after_end_of_options(remote, "origin", "https://example.invalid/o/n")
+        (fetch,) = [call for call in argv if call[1] == "fetch"]
+        self._after_end_of_options(fetch, "origin", "-x")
+
+    def test_fetch(
+        self, argv: list[list[str]], cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario.maps.cache import CachedRepo
+
+        source = MapSource(repo_url="https://example.invalid/o/n", ref="main")
+        (tmp_path / "entry").mkdir()
+        cache._fetch(
+            CachedRepo(source=source, root=tmp_path / "entry", worktree=tmp_path / "w")
+        )
+        (fetch,) = [call for call in argv if call[1] == "fetch"]
+        self._after_end_of_options(fetch, "origin", "main")
+
+    def test_clone(self, argv: list[list[str]], cache: GitMapCache) -> None:
+        source = MapSource(repo_url="https://example.invalid/o/n")
+        with pytest.raises(MapCacheError):
+            # Nothing is cloned, so there is no entry to find afterwards.
+            cache._clone(source)
+        (clone,) = [call for call in argv if call[1] == "clone"]
+        self._after_end_of_options(clone, source.repo_url)
+
+    def test_a_tip_note_that_is_not_a_ref_is_ignored(self, cache: GitMapCache) -> None:
+        source = MapSource(repo_url="https://example.invalid/o/n", ref="main")
+        cache.remember_tip(source, "--not-a-commit")
+        assert cache.last_tip(source) == ""
+
 
 # ---------------------------------------------------------------------------
 # Where the cache lives
@@ -2198,6 +2353,33 @@ class TestEditorMapLibrary:
 
     def test_offers_the_repositories_it_knows_about(self, editor: "TestClient") -> None:
         assert "carla-ue5-maps" in editor.get("/maps").text
+
+    @pytest.mark.parametrize(
+        "repo",
+        [
+            pytest.param("file:///srv/maps@--foo=bar", id="option-ref"),
+            pytest.param("file:///srv/maps@-x", id="dash-ref"),
+            pytest.param("file:///srv/maps@a..b", id="bad-ref"),
+            pytest.param("-x@host:maps.git", id="dash-repository"),
+        ],
+    )
+    def test_refuses_a_bad_ref_without_running_git(
+        self, editor: "TestClient", monkeypatch: pytest.MonkeyPatch, repo: str
+    ) -> None:
+        """The GET has no origin check, so the URI itself must stop it (#1848)."""
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        ran: list[Any] = []
+
+        def _record(args: Any, **_: Any) -> Any:
+            ran.append(args)
+            raise AssertionError("git must not run for a refused map source")
+
+        monkeypatch.setattr(cache_module.subprocess, "run", _record)
+        response = editor.get("/maps", params={"repo": repo})
+        assert response.status_code == 200
+        assert "begins with" in response.text or "contains" in response.text
+        assert ran == []
 
     def test_reports_a_repository_it_cannot_read(self, editor: "TestClient") -> None:
         response = editor.get("/maps", params={"repo": "file:///nowhere@main"})

@@ -51,7 +51,7 @@ from pathlib import Path
 from typing import Optional, Sequence
 
 from ..atomic_file import write_text_atomically
-from .source import MapSource
+from .source import MapSource, MapSourceError
 
 logger = logging.getLogger(__name__)
 
@@ -294,9 +294,17 @@ class GitMapCache:
         ref = source.ref or "HEAD"
         try:
             # `<ref>^{}` as well: ls-remote lists an annotated tag's peeled
-            # line only when a pattern names it.
+            # line only when a pattern names it.  `--` ends the options before
+            # the URL; ls-remote stops parsing them at the URL, so the
+            # patterns after it are never read as options either (#1848).
             listing = self._git(
-                None, "ls-remote", source.repo_url, ref, ref + "^{}", capture=True
+                None,
+                "ls-remote",
+                "--",
+                source.repo_url,
+                ref,
+                ref + "^{}",
+                capture=True,
             )
         except MapCacheError:
             # Falling back to the *note* rather than to the branch: the entry
@@ -354,7 +362,11 @@ class GitMapCache:
         except OSError:
             return ""
         commit = _json_field(raw, "commit") or ""
-        return commit if source.at(commit).pinned else ""
+        try:
+            return commit if source.at(commit).pinned else ""
+        except MapSourceError:
+            # A note that is not a ref at all (#1848) is as good as none.
+            return ""
 
     # -- reading --------------------------------------------------------
 
@@ -444,6 +456,7 @@ class GitMapCache:
                     "--no-checkout",
                     "--depth",
                     "1",
+                    "--",
                     source.repo_url,
                     str(worktree),
                 )
@@ -480,13 +493,22 @@ class GitMapCache:
         """
         worktree.mkdir(parents=True, exist_ok=True)
         self._git(worktree, "init", "--quiet", ".")
-        self._git(worktree, "remote", "add", "origin", repo_url)
+        # `--` before every user-supplied argument: one beginning with '-'
+        # would otherwise be read as an option (#1848).
+        self._git(worktree, "remote", "add", "--", "origin", repo_url)
         # What `clone --filter` would have configured for us.  Without it git
         # does not know the missing blobs can be fetched on demand.
         self._git(worktree, "config", "remote.origin.promisor", "true")
         self._git(worktree, "config", "remote.origin.partialclonefilter", "blob:none")
         self._git(
-            worktree, "fetch", "--depth", "1", "--filter=blob:none", "origin", ref
+            worktree,
+            "fetch",
+            "--depth",
+            "1",
+            "--filter=blob:none",
+            "--",
+            "origin",
+            ref,
         )
         self._git(worktree, "checkout", "--detach", "FETCH_HEAD")
 
@@ -503,7 +525,7 @@ class GitMapCache:
         if source.pinned and cached.commit == source.ref:
             return
         ref = source.ref or "HEAD"
-        self._git(cached.worktree, "fetch", "--depth", "1", "origin", ref)
+        self._git(cached.worktree, "fetch", "--depth", "1", "--", "origin", ref)
         self._git(cached.worktree, "checkout", "--detach", "FETCH_HEAD")
         commit = self._git(cached.worktree, "rev-parse", "HEAD", capture=True).strip()
         self._write_meta(cached.root, source, commit)
@@ -560,10 +582,12 @@ class GitMapCache:
 
             pattern = path or _WHOLE_TREE
             if self._is_sparse(worktree):
-                self._git_waiting(worktree, "sparse-checkout", "add", pattern)
+                self._git_waiting(worktree, "sparse-checkout", "add", "--", pattern)
             else:
+                # The map's path may begin with '-' (a directory may be named
+                # so); `--` keeps it a pattern (#1848).
                 self._git_waiting(
-                    worktree, "sparse-checkout", "set", "--no-cone", pattern
+                    worktree, "sparse-checkout", "set", "--no-cone", "--", pattern
                 )
             self._git_waiting(worktree, "checkout")
 
