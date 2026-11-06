@@ -1066,6 +1066,22 @@ draft is left as it was.
       `cross-site` or `same-site`, or whose `Origin` header is not the
       editor's own scheme, host and port (`Origin: null` included). A request
       with neither header, as curl or a script sends it, is served.
+    * Two `GET` routes do more than read, and are refused the same way:
+      the map library with a repository (`/maps?repo=...`), which runs
+      `git ls-remote` against it and may clone or fetch it, and the map panel
+      (`/draft/<id>/map-view`), which parses the map with `load_map=1` and
+      binds patterns on it. A link from another site to either is answered
+      with 403 and reaches no git server and loads no map. The editor's own
+      links, forms and htmx requests send `Sec-Fetch-Site: same-origin`, and
+      a URL typed in the address bar or opened from a bookmark sends
+      `Sec-Fetch-Site: none`; both are served, and so is a request with
+      neither header. Every other `GET` only reads drafts and files already
+      on disk. This rests on the browser sending `Sec-Fetch-Site`, which
+      current browsers do for `localhost` and loopback addresses but not for
+      plain HTTP on another address (`--host 0.0.0.0`, a LAN address), and
+      which older browsers (Safari before 16.4, Firefox before 90) never
+      send; a link or image from another site then carries neither header
+      and is served.
     * Against DNS rebinding, a request whose `Host` header is not
       `localhost`, a loopback address (`127.0.0.1`, `::1`) or the `--host` the
       editor is bound to, on any port, is refused with 400. Bound to every

@@ -21,7 +21,14 @@ from autoware_carla_scenario.authoring.persistence import DraftStore
 from autoware_carla_scenario.editor.app import create_app
 from autoware_carla_scenario.ui import app as app_module
 from autoware_carla_scenario.ui import runner
-from autoware_carla_scenario.web_guard import HostAllowlist, RequestGuard
+from autoware_carla_scenario.editor import scenario_map
+from autoware_carla_scenario.editor import service as service_module
+from autoware_carla_scenario.maps import cache as cache_module
+from autoware_carla_scenario.web_guard import (
+    HostAllowlist,
+    RequestGuard,
+    cross_site_refusal,
+)
 
 ROOT = Path(__file__).resolve().parents[3]
 DOCS = ROOT / "autoware_carla_scenario" / "docs"
@@ -297,6 +304,154 @@ def test_the_editor_answers_the_host_it_is_bound_to(
     assert client.get("/").status_code == 200
 
 
+# ── GET routes that do more than read (#1850) ────────────────────────────
+
+#: Headers a page on another site sends (or may send).
+FOREIGN_HEADERS = [
+    {"Sec-Fetch-Site": "cross-site"},
+    {"Sec-Fetch-Site": "same-site"},
+    {"Origin": FOREIGN},
+    {"Origin": "null"},
+    {"Origin": LOOPBACK, "Sec-Fetch-Site": "cross-site"},
+]
+
+#: Headers the editor's own pages, a typed URL or bookmark, and curl send.
+OWN_HEADERS = [
+    {},
+    {"Sec-Fetch-Site": "same-origin"},
+    {"Sec-Fetch-Site": "none"},
+    {"Origin": LOOPBACK, "Sec-Fetch-Site": "same-origin"},
+]
+
+
+def _ids(headers: dict[str, str]) -> str:
+    return ",".join(f"{k}={v}" for k, v in headers.items()) or "no-headers"
+
+
+@pytest.fixture
+def no_git(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """Every git command the map cache tries to run (none is run)."""
+    ran: list[Any] = []
+
+    def _record(args: Any, **_: Any) -> Any:
+        ran.append(args)
+        raise AssertionError("git must not run")
+
+    monkeypatch.setattr(cache_module.subprocess, "run", _record)
+    return ran
+
+
+@pytest.fixture
+def listed(monkeypatch: pytest.MonkeyPatch) -> list[str]:
+    """The repositories the map library was asked to list (none is read)."""
+    seen: list[str] = []
+
+    def _list_maps(uri: str, *, refresh: bool = False) -> list[Any]:
+        seen.append(uri)
+        return []
+
+    monkeypatch.setattr(service_module, "list_maps", _list_maps)
+    return seen
+
+
+REPO = "git+https://github.com/example/maps@main"
+
+
+@pytest.mark.parametrize("headers", FOREIGN_HEADERS, ids=_ids)
+def test_another_site_cannot_make_the_map_library_run_git(
+    editor: TestClient, no_git: list[Any], headers: dict[str, str]
+) -> None:
+    response = editor.get("/maps", params={"repo": REPO}, headers=headers)
+    assert response.status_code == 403
+    assert no_git == []
+
+
+@pytest.mark.parametrize("headers", OWN_HEADERS, ids=_ids)
+def test_the_map_library_still_lists_a_repository_for_this_site(
+    editor: TestClient, listed: list[str], headers: dict[str, str]
+) -> None:
+    response = editor.get("/maps", params={"repo": REPO}, headers=headers)
+    assert response.status_code == 200
+    assert listed == [REPO]
+
+
+def _draft(editor: TestClient) -> str:
+    response = editor.post(
+        "/new", data={"kind": "cut_in", "title": "Cut in"}, follow_redirects=False
+    )
+    return str(response.headers["location"]).rsplit("/", 1)[-1]
+
+
+@pytest.fixture
+def map_views(monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """The ``load_map`` of every map view built (each built as it was)."""
+    built: list[bool] = []
+    real = scenario_map.build_map_view
+
+    def _build(document: Any, *, pattern: int = 0, load_map: bool = False) -> Any:
+        built.append(load_map)
+        return real(document, pattern=pattern, load_map=False)
+
+    monkeypatch.setattr(scenario_map, "build_map_view", _build)
+    return built
+
+
+@pytest.mark.parametrize("headers", FOREIGN_HEADERS, ids=_ids)
+def test_another_site_cannot_make_the_map_panel_load_a_map(
+    editor: TestClient, map_views: list[bool], headers: dict[str, str]
+) -> None:
+    draft_id = _draft(editor)
+    response = editor.get(f"/draft/{draft_id}/map-view?load_map=1", headers=headers)
+    assert response.status_code == 403
+    assert map_views == []
+
+
+@pytest.mark.parametrize("headers", OWN_HEADERS, ids=_ids)
+def test_the_map_panel_still_loads_the_map_for_this_site(
+    editor: TestClient, map_views: list[bool], headers: dict[str, str]
+) -> None:
+    draft_id = _draft(editor)
+    response = editor.get(f"/draft/{draft_id}/map-view?load_map=1", headers=headers)
+    assert response.status_code == 200
+    assert map_views == [True]
+
+
+def test_a_page_that_only_reads_is_served_to_another_site(editor: TestClient) -> None:
+    """The guard covers the routes that fetch or parse, not every GET."""
+    draft_id = _draft(editor)
+    for path in ("/", f"/draft/{draft_id}", f"/draft/{draft_id}/yaml"):
+        response = editor.get(path, headers={"Sec-Fetch-Site": "cross-site"})
+        assert response.status_code == 200, path
+
+
+@pytest.mark.parametrize(
+    ("headers", "expected"),
+    [
+        ([(b"host", b"127.0.0.1:9000")], None),
+        ([(b"host", b"127.0.0.1:9000"), (b"sec-fetch-site", b"none")], None),
+        ([(b"host", b"127.0.0.1:9000"), (b"sec-fetch-site", b"same-origin")], None),
+        (
+            [(b"host", b"127.0.0.1:9000"), (b"sec-fetch-site", b"cross-site")],
+            (403, "Cross-site request refused"),
+        ),
+        (
+            [(b"host", b"127.0.0.1:9000"), (b"origin", b"http://127.0.0.1:8080")],
+            (403, "Cross-origin request refused"),
+        ),
+        # No Host to compare with: no Origin is this request's own.
+        (
+            [(b"origin", b"http://127.0.0.1:9000")],
+            (403, "Cross-origin request refused"),
+        ),
+    ],
+)
+def test_the_cross_site_refusal_of_a_get(
+    headers: list[tuple[bytes, bytes]], expected: tuple[int, str] | None
+) -> None:
+    scope = {"type": "http", "method": "GET", "scheme": "http", "headers": headers}
+    assert cross_site_refusal(scope) == expected
+
+
 # ── Docs ─────────────────────────────────────────────────────────────────
 
 
@@ -305,3 +460,14 @@ def test_the_loopback_warning_describes_the_guard(page: str) -> None:
     text = (DOCS / page).read_text(encoding="utf-8")
     assert re.search(r"Origin", text) and "Sec-Fetch-Site" in text
     assert "DNS rebinding" in text
+    assert "Sec-Fetch-Site: none" in text
+
+
+def test_the_editor_docs_name_the_guarded_get_routes() -> None:
+    text = (DOCS / "scenario_editor.md").read_text(encoding="utf-8")
+    assert "/maps?repo=" in text and "map-view" in text
+
+
+def test_the_viewer_docs_name_the_guarded_get_route() -> None:
+    text = (DOCS / "usage.md").read_text(encoding="utf-8")
+    assert ".rrd`) is converted" in text

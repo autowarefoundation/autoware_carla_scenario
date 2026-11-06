@@ -1669,6 +1669,19 @@ is recorded as failed, and the jobs after it do not start.
       or whose `Origin` header is not the viewer's own scheme, host and port
       (`Origin: null` included). A request with neither header, as curl or a
       script sends it, is served.
+    * One `GET` can make something: a case's recording
+      (`/recording/<session>/<index>.rrd`) is converted from its trajectory
+      log, and written, when there is none yet. A request from another site
+      (the same `Sec-Fetch-Site` and `Origin` rules) is then refused with 403
+      and converts nothing. A recording already made is served to any page
+      (a Rerun viewer hosted elsewhere may load its URL); the
+      viewer's pages make it first (`POST /api/recording/...`), and the
+      *Download .rrd* link, a typed URL (`Sec-Fetch-Site: none`) and curl
+      are served as before. Every other `GET` only reads files on disk or
+      queries SLURM. Like the editor's (see the scenario editor's guide),
+      this rests on the browser sending `Sec-Fetch-Site`, which current
+      browsers do for loopback addresses but not for plain HTTP on another
+      address, and older browsers never send.
     * A JSON route (`/api/run`, `/api/run/preview`,
       `/api/slurm/.../resubmit`) refuses a body that is not sent as
       `Content-Type: application/json` with 415, so a `text/plain` body, which

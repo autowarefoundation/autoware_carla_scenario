@@ -14,7 +14,7 @@ import logging
 from typing import Any, Iterator, Optional
 from urllib.parse import quote
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from fastapi.responses import (
@@ -32,6 +32,7 @@ from ..authoring.package_export import PackageExportError
 from ..authoring.persistence import Draft, dump_document_yaml
 from ..authoring.registry import TRUTHY_VALUES
 from ..maps import opendrive
+from ..web_guard import refuse_cross_site
 from . import map_preview, scenario_map
 from .service import (
     EditorError,
@@ -406,7 +407,12 @@ async def use_map(request: Request, draft_id: str) -> HTMLResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/maps", response_class=HTMLResponse)
+@router.get(
+    "/maps",
+    response_class=HTMLResponse,
+    # It runs git against the repository the URL names (#1850).
+    dependencies=[Depends(refuse_cross_site)],
+)
 def map_library(
     request: Request, repo: str = "", draft: str = "", refresh: str = ""
 ) -> HTMLResponse:
@@ -415,6 +421,11 @@ def map_library(
     Reachable on its own and from a draft.  With ``draft`` set, every map
     carries a button that points *that* scenario at it; without one, a map
     starts a new scenario instead.
+
+    A GET, so it can be linked and bookmarked, but one that makes the server
+    run ``git ls-remote`` (and may clone or fetch) against whatever repository
+    the URL names: a request another site sends is refused with 403
+    (:func:`~autoware_carla_scenario.web_guard.refuse_cross_site`).
     """
     service = _service(request)
     entries: list[Any] = []
@@ -990,7 +1001,12 @@ async def lanelet_preview(request: Request, draft_id: str) -> HTMLResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/draft/{draft_id}/map-view", response_class=HTMLResponse)
+@router.get(
+    "/draft/{draft_id}/map-view",
+    response_class=HTMLResponse,
+    # With load_map it parses a city; without, it still binds on a cached map.
+    dependencies=[Depends(refuse_cross_site)],
+)
 def map_view(
     request: Request, draft_id: str, pattern: int = 0, load_map: bool = False
 ) -> HTMLResponse:
@@ -1004,7 +1020,9 @@ def map_view(
 
     ``load_map`` is what a first binding costs -- parsing a city -- and is
     therefore asked for rather than assumed; once the map is cached every later
-    render binds without it.
+    render binds without it.  Only the panel itself (htmx, same-origin) asks
+    for this route, so a request another site sends is refused with 403 rather
+    than made to parse a map (#1850).
     """
     draft = _service(request).require_draft(draft_id)
     view = scenario_map.build_map_view(

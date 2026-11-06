@@ -67,6 +67,7 @@ __all__ = [
     "converter_available",
     "converter_version",
     "ensure_recording",
+    "existing_recording",
     "fetch_web_viewer",
     "recording_path",
     "web_viewer",
@@ -211,6 +212,16 @@ def _convert(trajectory: Path, out: Path, replace: bool = True) -> None:
         logger.info("%s: %s", trajectory.name, warning)
 
 
+def existing_recording(trajectory: Path) -> Path | None:
+    """The recording of *trajectory* :func:`ensure_recording` would return
+    without making one: beside the log, else in the cache, and no older than
+    the log; ``None`` when one would have to be made."""
+    for made in (recording_path(trajectory), _cached_recording(trajectory)):
+        if _fresh(made, trajectory):
+            return made
+    return None
+
+
 def ensure_recording(trajectory: Path) -> Path:
     """The recording of *trajectory*, made now if there is none (or an older
     one than the log).
@@ -229,12 +240,11 @@ def ensure_recording(trajectory: Path) -> Path:
     """
     if not trajectory.is_file():
         raise FileNotFoundError(f"No trajectory log {trajectory}")
+    made_already = existing_recording(trajectory)
+    if made_already is not None:
+        return made_already
     beside = recording_path(trajectory)
-    if _fresh(beside, trajectory):
-        return beside
     cached = _cached_recording(trajectory)
-    if _fresh(cached, trajectory):
-        return cached
     with _lock_for(trajectory):
         # Another request may have made it while this one waited.
         for made in (beside, cached):
