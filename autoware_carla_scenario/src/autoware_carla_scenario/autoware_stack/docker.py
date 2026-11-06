@@ -41,6 +41,7 @@ import hashlib
 import logging
 import os
 import shlex
+import socket
 import subprocess
 import sys
 from dataclasses import dataclass, field, replace
@@ -72,12 +73,18 @@ __all__ = [
     "DEPENDENCY_IMAGE_REPOSITORY",
     "DockerAutowareConfig",
     "DockerAutowareLauncher",
+    "OWNER_LABEL",
     "STACK_LABEL",
 ]
 
 #: Every container this launcher starts carries this label, which is how one
 #: left behind by a run that was killed is found and removed by the next.
 STACK_LABEL: str = "autoware_carla_scenario.stack"
+
+#: And this one, ``<host>:<pid>`` of the process that started it: a leftover
+#: is one whose process is gone, not a live stack of another run of the same
+#: user on the host (a SLURM task beside this one, #1862).
+OWNER_LABEL: str = "autoware_carla_scenario.owner"
 
 #: When the workspace is built: ``auto`` when it has never been built
 #: (``install/setup.bash`` is missing), ``always`` before every batch, ``never``
@@ -106,10 +113,50 @@ _DOCKER_TIMEOUT_S = 60.0
 #: and the dependencies' install stream their output and are not bounded.
 _DOCKER_COMMIT_TIMEOUT_S = 1800.0
 
+#: The lock file, in the workspace, that the dependency image's install and
+#: the workspace's build are run under: one run on the host (or on any host
+#: the workspace is shared with, where the file system locks across hosts)
+#: at a time, so SLURM tasks sharing a workspace do not ``colcon build`` it
+#: together (#1862).
+_BUILD_LOCK_NAME = ".autoware_carla_scenario-build.lock"
+
+#: How long a run waits for another's build of the workspace before failing.
+_BUILD_LOCK_TIMEOUT_S = 4 * 3600.0
+
+#: How often the build lock is tried while another run holds it.
+_BUILD_LOCK_POLL_S = 2.0
+
 
 def _label_value() -> str:
     """The value of :data:`STACK_LABEL` on this user's containers."""
     return f"uid-{os.getuid()}"
+
+
+def _owner_value() -> str:
+    """The value of :data:`OWNER_LABEL` on this process's containers."""
+    return f"{socket.gethostname()}:{os.getpid()}"
+
+
+def _process_alive(pid: int) -> bool:
+    """Whether process *pid* exists on this host."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True  # someone else's, but alive
+    return True
+
+
+def _owner_alive(owner: str) -> Optional[bool]:
+    """Whether the process an :data:`OWNER_LABEL` value names still runs;
+    None when that cannot be told (no label, a malformed one, another host's)."""
+    host, _, pid = owner.rpartition(":")
+    if not host or not pid.isdigit():
+        return None
+    if host != socket.gethostname():
+        return None
+    return _process_alive(int(pid))
 
 
 @dataclass(frozen=True)
@@ -288,11 +335,19 @@ class DockerAutowareLauncher:
             self._config.build == "auto" and not self._is_built()
         )
         if build or self._is_built():
-            self._container = replace(
-                self._container, image=self._dependency_image(self._container.image)
-            )
-        if build:
-            self._build()
+            lock = self._lock_workspace()
+            try:
+                self._container = replace(
+                    self._container,
+                    image=self._dependency_image(self._container.image),
+                )
+                # Another run may have built it while this one waited.
+                if build and self._config.build == "auto" and self._is_built():
+                    build = False
+                if build:
+                    self._build()
+            finally:
+                self._unlock_workspace(lock)
         if not self._is_built():
             raise AutowareStackError(
                 f"{self._workspace} has not been built ({self._setup_script()} is "
@@ -429,22 +484,58 @@ class DockerAutowareLauncher:
         return path
 
     def remove_leftover_containers(self) -> None:
-        """Remove every container this user's launchers started and nothing removed.
+        """Remove the containers this user's launchers started whose process is gone.
 
         A run killed before its scenario ended leaves its stack running -- and
         its nodes publishing into the next run's ROS graph.  Containers carry
-        the user's id in their label, so another user's runs are left alone;
-        two batches of one user's on one host are not supported.
+        the user's id in their label, so another user's runs are left alone,
+        and the host and pid of the process that started them
+        (:data:`OWNER_LABEL`), so the live stack of another run of this
+        user's (a SLURM task beside this one) is left alone too: only those
+        whose process no longer runs on this host are removed.  One without
+        an owner (started by a version before the label, or by another host
+        whose processes cannot be seen from here) is removed when it no
+        longer runs, and only named in a warning while it does.
         """
         listed = self._docker(
             "ps",
             "--all",
-            "--quiet",
             "--filter",
             f"label={STACK_LABEL}={_label_value()}",
+            "--format",
+            '{{.ID}}\t{{.State}}\t{{.Label "' + OWNER_LABEL + '"}}',
             check=False,
         )
-        ids = listed.stdout.split()
+        ids: list[str] = []
+        unknown: list[str] = []
+        for line in listed.stdout.splitlines():
+            fields = line.split("\t")
+            container = fields[0].strip()
+            if not container:
+                continue
+            state = ""
+            if len(fields) > 1:
+                state = fields[1].strip()
+            owner = ""
+            if len(fields) > 2:
+                owner = fields[2].strip()
+            alive = _owner_alive(owner)
+            if alive is None:
+                if state == "running":
+                    unknown.append(container)
+                else:
+                    ids.append(container)
+            elif not alive:
+                ids.append(container)
+        if unknown:
+            logger.warning(
+                "Leaving %d running Autoware container(s) whose process cannot be "
+                "told alive or not (no %s label, or another host's): %s. Remove "
+                "them with `docker rm --force` if no run of yours uses them.",
+                len(unknown),
+                OWNER_LABEL,
+                " ".join(unknown),
+            )
         if ids:
             logger.warning("Removing %d leftover Autoware container(s)", len(ids))
             # A list, not `*ids`: Codon 0.19 unpacks only a tuple into a call.
@@ -470,6 +561,71 @@ class DockerAutowareLauncher:
             workspace_mount=workspace_mount,
             environment=container.environment,
         )
+
+    def _lock_workspace(self) -> int:
+        """Wait for, and take, the workspace's build lock; its descriptor.
+
+        Raises:
+            AutowareStackError: Another run held it for longer than
+                :data:`_BUILD_LOCK_TIMEOUT_S`.
+        """
+        if TYPE_CHECKING:
+            # fcntl and os.open() have no model (typecheck/library.py).
+            return -1
+        else:
+            import fcntl  # noqa: PLC0415
+            import time  # noqa: PLC0415
+
+            path = self._workspace / _BUILD_LOCK_NAME
+            try:
+                fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+            except OSError as exc:
+                logger.warning(
+                    "Building %s without a lock (%s): another run may build it "
+                    "at the same time",
+                    self._workspace,
+                    exc,
+                )
+                return -1
+            # Read here, not as a default: a default is bound once.
+            timeout = _BUILD_LOCK_TIMEOUT_S
+            deadline = time.monotonic() + timeout
+            waiting = False
+            while True:
+                try:
+                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                    return fd
+                except BlockingIOError:
+                    pass
+                except OSError as exc:
+                    os.close(fd)
+                    logger.warning(
+                        "Building %s without a lock (%s): another run may build "
+                        "it at the same time",
+                        self._workspace,
+                        exc,
+                    )
+                    return -1
+                if time.monotonic() >= deadline:
+                    os.close(fd)
+                    raise AutowareStackError(
+                        f"Another run has been building {self._workspace} for "
+                        f"more than {timeout:.0f} s (it holds {path}); not "
+                        "building it beside it"
+                    )
+                if not waiting:
+                    logger.info(
+                        "Waiting for another run to finish building %s (%s)",
+                        self._workspace,
+                        path,
+                    )
+                    waiting = True
+                time.sleep(_BUILD_LOCK_POLL_S)
+
+    def _unlock_workspace(self, fd: int) -> None:
+        """Let the build lock *fd* (from :meth:`_lock_workspace`) go."""
+        if fd >= 0:
+            os.close(fd)
 
     def _setup_script(self) -> Path:
         return self._workspace / "install" / "setup.bash"
@@ -671,6 +827,8 @@ class DockerAutowareLauncher:
             name,
             "--label",
             f"{STACK_LABEL}={_label_value()}",
+            "--label",
+            f"{OWNER_LABEL}={_owner_value()}",
             # tini as PID 1 hands SIGINT on to ros2 launch whatever the image's
             # entrypoint does with it.
             "--init",

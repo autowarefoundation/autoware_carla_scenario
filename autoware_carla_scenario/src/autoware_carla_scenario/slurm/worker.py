@@ -50,6 +50,7 @@ from .manifest import (
 from .ports import (
     CarlaWatchdog,
     PortSlot,
+    RosDomains,
     acquire_slot,
     first_slot,
     kill_carla_on_port,
@@ -134,13 +135,22 @@ class _RssSampler(threading.Thread):
         )
 
 
-def worker_overrides(cfg: "DictConfig", slot: PortSlot) -> dict[str, Any]:
-    """Point *cfg* at the task's ports (in place); what it changed.
+def worker_overrides(
+    cfg: "DictConfig", slot: PortSlot, domains: RosDomains | None = None
+) -> dict[str, Any]:
+    """Point *cfg* at the task's ports and ROS domains (in place); what it changed.
 
     The CARLA server and its TrafficManager, and the bridges the run itself
     hosts.  ``driver.address`` is left alone: a policy the run serves itself
     (``driver.policy``) listens on a port the OS picks, and one that is not
     is a server someone else runs, which every task dials.
+
+    With *domains*, the DDS domains the run's ROS 2 nodes join are the
+    task's own (:class:`.ports.RosDomains`), none shared with another task on
+    the node: ``ros2.domain_id`` for ``ego.entity=ros2``, each
+    ``autoware.launcher.ros_domain_ids`` entry for the docker launcher (one,
+    from the launcher's ``env.ROS_DOMAIN_ID`` or 0, when it lists none), and
+    ``ROS_DOMAIN_ID`` in ``autoware.launcher.env`` for the command launcher.
     """
     from omegaconf import OmegaConf  # noqa: PLC0415
 
@@ -157,8 +167,58 @@ def worker_overrides(cfg: "DictConfig", slot: PortSlot) -> dict[str, Any]:
         changes["driver.bridge.address"] = _with_port(
             bridge.address, slot.driver_bridge
         )
+    if domains is not None:
+        changes.update(_domain_overrides(cfg, domains))
     for key, value in changes.items():
         OmegaConf.update(cfg, key, value, merge=False)
+    return changes
+
+
+def _domain_id(value: Any, key: str) -> int:
+    """*value* of *key* as a ROS domain id, refused naming the key."""
+    if isinstance(value, str) and value.strip().isdigit():
+        value = int(value)
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"{key} must be a ROS domain id, got {value!r}")
+    return value
+
+
+def _domain_overrides(cfg: "DictConfig", domains: RosDomains) -> dict[str, Any]:
+    """The ROS domain settings of *cfg* moved to the task's own domains."""
+    changes: dict[str, Any] = {}
+    ego = cfg.get("ego")
+    ros2 = cfg.get("ros2")
+    if (
+        ego is not None
+        and str(ego.get("entity", "autopilot")) == "ros2"
+        and ros2 is not None
+        and ros2.get("domain_id") is not None
+    ):
+        wanted = _domain_id(ros2.get("domain_id"), "ros2.domain_id")
+        changes["ros2.domain_id"] = domains.take(wanted)
+    autoware = cfg.get("autoware")
+    launcher = None if autoware is None else autoware.get("launcher")
+    if launcher is None:
+        return changes
+    kind = str(launcher.get("type", "none"))
+    env = launcher.get("env") or {}
+    configured = env.get("ROS_DOMAIN_ID")
+    default = (
+        0
+        if configured is None
+        else _domain_id(configured, "autoware.launcher.env.ROS_DOMAIN_ID")
+    )
+    if kind == "docker":
+        ids = list(launcher.get("ros_domain_ids") or []) or [default]
+        changes["autoware.launcher.ros_domain_ids"] = [
+            domains.take(_domain_id(i, "autoware.launcher.ros_domain_ids")) for i in ids
+        ]
+    elif kind == "command":
+        # The whole mapping, so a null env is replaced rather than descended into.
+        changes["autoware.launcher.env"] = {
+            **{str(k): str(v) for k, v in env.items()},
+            "ROS_DOMAIN_ID": str(domains.take(default)),
+        }
     return changes
 
 
@@ -621,6 +681,7 @@ def _batch_configs(
     chunk: list[int],
     configs: list[Any],
     slot: PortSlot,
+    domains: RosDomains | None = None,
 ) -> dict[int, Any]:
     """The configs of the cases *record* (the manifest's ``batch_settings``)
     names, by index: this task's own from *configs* (its cases, *chunk*), the
@@ -641,7 +702,7 @@ def _batch_configs(
         case = manifest["cases"][index]
         cfg = run._compose_config(case["scenario"], list(case["overrides"]))
         _check_same_config(case, cfg, manifest.get("cwd"))
-        worker_overrides(cfg, slot)
+        worker_overrides(cfg, slot, domains)
         found[index] = cfg
     return found
 
@@ -688,6 +749,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
     signal.signal(signal.SIGUSR1, _raise_interrupt)
 
     slot: PortSlot | None = None
+    domains: RosDomains | None = None
     watchdog: CarlaWatchdog | None = None
     # Converts each case's trajectory log into a Rerun recording as the case
     # ends (rerun.enabled): each task converts its own cases.
@@ -707,16 +769,20 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         if settings.start_stagger_seconds > 0:
             task.update(state="waiting")
             wait_for_start_turn(layout.start_lock, settings.start_stagger_seconds)
+        lock_dir = (
+            Path(settings.port_lock_dir).expanduser()
+            if settings.port_lock_dir
+            else None
+        )
         slot = acquire_slot(
             settings.port_base,
             settings.port_slots,
             start=first_slot(os.environ, settings.port_slots),
-            lock_dir=(
-                Path(settings.port_lock_dir).expanduser()
-                if settings.port_lock_dir
-                else None
-            ),
+            lock_dir=lock_dir,
         )
+        # Taken as the configs ask for them (worker_overrides), beside the
+        # slot's locks; they go when this process does.
+        domains = RosDomains(lock_dir)
         port_file = layout.task_port(submission_index, task_index)
         try:
             watchdog = CarlaWatchdog(slot, port_file)
@@ -739,7 +805,7 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
         for case in cases:
             cfg = run._compose_config(case["scenario"], list(case["overrides"]))
             _check_same_config(case, cfg, manifest.get("cwd"))
-            worker_overrides(cfg, slot)
+            worker_overrides(cfg, slot, domains)
             # Refused before anything is built, as a local batch refuses it
             # (the submitting process already did, for a batch it checked).
             timeouts.append(run_timeout_seconds(cfg))
@@ -773,7 +839,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
             run.apply_canvas(*configs)
             _apply_metrics(run, configs)
         else:
-            chosen = _batch_configs(run, manifest, record, chunk, configs, slot)
+            chosen = _batch_configs(
+                run, manifest, record, chunk, configs, slot, domains
+            )
             first_cfg = chosen[int(record.get("first_case", 0))]
             rerun = run.build_rerun_converter(
                 *(chosen[int(i)] for i in record.get("rerun_cases", []))
@@ -897,6 +965,8 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
             # With CARLA left, the watchdog ends it when this process does,
             # and keeps the slot locked until then.
             slot.release(keep_lock=watchdog is not None and bool(left))
+        if domains is not None:
+            domains.release()
     return exit_status
 
 

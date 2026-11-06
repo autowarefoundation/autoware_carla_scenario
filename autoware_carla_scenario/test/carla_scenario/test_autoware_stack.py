@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 import os
 import signal
+import socket
 import subprocess
 import sys
 import textwrap
@@ -24,6 +25,7 @@ from autoware_carla_scenario.autoware_stack.bridge_node import (
 )
 from autoware_carla_scenario.autoware_stack import (
     DEPENDENCY_IMAGE_REPOSITORY,
+    OWNER_LABEL,
     STACK_LABEL,
     AutowareEpisode,
     AutowareLauncher,
@@ -619,23 +621,203 @@ def test_docker_launcher_refuses_a_branch_without_scenario_support(
         _docker_launcher(ws, docker).prepare()
 
 
+def _dead_pid() -> int:
+    """The pid of a process that has exited (and been reaped)."""
+    process = subprocess.Popen([sys.executable, "-c", "pass"])
+    process.wait()
+    return process.pid
+
+
 def test_docker_launcher_removes_leftover_containers(
-    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path,
+    fake_docker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
+    # Only those whose process is gone: a live stack of another run of this
+    # user's on the host (a SLURM task beside this one) is left alone (#1862).
     docker, calls = fake_docker
     ws = _workspace(tmp_path, built=True, scenario=True)
-    monkeypatch.setenv("FAKE_DOCKER_PS", "abc123\ndef456")
+    host = socket.gethostname()
+    live = subprocess.Popen([sys.executable, "-c", "import time; time.sleep(60)"])
+    try:
+        lines = [
+            f"dead01\trunning\t{host}:{_dead_pid()}",
+            f"live01\trunning\t{host}:{live.pid}",
+            f"mine01\trunning\t{host}:{os.getpid()}",
+            # Another host's process cannot be seen from here.
+            f"other1\trunning\tsome-other-host-{os.getpid()}:{live.pid}",
+            f"other2\texited\tsome-other-host-{os.getpid()}:{live.pid}",
+            # Started before the owner label: removed only once it has stopped.
+            "legacy1\texited\t",
+            "legacy2\trunning\t",
+            "legacy3\tcreated",
+        ]
+        monkeypatch.setenv("FAKE_DOCKER_PS", "\n".join(lines))
 
-    _docker_launcher(ws, docker).prepare()
+        _docker_launcher(ws, docker).prepare()
+    finally:
+        live.kill()
+        live.wait()
 
     assert [
         "ps",
         "--all",
-        "--quiet",
         "--filter",
         f"label={STACK_LABEL}=uid-{os.getuid()}",
+        "--format",
+        '{{.ID}}\t{{.State}}\t{{.Label "' + OWNER_LABEL + '"}}',
     ] in calls()
-    assert ["rm", "--force", "abc123", "def456"] in calls()
+    removed = [c for c in calls() if c[:2] == ["rm", "--force"] and len(c) > 3]
+    assert removed == [["rm", "--force", "dead01", "other2", "legacy1", "legacy3"]]
+    assert "other1 legacy2" in caplog.text
+
+
+def test_docker_launcher_labels_its_containers_with_their_owner(
+    tmp_path: Path, fake_docker
+) -> None:
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    launcher = _docker_launcher(ws, docker)
+    launcher.start(name="x", bridge_address="localhost:1")
+    try:
+        _wait_for(lambda: len(_stack_runs(calls())) == 1)
+    finally:
+        launcher.close()
+    run = _stack_runs(calls())[0]
+    assert f"{OWNER_LABEL}={socket.gethostname()}:{os.getpid()}" in run
+
+
+def test_docker_launcher_waits_for_another_runs_build(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two runs on one workspace (SLURM tasks sharing a node) build it one at
+    # a time, under a lock in the workspace (#1862).
+    import fcntl
+
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path)
+    monkeypatch.setenv("FAKE_DOCKER_WS", str(ws))
+    monkeypatch.setenv("FAKE_DOCKER_SCENARIO", "1")
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.05)
+    lock = ws / ".autoware_carla_scenario-build.lock"
+    # Another process holds the lock (a child, so flock is not shared with
+    # this one's descriptors).
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import fcntl, sys, time\n"
+            f"f = open({str(lock)!r}, 'w')\n"
+            "fcntl.flock(f, fcntl.LOCK_EX)\n"
+            "print('locked', flush=True)\n"
+            "time.sleep(float(sys.argv[1]))\n",
+            "1.0",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "locked"
+        began = time.monotonic()
+        _docker_launcher(ws, docker, build="always").prepare()
+        waited = time.monotonic() - began
+    finally:
+        holder.kill()
+        holder.wait()
+    assert waited >= 0.5
+    assert any(c[0] == "run" and "colcon build" in c[-1] for c in calls())
+    # The lock is let go: another run takes it at once.
+    with lock.open("w") as stream:
+        fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def test_docker_launcher_gives_up_on_a_build_lock_held_too_long(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path)
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.05)
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_TIMEOUT_S", 0.3)
+    lock = ws / ".autoware_carla_scenario-build.lock"
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import fcntl, time\n"
+            f"f = open({str(lock)!r}, 'w')\n"
+            "fcntl.flock(f, fcntl.LOCK_EX)\n"
+            "print('locked', flush=True)\n"
+            "time.sleep(30)\n",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    try:
+        assert holder.stdout is not None
+        assert holder.stdout.readline().strip() == "locked"
+        with pytest.raises(AutowareStackError, match="Another run has been building"):
+            _docker_launcher(ws, docker, build="always").prepare()
+    finally:
+        holder.kill()
+        holder.wait()
+    assert not any(c[0] == "run" for c in calls())
+
+
+def test_docker_launcher_builds_serially_across_processes(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Two launchers in two processes, both told to build: their builds do
+    # not overlap.
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    spans = tmp_path / "spans"
+    slow_docker = tmp_path / "bin" / "slow-docker"
+    slow_docker.write_text(
+        f"#!/bin/sh\n"
+        f'case "$*" in *"colcon build"*) '
+        f'echo "start $(date +%s.%N)" >> {spans}; sleep 0.5; '
+        f'echo "end $(date +%s.%N)" >> {spans};; esac\n'
+        f'exec {docker} "$@"\n'
+    )
+    slow_docker.chmod(0o755)
+    script = textwrap.dedent(
+        f"""
+        import sys
+        from pathlib import Path
+        from autoware_carla_scenario.autoware_stack import (
+            DockerAutowareConfig, DockerAutowareLauncher,
+        )
+        from autoware_carla_scenario.autoware_stack import docker
+        docker._BUILD_LOCK_POLL_S = 0.05
+        DockerAutowareLauncher(DockerAutowareConfig(
+            workspace=Path({str(ws)!r}), launch=("p", "f.launch.xml"),
+            docker={str(slow_docker)!r}, mounts={{}}, rosdep=False,
+            build="always",
+        )).prepare()
+        """
+    )
+    env = {
+        **os.environ,
+        "FAKE_DOCKER_WS": str(ws),
+        "FAKE_DOCKER_SCENARIO": "1",
+    }
+    runs = [
+        subprocess.Popen(
+            [sys.executable, "-c", script],
+            env=env,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.PIPE,
+            text=True,
+        )
+        for _ in range(2)
+    ]
+    for run in runs:
+        _out, err = run.communicate(timeout=120)
+        assert run.returncode == 0, err
+    events = [line.split() for line in spans.read_text().splitlines()]
+    assert [kind for kind, _ in events] == ["start", "end", "start", "end"]
 
 
 def test_docker_launcher_starts_and_removes_a_container_per_scenario(

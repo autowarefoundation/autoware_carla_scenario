@@ -96,15 +96,25 @@ What happens:
       `autoware.launcher.build` says so: `auto` builds it only when
       `install/setup.bash` is missing, `always` before every batch, `never`
       leaves building to you. The output goes to `autoware-build.log`.
+      The dependency image and the build are made under a lock,
+      `.autoware_carla_scenario-build.lock` in the workspace: a second run
+      waits for the first's (up to 4 hours, then fails saying so), and with
+      `auto` uses its build rather than build again.
     - A workspace whose `autoware_carla_interface` launch takes no
       `scenario_mode` -- one built from a branch without scenario support --
       is refused here, not after the first scenario has timed out waiting for
       it.
-    - Containers left behind by a run of yours that was killed (they carry the
-      `autoware_carla_scenario.stack=uid-<your uid>` label) are removed.
-      Another user's are left alone, but two of your own batches on one host
-      are not supported -- the shared host network (CARLA's ports, the
-      bridge's, the ROS graph) would not allow them anyway.
+    - Containers left behind by a run of yours that was killed are removed.
+      Each container carries the `autoware_carla_scenario.stack=uid-<your uid>`
+      label, so another user's are left alone, and the
+      `autoware_carla_scenario.owner=<host>:<pid>` label of the process that
+      started it, so the live stack of another run of yours on the host (a
+      SLURM task beside this one) is left alone too: only those whose process
+      no longer runs on this host are removed. One without an owner label (from
+      a version before it) or another host's is removed once it has stopped,
+      and only named in a warning while it runs. Two of your own runs on one
+      host each need ports and ROS domains of their own, which SLURM tasks are
+      given ([slurm.md](slurm.md#ros-domains)) and two local batches are not.
     - Every docker call the launcher makes for its answer (`docker ps`,
       `docker image inspect`, `docker rm`) is given 60 s, `docker commit` of
       the dependency image 30 minutes: a daemon that stops answering fails
@@ -219,6 +229,8 @@ such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
 `ros_domain_ids` moves each scenario's stack to another ROS domain, so it does
 not discover what is left of the last one before those participants time out:
 `'autoware.launcher.ros_domain_ids=[10,11]'`.
+Under `launcher=slurm` each task maps these ids to domains no other task on
+the node holds ([slurm.md](slurm.md#ros-domains)).
 
 ## Sweeps
 

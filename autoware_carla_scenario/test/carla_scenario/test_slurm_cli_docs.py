@@ -54,3 +54,22 @@ def test_every_subcommand_and_option_is_documented(command: str) -> None:
             # `--cases a,b` or `--cases`, not the start of `--cases-per-task`.
             pattern = rf"`{re.escape(option)}[` ]"
             assert re.search(pattern, text), f"{command} {option} is not in {DOCS}"
+
+
+def test_the_slurm_and_autoware_docs_agree_on_tasks_sharing_a_node() -> None:
+    """slurm.md runs Autoware and ROS 2 egos in tasks sharing a node, so
+    autoware.md must not call that unsupported, and both describe the owner
+    label that keeps one task from removing another's stack (#1862)."""
+    slurm = " ".join(DOCS.read_text(encoding="utf-8").split())
+    autoware = " ".join(
+        (DOCS.parent / "autoware.md").read_text(encoding="utf-8").split()
+    )
+    assert "are not supported" not in autoware
+    assert "run such batches locally" not in slurm
+    assert "### ROS domains" in DOCS.read_text(encoding="utf-8")
+    assert "slurm.md#ros-domains" in autoware
+    for text in (slurm, autoware):
+        assert "autoware_carla_scenario.owner=<host>:<pid>" in text
+    from autoware_carla_scenario.autoware_stack import OWNER_LABEL  # noqa: PLC0415
+
+    assert OWNER_LABEL == "autoware_carla_scenario.owner"

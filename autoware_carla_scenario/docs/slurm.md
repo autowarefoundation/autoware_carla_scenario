@@ -415,6 +415,41 @@ SLURM gives each job a private one (`job_container/tmpfs`): it is
 `launcher.port_lock_dir`. The default range, 20000-29999, is below Linux's
 ephemeral ports.
 
+### ROS domains
+
+The ROS 2 nodes of tasks on one node would share a DDS domain: they all start
+from the same config. So each task maps every domain id its config names to
+one no other task on the node holds (`slurm/ports.py`, `RosDomains`), and
+keeps it for all its cases:
+
+| Config | What the task changes |
+|---|---|
+| `ego.entity=ros2` | `ros2.domain_id` |
+| `autoware.launcher.type=docker` | each `autoware.launcher.ros_domain_ids` entry; with none, one taken from `autoware.launcher.env.ROS_DOMAIN_ID`, else 0 |
+| `autoware.launcher.type=command` | `ROS_DOMAIN_ID` in `autoware.launcher.env` (from its own value, else 0) |
+
+An id maps to the first domain from it on (up to 232, then from 0) whose lock,
+`<lock dir>/autoware_carla_scenario-ros-domain-<id>.lock` beside the port
+slots', no other task holds; the lock goes when the task's process does. The
+first task on a node gets the ids it asked for, the next ones the ids after:
+with `ros_domain_ids=[10,11]`, one task runs on 10 and 11 and the next on 12
+and 13. The domains are not part of the port slot: a slot's index runs to
+`port_slots` (1000 by default), and ROS 2 has 233 domains. Keep
+`array_parallelism` times the domains a task uses well below that, and below
+102 on Linux (0 to 101 is what the ROS 2 documentation calls safe). The locks
+are per user (the lock directory is), so another user's tasks on the node
+may still pick the same domain.
+
+### Autoware stacks
+
+The docker launcher labels each container it starts with your uid and with
+its owner, `autoware_carla_scenario.owner=<host>:<pid>`. A task removes only
+the leftover containers whose owner no longer runs, so a live stack of
+another task on the node is left alone ([autoware.md](autoware.md)). Tasks
+that build one workspace (`build: always`, or `auto` while it is unbuilt) do
+so one at a time, under a lock in the workspace: a task that waits for
+another's `auto` build uses it rather than build again.
+
 `driver.address` is not changed: a policy the run serves itself
 (`driver.policy`) listens on a port the OS picks, and one it does not is a
 server someone else runs, which every task dials. `driver.transport` is not
@@ -455,9 +490,11 @@ dialled by every task, as a TCP one is.
   long, or a waiter that stalled for 10 s in the middle of taking a lock
   over.
 - **ROS 2 and Autoware egos** (`ego.entity=ros2`, `ego.entity=autoware` with
-  a launcher) run their stacks on DDS, whose domain the tasks would share; give
-  each its own `ROS_DOMAIN_ID` (the Autoware launcher's `ros_domain_ids`), or
-  run such batches locally.
+  a launcher) run their stacks on DDS. Each task takes ROS domains of its own
+  ([ROS domains](#ros-domains)), and its Autoware containers are told apart
+  from another task's ([Autoware stacks](#autoware-stacks)), so tasks sharing
+  a node do not meet. A command launcher's script that sets `ROS_DOMAIN_ID`
+  itself rather than reading it from its environment is the exception.
 - **File names.** A case is named by its position in the batch, which is the
   name a local batch gives it whenever every earlier case opened its trajectory
   log. A case that raises before it opens it (while its ego is created or the
