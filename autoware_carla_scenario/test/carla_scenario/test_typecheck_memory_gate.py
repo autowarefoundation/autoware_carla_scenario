@@ -8,6 +8,8 @@ the second "build" in another thread or process.
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import multiprocessing
 import os
 import threading
@@ -151,12 +153,34 @@ def fallbacks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return runtime / "acs-codon-gate"
 
 
+@pytest.mark.parametrize("mode", [0o775, 0o777])
+def test_a_directory_of_mine_others_can_write_to_is_made_private(
+    tmp_path: Path, fallbacks: Path, mode: int
+) -> None:
+    # As an older gate left it under a umask of 002 (0o775), or worse.
+    gate = tmp_path / "gate"
+    gate.mkdir()
+    gate.chmod(mode)
+    with admitted(2 * GB, directory=gate, budget=_budget(14)):
+        assert len(list(gate.glob("*.hold"))) == 1
+    assert (gate.stat().st_mode & 0o777) == 0o700
+    assert not fallbacks.exists()
+
+
+def _fchmod_fails(monkeypatch: pytest.MonkeyPatch) -> None:
+    def fchmod(fd: int, mode: int) -> None:
+        raise PermissionError(errno.EPERM, "not permitted")
+
+    monkeypatch.setattr(os, "fchmod", fchmod)
+
+
 def test_a_directory_others_can_write_to_is_not_used(
-    tmp_path: Path, fallbacks: Path
+    tmp_path: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     shared = tmp_path / "shared"
     shared.mkdir()
     shared.chmod(0o777)
+    _fchmod_fails(monkeypatch)
     with admitted(2 * GB, directory=shared, budget=_budget(14)):
         assert not list(shared.iterdir())
         assert len(list(fallbacks.glob("*.hold"))) == 1
@@ -179,6 +203,7 @@ def test_a_configured_directory_is_checked_too(
     shared = tmp_path / "shared"
     shared.mkdir()
     shared.chmod(0o777)
+    _fchmod_fails(monkeypatch)
     monkeypatch.setenv(GATE_ENV, str(shared))
     with admitted(2 * GB, budget=_budget(14)):
         assert not list(shared.iterdir())
@@ -302,3 +327,97 @@ def test_the_start_time_is_read_after_the_last_parenthesis(
 
     monkeypatch.setattr(Path, "read_text", read_text)
     assert memory_gate._start_time(42) == 22
+
+
+def test_a_fifo_named_like_a_hold_is_ignored(tmp_path: Path) -> None:
+    fifo = tmp_path / f"{os.getpid()}-9-9.hold"
+    os.mkfifo(fifo)
+
+    def never(seconds: float) -> None:
+        raise AssertionError("waited for a FIFO")
+
+    with admitted(9 * GB, directory=tmp_path, budget=_budget(1), sleep=never):
+        pass
+    assert fifo.exists()
+
+
+def _ungated(tmp_path: Path) -> None:
+    """A build that is admitted at once, its body run, and no hold left."""
+    ran = False
+    with admitted(2 * GB, directory=tmp_path, budget=_budget(14)):
+        ran = True
+    assert ran
+    assert not list(tmp_path.glob("*.hold"))
+
+
+def test_a_lock_that_fails_runs_the_build_ungated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def flock(fd: int, operation: int) -> None:
+        raise OSError(errno.ENOLCK, "No locks available")
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+    _ungated(tmp_path)
+
+
+def test_a_hold_that_cannot_be_written_is_not_left_behind(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = os.write
+    record = str(2 * GB).encode()
+
+    def write(fd: int, data: bytes) -> int:
+        if bytes(data).startswith(record):
+            raise OSError(errno.ENOSPC, "No space left on device")
+        return real(fd, data)
+
+    monkeypatch.setattr(os, "write", write)
+    _ungated(tmp_path)
+
+
+def test_a_listing_that_fails_runs_the_build_ungated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def listdir(path: object = ".") -> list[str]:
+        raise OSError(errno.EIO, "I/O error")
+
+    monkeypatch.setattr(os, "listdir", listdir)
+    _ungated(tmp_path)
+
+
+def test_a_budget_that_fails_runs_the_build_ungated(tmp_path: Path) -> None:
+    def budget() -> int:
+        raise RuntimeError("no meminfo")
+
+    ran = False
+    with admitted(2 * GB, directory=tmp_path, budget=budget):
+        ran = True
+    assert ran
+    assert not list(tmp_path.glob("*.hold"))
+
+
+def test_what_the_build_raises_propagates_and_its_hold_is_removed(
+    tmp_path: Path,
+) -> None:
+    with pytest.raises(KeyError, match="from the build"):
+        with admitted(2 * GB, directory=tmp_path, budget=_budget(14)):
+            raise KeyError("from the build")
+    assert not list(tmp_path.glob("*.hold"))
+
+
+def test_a_hold_that_cannot_be_removed_masks_nothing(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real = os.unlink
+
+    def unlink(path: object, *args: object, **kwargs: object) -> None:
+        if str(path).endswith(".hold"):
+            raise PermissionError(errno.EACCES, "denied")
+        real(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    with pytest.raises(KeyError, match="from the build"):
+        with admitted(2 * GB, directory=tmp_path, budget=_budget(14)):
+            monkeypatch.setattr(os, "unlink", unlink)
+            raise KeyError("from the build")
+    with admitted(2 * GB, directory=tmp_path, budget=_budget(14)):
+        pass  # no exception without one from the build either

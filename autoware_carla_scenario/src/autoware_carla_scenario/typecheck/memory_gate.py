@@ -20,11 +20,13 @@ hold whose process has died is forgotten, and so is one whose pid now names
 another process (its start time, from ``/proc/<pid>/stat``, differs).
 
 The directory is private: it is used only if it is a real directory (not a
-symlink) owned by this user that no one else can write to, and the lock and
-hold files are opened without following symlinks.  When it is not, the gate
-warns and falls back to a per-user directory (under ``$XDG_RUNTIME_DIR``, then
-``~/.cache``) and, failing that, admits the build ungated: the gate never
-blocks or fails a check of its own accord.
+symlink) owned by this user that no one else can write to (one of this user's
+that others can is made 0o700 first), it is used through a descriptor opened
+once it is checked, and the lock and hold files are opened without following
+symlinks.  When it is not, the gate warns and falls back to a per-user
+directory (under ``$XDG_RUNTIME_DIR``, then ``~/.cache``) and, failing that,
+admits the build ungated -- as it does when its own files or the budget fail:
+the gate never blocks or fails a check of its own accord.
 
 The gate is Linux's (``fcntl``, ``/proc/meminfo``), as Codon is; elsewhere,
 or with ``AUTOWARE_CARLA_SCENARIO_CODON_GATE=0``, every build is admitted at
@@ -41,8 +43,9 @@ import tempfile
 import threading
 import time
 from collections.abc import Callable, Iterator
-from contextlib import contextmanager
+from contextlib import contextmanager, suppress
 from pathlib import Path
+from types import ModuleType
 
 logger = logging.getLogger(__name__)
 
@@ -141,35 +144,71 @@ def admitted(
     if configured is None:
         yield
         return
-    where = _private_dir(configured)
-    if where is None:
+    gate = _private_dir(configured)
+    if gate is None:
         yield  # no private directory to gate in: run ungated (warned)
         return
-    hold = where / f"{os.getpid()}-{threading.get_ident()}-{next(_COUNTER)}.hold"
+    where, dir_fd = gate
+    try:
+        name = f"{os.getpid()}-{threading.get_ident()}-{next(_COUNTER)}.hold"
+        try:
+            recorded = _wait_for_room(fcntl, dir_fd, name, need, budget, sleep)
+        except OSError as error:
+            _warn(f"Codon memory gate: {where}: {error}; the build runs ungated")
+            recorded = False
+        if not recorded:
+            yield  # the gate failed (warned): run ungated
+            return
+        try:
+            yield
+        finally:
+            # Never masks what the block raised: a failure here is only logged.
+            try:
+                os.unlink(name, dir_fd=dir_fd)
+            except FileNotFoundError:
+                pass
+            except OSError as error:
+                _warn(f"Codon memory gate: cannot remove {where / name} ({error})")
+    finally:
+        with suppress(OSError):
+            os.close(dir_fd)
+
+
+def _wait_for_room(
+    fcntl: ModuleType,
+    dir_fd: int,
+    name: str,
+    need: int,
+    budget: Callable[[], int],
+    sleep: Callable[[float], None],
+) -> bool:
+    """Wait until *need* fits, then record it in the hold *name* of the
+    directory *dir_fd*: ``True`` once recorded, ``False`` if *budget* failed
+    (warned).  Raises :class:`OSError` when the gate's files fail."""
     start = _start_time(os.getpid())
     record = str(need) if start is None else f"{need} {start}"
     waited = False
-    recorded = False
     while True:
-        try:
-            lock = os.open(
-                where / "gate.lock",
-                os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
-                0o600,
-            )
-        except OSError as error:
-            _warn(
-                f"Codon memory gate: cannot open {where / 'gate.lock'} ({error}); the build runs ungated"
-            )
-            yield
-            return
+        lock = os.open(
+            "gate.lock",
+            os.O_RDWR | os.O_CREAT | os.O_NOFOLLOW | os.O_CLOEXEC,
+            0o600,
+            dir_fd=dir_fd,
+        )
         try:
             fcntl.flock(lock, fcntl.LOCK_EX)
-            held = _held(where)
-            room = budget()
+            held = _held(dir_fd)
+            try:
+                room = budget()
+            except Exception as error:  # noqa: BLE001 - the gate never fails a build
+                _warn(
+                    f"Codon memory gate: the memory budget failed ({error!r}); "
+                    "the build runs ungated"
+                )
+                return False
             if not held or room <= 0 or sum(held) + need <= room:
-                recorded = _write_hold(hold, record)
-                break
+                _write_hold(dir_fd, name, record)
+                return True
         finally:
             os.close(lock)
         if not waited:
@@ -183,13 +222,6 @@ def admitted(
             )
             waited = True
         sleep(_POLL_S)
-    if not recorded:
-        yield  # the hold could not be created (warned): run ungated
-        return
-    try:
-        yield
-    finally:
-        hold.unlink(missing_ok=True)
 
 
 def _fallback_dirs() -> list[Path]:
@@ -205,65 +237,82 @@ def _fallback_dirs() -> list[Path]:
     return dirs
 
 
-def _private_dir(configured: Path) -> Path | None:
+def _private_dir(configured: Path) -> tuple[Path, int] | None:
     """*configured*, if it is (or can be made) a private directory of this
-    user's; else the first per-user fallback that is; else ``None``."""
-    problem = _private_problem(configured)
-    if problem is None:
-        return configured
+    user's; else the first per-user fallback that is; else ``None``.  With
+    the directory comes a descriptor of it, which every later use of the
+    directory goes through, so it cannot be swapped once checked."""
+    opened = _open_private(configured)
+    if isinstance(opened, int):
+        return configured, opened
     for candidate in _fallback_dirs():
         if candidate == configured:
             continue
-        if _private_problem(candidate) is None:
+        fallback = _open_private(candidate)
+        if isinstance(fallback, int):
             _warn(
-                f"Codon memory gate: not using {configured} ({problem}); "
+                f"Codon memory gate: not using {configured} ({opened}); "
                 f"using {candidate} instead"
             )
-            return candidate
+            return candidate, fallback
     _warn(
-        f"Codon memory gate: not using {configured} ({problem}) and no "
+        f"Codon memory gate: not using {configured} ({opened}) and no "
         "private per-user directory is available; builds run ungated"
     )
     return None
 
 
-def _private_problem(where: Path) -> str | None:
-    """Why *where* cannot be the gate's directory, or ``None`` if it can: it
-    is created (mode 0o700) if missing, and must be a real directory owned by
-    this user that neither its group nor others may write to."""
+def _open_private(where: Path) -> int | str:
+    """A descriptor of *where*, or why it cannot be the gate's directory: it
+    is created (mode 0o700) if missing, and must be a real directory (not a
+    symlink) owned by this user; one its group or others may write to (made
+    so by an older gate under a lax umask) is made 0o700 first."""
     try:
         where.mkdir(mode=0o700, parents=True, exist_ok=True)
-        info = os.lstat(where)
+        fd = os.open(where, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
     except OSError as error:
         return str(error)
-    if not stat.S_ISDIR(info.st_mode):
-        return "not a directory"
-    if info.st_uid != os.getuid():
-        return f"owned by uid {info.st_uid}, not {os.getuid()}"
-    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        return f"writable by others (mode {stat.S_IMODE(info.st_mode):o})"
-    return None
-
-
-def _write_hold(hold: Path, record: str) -> bool:
-    """Create *hold* (never through a symlink, never over a file) with
-    *record*; whether that worked."""
     try:
-        fd = os.open(
-            hold,
-            os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-            0o600,
-        )
+        info = os.fstat(fd)
+        if info.st_uid != os.getuid():
+            problem = f"owned by uid {info.st_uid}, not {os.getuid()}"
+        elif info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            os.fchmod(fd, 0o700)
+            info = os.fstat(fd)
+            problem = (
+                f"writable by others (mode {stat.S_IMODE(info.st_mode):o})"
+                if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
+                else ""
+            )
+        else:
+            problem = ""
     except OSError as error:
-        _warn(
-            f"Codon memory gate: cannot create {hold} ({error}); the build runs ungated"
-        )
-        return False
+        problem = f"cannot be checked or made private ({error})"
+    if not problem:
+        return fd
+    with suppress(OSError):
+        os.close(fd)
+    return problem
+
+
+def _write_hold(dir_fd: int, name: str, record: str) -> None:
+    """Create the hold *name* (never through a symlink, never over a file)
+    with *record*; one that cannot be written is removed again."""
+    fd = os.open(
+        name,
+        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
+        0o600,
+        dir_fd=dir_fd,
+    )
+    written = False
     try:
         os.write(fd, record.encode())
+        written = True
     finally:
         os.close(fd)
-    return True
+        if not written:
+            with suppress(OSError):
+                os.unlink(name, dir_fd=dir_fd)
 
 
 _WARNED: set[str] = set()
@@ -279,35 +328,47 @@ def _warn(message: str) -> None:
     logger.warning(message)
 
 
-def _held(where: Path) -> list[int]:
-    """What the running builds hold; the holds of dead processes are removed
-    (and those of a pid since reused by another process); a file whose name
-    does not start with a pid is ignored."""
+def _held(dir_fd: int) -> list[int]:
+    """What the running builds hold, in the directory *dir_fd*; the holds of
+    dead processes are removed (and those of a pid since reused by another
+    process); a file whose name does not start with a pid, or that is not a
+    regular file, is ignored."""
     held: list[int] = []
-    for path in where.glob("*.hold"):
+    for name in os.listdir(dir_fd):
+        if not name.endswith(".hold"):
+            continue
         try:
-            pid = int(path.name.split("-", 1)[0])
+            pid = int(name.split("-", 1)[0])
         except ValueError:
             continue  # not a hold of ours
         if pid <= 0:
             continue
         try:
-            fields = _read_nofollow(path).split()
+            text = _read_hold(dir_fd, name)
+            if text is None:
+                continue  # not a regular file
+            fields = text.split()
             need = int(fields[0]) if fields else 0
             start = int(fields[1]) if len(fields) > 1 else None
         except (OSError, ValueError):
             continue  # being written or removed right now
         if not _alive(pid, start):
-            path.unlink(missing_ok=True)
+            with suppress(OSError):
+                os.unlink(name, dir_fd=dir_fd)
             continue
         held.append(need)
     return held
 
 
-def _read_nofollow(path: Path) -> str:
-    """The text of *path*, which is not read through a symlink."""
-    fd = os.open(path, os.O_RDONLY | os.O_NOFOLLOW | os.O_CLOEXEC)
+def _read_hold(dir_fd: int, name: str) -> str | None:
+    """The text of the hold *name*, or ``None`` if it is not a regular file;
+    never read through a symlink, and never waited on (a FIFO)."""
+    fd = os.open(
+        name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd
+    )
     try:
+        if not stat.S_ISREG(os.fstat(fd).st_mode):
+            return None
         return os.read(fd, 256).decode()
     finally:
         os.close(fd)

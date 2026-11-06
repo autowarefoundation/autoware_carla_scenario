@@ -164,16 +164,20 @@ checked). Files in the directory that are not holds are ignored. Set
 differently, or to `0` to start every build at once.
 
 The directory's name is predictable and sits in a world-writable one, so the
-gate trusts it only if it is private: it is created with mode `0o700`, and is
-used only if it is a real directory (not a symlink) owned by you that neither
-its group nor others can write to; `gate.lock` and the holds are opened
-without following symlinks, and a hold is created only if it does not exist.
-A directory set with `AUTOWARE_CARLA_SCENARIO_CODON_GATE` is held to the same
+gate trusts it only if it is private: it is created with mode `0o700`, opened
+without following a symlink, and used only if it is a real directory owned by
+you; one of yours that its group or others can write to (as an older gate left
+it under a umask of `002`) is made `0o700` first. Every later use goes through
+that open directory, so it cannot be swapped once checked; `gate.lock` and the
+holds are opened without following symlinks, a hold is created only if it
+does not exist, and a file that is not a regular one (a FIFO) is ignored. A
+directory set with `AUTOWARE_CARLA_SCENARIO_CODON_GATE` is held to the same
 rule. When the directory fails it, the gate warns and falls back to
 `$XDG_RUNTIME_DIR/acs-codon-gate`, then to
 `~/.cache/autoware_carla_scenario/codon-gate`; when none is usable, or the
-lock or a hold cannot be opened, it warns and starts the build ungated. The
-gate never holds up or fails a check on its own account.
+gate's own files or the memory budget fail (a lock refused on NFS, a full
+disk), it warns and starts the build ungated. The gate never holds up or fails
+a check on its own account, and never hides what a build raised.
 
 ### Installing Codon and typesafe_carla
 
