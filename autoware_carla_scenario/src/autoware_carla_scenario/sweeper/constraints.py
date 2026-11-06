@@ -158,10 +158,14 @@ def _lanelet_id(owner: str, name: str, value: Any) -> int:
         import numbers  # noqa: PLC0415
         import operator  # noqa: PLC0415
 
-        try:
-            return operator.index(value)
-        except TypeError:
-            pass
+        # numpy's bool_ is no lanelet id, but the numpy that runs on
+        # Python 3.10 (2.2) still takes it as an index, with a warning.
+        is_bool = getattr(getattr(value, "dtype", None), "kind", None) == "b"
+        if not is_bool:
+            try:
+                return operator.index(value)
+            except TypeError:
+                pass
         if isinstance(value, (numbers.Real, decimal.Decimal)):
             try:
                 whole = int(value)
