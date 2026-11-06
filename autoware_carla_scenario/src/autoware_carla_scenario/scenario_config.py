@@ -26,6 +26,7 @@ it is cheap and safe from any environment.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -273,8 +274,28 @@ class NpcVehicleConfig:
     #: CARLA vehicle blueprint ID.
     vehicle_type: str = "vehicle.mini.cooper"
 
-    #: Initial speed in km/h applied after warm-up.
+    #: Initial speed in km/h applied after warm-up: finite, 0 or more.
     initial_speed_kmh: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Refuse a NaN or infinite ``spawn_s``, and an ``initial_speed_kmh``
+        that is not finite or is below zero (#1809): a NaN pose fails far from
+        the key behind it, a negative or NaN speed leaves the NPC still with no
+        error and an infinite one breaks its physics.
+
+        Raises:
+            ValueError: naming the field.
+        """
+        if not math.isfinite(self.spawn_s):
+            raise ValueError(f"spawn_s must be finite, got {self.spawn_s}")
+        # NaN fails `>= 0.0` as well.
+        if not (
+            math.isfinite(self.initial_speed_kmh) and self.initial_speed_kmh >= 0.0
+        ):
+            raise ValueError(
+                "initial_speed_kmh must be finite and at least 0, "
+                f"got {self.initial_speed_kmh}"
+            )
 
 
 # ---------------------------------------------------------------------------

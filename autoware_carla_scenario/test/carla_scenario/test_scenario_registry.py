@@ -1053,6 +1053,182 @@ class TestEgoNumbersAreRefusedByTheirKey:
         assert (route.start.s, route.start.t) == (1.0, -1.0)
 
 
+#: The ego's and entity's numbers a run refuses unless finite (#1809): the
+#: speed and the retry steps also below zero, the poses at any finite value.
+_FINITE_EGO_NUMBERS = [
+    ("ego", "initial_speed_kmh", True),
+    ("entity", "spawn_retry_t_step", True),
+    ("entity", "spawn_retry_z_step", True),
+    ("ego", "spawn_s", False),
+    ("ego", "spawn_t", False),
+    ("ego", "spawn_heading", False),
+    ("ego", "goal_s", False),
+]
+
+
+def _shipped(overrides: list[str]) -> DictConfig:
+    from .test_video_removed import _shipped as compose
+
+    return compose(overrides)  # type: ignore[no-any-return]
+
+
+class TestEgoNumbersMustBeFinite:
+    """#1809: a NaN, an infinity or a negative speed or retry step of the
+    ego's and the entity's numbers is refused with a ``ValueError`` naming the
+    key, by the build and by the batch check before anything starts."""
+
+    @staticmethod
+    def _bad_values(non_negative: bool) -> list[float]:
+        values = [math.nan, math.inf, -math.inf]
+        return [*values, -1.0] if non_negative else values
+
+    @pytest.mark.parametrize(("group", "key", "non_negative"), _FINITE_EGO_NUMBERS)
+    def test_the_build_refuses_it(
+        self, group: str, key: str, non_negative: bool
+    ) -> None:
+        from autoware_carla_scenario.examples.run import (
+            build_ego_and_spawn,
+            build_goal_pose,
+            build_planned_route,
+            build_spawn_pose,
+        )
+
+        bound = "finite and at least 0" if non_negative else "finite"
+        for value in self._bad_values(non_negative):
+            cfg = TestEgoNumbersAreRefusedByTheirKey._cfg(group, key, value)
+            match = rf"^{group}\.{key} must be {bound}, got "
+            with pytest.raises(ValueError, match=match):
+                build_ego_and_spawn(cfg)
+            if key in ("spawn_s", "spawn_t", "spawn_heading"):
+                with pytest.raises(ValueError, match=match):
+                    build_spawn_pose(cfg)
+                with pytest.raises(ValueError, match=match):
+                    build_planned_route(cfg)
+            if key == "goal_s":
+                with pytest.raises(ValueError, match=match):
+                    build_goal_pose(cfg)
+
+    @pytest.mark.parametrize(("group", "key", "non_negative"), _FINITE_EGO_NUMBERS)
+    def test_the_batch_check_refuses_it(
+        self, group: str, key: str, non_negative: bool
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        for value in self._bad_values(non_negative):
+            cfg = _shipped([])
+            cfg[group][key] = value
+            with pytest.raises(run.RunConfigError) as raised:
+                run.check_run_config(cfg)
+            message = str(raised.value)
+            assert message.startswith(f"{group}.{key} must be finite"), message
+            assert "\n" not in message
+            with pytest.raises(run.RunConfigError, match=rf"^case-2: {group}\.{key}"):
+                run.check_batch_configs([_shipped([]), cfg], ["case-1", "case-2"])
+
+    def test_a_negative_pose_and_a_zero_speed_or_step_are_accepted(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = TestEgoNumbersAreRefusedByTheirKey._cfg("ego", "spawn_t", -1.5)
+        cfg.ego.spawn_heading = -3.0
+        cfg.ego.initial_speed_kmh = 0
+        cfg.entity.spawn_retry_t_step = 0.0
+        cfg.entity.spawn_retry_z_step = 0.0
+        ego, spawn, _ = run.build_ego_and_spawn(cfg)
+        assert (spawn.t, spawn.heading) == (-1.5, -3.0)
+        assert (ego.initial_speed_kmh, ego.spawn_retry_t_step) == (0.0, 0.0)
+        shipped = _shipped([])
+        shipped.ego.spawn_t = -1.5
+        shipped.ego.initial_speed_kmh = 0
+        run.check_run_config(shipped)
+
+    def test_the_batch_check_refuses_an_npc_vehicle_speed(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = _shipped(["scenario=intersection_passing/straight_3npc"])
+        run.check_run_config(cfg)
+        cfg.scenario.npc_vehicles[1].initial_speed_kmh = math.nan
+        with pytest.raises(
+            run.RunConfigError,
+            match=r"^npc_vehicles\[1\]\.initial_speed_kmh must be finite and at least 0",
+        ):
+            run.check_run_config(cfg)
+
+
+class TestEntityConfigNumbersMustBeFinite:
+    """#1809: ``NpcVehicleConfig`` and ``VehicleEntityConfig`` (and the ego's
+    and the other vehicles' configs built on it) refuse a NaN, an infinity or
+    a negative speed or retry step, and ``NpcVehicleConfig`` a non-finite
+    ``spawn_s``, naming the field."""
+
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf, -20.0])
+    def test_npc_vehicle_config_refuses_a_speed(self, value: float) -> None:
+        from autoware_carla_scenario import NpcVehicleConfig
+
+        with pytest.raises(
+            ValueError, match=r"^initial_speed_kmh must be finite and at least 0"
+        ):
+            NpcVehicleConfig(spawn_lanelet_id=1, initial_speed_kmh=value)
+
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    def test_npc_vehicle_config_refuses_a_spawn_s(self, value: float) -> None:
+        from autoware_carla_scenario import NpcVehicleConfig
+
+        with pytest.raises(ValueError, match=r"^spawn_s must be finite"):
+            NpcVehicleConfig(spawn_lanelet_id=1, spawn_s=value)
+
+    def test_npc_vehicle_config_accepts_a_still_npc_and_a_negative_s(self) -> None:
+        from autoware_carla_scenario import NpcVehicleConfig
+
+        npc = NpcVehicleConfig(spawn_lanelet_id=1, spawn_s=-2.0, initial_speed_kmh=0)
+        assert (npc.spawn_s, npc.initial_speed_kmh) == (-2.0, 0)
+
+    def test_the_scenario_config_names_the_npc(self) -> None:
+        from autoware_carla_scenario.examples.configs import IntersectionPassingConfig
+
+        with pytest.raises(
+            ValueError, match=r"^npc_vehicles\[0\]\.initial_speed_kmh must be"
+        ):
+            IntersectionPassingConfig(
+                npc_vehicles=[{"spawn_lanelet_id": 1, "initial_speed_kmh": -5.0}]  # type: ignore[list-item]
+            )
+
+    @pytest.mark.parametrize(
+        "field", ["initial_speed_kmh", "spawn_retry_t_step", "spawn_retry_z_step"]
+    )
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf, -0.5])
+    def test_vehicle_configs_refuse_it(self, field: str, value: float) -> None:
+        from autoware_carla_scenario import (
+            EmergencyVehicleEntityConfig,
+            MotorcycleEntityConfig,
+            VehicleEntityConfig,
+        )
+
+        spawn = SpawnTransform(carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0)))
+        match = rf"^{field} must be finite and at least 0, got "
+        bad: dict[str, Any] = {field: value}
+        with pytest.raises(ValueError, match=match):
+            VehicleEntityConfig(role_name="npc", spawn_location=spawn, **bad)
+        with pytest.raises(ValueError, match=match):
+            EgoConfig(spawn_location=spawn, **bad)
+        with pytest.raises(ValueError, match=match):
+            MotorcycleEntityConfig(role_name="m", spawn_location=spawn, **bad)
+        with pytest.raises(ValueError, match=match):
+            EmergencyVehicleEntityConfig(role_name="e", spawn_location=spawn, **bad)
+
+    def test_vehicle_configs_accept_zero(self) -> None:
+        from autoware_carla_scenario import VehicleEntityConfig
+
+        spawn = SpawnTransform(carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0)))
+        config = VehicleEntityConfig(
+            role_name="npc",
+            spawn_location=spawn,
+            initial_speed_kmh=0.0,
+            spawn_retry_t_step=0.0,
+            spawn_retry_z_step=0.0,
+        )
+        assert config.initial_speed_kmh == 0.0
+
+
 # ---------------------------------------------------------------------------
 # Tests for build_goal_pose helper
 # ---------------------------------------------------------------------------

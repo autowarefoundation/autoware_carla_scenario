@@ -101,10 +101,14 @@ class IntersectionPassingConfig:
 
     def __post_init__(self) -> None:
         """Convert raw dicts from OmegaConf into NpcVehicleConfig instances."""
-        self.npc_vehicles = [
-            NpcVehicleConfig(**v) if isinstance(v, dict) else v
-            for v in self.npc_vehicles
-        ]
+        npc_vehicles: list[NpcVehicleConfig] = []
+        for i, v in enumerate(self.npc_vehicles):
+            try:
+                npc_vehicles.append(NpcVehicleConfig(**v) if isinstance(v, dict) else v)
+            except ValueError as exc:
+                # Named by its key, as a run's other refusals are (#1809).
+                raise ValueError(f"npc_vehicles[{i}].{exc}") from None
+        self.npc_vehicles = npc_vehicles
         if self.turn_indicator_before_m is not None and self.turn_direction not in (
             "left",
             "right",
@@ -242,8 +246,7 @@ class LaneChangeConfig:
             )
         if self.expect not in ("success", "fail"):
             raise ValueError(
-                "lane_change expect must be 'success' or 'fail', "
-                f"not {self.expect!r}"
+                f"lane_change expect must be 'success' or 'fail', not {self.expect!r}"
             )
 
 
