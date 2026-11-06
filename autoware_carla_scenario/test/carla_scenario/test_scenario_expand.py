@@ -558,6 +558,74 @@ class TestExpandConfig:
         assert message in lines[0], lines
         sweeper.launcher.launch.assert_not_called()
 
+    #: A sweep whose `controls` have two errors, on a map that must not be
+    #: fetched: they are refused before it is (#1710).
+    _BAD_CONTROLS: dict = {
+        "map": {"source": "https://example.com/never-cloned.git"},
+        "sweep": {"constraints": {"ego.spawn_lanelet_id": [{}]}},
+        "controls": {
+            "vehicle_ahead_gap_m": 5,
+            "ego_speed_mps": {"key": "scenario.npc_gapm"},
+        },
+    }
+
+    def test_the_sweeper_reports_invalid_controls_one_line_per_problem(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture
+    ) -> None:
+        """#1710: as scenario-expand prints them, before the map is loaded."""
+        from unittest.mock import MagicMock, patch
+
+        from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as mod
+
+        monkeypatch.delenv("HYDRA_FULL_ERROR", raising=False)
+        sweeper = mod.LaneletConstraintSweeper()
+        sweeper.config = OmegaConf.create(
+            {
+                **self._BAD_CONTROLS,
+                "scenario": {"npc_gap_m": 10.0},
+                "hydra": {"runtime": {"choices": {"scenario": "cut_in/left"}}},
+            }
+        )
+        sweeper.launcher = MagicMock()
+        with (
+            patch.object(mod, "load_sweep_map") as load,
+            pytest.raises(SystemExit) as caught,
+        ):
+            sweeper.sweep([])
+        assert caught.value.code == 1
+        load.assert_not_called()
+        sweeper.launcher.launch.assert_not_called()
+        lines = capsys.readouterr().err.splitlines()
+        assert lines == [
+            "cut_in/left: controls.vehicle_ahead_gap_m: "
+            "expected a key or a mapping, got 5",
+            "cut_in/left: controls.ego_speed_mps.key: 'scenario.npc_gapm' is "
+            "not a key of the config (did you mean 'scenario.npc_gap_m'?)",
+        ], lines
+
+    def test_the_sweeper_raises_invalid_controls_with_hydra_full_error(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from unittest.mock import MagicMock, patch
+
+        from autoware_carla_scenario.odd.controls import ControlsError
+        from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as mod
+
+        monkeypatch.setenv("HYDRA_FULL_ERROR", "1")
+        sweeper = mod.LaneletConstraintSweeper()
+        sweeper.config = OmegaConf.create(self._BAD_CONTROLS)
+        sweeper.launcher = MagicMock()
+        with (
+            patch.object(mod, "load_sweep_map") as load,
+            pytest.raises(ControlsError) as caught,
+        ):
+            sweeper.sweep([])
+        load.assert_not_called()
+        assert [d.path for d in caught.value.diagnostics] == [
+            "controls.vehicle_ahead_gap_m",
+            "controls.ego_speed_mps.key",
+        ]
+
     def test_a_map_cache_root_that_is_no_directory_is_refused(
         self, monkeypatch: pytest.MonkeyPatch, tmp_path
     ) -> None:
