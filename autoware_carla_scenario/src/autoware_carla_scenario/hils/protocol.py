@@ -39,6 +39,7 @@ needs no socket (so the static check compiles it); they are re-exported here.
 from __future__ import annotations
 
 import json
+import selectors
 import socket
 import time
 from typing import Any, Dict, List, NoReturn, Optional
@@ -113,6 +114,10 @@ class LineReader:
         a line does not hold the call past *timeout*.  :attr:`closed` turns
         ``True`` once the peer closes.
 
+        The wait does not touch the socket's own timeout
+        (:meth:`socket.socket.settimeout`), which stays the one its sends
+        are bounded by, even while another thread sends.
+
         Raises:
             ValueError: A line is not a JSON object with a ``type``, or is
                 longer than :data:`MAX_LINE_BYTES`.
@@ -121,28 +126,45 @@ class LineReader:
         if messages or self.closed:
             return messages
         deadline = None if timeout is None else time.monotonic() + timeout
-        self._sock.settimeout(timeout)
-        while True:
+        wait = timeout
+        # The wait is a select, not the socket's timeout: that one is the
+        # socket's own, for its sends, which another thread may be making
+        # (#1792).  A readable socket's recv returns at once.
+        with selectors.DefaultSelector() as selector:
             try:
-                chunk = self._sock.recv(65536)
-            except (socket.timeout, BlockingIOError):
-                return self._take()
-            except OSError:
+                selector.register(self._sock, selectors.EVENT_READ)
+            except (OSError, ValueError):
+                # Closed (or shut down and closed) under the reader.
                 self.closed = True
                 return self._take()
-            if not chunk:
-                self.closed = True
-                return self._take()
-            self._buffer += chunk
-            messages = self._take()
-            if messages:
-                return messages
-            # A partial line: wait for its end, but no longer than asked.
-            if deadline is not None and timeout != 0.0:
-                remaining = deadline - time.monotonic()
-                if remaining <= 0.0:
+            while True:
+                try:
+                    ready = selector.select(wait)
+                except (OSError, ValueError):
+                    self.closed = True
+                    return self._take()
+                if not ready:
+                    return self._take()
+                try:
+                    chunk = self._sock.recv(65536)
+                except (socket.timeout, BlockingIOError, InterruptedError):
+                    return self._take()
+                except OSError:
+                    self.closed = True
+                    return self._take()
+                if not chunk:
+                    self.closed = True
+                    return self._take()
+                self._buffer += chunk
+                messages = self._take()
+                if messages:
                     return messages
-                self._sock.settimeout(remaining)
+                # A partial line: wait for its end, but no longer than asked.
+                # (A zero timeout reads on while more has already arrived.)
+                if deadline is not None and timeout != 0.0:
+                    wait = deadline - time.monotonic()
+                    if wait <= 0.0:
+                        return messages
 
     def _take(self) -> List[Dict[str, Any]]:
         messages: List[Dict[str, Any]] = []
