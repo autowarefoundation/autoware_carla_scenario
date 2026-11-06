@@ -251,9 +251,13 @@ def sampler_from_config(
     mapping without ``flaky`` (see :func:`search_from_config`).
 
     Raises:
-        ValueError: On an unknown field, or ``flaky``.
+        ValueError: On an unknown field, or a ``flaky`` other than missing,
+            null or false: ``true`` and any mapping, ``{}`` included, are a
+            flaky search, which needs :func:`search_from_config`.
     """
-    if raw.get("flaky"):
+    # ``{}`` is falsy but a flaky search with the defaults, as ``true`` is.
+    flaky = raw.get("flaky")
+    if flaky is not None and flaky is not False:
         raise ValueError("sweep.odd_sample.flaky needs search_from_config()")
     sampler, _, count = search_from_config(
         raw, odd=odd, controls=controls, base_dir=base_dir, drawn=drawn
