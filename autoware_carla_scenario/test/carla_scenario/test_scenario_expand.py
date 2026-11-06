@@ -857,6 +857,14 @@ def test_the_cli_refuses_a_sweep_that_expands_to_no_case(
             ["+sweep.odd_sample.count=2", "+sweep.odd_sample.seed=-2"],
             "sweep.odd_sample.seed must not be negative, got -2",
         ),
+        (
+            ["+sweep.odd_sample.count=2", "+sweep.odd_sample.tire_friction=ture"],
+            "sweep.odd_sample.tire_friction must be true or false, got 'ture'",
+        ),
+        (
+            ["+sweep.odd_sample.count=2", "+sweep.odd_sample.visibility=2"],
+            "sweep.odd_sample.visibility must be true or false, got 2",
+        ),
     ],
 )
 def test_the_cli_refuses_a_seed_or_count_that_is_no_whole_number(

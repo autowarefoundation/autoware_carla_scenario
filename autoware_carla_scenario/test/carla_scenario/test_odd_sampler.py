@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,8 +34,10 @@ from autoware_carla_scenario.odd import scenario_measure
 from autoware_carla_scenario.odd.probes import illumination_level, intensity_level
 from autoware_carla_scenario.odd.sampler import (
     controls_from_mapping,
+    check_sample_settings,
     decode_case,
     sample_count,
+    sample_draws,
     sample_seed,
     sampler_from_config,
     search_from_config,
@@ -737,6 +740,100 @@ def test_a_sweep_can_leave_the_grip_at_the_middle() -> None:
 
     for case in expand_config(cfg):
         assert not any("tire_friction" in o for o in case)
+
+
+# The grip and visibility switches are read strictly, not by truthiness:
+# "false" (what a Hydra override or ${oc.env:...} hands as text) turns a draw
+# off, and a typo is refused, named, before anything is drawn (#1756).
+@pytest.mark.parametrize("name", ["tire_friction", "visibility"])
+@pytest.mark.parametrize(
+    ("value", "draws"),
+    [
+        (False, False),
+        ("false", False),
+        ("off", False),
+        (" No ", False),
+        (0, False),
+        ("0", False),
+        (True, True),
+        ("true", True),
+        ("yes", True),
+        (1, True),
+        (None, True),
+    ],
+)
+def test_a_sample_switch_is_read_strictly(name: str, value: Any, draws: bool) -> None:
+    assert sample_draws({name: value}, name) is draws
+
+
+@pytest.mark.parametrize("name", ["tire_friction", "visibility"])
+def test_a_missing_sample_switch_draws(name: str) -> None:
+    assert sample_draws({}, name) is True
+
+
+@pytest.mark.parametrize("name", ["tire_friction", "visibility"])
+@pytest.mark.parametrize(
+    ("value", "shown"), [("ture", "'ture'"), (2, "2"), (0.5, "0.5"), ([], "[]")]
+)
+def test_a_bad_sample_switch_is_refused_naming_its_key(
+    name: str, value: Any, shown: str
+) -> None:
+    message = f"^sweep.odd_sample.{name} must be true or false, got {re.escape(shown)}$"
+    with pytest.raises(ValueError, match=message):
+        sample_draws({name: value}, name)
+    with pytest.raises(ValueError, match=message):
+        check_sample_settings({"count": 2, name: value})
+
+
+@pytest.mark.parametrize("name", ["tire_friction", "visibility"])
+def test_a_bad_sample_switch_is_refused_before_anything_is_drawn(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.odd import sampler as sampler_module
+
+    def no_draw(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("drew from the ODD")
+
+    monkeypatch.setattr(sampler_module, "OddSampler", no_draw)
+    cfg = OmegaConf.create(
+        {"odd": "default", "sweep": {"odd_sample": {"count": 2, name: "ture"}}}
+    )
+    with pytest.raises(ValueError, match=f"^sweep.odd_sample.{name} must be"):
+        expand_config(cfg)
+    with pytest.raises(ValueError, match=f"^sweep.odd_sample.{name} must be"):
+        search_from_config({"count": 2, name: "ture"}, odd="default")
+
+
+@pytest.mark.parametrize("value", ["false", "off", 0, "no"])
+def test_a_sweep_turns_the_draws_off_with_a_false_spelling(value: Any) -> None:
+    cfg = OmegaConf.create(
+        {
+            "odd": "default",
+            "sweep": {
+                "odd_sample": {"count": 2, "tire_friction": value, "visibility": value}
+            },
+        }
+    )
+
+    for case in expand_config(cfg):
+        assert not any("tire_friction" in o for o in case)
+        assert not any(o.startswith("environment.visibility") for o in case)
+
+
+@pytest.mark.parametrize("value", ["true", "yes", 1, None])
+def test_a_sweep_keeps_the_draws_with_a_true_spelling(value: Any) -> None:
+    cfg = OmegaConf.create(
+        {
+            "odd": "default",
+            "sweep": {
+                "odd_sample": {"count": 2, "tire_friction": value, "visibility": value}
+            },
+        }
+    )
+
+    for case in expand_config(cfg):
+        assert any(o.startswith("environment.tire_friction_quantile=") for o in case)
+        assert any(o.startswith("environment.visibility_quantile=") for o in case)
 
 
 def test_a_case_that_names_its_grip_keeps_it() -> None:

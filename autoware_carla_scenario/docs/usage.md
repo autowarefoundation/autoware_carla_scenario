@@ -794,6 +794,11 @@ in one line naming the key:
 rerun.enabled must be true or false, got 'ture'
 ```
 
+A sweep's `sweep.odd_sample.tire_friction` and `sweep.odd_sample.visibility`
+([Tire friction follows the weather](odd.md#tire-friction-follows-the-weather))
+and a route search's `ego_goal` ([Logical Scenarios](logical_scenarios.md))
+are read the same way, except that a missing or null one is true.
+
 ### Metrics in the recording
 
 A run judged on a `MetricCondition` writes the metrics it computed once it was

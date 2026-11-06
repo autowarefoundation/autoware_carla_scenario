@@ -74,6 +74,7 @@ from openodd.flaky import FlakyMetrics, FlakySearch, ParameterSpace
 from openodd.sampler import OddDraws, OddKnob, OddSample, knobs_from_mapping
 from openodd.sampler import OddSampler as _OddSampler
 
+from ..config_flags import check_flag
 from ..route.model import _whole_number
 from ..seed import DEFAULT_SEED, check_seed
 from .backend import CARLA_BACKEND, DEFAULT_KNOBS
@@ -104,6 +105,7 @@ __all__ = [
     "knobs_from_mapping",
     "check_sample_settings",
     "sample_count",
+    "sample_draws",
     "sample_seed",
     "sampler_from_config",
     "seed_setting",
@@ -349,9 +351,31 @@ def sample_count(raw: Mapping[str, Any]) -> Optional[int]:
     return count
 
 
+#: The switches of ``sweep.odd_sample`` that say whether each case draws its
+#: grip (:func:`with_tire_friction`) and its visibility (:func:`with_visibility`).
+SAMPLE_DRAWS = ("tire_friction", "visibility")
+
+
+def sample_draws(raw: Mapping[str, Any], name: str) -> bool:
+    """Whether a ``sweep.odd_sample`` mapping draws *name* for each case, one
+    of :data:`SAMPLE_DRAWS`: true when not given or null, else its value read
+    strictly (:func:`~autoware_carla_scenario.config_flags.check_flag`), so
+    ``"false"``, ``"off"`` and ``0`` turn the draw off.
+
+    Raises:
+        ValueError: naming ``sweep.odd_sample.<name>``, when it is not true
+            or false (``"ture"``, ``2``).
+    """
+    value = raw.get(name)
+    if value is None:
+        return True
+    return check_flag(f"sweep.odd_sample.{name}", value)
+
+
 def check_sample_settings(raw: Mapping[str, Any]) -> None:
-    """Refuse a ``sweep.odd_sample`` mapping's ``seed`` and ``count`` when
-    drawing from it would (:func:`sample_seed`, :func:`sample_count`): read
+    """Refuse a ``sweep.odd_sample`` mapping's ``seed``, ``count``,
+    ``tire_friction`` and ``visibility`` when drawing from it would
+    (:func:`sample_seed`, :func:`sample_count`, :func:`sample_draws`): read
     before anything is drawn, built or resolved.
 
     Raises:
@@ -359,6 +383,8 @@ def check_sample_settings(raw: Mapping[str, Any]) -> None:
     """
     sample_seed(raw)
     sample_count(raw)
+    for name in SAMPLE_DRAWS:
+        sample_draws(raw, name)
 
 
 def search_from_config(
@@ -388,8 +414,9 @@ def search_from_config(
     from its ODD. The caller records its own cases in it once drawn.
 
     Raises:
-        ValueError: On an unknown field, or a ``seed`` or ``count`` that is
-            not a whole number (:func:`check_sample_settings`).
+        ValueError: On an unknown field, a ``seed`` or ``count`` that is
+            not a whole number, or a ``tire_friction`` or ``visibility`` that
+            is not true or false (:func:`check_sample_settings`).
     """
     from ..coverage.report import load_and_merge  # noqa: PLC0415
     from .registry import resolve_odd  # noqa: PLC0415
@@ -398,6 +425,7 @@ def search_from_config(
     if unknown:
         raise ValueError(f"sweep.odd_sample: unknown fields {sorted(unknown)}")
     # Before the ODD is resolved or any coverage read.
+    check_sample_settings(raw)
     seed = sample_seed(raw)
     count = sample_count(raw)
     flaky = raw.get("flaky")

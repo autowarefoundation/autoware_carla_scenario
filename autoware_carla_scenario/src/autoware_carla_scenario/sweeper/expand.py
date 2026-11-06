@@ -306,6 +306,7 @@ def _with_odd_samples(
     from ..odd.sampler import (  # noqa: PLC0415
         ODD_CASE_KEY,
         encode_case,
+        sample_draws,
         sample_seed,
         search_from_config,
         with_tire_friction,
@@ -313,6 +314,10 @@ def _with_odd_samples(
     )
 
     raw = {str(k): v for k, v in odd_sample.items()}
+    # Read before anything is drawn, and strictly (check_sample_settings()):
+    # "false" turns a draw off, "ture" is refused (#1756).
+    draws_grip = sample_draws(raw, "tire_friction")
+    draws_visibility = sample_draws(raw, "visibility")
     readings: list[dict[str, tuple[str, Any]]] = []
     buckets: list[dict[str, str]] = []
     map_attributes: list[str] = []
@@ -358,10 +363,10 @@ def _with_odd_samples(
     # in), as the int it names: 4.0, "4" and " 4 " draw the grip and the
     # visibility seed 4 does, as they draw its cases (#1442).
     draw_seed = sample_seed(raw)
-    if raw.get("tire_friction", True):
+    if draws_grip:
         # After the draws are recorded: the grip is no attribute of the ODD.
         samples = with_tire_friction(samples, draw_seed)
-    if raw.get("visibility", True):
+    if draws_visibility:
         # Nor is how far drivers see.
         samples = with_visibility(samples, draw_seed)
     logger.info(
