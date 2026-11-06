@@ -659,6 +659,14 @@ def _load(path: Path, errors: list[str]) -> list[GateRecord]:
     return records
 
 
+def _write_output(path: Path, text: str, errors: list[str]) -> None:
+    """Write ``text`` to ``path``; on failure, append why to ``errors``."""
+    try:
+        path.write_text(text, encoding="utf-8")
+    except OSError as exc:
+        errors.append(f"cannot write {path}: {exc.strerror or exc}")
+
+
 def main(
     argv: Optional[Sequence[str]] = None, prog: Optional[str] = "scenario-gate"
 ) -> int:
@@ -666,7 +674,8 @@ def main(
 
     0 when every gate passes (on the candidate, with two sets), 1 when one
     fails -- or, with ``--fail-on-regression``, something regressed -- and 2
-    when there is nothing to judge or a file cannot be read.
+    when there is nothing to judge, a file cannot be read, or an output
+    (``--markdown``, ``--json``) cannot be written.
     """
     parser = _parser(prog)
     args = parser.parse_args(argv)
@@ -717,18 +726,23 @@ def main(
         print("scenario-gate: no gate record to judge", file=sys.stderr)
         return EXIT_ERROR
     markdown = title + "\n\n" + "\n\n".join(r.to_markdown() for r in reports)
+    # Both outputs are attempted, so one line names every path that cannot
+    # be written; the verdict printed to stdout is unchanged either way.
+    unwritable: list[str] = []
     if args.markdown is not None:
-        args.markdown.write_text(markdown + "\n", encoding="utf-8")
+        _write_output(args.markdown, markdown + "\n", unwritable)
     else:
         print(markdown)
     if args.json is not None:
-        args.json.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+        _write_output(args.json, json.dumps(payload, indent=2), unwritable)
+    for error in unwritable:
+        print(f"scenario-gate: {error}", file=sys.stderr)
     # What the judging could not read (a run's coverage file), as the records
     # main could not read: reported, and the exit code says so.
     unread = [e for r in reports for e in r.errors]
     for error in unread:
         print(f"scenario-gate: {error}", file=sys.stderr)
-    if errors or unread:
+    if errors or unread or unwritable:
         return EXIT_ERROR
     passed = all(
         r.ok(strict) if isinstance(r, GateComparison) else r.passed for r in reports
