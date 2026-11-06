@@ -69,7 +69,8 @@ class CarlaLidarSensorConfig:
     upper_fov_deg: float = 15.0
     lower_fov_deg: float = -25.0
     #: CARLA drops this fraction of points at random by default (0.45); a policy
-    #: expecting a real sensor's density wants none of that.
+    #: expecting a real sensor's density wants none of that.  A fraction, from 0
+    #: to 1.
     dropoff_general_rate: float = 0.0
     #: How much of the world's rain and fog the sweeps carry
     #: (:mod:`~autoware_carla_scenario.sensor.lidar_weather`): 0 none, as CARLA
@@ -140,6 +141,14 @@ class CarlaLidarSensorConfig:
             raise ValueError("LiDAR range_m and points_per_second must be positive")
         if self.lower_fov_deg >= self.upper_fov_deg:
             raise ValueError("LiDAR lower_fov_deg must be below upper_fov_deg")
+        # CARLA takes the rate as the fraction of points it drops, and clamps
+        # nothing: 45 empties every sweep and a negative rate drops none, both
+        # without a word (#1767).
+        if not 0.0 <= self.dropoff_general_rate <= 1.0:
+            raise ValueError(
+                "LiDAR dropoff_general_rate must be in [0, 1], "
+                f"got {self.dropoff_general_rate}"
+            )
         if self.weather_noise < 0.0:
             raise ValueError(
                 f"LiDAR weather_noise must not be negative, got {self.weather_noise}"

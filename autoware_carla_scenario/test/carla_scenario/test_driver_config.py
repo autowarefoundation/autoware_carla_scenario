@@ -670,6 +670,35 @@ def test_a_carla_driver_run_refuses_a_bool_number(override: str) -> None:
         run.check_run_config(cfg)
 
 
+@pytest.mark.parametrize(
+    ("rate", "refused"),
+    [
+        ("45", True),
+        ("-0.1", True),
+        ("1.01", True),
+        ("0", False),
+        ("0.45", False),
+        ("1", False),
+    ],
+)
+def test_a_carla_driver_run_checks_the_lidar_dropoff_rate(
+    rate: str, refused: bool
+) -> None:
+    """45 used to empty every sweep without a word (#1767)."""
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    lidars = f"driver.lidars=[{{logical_id:top,dropoff_general_rate:{rate}}}]"
+    cfg = _shipped(["ego.entity=carla_driver", lidars])
+    if refused:
+        match = r"^LiDAR dropoff_general_rate must be in \[0, 1\], got "
+        with pytest.raises(run.RunConfigError, match=match):
+            run.check_run_config(cfg)
+    else:
+        run.check_run_config(cfg)
+
+
 @pytest.mark.parametrize("preset", ["default", "vision_pilot"])
 def test_every_shipped_driver_preset_passes_the_run_check(preset: str) -> None:
     from autoware_carla_scenario.examples import run

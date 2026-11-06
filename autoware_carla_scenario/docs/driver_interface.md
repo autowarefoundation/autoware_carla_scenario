@@ -511,7 +511,8 @@ LiDAR logical ids must be unique, and every number a LiDAR takes must be finite:
 `channels` and `points_per_second` positive whole numbers (`64`, or `64.0`
 and `1.2e6`, which YAML reads as floats, kept as the ints `64` and `1200000`
 for CARLA; not `64.5`), `range_m` positive, `lower_fov_deg` below
-`upper_fov_deg`, `weather_noise` not negative, `noise_seed` a whole number
+`upper_fov_deg`, `dropoff_general_rate` (the fraction of points CARLA drops at
+random) from 0 to 1, `weather_noise` not negative, `noise_seed` a whole number
 (`3` or `3.0`; not `1.9`, a boolean or a string) from 0 to 2147483647,
 `fog_density_scale` positive.
 
