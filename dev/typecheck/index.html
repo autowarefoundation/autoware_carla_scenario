@@ -4816,9 +4816,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-298 of the package's 420
-modules (71%; about 89,900 of
-153,600 lines) are <code>CHECKED</code>: the kinematics, the
+299 of the package's 421
+modules (71%; about 90,000 of
+153,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4870,13 +4870,15 @@ and quaternions of its angles, and the check of the ego's rear-axle offset:
 itself, which reads the log's mixed-type records and builds protobuf
 messages, re-exports it), the file names of a driver policy's map set and the
 id it is written under (<code>driver.hdmap_files</code>, #1728; <code>driver.hdmap_export</code>,
-which writes the set with roadgen, re-exports them), and the parts of the
-tooling around a run that need nothing Codon lacks. A checked package's
+which writes the set with roadgen, re-exports them), the fields of a control
+and of <code>sweep.odd_sample</code> and the keys a sweep sets (<code>odd.control_fields</code>,</p>
+<h1 id="1733-oddcontrols-and-oddsampler-re-export-them-and-the-parts-of-the">1733; <code>odd.controls</code> and <code>odd.sampler</code> re-export them), and the parts of the<a class="headerlink" href="#1733-oddcontrols-and-oddsampler-re-export-them-and-the-parts-of-the" title="Permanent link">&para;</a></h1>
+<p>tooling around a run that need nothing Codon lacks. A checked package's
 <code>__init__</code> re-exports what is not checked through models of it (see <em>A class
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 298 CHECKED modules</summary>
+<summary>The 299 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5638,6 +5640,10 @@ with the first paragraph of its docstring:</p>
 <td>A problem with the <code>controls</code> of a scenario config, and its one-line text.</td>
 </tr>
 <tr>
+<td><code>odd.control_fields</code></td>
+<td>The fields of <code>controls</code> and <code>sweep.odd_sample</code>, and the keys a sweep sets.</td>
+</tr>
+<tr>
 <td><code>odd.probes</code></td>
 <td>Probes: functions that read one ODD attribute from the world.</td>
 </tr>
@@ -6347,12 +6353,12 @@ the first:</p>
 <li><code>odd</code>: <code>from . import backend, probes</code> fails first: Codon reads it as an import of <code>odd</code> from the top-level package's <code>__init__</code>, which the model does not declare ("cannot import name 'odd'"); behind that, it re-exports odd.model, odd.sampler, odd.openodd, odd.sources and odd.backend (openodd, a Rust extension), and odd.route and odd.registry, which are excluded (odd.probes is checked)</li>
 <li><code>odd.backend</code>: derives openodd's Backend (a Rust extension), a dataclass of probe callables and knobs (<code>Mapping[Any, OddKnob]</code>)</li>
 <li><code>odd.cli</code>: imports argparse, openodd (inside a function), and <code>odd_builder()</code> and <code>odd_names()</code> from odd.registry, which the odd model does not declare; inside its commands, it imports <code>combine_route_coverage()</code> from odd.route, which the odd model does not declare either (it declares only <code>plan_route_coverage()</code>), and typecheck (the checker, outside the library check), examples.run (omegaconf, hydra) and registry (omegaconf, importlib), which are neither checked nor modelled</li>
-<li><code>odd.controls</code>: imports omegaconf inside <code>_key_exists()</code> and <code>validate_controls()</code> (the config it checks the keys of is a <code>DictConfig</code>), difflib (for its did-you-mean hints), and <code>controls_from_mapping()</code> from odd.sampler (openodd, a Rust extension), inside <code>validate_controls()</code>; it reads the <code>controls</code> of a config as <code>Any</code> and <code>Mapping[Any, Any]</code> (a control is a key, or a mapping of any values: <code>isinstance</code> on <code>Any</code>, <code>spec.get()</code> of mixed types), which Codon cannot express; the diagnostic it reports and its one-line text are the checked odd.control_diagnostics'</li>
+<li><code>odd.controls</code>: imports omegaconf inside <code>_key_exists()</code> and <code>validate_controls()</code> (the config it checks the keys of is a <code>DictConfig</code>), difflib (for its did-you-mean hints), and <code>controls_from_mapping()</code> from odd.sampler (openodd, a Rust extension), inside <code>validate_controls()</code>; it reads the <code>controls</code> of a config as <code>Any</code> and <code>Mapping[Any, Any]</code> (a control is a key, or a mapping of any values: <code>isinstance</code> on <code>Any</code>, <code>spec.get()</code> of mixed types), which Codon cannot express; the diagnostic it reports and its one-line text are the checked odd.control_diagnostics', and the fields and targets of a control the checked odd.control_fields' (#1733)</li>
 <li><code>odd.model</code>: re-exports openodd's model (a Rust extension)</li>
 <li><code>odd.openodd</code>: re-exports openodd's reader (a Rust extension)</li>
 <li><code>odd.registry</code>: wraps openodd's registry (a Rust extension) and imports odd.model (openodd's model) at module level</li>
 <li><code>odd.route</code>: the route-coverage half of checking a planned route against an ODD (it imports the planning, <code>PlannedRoute</code>, <code>RouteError</code> and <code>plan_route()</code>, from odd.route_plan, which is checked, and re-exports it), built on openodd's model: each lanelet's attribute values are a <code>dict[str, Any]</code> (whatever a probe reads, a bool, int, float or str, <code>None</code>, or the <code>UNDECIDED</code> sentinel, compared by identity) that it hands to openodd's <code>OddDefinition.complete()</code> and <code>evaluate()</code> (a Rust extension, with no model) and to a cover item's <code>bucket_of()</code>, so a typed record of them would be converted back to that mapping at the boundary, which the check cannot see past; a probe's <code>on_lanelet</code> reader is an attribute of any callable (<code>getattr</code> with a default), which Codon has no attributes of on a function; the <code>describe()</code> reports are <code>dict[str, Any]</code> of mixed values; and it names what the odd and coverage models do not declare (<code>coverage.items.value_label()</code>, and the probe, cover item and derivation of <code>OddAttribute</code> and the attributes, <code>complete()</code>, <code>evaluate()</code>, <code>situations()</code> and <code>outside_buckets()</code> of <code>OddDefinition</code>)</li>
-<li><code>odd.sampler</code>: wraps openodd's sampler and openodd.flaky's search (a Rust extension), imports base64 and yaml, and reads <code>Mapping[str, Any]</code> config nodes (<code>sampler_from_config()</code>), which Codon cannot express</li>
+<li><code>odd.sampler</code>: wraps openodd's sampler and openodd.flaky's search (a Rust extension), imports base64 and yaml, and reads <code>Mapping[str, Any]</code> config nodes (<code>sampler_from_config()</code>), which Codon cannot express; the fields of a control and of <code>sweep.odd_sample</code>, the keys a sweep sets and whether a case's overrides set one (<code>sets_any()</code>, in _with_quantile()) are the checked odd.control_fields' (#1733), which it re-exports</li>
 <li><code>odd.sources</code>: re-exports openodd's git sources (a Rust extension)</li>
 <li><code>odd.traffic_probes</code>: builds openodd's OddKnob (a Rust extension) for each probe, and each probe reads a traffic parameter by name (<code>getattr</code> on the recorded parameters) and is a callable object keyed in a <code>dict[Callable[..., Any], OddKnob]</code>, which Codon cannot express; the probes' names, their knob keys and limits and the parameters' ranges are the checked odd.traffic_ranges's</li>
 <li><code>odd.units</code>: re-exports openodd's units (a Rust extension)</li>
@@ -8308,7 +8314,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 01:37:41 UTC"><span class="timeago" datetime="2026-11-06T01:37:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 01:37:41 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 02:30:42 UTC"><span class="timeago" datetime="2026-11-06T02:30:42+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 02:30:42 UTC">2026-11-06</span>
   </span>
 
     
