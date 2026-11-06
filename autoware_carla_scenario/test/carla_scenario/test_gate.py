@@ -1313,6 +1313,44 @@ class TestErroredJobs:
         assert unrecorded_cases(tmp_path) == []
         assert main([str(tmp_path)]) == EXIT_PASSED
 
+    def test_an_unfinished_marker_beside_a_result_is_not_counted(
+        self, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario.gate.errored import write_case_unfinished
+
+        self._sweep(tmp_path, given_up=0)
+        # A scenario without a gate wrote its result, and its job was killed
+        # before the marker was removed (#1840).
+        write_case_unfinished(tmp_path / "3", overrides=[], attempt=1)
+        (tmp_path / "3" / "App_result.json").write_text("{}")
+        assert unrecorded_cases(tmp_path) == []
+        assert main([str(tmp_path)]) == EXIT_PASSED
+
+    def test_a_given_up_marker_beside_a_result_still_counts(
+        self, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario.gate.errored import write_case_errored
+
+        self._sweep(tmp_path, given_up=0)
+        # The result may be an earlier attempt's: the job was given up.
+        write_case_errored(
+            tmp_path / "3", overrides=[], exit_code=1, attempts=2, reason="exit code 1"
+        )
+        (tmp_path / "3" / "App_result.json").write_text("{}")
+        (line,) = unrecorded_cases(tmp_path)
+        assert "1 job(s) of the sweep" in line and "3 (exit code 1)" in line
+        assert main([str(tmp_path)]) == EXIT_ERROR
+
+    def test_an_unreadable_marker_beside_a_result_still_counts(
+        self, tmp_path: Path
+    ) -> None:
+        self._sweep(tmp_path, given_up=0)
+        (tmp_path / "3").mkdir()
+        (tmp_path / "3" / "case_errored.json").write_text("{not json")
+        (tmp_path / "3" / "App_result.json").write_text("{}")
+        (line,) = unrecorded_cases(tmp_path)
+        assert "1 job(s) of the sweep" in line and "(3)" in line
+
     def test_an_unreadable_marker_still_counts(self, tmp_path: Path) -> None:
         self._sweep(tmp_path, given_up=0)
         (tmp_path / "3").mkdir()

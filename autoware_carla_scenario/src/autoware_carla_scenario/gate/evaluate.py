@@ -342,7 +342,15 @@ def _unstarted_jobs(path: Path) -> tuple[list[str], list[str]]:
 def _errored_jobs(path: Path) -> list[str]:
     """One line per sweep under *path* whose ``--multirun`` jobs were given up
     or did not finish (``case_errored.json``, :mod:`.errored`) and left no
-    gate record."""
+    gate record.
+
+    A marker saying the job did not finish (``"unfinished": true``) beside a
+    run's result (``*_result.json``) is not counted either: the run wrote its
+    result -- of a scenario without a gate, which writes no record -- and its
+    process was killed in what follows (the world reset, the Rerun
+    conversion) before the marker was removed (#1840).  A marker of a job
+    given up counts beside a result, which may be an earlier attempt's, and
+    so does one that cannot be read."""
     by_sweep: dict[Path, list[str]] = {}
     for marker in find_case_errored(path):
         job = marker.parent
@@ -350,6 +358,10 @@ def _errored_jobs(path: Path) -> list[str]:
             # The run wrote its record before the job failed: it is judged.
             continue
         data = read_case_errored(marker)
+        if data is not None and data.get("unfinished") is True and _has_result(job):
+            # The run wrote its result and was killed after it: it ran a
+            # scenario without a gate, no concern of the gate.
+            continue
         reason = data.get("reason") if data is not None else None
         name = (
             f"{job.name} ({reason})" if isinstance(reason, str) and reason else job.name
@@ -414,7 +426,10 @@ def unrecorded_cases(path: Path) -> list[str]:
     pending entries count (its entries name no stem, so an errored case that
     did write a record is counted too); a sweep is read from its jobs'
     markers (``case_errored.json``), and a job whose directory holds a gate
-    record is not counted; and a lanelet sweep from its plan
+    record, or a marker saying it did not finish (``"unfinished": true``)
+    and a result (``*_result.json``, a scenario without a gate killed after
+    writing it, #1840), is not counted -- a marker of a job given up, or
+    one that cannot be read, counts beside a result; and a lanelet sweep from its plan
     (``sweep_plan.json``), a planned job whose directory holds no gate
     record, no marker and no result counting as one that never ran (#1833).
     Empty for a gate record (a file), and for a directory holding no batch,
