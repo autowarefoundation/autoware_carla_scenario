@@ -9,7 +9,7 @@ resolution-markers = [
 
 [[package]]
 name = "carla-driver-interface"
-version = "2.3.1"
+version = "2.4.2"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "grpcio" },
@@ -23,9 +23,9 @@ dependencies = [
     { name = "scipy", version = "1.17.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version == '3.11.*'" },
     { name = "scipy", version = "1.18.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.12'" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/3d/16/f16dc29a4343b1bf8b8816434a0acf8664380975397d2418350dfcc02080/carla_driver_interface-2.3.1.tar.gz", hash = "sha256:305152bb24acaebb87bfddee1494605ed891c74c17cb5e5bc2b9529015604201", size = 84953, upload-time = "2026-10-20T08:34:04.436Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/79/6f/426cc47131c641bb05af78d8112c92076ee6fe55e1df268f2e04509aa2d5/carla_driver_interface-2.4.2.tar.gz", hash = "sha256:78c7514411743a04e99013475812d028d5f182bd5087258890cfaf5313c289f6", size = 87553, upload-time = "2026-11-03T14:59:18.714Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/10/20/13a862bcc8c4b23d92d878ffa772ab5d792602dbaa435330d733e8d82efe/carla_driver_interface-2.3.1-py3-none-any.whl", hash = "sha256:598441ae0416de3e42be749886ff38abaa4137dd6c4811fa0ae95d6a4313b217", size = 92725, upload-time = "2026-10-20T08:34:03.103Z" },
+    { url = "https://files.pythonhosted.org/packages/15/b8/34135815ce728c7f6af2e62fb08d537449997d97903b0175b599e9a86477/carla_driver_interface-2.4.2-py3-none-any.whl", hash = "sha256:c0e395f126f36aed09e087e4070e3ef8cadc9b96ab2fe3011634ad4d63c09dc5", size = 96000, upload-time = "2026-11-03T14:59:17.288Z" },
 ]
 
 [[package]]
@@ -2099,7 +2099,7 @@ dev = [
 
 [package.metadata]
 requires-dist = [
-    { name = "carla-driver-interface", specifier = ">=2.3,<3" },
+    { name = "carla-driver-interface", specifier = ">=2.4.2,<3" },
     { name = "numpy", specifier = ">=1.24" },
     { name = "stlcgpp", git = "https://github.com/UW-CTRL/stlcg-plus-plus?rev=44467eec5c21763597e5f6753cec6759a5bc0ac0" },
     { name = "torch", specifier = ">=2.6,<3" },

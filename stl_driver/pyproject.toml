@@ -15,8 +15,9 @@ license = { text = "Apache-2.0" }
 dependencies = [
   # The policy half of the egodriver contract: `BaseDriver`, the server, the
   # geometry. The same range as autoware_carla_scenario's, so the policy loads
-  # in the scenario's own process (`driver.transport=direct`).
-  "carla-driver-interface>=2.3,<3",
+  # in the scenario's own process (`driver.transport=direct`);
+  # `test_stl_driver_dependencies.py` in the framework checks the lower bound.
+  "carla-driver-interface>=2.4.2,<3",
   # STLCG++. Pinned to a commit because upstream has no releases and no tags.
   # It ships a setup.py only and has no `stlcgpp/__init__.py`, so it installs
   # as a PEP 420 namespace package -- see `stl_driver.stl_backend`. This direct
