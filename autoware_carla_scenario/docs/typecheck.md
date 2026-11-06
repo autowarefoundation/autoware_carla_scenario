@@ -178,15 +178,19 @@ with another link is never counted, and a `gate.lock` that fails this starts
 the build ungated. A build tries for the lock for at most two minutes
 (`LOCK_TIMEOUT_S`; the gate's own builds hold it for milliseconds) before it
 warns and starts ungated, so no one holding it can stall the checks; once one
-has timed out, later builds of the same process try once and start ungated at
-once if it is still taken. A `gate.lock` others could open (an older gate's
-`0o644`) is not just narrowed: it is replaced by a fresh `0o600` file, so a
-descriptor someone opened on the old one no longer contends for it. The gate
-first tries for the old lock for a second, so that none of its own builds
-holds it during the swap, and a build that was waiting for it finds the file
-replaced and takes the new one; only a lock held longer than that (through a
-kept descriptor) is replaced while held, which at worst lets two builds
-decide at once, once.
+has timed out, later builds of the same process try for it for only a second
+(enough for the gate's own builds) until one takes it again. A `gate.lock`
+others could open (an older gate's `0o644`) is not just narrowed: it is
+replaced by a fresh `0o600` file, so a descriptor someone opened on the old
+one no longer contends for it. So is, in the gate's own directories, one that
+stays taken for the whole two minutes (a descriptor opened before an earlier
+gate made it `0o600` in place); in a configured directory such a lock only
+starts builds ungated. The gate first tries for the old lock for a second, so
+that none of its own builds holds it during the swap, and a build that was
+waiting for it finds the file replaced and takes the new one. Only a lock
+held longer than that, through a kept descriptor, is replaced while held:
+builds that waited out that holder together may then decide at once, for
+that one look at the holds, once per machine.
 
 A directory set with `AUTOWARE_CARLA_SCENARIO_CODON_GATE` must be private in
 the same way (yours, mode `0o700` or at least not group- or other-writable),
@@ -198,7 +202,9 @@ directories are repaired: one of them that its group or others can use at all
 gate's files another user owns are removed from its own directory, which is
 used only if nothing of another user's remains and its `gate.lock`, if any, is
 a regular file of yours with a single link, so a repair that failed once keeps
-falling back. When the directory fails these rules (or there is no temporary
+falling back. A `gate.lock` of yours with another link is removed there and
+made afresh (the other file stays as it is), and a fresh lock that a build
+killed during the swap left behind is removed too. When the directory fails these rules (or there is no temporary
 directory), the gate warns and falls back to `$XDG_RUNTIME_DIR/acs-codon-gate`,
 then to `~/.cache/autoware_carla_scenario/codon-gate`; when none is usable, or
 the gate's own files or the memory budget fail (a lock refused on NFS, a full

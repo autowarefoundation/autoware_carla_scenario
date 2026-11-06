@@ -27,16 +27,18 @@ file of this user's with one link (no hard link elsewhere): a hold that is not
 is never counted (and removed, if another user owns it or the directory is
 the gate's own), a lock that is not runs the build ungated.  A lock held for
 over :data:`LOCK_TIMEOUT_S` -- by anyone -- runs the build ungated too, and
-so, without waiting again, does every later build of the process that finds
-it still taken.  A lock others may open (an older gate's 0o644) is replaced
-by a fresh 0o600 one, so a descriptor someone opened on the old one no longer
-contends for it.
+the process's later builds then try for it only briefly until one takes it.
+A lock others may open (an older gate's 0o644), or, in the gate's own
+directories, one held for :data:`LOCK_TIMEOUT_S` (through a descriptor opened
+before it was made private), is replaced by a fresh 0o600 one, so a
+descriptor someone kept on the old one no longer contends for it.
 
 Only the gate's own directories (the default and the fallbacks) are ever
 repaired -- made 0o700 and cleared of the gate's files other users own --
-and only when they hold nothing but the gate's files; every use of one checks
-again that nothing in it is another user's and that its lock is sound, and
-falls back otherwise.  In a configured directory the gate changes nothing but
+and only when they hold nothing but the gate's files; every use of one clears
+it again (of a hard-linked lock, and of fresh locks left by builds that died,
+too) and checks that nothing in it is another user's and that its lock is
+sound, and falls back otherwise.  In a configured directory the gate changes nothing but
 its own files (the lock and the holds).  When the directory is not private,
 the gate warns and falls back to a per-user directory (under
 ``$XDG_RUNTIME_DIR``, then ``~/.cache``) and, failing that, admits the build
@@ -111,8 +113,9 @@ _LOCK_POLL_S = 0.05
 #: by then is held through a descriptor someone kept.
 _REPLACE_WAIT_S = 1.0
 
-#: Set once a build of this process has timed out on the lock: later builds
-#: then try for it once and run ungated at once if it is still taken.
+#: Set while the last try of this process for the lock timed out: later builds
+#: then try for it only for :data:`_REPLACE_WAIT_S` (long enough for the
+#: gate's own builds) before they run ungated; cleared once one takes it.
 _LOCK_TIMED_OUT = threading.Event()
 
 _COUNTER = itertools.count()
@@ -244,7 +247,7 @@ def _wait_for_room(
     record = str(need) if start is None else f"{need} {start}"
     waited = False
     while True:
-        lock = _take_lock(fcntl, dir_fd)
+        lock = _take_lock(fcntl, dir_fd, own)
         try:
             held = _held(dir_fd, own)
             try:
@@ -273,12 +276,18 @@ def _wait_for_room(
         sleep(_POLL_S)
 
 
-def _take_lock(fcntl: ModuleType, dir_fd: int) -> int:
+def _take_lock(fcntl: ModuleType, dir_fd: int, own: bool) -> int:
     """A descriptor of the directory *dir_fd*'s ``gate.lock``, exclusively
-    locked, that still names it: created if missing, replaced by a fresh one
-    if others may open it (:func:`_replace_lock`).  Raises :class:`OSError`
-    when it is not a regular file of this user's with one link, or cannot be
-    locked (:func:`_lock`)."""
+    locked, that still names it: created if missing, and replaced by a fresh
+    one (:func:`_replace_lock`) if others may open it or -- in one of the
+    gate's own directories (*own*) -- if it stays taken for
+    :data:`LOCK_TIMEOUT_S`.  Raises :class:`OSError` when it is not a regular
+    file of this user's with one link, and :class:`TimeoutError` when it is
+    not taken in time: :data:`LOCK_TIMEOUT_S` in all, or, once a build of
+    this process has timed out on it (:data:`_LOCK_TIMED_OUT`), only
+    :data:`_REPLACE_WAIT_S`, long enough for the gate's own builds."""
+    flagged = _LOCK_TIMED_OUT.is_set()
+    deadline = time.monotonic() + (_REPLACE_WAIT_S if flagged else LOCK_TIMEOUT_S)
     while True:
         fd = os.open(
             "gate.lock",
@@ -291,21 +300,50 @@ def _take_lock(fcntl: ModuleType, dir_fd: int) -> int:
             problem = _unsound(info)
             if problem:
                 raise PermissionError(errno.EPERM, f"gate.lock {problem}")
+            fresh: int | None = None
             if stat.S_IMODE(info.st_mode) & 0o077:
                 # An older gate's 0o644: someone may hold a descriptor of it.
-                fresh = _replace_lock(fcntl, dir_fd, fd, info)
-                if fresh is not None:
-                    with suppress(OSError):
-                        os.close(fd)  # releases the old lock, if it was taken
-                    return fresh
-            else:
-                _lock(fcntl, fd)
+                fresh = _replace_lock(fcntl, dir_fd, fd, info, wait=_REPLACE_WAIT_S)
+            elif _try_lock(fcntl, fd, deadline):
                 if _names_lock(dir_fd, info):
+                    _LOCK_TIMED_OUT.clear()
                     return fd
+            elif own and not flagged:
+                # Held all this time: through a descriptor someone opened
+                # before the lock was private (an earlier gate made it 0o600
+                # in place).  Ours to replace, once.
+                fresh = _replace_lock(fcntl, dir_fd, fd, info, wait=0.0)
+                flagged = True  # never twice in one build
+                if fresh is None:
+                    deadline = time.monotonic() + _REPLACE_WAIT_S
+            else:
+                raise _timed_out(flagged)
+            if fresh is not None:
+                with suppress(OSError):
+                    os.close(fd)  # releases the old lock, if it was taken
+                _LOCK_TIMED_OUT.clear()
+                return fresh
         except BaseException:
-            os.close(fd)
+            with suppress(OSError):
+                os.close(fd)
             raise
         os.close(fd)  # replaced since it was opened: try the one there now
+        if time.monotonic() >= deadline:
+            raise _timed_out(flagged)
+
+
+def _timed_out(flagged: bool) -> TimeoutError:
+    """The error of a build that did not get the lock in time, remembered
+    (:data:`_LOCK_TIMED_OUT`) for the process's later builds."""
+    _LOCK_TIMED_OUT.set()
+    if flagged:
+        return TimeoutError(
+            errno.ETIMEDOUT,
+            "gate.lock still held elsewhere (an earlier build timed out)",
+        )
+    return TimeoutError(
+        errno.ETIMEDOUT, f"gate.lock held elsewhere for over {LOCK_TIMEOUT_S:g} s"
+    )
 
 
 def _unsound(info: os.stat_result) -> str:
@@ -332,23 +370,25 @@ def _names_lock(dir_fd: int, info: os.stat_result) -> bool:
 
 
 def _replace_lock(
-    fcntl: ModuleType, dir_fd: int, old: int, info: os.stat_result
+    fcntl: ModuleType, dir_fd: int, old: int, info: os.stat_result, *, wait: float
 ) -> int | None:
     """Put a fresh 0o600 ``gate.lock``, locked, in place of *old* (whose
     file *info* describes) in the directory *dir_fd*, and return it; ``None``
     if another build has replaced *old* already.
 
     A descriptor someone opened on the old file then locks a file the gate no
-    longer uses.  The old lock is taken first, for :data:`_REPLACE_WAIT_S`,
-    so a build of this gate inside it finishes before the swap, and one
-    waiting for it finds the file replaced (:func:`_names_lock`) and tries the
-    new one.  Only if it is held longer -- through a descriptor someone kept,
-    which the swap is for -- is it replaced unlocked; a build of the gate
-    inside it right then (an older gate's, or one that waited out the same
-    holder) may overlap the next by a few milliseconds, which at worst admits
-    one build too many, once."""
-    with suppress(BlockingIOError):
-        _lock(fcntl, old, timeout=_REPLACE_WAIT_S)
+    longer uses.  The old lock is tried for first, for *wait*, so that a
+    build of this gate inside it finishes before the swap, and one waiting
+    for it finds the file replaced (:func:`_names_lock`) and tries the new
+    one.  One held longer -- through a descriptor someone kept, which the
+    swap is for -- is replaced while held: builds that waited out that holder
+    together may then decide at once, for that one look at the holds, which
+    at worst admits one build too many, once per machine.
+
+    The fresh file is named ``gate.lock.<pid>-...`` until it is in place and
+    records its process's start time, so one left behind by a build that was
+    killed is removed (:func:`_clear`)."""
+    _try_lock(fcntl, old, time.monotonic() + wait)
     if not _names_lock(dir_fd, info):
         return None
     name = f"gate.lock.{os.getpid()}-{threading.get_ident()}-{next(_COUNTER)}"
@@ -359,6 +399,9 @@ def _replace_lock(
         dir_fd=dir_fd,
     )
     try:
+        start = _start_time(os.getpid())
+        if start is not None:
+            os.write(fd, str(start).encode())
         fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # no one else can open it
         os.rename(name, "gate.lock", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
     except BaseException:
@@ -369,31 +412,16 @@ def _replace_lock(
     return fd
 
 
-def _lock(fcntl: ModuleType, fd: int, *, timeout: float | None = None) -> None:
-    """Take the exclusive lock on *fd*, trying for *timeout* (by default
-    :data:`LOCK_TIMEOUT_S`, which, once passed, is remembered: later tries of
-    the process give up at once); raises :class:`TimeoutError` (an
-    :class:`OSError`) when it was not taken in time."""
-    timed_out = _LOCK_TIMED_OUT.is_set() and timeout is None
-    deadline = time.monotonic() + (LOCK_TIMEOUT_S if timeout is None else timeout)
+def _try_lock(fcntl: ModuleType, fd: int, deadline: float) -> bool:
+    """Take the exclusive lock on *fd*, trying until *deadline* (of
+    :func:`time.monotonic`): whether it was taken."""
     while True:
         try:
             fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            return
+            return True
         except BlockingIOError:
-            if timed_out:
-                raise TimeoutError(
-                    errno.ETIMEDOUT,
-                    "gate.lock still held elsewhere (an earlier build timed out)",
-                ) from None
             if time.monotonic() >= deadline:
-                if timeout is not None:
-                    raise
-                _LOCK_TIMED_OUT.set()
-                raise TimeoutError(
-                    errno.ETIMEDOUT,
-                    f"gate.lock held elsewhere for over {LOCK_TIMEOUT_S:g} s",
-                ) from None
+                return False
             time.sleep(_LOCK_POLL_S)
 
 
@@ -497,15 +525,24 @@ def _repair(dir_fd: int) -> str:
 
 
 def _clear(dir_fd: int) -> str:
-    """Remove the gate's files other users own from the gate's own (private)
-    directory *dir_fd*: why it cannot be used then, or ``""``."""
+    """Remove from the gate's own (private) directory *dir_fd* the gate's
+    files other users own, a ``gate.lock`` of this user's with another link
+    (removing the name leaves the other file as it is), and the fresh locks
+    (:func:`_replace_lock`) of builds that died: why it cannot be used then,
+    or ``""``."""
     uid = os.getuid()
     for name in os.listdir(dir_fd):
         if not _is_gate_file(name):
             continue
         with suppress(OSError):
-            if os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_uid != uid:
+            entry = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+            if entry.st_uid != uid:
                 os.unlink(name, dir_fd=dir_fd)  # others could write here once
+            elif name == "gate.lock":
+                if stat.S_ISREG(entry.st_mode) and entry.st_nlink != 1:
+                    os.unlink(name, dir_fd=dir_fd)  # made afresh when next used
+            elif name.startswith("gate.lock.") and _stale_lock(dir_fd, name):
+                os.unlink(name, dir_fd=dir_fd)
     for name in os.listdir(dir_fd):
         entry = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
         if entry.st_uid != uid:
@@ -515,6 +552,24 @@ def _clear(dir_fd: int) -> str:
             if problem:
                 return f"gate.lock {problem}"
     return ""
+
+
+def _stale_lock(dir_fd: int, name: str) -> bool:
+    """Whether the fresh lock *name* (``gate.lock.<pid>-...``) was left by a
+    build that is gone (its pid dead, or since reused by another process)."""
+    try:
+        pid = int(name[len("gate.lock.") :].split("-", 1)[0])
+    except ValueError:
+        return False  # not one of the gate's
+    if not 0 < pid <= _PID_MAX:
+        return False
+    text = _read_hold(dir_fd, name)
+    if text is None or text is _FOREIGN:
+        return False
+    if text is _LINKED:
+        return True
+    fields = text.split()
+    return not _alive(pid, int(fields[0]) if fields else None)
 
 
 def _write_hold(dir_fd: int, name: str, record: str) -> None:
