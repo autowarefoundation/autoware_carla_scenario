@@ -37,6 +37,7 @@ from typing import Any
 
 from ...utils.opendrive import sanitize_opendrive
 from ..base import TrafficBackendError, TrafficBackendUnavailable
+from .options import random_trips_argv, ride_options, trip_options, walk_options
 
 logger = logging.getLogger(__name__)
 
@@ -282,28 +283,17 @@ def _random_trips(
     """
     tool = sumo_home() / "tools" / "randomTrips.py"
     out.parent.mkdir(parents=True, exist_ok=True)
-    cmd = [
+    cmd = random_trips_argv(
         sys.executable,
-        str(tool),
-        "-n",
-        str(network.net_file),
-        "-o",
-        str(out.with_suffix(".trips.xml")),
-        "-r",
-        str(out),
-        "-b",
-        "0",
-        "-e",
-        str(end),
-        "-p",
-        str(period),
-        "--seed",
-        str(seed),
-        "--validate",
-        "--prefix",
+        tool,
+        network.net_file,
+        out,
+        seed,
+        period,
+        end,
         prefix,
-        *options,
-    ]
+        options,
+    )
     env = dict(os.environ, SUMO_HOME=str(sumo_home()))
     proc = subprocess.run(  # noqa: S603
         cmd,
@@ -336,10 +326,7 @@ def generate_trips(
     Weighted by roadgen's ``network.safe.*`` files when *safe_weights* and the
     network has them, by *fringe_factor* otherwise.
     """
-    if safe_weights and Path(f"{network.weights_prefix}.src.xml").is_file():
-        weights = ["--weights-prefix", str(network.weights_prefix)]
-    else:
-        weights = ["--fringe-factor", f"{fringe_factor:g}"]
+    found = safe_weights and Path(f"{network.weights_prefix}.src.xml").is_file()
     return _random_trips(
         network,
         out,
@@ -347,7 +334,7 @@ def generate_trips(
         period=period,
         end=end,
         prefix="sumo",
-        options=["--vehicle-class", "passenger", *weights],
+        options=trip_options(network.weights_prefix, found, fringe_factor),
     )
 
 
@@ -372,7 +359,7 @@ def generate_walks(
         period=period,
         end=end,
         prefix="sumoped",
-        options=["--pedestrians", "--max-distance", f"{max_distance:g}"],
+        options=walk_options(max_distance),
         what=" --pedestrians",
     )
 
@@ -396,28 +383,6 @@ def generate_rides(
     file redefining that type, which the routing has to know.  Unweighted:
     roadgen's weights are for cars, and give every bicycle edge 0.
     """
-    options = [
-        # From and to edges a bicycle may use; the type is SUMO's own, which
-        # --vehicle-class would shadow with one of randomTrips'.
-        "--vclass",
-        "bicycle",
-        "--trip-attributes",
-        'type="DEFAULT_BIKETYPE"',
-        "--min-distance",
-        f"{min_distance:g}",
-    ]
-    if max_distance is not None:
-        options += ["--max-distance", f"{max_distance:g}"]
-    if bicycle_type is not None:
-        # The routing writes the types its rides drew beside them rather than
-        # into them: SUMO loads the type file itself, and refuses a type
-        # defined twice.
-        options += [
-            "--additional-files",
-            str(bicycle_type),
-            "--vtype-output",
-            str(out.with_suffix(".vtypes.xml")),
-        ]
     return _random_trips(
         network,
         out,
@@ -425,7 +390,7 @@ def generate_rides(
         period=period,
         end=end,
         prefix="sumobike",
-        options=options,
+        options=ride_options(out, min_distance, max_distance, bicycle_type),
         what=" --vclass bicycle",
     )
 

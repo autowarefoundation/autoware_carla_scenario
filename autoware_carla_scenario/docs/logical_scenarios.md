@@ -154,7 +154,7 @@ assertions:
 |-----|------|---------|---------|
 | `segments` | list | -- (required, >= 1) | The pattern, in driving order. Each item is a lane or a junction segment, told apart by `kind`. |
 | `ego_spawn_s` | float >= 0 | `0.0` | The ego spawns this far along the route (route s). Must lie on the route. |
-| `ego_goal` | bool | `true` | The ego's goal is the route's end (less `ego_goal_margin`). With `true` the ego must not name a goal of its own (validation error); set `false` to keep the ego's own goal. |
+| `ego_goal` | bool | `true` | The ego's goal is the route's end (less `ego_goal_margin`). With `true` the ego must not name a goal of its own (validation error); set `false` to keep the ego's own goal. `true` or `false`, or one of their spellings as [the run's switches](usage.md#the-switches) take (`"false"`, `"off"`, `"no"`, `0` are false); anything else (`ture`, `2`) is refused, naming `ego_goal`. |
 | `ego_goal_margin` | float >= 0 | `0.0` | How far before the route's end the goal is. The goal must be ahead of the spawn. |
 | `match_index` | int >= 0 | `0` | Which match a run that was **not** expanded takes. Must be below `max_matches` (validation error). |
 | `max_matches` | int 1..1000 | `64` | How many matches the search returns at most. |
@@ -275,7 +275,7 @@ type: route_progress
 params:
   entity: null                 # null: the ego
   rule: greater_than_or_equal  # less_than | less_than_or_equal | greater_than | greater_than_or_equal | equal_to
-  value: -15.0                 # metres past the anchor; negative is before it
+  value: -15.0                 # metres past the anchor; negative is before it (kept on the route: see below)
   anchor: "junction:0:entry"   # default start
 ```
 
@@ -288,7 +288,20 @@ that passes the same place twice is followed pass by pass; when the entity is
 more than 12 m from the route within that window (it was teleported -- an
 appearing entity --, or the condition was not checked for a while) the whole
 route is searched instead and the nearer answer kept. The result is clamped
-to `[0, length]`. An entity 50 m or more below the route where it projects
+to `[0, length]`, so a target off the route is one the rule meets on every
+tick or on none. Before the start (`start` with a negative `value`),
+`greater_than_or_equal` holds from the first tick the entity is on the map,
+even for an entity behind the start. Past the end (`end` with a positive
+`value`), it never holds, and a waypoint waiting on it never departs. A
+target exactly on a bound never holds with a strict rule pointing off the
+route either: `less_than` with `start` and `value: 0`, `greater_than` with
+`end` and `value: 0`. The other rules there can hold, the default
+`greater_than_or_equal` from `start`, and `less_than_or_equal` to `end`, among
+them. The validator **warns** about either kind of target where the
+pattern pins its anchor to a bound -- `start`, `end`, `segment:0:start`, the
+last segment's `end`, a junction that is the first or last segment -- and
+says nothing of other anchors, whose distance from a bound is the map's. An
+entity 50 m or more below the route where it projects
 (spawned hidden, parked under the map) or not in the world has **no**
 progress: the condition does not hold, and `progress` is `None`. Usable anywhere a condition is: a trigger, an
 assertion, inside `all`/`any`/`not`, and as a **waypoint condition**
@@ -361,6 +374,11 @@ far enough away.
   With none fitting, it is the kind's default. `auto` on a pedestrian, or
   without a size, is a validation error, and so is a size on an entity that
   names its blueprint: nothing would read it.
+* A `motorcycle` (`kind: motorcycle`) is an NPC vehicle on a motorcycle's
+  blueprint (`MotorcycleEntity`) and may do whatever a `vehicle` may. Its
+  `vehicle_type` is `auto` by default: whichever motorcycle the running CARLA
+  has. It takes no size; a blueprint it names must be a motorcycle's, which
+  the run checks when it spawns it.
 
 ## Matching semantics
 
@@ -492,6 +510,7 @@ scenario.route.segment_kinds=[lane,junction,lane]
 scenario.route.segment_ends=[60.0,78.5,118.5]           # route s where each segment ends
 scenario.route.segment_lanelet_counts=[2,1,1]
 scenario.route.junction_turns=[left]
+scenario.route.case_count=4                             # cases on this map, for the gate
 ```
 
 A match the ego cannot be placed on (spawn past the end, goal not ahead of the
@@ -516,6 +535,15 @@ and the ego is sent along it:
   TrafficManager drives gets a `TurnAction` per junction segment instead, in
   the junction's actual `turn_direction`, triggered when it is 100 m short of
   the junction (or past the previous one).
+
+## Passing as a whole: the gate
+
+Each match runs as a concrete scenario and passes or fails on its own. A
+`gate:` block in the document says when the logical scenario passes over all
+its runs -- a minimum number of runs, success rate, case and cover coverage,
+and how consistently the ego drives the pattern. Each run records what the
+gate needs (`{stem}_gate.json`) and `scenario-gate` judges it afterwards: see
+[Gates for Logical Scenarios](gate.md).
 
 ## Python API
 

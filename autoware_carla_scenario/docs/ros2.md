@@ -63,7 +63,9 @@ the world in synchronous mode, paced to wall-clock 10 Hz, without waiting for a
 command).
 
 `ego.entity=ros2` without `server.max_tick_rate_hz` logs a warning: unpaced, the
-simulation outruns the nodes and their sources look stale.
+simulation outruns the nodes and their sources look stale. The rate must be a finite
+number above 0 or `null`; anything else (`0`, a negative rate, `nan`) is refused
+before the run starts.
 
 Published stamps and the freshness of commands are both in simulation time, the time
 CARLA's `/clock` carries, which is what nodes with `use_sim_time` read.
@@ -96,9 +98,13 @@ server built without it, the entity publishes them as well:
 A camera in `cameras` takes the rendering and mount fields of a
 [driver camera](driver_interface.md) (`image_width`, `image_height`, `fov`, `fps`,
 `position_x/y/z`, `roll`, `pitch`, `yaw`, in CARLA's convention), plus its `topic` and
-`frame_id`. Its frames go out from the sensor's own thread as they are rendered, the
-way CARLA's own interface publishes them, and under the names a node already
-subscribes to:
+`frame_id`, and the same bounds: `image_width` and `image_height` positive whole
+numbers (`960`, or `960.0` kept as the int `960`, so CARLA is given
+`image_size_x="960"`; not `960.5`, a bool or a string), `fps` positive and
+finite, `fov` in (0, 180) degrees, and the mount finite. A camera out of these bounds is
+refused as the config is read, not when it attaches after the ego spawned. Its frames go
+out from the sensor's own thread as they are rendered, the way CARLA's own interface
+publishes them, and under the names a node already subscribes to:
 
 ```yaml
 ros2:
@@ -181,6 +187,11 @@ an acceleration, a jerk, or a trajectory's poses, speeds or accelerations) is
 refused, with a warning: the active source's last good command of that kind drives
 on, and with none, the ego is held on its brakes.
 
+A `control` command's jerk is signed in Autoware (negative while the deceleration
+grows), while CARLA's Ackermann jerk is a limit: a negative one is handed over as its
+magnitude, logged once a session. A `control` command that leaves its jerk undefined,
+and every `steer_accel` command, takes the source's `jerk_mps3`.
+
 ```yaml
 ros2:
   domain_id: 0
@@ -193,6 +204,29 @@ ros2:
       stale_s: 0.3
   control: {}     # trajectory-follower gains, as driver.control
 ```
+
+The settings are checked as the config is read -- by `check_run_config`, before a
+batch's first scenario starts, as well as when the entity is built -- and a bad one is
+refused naming its key (`ros2: domain_id must be ...`), not once the ego has spawned
+and joined the domain:
+
+* `domain_id` is a whole number from 0 to 232, the
+  `ROS_DOMAIN_ID` range ROS 2 can use, the bound the docker launcher's
+  `ros_domain_ids` share ([autoware.md](autoware.md)).
+* A source's `priority` is a whole number.
+* A whole number, here as for a camera's size, is an integral value: `7`, or `7.0`,
+  which is kept as the int `7`; `7.5`, NaN, infinity, a bool and a quoted `"7"` are
+  refused.
+* `stale_s`, `pair_window_s`, `steering_sign`, `speed_horizon_s`, `jerk_mps3`,
+  `rear_axle_offset_m` and a camera's numeric fields are numbers, an int or a float
+  (not a bool or a quoted string), and finite, within the bounds above.
+* A source's `speed_horizon_s` is positive: zero would pin a `steer_accel` target
+  speed to the current speed, and a negative horizon would turn a request to
+  accelerate into braking.
+* A source's `jerk_mps3` is not negative. `0` is allowed: it is the jerk
+  `carla.VehicleAckermannControl` takes by default.
+* A source's `steering_sign` is not zero, which would pin the steering straight. Its
+  magnitude scales the steering and a negative value flips it, so both are kept.
 
 ## The Open AD Kit safety-island demo
 

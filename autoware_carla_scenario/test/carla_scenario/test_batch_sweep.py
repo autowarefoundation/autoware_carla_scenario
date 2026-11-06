@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import re
 import shutil
 import sys
 from pathlib import Path
@@ -256,3 +257,344 @@ def test_a_batch_refuses_a_concrete_scenario_with_invalid_controls(
         capsys.readouterr().err
     )
     assert batch.configs == []
+
+
+# A scenario whose sweep expands to no case is refused before anything runs,
+# naming it, as the lanelet sweeper refuses it (#1407): the batch used to log
+# "0 case(s)" and run the other scenarios' cases alone.
+@pytest.mark.parametrize("glob", [False, True])
+def test_a_batch_refuses_a_scenario_whose_sweep_expands_to_no_case(
+    batch: _Batch,
+    twin: str,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    glob: bool,
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.sweeper import expand
+
+    real = expand.expand_config
+
+    def expand_config(cfg: DictConfig, *args: Any, **kwargs: Any) -> list[list[str]]:
+        # The twin's sweep matches nothing; the other scenario has its cases.
+        if cfg.scenario.get("timeout_seconds") == 1234:
+            return []
+        return real(cfg, *args, **kwargs)
+
+    monkeypatch.setattr(expand, "expand_config", expand_config)
+    names = [_CONCRETE, twin] if glob else [twin]
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(names, ["scenario.timeout_seconds=1234"], expand=True)
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    assert f"Error: {twin}: the sweep expands to no case (its constraints" in err
+    assert batch.configs == []
+
+
+@pytest.mark.parametrize("count", ["0", "2.7", "-1"])
+def test_a_batch_refuses_an_odd_sample_count_that_is_no_count(
+    batch: _Batch, capsys: pytest.CaptureFixture[str], count: str
+) -> None:
+    # 0 drew no case, a sweep refused for matching nothing on the map; 2.7
+    # drew 2 (#1437).
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch([_CONCRETE], [f"+sweep.odd_sample.count={count}"], expand=True)
+    assert exited.value.code == 1
+    assert (
+        f"Error: {_CONCRETE}: sweep.odd_sample.count must be a whole number of "
+        f"at least 1, got {count}"
+    ) in capsys.readouterr().err
+    assert batch.configs == []
+
+
+def test_a_slurm_batch_whose_sweep_expands_to_no_case_submits_nothing(
+    batch: _Batch, capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``launcher=slurm`` expands the batch in run_batch too: refused before
+    anything is submitted."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm import settings
+    from autoware_carla_scenario.sweeper import expand
+
+    monkeypatch.setattr(settings, "require_sbatch", lambda: None)
+    # A sweep matching nothing on the map: odd_sample.count=0 is refused for
+    # its count now (#1437), as the next test checks.
+    monkeypatch.setattr(expand, "expand_config", lambda *_, **__: [])
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(
+            [_CONCRETE],
+            ["+sweep.odd_sample.count=1", "launcher=slurm"],
+            expand=True,
+        )
+    assert exited.value.code == 1
+    assert f"Error: {_CONCRETE}: the sweep expands to no case" in (
+        capsys.readouterr().err
+    )
+    assert batch.configs == []
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ("+sweep.odd_sample.count=0", "sweep.odd_sample.count must be a whole"),
+        ("seed=1.9", "seed must be a whole number, got 1.9"),
+    ],
+)
+def test_a_slurm_batch_with_a_bad_seed_or_count_submits_nothing(
+    batch: _Batch,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    override: str,
+    message: str,
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm import settings
+
+    monkeypatch.setattr(settings, "require_sbatch", lambda: None)
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch([_CONCRETE], [override, "launcher=slurm"], expand=True)
+    assert exited.value.code == 1
+    assert f"Error: {_CONCRETE}: {message}" in capsys.readouterr().err
+    assert batch.configs == []
+
+
+# An invalid sweep is refused, named, for every scenario before anything runs
+# (#1412): its ValueError used to escape as a traceback at the first one.
+@pytest.mark.usefixtures("at_repo_root")
+def test_a_batch_reports_the_invalid_sweep_of_each_scenario(
+    batch: _Batch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(
+            ["cut_in/left", "cut_in/right"],
+            ["+sweep.odd_sample.count=2", "++sweep.case_index=99"],
+            expand=True,
+        )
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    for name in ("cut_in/left", "cut_in/right"):
+        assert (
+            f"Error: {name}: sweep.case_index 99 is out of range: the sweep "
+            "expands to 2 case(s)"
+        ) in err
+    assert "Traceback" not in err
+    assert batch.configs == []
+
+
+# A case index that is no whole number is refused, naming the key, for every
+# scenario before anything runs (#1819): int() read true as case 1.
+@pytest.mark.usefixtures("at_repo_root")
+def test_a_batch_reports_a_case_index_that_is_no_whole_number(
+    batch: _Batch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(
+            ["cut_in/left", "cut_in/right"],
+            ["+sweep.odd_sample.count=2", "++sweep.case_index=true"],
+            expand=True,
+        )
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    for name in ("cut_in/left", "cut_in/right"):
+        assert (
+            f"Error: {name}: sweep.case_index must be a whole number, got True"
+        ) in err
+    assert "Traceback" not in err
+    assert batch.configs == []
+
+
+# A missing Lanelet2 map is refused, named, for every scenario before anything
+# runs (#1444): load_map's FileNotFoundError used to escape as a traceback at
+# the first one.
+@pytest.mark.usefixtures("at_repo_root")
+def test_a_batch_reports_the_missing_map_of_each_scenario(
+    batch: _Batch, capsys: pytest.CaptureFixture[str], tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    missing = tmp_path / "missing.osm"
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(
+            ["lane_change/left", "lane_change/right"],
+            [f"map.lanelet2_path={missing}"],
+            expand=True,
+        )
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    for name in ("lane_change/left", "lane_change/right"):
+        assert f"Error: {name}: Lanelet2 file not found: {missing}" in err
+    assert "Traceback" not in err
+    assert batch.configs == []
+
+
+# A map that cannot be resolved or fetched is refused the same way (#1444).
+@pytest.mark.usefixtures("at_repo_root")
+@pytest.mark.parametrize("fetched", [False, True])
+def test_a_batch_reports_the_unresolvable_map_of_each_scenario(
+    batch: _Batch,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    fetched: bool,
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.maps import MapCacheError
+
+    missing = tmp_path / "no_map"
+    if fetched:
+
+        def _unreachable(_map_cfg: object) -> None:
+            raise MapCacheError("could not clone the map repository")
+
+        monkeypatch.setattr(
+            "autoware_carla_scenario.maps.resolve_map_paths", _unreachable
+        )
+        overrides: list[str] = []
+        message = "could not clone the map repository"
+    else:
+        overrides = [f"+map.directory={missing}"]
+        message = f"Map directory {missing} does not exist"
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(["lane_change/left", "lane_change/right"], overrides, expand=True)
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    for name in ("lane_change/left", "lane_change/right"):
+        assert f"Error: {name}: {message}" in err
+    assert "Traceback" not in err
+    assert batch.configs == []
+
+
+def test_a_batch_reports_the_invalid_controls_of_each_scenario(
+    batch: _Batch, twin: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch([_CONCRETE, twin], ["+controls.x=5"], expand=True)
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    for name in (_CONCRETE, twin):
+        assert f"{name}: controls.x: expected a key or a mapping" in err
+    assert batch.configs == []
+
+
+# A config value a case would refuse is refused before any scenario is built or
+# the map is resolved, locally as under SLURM, and the CLI prints the key's
+# ``Error:`` line rather than a traceback (#1430).
+@pytest.mark.parametrize(
+    ("override", "key"),
+    [
+        ("server.world_reset=fast", "server.world_reset"),
+        ("scenario.timeout_seconds=-1", "scenario.timeout_seconds"),
+        ("server.port=70000", "server.port"),
+        ("server.cooldown_max_retries=-1", "server.cooldown_max_retries"),
+        # Taken as seed 1, or refused only once the scenario was built (#1437).
+        ("seed=1.9", "seed"),
+        ("seed=true", "seed"),
+        ("seed=-1", "seed"),
+        ("seed=abc", "seed"),
+        ("++sweep.odd_sample.seed=0.5", "sweep.odd_sample.seed"),
+        ("++sweep.odd_sample.count=2.7", "sweep.odd_sample.count"),
+    ],
+)
+@pytest.mark.parametrize("multirun", [False, True])
+def test_a_batch_refuses_a_bad_config_value_with_an_error_line(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    override: str,
+    key: str,
+    multirun: bool,
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.sweeper import expand
+
+    def not_reached(what: str) -> Any:
+        def fail(*_: object, **__: object) -> Any:
+            raise AssertionError(f"{what} before refusing {key}")
+
+        return fail
+
+    monkeypatch.setattr(run, "build_scenario", not_reached("built a scenario"))
+    monkeypatch.setattr(run, "resolve_map_paths", not_reached("resolved the map"))
+    monkeypatch.setattr(run, "_make_batch_output_dir", not_reached("made the output"))
+    # --multirun: refused before a sweep reads the map, as the sweeper does.
+    monkeypatch.setattr(expand, "expand_config", not_reached("expanded a sweep"))
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    monkeypatch.delenv("HYDRA_FULL_ERROR", raising=False)
+    # main() exports --resume-from for the sweeper: undone after the test.
+    monkeypatch.setenv("SWEEP_RESUME_FROM", "0")
+    argv = ["scenario", "scenario=intersection_passing/straight*", override]
+    if multirun:
+        argv.insert(1, "--multirun")
+    monkeypatch.setattr(sys, "argv", argv)
+    with pytest.raises(SystemExit) as exited:
+        run.main()
+    # A configuration error, as a single run's is (docs/usage.md, Exit Codes).
+    assert exited.value.code == 1
+    out, err = capsys.readouterr()
+    # The case named (the glob's first), as the batch's map checks name theirs.
+    assert re.search(
+        rf"^Error: intersection_passing/straight\S*: {re.escape(key)}", err
+    )
+    assert "Traceback" not in out + err
+
+
+def test_a_batch_names_the_case_a_bad_config_value_is_refused_for(
+    monkeypatch: pytest.MonkeyPatch, twin: str
+) -> None:
+    """Every case is checked, so the one refused is named: here the second."""
+    from autoware_carla_scenario.examples import run
+
+    compose = run._compose_config
+
+    def composed(name: str, overrides: list[str]) -> Any:
+        cfg = compose(name, overrides)
+        if name == twin:
+            cfg.server.world_reset = "fast"
+        return cfg
+
+    monkeypatch.setattr(run, "_compose_config", composed)
+    monkeypatch.setattr(
+        run, "build_scenario", lambda *_, **__: pytest.fail("built a scenario")
+    )
+    with pytest.raises(
+        run.RunConfigError,
+        match=rf"^{re.escape(twin)}: server\.world_reset must be one of",
+    ):
+        run.run_batch([_CONCRETE, twin], [])
+
+
+@pytest.mark.parametrize("multirun", [False, True])
+def test_a_batch_raises_a_bad_config_value_with_hydra_full_error(
+    monkeypatch: pytest.MonkeyPatch, multirun: bool
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.sweeper import expand
+
+    monkeypatch.setattr(
+        expand, "expand_config", lambda *_, **__: pytest.fail("expanded a sweep")
+    )
+
+    monkeypatch.setattr(
+        run, "build_scenario", lambda *_, **__: pytest.fail("built a scenario")
+    )
+    monkeypatch.setenv("HYDRA_FULL_ERROR", "1")
+    monkeypatch.setenv("SWEEP_RESUME_FROM", "0")
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "scenario",
+            *(["--multirun"] if multirun else []),
+            f"scenario={_CONCRETE}*",
+            "server.world_reset=fast",
+        ],
+    )
+    with pytest.raises(run.RunConfigError, match="server.world_reset"):
+        run.main()

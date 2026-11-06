@@ -167,7 +167,7 @@ def carla_processes_on_port(port: int) -> list[int]:
     marker = f"-carla-rpc-port={port}".encode()
     pids: list[int] = []
     for entry in Path("/proc").iterdir():
-        if not entry.name.isdigit():
+        if not (entry.name.isascii() and entry.name.isdigit()):
             continue
         try:
             args = (entry / "cmdline").read_bytes().split(b"\0")

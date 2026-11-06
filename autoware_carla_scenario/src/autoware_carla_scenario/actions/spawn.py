@@ -132,6 +132,9 @@ def clear_props() -> None:
     for name in list(_STANDING.keys()):
         remove_prop(name)
     _BROUGHT_IN.clear()
+    # The entry speeds too: written on every spawn, by an actor id the next
+    # run's world may reuse, and nothing else forgets them (#1599).
+    _ENTERED.clear()
 
 
 def note_brought_in(world: "carla.World", role: str, pose: CarlaWorldPose) -> None:
@@ -402,15 +405,16 @@ class SpawnAction(BaseAction):
         self,
         world: "carla.World",
         library: Optional["carla.BlueprintLibrary"] = None,
-        ground: Optional[Callable[[float, float], Optional[float]]] = None,
+        ground: Optional[Callable[[float, float, float], Optional[float]]] = None,
     ) -> bool:
         """Spawn now; whether it was done.
 
         For an action built on this one, which applies it itself rather than
         registering it, and may place many props in one tick: *library* is
         the world's blueprint library and *ground* the road height under a
-        point (:func:`~..trajectory.resolve.road_height`), fetched once for
-        them all.
+        point, read near a hint height
+        (:func:`~..trajectory.resolve.road_height`), fetched once for them
+        all.
         """
         if self._name:
             return self._add_prop(world, library, ground)
@@ -479,7 +483,7 @@ class SpawnAction(BaseAction):
         self,
         world: "carla.World",
         library: Optional["carla.BlueprintLibrary"],
-        ground: Optional[Callable[[float, float], Optional[float]]],
+        ground: Optional[Callable[[float, float, float], Optional[float]]],
     ) -> bool:
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
@@ -490,11 +494,13 @@ class SpawnAction(BaseAction):
         height = z
         if self._on_ground:
             # Branched: Codon types no conditional expression of the two.
+            # Read near the place's own height, so that a prop on a road
+            # under an overpass stays on that road (not the deck above).
             if ground is None:
-                surface = road_height(run_carla_map(world))(x, y)
+                surface = road_height(run_carla_map(world))(x, y, z)
             else:
-                given: Callable[[float, float], Optional[float]] = ground
-                surface = given(x, y)
+                given: Callable[[float, float, float], Optional[float]] = ground
+                surface = given(x, y, z)
             if surface is not None:
                 height = float(surface) + _LIFT_M
         blueprints = world.get_blueprint_library() if library is None else library
@@ -590,16 +596,11 @@ class SpawnAction(BaseAction):
         if self._shift_max <= 0.0 and not self._entity_name:
             return due  # a prop not asked to look for a clear place
         x, y, z, yaw = due
-        if TYPE_CHECKING:
-            blocker = -1  # utils.clearance is not compiled (docs/typecheck.md)
-        else:
-            blocker = _taken(
-                world, actor_id, x, y, yaw, half_length, half_width, self._ahead
-            )
+        blocker = _taken(
+            world, actor_id, x, y, yaw, half_length, half_width, self._ahead, z=z
+        )
         if blocker >= 0 and self._ahead > 0.0:
-            if TYPE_CHECKING:
-                pass  # utils.clearance is not compiled (docs/typecheck.md)
-            elif _taken(world, actor_id, x, y, yaw, half_length, half_width) < 0:
+            if _taken(world, actor_id, x, y, yaw, half_length, half_width, z=z) < 0:
                 # Only the room to stop in is taken, by one ahead: shifted on
                 # it would be put past that one (vehicle_135 past vehicle_117,
                 # bicycle_89 past bicycle_87).  It keeps its place, entering
@@ -638,6 +639,7 @@ class SpawnAction(BaseAction):
                     half_length,
                     half_width,
                     self._ahead,
+                    z=there[2],
                 )
                 if other < 0:
                     logger.warning(
@@ -672,7 +674,7 @@ class SpawnAction(BaseAction):
         """Slow the entry speed until the room it needs behind *blocker* --
         to brake to *blocker*'s speed and the gap kept -- is clear (said),
         down to standing."""
-        x, y, _z, yaw = due
+        x, y, z, yaw = due
         braking = self._speed * self._speed / (2.0 * _ENTRY_BRAKING_MPS2)
         gap = max(self._ahead - braking, 0.0)
         ahead_speed = _speed_ahead(world, blocker, yaw)
@@ -681,12 +683,9 @@ class SpawnAction(BaseAction):
             trying = self._speed * factor
             room = max(trying * trying - ahead_speed * ahead_speed, 0.0)
             room = room / (2.0 * _ENTRY_BRAKING_MPS2) + gap
-            if TYPE_CHECKING:
-                taken = -1
-            else:
-                taken = _taken(
-                    world, actor_id, x, y, yaw, half_length, half_width, room
-                )
+            taken = _taken(
+                world, actor_id, x, y, yaw, half_length, half_width, room, z=z
+            )
             if taken < 0:
                 slower = trying
                 break
@@ -709,7 +708,16 @@ class SpawnAction(BaseAction):
         half_length: float,
         half_width: float,
     ) -> None:
-        _hold(world, actor_id, place[0], place[1], place[3], half_length, half_width)
+        _hold(
+            world,
+            actor_id,
+            place[0],
+            place[1],
+            place[3],
+            half_length,
+            half_width,
+            z=place[2],
+        )
 
 
 def _along_lane(
@@ -814,11 +822,14 @@ def _taken(
     half_length: float,
     half_width: float,
     ahead: float = 0.0,
+    *,
+    z: float,
 ) -> int:
     """The id of a road user whose outline overlaps the rectangle of
     *actor_id* put with its origin at CARLA ``(x, y)`` facing *yaw* -- centred
     on its bounding box, a car's ahead of its origin -- stretched *ahead* m
-    further forward (the room to stop in), with a 0.3 m margin; or ``-1``."""
+    further forward (the room to stop in), with a 0.3 m margin; or ``-1``.
+    Only one on the level of road at height *z* there (#1588)."""
     from ..utils.clearance import box_centre, overlaps  # noqa: PLC0415
 
     heading = math.radians(yaw)
@@ -830,7 +841,7 @@ def _taken(
     cy = by + math.sin(heading) * ahead / 2.0
     try:
         found = overlaps(
-            world, actor_id, cx, cy, yaw, half_length + ahead / 2.0, half_width
+            world, actor_id, cx, cy, yaw, half_length + ahead / 2.0, half_width, z=z
         )
     except (AttributeError, RuntimeError):
         return -1
@@ -876,14 +887,16 @@ def _hold(
     yaw: float,
     half_length: float,
     half_width: float,
+    *,
+    z: float,
 ) -> None:
-    """Hold the place -- *actor_id*'s box, its origin put at ``(x, y)`` --
-    for this frame (two put on one place on one tick do not both land
-    there)."""
+    """Hold the place -- *actor_id*'s box, its origin put at ``(x, y)`` on
+    the road at height *z* -- for this frame (two put on one place on one
+    tick do not both land there)."""
     from ..utils.clearance import box_centre, claim_spot  # noqa: PLC0415
 
     try:
         cx, cy = box_centre(world, actor_id, x, y, yaw)
-        claim_spot(world, actor_id, cx, cy, yaw, half_length, half_width)
+        claim_spot(world, actor_id, cx, cy, yaw, half_length, half_width, z=z)
     except (AttributeError, RuntimeError):
         pass

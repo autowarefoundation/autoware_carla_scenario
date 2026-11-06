@@ -229,33 +229,30 @@ class FinalApproach:
                 vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
             return
         velocity = actor.get_velocity()
-        if TYPE_CHECKING:
-            pass  # utils.clearance is not compiled (docs/typecheck.md)
-        else:
-            speed = math.hypot(velocity.x, velocity.y)
-            extent = actor.bounding_box.extent
-            # Along the path it drives -- a turn out of its junction, say -- not
-            # straight ahead, where a walker on the corner it turns away from
-            # stood "in its way" (vehicle_56 and pedestrian_66, each waiting on
-            # the other): within its stopping distance, as _walker_in_way and
-            # _vehicle_in_way measure it.
-            walker = self._in_way(
-                "walker",
-                speed * speed / 8.0 + LEAD_OUT_WALKER_AHEAD_M,
-                float(extent.y) + LEAD_OUT_WALKER_CLEARANCE_M,
-            )
-            if walker or self._in_way(
-                "vehicle",
-                speed * speed / 8.0 + float(extent.x) + 2.0,
-                float(extent.y) + _VEHICLE_CLEARANCE_M,
-            ):
-                vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
-                self._blocked_s += dt
-                wait = LEAD_OUT_WALKER_WAIT_S if walker else LEAD_OUT_WAIT_S
-                if not self._stop and self._blocked_s >= wait:
-                    self.done = True  # the TrafficManager takes it on as it is
-                return
-            self._blocked_s = 0.0
+        speed = math.hypot(velocity.x, velocity.y)
+        extent = actor.bounding_box.extent
+        # Along the path it drives -- a turn out of its junction, say -- not
+        # straight ahead, where a walker on the corner it turns away from
+        # stood "in its way" (vehicle_56 and pedestrian_66, each waiting on
+        # the other): within its stopping distance, as _walker_in_way and
+        # _vehicle_in_way measure it.
+        walker = self._in_way(
+            "walker",
+            speed * speed / 8.0 + LEAD_OUT_WALKER_AHEAD_M,
+            float(extent.y) + LEAD_OUT_WALKER_CLEARANCE_M,
+        )
+        if walker or self._in_way(
+            "vehicle",
+            speed * speed / 8.0 + float(extent.x) + 2.0,
+            float(extent.y) + _VEHICLE_CLEARANCE_M,
+        ):
+            vehicle.apply_control(carla.VehicleControl(throttle=0.0, brake=1.0))
+            self._blocked_s += dt
+            wait = LEAD_OUT_WALKER_WAIT_S if walker else LEAD_OUT_WAIT_S
+            if not self._stop and self._blocked_s >= wait:
+                self.done = True  # the TrafficManager takes it on as it is
+            return
+        self._blocked_s = 0.0
         if not self._stop:
             # Making no way, nothing in its way: wedged; handed on.
             if self._here > self._progress_at + _PROGRESS_M:
@@ -336,6 +333,8 @@ class FinalApproach:
             world = self._actor.get_world()
             own = int(self._actor.id)
             transform = self._actor.get_transform()
+            # On its own level of road (#1588).
+            height = float(transform.location.z)
             centre = _box_centre(self._actor, transform)
             # How far its box's centre is ahead of its origin, whose place
             # along the path _here is: *reach* and its front half are
@@ -386,35 +385,34 @@ class FinalApproach:
             if distance - self._here < forward + half_length:
                 swing = abs(math.sin(math.radians(heading - behind[2])))
                 looked += swing * half_length
-            if TYPE_CHECKING:
-                pass  # utils.clearance is not compiled (docs/typecheck.md)
-            else:
-                from ..actions._trajectory_run import _in_way_ahead  # noqa: PLC0415
+            from ..actions._trajectory_run import _in_way_ahead  # noqa: PLC0415
 
-                found = _in_way_ahead(
-                    world,
-                    own,
-                    at.x,
-                    at.y,
-                    heading,
-                    kind,
-                    span,
-                    looked,
-                    behind,
-                    body,
-                )
-                if found >= 0:
-                    if found != self._waits_for:
-                        self._waits_for = found
-                        logger.info(
-                            "actor %d: led out of its junction, waits for %s %d, "
-                            "%.1f m on along its path",
-                            own,
-                            kind,
-                            found,
-                            distance - self._here,
-                        )
-                    return True
+            found = _in_way_ahead(
+                world,
+                own,
+                at.x,
+                at.y,
+                heading,
+                kind,
+                span,
+                looked,
+                behind,
+                body,
+                height,
+                max(distance - self._here, 0.0),
+            )
+            if found >= 0:
+                if found != self._waits_for:
+                    self._waits_for = found
+                    logger.info(
+                        "actor %d: led out of its junction, waits for %s %d, "
+                        "%.1f m on along its path",
+                        own,
+                        kind,
+                        found,
+                        distance - self._here,
+                    )
+                return True
             distance += span
         return False
 

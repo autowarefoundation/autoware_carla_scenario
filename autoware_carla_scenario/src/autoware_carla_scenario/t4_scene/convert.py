@@ -42,9 +42,18 @@ import orjson
 
 from ..constants import FIXED_DELTA_SECONDS
 from ..rerun import TRAJECTORY_SUFFIX
+from ..run_outputs import T4SCENE_MAP_SUFFIX, T4SCENE_SUFFIX
 from ..utils.clearance import _HIDDEN_BELOW_M
 from ..utils.light_lanes import LightLanes, elements_ahead, light_lanes
 from ._proto import t4_scene_pb2 as pb
+from .frames import FLIP_Y as _FLIP_Y
+
+# The check of a rear-axle offset is the checked frames's (#1697); live and
+# __main__ import it from here.
+from .frames import checked_rear_axle_offset as checked_rear_axle_offset
+from .frames import map_angles, map_positions
+from .frames import quaternions as _quaternions
+from .frames import rotations as _rotations
 from .grid import (
     checked_max_distance,
     indicator_at,
@@ -69,10 +78,11 @@ logger = logging.getLogger(__name__)
 
 #: The suffix of a trajectory log; the run's stem is the file name without it.
 LOG_SUFFIX = TRAJECTORY_SUFFIX
-#: The T4Scene written for ``{stem}.trajectory.jsonl``: ``{stem}.t4scene.pb``.
-SCENE_SUFFIX = ".t4scene.pb"
+#: The T4Scene written for ``{stem}.trajectory.jsonl``: ``{stem}.t4scene.pb``
+#: (the checked run_outputs's suffix, #1713).
+SCENE_SUFFIX = T4SCENE_SUFFIX
 #: Its map, the ``MapResource`` the scene's ``MapReference`` names.
-MAP_SUFFIX = ".t4scene.map.pb"
+MAP_SUFFIX = T4SCENE_MAP_SUFFIX
 
 #: The contract's object categories this module writes (``Annotations.labels``).
 _VEHICLE = 1
@@ -102,11 +112,10 @@ _DTYPES = {
     "f4": pb.NumericArray.FLOAT32,
     "f8": pb.NumericArray.FLOAT64,
 }
-#: CARLA's left-handed frame to the map's right-handed one: ``y`` flips.
-_FLIP_Y = np.array([1.0, -1.0, 1.0])
-#: The same reflection of an *axial* vector (an angular velocity): ``x`` and
-#: ``z`` flip, as ``driver.observation._to_local_axial`` turns one (the driver
-#: package, gRPC and all, is not imported for it; a test keeps the two equal).
+#: The reflection ``_FLIP_Y`` (t4_scene.frames) of an *axial* vector (an
+#: angular velocity): ``x`` and ``z`` flip, as
+#: ``driver.observation._to_local_axial`` turns one (the driver package, gRPC
+#: and all, is not imported for it; a test keeps the two equal).
 _FLIP_AXIAL = np.array([-1.0, 1.0, -1.0])
 _NO_STATES = np.zeros((0, 10))
 
@@ -237,32 +246,6 @@ class _Log:
         return on_scene(self.spawned.get(actor_id), self.despawned.get(actor_id), frame)
 
 
-def checked_rear_axle_offset(
-    rear_axle_offset_m: float, key: str = "rear_axle_offset_m"
-) -> float:
-    """*rear_axle_offset_m* as a float, which must be finite.
-
-    The offset is where the ego's rear axle (its ``base_link``) is from its
-    actor origin along its x axis: negative behind the origin -- the usual
-    case, and the default's ``-0.5 * extent.x`` -- 0 at it, positive ahead of
-    it, so any finite value is a place.  NaN or infinity would put the ego's
-    every pose and ``base_link_to_front`` at NaN, so either is refused before
-    a scene is written.  A bool is refused too: ``true`` is not an offset,
-    though ``float()`` would read it as 1 m.
-
-    Args:
-        rear_axle_offset_m: The offset, metres.
-        key: The setting's name, which the error names (``--rear-axle-offset``).
-
-    Raises:
-        ValueError: If *rear_axle_offset_m* is a bool, or not finite.
-    """
-    value = float(rear_axle_offset_m)
-    if isinstance(rear_axle_offset_m, bool) or not math.isfinite(value):
-        raise ValueError(f"{key} must be finite, not {rear_axle_offset_m}")
-    return value
-
-
 def _read_log(path: Path, step_frames: int) -> _Log:
     log = _Log(step_frames=step_frames)
     with path.open("rb") as stream:
@@ -303,47 +286,15 @@ class _MapFrame:
         return cls(np.array([float(mgrs[0]), float(mgrs[1]), z]))
 
     def positions(self, xyz: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-        """(N, 3) CARLA locations as map-frame positions."""
-        return xyz * _FLIP_Y + self.offset
+        """(N, 3) CARLA locations as map-frame positions
+        (:func:`t4_scene.frames.map_positions`)."""
+        return map_positions(xyz, self.offset)
 
     @staticmethod
     def angles(rpy_deg: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
         """(N, 3) CARLA rotations (roll, pitch, yaw; degrees) as map-frame
-        Euler angles (radians)."""
-        return np.radians(rpy_deg) * np.array([1.0, -1.0, -1.0])
-
-
-def _rotations(angles: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """(N, 3, 3) body-to-map rotations of (N, 3) roll/pitch/yaw (ZYX)."""
-    cr, cp, cw = np.cos(angles).T
-    sr, sp, sw = np.sin(angles).T
-    return np.stack(
-        [
-            np.stack(
-                [cw * cp, cw * sp * sr - sw * cr, cw * sp * cr + sw * sr], axis=-1
-            ),
-            np.stack(
-                [sw * cp, sw * sp * sr + cw * cr, sw * sp * cr - cw * sr], axis=-1
-            ),
-            np.stack([-sp, cp * sr, cp * cr], axis=-1),
-        ],
-        axis=-2,
-    )
-
-
-def _quaternions(angles: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
-    """(N, 4) unit quaternions ``(x, y, z, w)`` of (N, 3) roll/pitch/yaw (ZYX)."""
-    cr, cp, cw = np.cos(angles / 2).T
-    sr, sp, sw = np.sin(angles / 2).T
-    return np.stack(
-        [
-            sr * cp * cw - cr * sp * sw,
-            cr * sp * cw + sr * cp * sw,
-            cr * cp * sw - sr * sp * cw,
-            cr * cp * cw + sr * sp * sw,
-        ],
-        axis=-1,
-    )
+        Euler angles (radians) (:func:`t4_scene.frames.map_angles`)."""
+        return map_angles(rpy_deg)
 
 
 def _array(
@@ -576,9 +527,10 @@ def _fill_metadata(scene: pb.T4Scene, log: _Log, stem: str) -> None:
     if log.map is not None and log.map.get("name"):
         metadata.tags.append(f"map:{log.map['name']}")
     if log.result is not None:
-        metadata.tags.append(
-            "result:passed" if log.result.get("passed") else "result:failed"
-        )
+        # Only a JSON true is a pass: bool("false") would tag a failed run
+        # as passed.
+        passed = log.result.get("passed") is True
+        metadata.tags.append("result:passed" if passed else "result:failed")
 
 
 def _fill_ego(
@@ -889,13 +841,23 @@ def driven_route(scene: pb.T4Scene, graph: RouteGraph) -> list[int]:
     return graph.match(np.array(kept))
 
 
+def _route_data(lanelet_ids: Sequence[int]) -> pb.RouteData:
+    """A route as the contract writes one: each lanelet a segment of its own,
+    the way the route runs (``RouteSegment``, one lane and no alternative).
+    The route walks one lane per lanelet, so a segment has nothing else to
+    choose between."""
+    return pb.RouteData(
+        segments=[pb.RouteSegment(lane_ids=[int(i)]) for i in lanelet_ids]
+    )
+
+
 def _fill_route(scene: pb.T4Scene, lanelet_ids: Sequence[int]) -> None:
     """Write *lanelet_ids* as the route of every row, as a live scene writes
     its route; nothing when there are none."""
     if not lanelet_ids:
         return
     rows = int(scene.timestamps_ns.shape[0])
-    route = pb.RouteData(lane_ids=_array(list(lanelet_ids), "i8"))
+    route = _route_data(lanelet_ids)
     scene.routes.rows.extend(pb.RouteRow(value=route) for _ in range(rows))
 
 

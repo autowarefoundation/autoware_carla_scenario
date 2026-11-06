@@ -284,7 +284,8 @@ _LOGS: dict[str, list[Any]] = {
     "an_approach_0m_short": _approach(0.0),
     "a_seeded_drive": _drive(7, 400, 3),
     "a_seeded_crowd": _drive(41, 120, 9),
-    # What the reader gives up on: no metrics at all.
+    # What the reader cannot use: the record is skipped and the good ticks
+    # around it still count (#1378); no metrics when there are none.
     "a_tick_without_t": [
         _WORLD,
         _EGO,
@@ -369,7 +370,9 @@ def test_the_golden_file_covers_every_log() -> None:
     # The edge cases are what they claim to be.
     golden = {k: json.loads(v) for k, v in _golden().items()}
     assert golden["actors_but_no_ticks"] == {}
-    assert golden["a_tick_without_t"] == {}
+    # A tick it cannot use is skipped, not the whole log (#1378).
+    assert golden["a_tick_without_t"]["distance_m"] == 0.0
+    assert golden["a_short_state"]["distance_m"] == 0.0
     assert set(golden["a_single_tick"]) == {
         "distance_m",
         "max_speed_kmh",

@@ -16,10 +16,10 @@ next one, and one retried took a second stem, so a position alone is not
 enough.
 
 The path guard every directory the viewer builds from a request goes
-through (``contained``, ``session_dir``, ``job_dir``), ``CaseFiles`` and the
-stems of a directory live in ``ui.case_paths``, which the library check
-compiles, and are re-exported here; what reads the JSON documents a batch
-leaves (of any type) stays here.
+through (``contained``, ``session_dir``, ``job_dir``), ``CaseFiles``, the
+stems of a directory and a batch's stamp (``batch_stamp``) live in
+``ui.case_paths``, which the library check compiles, and are re-exported here;
+what reads the JSON documents a batch leaves (of any type) stays here.
 
 Free of heavy imports: the viewer reads these on every page.
 """
@@ -30,9 +30,12 @@ import json
 from pathlib import Path
 from typing import Any
 
-# The path guard and the case stems, compiled by the library check; every
+from ..slurm.manifest import recorded_verdict
+
+# The path guard, the case stems and a batch's stamp, compiled by the library check; every
 # name stays importable from here.
 from .case_paths import _COMPONENT as _COMPONENT
+from .case_paths import _COVERAGE as _COVERAGE
 from .case_paths import _mtime as _mtime
 from .case_paths import _only_case as _only_case
 from .case_paths import _RESULT as _RESULT
@@ -41,7 +44,10 @@ from .case_paths import _TRAJECTORY as _TRAJECTORY
 from .case_paths import SESSION_TYPES as SESSION_TYPES
 from .case_paths import CaseFiles as CaseFiles
 from .case_paths import _safe as _safe
+from .case_paths import _stat as _stat
 from .case_paths import _stems_in as _stems_in
+from .case_paths import _summary_is_current as _summary_is_current
+from .case_paths import batch_stamp as batch_stamp
 from .case_paths import contained as contained
 from .case_paths import job_dir as job_dir
 from .case_paths import session_dir as session_dir
@@ -101,7 +107,9 @@ def match_batch_stems(
     Each entry takes the first unused stem, in :func:`stem_order`, whose
     ``_result.json`` is the entry's result and whose coverage case is among
     the entry's overrides; ``None`` when none is (an errored case, which wrote
-    no result).
+    no result), and for a pending one (a case the batch has not run, #1831),
+    which takes no stem: one its run is still writing belongs to no entry
+    yet.
     """
     stems = _stems_in(directory)
     results = {stem: _read_json(directory / f"{stem}{_RESULT}") for stem in stems}
@@ -110,12 +118,16 @@ def match_batch_stems(
     out: list[str | None] = []
     for entry in entries:
         chosen: str | None = None
-        if isinstance(entry, dict) and not entry.get("error"):
+        if (
+            isinstance(entry, dict)
+            and not entry.get("error")
+            and not entry.get("pending")
+        ):
             for stem in stems:
                 if stem in used or not _same_result(entry, results.get(stem)):
                     continue
                 if stem not in coverages:
-                    coverages[stem] = _read_json(directory / f"{stem}_coverage.json")
+                    coverages[stem] = _read_json(directory / f"{stem}{_COVERAGE}")
                 if _same_case(entry, coverages[stem]):
                     chosen = stem
                     break
@@ -142,7 +154,9 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
     """The entries a SLURM batch's summary will have, from its manifest and
     the outcomes its tasks recorded (``slurm/results/<case>.json``), while it
     has no ``batch_results.json`` yet. A case without an outcome yet has
-    ``passed`` ``None`` and ``pending`` true."""
+    ``passed`` ``None`` and ``pending`` true; one whose outcome holds no
+    verdict, or a result that cannot be reported (``recorded_verdict``,
+    #1718, #1726), did not pass: ``error`` true, as ``collect`` reports it."""
     manifest = _read_json(directory / "slurm" / "manifest.json")
     if not isinstance(manifest, dict) or not isinstance(manifest.get("cases"), list):
         return None
@@ -159,6 +173,15 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
             entry.update(record["result"])
             if record.get("errored"):
                 entry["error"] = True
+            if recorded_verdict(record) is None:
+                path = directory / "slurm" / "results" / f"{int(case['index'])}.json"
+                entry.update(
+                    passed=False,
+                    error=True,
+                    elapsed_seconds=None,
+                    message=f"No verdict: {path} holds no result that can be "
+                    "reported",
+                )
         else:
             entry.update(
                 passed=None,
@@ -168,59 +191,6 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
             )
         entries.append(entry)
     return entries
-
-
-def _stat(path: Path) -> tuple[int, int]:
-    """*path*'s modification time (ns) and size, ``(0, -1)`` when missing."""
-    try:
-        info = path.stat()
-    except OSError:
-        return (0, -1)
-    return (info.st_mtime_ns, info.st_size)
-
-
-def batch_stamp(directory: Path) -> tuple[tuple[int, int], ...]:
-    """What a batch's entries and case files are read from, cheaply: the
-    modification time and size of its ``batch_results.json``, of a SLURM
-    batch's manifest and ``collected.json``, and of the directories its
-    submissions and case outcomes are written to, and of *directory* itself.
-
-    A few ``stat`` calls, whatever the size of the batch: the launcher writes
-    every record by renaming a new file over it (``slurm.manifest.write_json``)
-    and a task removes a case's old outcome before it runs it again, so a
-    record added, replaced or removed changes its directory's time.  The
-    viewer's caches of a batch (:func:`batch_case_files`, and the session and
-    case pages' in ``ui.scanner``) are kept while this stays the same.
-    """
-    slurm = directory / "slurm"
-    return (
-        _stat(directory / "batch_results.json"),
-        _stat(slurm / "manifest.json"),
-        _stat(slurm / "collected.json"),
-        _stat(slurm / "submissions"),
-        _stat(slurm / "results"),
-        _stat(directory),
-    )
-
-
-def _summary_is_current(directory: Path) -> bool:
-    """Whether a batch's ``batch_results.json`` is its latest summary: not
-    older than a SLURM batch's last submission or case outcome.
-
-    A resubmission (``scenario-slurm resubmit``, the viewer's "Resubmit")
-    leaves the summary of the earlier collect in place until its own collect
-    rewrites it; until then the summary is stale, and the cases are read from
-    what the tasks record (``slurm/results``).  A local batch has no
-    ``slurm/``, so its summary is always current.
-    """
-    slurm = directory / "slurm"
-    summary = _stat(directory / "batch_results.json")[0]
-    collected = _stat(slurm / "collected.json")
-    if collected[1] >= 0:
-        # A collect writes the summary, then collected.json.
-        summary = min(summary, collected[0])
-    latest = max(_stat(slurm / "submissions")[0], _stat(slurm / "results")[0])
-    return latest <= summary
 
 
 def batch_entries(directory: Path) -> tuple[list[dict[str, Any]], bool] | None:

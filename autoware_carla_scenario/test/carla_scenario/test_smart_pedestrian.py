@@ -9,7 +9,10 @@ from __future__ import annotations
 
 import json
 import math
+import random
+import sys
 from concurrent import futures
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator
@@ -42,10 +45,12 @@ from autoware_carla_scenario.pedestrian.motion_client import (
     to_contract,
 )
 from autoware_carla_scenario.pedestrian.poser import WalkerPoser
+from autoware_carla_scenario.authoring import registry
 from autoware_carla_scenario.pedestrian.skeleton import directions_from_joints
 from autoware_carla_scenario.prepare import Resources
 from autoware_carla_scenario.prepare import pool as pool_module
 from autoware_carla_scenario.prepare.pool import BackendPool
+from autoware_carla_scenario.seed import DEFAULT_SEED, set_run_seed
 
 from .test_play_motion import _bones
 
@@ -226,9 +231,21 @@ class _Scene:
             self.elapsed += DT
 
 
-@pytest.fixture
-def generator() -> Iterator[_Generator]:
-    servicer = _Generator()
+class _SeededGenerator(_Generator):
+    """Walks straight on, turned by an angle drawn from the session's seed:
+    a generator whose motion follows its seed, as a real one's does."""
+
+    def OpenSession(self, request: Any, context: Any) -> Any:
+        session = pb.OpenSessionRequest()
+        session.CopyFrom(request)
+        session.heading += random.Random(request.seed).uniform(-0.5, 0.5)
+        self.sessions[request.session_id] = session
+        return pb.OpenSessionResponse()
+
+
+@contextmanager
+def _serving(servicer: _Generator) -> Iterator[_Generator]:
+    """*servicer* as the run's ``ardy`` backend, for as long as the block runs."""
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
     pb_grpc.add_PedestrianMotionServicer_to_server(servicer, server)
     port = server.add_insecure_port("127.0.0.1:0")
@@ -236,9 +253,17 @@ def generator() -> Iterator[_Generator]:
     pool = BackendPool(check_resources=False)
     pool._running["ardy"] = _Backend(f"127.0.0.1:{port}")  # type: ignore[assignment]
     pool_module._ACTIVE = pool
-    yield servicer
-    pool_module._ACTIVE = None
-    server.stop(None)
+    try:
+        yield servicer
+    finally:
+        pool_module._ACTIVE = None
+        server.stop(None)
+
+
+@pytest.fixture
+def generator() -> Iterator[_Generator]:
+    with _serving(_Generator()) as servicer:
+        yield servicer
 
 
 @pytest.fixture
@@ -471,6 +496,21 @@ class TestSmartPedestrianControllerAction:
             client.negotiate()
         client.close()
 
+    @pytest.mark.parametrize("fps", [0.0, -30.0, math.nan, math.inf])
+    def test_a_generator_without_a_finite_positive_rate_is_refused(
+        self,
+        generator: _Generator,
+        monkeypatch: pytest.MonkeyPatch,
+        fps: float,
+    ) -> None:
+        # #1473: every frame number is a time times the rate.
+        monkeypatch.setattr(sys.modules[__name__], "FPS", fps)
+        backend = pool_module._ACTIVE.backend("ardy")  # type: ignore[union-attr]
+        client = PedestrianMotionClient(backend.address())  # type: ignore[union-attr]
+        with pytest.raises(RuntimeError, match="frame rate"):
+            client.negotiate()
+        client.close()
+
     @pytest.mark.parametrize(
         "kwargs, match",
         [
@@ -484,6 +524,17 @@ class TestSmartPedestrianControllerAction:
     ) -> None:
         with pytest.raises(ValueError, match=match):
             SmartPedestrianControllerAction("walker1", **kwargs)
+
+    @pytest.mark.parametrize("value", [2.5, math.nan, math.inf, True, -1, "2"])
+    def test_a_seed_must_be_a_whole_number_not_negative(self, value: Any) -> None:
+        # #1495: int() read 2.5 as 2 and True as 1, and a negative seed passed.
+        with pytest.raises(ValueError, match="seed"):
+            SmartPedestrianControllerAction("walker1", seed=value)
+
+    def test_a_whole_float_seed_is_read_as_an_int(self) -> None:
+        two: Any = 2.0
+        action = SmartPedestrianControllerAction("walker1", seed=two)
+        assert action._seed == 2 and type(action._seed) is int  # noqa: SLF001
 
     @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
     @pytest.mark.parametrize("name", ["speed_ms", "duration_s", "prompt time_s"])
@@ -510,6 +561,48 @@ class TestSmartPedestrianControllerAction:
         with pytest.raises(ValueError, match="time_s must be finite"):
             SmartPedestrianControllerAction("walker1", keyframes=str(bad))
 
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    @pytest.mark.parametrize("axis", ["x", "y"])
+    def test_a_non_finite_waypoint_is_refused(self, axis: str, value: float) -> None:
+        # #1473: it failed int() only when the action started, after the
+        # generator was up and the walker taken over.
+        point = {"x": 1.0, "y": 2.0, axis: value}
+        with pytest.raises(ValueError, match="waypoint 1 must be finite"):
+            SmartPedestrianControllerAction(
+                "walker1",
+                waypoints=[WalkWaypoint(0.0, 0.0), WalkWaypoint(**point)],
+            )
+
+    @pytest.mark.parametrize("value", ["NaN", "Infinity", "-Infinity"])
+    @pytest.mark.parametrize(
+        "field, entry",
+        [
+            ("joint pelvis", '"joints": {"pelvis": [0, %s, 1]}'),
+            ("x", '"x": %s, "y": 0, "joints": {"pelvis": [0, 0, 1]}'),
+            ("y", '"x": 0, "y": %s, "joints": {"pelvis": [0, 0, 1]}'),
+            ("yaw_deg", '"yaw_deg": %s, "joints": {"pelvis": [0, 0, 1]}'),
+        ],
+    )
+    def test_a_non_finite_keyframe_value_is_refused(
+        self, tmp_path: Path, field: str, entry: str, value: str
+    ) -> None:
+        # #1473: json.loads reads NaN and Infinity; only time_s was checked.
+        bad = tmp_path / "bad.json"
+        bad.write_text('{"keyframes": [{"time_s": 1.0, %s}]}' % (entry % value))
+        with pytest.raises(
+            ValueError, match=f"not a keyframes file \\({field} must be finite"
+        ):
+            SmartPedestrianControllerAction("walker1", keyframes=str(bad))
+
+    def test_a_finite_keyframes_file_loads(self, tmp_path: Path) -> None:
+        good = tmp_path / "good.json"
+        good.write_text(
+            '{"keyframes": [{"time_s": 1.0, "x": 1, "y": -2.5, "yaw_deg": 90,'
+            ' "joints": {"pelvis": [0, 0, 1]}}]}'
+        )
+        action = SmartPedestrianControllerAction("walker1", keyframes=str(good))
+        assert action.label == "smart_pedestrian"
+
     def test_a_malformed_keyframes_file_is_refused(self, tmp_path: Path) -> None:
         bad = tmp_path / "bad.json"
         bad.write_text('{"keyframes": [{"joints": {}}]}')
@@ -522,3 +615,78 @@ class TestSmartPedestrianControllerAction:
             SmartPedestrianControllerAction(
                 "walker1", keyframes=str(tmp_path / "x.json")
             )
+
+
+@pytest.fixture
+def _restore_run_seed() -> Iterator[None]:
+    previous = set_run_seed(DEFAULT_SEED)
+    yield
+    set_run_seed(previous)
+
+
+def _walk(**kwargs: Any) -> tuple[int, tuple[float, float]]:
+    """The seed a fresh walker's session opened with, and where its generated
+    motion took it in one second."""
+    built = _Scene()
+    action = SmartPedestrianControllerAction("walker1", "walks", **kwargs)
+    register_entity("walker1", built.entity)
+    try:
+        with _serving(_SeededGenerator()) as servicer:
+            built.run(action, 1.0)
+            (session,) = servicer.sessions.values()
+    finally:
+        # As a run's end does: gives back the walker for the next walk.
+        action.close()
+        unregister_entity("walker1")
+    where = built.walker.transform.location
+    return session.seed, (where.x, where.y)
+
+
+@pytest.mark.usefixtures("_restore_run_seed")
+class TestTheRunSeed:
+    """#1835: the generator's seed follows the run's unless it is given one."""
+
+    def test_without_a_seed_the_action_takes_the_runs(self) -> None:
+        set_run_seed(42)
+        assert SmartPedestrianControllerAction("walker1")._seed == 42  # noqa: SLF001
+        set_run_seed(43)
+        assert SmartPedestrianControllerAction("walker1")._seed == 43  # noqa: SLF001
+
+    def test_an_explicit_seed_is_kept(self) -> None:
+        set_run_seed(42)
+        action = SmartPedestrianControllerAction("walker1", seed=7)
+        assert action._seed == 7  # noqa: SLF001
+
+    def test_the_authoring_default_follows_the_run(self) -> None:
+        (spec,) = [
+            s for s in registry.action_specs() if s.type_id == "smart_pedestrian"
+        ]
+        (field,) = [f for f in spec.fields if f.name == "seed"]
+        assert field.default is None
+        assert not field.required
+
+    def test_the_runs_seed_reaches_the_generator(self) -> None:
+        set_run_seed(42)
+        seed, _ = _walk()
+        assert seed == 42
+
+    def test_different_run_seeds_give_different_motion(self) -> None:
+        set_run_seed(1)
+        first = _walk()
+        set_run_seed(2)
+        second = _walk()
+        assert first[0] != second[0]
+        assert first[1] != pytest.approx(second[1], abs=1e-3)
+
+    def test_the_same_run_seed_gives_the_same_motion(self) -> None:
+        set_run_seed(5)
+        first = _walk()
+        second = _walk()
+        assert first == second
+
+    def test_an_explicit_seed_does_not_follow_the_run(self) -> None:
+        set_run_seed(1)
+        first = _walk(seed=9)
+        set_run_seed(2)
+        second = _walk(seed=9)
+        assert first == second

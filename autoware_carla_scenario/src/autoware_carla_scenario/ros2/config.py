@@ -12,7 +12,8 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, List, Mapping, Optional, Tuple
 
-from ..constants import US_PER_S
+from ..constants import MAX_ROS_DOMAIN_ID, US_PER_S
+from ..seed import check_whole_number
 from ..sensor.carla_camera import CarlaCameraSensorConfig
 
 __all__ = [
@@ -43,6 +44,24 @@ COMMAND_KINDS: Tuple[str, ...] = ("trajectory", "steer_accel", "control")
 ON_STALE_ACTIONS: Tuple[str, ...] = ("hold", "brake")
 
 
+# A mapping (a Hydra node) is not coerced: a field annotated float may hold a
+# quoted "0.3" or a bool, which math.isfinite() would refuse with a TypeError
+# naming no key, or take as 1.0 and 0.0.
+
+
+def _check_number(owner: str, key: str, value: float) -> None:
+    """Refuse *value* unless it is an int or a float, not a bool."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{owner}: {key} must be a number, got {value!r}")
+
+
+def _whole_number(owner: str, key: str, value: int) -> int:
+    """*value* as an int, refused unless a whole number: ``7`` or ``7.0``, not
+    ``7.5``, a bool or a string
+    (:func:`~autoware_carla_scenario.seed.check_whole_number`)."""
+    return check_whole_number(f"{owner}: {key}", value)
+
+
 @dataclass(frozen=True)
 class CommandSourceConfig:
     """One ROS 2 publisher the ego takes commands from.
@@ -56,17 +75,25 @@ class CommandSourceConfig:
         topic: The command topic, for ``trajectory`` and ``control``.
         steering_topic: The steering topic, for ``steer_accel``.
         acceleration_topic: The acceleration topic, for ``steer_accel``.
-        priority: Higher wins among the fresh sources.
+        priority: Higher wins among the fresh sources.  A whole number
+            (``10``, or ``10.0`` kept as ``10``; not a bool, ``10.5`` or a
+            string).
         stale_s: Simulated seconds after its last command that a source stops
             counting as fresh.
         steering_sign: Multiplies a ``steer_accel`` steering angle before it
             reaches CARLA, whose Ackermann steer is positive to the right.
-            VisionPilot already steers positive to the right, so ``1.0``.
+            VisionPilot already steers positive to the right, so ``1.0``.  Not
+            zero, which would pin the steering straight; a negative value
+            flips the sign.
         speed_horizon_s: A ``steer_accel`` acceleration becomes the Ackermann
             target speed ``speed + acceleration * speed_horizon_s``, as
-            VisionPilot's ``carla_control_publisher`` builds it.
+            VisionPilot's ``carla_control_publisher`` builds it.  Positive: zero
+            would pin the target to the current speed, and a negative horizon
+            would turn a request to accelerate into braking.
         jerk_mps3: The Ackermann jerk limit, for ``steer_accel`` and for a
-            ``control`` command that leaves its jerk undefined.
+            ``control`` command that leaves its jerk undefined.  Not negative;
+            ``0`` is allowed, the jerk ``carla.VehicleAckermannControl`` takes
+            by default.
         pair_window_s: For ``steer_accel``, how far apart (in the publisher's
             clock, by the samples' DDS source timestamps) the steering and the
             acceleration of one cycle may be written.  A half with no partner
@@ -104,6 +131,19 @@ class CommandSourceConfig:
                 )
         elif not self.topic:
             raise ValueError(f"command source {self.name!r}: {self.kind} needs a topic")
+        owner = f"command source {self.name!r}"
+        # The arbiter compares priorities: a quoted "10" would only fail there,
+        # on the first tick two sources are fresh, and a NaN would never win.
+        object.__setattr__(
+            self, "priority", _whole_number(owner, "priority", self.priority)
+        )
+        for key, value in (
+            ("stale_s", self.stale_s),
+            ("steering_sign", self.steering_sign),
+            ("speed_horizon_s", self.speed_horizon_s),
+            ("jerk_mps3", self.jerk_mps3),
+        ):
+            _check_number(owner, key, value)
         # A NaN fails every comparison: a NaN stale_s would pass a `<= 0`
         # check and then never count a command fresh, and a NaN gain makes
         # every command non-finite, so the ego brakes for the whole run.
@@ -113,6 +153,8 @@ class CommandSourceConfig:
                 f"finite, got {self.stale_s}"
             )
         window = self.pair_window_s
+        if window is not None:
+            _check_number(owner, "pair_window_s", window)
         if window is not None and (not math.isfinite(window) or window < 0.0):
             raise ValueError(
                 f"command source {self.name!r}: pair_window_s must be finite and "
@@ -127,6 +169,22 @@ class CommandSourceConfig:
                 raise ValueError(
                     f"command source {self.name!r}: {key} must be finite, got {value}"
                 )
+        # Each is finite here, so a comparison means what it says.
+        if self.steering_sign == 0.0:
+            raise ValueError(
+                f"command source {self.name!r}: steering_sign must not be zero, "
+                f"got {self.steering_sign}"
+            )
+        if self.speed_horizon_s <= 0.0:
+            raise ValueError(
+                f"command source {self.name!r}: speed_horizon_s must be positive, "
+                f"got {self.speed_horizon_s}"
+            )
+        if self.jerk_mps3 < 0.0:
+            raise ValueError(
+                f"command source {self.name!r}: jerk_mps3 must not be negative, "
+                f"got {self.jerk_mps3}"
+            )
 
     @property
     def topics(self) -> Tuple[str, ...]:
@@ -171,6 +229,13 @@ class Ros2CameraConfig:
         frame_id: ``header.frame_id`` of the published images; the
             :attr:`logical_id` when empty.
         logical_id: The camera's name in logs.
+
+    Raises:
+        ValueError: If the topic is empty, the image size is not a positive
+            whole number (``960``, or ``960.0`` kept as the int ``960``; not
+            ``960.5``, a bool or a string), the fps is not positive and
+            finite, the ``fov`` is outside (0, 180) degrees, or the mount is
+            not finite.
     """
 
     topic: str = ""
@@ -190,10 +255,18 @@ class Ros2CameraConfig:
     def __post_init__(self) -> None:
         if not self.topic:
             raise ValueError(f"camera {self.logical_id!r} needs a topic")
-        if self.image_width <= 0 or self.image_height <= 0 or self.fps <= 0.0:
-            raise ValueError(
-                f"camera {self.logical_id!r}: image size and fps must be positive"
-            )
+        owner = f"camera {self.logical_id!r}"
+        # A whole number, as a driver camera's (DriverCameraConfig), kept as
+        # an int: CARLA is handed str(image_width), so "960", never "960.0";
+        # 960.5, a bool and a string are refused (#1472).
+        object.__setattr__(
+            self, "image_width", _whole_number(owner, "image_width", self.image_width)
+        )
+        object.__setattr__(
+            self,
+            "image_height",
+            _whole_number(owner, "image_height", self.image_height),
+        )
         for key, value in (
             ("fov", self.fov),
             ("fps", self.fps),
@@ -204,10 +277,26 @@ class Ros2CameraConfig:
             ("pitch", self.pitch),
             ("yaw", self.yaw),
         ):
+            _check_number(owner, key, value)
             if not math.isfinite(value):
                 raise ValueError(
                     f"camera {self.logical_id!r}: {key} must be finite, got {value}"
                 )
+        # As a driver camera's (DriverCameraConfig): a bad size or fov would
+        # only fail as the camera attaches, after the ego has spawned (#1399).
+        if self.image_width <= 0 or self.image_height <= 0 or self.fps <= 0.0:
+            raise ValueError(
+                f"camera {self.logical_id!r}: image size and fps must be positive "
+                f"and finite, got {self.image_width}x{self.image_height} "
+                f"at {self.fps} fps"
+            )
+        # CARLA renders a pinhole of the horizontal fov, which only spans
+        # (0, 180) degrees.
+        if not 0.0 < self.fov < 180.0:
+            raise ValueError(
+                f"camera {self.logical_id!r}: fov must be in (0, 180) degrees, "
+                f"got {self.fov}"
+            )
 
     @property
     def header_frame_id(self) -> str:
@@ -272,7 +361,10 @@ class Ros2EgoConfig:
     the origin on the rear axle, Autoware's ``base_link``.
 
     Attributes:
-        domain_id: The DDS domain (``ROS_DOMAIN_ID``).
+        domain_id: The DDS domain (``ROS_DOMAIN_ID``): a whole number (``7``,
+            or ``7.0`` kept as ``7``; not a bool or a string) from 0 to
+            :data:`~autoware_carla_scenario.constants.MAX_ROS_DOMAIN_ID`
+            (232), the domains ROS 2 can use.
         frame_id: ``header.frame_id`` of the published odometry.
         child_frame_id: Its ``child_frame_id``.
         kinematic_state_topic: ``nav_msgs/msg/Odometry`` of the ego.
@@ -312,6 +404,20 @@ class Ros2EgoConfig:
     cameras: Tuple[Ros2CameraConfig, ...] = field(default_factory=_no_cameras)
 
     def __post_init__(self) -> None:
+        # Checked here: the domain is first used as the entity joins it, once
+        # the scenario has started and the ego has spawned, where 233 fails
+        # with an opaque DDSException and "7" with a ctypes TypeError.
+        # Kept as an int, as the DDS bindings take it.
+        try:
+            domain_id = check_whole_number("domain_id", self.domain_id)
+        except ValueError:
+            domain_id = -1
+        if not 0 <= domain_id <= MAX_ROS_DOMAIN_ID:
+            raise ValueError(
+                "domain_id must be a ROS domain id, a whole number from 0 to "
+                f"{MAX_ROS_DOMAIN_ID}, got {self.domain_id!r}"
+            )
+        object.__setattr__(self, "domain_id", domain_id)
         if self.on_stale not in ON_STALE_ACTIONS:
             raise ValueError(
                 f"unknown on_stale {self.on_stale!r}, expected one of "
@@ -320,6 +426,10 @@ class Ros2EgoConfig:
         if not self.sources:
             raise ValueError("the ego needs at least one command source")
         offset = self.rear_axle_offset_m
+        if offset is not None and (
+            isinstance(offset, bool) or not isinstance(offset, (int, float))
+        ):
+            raise ValueError(f"rear_axle_offset_m must be a number, got {offset!r}")
         if offset is not None and not math.isfinite(offset):
             raise ValueError(f"rear_axle_offset_m must be finite, got {offset}")
         names = [source.name for source in self.sources]

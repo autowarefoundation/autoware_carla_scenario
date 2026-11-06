@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -174,6 +175,165 @@ class TestScenarioRegistry:
             unregister_scenario(name)
 
 
+class TestPluginReplacement:
+    """A plugin that takes a registered name is reported (#1802)."""
+
+    @staticmethod
+    def _load(
+        monkeypatch: pytest.MonkeyPatch, register: Any, name: str = "my_pkg"
+    ) -> None:
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        entry_point = MagicMock()
+        entry_point.name = name
+        entry_point.value = f"{name}:register"
+        entry_point.load.return_value = register
+        monkeypatch.setattr(
+            "importlib.metadata.entry_points", lambda *, group: [entry_point]
+        )
+        monkeypatch.setattr(registry, "_plugins_loaded", False)
+        registry.load_scenario_plugins()
+
+    @staticmethod
+    def _keep(monkeypatch: pytest.MonkeyPatch, name: str) -> None:
+        """Restore the registration of *name* once the test is over."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        for table in (registry._SCENARIO_REGISTRY, registry._SCENARIO_CLASSES):
+            if name in table:
+                monkeypatch.setitem(table, name, table[name])
+            else:
+                monkeypatch.delitem(table, name, raising=False)
+
+    def test_a_plugin_replacing_a_built_in_is_warned_about(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        import autoware_carla_scenario.examples.run  # noqa: F401, PLC0415
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        self._keep(monkeypatch, "lane_change")
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                lambda: register_scenario("lane_change", _DummyScenario, _DummyConfig),
+            )
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        message = warnings[0].getMessage()
+        assert "'my_pkg'" in message
+        assert "my_pkg:register" in message
+        assert "'lane_change'" in message
+
+    def test_a_plugin_adding_a_new_name_is_quiet(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        name = "__test_plugin_new_name__"
+        self._keep(monkeypatch, name)
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                lambda: register_scenario(name, _DummyScenario, _DummyConfig),
+            )
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_a_failing_plugin_is_still_checked(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """What a plugin registered before it raised stays registered."""
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        name = "__test_plugin_taken__"
+        self._keep(monkeypatch, name)
+        register_scenario(name, _DummyScenario, _DummyConfig)
+
+        class _OtherScenario(_DummyScenario):
+            pass
+
+        def register() -> None:
+            register_scenario(name, _OtherScenario, _DummyConfig)
+            raise RuntimeError("boom")
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(monkeypatch, register, name="broken_pkg")
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert f"'{name}'" in warnings[0].getMessage()
+        assert "'broken_pkg'" in warnings[0].getMessage()
+
+    def test_registering_the_same_pair_again_is_quiet(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A ``register()`` called explicitly, then by its entry point.
+
+        The tutorial's "No entry point? Register explicitly." tip, with the
+        package installed: the same pair is registered twice, which replaces
+        nothing, although each call makes a new builder.
+        """
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        name = "__test_plugin_same_pair__"
+        self._keep(monkeypatch, name)
+
+        def register() -> None:
+            register_scenario(name, _DummyScenario, _DummyConfig)
+
+        register()
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(monkeypatch, register)
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_a_distribution_seen_twice_is_quiet(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An editable install and a wheel of the same package on the path."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        name = "__test_plugin_twice__"
+        self._keep(monkeypatch, name)
+
+        def register() -> None:
+            register_scenario(name, _DummyScenario, _DummyConfig)
+
+        entry_points = []
+        for _ in range(2):
+            entry_point = MagicMock()
+            entry_point.name = "my_pkg"
+            entry_point.value = "my_pkg:register"
+            entry_point.load.return_value = register
+            entry_points.append(entry_point)
+        monkeypatch.setattr(
+            "importlib.metadata.entry_points", lambda *, group: entry_points
+        )
+        monkeypatch.setattr(registry, "_plugins_loaded", False)
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            registry.load_scenario_plugins()
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_a_different_config_class_is_a_replacement(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        name = "__test_plugin_other_config__"
+        self._keep(monkeypatch, name)
+        register_scenario(name, _DummyScenario, _DummyConfig)
+
+        class _OtherConfig(_DummyConfig):
+            pass
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                lambda: register_scenario(name, _DummyScenario, _OtherConfig),
+            )
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert f"'{name}'" in warnings[0].getMessage()
+
+
 # ---------------------------------------------------------------------------
 # Tests for build_scenario with injectable builder
 # ---------------------------------------------------------------------------
@@ -335,7 +495,8 @@ class TestBuildAutowareLauncher:
                 "bridge_address:={bridge_address}",
             ],
             ros_domain_ids=[3, 4],
-            ignored_key=1,
+            # The command launcher's key: the group holds both types' keys.
+            command=["true"],
         )
         launcher = build_autoware_launcher(cfg)
 
@@ -346,6 +507,84 @@ class TestBuildAutowareLauncher:
         entity = build_ego_entity(cfg)
         assert entity is not None
         assert entity.launcher is launcher  # type: ignore[attr-defined]
+
+    @pytest.mark.parametrize(
+        ("value", "rosdep"),
+        [
+            ("false", False),
+            (" Off ", False),
+            (0, False),
+            ("0", False),
+            (False, False),
+            ("true", True),
+            ("yes", True),
+            (1, True),
+            (True, True),
+        ],
+    )
+    def test_rosdep_is_read_strictly(
+        self, tmp_path: Path, value: object, rosdep: bool
+    ) -> None:
+        """#1761: the launcher reads it by truthiness, so "false" ran rosdep."""
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launcher = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace=str(tmp_path),
+                launch=["autoware_launch", "x.launch.xml"],
+                rosdep=value,
+            )
+        )
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.rosdep is rosdep
+
+    def test_rosdep_defaults_to_on(self, tmp_path: Path) -> None:
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launcher = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace=str(tmp_path),
+                launch=["autoware_launch", "x.launch.xml"],
+            )
+        )
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.rosdep is True
+
+    @pytest.mark.parametrize("value", ["ture", "", 2, 0.0, None, [True]])
+    def test_a_rosdep_that_is_no_switch_is_refused(
+        self, tmp_path: Path, value: object
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._cfg(
+            type="docker",
+            workspace=str(tmp_path),
+            launch=["autoware_launch", "x.launch.xml"],
+            rosdep=value,
+        )
+        match = r"^autoware\.launcher\.rosdep must be true or false"
+        with pytest.raises(ValueError, match=match):
+            run.build_autoware_launcher(cfg)
+        # Before anything starts, as the launcher's other settings are.
+        with pytest.raises(ValueError, match=match):
+            run._check_batch_queue_settings(cfg)
+
+    @pytest.mark.parametrize("value", ["false", 0, None])
+    def test_the_config_refuses_a_rosdep_that_is_no_bool(
+        self, tmp_path: Path, value: object
+    ) -> None:
+        from autoware_carla_scenario.autoware_stack import DockerAutowareConfig
+
+        with pytest.raises(ValueError, match=r"^rosdep must be true or false"):
+            DockerAutowareConfig(
+                workspace=tmp_path,
+                launch=("autoware_launch", "x.launch.xml"),
+                rosdep=value,  # type: ignore[arg-type]
+            )
 
     def test_command(self) -> None:
         from autoware_carla_scenario.autoware_stack import CommandAutowareLauncher
@@ -363,6 +602,289 @@ class TestBuildAutowareLauncher:
 
         with pytest.raises(ValueError, match="Unknown autoware.launcher.type"):
             build_autoware_launcher(self._cfg(type="kubernetes"))
+
+    @pytest.mark.parametrize("kind", ["none", "docker", "command"])
+    @pytest.mark.parametrize("typo", ["stop_timout_s", "workspce"])
+    def test_an_unknown_key_is_refused(self, kind: str, typo: str) -> None:
+        """#1413: a key neither launcher reads is a typo, not a default."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+        )
+        cfg.autoware.launcher[typo] = 60
+        with pytest.raises(
+            ValueError,
+            match=rf"^Unknown autoware\.launcher key\(s\): "
+            rf"\['autoware\.launcher\.{typo}'\]\. Known keys: .*'stop_timeout_s'",
+        ):
+            build_autoware_launcher(cfg)
+
+    def test_the_shipped_launcher_keys_are_accepted(self) -> None:
+        """The shipped config holds the keys of both types; each type takes it."""
+        from hydra import compose, initialize_config_dir
+
+        from autoware_carla_scenario.autoware_stack import (
+            CommandAutowareLauncher,
+            DockerAutowareLauncher,
+        )
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        conf = (
+            Path(__file__).resolve().parents[2]
+            / "src"
+            / "autoware_carla_scenario"
+            / "examples"
+            / "conf"
+        )
+        common = [
+            "ego.entity=autoware",
+            "autoware.launcher.launch=[autoware_launch,x.launch.xml]",
+            "autoware.launcher.command=[ros2,launch]",
+            "autoware.launcher.stop_timeout_s=7",
+            "+autoware.launcher.docker=podman",
+            "+autoware.launcher.container_prefix=acs-test",
+        ]
+        with initialize_config_dir(config_dir=str(conf), version_base=None):
+            docker = compose(
+                config_name="config",
+                overrides=[*common, "autoware.launcher.type=docker"],
+            )
+            command = compose(
+                config_name="config",
+                overrides=[*common, "autoware.launcher.type=command"],
+            )
+            none = compose(config_name="config", overrides=common)
+
+        docker_launcher = build_autoware_launcher(docker)
+        assert isinstance(docker_launcher, DockerAutowareLauncher)
+        assert docker_launcher.config.stop_timeout_s == 7.0
+        assert docker_launcher.config.docker == "podman"
+        assert docker_launcher.config.container_prefix == "acs-test"
+        command_launcher = build_autoware_launcher(command)
+        assert isinstance(command_launcher, CommandAutowareLauncher)
+        assert tuple(command_launcher.argv) == ("ros2", "launch")
+        assert build_autoware_launcher(none) is None
+
+    @pytest.mark.parametrize("kind", ["docker", "command"])
+    @pytest.mark.parametrize(
+        "value",
+        [
+            *(float("nan"), float("inf"), -5, 0, "abc", None, True),
+            pytest.param(10**400, id="huge"),  # too big for a float (#1652)
+        ],
+    )
+    def test_a_stop_timeout_that_is_not_positive_and_finite_is_refused(
+        self, kind: str, value: object
+    ) -> None:
+        """#1450: a NaN never escalates a stack that ignores SIGINT, a negative
+        one skips its grace, and a string used to fail only at stop time."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+            stop_timeout_s=value,
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"^autoware\.launcher\.stop_timeout_s must be a finite number > 0",
+        ):
+            build_autoware_launcher(cfg)
+
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            # The range is DockerAutowareConfig's, prefixed with the group.
+            ([-3, 999], r"must be ROS domain ids, whole numbers from 0 to 232, got -3"),
+            ([3, 233], r"must be ROS domain ids, whole numbers from 0 to 232, got 233"),
+            # The types are build_autoware_launcher's: no raw TypeError.
+            (7, r"must be a list of ROS domain ids"),
+            ("7", r"must be a list of ROS domain ids"),
+            ([3, True], r"must be a list of ROS domain ids"),
+            ([3, 4.5], r"must be a list of ROS domain ids"),
+            ([3, "4"], r"must be a list of ROS domain ids"),
+        ],
+    )
+    def test_a_ros_domain_id_that_is_not_one_is_refused(
+        self, value: object, message: str
+    ) -> None:
+        """#1450: refused up front, not by the stack's DDS in the container."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type="docker",
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            ros_domain_ids=value,
+        )
+        with pytest.raises(
+            ValueError, match=rf"^autoware\.launcher\.ros_domain_ids {message}"
+        ):
+            build_autoware_launcher(cfg)
+
+    def test_the_ros_domain_id_range_and_null_are_taken(self) -> None:
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launch = ["autoware_launch", "x.launch.xml"]
+        launcher = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace="/nowhere",
+                launch=launch,
+                ros_domain_ids=[0, 232],
+                stop_timeout_s=1,
+            )
+        )
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.ros_domain_ids == (0, 232)
+        assert launcher.config.stop_timeout_s == 1.0
+        launcher = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace="/nowhere",
+                launch=launch,
+                ros_domain_ids=None,
+            )
+        )
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.ros_domain_ids == ()
+
+    @pytest.mark.parametrize(
+        ("kind", "name"),
+        [
+            ("docker", "launch"),
+            ("docker", "colcon_args"),
+            ("docker", "docker_args"),
+            ("command", "command"),
+        ],
+    )
+    @pytest.mark.parametrize("value", ["--shm-size=8g", "ros2 launch x y", 7, {}])
+    def test_an_argument_list_that_is_not_a_list_is_refused(
+        self, kind: str, name: str, value: object
+    ) -> None:
+        """#1484: a string used to be split into its characters."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+        )
+        cfg.autoware.launcher[name] = value
+        with pytest.raises(
+            ValueError,
+            match=rf"^autoware\.launcher\.{name} must be a list of arguments, not ",
+        ):
+            build_autoware_launcher(cfg)
+
+    @pytest.mark.parametrize(
+        ("kind", "name"), [("docker", "docker_args"), ("command", "command")]
+    )
+    @pytest.mark.parametrize("item", [["a"], {"a": 1}, None, True])
+    def test_an_argument_that_is_not_a_string_or_number_is_refused(
+        self, kind: str, name: str, item: object
+    ) -> None:
+        """#1484: its str() (``"['a']"``, ``"None"``) is not the argument meant."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+        )
+        cfg.autoware.launcher[name] = ["ok", item]
+        with pytest.raises(
+            ValueError,
+            match=rf"^autoware\.launcher\.{name}\[1\] must be a string or a number",
+        ):
+            build_autoware_launcher(cfg)
+
+    def test_argument_lists_are_made_strings(self) -> None:
+        from autoware_carla_scenario.autoware_stack import (
+            CommandAutowareLauncher,
+            DockerAutowareLauncher,
+        )
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        docker = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace="/nowhere",
+                launch=["autoware_launch", "x.launch.xml", "rate:=10"],
+                colcon_args=None,
+                docker_args=["--shm-size=8g", "--cpus", 4],
+                env={"A": 1, "B": "two words"},
+                mounts={"/data": "/home/aw/data"},
+            )
+        )
+        assert isinstance(docker, DockerAutowareLauncher)
+        assert docker.config.launch == ("autoware_launch", "x.launch.xml", "rate:=10")
+        assert docker.config.colcon_args == ()
+        assert docker.config.docker_args == ("--shm-size=8g", "--cpus", "4")
+        assert docker.config.env == {"A": "1", "B": "two words"}
+        assert docker.config.mounts == {"/data": "/home/aw/data"}
+        command = build_autoware_launcher(
+            self._cfg(type="command", command=["sleep", 5], env=None)
+        )
+        assert isinstance(command, CommandAutowareLauncher)
+        assert tuple(command.argv) == ("sleep", "5")
+        assert command.env == {}
+
+    @pytest.mark.parametrize(
+        ("kind", "name", "value", "message"),
+        [
+            ("docker", "env", "A=1", r"env must be a mapping"),
+            ("command", "env", ["A=1"], r"env must be a mapping"),
+            ("docker", "mounts", "/data:/data", r"mounts must be a mapping"),
+            ("docker", "env", {"A": None}, r"env\.A must be a string or a number"),
+            ("command", "env", {"A": [1]}, r"env\.A must be a string or a number"),
+            (
+                "docker",
+                "bridge_parameters",
+                "x",
+                r"bridge_parameters must be a mapping",
+            ),
+            (
+                "command",
+                "bridge_parameters",
+                [1],
+                r"bridge_parameters must be a mapping",
+            ),
+        ],
+    )
+    def test_a_mapping_setting_that_is_not_one_is_refused(
+        self, kind: str, name: str, value: object, message: str
+    ) -> None:
+        """#1484: refused naming the key, not by an AttributeError at run time."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+        )
+        cfg.autoware.launcher[name] = value
+        with pytest.raises(ValueError, match=rf"^autoware\.launcher\.{message}"):
+            build_autoware_launcher(cfg)
+
+    def test_a_config_refusal_names_the_group(self) -> None:
+        """DockerAutowareConfig's own refusals are prefixed with the group."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        with pytest.raises(
+            ValueError, match=r"^autoware\.launcher\.launch is required"
+        ):
+            build_autoware_launcher(self._cfg(type="docker", workspace="/nowhere"))
 
 
 # ---------------------------------------------------------------------------
@@ -441,6 +963,274 @@ class TestBuildEgoAndSpawn:
         ego, _, _ = build_ego_and_spawn(_ego_and_spawn_cfg(entity="autoware"))
 
         assert ego.goal_pose is None
+
+
+class TestEgoNumbersAreRefusedByTheirKey:
+    """#1660: what ``float()`` or ``int()`` cannot read of the ego's and the
+    entity's numbers is refused with a ``ValueError`` naming the key, not an
+    unkeyed ``ValueError`` (``"abc"``) or ``OverflowError`` (``10**400``)."""
+
+    @staticmethod
+    def _cfg(group: str, key: str, value: object) -> DictConfig:
+        cfg = _ego_and_spawn_cfg(goal_lanelet_id=265)
+        cfg[group][key] = value
+        return cfg
+
+    @pytest.mark.parametrize(
+        ("group", "key"),
+        [
+            ("ego", "initial_speed_kmh"),
+            ("entity", "spawn_retry_t_step"),
+            ("entity", "spawn_retry_z_step"),
+            ("ego", "spawn_s"),
+            ("ego", "spawn_t"),
+            ("ego", "spawn_heading"),
+            ("ego", "goal_s"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            ("abc", "must be a number, got 'abc'"),
+            (10**400, "must be finite, got 1000"),
+            (-(10**5000), "must be finite, got an integer of about -10\\*\\*"),
+        ],
+        ids=["text", "huge", "too-long-for-repr"],
+    )
+    def test_a_number_float_cannot_read(
+        self, group: str, key: str, value: object, message: str
+    ) -> None:
+        from autoware_carla_scenario.examples.run import (
+            build_ego_and_spawn,
+            build_planned_route,
+            build_spawn_pose,
+        )
+
+        cfg = self._cfg(group, key, value)
+        match = rf"^{group}\.{key} {message}"
+        with pytest.raises(ValueError, match=match):
+            build_ego_and_spawn(cfg)
+        if key in ("spawn_s", "spawn_t", "spawn_heading"):
+            with pytest.raises(ValueError, match=match):
+                build_spawn_pose(cfg)
+            with pytest.raises(ValueError, match=match):
+                build_planned_route(cfg)
+
+    @pytest.mark.parametrize("value", ["abc", "1.5", math.inf])
+    def test_a_retry_count_int_cannot_read(self, value: object) -> None:
+        from autoware_carla_scenario.examples.run import build_ego_and_spawn
+
+        cfg = self._cfg("entity", "spawn_retry_max_count", value)
+        with pytest.raises(
+            ValueError, match=r"^entity\.spawn_retry_max_count must be a whole number"
+        ):
+            build_ego_and_spawn(cfg)
+
+    def test_what_float_and_int_read_is_read_as_before(self) -> None:
+        """A numeric string, a bool and an int read as ``float()``/``int()`` do."""
+        from autoware_carla_scenario.examples.run import (
+            build_ego_and_spawn,
+            build_planned_route,
+        )
+
+        cfg = _ego_and_spawn_cfg(
+            goal_lanelet_id=265,
+            initial_speed_kmh="12.5",
+            spawn_s=True,
+            spawn_t="-1",
+            spawn_heading=0,
+            goal_s="3",
+        )
+        cfg.entity.spawn_retry_max_count = "4"
+        cfg.entity.spawn_retry_t_step = 2
+        ego, spawn, _ = build_ego_and_spawn(cfg)
+        assert ego.initial_speed_kmh == 12.5
+        assert ego.spawn_retry_max_count == 4
+        assert ego.spawn_retry_t_step == 2.0
+        assert (spawn.s, spawn.t, spawn.heading) == (1.0, -1.0, 0.0)
+        assert ego.goal_pose is not None and ego.goal_pose.s == 3.0
+        route = build_planned_route(cfg)
+        assert (route.start.s, route.start.t) == (1.0, -1.0)
+
+
+#: The ego's and entity's numbers a run refuses unless finite (#1809): the
+#: speed and the retry steps also below zero, the poses at any finite value.
+_FINITE_EGO_NUMBERS = [
+    ("ego", "initial_speed_kmh", True),
+    ("entity", "spawn_retry_t_step", True),
+    ("entity", "spawn_retry_z_step", True),
+    ("ego", "spawn_s", False),
+    ("ego", "spawn_t", False),
+    ("ego", "spawn_heading", False),
+    ("ego", "goal_s", False),
+]
+
+
+def _shipped(overrides: list[str]) -> DictConfig:
+    from .test_video_removed import _shipped as compose
+
+    return compose(overrides)  # type: ignore[no-any-return]
+
+
+class TestEgoNumbersMustBeFinite:
+    """#1809: a NaN, an infinity or a negative speed or retry step of the
+    ego's and the entity's numbers is refused with a ``ValueError`` naming the
+    key, by the build and by the batch check before anything starts."""
+
+    @staticmethod
+    def _bad_values(non_negative: bool) -> list[float]:
+        values = [math.nan, math.inf, -math.inf]
+        return [*values, -1.0] if non_negative else values
+
+    @pytest.mark.parametrize(("group", "key", "non_negative"), _FINITE_EGO_NUMBERS)
+    def test_the_build_refuses_it(
+        self, group: str, key: str, non_negative: bool
+    ) -> None:
+        from autoware_carla_scenario.examples.run import (
+            build_ego_and_spawn,
+            build_goal_pose,
+            build_planned_route,
+            build_spawn_pose,
+        )
+
+        bound = "finite and at least 0" if non_negative else "finite"
+        for value in self._bad_values(non_negative):
+            cfg = TestEgoNumbersAreRefusedByTheirKey._cfg(group, key, value)
+            match = rf"^{group}\.{key} must be {bound}, got "
+            with pytest.raises(ValueError, match=match):
+                build_ego_and_spawn(cfg)
+            if key in ("spawn_s", "spawn_t", "spawn_heading"):
+                with pytest.raises(ValueError, match=match):
+                    build_spawn_pose(cfg)
+                with pytest.raises(ValueError, match=match):
+                    build_planned_route(cfg)
+            if key == "goal_s":
+                with pytest.raises(ValueError, match=match):
+                    build_goal_pose(cfg)
+
+    @pytest.mark.parametrize(("group", "key", "non_negative"), _FINITE_EGO_NUMBERS)
+    def test_the_batch_check_refuses_it(
+        self, group: str, key: str, non_negative: bool
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        for value in self._bad_values(non_negative):
+            cfg = _shipped([])
+            cfg[group][key] = value
+            with pytest.raises(run.RunConfigError) as raised:
+                run.check_run_config(cfg)
+            message = str(raised.value)
+            assert message.startswith(f"{group}.{key} must be finite"), message
+            assert "\n" not in message
+            with pytest.raises(run.RunConfigError, match=rf"^case-2: {group}\.{key}"):
+                run.check_batch_configs([_shipped([]), cfg], ["case-1", "case-2"])
+
+    def test_a_negative_pose_and_a_zero_speed_or_step_are_accepted(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = TestEgoNumbersAreRefusedByTheirKey._cfg("ego", "spawn_t", -1.5)
+        cfg.ego.spawn_heading = -3.0
+        cfg.ego.initial_speed_kmh = 0
+        cfg.entity.spawn_retry_t_step = 0.0
+        cfg.entity.spawn_retry_z_step = 0.0
+        ego, spawn, _ = run.build_ego_and_spawn(cfg)
+        assert (spawn.t, spawn.heading) == (-1.5, -3.0)
+        assert (ego.initial_speed_kmh, ego.spawn_retry_t_step) == (0.0, 0.0)
+        shipped = _shipped([])
+        shipped.ego.spawn_t = -1.5
+        shipped.ego.initial_speed_kmh = 0
+        run.check_run_config(shipped)
+
+    def test_the_batch_check_refuses_an_npc_vehicle_speed(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = _shipped(["scenario=intersection_passing/straight_3npc"])
+        run.check_run_config(cfg)
+        cfg.scenario.npc_vehicles[1].initial_speed_kmh = math.nan
+        with pytest.raises(
+            run.RunConfigError,
+            match=(
+                r"^scenario\.npc_vehicles\[1\]\.initial_speed_kmh "
+                "must be finite and at least 0"
+            ),
+        ):
+            run.check_run_config(cfg)
+
+
+class TestEntityConfigNumbersMustBeFinite:
+    """#1809: ``NpcVehicleConfig`` and ``VehicleEntityConfig`` (and the ego's
+    and the other vehicles' configs built on it) refuse a NaN, an infinity or
+    a negative speed or retry step, and ``NpcVehicleConfig`` a non-finite
+    ``spawn_s``, naming the field."""
+
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf, -20.0])
+    def test_npc_vehicle_config_refuses_a_speed(self, value: float) -> None:
+        from autoware_carla_scenario import NpcVehicleConfig
+
+        with pytest.raises(
+            ValueError, match=r"^initial_speed_kmh must be finite and at least 0"
+        ):
+            NpcVehicleConfig(spawn_lanelet_id=1, initial_speed_kmh=value)
+
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    def test_npc_vehicle_config_refuses_a_spawn_s(self, value: float) -> None:
+        from autoware_carla_scenario import NpcVehicleConfig
+
+        with pytest.raises(ValueError, match=r"^spawn_s must be finite"):
+            NpcVehicleConfig(spawn_lanelet_id=1, spawn_s=value)
+
+    def test_npc_vehicle_config_accepts_a_still_npc_and_a_negative_s(self) -> None:
+        from autoware_carla_scenario import NpcVehicleConfig
+
+        npc = NpcVehicleConfig(spawn_lanelet_id=1, spawn_s=-2.0, initial_speed_kmh=0)
+        assert (npc.spawn_s, npc.initial_speed_kmh) == (-2.0, 0)
+
+    def test_the_scenario_config_names_the_npc(self) -> None:
+        from autoware_carla_scenario.examples.configs import IntersectionPassingConfig
+
+        with pytest.raises(
+            ValueError,
+            match=r"^scenario\.npc_vehicles\[0\]\.initial_speed_kmh must be",
+        ):
+            IntersectionPassingConfig(
+                npc_vehicles=[{"spawn_lanelet_id": 1, "initial_speed_kmh": -5.0}]  # type: ignore[list-item]
+            )
+
+    @pytest.mark.parametrize(
+        "field", ["initial_speed_kmh", "spawn_retry_t_step", "spawn_retry_z_step"]
+    )
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf, -0.5])
+    def test_vehicle_configs_refuse_it(self, field: str, value: float) -> None:
+        from autoware_carla_scenario import (
+            EmergencyVehicleEntityConfig,
+            MotorcycleEntityConfig,
+            VehicleEntityConfig,
+        )
+
+        spawn = SpawnTransform(carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0)))
+        match = rf"^{field} must be finite and at least 0, got "
+        bad: dict[str, Any] = {field: value}
+        with pytest.raises(ValueError, match=match):
+            VehicleEntityConfig(role_name="npc", spawn_location=spawn, **bad)
+        with pytest.raises(ValueError, match=match):
+            EgoConfig(spawn_location=spawn, **bad)
+        with pytest.raises(ValueError, match=match):
+            MotorcycleEntityConfig(role_name="m", spawn_location=spawn, **bad)
+        with pytest.raises(ValueError, match=match):
+            EmergencyVehicleEntityConfig(role_name="e", spawn_location=spawn, **bad)
+
+    def test_vehicle_configs_accept_zero(self) -> None:
+        from autoware_carla_scenario import VehicleEntityConfig
+
+        spawn = SpawnTransform(carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0)))
+        config = VehicleEntityConfig(
+            role_name="npc",
+            spawn_location=spawn,
+            initial_speed_kmh=0.0,
+            spawn_retry_t_step=0.0,
+            spawn_retry_z_step=0.0,
+        )
+        assert config.initial_speed_kmh == 0.0
 
 
 # ---------------------------------------------------------------------------
@@ -553,6 +1343,7 @@ def test_run_batch_gives_each_scenario_its_own_timeout(
 
 def test_a_batch_lets_go_of_each_scenario_once_it_has_run(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     """A batch keeps each case's result, not the finished scenario: one kept to
     the end keeps everything its run built (entities, conditions, the ego's
@@ -617,7 +1408,7 @@ def test_a_batch_lets_go_of_each_scenario_once_it_has_run(
         ),
     )
     monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
-    monkeypatch.setattr(run, "_make_batch_output_dir", lambda: None)
+    monkeypatch.setattr(run, "_make_batch_output_dir", lambda: tmp_path)
     monkeypatch.setattr(run, "_print_summary", fake_summary)
 
     with pytest.raises(SystemExit):

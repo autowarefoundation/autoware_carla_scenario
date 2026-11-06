@@ -28,7 +28,6 @@ built in a temporary directory and moved into place only once the checks pass.
 from __future__ import annotations
 
 import logging
-import re
 import shutil
 import subprocess
 import sys
@@ -41,12 +40,24 @@ from typing import Any, Optional
 from ..templating import code_environment
 from ..text_escape import toml_string
 from .framework_pin import Pin, PinResolutionError, resolve_framework_pin
-from .hydra_config import dump_scenario_config
+from .hydra_config import (
+    dump_map_group_config,
+    dump_scenario_config,
+    own_map_group,
+    run_map_group,
+)
 from .models import ScenarioDocument
+from .package_names import (  # noqa: F401  (re-exported)
+    _pin_note,
+    _pin_summary,
+    _sanitize_identifier,
+    names_for_id,
+    scenario_id_problem,
+)
 from .persistence import dump_document_yaml, dump_yaml, utc_timestamp
 from .uv_tool import UvUnavailable, run_uv
 from .uv_tool import uv_version as _uv_version
-from .validator import PACKAGE_SUFFIX, scenario_id_problem, validate_document
+from .validator import validate_document
 from .wheelhouse import Wheelhouse, WheelhouseError, build_wheelhouse
 
 logger = logging.getLogger(__name__)
@@ -123,44 +134,19 @@ class ExportResult:
 # ---------------------------------------------------------------------------
 
 
-def _sanitize_identifier(raw: str) -> str:
-    """Return *raw* reduced to a valid lower_snake_case Python identifier."""
-    snake = re.sub(r"[^0-9a-zA-Z]+", "_", raw).strip("_").lower()
-    snake = re.sub(r"__+", "_", snake)
-    if not snake or snake[0].isdigit():
-        snake = f"scenario_{snake}" if snake else "scenario"
-    return snake
-
-
 def package_names(document: ScenarioDocument) -> dict[str, str]:
-    """Return the naming variants a generated package needs.
+    """Return the naming variants a package exported from *document* needs.
 
-    ``scenario_id`` is ``document.id`` unchanged: it is the registered builder
-    name, the conf file name and the conf's ``scenario.name`` alike, and they
-    must agree for ``scenario=<id>`` to select the scenario.  The model already
-    restricts it to ``^[a-z][a-z0-9_]*$``, and it is only ever used as a
-    string, never as a Python identifier, so a keyword such as ``class`` is
-    harmless.  Only the Python package and distribution names are sanitised;
-    the package name always ends in ``_scenario``, so it is never a keyword.
-
-    ``_scenario`` is added even to an id that already ends in it, so ``foo``
-    and ``foo_scenario`` are ``foo_scenario`` and ``foo_scenario_scenario``
-    rather than one package (#1358).  The mapping is one-to-one over the ids
-    :func:`~autoware_carla_scenario.authoring.validator.scenario_id_problem`
-    accepts; it refuses ``foo__bar`` and ``foo_bar_``, which would be named
-    after ``foo_bar``, and ``autoware_carla``, which would be named after the
-    framework.  :func:`export_package` refuses those ids before writing
-    anything, so it never exports one of them.
+    :func:`.package_names.names_for_id` of ``document.id``; raises
+    ``ValueError`` for an id whose package would be the framework's own, or
+    that names a built-in scenario, which
+    :func:`.validator.validate_document` reports as an error first.  The
+    package is always ``<id>_scenario``, even for an id already ending in
+    ``_scenario`` (#1358); :func:`export_package` refuses the ids
+    :func:`.package_names.scenario_id_problem` flags, whose package would be
+    another id's.
     """
-    scenario_id = document.id
-    module_id = _sanitize_identifier(scenario_id)
-    package_name = f"{module_id}{PACKAGE_SUFFIX}"
-    return {
-        "scenario_id": scenario_id,
-        "package_name": package_name,
-        "distribution_name": package_name.replace("_", "-"),
-        "document_path_env": f"{package_name.upper()}_DOCUMENT_PATH",
-    }
+    return names_for_id(document.id)
 
 
 # ---------------------------------------------------------------------------
@@ -223,33 +209,6 @@ def _render_source_entry(pin: Pin) -> str:
     return ", ".join(parts)
 
 
-def _pin_note(pin: Pin) -> str:
-    """Return the comment written above the framework dependency."""
-    if pin.kind == "version":
-        return (
-            "Pinned to an exact release: a scenario package is only "
-            "reproducible if the framework underneath it cannot move."
-        )
-    if pin.kind == "git":
-        return (
-            "Pinned to an exact commit (see [tool.uv.sources]) rather than a "
-            "branch, which would move under the package."
-        )
-    return (
-        "Development export: a local path, which does NOT resolve on another "
-        "machine. Re-export without development mode before sharing."
-    )
-
-
-def _pin_summary(pin: Pin) -> str:
-    """Return a one-line, human-readable description of *pin* for the README."""
-    if pin.kind == "version":
-        return f"version `{pin.version}` (exact)"
-    if pin.kind == "git":
-        return f"commit `{pin.commit}` of `{pin.repository}`"
-    return f"local path `{pin.path}` -- **not portable**"
-
-
 def _write_package_tree(
     root: Path,
     document: ScenarioDocument,
@@ -284,7 +243,8 @@ def _write_package_tree(
             else "not recorded -- uv version could not be determined at export time"
         ),
         "python_version": _python_version(),
-        "map_group": document.map.group,
+        "map_group": run_map_group(document),
+        "own_map_group": own_map_group(document) is not None,
         "generated_at": generated_at,
         "action_count": len(document.actions),
         "pass_count": len(document.assertions.pass_conditions),
@@ -323,6 +283,17 @@ def _write_package_tree(
     hydra_path.parent.mkdir(parents=True, exist_ok=True)
     hydra_path.write_text(dump_scenario_config(document), encoding="utf-8")
 
+    # A map named by source or directory is no built-in group's: the package
+    # carries the group that selects it (hydra_config's module docstring).
+    map_files: dict[str, str] = {}
+    map_config = dump_map_group_config(document)
+    if map_config is not None:
+        map_rel = f"src/{package_name}/conf/map/{run_map_group(document)}.yaml"
+        map_path = root / map_rel
+        map_path.parent.mkdir(parents=True, exist_ok=True)
+        map_path.write_text(map_config, encoding="utf-8")
+        map_files["map_config"] = map_rel
+
     (root / ".gitignore").write_text(
         "# uv.lock is intentionally tracked: it is what makes this package\n"
         "# reproducible. Everything below is build output.\n"
@@ -341,6 +312,7 @@ def _write_package_tree(
         "manifest": "scenario/manifest.yaml",
         "lockfile": "uv.lock",
         "python_version": ".python-version",
+        **map_files,
     }
 
 
@@ -603,7 +575,7 @@ def _build_wheelhouse(
             be installed where it runs is not an export anyone can use, so this
             fails the whole thing rather than coming back half-done.
     """
-    run = f"scenario scenario={names['scenario_id']} map={document.map.group}"
+    run = f"scenario scenario={names['scenario_id']} map={run_map_group(document)}"
     try:
         return build_wheelhouse(
             staging,

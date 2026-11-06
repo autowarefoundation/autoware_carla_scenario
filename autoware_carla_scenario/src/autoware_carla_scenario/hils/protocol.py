@@ -31,25 +31,28 @@ bridge -> runner
 ========================  ===================================================
 
 Only the standard library is needed here, so a run reaches the bridge without
-hilspy installed.  The constants and :func:`encode`, :func:`parse_address` and
-:func:`format_address` live in :mod:`.wire`, which needs no socket (so the
-static check compiles it); they are re-exported here.
+hilspy installed.  The constants and :func:`encode`, :func:`parse_address`,
+:func:`format_address` and :func:`command_value` live in :mod:`.wire`, which
+needs no socket (so the static check compiles it); they are re-exported here.
 """
 
 from __future__ import annotations
 
 import json
-import math
+import selectors
 import socket
-from typing import Any, Dict, List, Optional
+import time
+from typing import Any, Dict, List, NoReturn, Optional
 
 from .wire import (
     COMMAND_FIELDS,
     COMMAND_MODES,
+    COMMAND_VALUE_LIMIT,
     DEFAULT_PORT,
     LINK_DIRECTIONS,
     PROTOCOL_VERSION,
     RUNNER_MESSAGES,
+    command_value,
     encode,
     format_address,
     parse_address,
@@ -58,36 +61,39 @@ from .wire import (
 __all__ = [
     "COMMAND_FIELDS",
     "COMMAND_MODES",
+    "COMMAND_VALUE_LIMIT",
     "DEFAULT_PORT",
     "LINK_DIRECTIONS",
+    "MAX_LINE_BYTES",
     "RUNNER_MESSAGES",
     "PROTOCOL_VERSION",
     "LineReader",
+    "command_value",
     "encode",
     "format_address",
     "parse_address",
 ]
 
-#: The largest magnitude a command field may have: CARLA's controls are 32-bit
-#: floats, which turn a larger (finite) double into an infinity.
-COMMAND_VALUE_LIMIT = 3.4028234663852886e38
+#: The longest line :class:`LineReader` buffers, bytes: a peer that sends more
+#: without a newline is refused rather than buffered without bound.
+MAX_LINE_BYTES = 1 << 20
+
+#: How much of a refused line a :class:`LineReader` error quotes, bytes.
+_PREVIEW_BYTES = 200
 
 
-def command_value(value: Any) -> Optional[float]:
-    """A command field's *value* as a float, or ``None`` when it is not a
-    number CARLA can take: not finite (NaN, an infinity), or beyond
-    :data:`COMMAND_VALUE_LIMIT` (an integer too large for a float included)."""
-    try:
-        number = float(value)
-    except OverflowError:
-        return None
-    if not math.isfinite(number) or abs(number) > COMMAND_VALUE_LIMIT:
-        return None
-    return number
+def _preview(line: bytes) -> str:
+    """The start of *line*, for an error message."""
+    if len(line) > _PREVIEW_BYTES:
+        return f"{line[:_PREVIEW_BYTES]!r}... ({len(line)} bytes)"
+    return repr(line)
 
 
 class LineReader:
     """Reads the messages arriving on a socket, a line at a time.
+
+    A line longer than :data:`MAX_LINE_BYTES` is refused; the stream cannot be
+    read on after it, so the reader counts as :attr:`closed` then.
 
     Args:
         sock: The connected socket.
@@ -95,48 +101,104 @@ class LineReader:
 
     def __init__(self, sock: socket.socket) -> None:
         self._sock = sock
-        self._buffer = b""
+        self._buffer = bytearray()
+        # How much of the buffer is known to hold no newline: only what arrives
+        # after it is searched, so a long line is not rescanned per chunk.
+        self._scanned = 0
         self.closed = False
 
     def read(self, timeout: Optional[float] = 0.0) -> List[Dict[str, Any]]:
         """The messages that arrived; waits up to *timeout* s for the first.
 
-        ``None`` waits indefinitely.  :attr:`closed` turns ``True`` once the
-        peer closes.
+        ``None`` waits indefinitely.  A peer that keeps sending without ending
+        a line does not hold the call past *timeout*.  :attr:`closed` turns
+        ``True`` once the peer closes.
+
+        The wait does not touch the socket's own timeout
+        (:meth:`socket.socket.settimeout`), which stays the one its sends
+        are bounded by, even while another thread sends.
 
         Raises:
-            ValueError: A line is not a JSON object.
+            ValueError: A line is not a JSON object with a ``type``, or is
+                longer than :data:`MAX_LINE_BYTES`.
         """
         messages = self._take()
         if messages or self.closed:
             return messages
-        self._sock.settimeout(timeout)
-        while True:
+        deadline = None if timeout is None else time.monotonic() + timeout
+        wait = timeout
+        # The wait is a select, not the socket's timeout: that one is the
+        # socket's own, for its sends, which another thread may be making
+        # (#1792).  A readable socket's recv returns at once.
+        with selectors.DefaultSelector() as selector:
             try:
-                chunk = self._sock.recv(65536)
-            except (socket.timeout, BlockingIOError):
-                return self._take()
-            except OSError:
+                selector.register(self._sock, selectors.EVENT_READ)
+            except (OSError, ValueError):
+                # Closed (or shut down and closed) under the reader.
                 self.closed = True
                 return self._take()
-            if not chunk:
-                self.closed = True
-                return self._take()
-            self._buffer += chunk
-            messages = self._take()
-            if messages:
-                return messages
-            # A partial line: wait for its end without blocking the caller long.
-            self._sock.settimeout(0.0 if timeout == 0.0 else timeout)
+            while True:
+                try:
+                    ready = selector.select(wait)
+                except (OSError, ValueError):
+                    self.closed = True
+                    return self._take()
+                if not ready:
+                    return self._take()
+                try:
+                    chunk = self._sock.recv(65536)
+                except (socket.timeout, BlockingIOError, InterruptedError):
+                    return self._take()
+                except OSError:
+                    self.closed = True
+                    return self._take()
+                if not chunk:
+                    self.closed = True
+                    return self._take()
+                self._buffer += chunk
+                messages = self._take()
+                if messages:
+                    return messages
+                # A partial line: wait for its end, but no longer than asked.
+                # (A zero timeout reads on while more has already arrived.)
+                if deadline is not None and timeout != 0.0:
+                    wait = deadline - time.monotonic()
+                    if wait <= 0.0:
+                        return messages
 
     def _take(self) -> List[Dict[str, Any]]:
         messages: List[Dict[str, Any]] = []
-        while b"\n" in self._buffer:
-            line, self._buffer = self._buffer.split(b"\n", 1)
+        while True:
+            end = self._buffer.find(b"\n", self._scanned)
+            if end < 0:
+                self._scanned = len(self._buffer)
+                if self._scanned > MAX_LINE_BYTES:
+                    self._overlong(self._scanned)
+                return messages
+            if end > MAX_LINE_BYTES:
+                self._overlong(end)
+            line = bytes(self._buffer[:end])
+            del self._buffer[: end + 1]
+            self._scanned = 0
             if not line.strip():
                 continue
-            message = json.loads(line)
+            try:
+                message = json.loads(line)
+            except Exception as exc:
+                # Not only ValueError: a deeply nested line is a RecursionError.
+                raise ValueError(
+                    f"not a message: {_preview(line)} ({type(exc).__name__})"
+                ) from exc
             if not isinstance(message, dict) or "type" not in message:
-                raise ValueError(f"not a message: {line[:200]!r}")
+                raise ValueError(f"not a message: {_preview(line)}")
             messages.append(message)
-        return messages
+
+    def _overlong(self, length: int) -> NoReturn:
+        preview = bytes(self._buffer[:_PREVIEW_BYTES])
+        self._buffer = bytearray()
+        self._scanned = 0
+        self.closed = True
+        raise ValueError(
+            f"not a message: a line longer than {MAX_LINE_BYTES} bytes "
+            f"({length} bytes so far, starting {preview!r})"
+        )

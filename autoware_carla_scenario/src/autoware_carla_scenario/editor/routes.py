@@ -11,9 +11,10 @@ banner from ever disagreeing with each other.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
+from urllib.parse import quote
 
-from fastapi import APIRouter, Request
+from fastapi import APIRouter, Depends, Request
 from pydantic import ValidationError
 from starlette.concurrency import run_in_threadpool
 from fastapi.responses import (
@@ -21,15 +22,25 @@ from fastapi.responses import (
     HTMLResponse,
     PlainTextResponse,
     RedirectResponse,
+    Response,
+    StreamingResponse,
 )
+from starlette.types import Receive, Scope, Send
 
 from ..authoring.models import ScenarioDocument
 from ..authoring.package_export import PackageExportError
 from ..authoring.persistence import Draft, dump_document_yaml
 from ..authoring.registry import TRUTHY_VALUES
 from ..maps import opendrive
+from ..web_guard import refuse_cross_site
 from . import map_preview, scenario_map
-from .service import EditorError, EditorService, as_int, find_constraint
+from .service import (
+    EditorError,
+    EditorService,
+    StagedArchive,
+    as_port,
+    find_constraint,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -371,7 +382,7 @@ async def fetch_opendrive(request: Request, draft_id: str) -> HTMLResponse:
         # Parsed here rather than above, so a bad port is refused the way every
         # other bad field on this panel is -- inline, on the re-rendered body.
         host = str(form.get("carla_host", "") or opendrive.DEFAULT_HOST).strip()
-        port = as_int(form.get("carla_port", ""), "CARLA port", opendrive.DEFAULT_PORT)
+        port = as_port(form.get("carla_port", ""), "CARLA port", opendrive.DEFAULT_PORT)
         return service.fetch_opendrive(document, host=host, port=port)
 
     return await _map_action(request, draft_id, _act)
@@ -396,7 +407,12 @@ async def use_map(request: Request, draft_id: str) -> HTMLResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/maps", response_class=HTMLResponse)
+@router.get(
+    "/maps",
+    response_class=HTMLResponse,
+    # It runs git against the repository the URL names (#1850).
+    dependencies=[Depends(refuse_cross_site)],
+)
 def map_library(
     request: Request, repo: str = "", draft: str = "", refresh: str = ""
 ) -> HTMLResponse:
@@ -405,6 +421,11 @@ def map_library(
     Reachable on its own and from a draft.  With ``draft`` set, every map
     carries a button that points *that* scenario at it; without one, a map
     starts a new scenario instead.
+
+    A GET, so it can be linked and bookmarked, but one that makes the server
+    run ``git ls-remote`` (and may clone or fetch) against whatever repository
+    the URL names: a request another site sends is refused with 403
+    (:func:`~autoware_carla_scenario.web_guard.refuse_cross_site`).
     """
     service = _service(request)
     entries: list[Any] = []
@@ -431,13 +452,33 @@ def map_library(
 
 
 @router.post("/maps/new", response_class=HTMLResponse)
-async def new_draft_on_map(request: Request) -> RedirectResponse:
-    """Start a scenario on a map chosen in the library."""
+async def new_draft_on_map(request: Request) -> Response:
+    """Start a scenario on a map chosen in the library.
+
+    A map that cannot be fetched creates no draft: the library is shown again
+    with the reason, as ``/draft/{id}/map/use`` shows it inline (#1429).
+    """
     form = dict(await request.form())
     uri = str(form.get("uri", "")).strip()
     title = str(form.get("title", "")).strip()
+    repo = str(form.get("repo", "")).strip()
     service = _service(request)
-    draft = await run_in_threadpool(service.create_draft_for_map, uri, title=title)
+    try:
+        draft = await run_in_threadpool(service.create_draft_for_map, uri, title=title)
+    except EditorError as exc:
+        return _templates(request).TemplateResponse(
+            request=request,
+            name="maps.html",
+            context={
+                "repositories": service.map_repositories(),
+                "repo": repo,
+                "entries": [],
+                "error": str(exc),
+                "error_title": "No scenario was created",
+                "draft_id": "",
+                "page": "maps",
+            },
+        )
     return RedirectResponse(f"/draft/{draft.id}", status_code=303)
 
 
@@ -960,7 +1001,12 @@ async def lanelet_preview(request: Request, draft_id: str) -> HTMLResponse:
 # ---------------------------------------------------------------------------
 
 
-@router.get("/draft/{draft_id}/map-view", response_class=HTMLResponse)
+@router.get(
+    "/draft/{draft_id}/map-view",
+    response_class=HTMLResponse,
+    # With load_map it parses a city; without, it still binds on a cached map.
+    dependencies=[Depends(refuse_cross_site)],
+)
 def map_view(
     request: Request, draft_id: str, pattern: int = 0, load_map: bool = False
 ) -> HTMLResponse:
@@ -974,7 +1020,9 @@ def map_view(
 
     ``load_map`` is what a first binding costs -- parsing a city -- and is
     therefore asked for rather than assumed; once the map is cached every later
-    render binds without it.
+    render binds without it.  Only the panel itself (htmx, same-origin) asks
+    for this route, so a request another site sends is refused with 403 rather
+    than made to parse a map (#1850).
     """
     draft = _service(request).require_draft(draft_id)
     view = scenario_map.build_map_view(
@@ -1094,9 +1142,63 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
     )
 
 
+#: How much of a staged archive one chunk of the download reads.
+_DOWNLOAD_CHUNK = 1024 * 1024
+
+
+def _attachment(filename: str) -> str:
+    """Return the ``content-disposition`` naming a download *filename*, as
+    Starlette's ``FileResponse`` writes it."""
+    quoted = quote(filename)
+    if quoted != filename:
+        return f"attachment; filename*=utf-8''{quoted}"
+    return f'attachment; filename="{filename}"'
+
+
+class _ArchiveResponse(StreamingResponse):
+    """Stream an archive already opened, and close it however the response ends.
+
+    Starlette's ``FileResponse`` takes a path and opens it only once the
+    response is sent, by when the archive may be gone (#1719); this serves the
+    handle :meth:`EditorService.open_staged_archive` opened under the archive
+    lock, which stays readable after an unlink.  The handle is closed when the
+    response finishes, fails or the client disconnects -- neither the body
+    iterator nor a background task is guaranteed to run to the end on a
+    disconnect, so it is closed around the whole of ``__call__``.
+    """
+
+    def __init__(self, archive: StagedArchive) -> None:
+        self._archive = archive
+        super().__init__(
+            self._chunks(archive),
+            media_type="application/zip",
+            headers={
+                "content-length": str(archive.size),
+                "content-disposition": _attachment(archive.name),
+            },
+        )
+
+    @staticmethod
+    def _chunks(archive: StagedArchive) -> Iterator[bytes]:
+        """Yield *archive* a chunk at a time."""
+        while chunk := archive.file.read(_DOWNLOAD_CHUNK):
+            yield chunk
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._archive.file.close()
+
+
 @router.get("/draft/{draft_id}/wheelhouse.zip")
-def download_wheelhouse(request: Request, draft_id: str) -> FileResponse:
+def download_wheelhouse(request: Request, draft_id: str) -> Response:
     """Serve the wheelhouse the last export staged for this draft.
+
+    The archive is opened before the response is built, under the lock that
+    staging and deleting it hold, so an archive removed after the link was
+    rendered is a 404 rather than a 500 from a path that no longer exists, and
+    one removed while it downloads still downloads whole (#1719).
 
     Raises:
         EditorError: If nothing has been exported yet, or the archive has since
@@ -1104,14 +1206,10 @@ def download_wheelhouse(request: Request, draft_id: str) -> FileResponse:
     """
     service = _service(request)
     draft = service.require_draft(draft_id)
-    archive = service.staged_archive(draft)
+    archive = service.open_staged_archive(draft)
     if archive is None:
         raise EditorError("No exported wheelhouse to download. Run the export again.")
-    return FileResponse(
-        archive,
-        media_type="application/zip",
-        filename=archive.name,
-    )
+    return _ArchiveResponse(archive)
 
 
 def _checked(form: dict[str, Any], name: str) -> bool:

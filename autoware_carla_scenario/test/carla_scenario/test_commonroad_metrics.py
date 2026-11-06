@@ -10,12 +10,14 @@ one when the ``commonroad_metrics`` environment is there.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
 import os
 import platform
 import re
+import signal
 import sys
 import textwrap
 from pathlib import Path
@@ -24,7 +26,7 @@ from typing import Any, Iterator, Optional
 
 import pytest
 
-from autoware_carla_scenario import metrics
+from autoware_carla_scenario import heavy_metrics, metrics
 from autoware_carla_scenario.commonroad import frame as cr_frame
 from autoware_carla_scenario.commonroad import session as cr_session
 from autoware_carla_scenario.commonroad import worker as cr_worker
@@ -172,7 +174,8 @@ class _Actor:
 
     def get_transform(self) -> Any:
         return SimpleNamespace(
-            location=self._location, rotation=SimpleNamespace(yaw=self._yaw)
+            location=self._location,
+            rotation=SimpleNamespace(roll=0.0, pitch=0.0, yaw=self._yaw),
         )
 
     def get_velocity(self) -> Any:
@@ -436,6 +439,13 @@ def test_a_run_judging_one_needs_the_workers(opendrive: str, tmp_path: Path) -> 
         ("radius_m", -1.0, "radius_m must be positive and finite, got -1.0"),
         ("radius_m", math.nan, "radius_m must be positive and finite, got nan"),
         ("radius_m", math.inf, "radius_m must be positive and finite, got inf"),
+        # Too big for a float (#1652).
+        pytest.param(
+            "dt",
+            10**400,
+            f"dt must be positive and finite, got {10**400}",
+            id="dt-huge",
+        ),
     ],
 )
 def test_the_settings_refuse_a_bad_value(field: str, value: Any, message: str) -> None:
@@ -721,6 +731,126 @@ def test_the_heavy_metrics_are_on_unless_the_environment_says(
     assert cr_session.CommonRoadSettings().evaluates(CRIME_TTR_S)
 
 
+def test_the_heavy_metrics_settings_are_heavy_metrics_reexported() -> None:
+    # Moved to the checked heavy_metrics (#1689); session keeps the names.
+    for name in (
+        "DEFAULT_METRIC_PERIODS_S",
+        "HEAVY_METRICS",
+        "HEAVY_METRICS_DECIDED_ENV",
+        "HEAVY_METRICS_ENV",
+        "_check_period",
+        "_heavy_metrics_default",
+        "_heavy_metrics_from_user",
+        "_heavy_metrics_on",
+        "evaluates",
+    ):
+        assert getattr(cr_session, name) is getattr(heavy_metrics, name), name
+    assert heavy_metrics.HEAVY_METRICS_ENV == "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS"
+    assert heavy_metrics.HEAVY_METRICS_DECIDED_ENV == (
+        "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED"
+    )
+
+
+def test_heavy_metrics_holds_the_key_metrics_defines() -> None:
+    # heavy_metrics imports the key from metrics, which the library check
+    # reads through the module (#1693; #1689 wrote it out).
+    assert heavy_metrics.CRIME_TTR_S is metrics.CRIME_TTR_S
+    assert heavy_metrics.HEAVY_METRICS == frozenset({metrics.CRIME_TTR_S})
+    assert isinstance(heavy_metrics.HEAVY_METRICS, frozenset)
+    assert heavy_metrics.HEAVY_METRICS <= set(metrics.COMMONROAD_METRICS)
+    assert heavy_metrics.DEFAULT_METRIC_PERIODS_S == {metrics.CRIME_TTR_S: 0.5}
+
+
+@pytest.mark.parametrize(
+    ("value", "on"),
+    [
+        (None, True),
+        ("", True),
+        ("   ", True),
+        ("1", True),
+        ("true", True),
+        ("on", True),
+        ("anything", True),
+        ("0", False),
+        (" 0 ", False),
+        ("false", False),
+        ("False", False),
+        ("OFF", False),
+        ("no", False),
+        ("No\n", False),
+    ],
+)
+def test_heavy_metrics_on_reads_an_environment_value(
+    value: Optional[str], on: bool
+) -> None:
+    assert heavy_metrics._heavy_metrics_on(value) is on
+
+
+@pytest.mark.parametrize(
+    ("user", "decided", "on"),
+    [
+        (None, None, True),
+        ("0", None, False),
+        ("1", None, True),
+        # The scenario command's decision wins over the user's variable.
+        ("0", "1", True),
+        ("1", "0", False),
+        (None, "off", False),
+        # A blank decision is no decision: the user's variable says.
+        ("0", "", False),
+        ("0", "  ", False),
+        ("1", " ", True),
+    ],
+)
+def test_heavy_metrics_default_reads_the_decision_then_the_user(
+    monkeypatch: pytest.MonkeyPatch,
+    user: Optional[str],
+    decided: Optional[str],
+    on: bool,
+) -> None:
+    for name, value in (
+        (heavy_metrics.HEAVY_METRICS_ENV, user),
+        (heavy_metrics.HEAVY_METRICS_DECIDED_ENV, decided),
+    ):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    assert heavy_metrics._heavy_metrics_from_user() is (user not in ("0",))
+    assert heavy_metrics._heavy_metrics_default() is on
+    assert cr_session.CommonRoadSettings().heavy_metrics is on
+
+
+@pytest.mark.parametrize("heavy", [True, False])
+def test_evaluates_leaves_out_only_a_heavy_metric_when_they_are_off(
+    heavy: bool,
+) -> None:
+    settings = cr_session.CommonRoadSettings(heavy_metrics=heavy)
+    for key in metrics.COMMONROAD_METRICS:
+        expected = heavy or key != CRIME_TTR_S
+        assert heavy_metrics.evaluates(heavy, key) is expected, key
+        assert settings.evaluates(key) is expected, key
+
+
+@pytest.mark.parametrize(
+    ("period", "message"),
+    [
+        (0.0, "p must be positive and finite, got 0.0"),
+        (-1.0, "p must be positive and finite, got -1.0"),
+        (math.inf, "p must be positive and finite, got inf"),
+        (math.nan, "p must be positive and finite, got nan"),
+        (10**400, "p must be positive and finite, got 1"),
+    ],
+)
+def test_check_period_refuses_a_period_not_positive_and_finite(
+    period: float, message: str
+) -> None:
+    with pytest.raises(ValueError, match=re.escape(message)):
+        heavy_metrics._check_period("p", period)
+    heavy_metrics._check_period("p", 0.5)
+    heavy_metrics._check_period("p", 1)
+
+
 def test_a_condition_on_a_heavy_metric_turned_off_is_not_judged(
     tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
@@ -964,3 +1094,677 @@ def test_the_shipped_config_leaves_the_heavy_metrics_to_the_environment(
     assert apply_metrics(_shipped_config(["metrics.heavy=true"]))
     monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "1")
     assert not apply_metrics(_shipped_config(["metrics.heavy=false"]))
+
+
+def test_a_version_reads_ascii_digits_only() -> None:
+    """#1612: ``"²".isdigit()`` is true but ``int("²")`` raises."""
+    from autoware_carla_scenario.commonroad.map import _version
+
+    assert _version("2.1rc3") == (2, 13)
+    assert _version("2².1") == (2, 1)
+
+
+#: A worker that answers its ``init`` ok unless told otherwise, and then each
+#: request with the line it was given (``sys.argv[2]``).  With ``init`` as
+#: ``sys.argv[1]``, it answers its ``init`` with that line too.
+_ANSWERS_OUT_OF_PROTOCOL = textwrap.dedent(
+    """
+    import json, sys
+
+    when, answer = sys.argv[1], sys.argv[2]
+    for line in sys.stdin:
+        op = json.loads(line)["op"]
+        if op == "close":
+            break
+        if op == "init" and when != "init":
+            sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+        else:
+            sys.stdout.write(answer + "\\n")
+        sys.stdout.flush()
+    """
+)
+
+
+@pytest.mark.parametrize(
+    ("answer", "message"),
+    [
+        ("Loading CommonRoad...", "not with JSON: 'Loading CommonRoad...'"),
+        ("{not json", "not with JSON: '{not json'"),
+        ('["ok", true]', """not with a JSON object: '["ok", true]'"""),
+        ('"ok"', """not with a JSON object: '"ok"'"""),
+        ("1", "not with a JSON object: '1'"),
+        ("null", "not with a JSON object: 'null'"),
+    ],
+)
+def test_an_answer_out_of_protocol_is_a_worker_error(
+    tmp_path: Path, answer: str, message: str
+) -> None:
+    """#1636: a line that is not a JSON object raises CommonRoadWorkerError,
+    not JSONDecodeError or AttributeError."""
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script), "evaluate", answer], tmp_path / "map.xml"
+    )
+    try:
+        with pytest.raises(cr_worker.CommonRoadWorkerError) as raised:
+            worker.evaluate([CRIME_TTC_S], {}, [])
+        assert "'evaluate' out of protocol" in str(raised.value)
+        assert message in str(raised.value)
+    finally:
+        worker.close()
+    assert not worker.running()
+
+
+def test_an_answer_out_of_protocol_is_quoted_cut_short(tmp_path: Path) -> None:
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script), "evaluate", "x" * 5000], tmp_path / "map.xml"
+    )
+    try:
+        with pytest.raises(cr_worker.CommonRoadWorkerError) as raised:
+            worker.evaluate([CRIME_TTC_S], {}, [])
+    finally:
+        worker.close()
+    assert "'" + "x" * cr_worker._EXCERPT_CHARS + "...'" in str(raised.value)
+    assert "x" * (cr_worker._EXCERPT_CHARS + 1) not in str(raised.value)
+
+
+def test_a_worker_answering_its_init_out_of_protocol_is_not_left_running(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    started: list[Any] = []
+    popen = cr_worker.subprocess.Popen
+
+    def recording_popen(*args: Any, **kwargs: Any) -> Any:
+        process = popen(*args, **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr(cr_worker.subprocess, "Popen", recording_popen)
+    with pytest.raises(cr_worker.CommonRoadWorkerError, match="'init' out of"):
+        cr_worker.CommonRoadWorker(
+            [sys.executable, str(script), "init", "a banner"], tmp_path / "map.xml"
+        )
+    (process,) = started
+    assert process.poll() is not None
+
+
+#: A worker that answers its ``init`` and then neither reads nor answers
+#: anything more, as one deep in a long (or deadlocked) evaluation would.
+_STUCK = textwrap.dedent(
+    """
+    import json, sys, time
+
+    json.loads(sys.stdin.readline())
+    sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+    sys.stdout.flush()
+    while True:
+        time.sleep(60)
+    """
+)
+
+#: A worker that answers its ``init`` and exits at the end of its input,
+#: answering nothing else (not even ``close``).
+_EXITS_AT_EOF = textwrap.dedent(
+    """
+    import json, sys
+
+    json.loads(sys.stdin.readline())
+    sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+    sys.stdout.flush()
+    for line in sys.stdin:
+        pass
+    """
+)
+
+
+def _closed_within(worker: cr_worker.CommonRoadWorker, seconds: float) -> float:
+    """How long ``worker.close()`` took; fails if it took over *seconds*,
+    without waiting for it longer than that."""
+    import threading
+    import time
+
+    errors: list[BaseException] = []
+
+    def close() -> None:
+        try:
+            worker.close()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    start = time.monotonic()
+    closing = threading.Thread(target=close, daemon=True)
+    closing.start()
+    closing.join(seconds)
+    took = time.monotonic() - start
+    assert not closing.is_alive(), f"close() still blocked after {seconds} s"
+    assert not errors, errors
+    return took
+
+
+def _started_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> tuple[cr_worker.CommonRoadWorker, Any]:
+    """A worker running *source*, and its process."""
+    script = tmp_path / "worker.py"
+    script.write_text(source)
+    started: list[Any] = []
+    popen = cr_worker.subprocess.Popen
+
+    def recording_popen(*args: Any, **kwargs: Any) -> Any:
+        process = popen(*args, **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr(cr_worker.subprocess, "Popen", recording_popen)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script)], tmp_path / "map.xml"
+    )
+    (process,) = started
+    return worker, process
+
+
+def _kill(process: Any) -> None:
+    """Make sure the test leaves *process* (one it started) not running."""
+    if process.poll() is None:
+        process.kill()
+        process.wait()
+
+
+def test_a_stuck_worker_is_killed_by_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1775: close() does not wait for an answer a busy worker never gives;
+    the worker is killed once the close timeout is up."""
+    worker, process = _started_worker(tmp_path, monkeypatch, _STUCK)
+    try:
+        took = _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10)
+        assert took >= cr_worker._CLOSE_TIMEOUT_S - 0.5
+        assert process.poll() is not None
+        assert not worker.running()
+        # Closing it again does nothing more.
+        assert _closed_within(worker, 5) < 1
+    finally:
+        _kill(process)
+
+
+def test_a_worker_exiting_at_the_end_of_its_input_closes_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker, process = _started_worker(tmp_path, monkeypatch, _EXITS_AT_EOF)
+    try:
+        assert _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10) < (
+            cr_worker._CLOSE_TIMEOUT_S
+        )
+        assert process.returncode == 0
+    finally:
+        _kill(process)
+
+
+def test_a_worker_exiting_on_close_closes_at_once_and_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker, process = _started_worker(
+        tmp_path,
+        monkeypatch,
+        _ANSWERS_OUT_OF_PROTOCOL.replace(
+            "when, answer = sys.argv[1], sys.argv[2]", "when, answer = 'never', ''"
+        ),
+    )
+    try:
+        assert _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10) < (
+            cr_worker._CLOSE_TIMEOUT_S
+        )
+        assert process.returncode == 0
+        assert _closed_within(worker, 5) < 1
+    finally:
+        _kill(process)
+
+
+def test_closing_a_worker_that_has_exited_is_fine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker, process = _started_worker(tmp_path, monkeypatch, _STUCK)
+    try:
+        process.kill()
+        process.wait()
+        assert _closed_within(worker, 5) < 1
+        assert not worker.running()
+        with pytest.raises(cr_worker.CommonRoadWorkerError, match="has exited"):
+            worker.evaluate([CRIME_TTC_S], {}, [])
+    finally:
+        _kill(process)
+
+
+# ---------------------------------------------------------------------------
+# Interrupts, and workers under a wrapper (#1780)
+# ---------------------------------------------------------------------------
+
+#: A worker run by :data:`_WRAPPER`: it answers its ``init``, having written
+#: its pid to ``sys.argv[1]``, and then ignores the end of its input and
+#: sleeps, as a worker deep in an evaluation would.
+_IGNORES_EOF = textwrap.dedent(
+    """
+    import json, os, sys, time
+
+    json.loads(sys.stdin.readline())
+    with open(sys.argv[1] + ".tmp", "w") as f:
+        f.write(str(os.getpid()))
+    os.replace(sys.argv[1] + ".tmp", sys.argv[1])
+    sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+    sys.stdout.flush()
+    for line in sys.stdin:
+        pass
+    while True:
+        time.sleep(60)
+    """
+)
+
+#: A wrapper that, as ``uv run`` does, runs the worker as its child and waits
+#: for it: killing the wrapper alone leaves the worker running.
+_WRAPPER = textwrap.dedent(
+    """
+    import subprocess, sys
+
+    sys.exit(subprocess.call([sys.executable] + sys.argv[1:]))
+    """
+)
+
+#: A worker that reads its requests and answers none, ``init`` included,
+#: exiting at the end of its input.
+_NEVER_ANSWERS = textwrap.dedent(
+    """
+    import sys
+
+    for line in sys.stdin:
+        pass
+    """
+)
+
+
+def _gone(pid: int) -> bool:
+    """Whether *pid* no longer runs (a zombie waiting for its reaper does
+    not)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return True
+    return stat.rsplit(")", 1)[1].split()[0] == "Z"
+
+
+def _eventually(check: Any, seconds: float) -> bool:
+    """Whether *check()* holds within *seconds*."""
+    import time
+
+    deadline = time.monotonic() + seconds
+    while not check():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def _kill_pid_running(pid: int, script: Path) -> None:
+    """Kill *pid* if it still runs *script* (a process the test started)."""
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return
+    if str(script).encode() in cmdline:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def _bounded(call: Any, seconds: float) -> tuple[Optional[BaseException], float]:
+    """Run *call()* in a thread: what it raised, if anything, and how long it
+    took; fails if it is still running after *seconds*, without waiting
+    longer."""
+    import threading
+    import time
+
+    raised: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            call()
+        except BaseException as exc:  # noqa: BLE001
+            raised.append(exc)
+
+    start = time.monotonic()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(seconds)
+    took = time.monotonic() - start
+    assert not thread.is_alive(), f"still running after {seconds} s"
+    return (raised[0] if raised else None), took
+
+
+def _recording_popen(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The processes the workers start from now on."""
+    started: list[Any] = []
+    popen = cr_worker.subprocess.Popen
+
+    def recording_popen(*args: Any, **kwargs: Any) -> Any:
+        process = popen(*args, **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr(cr_worker.subprocess, "Popen", recording_popen)
+    return started
+
+
+def _wrapped_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[cr_worker.CommonRoadWorker, Any, int, Path]:
+    """A worker run by :data:`_WRAPPER`, the wrapper's process, the worker's
+    pid, and the worker's script."""
+    child = tmp_path / "ignores_eof.py"
+    child.write_text(_IGNORES_EOF)
+    wrapper = tmp_path / "wrapper.py"
+    wrapper.write_text(_WRAPPER)
+    pid_file = tmp_path / "worker.pid"
+    started = _recording_popen(monkeypatch)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(wrapper), str(child), str(pid_file)],
+        tmp_path / "map.xml",
+    )
+    (process,) = started
+    return worker, process, int(pid_file.read_text()), child
+
+
+def test_a_worker_runs_in_a_session_of_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker, process = _started_worker(tmp_path, monkeypatch, _EXITS_AT_EOF)
+    try:
+        assert os.getsid(process.pid) == process.pid
+        assert os.getpgid(process.pid) == process.pid
+    finally:
+        worker.close()
+        _kill(process)
+
+
+def test_close_kills_the_worker_under_a_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #1780: the kill reaches the worker a ``uv run`` started, not
+    only ``uv``."""
+    worker, process, pid, child = _wrapped_worker(tmp_path, monkeypatch)
+    try:
+        _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10)
+        assert process.poll() is not None
+        assert _eventually(lambda: _gone(pid), 10), f"worker {pid} still runs"
+    finally:
+        _kill_pid_running(pid, child)
+        _kill(process)
+
+
+def test_close_returns_while_a_request_is_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #1780: close() does not wait for the output a thread blocked in
+    request() holds; that request raises once the worker is gone."""
+    import threading
+
+    worker, process, pid, child = _wrapped_worker(tmp_path, monkeypatch)
+    raised: list[BaseException] = []
+
+    def evaluate() -> None:
+        try:
+            worker.evaluate([CRIME_TTC_S], {}, [])
+        except BaseException as exc:  # noqa: BLE001
+            raised.append(exc)
+
+    requesting = threading.Thread(target=evaluate, daemon=True)
+    try:
+        requesting.start()
+        requesting.join(0.5)  # in request(), waiting for an answer
+        _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10)
+        requesting.join(10)
+        assert not requesting.is_alive()
+        assert len(raised) == 1
+        assert isinstance(raised[0], cr_worker.CommonRoadWorkerError)
+        assert _eventually(lambda: _gone(pid), 10), f"worker {pid} still runs"
+        # Neither pipe is left open for the garbage collector.
+        assert process.stdout.closed and process.stdin.closed
+    finally:
+        _kill_pid_running(pid, child)
+        _kill(process)
+
+
+def test_close_returns_while_a_request_is_blocked_writing(
+    tmp_path: Path,
+) -> None:
+    """Issue #1780: a request blocked writing to a worker that reads nothing
+    does not hold close() up; it raises once the worker is killed, its pipes
+    closed (no ResourceWarning when the worker is collected)."""
+    import gc
+    import threading
+    import warnings
+    import weakref
+
+    script = tmp_path / "worker.py"
+    script.write_text(_STUCK)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script)], tmp_path / "map.xml"
+    )
+    pid = worker._process.pid
+    raised: list[BaseException] = []
+
+    def evaluate(worker: cr_worker.CommonRoadWorker) -> None:
+        try:
+            # Far more than a pipe holds: the write blocks.
+            worker.evaluate([CRIME_TTC_S], {}, [{"pad": "x" * 1_000_000}])
+        except BaseException as exc:  # noqa: BLE001
+            raised.append(exc)
+
+    # The worker as an argument, not a closure's: the thread lets go of it.
+    requesting = threading.Thread(target=evaluate, args=(worker,), daemon=True)
+    try:
+        requesting.start()
+        requesting.join(0.5)  # blocked writing the request
+        _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10)
+        requesting.join(10)
+        assert not requesting.is_alive()
+        assert len(raised) == 1
+        assert isinstance(raised[0], cr_worker.CommonRoadWorkerError)
+        process = worker._process
+        assert process.poll() is not None
+        assert process.stdin is not None and process.stdin.closed
+        assert process.stdout is not None and process.stdout.closed
+        collected = weakref.ref(process)
+        del process
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            del worker
+            raised.clear()  # the error's traceback holds the worker
+            gc.collect()
+        assert collected() is None  # so its pipes would have warned
+        assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
+    finally:
+        _kill_pid_running(pid, script)
+
+
+def test_an_interrupted_evaluation_closes_its_workers_at_once(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #1780: an interrupt does not wait for the remaining frames; the
+    stuck workers are closed together, within about one close timeout."""
+    from concurrent.futures import FIRST_EXCEPTION
+
+    script = tmp_path / "worker.py"
+    script.write_text(_STUCK)
+    cr_session.configure_commonroad_metrics(
+        command=(sys.executable, str(script)),
+        cache_dir=tmp_path / "maps",
+        workers=3,
+    )
+    world = _following(opendrive)
+    frames = _recorded(world, TIMES)
+    carla_map = world.get_map()
+    # Started before the interrupt is armed.
+    started = _recording_popen(monkeypatch)
+    cr_session._workers_for(carla_map)
+    real_wait = cr_session.wait
+
+    def interrupted(fs: Any, timeout: Any = None, return_when: Any = None) -> Any:
+        if return_when == FIRST_EXCEPTION:
+            # Each share is blocked in its first request by now.
+            real_wait(fs, timeout=1.0, return_when=FIRST_EXCEPTION)
+            raise KeyboardInterrupt
+        return real_wait(fs, timeout=timeout)
+
+    monkeypatch.setattr(cr_session, "wait", interrupted)
+    try:
+        raised, took = _bounded(
+            lambda: cr_session.evaluate_commonroad(frames, carla_map, [CRIME_TTC_S]),
+            cr_worker._CLOSE_TIMEOUT_S * 3 + 10,
+        )
+        assert isinstance(raised, KeyboardInterrupt)
+        assert len(started) == 3
+        assert all(process.poll() is not None for process in started)
+        assert cr_session._POOL.workers == []
+        # One close timeout for all three, not one each.
+        assert took < cr_worker._CLOSE_TIMEOUT_S * 2
+    finally:
+        for process in started:
+            _kill(process)
+
+
+def test_an_interrupt_while_starting_closes_the_workers_started(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #1780: workers that are still waiting for their ``init`` answer
+    when an interrupt comes are closed, not left to the end of the run."""
+    script = tmp_path / "worker.py"
+    script.write_text(_NEVER_ANSWERS)
+    cr_session.configure_commonroad_metrics(
+        command=(sys.executable, str(script)),
+        cache_dir=tmp_path / "maps",
+        workers=2,
+    )
+    world = _following(opendrive)
+    started = _recording_popen(monkeypatch)
+    real_wait = cr_session.wait
+
+    def interrupted(fs: Any, timeout: Any = None, return_when: Any = None) -> Any:
+        if timeout is None and return_when is None:
+            _eventually(lambda: len(started) == 2, 30)
+            real_wait(fs, timeout=0.5)  # each is waiting for its answer
+            raise KeyboardInterrupt
+        return real_wait(fs, timeout=timeout)
+
+    monkeypatch.setattr(cr_session, "wait", interrupted)
+    try:
+        raised, _ = _bounded(
+            lambda: cr_session.evaluate_commonroad(
+                _recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S]
+            ),
+            cr_worker._CLOSE_TIMEOUT_S * 2 + 30,
+        )
+        assert isinstance(raised, KeyboardInterrupt)
+        assert len(started) == 2
+        assert _eventually(
+            lambda: all(process.poll() is not None for process in started), 10
+        )
+        assert cr_session._POOL.workers == []
+    finally:
+        for process in started:
+            _kill(process)
+
+
+def test_a_worker_answering_out_of_protocol_is_not_reused(
+    opendrive: str, tmp_path: Path
+) -> None:
+    """The run fails with the worker's error, and the pool is reset: the
+    worker's answers are out of step, so the next run starts afresh."""
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    cr_session.configure_commonroad_metrics(
+        command=(sys.executable, str(script), "evaluate", "[]"),
+        cache_dir=tmp_path / "maps",
+        workers=1,
+    )
+    world = _following(opendrive)
+    (worker,) = cr_session._workers_for(world.get_map())
+    with pytest.raises(cr_worker.CommonRoadWorkerError, match="not with a JSON"):
+        evaluate_metrics(_recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S])
+    assert cr_session._POOL.workers == []
+    assert not worker.running()
+
+
+@pytest.mark.parametrize(
+    ("value", "heavy"),
+    [
+        ("false", False),
+        (" Off ", False),
+        ("no", False),
+        (0, False),
+        ("0", False),
+        ("true", True),
+        ("YES", True),
+        (1, True),
+        ("1", True),
+    ],
+)
+def test_metrics_heavy_is_read_strictly(
+    monkeypatch: pytest.MonkeyPatch, value: Any, heavy: bool
+) -> None:
+    """#1761: ``bool("false")`` turned them on; the spelling is read."""
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    # The environment says the opposite: the config decides.
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "0" if heavy else "1")
+    assert apply_metrics(OmegaConf.create({"metrics": {"heavy": value}})) is heavy
+    assert cr_session.commonroad_settings().heavy_metrics is heavy
+    # What the SLURM tasks and the runs' processes read.
+    assert os.environ[cr_session.HEAVY_METRICS_DECIDED_ENV] == ("1" if heavy else "0")
+    assert heavy_metrics._heavy_metrics_default() is heavy
+
+
+@pytest.mark.parametrize("value", ["ture", "", 2, -1, 0.0, 1.5, [True]])
+def test_a_metrics_heavy_that_is_no_switch_is_refused(
+    monkeypatch: pytest.MonkeyPatch, value: Any
+) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    monkeypatch.delenv(cr_session.HEAVY_METRICS_DECIDED_ENV, raising=False)
+    with pytest.raises(ValueError, match=r"^metrics\.heavy must be true or false"):
+        apply_metrics(OmegaConf.create({"metrics": {"heavy": value}}))
+    # Nothing was decided.
+    assert cr_session.HEAVY_METRICS_DECIDED_ENV not in os.environ
+
+
+@pytest.mark.parametrize("value", ["ture", "2"])
+def test_the_batch_check_refuses_a_bad_metrics_heavy_in_any_case(
+    value: str,
+) -> None:
+    """#1761: refused before the first case runs, though apply_metrics reads
+    only the first case that sets it."""
+    from autoware_carla_scenario.examples import run
+
+    good = run._compose_config("intersection_passing/straight", [])
+    run.check_batch_configs([good])
+    falsy = run._compose_config(
+        "intersection_passing/straight", ["metrics.heavy=false"]
+    )
+    run.check_batch_configs([falsy])
+    bad = run._compose_config(
+        "intersection_passing/straight", [f"metrics.heavy={value}"]
+    )
+    with pytest.raises(
+        run.RunConfigError, match=r"^b: metrics\.heavy must be true or false"
+    ):
+        run.check_batch_configs([falsy, bad], ["a", "b"])

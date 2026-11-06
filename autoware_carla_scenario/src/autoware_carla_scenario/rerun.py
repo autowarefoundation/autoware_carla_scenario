@@ -36,6 +36,14 @@ from pathlib import Path
 from types import ModuleType
 from typing import Any, Optional, Union
 
+# The suffix of the log a recording is made from, and of the recording, and
+# the run a log is of (``_label``): the path rule is the checked
+# run_outputs's (#1678); the names they had here stay importable from here.
+from .run_outputs import RECORDING_SUFFIX as RECORDING_SUFFIX
+from .run_outputs import TRAJECTORY_SUFFIX as TRAJECTORY_SUFFIX
+from .run_outputs import recording_path as _recording_path
+from .run_outputs import trajectory_stem as _label
+
 __all__ = [
     "INSTALL_HINT",
     "RECORDING_SUFFIX",
@@ -43,6 +51,7 @@ __all__ = [
     "RerunConverter",
     "RerunUnavailableError",
     "convert_outputs",
+    "latest",
     "main",
     "recording_path",
     "report",
@@ -53,10 +62,6 @@ logger = logging.getLogger(__name__)
 
 #: How to install what this module needs.
 INSTALL_HINT = "pip install 'autoware-carla-scenario[rerun]'"
-
-#: The suffix of the log a recording is made from, and of the recording.
-TRAJECTORY_SUFFIX = ".trajectory.jsonl"
-RECORDING_SUFFIX = ".rrd"
 
 #: The package that does the conversion.
 _CONVERTER_MODULE = "autoware_carla_scenario_rerun"
@@ -85,20 +90,11 @@ def require_converter() -> ModuleType:
         ) from exc
 
 
-def _label(trajectory: Path) -> str:
-    """The run *trajectory* is the log of: its file stem (``X`` of
-    ``X.trajectory.jsonl``)."""
-    name = trajectory.name
-    if name.endswith(TRAJECTORY_SUFFIX):
-        return name[: -len(TRAJECTORY_SUFFIX)]
-    return trajectory.stem
-
-
 def recording_path(trajectory: Union[str, Path]) -> Path:
     """The recording made of *trajectory*: ``X.rrd`` beside
-    ``X.trajectory.jsonl``, where the converter writes it by default."""
-    path = Path(trajectory)
-    return path.with_name(_label(path) + RECORDING_SUFFIX)
+    ``X.trajectory.jsonl``, where the converter writes it by default
+    (:func:`.run_outputs.recording_path`, which takes a ``Path``)."""
+    return _recording_path(Path(trajectory))
 
 
 @dataclass(frozen=True)
@@ -341,8 +337,27 @@ class RerunConverter:
         self.close()
 
 
+def latest(conversions: list[RerunConversion]) -> list[RerunConversion]:
+    """*conversions* with only the last of each recording's, in the order the
+    recordings were first converted.
+
+    A retried run is converted again into the recording of the attempt it
+    replaces, so :meth:`RerunConverter.wait` returns that recording twice;
+    the earlier conversion no longer says how it went.
+    """
+    last: dict[str, RerunConversion] = {}
+    for conversion in conversions:
+        last[str(conversion.recording)] = conversion
+    return list(last.values())
+
+
 def report(conversions: list[RerunConversion]) -> str:
-    """One line on *conversions*, then one per failure, for a run's summary."""
+    """One line on *conversions*, then one per failure, for a run's summary.
+
+    A recording converted more than once (a retried run) counts once, by its
+    last conversion (:func:`latest`).
+    """
+    conversions = latest(conversions)
     failed = [c for c in conversions if not c.ok]
     lines = [
         f"Rerun recordings: {len(conversions) - len(failed)}/{len(conversions)} "
@@ -573,6 +588,10 @@ def main(argv: Optional[list[str]] = None) -> int:
         "when that data cannot be carried over into the new one",
     )
     args = parser.parse_args(argv)
+    if args.jobs is not None and args.jobs < 1:
+        # The converter's pool refuses it with an OverflowError (-1) for the
+        # first PATH, which is not a PATH that cannot be converted.
+        parser.error(f"argument --jobs: must be at least 1, got {args.jobs}")
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )

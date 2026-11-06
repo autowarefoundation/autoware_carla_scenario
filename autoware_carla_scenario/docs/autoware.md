@@ -105,6 +105,14 @@ What happens:
       Another user's are left alone, but two of your own batches on one host
       are not supported -- the shared host network (CARLA's ports, the
       bridge's, the ROS graph) would not allow them anyway.
+    - Every docker call the launcher makes for its answer (`docker ps`,
+      `docker image inspect`, `docker rm`) is given 60 s, `docker commit` of
+      the dependency image 30 minutes: a daemon that stops answering fails
+      the batch here (a call it needs) or is logged and gone on without (the
+      leftover containers' removal), rather than hang it. A dependency image
+      whose `docker image inspect` does not answer fails the batch too: it is
+      not taken for a missing one, installed and committed again. The dependencies'
+      install and the build stream their output and are not bounded.
 2. **For each scenario**, once the ego is spawned and the mission served:
     `docker run --rm --network host` of the dev container image, the workspace
     mounted where it was built, `source install/setup.bash`, then the
@@ -121,8 +129,10 @@ What happens:
     `autoware.ready_timeout_ticks`, as before.
 4. **When the scenario ends**, however it ends, the stack is stopped (`SIGINT`
     to `ros2 launch`, through `docker run --init`) and its container removed
-    once it has stopped or `stop_timeout_s` has passed, before the next
-    scenario starts. A scenario that is retried (`server.cooldown_max_retries`)
+    with `docker rm --force` once it has stopped or `stop_timeout_s` has
+    passed, before the next scenario starts. That removal is given 60 s: a
+    daemon that does not answer in that time is logged as a warning and the
+    batch goes on, the container left for the next batch's start to remove. A scenario that is retried (`server.cooldown_max_retries`)
     starts another fresh stack, with nothing of the failed attempt's carried
     over.
 
@@ -133,6 +143,58 @@ on it is refused).
 A stack that exits during a scenario ends it: the result's message says
 `The Autoware stack exited with code <n>`.
 
+The `autoware` group holds the bridge's settings (`AutowareBridgeConfig`:
+`address`, `timeout_s`, `ready_timeout_ticks`, `boot_timeout_s`,
+`boot_tick_period_s`, `base_link_offset_m`) and `launcher`. Any other key is
+refused when the ego is built, with an error naming it: `+autoware.timout_s=30`
+fails the run rather than leaving the default timeout in place.
+
+`autoware.launcher` is checked the same way. It holds the keys of both launcher
+types at once (the shipped config does), and each type reads its own: `type`,
+`command` and every `DockerAutowareConfig` field (`workspace`, `launch`,
+`devcontainer`, `image`, `workspace_mount`, `build`, `rosdep`,
+`bridge_parameters`, `colcon_args`, `mounts`, `env`, `ros_domain_ids`, `gpus`,
+`user`, `docker_args`, `docker`, `stop_timeout_s`, `container_prefix`; the
+`command` launcher reads `env`, `stop_timeout_s` and `bridge_parameters` of
+these). A key neither type reads is refused whatever the type, naming it:
+`+autoware.launcher.stop_timout_s=60` fails the run, and a batch or a sweep
+before its first scenario starts.
+
+The values the launcher's type reads are checked there too, naming the key:
+
+- `stop_timeout_s` must be a finite number of seconds above 0 (an int or a
+  float; not a boolean, a string or null), as the bridge's timeouts must. A
+  NaN never times out, so a stack that ignores `SIGINT` would never be sent
+  `SIGTERM` and the batch would hang; 0 or less would skip the grace the stack
+  is given to shut down.
+- the docker launcher's `ros_domain_ids` must be a list (or null, for none)
+  of whole numbers from 0 to 232, the domain ids ROS 2 can use: above 232 a
+  domain's DDS ports are past 65535 (see
+  [The ROS_DOMAIN_ID](https://docs.ros.org/en/rolling/Concepts/Intermediate/About-Domain-ID.html)).
+  On Linux, that page advises 0 to 101, below the kernel's ephemeral ports.
+- the argument lists -- `launch`, `colcon_args`, `docker_args` and `command`
+  -- must be lists (or null, for none) of strings or numbers, each made a
+  string. A string is refused, not split and not taken as one argument:
+  `"autoware.launcher.docker_args='--shm-size=8g'"` used to run
+  `docker run - - s h m ...`, a character per argument, and
+  `'ros2 launch x y'` may be one argument (a `bash -c` script) or four, which
+  only you know. Write a list, quoting an item that holds spaces:
+  `'autoware.launcher.docker_args=[--shm-size=8g]'`,
+  `'autoware.launcher.command=[bash,-c,"ros2 launch x y"]'`. An item that is
+  a list, a mapping, null or a boolean is refused too.
+- `env` and `mounts` must be mappings (or null) of strings or numbers, and
+  `bridge_parameters` a mapping (or null) of ROS parameters. An `env` value is
+  given as text or a number (`ROS_LOCALHOST_ONLY: 1`, not `true`).
+
+`+autoware.launcher.stop_timeout_s=nan`,
+`'autoware.launcher.ros_domain_ids=[-3,999]'` or
+`"autoware.launcher.docker_args='--shm-size=8g'"` fails the run the same way.
+`DockerAutowareConfig`, `CommandAutowareLauncher` and `ProcessGroup` refuse
+such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
+`DockerAutowareConfig` a `str` (or `bytes`) `launch`, `colcon_args` or
+`docker_args`, and `CommandAutowareLauncher` a `str` `argv`, with a
+`ValueError` when they are built from Python.
+
 ### Settings
 
 | Setting | Default | Meaning |
@@ -142,17 +204,17 @@ A stack that exits during a scenario ends it: the result's message says
 | `image` | `null` | An image to use instead of the dev container's |
 | `workspace_mount` | `null` | Where to mount the workspace instead of where the dev container does |
 | `build` | `auto` | `auto` / `always` / `never` |
-| `rosdep` | `true` | Also install the workspace's dependencies into the image the stack runs in |
+| `rosdep` | `true` | Also install the workspace's dependencies into the image the stack runs in. `true` or `false`, or one of their spellings as [the run's switches](usage.md#the-switches) take (`"false"`, `"off"`, `"no"`, `0` are false); anything else (`ture`, `2`) is refused, naming `autoware.launcher.rosdep` |
 | `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, ... |
 | `colcon_args` | `[--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]` | Arguments to `colcon build` |
 | `launch` | (required) | `ros2 launch` package, file and `name:=value` arguments |
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |
 | `env` | `{}` | Variables set in the container, over the dev container's own |
-| `ros_domain_ids` | `[]` | `ROS_DOMAIN_ID` per scenario, cycling; empty keeps the dev container's |
+| `ros_domain_ids` | `[]` | `ROS_DOMAIN_ID` per scenario, cycling, each 0 to 232; empty keeps the dev container's |
 | `gpus` | `all` | Docker's `--gpus`; `null` for none |
 | `user` | `null` | Docker's `--user`; by default the image maps `aw` to your `HOST_UID`/`HOST_GID` |
 | `docker_args` | `[]` | Further `docker run` arguments |
-| `stop_timeout_s` | `20.0` | How long stopping waits after each signal |
+| `stop_timeout_s` | `20.0` | How long stopping waits after each signal, in seconds above 0 |
 
 `ros_domain_ids` moves each scenario's stack to another ROS domain, so it does
 not discover what is left of the last one before those participants time out:
@@ -172,8 +234,11 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
   +sweep.job_timeout_seconds=900
 ```
 
-`sweep.job_timeout_seconds` (120 s by default; `+` adds it to a sweep YAML
-that does not set it) is a whole job's budget --
+`sweep.job_timeout_seconds` (120 s by default, and when `null`; `+` adds it
+to a sweep YAML that does not set it; 0 for no timeout) is a whole job's
+budget, in whole seconds -- a fraction, a negative value, NaN, infinity or a
+value above 2147483647 (what `signal.alarm` takes) is refused, with exit
+status 2, before any job starts --
 starting Autoware, localizing, routing, engaging and the scenario itself --
 so raise it: launching Autoware alone can take most of two minutes. A job the
 sweeper kills at that limit leaves its container behind, and the next job's
@@ -194,7 +259,14 @@ background (every SLURM task, a `scenario ... &` in a script) does, so the
 `SIGINT` still shuts `ros2 launch` down cleanly rather than leaving it to the
 `SIGTERM` after `stop_timeout_s`; the Docker launcher's `docker run` starts
 the same way. `{bridge_address}`, `{index}` and `{name}`
-are filled in, and the address is in `AUTOWARE_BRIDGE_ADDRESS` too.
+are filled in, in one pass (what a placeholder is replaced with is never
+filled in again), and the address is in `AUTOWARE_BRIDGE_ADDRESS` too.
+`{name}` is the scenario's name with every character but `A-Z`, `a-z`, `0-9`,
+`.`, `_` and `-` replaced by `_` -- the name the stack's log file carries --
+so it can stand unquoted in a shell script. The name as given is in
+`AUTOWARE_SCENARIO_NAME`; a script that needs it exactly reads
+`"$AUTOWARE_SCENARIO_NAME"`, quoted, and never pastes the name into the script
+text itself, since a scenario's name comes from its config.
 `{scenario_bridge}` is a shell command that runs the `scenario_bridge` node with
 that address and `autoware.launcher.bridge_parameters`, for the command to run
 beside the launch in Autoware's ROS 2 environment:

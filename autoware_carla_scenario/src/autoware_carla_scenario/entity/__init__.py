@@ -19,6 +19,17 @@ Usage::
     npc = VehicleEntity(config)
     actor = npc.spawn(world)
     # Autopilot is enabled automatically by ScenarioRunner after warm-up ticks
+
+    # NPC motorcycle: whichever motorcycle blueprint the server has
+    rider = MotorcycleEntity(
+        MotorcycleEntityConfig(role_name="rider", spawn_location=SpawnPointIndex(6))
+    )
+
+    # NPC emergency vehicle: siren lights on and driven as one while on a call
+    ambulance = EmergencyVehicleEntity(
+        EmergencyVehicleEntityConfig(role_name="ambulance", spawn_location=SpawnPointIndex(7))
+    )
+    ambulance.set_emergency(True)
 """
 
 from ._spawn import SpawnLocation, SpawnPointIndex, SpawnTransform
@@ -34,7 +45,16 @@ from .registry import (
     register_entity,
     unregister_entity,
 )
-from .vehicle_entity import VehicleEntity, VehicleEntityConfig
+from .vehicle_entity import (
+    ANY_EMERGENCY_VEHICLE,
+    ANY_MOTORCYCLE,
+    EmergencyVehicleEntity,
+    EmergencyVehicleEntityConfig,
+    MotorcycleEntity,
+    MotorcycleEntityConfig,
+    VehicleEntity,
+    VehicleEntityConfig,
+)
 
 __all__ = [
     "AutowareEgoEntity",
@@ -42,6 +62,12 @@ __all__ = [
     "CarlaDriverEntity",
     "EgoVehicle",
     "ExternallyDrivenEgo",
+    "ANY_EMERGENCY_VEHICLE",
+    "EmergencyVehicleEntity",
+    "EmergencyVehicleEntityConfig",
+    "ANY_MOTORCYCLE",
+    "MotorcycleEntity",
+    "MotorcycleEntityConfig",
     "PedestrianEntity",
     "PedestrianEntityConfig",
     "clear_entities",

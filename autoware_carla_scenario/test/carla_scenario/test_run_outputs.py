@@ -7,17 +7,31 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from autoware_carla_scenario import environment, rerun, rerun_lidar, t4_settings
+from autoware_carla_scenario import (
+    environment,
+    rerun,
+    rerun_lidar,
+    rerun_metrics,
+    run_outputs,
+    t4_settings,
+)
+from autoware_carla_scenario.coverage import collector
+from autoware_carla_scenario.gate import record as gate_record
 from autoware_carla_scenario.run_outputs import (
     RUN_DIR_SUFFIXES,
     RUN_FILE_SUFFIXES,
+    remove_run_outputs,
     run_output_paths,
+    run_output_stems,
     run_outputs_exist,
 )
 from autoware_carla_scenario.scenario_runner import _run_file_stem
 from autoware_carla_scenario.slurm import manifest
 from autoware_carla_scenario.slurm.worker import _remove_outputs
 from autoware_carla_scenario.t4_scene import convert
+from autoware_carla_scenario.ui import case_paths, recordings, web_viewer_paths
+from autoware_carla_scenario.traffic.base import TrafficContext
+from autoware_carla_scenario.traffic.sumo import backend as sumo_backend
 
 STEM = "CutInScenario"
 
@@ -39,13 +53,106 @@ def test_the_suffixes_are_the_writers_own() -> None:
         rerun.TRAJECTORY_SUFFIX,
         rerun.RECORDING_SUFFIX,
         rerun_lidar.SENSORS_SUFFIX,
+        rerun_metrics.METRICS_SUFFIX,
+        collector.ODD_ARCHIVE_SUFFIX,
         convert.SCENE_SUFFIX,
         convert.MAP_SUFFIX,
         environment.ENVIRONMENT_SUFFIX,
         environment.LOCK_SUFFIX,
+        gate_record.GATE_RECORD_SUFFIX,
     }
-    assert RUN_DIR_SUFFIXES == (t4_settings.DATASET_SUFFIX,)
+    assert RUN_DIR_SUFFIXES == (
+        t4_settings.DATASET_SUFFIX,
+        sumo_backend.OUTPUT_SUFFIX,
+    )
     assert not set(RUN_FILE_SUFFIXES) & set(RUN_DIR_SUFFIXES)
+
+
+def test_environment_and_t4scene_suffixes_are_run_outputs_s() -> None:
+    # Defined in the checked run_outputs, re-exported under the names they
+    # had (#1713).
+    assert environment.ENVIRONMENT_SUFFIX is run_outputs.ENVIRONMENT_SUFFIX
+    assert environment.LOCK_SUFFIX is run_outputs.LOCK_SUFFIX
+    assert convert.SCENE_SUFFIX is run_outputs.T4SCENE_SUFFIX
+    assert convert.MAP_SUFFIX is run_outputs.T4SCENE_MAP_SUFFIX
+
+
+def test_the_metrics_and_odd_archive_suffixes_are_run_outputs_s() -> None:
+    # Defined in the checked run_outputs (#1748): rerun_metrics re-exports
+    # its scratch recording's under the name it had; openodd's ODD archive
+    # suffix, which run_outputs cannot import, is the one named here, which
+    # the checked ui.case_paths reads.
+    assert rerun_metrics.METRICS_SUFFIX is run_outputs.METRICS_SUFFIX
+    assert run_outputs.ODD_ARCHIVE_SUFFIX == collector.ODD_ARCHIVE_SUFFIX
+    assert case_paths.ODD_ARCHIVE_SUFFIX is run_outputs.ODD_ARCHIVE_SUFFIX
+
+
+def test_a_left_metrics_recording_is_the_runs_own(tmp_path: Path) -> None:
+    # A run killed while its metrics were merged leaves X.metrics.rrd: it
+    # reads as stem X, not X.metrics, and a case run again removes it.
+    left = tmp_path / f"{STEM}{run_outputs.METRICS_SUFFIX}"
+    left.write_bytes(b"RRF2")
+    assert left.name == f"{STEM}.metrics.rrd"
+    assert run_output_stems(tmp_path, None) == {STEM}
+    assert _run_file_stem(tmp_path, STEM) == f"{STEM}-1"
+
+    remove_run_outputs(tmp_path, STEM)
+
+    assert not left.exists()
+    assert run_output_stems(tmp_path, None) == set()
+
+
+def test_the_log_and_recording_path_rule_is_run_outputs_s() -> None:
+    # One rule for every module that names a log's recordings (#1678); the
+    # names they had stay importable from them.
+    assert rerun.TRAJECTORY_SUFFIX is run_outputs.TRAJECTORY_SUFFIX
+    assert rerun.RECORDING_SUFFIX is run_outputs.RECORDING_SUFFIX
+    assert rerun._label is run_outputs.trajectory_stem
+    assert rerun_lidar.SENSORS_SUFFIX is run_outputs.SENSORS_SUFFIX
+    assert rerun_lidar.lidar_recording_path is run_outputs.sensors_recording_path
+    assert web_viewer_paths.recording_path is run_outputs.recording_path
+    assert web_viewer_paths._TRAJECTORY is run_outputs.TRAJECTORY_SUFFIX
+    assert recordings.recording_path is run_outputs.recording_path
+    for name in ("Case-3.trajectory.jsonl", "odd.jsonl", "a.b.trajectory.jsonl"):
+        log = Path("/x") / name
+        assert rerun.recording_path(log) == run_outputs.recording_path(log)
+        assert rerun.recording_path(str(log)) == run_outputs.recording_path(log)
+    log = Path("/x/Case-3.trajectory.jsonl")
+    assert run_outputs.trajectory_stem(log) == "Case-3"
+    assert run_outputs.recording_path(log) == Path("/x/Case-3.rrd")
+    assert run_outputs.trajectory_stem(Path("/x/odd.jsonl")) == "odd"
+    assert run_outputs.sensors_recording_path(Path("/x"), "Case-3") == Path(
+        "/x/Case-3.sensors.rrd"
+    )
+
+
+def test_sumos_outputs_are_the_runs_own(tmp_path: Path) -> None:
+    # A batch shares the output directory: the SUMO backend writes each run's
+    # FCD, clock and log under the run's stem, so its stem is not reused while
+    # they exist and a retry clears them (#1544).
+    context = TrafficContext(output_dir=tmp_path, file_stem=STEM)
+    sumo_dir = sumo_backend.run_output_dir(context)
+    assert sumo_dir == tmp_path / f"{STEM}.sumo"
+    assert sumo_dir in run_output_paths(tmp_path, STEM)
+    sumo_dir.mkdir()
+    (sumo_dir / "fcd.xml").write_text("<fcd-export/>")
+    assert _run_file_stem(tmp_path, STEM) == f"{STEM}-1"
+    other = sumo_backend.run_output_dir(
+        TrafficContext(output_dir=tmp_path, file_stem=f"{STEM}-1")
+    )
+    assert other != sumo_dir
+
+    _remove_outputs(tmp_path, STEM)
+
+    assert not sumo_dir.exists()
+    assert _run_file_stem(tmp_path, STEM) == STEM
+
+
+def test_a_context_naming_no_run_keeps_sumos_shared_directory(
+    tmp_path: Path,
+) -> None:
+    context = TrafficContext(output_dir=tmp_path)
+    assert sumo_backend.run_output_dir(context) == tmp_path / "sumo"
 
 
 def test_the_manifest_re_exports_the_list() -> None:

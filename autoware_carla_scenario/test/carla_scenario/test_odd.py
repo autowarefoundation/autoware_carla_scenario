@@ -5,6 +5,7 @@ from __future__ import annotations
 import ast
 import inspect
 import json
+import os
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -570,6 +571,23 @@ class TestProbes:
         assert hits["odd.scenery.location"] == ["urban"]
         assert hits["odd.scenery.road_type"] == ["road"]
         assert hits["odd.scenery.speed_limit"] == ["[40, 50)"]
+
+    @pytest.mark.parametrize("tag", ["nan", "inf", "0", "-5"])
+    def test_a_bad_speed_limit_tag_falls_back_to_carla(
+        self, tag: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A tag that is not a finite number above 0 reads as no tag (#1798):
+        # CARLA's 50 km/h, never the tag, and no NaN in the output.
+        monkeypatch.setattr(probes, "_lanelet_tags", lambda world: {"speed_limit": tag})
+        world = _odd_world()
+        assert probes.lanelet_speed_limit_kph(world) is None
+        assert probes.speed_limit_kph(world) == 50.0
+        collector = CoverageCollector([], odd=default_odd())
+        collector.tick(world, 0.05)
+        out = collector.to_dict("S")
+        hits = {i["name"]: [b for b, n in i["hits"].items() if n] for i in out["items"]}
+        assert hits["odd.scenery.speed_limit"] == ["[50, 60)"]
+        json.dumps(out, allow_nan=False)
 
     def test_a_server_without_weather_leaves_the_weather_unknown(self) -> None:
         collector = CoverageCollector([], odd=default_odd())
@@ -1562,6 +1580,58 @@ def test_the_innermost_frame_of_the_authors_files_is_named(
     monkeypatch.chdir(tmp_path)
     assert odd_main(["check", "bad_main_mod:build"]) == 1
     assert "bad_helper_mod.py:2: 'k'" in capsys.readouterr().out
+
+
+def test_a_syntax_error_in_an_odd_module_names_the_authors_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    # The import machinery (importlib, in the standard library) raises it: the
+    # location is the SyntaxError's own, not importlib/__init__.py (#1617).
+    package = tmp_path / "syntax_odds"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "bad.py").write_text("\n\ndef urban_odd(:\n    pass\n")
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert odd_main(["check", "syntax_odds.bad:urban_odd"]) == 1
+    out = capsys.readouterr().out
+    assert f"{os.path.join('syntax_odds', 'bad.py')}:3: " in out
+    assert "importlib" not in out
+
+
+def test_a_runtime_error_while_an_odd_module_imports_names_the_authors_line(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    package = tmp_path / "runtime_odds"
+    package.mkdir()
+    (package / "__init__.py").write_text("")
+    (package / "bad.py").write_text(
+        "TABLE = {}\nLIMIT = TABLE['k']\n\n\ndef urban_odd():\n    pass\n"
+    )
+    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.chdir(tmp_path)
+    assert odd_main(["check", "runtime_odds.bad:urban_odd"]) == 1
+    out = capsys.readouterr().out
+    assert f"{os.path.join('runtime_odds', 'bad.py')}:2: 'k'" in out
+    assert "importlib" not in out
+
+
+def test_a_missing_odd_module_is_not_located_in_importlib(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+) -> None:
+    monkeypatch.chdir(tmp_path)
+    assert odd_main(["check", "no_such_odd_module_1617:urban_odd"]) == 1
+    out = capsys.readouterr().out
+    assert "no_such_odd_module_1617" in out
+    assert "importlib" not in out
+
+
+def test_stdlib_frames_are_library_frames_but_site_packages_are_not() -> None:
+    from autoware_carla_scenario.odd.cli import _is_stdlib  # noqa: PLC0415
+
+    assert _is_stdlib(json.__file__ or "")
+    assert not _is_stdlib(pytest.__file__ or "")
+    assert not _is_stdlib(__file__)
 
 
 def test_an_error_without_a_traceback_is_reported_as_is() -> None:

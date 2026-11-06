@@ -45,7 +45,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Optional
+from typing import ClassVar, Optional
 
 import typesafe_carla.carla as carla
 
@@ -406,6 +406,11 @@ class RedLightViolationCondition(BaseCondition):
       still on its way (or no stop line read at all), each with a message of
       its own (:meth:`StopLineWatch.green_verdict`).
     """
+
+    #: It only ever reports a failure (``passed=False``): a
+    #: ``PersistentCondition`` around it never fires
+    #: (:func:`~autoware_carla_scenario.conditions.base.reports_only_failure`).
+    REPORTS_ONLY_FAILURE: ClassVar[bool] = True
 
     _watch: StopLineWatch
 

@@ -21,7 +21,7 @@ uv run scenario scenario=cut_in/left t4scene.enabled=true
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `t4scene.enabled` | bool | `false` | Write each run as `{ScenarioName}.t4scene.pb` and `{ScenarioName}.t4scene.map.pb` |
-| `t4scene.step_s` | float | `0.1` | The scenes' time step, a multiple of the 0.05 s tick (`--step`); another value is refused before anything runs |
+| `t4scene.step_s` | float | `0.1` | The scenes' time step, a positive multiple of the 0.05 s tick (`--step`); another value, a bool (`true`, which would otherwise read as 1 s) or a string is refused before anything runs |
 | `t4scene.max_distance_m` | float or null | `100.0` | The road users within this distance of the ego are a scene's objects: a positive, finite distance, another value is refused before anything runs; `null` takes all of them (`--max-distance`, `--all-objects`) |
 
 A batch takes the first case's settings, as it does `t4`'s -- a SLURM batch
@@ -113,7 +113,7 @@ machine any more) has no `map` and no `traffic_lights`.
 
 | T4Scene | From the log |
 |---|---|
-| `scene_metadata` | `scene_id`: the log's stem; `recording_id`: the world's `episode`; `tags`: `autoware_carla_scenario`, `map:{name}`, and `result:passed`/`result:failed` when the run reached a verdict |
+| `scene_metadata` | `scene_id`: the log's stem; `recording_id`: the world's `episode`; `tags`: `autoware_carla_scenario`, `map:{name}`, and `result:passed` (the result's `passed` is JSON `true`) or `result:failed` (anything else) when the run reached a verdict |
 | `timestamps_ns`, `frame_indices` | One row every `--step` seconds (default 0.1 s, a multiple of the 0.05 s tick) from the first tick to the last: nanoseconds since the first tick, and the CARLA frame of each row |
 | `current_index` | `--current-index` (default 0: the whole run is the recorded future) |
 | `ego` | The actor whose role is `ego` or `hero`: `poses` and `poses_3d` at its `base_link`, `velocities` and `longitudinal_speeds` of its `base_link` (below), `angular_velocities` (body axes, rad/s, from the ticks' `angular_velocity`), `available`, `turn_indicators` (the log's `turn_indicators` records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its `shape` |

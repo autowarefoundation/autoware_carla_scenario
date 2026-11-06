@@ -37,7 +37,9 @@ class MetricCondition(BaseCondition):
     the road users every tick, and when the run ends replays them on the
     world's map (``docs/metrics.md``, "How metrics are computed").  A frame
     is **NG** when the metric satisfies the comparison.  Each NG frame counts
-    for the time until the next frame evaluated; the run fails when those add
+    for the time until the next frame evaluated (the last, until the run's
+    end: a metric sampled less often than every tick reads its last sample
+    before then); the run fails when those add
     up to more than *max_ng_seconds* (by over ``1e-9`` s, so a clock summed
     tick by tick does not fail a run NG for exactly that long) -- with ``0``,
     at its first NG frame -- at the time they do, unless something else failed
@@ -139,13 +141,20 @@ class MetricCondition(BaseCondition):
         return value is not None and self._comparison.satisfied(value)
 
     def judge(
-        self, times: list[float], values: list[Optional[float]]
+        self,
+        times: list[float],
+        values: list[Optional[float]],
+        end: Optional[float] = None,
     ) -> Optional[ScenarioResult]:
         """Judge the run on its metric's series: *values* read at *times*
-        (simulated seconds, ascending).
+        (simulated seconds, ascending), the run ending at *end* (the time of
+        its last recorded frame, in the same time base as *times*).
 
-        Each NG frame counts until the next frame; the last, until the run's
-        end at its own time.  Returns a result (``passed=True``: the fail
+        Each NG frame counts until the next frame; the last, until *end*
+        (nothing before its own time).  A metric sampled less often than
+        every tick reads its last sample up to a period before the run's
+        end, which that sample's verdict holds for.  Without *end*, the last
+        sample counts nothing.  Returns a result (``passed=True``: the fail
         condition holds) at the time the NG time first exceeds
         :attr:`max_ng_seconds`, ``None`` when it never does.  What it found --
         the NG time, when it first went NG, the most critical value -- is in
@@ -165,7 +174,12 @@ class MetricCondition(BaseCondition):
                 first = at
             if worst is None or self._more_critical(value, worst):
                 worst = value
-            span = max(times[i + 1] - at, 0.0) if i + 1 < len(times) else 0.0
+            if i + 1 < len(times):
+                span = max(times[i + 1] - at, 0.0)
+            elif end is not None:
+                span = max(end - at, 0.0)
+            else:
+                span = 0.0
             if failed_at is None:
                 if self._max_ng_seconds == 0.0:
                     failed_at = at

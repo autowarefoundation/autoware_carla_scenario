@@ -4,6 +4,9 @@ server:
   port: 2000
   cooldown_seconds: 2.0
   cooldown_max_retries: 0
+  # Upper bound (Hz) on how fast the run ticks the world; null: as fast as the
+  # server allows. ego.entity=ros2 wants 20 (real time at the 0.05 s step).
+  max_tick_rate_hz: null
   # carla.Weather.FogDensityScale for the server and the LiDARs' fog (0.01:
   # fog a camera sees); null keeps the server's own 0.001.
   fog_density_scale: null

@@ -167,8 +167,8 @@ class TestConstruction:
         from autoware_carla_scenario.authoring.persistence import save_document
 
         path = save_document(new_document(), tmp_path / "document.yaml")
-        config = DeclarativeScenarioConfig(name="cut_in", document_path=str(path))
-        assert _scenario_from(config).document.id == "cut_in"
+        config = DeclarativeScenarioConfig(name="my_cut_in", document_path=str(path))
+        assert _scenario_from(config).document.id == "my_cut_in"
 
     def test_spawn_overrides_reach_the_entity(self) -> None:
         """This is how a swept NPC spawn arrives from the sweeper."""
@@ -611,3 +611,75 @@ class TestTheDocumentTimeoutIsTheScenariosOwn:
         config = DeclarativeScenarioConfig(name="cut_in", timeout_seconds=7.5)
         timeouts = self._timeouts(self._set_up(config))
         assert ("document_timeout", 7.5) in timeouts
+
+
+class TestTheGateRecord:
+    """A logical scenario with a gate leaves a record of each run (docs/gate.md)."""
+
+    @staticmethod
+    def _gated() -> DeclarativeScenario:
+        from autoware_carla_scenario.authoring.models import (
+            GateSpec,
+            LaneSegment,
+            RouteSearch,
+        )
+        from autoware_carla_scenario.gate.probe import GateProbe
+        from autoware_carla_scenario.route.model import RouteMatch, RouteSegmentMatch
+
+        scenario = _scenario()
+        # Set after compiling: the starter document searches lanelets, which a
+        # route search refuses; only the record is under test.
+        scenario._document.route = RouteSearch(segments=[LaneSegment()])
+        scenario._document.gate = GateSpec(min_success_rate=0.9)
+        scenario._route_match = RouteMatch(
+            (7, 8), 0.0, 5.0, (RouteSegmentMatch("lane", 0.0, 25.0, (7, 8)),), index=2
+        )
+        scenario._case_count = 5
+        scenario._gate_probe = GateProbe()
+        scenario._gate_probe.rows.append((0.0, 1.0, 0.2, 3.0))
+        return scenario
+
+    def test_a_run_of_a_gated_logical_scenario_is_recorded(self) -> None:
+        from autoware_carla_scenario.conditions import ScenarioResult
+
+        scenario = self._gated()
+        record = scenario.gate_record(
+            ScenarioResult(passed=True, message="ok", elapsed_seconds=3.0), "Left-1"
+        )
+        assert record is not None
+        assert record.gate == {
+            "min_runs": 1,
+            "min_success_rate": 0.9,
+            "coverage_items": [],
+            "consistency_stations": 20,
+            "consistency_min_runs": 2,
+        }
+        assert (record.case.index, record.case.lanelet_ids) == (2, (7, 8))
+        assert record.case.case_count == 5
+        assert record.case.segment_ends == (25.0,)
+        assert record.case.segment_lanelets == (2,)
+        # The runner names the outputs it wrote (scenario_runner._write_gate_record).
+        assert record.files == {}
+        assert record.ego == [(0.0, 1.0, 0.2, 3.0)]
+
+    def test_no_gate_no_record(self) -> None:
+        from autoware_carla_scenario.conditions import ScenarioResult
+
+        scenario = _scenario()
+        assert (
+            scenario.gate_record(
+                ScenarioResult(passed=True, message="", elapsed_seconds=0.0), "X"
+            )
+            is None
+        )
+
+    def test_every_case_has_the_documents_digest(self) -> None:
+        from autoware_carla_scenario.declarative import document_digest
+
+        document = new_document()
+        moved = document.model_copy(deep=True)
+        moved.ui.actor_order = list(reversed(moved.ui.actor_order)) + ["x"]
+        assert document_digest(document) == document_digest(moved)
+        retitled = document.model_copy(deep=True)
+        retitled.title = "Another"
+        assert document_digest(document) != document_digest(retitled)

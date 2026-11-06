@@ -229,7 +229,9 @@ def test_a_vehicle_led_out_watches_the_path_it_turns_along(
 
     walkers: List[tuple[float, float]] = []
 
-    def first_in_way(world, self_id, x, y, heading_deg, kind, distance, half_width):
+    def first_in_way(
+        world, self_id, x, y, heading_deg, kind, distance, half_width, **kwargs
+    ):
         if kind != "walker":
             return None
         c, s_ = math.cos(math.radians(heading_deg)), math.sin(math.radians(heading_deg))
@@ -267,7 +269,9 @@ def test_one_behind_the_vehicle_is_not_in_its_way(
     # Its centre 2 m behind the vehicle's: corners near, still behind it.
     behind_it = SimpleNamespace(id=9, x=-2.0, y=-1.5)
 
-    def first_in_way(world, self_id, x, y, heading_deg, kind, distance, half_width):
+    def first_in_way(
+        world, self_id, x, y, heading_deg, kind, distance, half_width, **kwargs
+    ):
         return behind_it if kind == "vehicle" else None
 
     monkeypatch.setattr(clearance, "first_box_in_way", first_in_way)
@@ -321,7 +325,7 @@ def test_a_walker_walking_off_the_way_is_not_waited_for(
     monkeypatch.setattr(
         clearance,
         "first_box_in_way",
-        lambda *args: walker if args[5] == "walker" else None,
+        lambda *args, **kwargs: walker if args[5] == "walker" else None,
     )
     vehicle = _Vehicle(speed=1.0)  # half width 1.0
     vehicle.get_world = lambda: world  # type: ignore[attr-defined]
@@ -370,7 +374,7 @@ def _ahead(monkeypatch: pytest.MonkeyPatch, world: _Clock) -> Any:
     from autoware_carla_scenario.actions import _trajectory_run
     from autoware_carla_scenario.utils import clearance
 
-    def found(*args: Any) -> Any:
+    def found(*args: Any, **kwargs: Any) -> Any:
         at = world.walker.at
         return SimpleNamespace(id=66, x=at.x, y=at.y, ahead=at.x, side=at.y)
 
@@ -446,7 +450,7 @@ def test_a_walker_on_its_controller_looks_as_far_ahead_as_it_walks(
 
     reaches: List[float] = []
 
-    def found(*args: Any) -> Any:
+    def found(*args: Any, **kwargs: Any) -> Any:
         reaches.append(float(args[6]))
         return None
 

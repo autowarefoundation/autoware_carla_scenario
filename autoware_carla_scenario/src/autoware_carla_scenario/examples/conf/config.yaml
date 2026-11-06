@@ -211,6 +211,8 @@ autoware:
     # command: the command line, with {bridge_address}, {index}, {name} and
     # {scenario_bridge} (a shell command running the bridge node; run it beside
     # the launch: "source ... && ({scenario_bridge} &) && exec ros2 launch ...").
+    # {name} keeps only A-Z a-z 0-9 . _ - (others become _); the exact name is
+    # in AUTOWARE_SCENARIO_NAME, for a script to quote: "$AUTOWARE_SCENARIO_NAME".
     command: []
     stop_timeout_s: 20.0
 

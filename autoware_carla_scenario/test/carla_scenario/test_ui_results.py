@@ -84,6 +84,53 @@ def test_the_metrics_read_off_a_trajectory_log(tmp_path: Path) -> None:
     assert metrics["distance_m"] == pytest.approx(43.0, abs=0.1)
 
 
+def test_a_truncated_last_line_keeps_the_metrics_of_every_good_tick(
+    tmp_path: Path,
+) -> None:
+    """A killed run loses at most the tick being written (#1378): a log cut
+    off mid-line reads as the log without that line, and is kept."""
+    plain = tmp_path / "Plain.trajectory.jsonl"
+    _trajectory(plain, stop_short_of=3.0)
+    cut = tmp_path / "Cut.trajectory.jsonl"
+    cut.write_text(
+        plain.read_text(encoding="utf-8")
+        + '{"type": "tick", "frame": 201, "t": 10.05, "actors": [[1, 25.0',
+        encoding="utf-8",
+    )
+    metrics = results.case_metrics(cut)
+    assert metrics
+    assert metrics == results.case_metrics(plain)
+    assert str(cut) in results._metrics_cache
+
+
+def test_a_bad_line_in_the_middle_is_skipped(tmp_path: Path) -> None:
+    """A line that is not JSON, and a tick that cannot be used (an actor's
+    state too short, a time missing), are skipped; the ticks around them
+    count."""
+    plain = tmp_path / "Plain.trajectory.jsonl"
+    _trajectory(plain, stop_short_of=3.0)
+    lines = plain.read_text(encoding="utf-8").splitlines()
+    short = json.loads(lines[50])
+    short["actors"][1] = [2, 0.0]
+    untimed = json.loads(lines[60])
+    del untimed["t"]
+    lines[40:40] = ['{"type": "tick", garbage', json.dumps(short), json.dumps(untimed)]
+    bad = tmp_path / "Bad.trajectory.jsonl"
+    bad.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    assert results.case_metrics(bad) == results.case_metrics(plain)
+
+
+def test_an_unreadable_log_has_no_metrics(tmp_path: Path) -> None:
+    """Only a log that cannot be read at all gives no metrics, and that is
+    not kept."""
+    missing = tmp_path / "Missing.trajectory.jsonl"
+    assert results.case_metrics(missing) == {}
+    directory = tmp_path / "Dir.trajectory.jsonl"
+    directory.mkdir()
+    assert results.case_metrics(directory) == {}
+    assert str(directory) not in results._metrics_cache
+
+
 def test_a_road_user_parked_under_the_map_is_no_gap(tmp_path: Path) -> None:
     """A hidden road user is parked 500 m under the map, here right under the
     ego's path (#844): it is not 0 m away."""
@@ -191,6 +238,89 @@ def test_a_log_without_center_centres_boxes_at_the_origin(tmp_path: Path) -> Non
         walker=(3.0, 0.0),
     )
     assert results.case_metrics(log)["min_gap_m"] == pytest.approx(0.3)
+
+
+def _levels_log(path: Path, *, other_z: float, with_z: bool = True) -> Path:
+    """A one-tick log: an ego 4.8 m by 2 m by 1.5 m standing at the origin,
+    and a car of the same size right above or below it, its origin at
+    *other_z* (both boxes 0.75 m above their origins).  No z in ``extent``
+    and ``center`` when not *with_z*, as older logs."""
+    extent = [2.4, 1.0, 0.75] if with_z else [2.4, 1.0]
+    center = [0.0, 0.0, 0.75] if with_z else [0.0, 0.0]
+    lines = [
+        json.dumps({"type": "world", "schema_version": 2}),
+        json.dumps(
+            {
+                "type": "actor",
+                "id": 1,
+                "role": "Ego",
+                "extent": extent,
+                "center": center,
+            }
+        ),
+        json.dumps(
+            {
+                "type": "actor",
+                "id": 2,
+                "role": "npc1",
+                "extent": extent,
+                "center": center,
+            }
+        ),
+        json.dumps(
+            {
+                "type": "tick",
+                "frame": 0,
+                "t": 0.0,
+                "actors": [
+                    [1, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                    [2, 0.0, 0.0, other_z, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0],
+                ],
+                "control": {"1": [0.0, 0.0, 0.0, 1]},
+            }
+        ),
+    ]
+    path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return path
+
+
+def test_a_road_user_overhead_is_as_far_as_the_clearance(tmp_path: Path) -> None:
+    """A car on a bridge 6 m over the ego overlaps it on the ground (#1598):
+    the gap is the 4.5 m between the ego's roof and its wheels, not 0."""
+    log = _levels_log(tmp_path / "Case.trajectory.jsonl", other_z=6.0)
+    assert results.case_metrics(log)["min_gap_m"] == pytest.approx(4.5)
+
+
+def test_a_road_user_beneath_is_as_far_as_the_clearance(tmp_path: Path) -> None:
+    """In an underpass 7 m under the ego: 5.5 m between its roof and the
+    ego's wheels."""
+    log = _levels_log(tmp_path / "Case.trajectory.jsonl", other_z=-7.0)
+    assert results.case_metrics(log)["min_gap_m"] == pytest.approx(5.5)
+
+
+def test_a_road_user_on_the_same_level_is_measured_on_the_ground(
+    tmp_path: Path,
+) -> None:
+    """Half a metre higher, on a slope or a kerb, is the ego's level of road
+    (``utils.clearance._SAME_LEVEL_MARGIN_M``): the boxes meet."""
+    log = _levels_log(tmp_path / "Case.trajectory.jsonl", other_z=0.5)
+    assert results.case_metrics(log)["min_gap_m"] == pytest.approx(0.0)
+    beside = _boxed_log(
+        tmp_path / "Beside.trajectory.jsonl",
+        ego_center=[0.0, 0.0, 0.75],
+        ego_yaw=0.0,
+        walker=(3.0, 0.0),
+    )
+    assert results.case_metrics(beside)["min_gap_m"] == pytest.approx(0.3)
+
+
+def test_a_log_without_z_measures_gaps_on_the_ground(tmp_path: Path) -> None:
+    """An older log records no z in ``extent`` or ``center``: its gaps are
+    planar, as before, and it still reads."""
+    log = _levels_log(tmp_path / "Case.trajectory.jsonl", other_z=6.0, with_z=False)
+    metrics = results.case_metrics(log)
+    assert metrics["min_gap_m"] == pytest.approx(0.0)
+    assert metrics["max_speed_kmh"] == pytest.approx(0.0)
 
 
 def test_records_other_than_ticks_and_actors_are_skipped(tmp_path: Path) -> None:
@@ -370,6 +500,44 @@ def test_a_change_is_between_the_first_and_last_sessions_that_ran_it(
     assert by_case == {"0": "fixed", "1": "new"}
 
 
+def _drawn(index: int, odd_case: str, passed: bool) -> results.CaseResult:
+    """A case drawn at the same ODD values as every other, named by its
+    position alone (``++odd_case``)."""
+    return results.CaseResult(
+        index=index,
+        label=f"pkg/cut_in#{index + 1}",
+        passed=passed,
+        errored=False,
+        elapsed_seconds=5.0,
+        message="",
+        overrides=[f"++odd_case={odd_case}"],
+        files=None,
+        coverage={
+            "case": {"buckets": {GAP: "[0, 10)"}, "values": {GAP: 5.0, SPEED: -1.0}}
+        },
+    )
+
+
+def test_cases_differing_only_in_odd_case_are_all_compared() -> None:
+    """#1825: two cases whose values are identical and that differ only in
+    their position share a key, and both are compared, not the last alone."""
+    first = [_drawn(0, "a", False), _drawn(1, "b", True)]
+    second = [_drawn(0, "c", True), _drawn(1, "d", True)]
+    assert first[0].key == first[1].key == second[0].key
+    comparison = results.compare(
+        [("batch/2026-10-18/10-00-00", first), ("batch/2026-10-18/11-00-00", second)],
+        x=GAP,
+    )
+    assert len(comparison.cases) == 1
+    case = comparison.cases[0]
+    assert [[r.index for r in runs] for runs in case.runs] == [[0, 1], [0, 1]]
+    assert [case.tally(i) for i in range(2)] == [(1, 2), (2, 2)]
+    # Passed and failed in the baseline: flaky, not dropped as a pass.
+    assert case.change() == "flaky"
+    assert comparison.totals == [(1, 2), (2, 2)]
+    assert comparison.cells[("[0, 10)", "")].tallies == comparison.totals
+
+
 # ── The pages ──────────────────────────────────────────────────────────────
 
 
@@ -378,7 +546,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
     monkeypatch.setenv("VIEWER_CACHE_DIR", str(tmp_path / "cache"))
     scanner.clear_cache()
-    return TestClient(app_module.app)
+    return TestClient(app_module.app, base_url="http://127.0.0.1")
 
 
 def test_the_odd_page_is_openodd_s_matrix_with_the_cases(
@@ -440,9 +608,47 @@ def test_the_compare_page(client: TestClient, tmp_path: Path) -> None:
     assert f'href="/session/{a}/0#recording"' in text
     # A side-by-side view of the regressed case's runs: #0 in a, #3 in b.
     assert f"/compare/runs?run={a}/0&amp;run={b}/3" in text
+    # Each session's run of each case: four in each.
+    rows = text.split('id="case-table"', 1)[1]
+    assert rows.count('data-runs="1"') == 8
     # Both sessions are offered, and picked.
     assert text.count('name="s"') == 2
     assert text.count("checked") >= 2
+
+
+def test_the_compare_page_takes_minus_9_as_the_baseline_of_minus_10(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """#1845: sessions started in the same second are compared by their
+    number: ``-9`` is the baseline of ``-10``, so a case that passes in
+    ``-9`` and fails in ``-10`` is a regression, not a fix."""
+    nine = _session(tmp_path, "10-00-00-9", [True, True, True, True])
+    ten = _session(tmp_path, "10-00-00-10", [False, True, True, True])
+    page = client.get("/compare", params=[("s", ten), ("s", nine)])
+    assert page.status_code == 200, page.text
+    text = page.text
+    assert "1 regression(s)" in text and "0 fixed" in text
+    summary = text.split('id="compare-summary"', 1)[1]
+    assert summary.index(f"{nine} (baseline)") < summary.index(ten)
+
+
+def test_the_compare_page_shows_every_run_of_a_repeated_case(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """#1825: a session that ran a case twice (#0 and #1, the same ODD
+    values) lists and links both runs, and counts both in its cell."""
+    a = _session(tmp_path, "10-00-00", [False, True, False, False], order=[0, 1])
+    b = _session(tmp_path, "11-00-00", [True, True, False, False], order=[0, 0, 1])
+    page = client.get("/compare", params=[("s", a), ("s", b)])
+    assert page.status_code == 200, page.text
+    rows = page.text.split('id="case-table"', 1)[1]
+    assert 'data-runs="2" data-passed="2"' in rows
+    assert "2/2 passed" in rows
+    assert f'href="/session/{b}/0#recording"' in rows
+    assert f'href="/session/{b}/1#recording"' in rows
+    # Side by side: the baseline's run, and the latest session's last.
+    assert f"/compare/runs?run={a}/0&amp;run={b}/1" in rows
+    assert "3/3 passed" in page.text.split('id="compare-summary"', 1)[1]
 
 
 def test_the_compare_page_with_fewer_than_two_sessions_offers_them(

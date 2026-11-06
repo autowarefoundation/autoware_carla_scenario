@@ -12,24 +12,46 @@ host (two SLURM jobs) each keep their own.
 from __future__ import annotations
 
 import logging
+import math
 import os
 import socket
 import subprocess
 import time
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import IO, ClassVar, Optional
+from typing import IO, Any, ClassVar, Mapping, Optional
 
+from ..seed import check_whole_number
+from ..value_text import shown
 from . import BackendError, Resources
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["DockerBackend", "DockerSettings"]
+__all__ = [
+    "PULL_POLICIES",
+    "DockerBackend",
+    "DockerSettings",
+    "positive_seconds",
+    "read_docker_settings",
+    "setting_key",
+    "string_list",
+    "whole_mib",
+]
 
 #: The label every backend container carries: ``<host>:<pid>`` of its starter.
 OWNER_LABEL = "autoware_carla_scenario.backend.owner"
 #: The label naming the backend.
 NAME_LABEL = "autoware_carla_scenario.backend.name"
+
+#: How long a docker command that only reads or removes (``image inspect``,
+#: a leftover's ``rm``) may take: a daemon that stops answering must not hang
+#: the run (#1785).
+_CALL_TIMEOUT_S = 60.0
+#: How long reading the end of a container's log for an error may take.
+_TAIL_TIMEOUT_S = 10.0
+#: The least time a call made while waiting for the container to answer is
+#: given, however close the deadline is.
+_MIN_CALL_TIMEOUT_S = 1.0
 
 
 @dataclass(frozen=True)
@@ -68,6 +90,143 @@ class DockerSettings:
     docker: str = "docker"
 
 
+#: What ``pull`` takes: pull when the host lacks the image, every start, or
+#: never.
+PULL_POLICIES = ("missing", "always", "never")
+
+
+def setting_key(backend: str, key: str) -> str:
+    """The name of *backend*'s setting *key* in a run's config
+    (``backends.<backend>.<key>``), as an error names it."""
+    return f"backends.{backend}.{key}"
+
+
+def positive_seconds(key: str, value: Any) -> float:
+    """*value*, a timeout in seconds, checked: a number, finite and above 0.
+
+    A timeout of 0 or less puts a deadline in the past (a container started,
+    then torn down at once), NaN never ends a comparison, and infinity waits
+    forever.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    if isinstance(value, bool) or isinstance(value, str):
+        raise ValueError(f"{key} must be a number of seconds, got {value!r}")
+    try:
+        seconds = float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a number of seconds, got {value!r}")
+    except OverflowError:
+        # An int too big for a float (10**400): not finite (#1652).
+        raise ValueError(
+            f"{key} must be finite and above 0, got {shown(value)}"
+        ) from None
+    if not math.isfinite(seconds) or seconds <= 0.0:
+        raise ValueError(f"{key} must be finite and above 0, got {value!r}")
+    return seconds
+
+
+def whole_mib(key: str, value: Any) -> int:
+    """*value*, an amount of memory in MiB, checked: a whole number
+    (:func:`~autoware_carla_scenario.seed.check_whole_number`), not negative.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    number = check_whole_number(key, value)
+    if number < 0:
+        raise ValueError(f"{key} must not be negative, got {value!r}")
+    return number
+
+
+def string_list(key: str, value: Any) -> tuple[str, ...]:
+    """*value*, a list setting (``docker_args``), as a tuple of strings.
+
+    ``None`` is an empty list.  A string is refused rather than split into
+    its characters (``'--shm-size=8g'``), and so is a mapping, or an item
+    that is itself a list or a mapping.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    if value is None:
+        return ()
+    if isinstance(value, (str, bytes)) or isinstance(value, Mapping):
+        raise ValueError(f"{key} must be a list, got {value!r}")
+    try:
+        items = list(value)
+    except TypeError:
+        raise ValueError(f"{key} must be a list, got {value!r}")
+    for item in items:
+        if isinstance(item, Mapping) or isinstance(item, (list, tuple)):
+            raise ValueError(f"{key} must be a list of strings, got {value!r}")
+    return tuple(str(item) for item in items)
+
+
+def read_docker_settings(
+    backend: str,
+    settings: Mapping[str, Any],
+    *,
+    image: str,
+    container_port: int,
+    env: Optional[Mapping[str, str]] = None,
+    pass_env: tuple[str, ...] = (),
+    mounts: tuple[str, ...] = (),
+    startup_timeout_s: float = 600.0,
+    gpu_memory_mb: int = 0,
+    memory_mb: int = 0,
+) -> DockerSettings:
+    """The :class:`DockerSettings` of a backend's block of the run's config
+    (``backends.<backend>``), every key optional, checked.
+
+    It reads the keys every container backend shares: ``image``, ``gpus``,
+    ``pull`` (one of :data:`PULL_POLICIES`), ``docker_args`` (a list),
+    ``startup_timeout_s`` (finite, above 0), ``gpu_memory_mb`` and
+    ``memory_mb`` (whole numbers, not negative).  The keyword arguments are
+    its defaults, and what the backend sets itself (its port, environment and
+    mounts); a backend checks its own keys.  Checking reads nothing of the
+    host and starts nothing, so a run can refuse a setting before any image
+    is pulled or container started.
+
+    Raises:
+        ValueError: naming the key (``backends.<backend>.<key>``) of the
+            first value refused.
+    """
+    pull = settings.get("pull", "missing")
+    if not isinstance(pull, str) or pull not in PULL_POLICIES:
+        raise ValueError(
+            f"{setting_key(backend, 'pull')} must be one of "
+            f"{', '.join(PULL_POLICIES)}, got {pull!r}"
+        )
+    return DockerSettings(
+        image=str(settings.get("image", image)),
+        container_port=container_port,
+        gpus=str(settings.get("gpus", "auto")),
+        env=dict(env or {}),
+        pass_env=pass_env,
+        mounts=mounts,
+        docker_args=string_list(
+            setting_key(backend, "docker_args"), settings.get("docker_args")
+        ),
+        pull=pull,
+        startup_timeout_s=positive_seconds(
+            setting_key(backend, "startup_timeout_s"),
+            settings.get("startup_timeout_s", startup_timeout_s),
+        ),
+        resources=Resources(
+            gpu_memory_mb=whole_mib(
+                setting_key(backend, "gpu_memory_mb"),
+                settings.get("gpu_memory_mb", gpu_memory_mb),
+            ),
+            memory_mb=whole_mib(
+                setting_key(backend, "memory_mb"),
+                settings.get("memory_mb", memory_mb),
+            ),
+        ),
+    )
+
+
 class DockerBackend:
     """A backend in a container (:class:`~autoware_carla_scenario.prepare.Backend`).
 
@@ -101,7 +260,11 @@ class DockerBackend:
         if settings.gpus == "none":
             return replace(settings.resources, gpu_memory_mb=0)
         device = settings.gpus.removeprefix("device=")
-        if settings.gpus.startswith("device=") and device.isdigit():
+        if (
+            settings.gpus.startswith("device=")
+            and device.isascii()
+            and device.isdigit()
+        ):
             return replace(settings.resources, gpu=int(device))
         return settings.resources
 
@@ -178,6 +341,12 @@ class DockerBackend:
                 follower.wait(timeout=10)
             except subprocess.TimeoutExpired:
                 follower.kill()
+                try:
+                    follower.wait(timeout=10)
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "The log follower of backend '%s' did not exit", self.name
+                    )
         log = self._log
         self._log = None
         if log is not None:
@@ -222,27 +391,45 @@ class DockerBackend:
         for line in listing.splitlines():
             container, _, owner = line.partition(" ")
             owner_host, _, pid = owner.rpartition(":")
-            if owner_host != host or not pid.isdigit() or _alive(int(pid)):
+            if (
+                owner_host != host
+                or not (pid.isascii() and pid.isdigit())
+                or _alive(int(pid))
+            ):
                 continue
             logger.warning(
                 "Removing backend container %s a stopped run (%s) left",
                 container,
                 owner,
             )
-            subprocess.run(
-                [docker, "rm", "--force", container], capture_output=True, check=False
-            )
+            try:
+                _docker(
+                    [docker, "rm", "--force", container],
+                    f"remove container {container}",
+                    _CALL_TIMEOUT_S,
+                )
+            except BackendError as error:
+                # Another run's leftover: one that cannot be removed now is
+                # removed by the next start, and does not stop this one.
+                logger.warning("%s", error)
 
     def _ensure_image(self) -> None:
         settings = self._settings
         if settings.pull == "never":
             return
         if settings.pull == "missing":
-            present = subprocess.run(
-                [settings.docker, "image", "inspect", settings.image],
-                capture_output=True,
-                check=False,
-            )
+            argv = [settings.docker, "image", "inspect", settings.image]
+            try:
+                present = _run(argv, _CALL_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                raise BackendError(
+                    f"could not look for {settings.image}: '{' '.join(argv[:3])}' "
+                    f"timed out"
+                ) from None
+            except OSError as error:
+                raise BackendError(
+                    f"could not look for {settings.image}: {error}"
+                ) from None
             if present.returncode == 0:
                 return
         logger.info("Pulling %s for backend '%s'", settings.image, self.name)
@@ -253,26 +440,42 @@ class DockerBackend:
     def _follow(self, log_dir: Optional[Path]) -> None:
         if log_dir is None or self._container is None:
             return
-        log_dir.mkdir(parents=True, exist_ok=True)
-        self._log = open(log_dir / f"backend_{self.name}.log", "ab")
-        self._follower = subprocess.Popen(
-            [self._settings.docker, "logs", "--follow", self._container],
-            stdout=self._log,
-            stderr=subprocess.STDOUT,
-        )
+        # An OSError (no docker binary, a fork that fails with EMFILE or
+        # ENOMEM, a log dir that cannot be written) is the backend's error,
+        # not a raw traceback (#1790); the caller's close() removes the
+        # container and closes the log.
+        try:
+            log_dir.mkdir(parents=True, exist_ok=True)
+            self._log = (log_dir / f"backend_{self.name}.log").open("ab")
+            self._follower = subprocess.Popen(
+                [self._settings.docker, "logs", "--follow", self._container],
+                stdout=self._log,
+                stderr=subprocess.STDOUT,
+            )
+        except OSError as error:
+            raise BackendError(
+                f"could not follow the log of backend '{self.name}': {error}"
+            ) from None
 
     def _wait_ready(self) -> None:
         settings = self._settings
         deadline = time.monotonic() + settings.startup_timeout_s
-        while time.monotonic() < deadline:
-            if not self._running():
+        # Every call is capped by the time left (#1785): a docker that stops
+        # answering ends in the deadline, not in a run that hangs.
+        left = deadline - time.monotonic()
+        while left > 0.0:
+            if self._exited(max(left, _MIN_CALL_TIMEOUT_S)):
                 raise BackendError(
                     f"backend '{self.name}' ({settings.image}) exited while starting:\n"
                     f"{self._tail()}"
                 )
-            if self.ready(timeout_s=5.0):
+            left = deadline - time.monotonic()
+            if self.ready(timeout_s=min(5.0, max(left, _MIN_CALL_TIMEOUT_S))):
                 return
-            time.sleep(2.0)
+            left = deadline - time.monotonic()
+            if left > 0.0:
+                time.sleep(min(2.0, left))
+            left = deadline - time.monotonic()
         try:
             tail = self._tail()
         finally:
@@ -283,37 +486,78 @@ class DockerBackend:
             f"{settings.startup_timeout_s:.0f} s:\n{tail}"
         )
 
-    def _running(self) -> bool:
+    def _exited(self, timeout_s: float) -> bool:
+        """Whether docker says the container is not running.
+
+        A docker that does not answer within *timeout_s* says nothing: the
+        container is taken as not running *yet*, and the caller's deadline
+        decides.
+        """
         if self._container is None:
+            return True
+        try:
+            state = _run(
+                [
+                    self._settings.docker,
+                    "inspect",
+                    "--format",
+                    "{{.State.Running}}",
+                    self._container,
+                ],
+                timeout_s,
+            )
+        except subprocess.TimeoutExpired:
+            logger.warning(
+                "docker did not say within %.0f s whether backend '%s' runs",
+                timeout_s,
+                self.name,
+            )
             return False
-        state = subprocess.run(
-            [
-                self._settings.docker,
-                "inspect",
-                "--format",
-                "{{.State.Running}}",
-                self._container,
-            ],
-            capture_output=True,
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
-        return state.returncode == 0 and state.stdout.strip() == "true"
+        except OSError as error:
+            # The caller's close() removes the container (#1790).
+            raise BackendError(
+                f"could not ask docker whether backend '{self.name}' runs: {error}"
+            ) from None
+        return not (state.returncode == 0 and state.stdout.strip() == "true")
 
     def _tail(self) -> str:
+        """The end of the container's log, or a note that docker did not give
+        it within :data:`_TAIL_TIMEOUT_S` or could not be run."""
         if self._container is None:
             return ""
-        logs = subprocess.run(
-            [self._settings.docker, "logs", "--tail", "40", self._container],
-            capture_output=True,
-            # The backend's own output, any bytes: replace what is not UTF-8
-            # rather than fail to report the error it explains (#1346).
-            encoding="utf-8",
-            errors="replace",
-            check=False,
-        )
+        timeout_s = _TAIL_TIMEOUT_S
+        try:
+            logs = _run(
+                [self._settings.docker, "logs", "--tail", "40", self._container],
+                timeout_s,
+            )
+        except subprocess.TimeoutExpired:
+            return f"(no log: docker did not give it within {timeout_s:.0f} s)"
+        except OSError as error:
+            return f"(no log: could not run docker: {error})"
         return (logs.stdout + logs.stderr).strip()
+
+
+def _run(argv: list[str], timeout: float) -> subprocess.CompletedProcess[str]:
+    """A docker command run for its answer, whatever its exit status, within
+    *timeout* seconds.
+
+    Its output, the backend's own (a log) among it, is any bytes: what is not
+    UTF-8 is replaced rather than fail to report the error it explains
+    (#1346).
+
+    Raises:
+        subprocess.TimeoutExpired: when it does not finish in time.
+        OSError: when it cannot be run.
+    """
+    return subprocess.run(
+        argv,
+        capture_output=True,
+        encoding="utf-8",
+        errors="replace",
+        timeout=timeout,
+        check=False,
+    )
 
 
 def _docker(argv: list[str], what: str, timeout: Optional[float] = 120.0) -> str:
@@ -333,6 +577,8 @@ def _docker(argv: list[str], what: str, timeout: Optional[float] = 120.0) -> str
         raise BackendError(
             f"could not {what}: '{' '.join(argv[:3])}' timed out"
         ) from None
+    except OSError as error:
+        raise BackendError(f"could not {what}: {error}") from None
     if done.returncode != 0:
         raise BackendError(
             f"could not {what}: {done.stderr.strip() or done.stdout.strip()}"

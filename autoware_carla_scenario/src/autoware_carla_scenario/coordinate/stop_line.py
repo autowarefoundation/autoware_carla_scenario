@@ -57,8 +57,13 @@ def get_stop_line_linestrings_with_following(
     Requires :class:`MapManager` to be initialised.
 
     Raises:
-        ValueError: If the lanelet ID is not found in the map.
+        ValueError: If *depth* is negative, or the lanelet ID is not found in
+            the map.
     """
+    # Refused here too: a lanelet with a stop line of its own never reaches
+    # the search below, and a negative depth is wrong whatever the lanelet.
+    if depth < 0:
+        raise ValueError(f"Stop line search depth must not be negative, got {depth}")
     mm = MapManager.get_instance()
     lanelet_map = mm.lanelet_map
     # The lanelet's own stop lines first, as the search itself does, so that
@@ -133,14 +138,15 @@ def get_stop_line_poses_with_following(
 
     Args:
         lanelet_id: The starting Lanelet2 lanelet ID.
-        depth: How many steps of successors to search.
+        depth: How many steps of successors to search, ``0`` or more.
 
     Returns:
         List of :class:`Lanelet2Pose` for each unique stop line found.
         Empty list if no stop lines are found.
 
     Raises:
-        ValueError: If the lanelet ID is not found in the map.
+        ValueError: If *depth* is negative, or the lanelet ID is not found in
+            the map.
     """
     results = get_stop_line_linestrings_with_following(lanelet_id, depth)
     if not results:

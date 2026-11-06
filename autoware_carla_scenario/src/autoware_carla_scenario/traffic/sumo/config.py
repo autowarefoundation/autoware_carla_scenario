@@ -12,8 +12,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from ...config_flags import check_flag
 from ...constants import DEFAULT_TM_PORT
-from ..fidelity import MesoscopicConfig
+from ..fidelity import MesoscopicConfig, _number
 from ..parameters import BICYCLE_PARAMETER_BACKENDS
 
 __all__ = [
@@ -48,36 +49,66 @@ def _check_count(key: str, value: Optional[int]) -> None:
         raise ValueError(f"{key} must be an integer >= 0 or null (got {value!r})")
 
 
-def _check_positive(key: str, value: Optional[float]) -> None:
-    """Refuse a value that is not finite and > 0 (``None`` passes)."""
-    if value is not None and not (math.isfinite(value) and value > 0.0):
-        raise ValueError(f"{key} must be positive and finite or null (got {value!r})")
+def _check_positive(key: str, value: float) -> float:
+    """*value* as a float, refused unless finite and > 0."""
+    number = _number(key, value, "positive and finite")
+    if not (math.isfinite(number) and number > 0.0):
+        raise ValueError(f"{key} must be positive and finite (got {number!r})")
+    return number
 
 
-def _check_positive_or_inf(key: str, value: Optional[float]) -> None:
-    """Refuse a value that is not > 0 (``None`` and ``inf`` pass).
+def _check_positive_or_null(key: str, value: Optional[float]) -> Optional[float]:
+    """*value* as a float, refused unless finite and > 0 (``None`` passes)."""
+    if value is None:
+        return None
+    requirement = "positive and finite or null"
+    number = _number(key, value, requirement)
+    if not (math.isfinite(number) and number > 0.0):
+        raise ValueError(f"{key} must be {requirement} (got {number!r})")
+    return number
+
+
+def _check_positive_or_inf(key: str, value: float) -> float:
+    """*value* as a float, refused unless > 0 (``inf`` passes).
 
     For a distance where ``inf`` has a meaning -- no bound -- that SUMO's
     tools and the backend read as such: NaN and 0 or below are refused.
     """
-    if value is not None and not value > 0.0:
-        raise ValueError(f"{key} must be positive or null (got {value!r})")
+    number = _number(key, value, "positive")
+    if not number > 0.0:
+        raise ValueError(f"{key} must be positive (got {number!r})")
+    return number
 
 
-def _check_not_negative(key: str, value: float) -> None:
-    """Refuse a value that is not finite and >= 0."""
-    if not (math.isfinite(value) and value >= 0.0):
-        raise ValueError(f"{key} must be finite and not negative (got {value!r})")
+def _check_positive_or_inf_or_null(key: str, value: Optional[float]) -> Optional[float]:
+    """As :func:`_check_positive_or_inf`, where ``None`` passes too."""
+    if value is None:
+        return None
+    number = _number(key, value, "positive or null")
+    if not number > 0.0:
+        raise ValueError(f"{key} must be positive or null (got {number!r})")
+    return number
+
+
+def _check_not_negative(key: str, value: float) -> float:
+    """*value* as a float, refused unless finite and >= 0."""
+    number = _number(key, value, "finite and not negative")
+    if not (math.isfinite(number) and number >= 0.0):
+        raise ValueError(f"{key} must be finite and not negative (got {number!r})")
+    return number
 
 
 def _check_demand(
     group: str, rate: str, per_hour: float, period_s: Optional[float], end_s: float
-) -> None:
-    """Refuse a generated demand's rate, period or end that is not a number
-    SUMO's ``randomTrips.py`` can use: a NaN rate would make a NaN period."""
-    _check_not_negative(f"{group}.{rate}", per_hour)
-    _check_positive(f"{group}.period_s", period_s)
-    _check_positive(f"{group}.end_s", end_s)
+) -> tuple[float, Optional[float], float]:
+    """A generated demand's rate, period and end as floats, refused unless
+    numbers SUMO's ``randomTrips.py`` can use: a NaN rate would make a NaN
+    period."""
+    return (
+        _check_not_negative(f"{group}.{rate}", per_hour),
+        _check_positive_or_null(f"{group}.period_s", period_s),
+        _check_positive(f"{group}.end_s", end_s),
+    )
 
 
 @dataclass
@@ -108,14 +139,22 @@ class AmbientTrafficConfig:
     use_safe_weights: bool = True
 
     def __post_init__(self) -> None:
-        _check_demand(
+        # A switch read strictly: "false" (a quoted override, an
+        # ${oc.env:...}) is false, a typo is refused (#1757).
+        self.enabled = check_flag("ambient.enabled", self.enabled)
+        self.use_safe_weights = check_flag(
+            "ambient.use_safe_weights", self.use_safe_weights
+        )
+        self.vehicles_per_hour, self.period_s, self.end_s = _check_demand(
             "ambient",
             "vehicles_per_hour",
             self.vehicles_per_hour,
             self.period_s,
             self.end_s,
         )
-        _check_not_negative("ambient.fringe_factor", self.fringe_factor)
+        self.fringe_factor = _check_not_negative(
+            "ambient.fringe_factor", self.fringe_factor
+        )
 
     def period(self) -> float:
         """Seconds between two generated trips."""
@@ -167,15 +206,18 @@ class PedestrianConfig:
     blueprint: str = "walker.pedestrian.0015"
 
     def __post_init__(self) -> None:
-        _check_demand(
+        self.enabled = check_flag("pedestrians.enabled", self.enabled)
+        self.persons_per_hour, self.period_s, self.end_s = _check_demand(
             "pedestrians",
             "persons_per_hour",
             self.persons_per_hour,
             self.period_s,
             self.end_s,
         )
-        _check_positive_or_inf("pedestrians.max_distance_m", self.max_distance_m)
-        _check_positive("pedestrians.radius_m", self.radius_m)
+        self.max_distance_m = _check_positive_or_inf(
+            "pedestrians.max_distance_m", self.max_distance_m
+        )
+        self.radius_m = _check_positive_or_null("pedestrians.radius_m", self.radius_m)
         _check_count("pedestrians.max_persons", self.max_persons)
 
     def period(self) -> float:
@@ -217,7 +259,8 @@ class BicycleConfig:
         min_distance_m: The shortest ride generated, metres (between where it
             starts and ends).
         max_distance_m: The longest ride generated, metres; ``None`` for no
-            limit.
+            limit.  Above ``min_distance_m``: ``randomTrips.py`` keeps a ride
+            at least ``min_distance_m`` and under ``max_distance_m`` long.
         radius_m: Mirror only the bicycles this close to the ego into CARLA;
             ``None``: ``spawn_radius_m``, the vehicles' radius.
         max_bicycles: Most bicycles mirrored into CARLA at once, the nearest
@@ -244,21 +287,35 @@ class BicycleConfig:
     vehicle_control: str = "teleport"
 
     def __post_init__(self) -> None:
+        self.enabled = check_flag("bicycles.enabled", self.enabled)
         if self.vehicle_control not in _VEHICLE_CONTROLS:
             raise ValueError(
                 "bicycles.vehicle_control must be one of "
                 f"{', '.join(_VEHICLE_CONTROLS)} (got {self.vehicle_control!r})"
             )
-        _check_demand(
+        self.bicycles_per_hour, self.period_s, self.end_s = _check_demand(
             "bicycles",
             "bicycles_per_hour",
             self.bicycles_per_hour,
             self.period_s,
             self.end_s,
         )
-        _check_not_negative("bicycles.min_distance_m", self.min_distance_m)
-        _check_positive_or_inf("bicycles.max_distance_m", self.max_distance_m)
-        _check_positive("bicycles.radius_m", self.radius_m)
+        self.min_distance_m = _check_not_negative(
+            "bicycles.min_distance_m", self.min_distance_m
+        )
+        self.max_distance_m = _check_positive_or_inf_or_null(
+            "bicycles.max_distance_m", self.max_distance_m
+        )
+        # randomTrips.py keeps a ride min <= distance < max: an equal or
+        # inverted pair keeps none, and generates no ride without a word.
+        max_distance = self.max_distance_m
+        if max_distance is not None and not self.min_distance_m < max_distance:
+            raise ValueError(
+                "bicycles.min_distance_m must be less than "
+                f"bicycles.max_distance_m (got {self.min_distance_m!r} and "
+                f"{max_distance!r})"
+            )
+        self.radius_m = _check_positive_or_null("bicycles.radius_m", self.radius_m)
         _check_count("bicycles.max_bicycles", self.max_bicycles)
 
     def period(self) -> float:
@@ -270,7 +327,7 @@ class BicycleConfig:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "BicycleConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
-        from ...utils.config import checked_options  # noqa: PLC0415
+        from ...utils.config import checked_options, checked_str_list  # noqa: PLC0415
 
         moved = sorted(set(mapping) & set(BICYCLE_PARAMETER_BACKENDS))
         if moved:
@@ -281,7 +338,10 @@ class BicycleConfig:
             )
         checked = checked_options(cls, mapping)
         if "blueprints" in checked:
-            checked["blueprints"] = [str(b) for b in checked["blueprints"] or []]
+            # A string is refused, not split into characters (#1534).
+            checked["blueprints"] = checked_str_list(
+                "traffic.options.bicycles.blueprints", checked["blueprints"]
+            )
         return cls(**checked)
 
 
@@ -425,10 +485,14 @@ class SumoBackendConfig:
             they came from; ``~/.cache/autoware_carla_scenario/sumo`` by
             default.
         fcd_output: Record every SUMO vehicle's state each step (SUMO's
-            floating car data) to ``<output_dir>/sumo/fcd.xml``, for replaying
-            or plotting a run's traffic afterwards, and the SUMO time each CARLA
-            tick maps to in ``<output_dir>/sumo/clock.csv``.
-        sumo_args: Extra command-line arguments for SUMO.
+            floating car data) to ``<output_dir>/{stem}.sumo/fcd.xml``, for
+            replaying or plotting a run's traffic afterwards, and the SUMO time
+            each CARLA tick maps to in ``<output_dir>/{stem}.sumo/clock.csv``;
+            ``{stem}`` is the run's file stem, as in ``{stem}_result.json``.
+        sumo_args: Extra command-line arguments for SUMO.  Additional and
+            route files given here (``-a``/``--additional-files``,
+            ``-r``/``--route-files``) join the backend's own, after them, as
+            SUMO takes each option only once.
     """
 
     scenario_vehicles: str = "traffic_manager"
@@ -462,6 +526,16 @@ class SumoBackendConfig:
     sumo_args: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        # The switches, read strictly as the nested configs' are (#1757).
+        self.publish_walkers = check_flag("publish_walkers", self.publish_walkers)
+        self.pedestrian_crossings = check_flag(
+            "pedestrian_crossings", self.pedestrian_crossings
+        )
+        self.cycle_on_sidewalks = check_flag(
+            "cycle_on_sidewalks", self.cycle_on_sidewalks
+        )
+        self.use_libsumo = check_flag("use_libsumo", self.use_libsumo)
+        self.fcd_output = check_flag("fcd_output", self.fcd_output)
         if self.traffic_light_authority not in _LIGHT_AUTHORITIES:
             raise ValueError(
                 "traffic_light_authority must be one of "
@@ -480,14 +554,28 @@ class SumoBackendConfig:
             raise ValueError(
                 f"tm_port must be an integer within 1-65535 (got {self.tm_port!r})"
             )
-        _check_not_negative("feedback_distance_m", self.feedback_distance_m)
-        _check_positive_or_inf("resync_distance_m", self.resync_distance_m)
-        _check_positive("curve_lateral_acceleration", self.curve_lateral_acceleration)
-        _check_positive("lateral_resolution_m", self.lateral_resolution_m)
-        _check_positive("lane_change_duration_s", self.lane_change_duration_s)
-        _check_positive("step_length_s", self.step_length_s)
-        _check_not_negative("warmup_s", self.warmup_s)
-        _check_positive("spawn_radius_m", self.spawn_radius_m)
+        self.feedback_distance_m = _check_not_negative(
+            "feedback_distance_m", self.feedback_distance_m
+        )
+        self.resync_distance_m = _check_positive_or_inf(
+            "resync_distance_m", self.resync_distance_m
+        )
+        self.curve_lateral_acceleration = _check_positive_or_null(
+            "curve_lateral_acceleration", self.curve_lateral_acceleration
+        )
+        self.lateral_resolution_m = _check_positive_or_null(
+            "lateral_resolution_m", self.lateral_resolution_m
+        )
+        self.lane_change_duration_s = _check_positive_or_null(
+            "lane_change_duration_s", self.lane_change_duration_s
+        )
+        self.step_length_s = _check_positive_or_null(
+            "step_length_s", self.step_length_s
+        )
+        self.warmup_s = _check_not_negative("warmup_s", self.warmup_s)
+        self.spawn_radius_m = _check_positive_or_null(
+            "spawn_radius_m", self.spawn_radius_m
+        )
         _check_count("max_vehicles", self.max_vehicles)
         if (
             self.lane_change_duration_s is not None
@@ -515,7 +603,7 @@ class SumoBackendConfig:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "SumoBackendConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
-        from ...utils.config import checked_options  # noqa: PLC0415
+        from ...utils.config import checked_options, checked_str_list  # noqa: PLC0415
 
         if "follow_visibility" in mapping:
             raise ValueError(
@@ -535,7 +623,10 @@ class SumoBackendConfig:
         if isinstance(checked.get("mesoscopic"), Mapping):
             checked["mesoscopic"] = MesoscopicConfig.from_mapping(checked["mesoscopic"])
         if "sumo_args" in checked:
-            checked["sumo_args"] = [str(a) for a in checked["sumo_args"] or []]
+            # A string is refused, not split into characters (#1534).
+            checked["sumo_args"] = checked_str_list(
+                "traffic.options.sumo_args", checked["sumo_args"]
+            )
         if checked.get("tm_port") is None:
             checked.pop("tm_port", None)  # `${oc.select:...,null}`: the default
         return cls(**checked)

@@ -119,11 +119,6 @@ _GRPC = (
     "the model declares the class only by name, so the checked package's "
     "re-export resolves"
 )
-_CARLA_INSTALL = (
-    "the CARLA installer and its command line (tqdm, urllib.request, tarfile, "
-    "argparse); carla_install.codon models only installed_executable(), "
-    "which the checked server manager uses"
-)
 _CYCLONE = (
     "converts ROS 2 messages (ros2.messages: cyclonedds's IdlStruct, which "
     "has no model); ros2/cyclone.codon models the transport "
@@ -165,8 +160,9 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         **_each("ScenarioQueue ScenarioRunner", _RUNNER),
         **_each(
             "BuildScenarioFn ScenarioBuilder get_conf_dirs get_scenario_builder "
-            "get_scenario_classes get_scenario_registry load_scenario_plugins "
-            "register_conf_dir register_scenario register_scenario_builder "
+            "get_scenario_classes get_scenario_document get_scenario_registry "
+            "load_scenario_plugins register_conf_dir register_scenario "
+            "register_scenario_builder register_scenario_document "
             "unregister_conf_dir unregister_scenario",
             _REGISTRY,
         ),
@@ -183,11 +179,6 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "AutowareStackError CommandAutowareLauncher DEFAULT_BRIDGE_PARAMETERS "
         "ProcessGroup episode_log_path fill_placeholders",
         _STACK_LAUNCHER,
-    ),
-    f"{_PACKAGE}.carla_install": _each(
-        "HOME_ENV LAUNCHER NIGHTLY_MACHINES NIGHTLY_URL install install_dir main "
-        "package_url",
-        _CARLA_INSTALL,
     ),
     f"{_PACKAGE}.debug_markers": _each(
         "plan_markers plan_polyline world_point",
@@ -220,14 +211,24 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             _ENTITY_REGISTRY,
         ),
     },
-    f"{_PACKAGE}.weather_rules": _each(
-        "DEFAULT_RULES EGO_KEY QUANTITIES RulesError WEATHER_INPUTS default_rules "
-        "rule_values use_weather_rules vehicle_range weather_rule_files",
-        "reads rule files with openodd (a Rust extension) and takes "
-        "`environment.rules` as `Mapping[str, Any]`, the runner's; a scenario "
-        "sets the weather, not the rules (weather_rules.codon models what "
-        "visibility and actions.environment read the rules through)",
-    ),
+    f"{_PACKAGE}.weather_rules": {
+        **_each(
+            "DEFAULT_RULES RulesError check_weather_rules default_rules "
+            "use_weather_rules vehicle_range weather_rule_files",
+            "reads rule files with openodd (a Rust extension) and takes "
+            "`environment.rules` as `Mapping[str, Any]`, the runner's; a "
+            "scenario sets the weather, not the rules (weather_rules.codon "
+            "models what visibility and actions.environment read the rules "
+            "through)",
+        ),
+        **_each(
+            "EGO_KEY QUANTITIES WEATHER_INPUTS rule_values",
+            "re-exported from weather_inputs, which the library check "
+            "compiles from its source; a scenario sets the weather, not the "
+            "rules (weather_rules.codon models what visibility and "
+            "actions.environment read the rules through)",
+        ),
+    },
     f"{_PACKAGE}.environment": {
         "write": (
             "writes the run's environment with json (`dict[str, Any]`), the "
@@ -303,7 +304,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
     },
     f"{_PACKAGE}.rerun": _each(
         "INSTALL_HINT RECORDING_SUFFIX RerunConversion RerunUnavailableError "
-        "convert_outputs main report require_converter",
+        "convert_outputs latest main report require_converter",
         "makes Rerun recordings of a run's trajectory logs with the "
         "autoware-carla-scenario-rerun package, which the runner does after a "
         "run (rerun.enabled), not a scenario; the model declares only the "
@@ -570,7 +571,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "handshake is_initialized lane_change_finished on_scenario_end "
         "on_scenario_start on_tick release_from_traffic require_microscopic "
         "requires_goal resume_traffic route_to set_client set_desired_speed "
-        "set_initial_speeds set_traffic_backend simulation_fidelity "
+        "set_emergency set_initial_speeds set_traffic_backend simulation_fidelity "
         "spawn stack_name termination_reason termination_requested "
         "turn_at_junction turn_indicator use_autopilot",
         _BY_NAME,
@@ -611,8 +612,8 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "config debug_markers destroy end_route finish_at follow_route forget_lane_change "
         "is_initialized lane_change_finished on_scenario_end on_scenario_start "
         "on_tick release_from_traffic require_microscopic requires_goal "
-        "resume_traffic route_to set_client set_desired_speed set_initial_speeds "
-        "simulation_fidelity spawn stack_name termination_reason "
+        "resume_traffic route_to set_client set_desired_speed set_emergency "
+        "set_initial_speeds simulation_fidelity spawn stack_name termination_reason "
         "termination_requested turn_at_junction use_autopilot",
         "the model declares only what the checked CommunicationLossAction "
         "calls on the HILS ego (disconnect, reconnect), and a scenario cannot "
@@ -654,10 +655,11 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     },
     "RerunConverter": {
         **_members(
-            "close strict wait",
-            "waits for the conversions and reports them, which the runner's "
-            "caller (examples.run) does once the runs are over, not the checked "
-            "runner, which only submits each log",
+            "close strict",
+            "closes the converter and reports the conversions, which the "
+            "runner's caller (examples.run) does once the runs are over, not "
+            "the checked runner, which only submits each log (and waits for "
+            "it before a retry)",
         ),
         "records_sensors": (
             "whether rerun.lidar or rerun.cameras is set, which the converter's "
@@ -700,7 +702,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "to_dict": _AS_DICT,
         "from_dict": _FROM_MAPPING,
     },
-    "SweepConfig": _members("bindings constraints odd_sample", _SWEEP_FIELD),
+    "SweepConfig": _members("bindings constraints exclude odd_sample", _SWEEP_FIELD),
     "DriverConfig": {
         "bridge": (
             "a Hydra mapping of AutowareBridgeConfig's fields, or None "

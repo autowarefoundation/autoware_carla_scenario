@@ -11,6 +11,8 @@ steps that need a live CARLA world.
 from __future__ import annotations
 
 import importlib
+import math
+import os
 import sys
 from pathlib import Path
 from types import ModuleType
@@ -68,6 +70,68 @@ class TestResolveNames:
     def test_invalid_names_raise(self, bad: str) -> None:
         with pytest.raises(ValueError):
             resolve_names(bad)
+
+
+class TestReservedPackageNames:
+    """A package may not take a name that clashes once installed (#1451)."""
+
+    @pytest.mark.parametrize(
+        "package",
+        [
+            "autoware-carla-scenario",
+            "autoware_carla_scenario",
+            "AutowareCarlaScenario",
+            "autoware.carla.scenario",
+        ],
+    )
+    def test_framework_name_raises(self, package: str) -> None:
+        with pytest.raises(ValueError, match="framework's own"):
+            resolve_names(package)
+
+    @pytest.mark.parametrize("package", ["json", "typing", "Typing", "asyncio"])
+    def test_stdlib_name_raises(self, package: str) -> None:
+        with pytest.raises(ValueError, match="standard library module"):
+            resolve_names(package)
+
+    @pytest.mark.parametrize(
+        "package", ["openodd", "lanelet2", "typesafe_carla", "omegaconf", "hydra"]
+    )
+    def test_dependency_name_raises(self, package: str) -> None:
+        with pytest.raises(ValueError, match="which autoware_carla_scenario depends"):
+            resolve_names(package)
+
+    def test_dependencies_are_read_off_the_metadata(self) -> None:
+        from autoware_carla_scenario.scaffold.generator import (  # noqa: PLC0415
+            _DEPENDENCY_IMPORT_NAMES,
+            _dependency_import_names,
+        )
+
+        # The installed metadata covers every name of the documented floor.
+        names = _dependency_import_names()
+        assert names >= _DEPENDENCY_IMPORT_NAMES
+        # ... and an optional extra (``sumo``'s ``traci``) is not a dependency.
+        assert "traci" not in names
+
+    def test_cli_reports_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main(["autoware-carla-scenario", "-o", str(tmp_path)]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith(
+            "Error: package name 'autoware_carla_scenario' is reserved"
+        )
+        assert "Traceback" not in err
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "package", ["my_json_pkg", "openodd_scenarios_pkg", "carla_pkg", "lanes"]
+    )
+    def test_ordinary_names_still_work(self, tmp_path: Path, package: str) -> None:
+        result = create_scenario_package(package, output_dir=tmp_path)
+        assert result.names["package_name"] == package
+        assert (result.root / "pyproject.toml").is_file()
 
 
 class TestReservedScenarioNames:
@@ -135,6 +199,95 @@ class TestReservedScenarioNames:
         assert f"class {result.names['config_class']}" in configs
         module = (pkg / f"{scenario}.py").read_text(encoding="utf-8")
         assert f"class {result.names['scenario_class']}" in module
+
+
+class TestBuiltinScenarioNames:
+    """A generated package may not take a built-in scenario's name (#1802)."""
+
+    def test_the_list_matches_the_built_in_registry(self) -> None:
+        """What ``examples.run`` registers, read in a fresh interpreter.
+
+        A fresh one so that what other tests register (or an installed
+        scenario package, which the runner only loads later) does not count.
+        """
+        import json  # noqa: PLC0415
+        import subprocess  # noqa: PLC0415
+
+        from autoware_carla_scenario.scaffold.names import (  # noqa: PLC0415
+            BUILTIN_SCENARIO_NAMES,
+        )
+
+        code = (
+            "import json\n"
+            "from autoware_carla_scenario import registry\n"
+            "before = set(registry.get_scenario_registry())\n"
+            "import autoware_carla_scenario.examples.run\n"
+            "after = set(registry.get_scenario_registry())\n"
+            "print(json.dumps(sorted(after - before)))\n"
+        )
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=300,
+        )
+        registered = json.loads(result.stdout.strip().splitlines()[-1])
+        assert registered == sorted(BUILTIN_SCENARIO_NAMES)
+        assert list(BUILTIN_SCENARIO_NAMES) == sorted(BUILTIN_SCENARIO_NAMES)
+
+    @pytest.mark.parametrize(
+        "scenario", ["lane_change", "cut_in", "LaneChange", "cut-in", "adversity"]
+    )
+    def test_a_built_in_name_is_refused(self, scenario: str) -> None:
+        with pytest.raises(ValueError, match="names a built-in scenario"):
+            resolve_names("my_pkg", scenario_name=scenario)
+
+    def test_a_derived_built_in_name_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="'lane_change' is reserved"):
+            resolve_names("lane_change_package")
+
+    def test_cli_reports_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main(["my_pkg", "--scenario", "lane_change", "-o", str(tmp_path)]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("Error: scenario name 'lane_change' is reserved")
+        assert "built-in scenario" in err
+        assert "Traceback" not in err
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize("scenario", ["my_lane_change", "lane_change_merge"])
+    def test_near_misses_still_work(self, scenario: str) -> None:
+        assert resolve_names("my_pkg", scenario_name=scenario)["scenario_name"] == (
+            scenario
+        )
+
+    def test_the_check_does_not_import_the_runner(self) -> None:
+        """``scenario-new`` reads the list without importing the runner or CARLA."""
+        import subprocess  # noqa: PLC0415
+
+        code = (
+            "import sys\n"
+            "from autoware_carla_scenario.scaffold.generator import resolve_names\n"
+            "try:\n"
+            "    resolve_names('my_pkg', scenario_name='lane_change')\n"
+            "except ValueError:\n"
+            "    pass\n"
+            "loaded = [m for m in ('autoware_carla_scenario.examples.run',"
+            " 'typesafe_carla.carla') if m in sys.modules]\n"
+            "print(loaded)\n"
+        )
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=300,
+        )
+        assert result.stdout.strip().splitlines()[-1] == "[]"
 
 
 class TestScenarioModuleShadowing:
@@ -323,6 +476,182 @@ class TestCreateScenarioPackage:
         result = create_scenario_package("dup_pkg", output_dir=tmp_path, force=True)
         assert result.root.is_dir()
 
+    def test_force_replaces_the_whole_package(self, tmp_path: Path) -> None:
+        """An earlier scenario's files do not survive ``force`` (#1696)."""
+        first = create_scenario_package(
+            "dup_pkg", scenario_name="alpha", output_dir=tmp_path
+        )
+        src = first.root / "src" / "dup_pkg"
+        assert (src / "alpha.py").is_file()
+        (first.root / "NOTES.txt").write_text("added by hand", encoding="utf-8")
+
+        result = create_scenario_package(
+            "dup_pkg", scenario_name="beta", output_dir=tmp_path, force=True
+        )
+
+        assert (src / "beta.py").is_file()
+        assert (src / "conf" / "scenario" / "beta" / "default.yaml").is_file()
+        assert not (src / "alpha.py").exists()
+        assert not (src / "conf" / "scenario" / "alpha").exists()
+        assert not (result.root / "NOTES.txt").exists()
+        # No staging or set-aside directory is left beside the package.
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
+
+    def test_force_refuses_a_file_in_the_way(self, tmp_path: Path) -> None:
+        (tmp_path / "dup_pkg").write_text("not a package", encoding="utf-8")
+        with pytest.raises(FileExistsError, match="is not a directory"):
+            create_scenario_package("dup_pkg", output_dir=tmp_path, force=True)
+        assert (tmp_path / "dup_pkg").read_text(encoding="utf-8") == "not a package"
+
+    @staticmethod
+    def _fail_on_write(monkeypatch: pytest.MonkeyPatch, nth: int) -> None:
+        """Make the *nth* ``Path.write_text`` call raise ``OSError``."""
+        real = Path.write_text
+        calls = {"n": 0}
+
+        def write_text(self: Path, *args: Any, **kwargs: Any) -> int:
+            calls["n"] += 1
+            if calls["n"] == nth:
+                raise OSError(28, "No space left on device", str(self))
+            return real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", write_text)
+
+    def test_a_failed_write_leaves_nothing_behind(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        self._fail_on_write(monkeypatch, nth=3)
+        with pytest.raises(OSError, match="No space left"):
+            create_scenario_package("dup_pkg", output_dir=tmp_path)
+        assert list(tmp_path.iterdir()) == []
+
+        # So the next run needs no --force.
+        monkeypatch.undo()
+        assert create_scenario_package("dup_pkg", output_dir=tmp_path).root.is_dir()
+
+    def test_a_failed_forced_write_keeps_the_old_package(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first = create_scenario_package(
+            "dup_pkg", scenario_name="alpha", output_dir=tmp_path
+        )
+        before = sorted(str(p.relative_to(first.root)) for p in first.root.rglob("*"))
+        self._fail_on_write(monkeypatch, nth=3)
+        with pytest.raises(OSError, match="No space left"):
+            create_scenario_package(
+                "dup_pkg", scenario_name="beta", output_dir=tmp_path, force=True
+            )
+        after = sorted(str(p.relative_to(first.root)) for p in first.root.rglob("*"))
+        assert after == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
+
+    def test_a_package_that_cannot_be_moved_aside_leaves_no_holder(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        first = create_scenario_package(
+            "dup_pkg", scenario_name="alpha", output_dir=tmp_path
+        )
+        before = sorted(str(p.relative_to(first.root)) for p in first.root.rglob("*"))
+        real = os.replace
+
+        def replace(src: Any, dst: Any) -> None:
+            if Path(src) == first.root:
+                raise PermissionError(13, "Permission denied", str(src))
+            real(src, dst)
+
+        monkeypatch.setattr(os, "replace", replace)
+        with pytest.raises(PermissionError):
+            create_scenario_package(
+                "dup_pkg", scenario_name="beta", output_dir=tmp_path, force=True
+            )
+        after = sorted(str(p.relative_to(first.root)) for p in first.root.rglob("*"))
+        assert after == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
+
+    @staticmethod
+    def _occupy_while_rendering(monkeypatch: pytest.MonkeyPatch, root: Path) -> None:
+        """Make another process's directory appear at *root* on the first write."""
+        real = Path.write_text
+
+        def write_text(self: Path, *args: Any, **kwargs: Any) -> int:
+            if not root.exists():
+                root.mkdir()
+                real(root / "theirs.txt", "not ours", encoding="utf-8")
+            return real(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "write_text", write_text)
+
+    def test_a_directory_that_appears_meanwhile_is_kept(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Without ``force``, a target created during rendering is not replaced."""
+        from autoware_carla_scenario.scaffold import PackageExistsError  # noqa: PLC0415
+
+        root = tmp_path / "dup_pkg"
+        self._occupy_while_rendering(monkeypatch, root)
+        with pytest.raises(PackageExistsError):
+            create_scenario_package("dup_pkg", output_dir=tmp_path)
+        assert sorted(p.name for p in root.iterdir()) == ["theirs.txt"]
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
+
+    def test_the_move_itself_refuses_an_occupied_target(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A target appearing after the last check is refused by the rename."""
+        from autoware_carla_scenario.scaffold import (  # noqa: PLC0415
+            PackageExistsError,
+            generator,
+        )
+
+        root = tmp_path / "dup_pkg"
+        monkeypatch.setattr(generator, "_occupied", lambda _root: False)
+        self._occupy_while_rendering(monkeypatch, root)
+        with pytest.raises(PackageExistsError):
+            create_scenario_package("dup_pkg", output_dir=tmp_path)
+        assert sorted(p.name for p in root.iterdir()) == ["theirs.txt"]
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
+
+    def test_output_dir_expands_the_home_directory(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        monkeypatch.setenv("HOME", str(tmp_path))
+        result = create_scenario_package("dup_pkg", output_dir="~/pkgs")
+        assert result.root == tmp_path / "pkgs" / "dup_pkg"
+        assert result.root.is_dir()
+
+        assert main(["dup_pkg", "-o", "~/cli"]) == 0
+        assert (tmp_path / "cli" / "dup_pkg" / "pyproject.toml").is_file()
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["cli", "pkgs"]
+
+    def test_main_reports_an_os_error(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        """A filesystem error is ``Error: ...`` and exit code 1, not a traceback."""
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        not_a_dir = tmp_path / "a_file"
+        not_a_dir.write_text("", encoding="utf-8")
+        assert main(["dup_pkg", "-o", str(not_a_dir)]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("Error: ")
+        assert str(not_a_dir) in err
+        assert "Traceback" not in err
+
+    def test_main_reports_a_failed_write(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        self._fail_on_write(monkeypatch, nth=1)
+        assert main(["dup_pkg", "-o", str(tmp_path)]) == 1
+        assert capsys.readouterr().err.startswith("Error: [Errno 28] No space left")
+        assert list(tmp_path.iterdir()) == []
+
 
 # ---------------------------------------------------------------------------
 # One goal lanelet (#1068)
@@ -350,8 +679,14 @@ def _set_up(
     module: ModuleType,
     scenario_cls: Any,
     config: Any,
+    *,
+    goal_ego: bool = False,
 ) -> Any:
-    """Run ``setup()`` with stand-ins for what needs a live CARLA world."""
+    """Run ``setup()`` with stand-ins for what needs a live CARLA world.
+
+    With *goal_ego*, the ego is one that plans its own route and the
+    scenario's own ``derive_goal_from_route`` runs.
+    """
     from autoware_carla_scenario import EgoConfig, Lanelet2Pose  # noqa: PLC0415
     from autoware_carla_scenario.conditions.always_true import (  # noqa: PLC0415
         AlwaysTrueCondition,
@@ -369,8 +704,22 @@ def _set_up(
     scenario = scenario_cls(
         EgoConfig(SpawnPointIndex(0)), Lanelet2Pose(lanelet_id=242, s=25.0), config
     )
-    monkeypatch.setattr(scenario, "derive_goal_from_route", lambda ids: None)
-    monkeypatch.setattr(scenario, "_setup_ego_spawn", lambda: None)
+    if goal_ego:
+        # An ego that plans its own route, as `entity=autoware` is.  The spawn
+        # snap needs the world, so it is stood in for by the one thing it asks
+        # of the goal: `register_route_to_goal` calls require_goal(), which
+        # refuses such an ego with no goal (#1377).
+        from autoware_carla_scenario.entity.ego import EgoVehicle  # noqa: PLC0415
+
+        monkeypatch.setattr(
+            scenario,
+            "ego_type",
+            type("_RoutingEgo", (EgoVehicle,), {"requires_goal": True}),
+        )
+        monkeypatch.setattr(scenario, "_setup_ego_spawn", scenario.require_goal)
+    else:
+        monkeypatch.setattr(scenario, "derive_goal_from_route", lambda ids: None)
+        monkeypatch.setattr(scenario, "_setup_ego_spawn", lambda: None)
     scenario.setup()
     return scenario
 
@@ -444,4 +793,92 @@ class TestOneGoalLanelet:
             _assert_goals_pass_condition(scenario, goals)
         finally:
             for name in [m for m in sys.modules if m.split(".")[0] == "one_goal_pkg"]:
+                del sys.modules[name]
+
+
+class TestGeneratedConfig:
+    """The generated config refuses a bad timeout, as the template's does (#1818)."""
+
+    @pytest.mark.parametrize("value", [0.0, -1.0, math.nan, math.inf])
+    def test_a_timeout_not_positive_is_refused(
+        self, tmp_path: Path, value: float
+    ) -> None:
+        result = create_scenario_package("timeout_pkg", output_dir=tmp_path)
+        (configs,) = _import_from(result.root / "src", "timeout_pkg.configs")
+        try:
+            config_cls = getattr(configs, result.names["config_class"])
+            with pytest.raises(
+                ValueError,
+                match=r"^scenario\.timeout_seconds must be finite and positive, ",
+            ):
+                config_cls(timeout_seconds=value)
+            assert config_cls(timeout_seconds=8.0).timeout_seconds == 8.0
+            assert config_cls().timeout_seconds == 10.0
+        finally:
+            for name in [m for m in sys.modules if m.split(".")[0] == "timeout_pkg"]:
+                del sys.modules[name]
+
+    def test_the_check_is_the_templates(self, tmp_path: Path) -> None:
+        """The same ``__post_init__`` as the scenario package template's."""
+        result = create_scenario_package("same_pkg", output_dir=tmp_path)
+        generated = (result.root / "src" / "same_pkg" / "configs.py").read_text(
+            encoding="utf-8"
+        )
+        template = (_TEMPLATE_SRC / "my_scenario_package" / "configs.py").read_text(
+            encoding="utf-8"
+        )
+        marker = "    def __post_init__"
+        assert marker in template
+        assert (
+            generated[generated.index(marker) :] == template[template.index(marker) :]
+        )
+
+
+class TestGoalFromRoute:
+    """A scenario-new package names its goal, as the template does (#1377).
+
+    Run with an ego that plans its own route and no stand-in for
+    ``derive_goal_from_route``: without the call, ``setup()`` refuses it.
+    """
+
+    @pytest.mark.parametrize("goals", [[265], [460, 265]])
+    def test_the_template_derives_its_goal(
+        self, monkeypatch: pytest.MonkeyPatch, goals: list[int]
+    ) -> None:
+        module, configs = _import_from(
+            _TEMPLATE_SRC,
+            "my_scenario_package.reach_goal",
+            "my_scenario_package.configs",
+        )
+        scenario = _set_up(
+            monkeypatch,
+            module,
+            module.ReachGoalScenario,
+            configs.ReachGoalConfig(goal_lanelet_ids=goals),
+            goal_ego=True,
+        )
+        assert scenario.goal_pose is not None
+        assert scenario.goal_pose.lanelet_id == goals[-1]
+
+    @pytest.mark.parametrize("goals", [[265], [460, 265]])
+    def test_a_scaffolded_scenario_derives_its_goal(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, goals: list[int]
+    ) -> None:
+        result = create_scenario_package("goal_ego_pkg", output_dir=tmp_path)
+        module, configs = _import_from(
+            result.root / "src", "goal_ego_pkg.goal_ego", "goal_ego_pkg.configs"
+        )
+        try:
+            scenario = _set_up(
+                monkeypatch,
+                module,
+                getattr(module, result.names["scenario_class"]),
+                getattr(configs, result.names["config_class"])(goal_lanelet_ids=goals),
+                goal_ego=True,
+            )
+            assert scenario.goal_pose is not None
+            assert scenario.goal_pose.lanelet_id == goals[-1]
+            assert scenario.require_goal() is scenario.goal_pose
+        finally:
+            for name in [m for m in sys.modules if m.split(".")[0] == "goal_ego_pkg"]:
                 del sys.modules[name]

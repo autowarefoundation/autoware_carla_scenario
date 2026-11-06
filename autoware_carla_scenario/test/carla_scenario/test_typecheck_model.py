@@ -39,7 +39,6 @@ from pyxodr.road_objects.road import Road as PyxodrRoad
 import autoware_carla_scenario as acs
 from autoware_carla_scenario import (
     action_state,
-    carla_install,
     conditions,
     constants,
     coordinate,
@@ -111,7 +110,7 @@ _MODEL = model_dir() / "autoware_carla_scenario"
 #: Python members the model leaves out on purpose, by class.  Each is a
 #: free-form mapping (dict[str, Any]), which has no Codon type.
 _OMITTED_PARAMETERS: dict[str, set[str]] = {
-    "SweepConfig": {"constraints", "bindings", "odd_sample"},
+    "SweepConfig": {"constraints", "bindings", "exclude", "odd_sample"},
     # A mapping of AutowareBridgeConfig's fields, or None (run.py builds the bridge).
     "DriverConfig": {"bridge"},
     # A condition's details (scenario_runner fills them, outside the check).
@@ -432,6 +431,7 @@ _BOUNDARY: dict[str, tuple[str, Any]] = {
             "FIXED_DELTA_SECONDS",
             "LANE_CHANGE_CENTER_TOLERANCE_M",
             "LANE_CHANGE_HEADING_TOLERANCE_DEG",
+            "MAX_ROS_DOMAIN_ID",
             "MIN_BACKGROUND_SPEED_KMH",
             "US_PER_S",
         )
@@ -928,7 +928,6 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What ActionStateCondition takes and BaseAction.state returns; the model
     # of actions imports it from here, as Python's actions.base does.
     "action_state": (action_state, ("ActionState",)),
-    "carla_install": (carla_install, ("installed_executable",)),
     # What an ego entity a scenario defines returns from debug_markers().
     "debug_markers": (
         debug_markers,

@@ -12,6 +12,7 @@ import pytest
 
 from autoware_carla_scenario.conditions import (
     AccelerationCondition,
+    CollisionCondition,
     ComparisonRule,
     ElapsedTimeCondition,
     EntityDistanceCondition,
@@ -186,3 +187,19 @@ def test_entity_filter_refuses_a_bound_that_is_not_finite(
     entities = EntityFilter(**{bound: number})  # type: ignore[arg-type]
     with pytest.raises(ValueError, match=f"{bound} must (be finite|not be neg)"):
         entities.validate()
+
+
+@pytest.mark.parametrize("impulse", [*NOT_FINITE, -1.0])
+def test_collision_refuses_a_min_impulse_that_is_negative_or_not_finite(
+    impulse: float,
+) -> None:
+    """An infinite or NaN threshold ignored every collision, so a crash passed
+    (#1501)."""
+    with pytest.raises(ValueError, match="min_impulse must be non-negative and"):
+        CollisionCondition(min_impulse=impulse, label="t")
+
+
+@pytest.mark.parametrize("impulse", [0.0, 50.0])
+def test_collision_takes_a_non_negative_finite_min_impulse(impulse: float) -> None:
+    condition = CollisionCondition(min_impulse=impulse, label="t")
+    assert condition.get_details()["min_impulse"] == impulse

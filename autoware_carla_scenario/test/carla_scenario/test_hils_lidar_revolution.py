@@ -534,6 +534,24 @@ def test_a_field_of_view_outside_a_revolution_is_refused(
         LidarRevolution(10.0, 0.05, horizontal_fov)
 
 
+@pytest.mark.parametrize(
+    ("rotation_frequency", "first_dt"),
+    [
+        (math.nan, 0.05),
+        (math.inf, 0.05),
+        (-math.inf, 0.05),
+        (10.0, math.nan),
+        (10.0, math.inf),
+    ],
+)
+def test_a_non_finite_frequency_or_tick_is_refused(
+    rotation_frequency: float, first_dt: float
+) -> None:
+    # NaN passes a ``<= 0`` check, which the original made alone (#1478).
+    with pytest.raises(ValueError, match="must be finite"):
+        LidarRevolution(rotation_frequency, first_dt)
+
+
 @pytest.mark.parametrize("lost", [0, 1, 3])
 @pytest.mark.parametrize(
     ("horizontal_fov", "rotation_frequency", "dt"),

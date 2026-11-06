@@ -32,7 +32,6 @@ from __future__ import annotations
 import importlib.util
 import logging
 import os
-import re
 import subprocess
 import threading
 from pathlib import Path
@@ -41,6 +40,29 @@ from typing import Any, Optional
 import numpy as np
 
 from .constants import FIXED_DELTA_SECONDS
+
+# What a run's sensor recording is named, ``{stem}.sensors.rrd``, and where it
+# is: the path rule is the checked run_outputs's (#1678); the names they had
+# here stay importable from here.
+from .run_outputs import SENSORS_SUFFIX as SENSORS_SUFFIX
+from .run_outputs import sensors_recording_path as lidar_recording_path
+
+# A camera's mount, the colours of a sweep, the sensors' entities and the
+# parse of ``rerun rrd print`` are the checked rerun_sensor_mount's (#1688);
+# the names they had here stay importable from here.
+from .rerun_sensor_mount import _CHUNK_LINE as _CHUNK_LINE
+from .rerun_sensor_mount import _COLOUR_HIGH_M as _COLOUR_HIGH_M
+from .rerun_sensor_mount import _COLOUR_LOW_M as _COLOUR_LOW_M
+from .rerun_sensor_mount import SENSOR_ENTITIES as SENSOR_ENTITIES
+from .rerun_sensor_mount import CameraMount as CameraMount
+from .rerun_sensor_mount import _height_colours as _height_colours
+from .rerun_sensor_mount import _is_sensor_entity as _is_sensor_entity
+from .rerun_sensor_mount import chunk_entities as chunk_entities
+
+# The scan for the sensors' entity paths is the checked rerun_sensor_mount's
+# too (#1697); the names it had here stay importable from here.
+from .rerun_sensor_mount import _SCAN_BLOCK as _SCAN_BLOCK
+from .rerun_sensor_mount import carries_sensors as carries_sensors
 
 __all__ = [
     "APPLICATION_ID",
@@ -54,6 +76,7 @@ __all__ = [
     "SENSOR_ENTITIES",
     "active_recorder",
     "carries_sensors",
+    "chunk_entities",
     "extract_sensors",
     "lidar_recording_path",
     "merge_into",
@@ -64,19 +87,10 @@ logger = logging.getLogger(__name__)
 
 #: The converter's application id, so the viewer merges the two recordings.
 APPLICATION_ID = "autoware_carla_scenario"
-#: What a run's sensor recording is named: ``{stem}.sensors.rrd``.
-SENSORS_SUFFIX = ".sensors.rrd"
 #: The name it had when it held the LiDAR alone.
 LIDAR_SUFFIX = SENSORS_SUFFIX
 #: How to install what this module needs.
 INSTALL_HINT = "pip install 'autoware-carla-scenario[rerun-lidar]'"
-#: The entities the sensors are recorded under: the LiDARs and the cameras.
-SENSOR_ENTITIES = ("world/lidar", "world/ego/pose/cameras")
-
-#: Heights (m, above the ego's rig) the colours run over, blue to red.
-_COLOUR_LOW_M = -2.5
-_COLOUR_HIGH_M = 4.0
-
 _lock = threading.Lock()
 _active: Optional["SensorRecorder"] = None
 
@@ -96,11 +110,6 @@ def require_sdk() -> Any:
             "rerun.lidar=false rerun.cameras=false)"
         ) from exc
     return rerun
-
-
-def lidar_recording_path(directory: Path, stem: str) -> Path:
-    """``{directory}/{stem}.sensors.rrd``."""
-    return Path(directory) / f"{stem}{SENSORS_SUFFIX}"
 
 
 def _cli() -> Path:
@@ -137,43 +146,6 @@ def merge_into(recording: Path, lidar: Path) -> Path:
     return recording
 
 
-def _is_sensor_entity(entity: str) -> bool:
-    path = entity.strip("/")
-    return any(path == root or path.startswith(root + "/") for root in SENSOR_ENTITIES)
-
-
-#: How much of a recording :func:`carries_sensors` reads at a time.
-_SCAN_BLOCK = 1 << 20
-
-
-def carries_sensors(recording: Path) -> bool:
-    """Whether *recording* seems to hold sensor entities
-    (:data:`SENSOR_ENTITIES`), without the Rerun SDK.
-
-    A heuristic, for when :func:`extract_sensors` cannot tell: it scans the
-    file's bytes for the sensors' entity paths.  Each chunk names its entity
-    in its Arrow schema, whose first mention of the path stays legible even
-    in an LZ4-compressed chunk (checked with the SDK's 0.38 encoding), and the
-    recording's footer names them again.  A recording that merely mentions
-    such a path elsewhere is a false positive: it is kept rather than
-    replaced, which errs on the safe side.
-    """
-    needles = [f"{root}/".encode() for root in SENSOR_ENTITIES]
-    overlap = max(len(needle) for needle in needles) - 1
-    tail = b""
-    with open(recording, "rb") as stream:
-        while block := stream.read(_SCAN_BLOCK):
-            window = tail + block
-            if any(needle in window for needle in needles):
-                return True
-            tail = window[-overlap:]
-    return False
-
-
-#: An entity of a chunk, as ``rerun rrd print`` names it.
-_CHUNK_LINE = re.compile(r"^Chunk\([^)]*\) with [^-]* - (/.*?)(?: - data columns:.*)?$")
-
-
 def extract_sensors(recording: Path, sensors: Path) -> bool:
     """Write the sensor entities of *recording* (:data:`SENSOR_ENTITIES`) into
     *sensors*, a recording :func:`merge_into` can merge into another, with the
@@ -198,17 +170,16 @@ def extract_sensors(recording: Path, sensors: Path) -> bool:
         encoding="utf-8",
         errors="replace",
     ).stdout
-    chunks = [line for line in printed.splitlines() if line.startswith("Chunk(")]
-    matches = [_CHUNK_LINE.match(line) for line in chunks]
-    if not chunks or None in matches:
+    # _CHUNK_LINE is read here, so that it stays patchable on this module.
+    read, unread = chunk_entities(printed, _CHUNK_LINE)
+    if unread or not read:
         # Another SDK's output: dropping too little would duplicate data on
         # a merge, and finding no sensors would lose them.
-        unread = next((c for c, m in zip(chunks, matches) if m is None), None)
         raise RuntimeError(
             f"cannot read the entities of {recording} from `rerun rrd print`"
-            + (f": {unread!r}" if unread is not None else ": no chunks")
+            + (f": {unread!r}" if unread else ": no chunks")
         )
-    entities = {match.group(1) for match in matches if match is not None}
+    entities = set(read)
     if not any(_is_sensor_entity(entity) for entity in entities):
         return False
     dropped = sorted(entity for entity in entities if not _is_sensor_entity(entity))
@@ -381,64 +352,3 @@ class SensorRecorder:
 
 #: The name it had when it recorded the LiDAR alone.
 LidarRecorder = SensorRecorder
-
-
-class CameraMount:
-    """A camera's mount on the ego, as ``driver.cameras`` gives it (CARLA's
-    convention: x forward, y right, z up, degrees), and its image."""
-
-    def __init__(
-        self,
-        width: int,
-        height: int,
-        fov: float,
-        position: tuple[float, float, float] = (0.0, 0.0, 0.0),
-        rotation_deg: tuple[float, float, float] = (0.0, 0.0, 0.0),
-    ) -> None:
-        self.width = int(width)
-        self.height = int(height)
-        self.fov = float(fov)
-        self.position = position
-        self.roll, self.pitch, self.yaw = rotation_deg
-
-    def translation(self) -> list[float]:
-        """In the recording's right-handed frame: CARLA's ``y`` negated."""
-        x, y, z = self.position
-        return [float(x), -float(y), float(z)]
-
-    def rotation(self) -> np.ndarray[tuple[int, int], np.dtype[np.float64]]:
-        """CARLA's ``yaw * pitch * roll``, rebuilt right-handed: yaw and pitch
-        negated, roll kept (as the driver's camera extrinsics)."""
-        yaw, pitch, roll = (
-            np.radians(-self.yaw),
-            np.radians(-self.pitch),
-            np.radians(self.roll),
-        )
-        cz, sz, cy, sy, cx, sx = (
-            np.cos(yaw),
-            np.sin(yaw),
-            np.cos(pitch),
-            np.sin(pitch),
-            np.cos(roll),
-            np.sin(roll),
-        )
-        rz = np.array([[cz, -sz, 0.0], [sz, cz, 0.0], [0.0, 0.0, 1.0]])
-        ry = np.array([[cy, 0.0, sy], [0.0, 1.0, 0.0], [-sy, 0.0, cy]])
-        rx = np.array([[1.0, 0.0, 0.0], [0.0, cx, -sx], [0.0, sx, cx]])
-        return rz @ ry @ rx
-
-    def focal_length_px(self) -> float:
-        """CARLA's horizontal field of view as a focal length in pixels."""
-        return self.width / (2.0 * float(np.tan(np.radians(self.fov) / 2.0)))
-
-
-def _height_colours(
-    heights: np.ndarray[tuple[int], np.dtype[np.float32]],
-) -> np.ndarray[tuple[int, int], np.dtype[np.uint8]]:
-    """Blue (low) through green to red (high), over the ego's surroundings."""
-    t = np.clip((heights - _COLOUR_LOW_M) / (_COLOUR_HIGH_M - _COLOUR_LOW_M), 0.0, 1.0)
-    colours = np.empty((len(t), 3), dtype=np.uint8)
-    colours[:, 0] = (255 * np.clip(2.0 * t - 1.0, 0.0, 1.0)).astype(np.uint8)
-    colours[:, 1] = (255 * (1.0 - np.abs(2.0 * t - 1.0))).astype(np.uint8)
-    colours[:, 2] = (255 * np.clip(1.0 - 2.0 * t, 0.0, 1.0)).astype(np.uint8)
-    return colours

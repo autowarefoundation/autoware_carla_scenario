@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 from collections import Counter
 from pathlib import Path
 from types import SimpleNamespace
@@ -33,10 +34,14 @@ from autoware_carla_scenario.odd import scenario_measure
 from autoware_carla_scenario.odd.probes import illumination_level, intensity_level
 from autoware_carla_scenario.odd.sampler import (
     controls_from_mapping,
+    check_sample_settings,
     decode_case,
+    sample_count,
+    sample_draws,
     sample_seed,
     sampler_from_config,
     search_from_config,
+    weights_from_config,
 )
 from autoware_carla_scenario.seed import DEFAULT_SEED
 from autoware_carla_scenario.sweeper.expand import expand_config, expand_sweep
@@ -404,6 +409,43 @@ def test_bad_weights_are_refused(weights: Any, message: str, tmp_path: Path) -> 
         sampler_from_config({"weights": weights}, odd=_regions_odd(), base_dir=tmp_path)
 
 
+@pytest.mark.parametrize(
+    "content",
+    [
+        pytest.param(b"urban: [0.5\n", id="unclosed-flow-sequence"),
+        pytest.param(b"urban: 0.5\n  rural: 0.2\n", id="bad-indentation"),
+        pytest.param(b"urban: \xff\n", id="not-utf-8"),
+        pytest.param(b"urban: " + b"1" * 5000 + b"\n", id="huge-integer"),
+    ],
+)
+def test_an_unreadable_weights_file_is_refused_with_the_key(
+    content: bytes, tmp_path: Path
+) -> None:
+    """#1703: a weights file that is not YAML, not UTF-8, or holds an integer
+    too long to read is the keyed one-line ``ValueError`` the docstring
+    promises, not a ``yaml.YAMLError`` (a traceback in scenario-expand) or a
+    bare ``UnicodeDecodeError`` or ``ValueError``."""
+    path = tmp_path / "shares.yaml"
+    path.write_bytes(content)
+    with pytest.raises(
+        ValueError, match="^sweep.odd_sample.weights: cannot read "
+    ) as e:
+        weights_from_config("shares.yaml", tmp_path)
+    assert str(path) in str(e.value)
+    # One line: a YAML error's text (a caret diagram) is collapsed.
+    assert "\n" not in str(e.value)
+    with pytest.raises(ValueError, match="^sweep.odd_sample.weights: cannot read "):
+        sampler_from_config({"weights": str(path)}, odd=_regions_odd())
+
+
+def test_a_valid_weights_file_reads_as_before(tmp_path: Path) -> None:
+    (tmp_path / "shares.yaml").write_text("rainy: 0.25\ndark: 1\n", encoding="utf-8")
+    assert weights_from_config("shares.yaml", tmp_path) == {"rainy": 0.25, "dark": 1.0}
+    assert weights_from_config(tmp_path / "shares.yaml") == {"rainy": 0.25, "dark": 1.0}
+    assert weights_from_config(None) is None
+    assert weights_from_config({"rainy": 0.5}) == {"rainy": 0.5}
+
+
 def test_weights_need_the_weighted_strategy() -> None:
     with pytest.raises(ValueError, match="'weighted'"):
         sampler_from_config(
@@ -523,6 +565,54 @@ def test_a_null_or_missing_sample_seed_is_the_default_seed() -> None:
     expected = draws({"seed": DEFAULT_SEED})
     assert draws({"seed": None}) == expected
     assert draws({}) == expected
+
+
+def test_a_whole_float_sample_seed_and_count_are_whole_numbers() -> None:
+    assert sample_seed({"seed": 4.0}) == 4
+    assert sample_count({"count": 3.0}) == 3
+    assert sample_count({"count": None}) is None
+    assert sample_count({}) is None
+
+
+@pytest.mark.parametrize("value", [1.9, True, "abc", "", -1, float("nan")])
+def test_a_sample_seed_that_is_no_seed_is_refused(value: Any) -> None:
+    # int() took 1.9 and true as seed 1 (#1437).
+    with pytest.raises(ValueError, match=r"^sweep\.odd_sample\.seed must "):
+        sample_seed({"seed": value})
+    with pytest.raises(ValueError, match=r"^sweep\.odd_sample\.seed must "):
+        search_from_config({"seed": value}, odd="default")
+
+
+@pytest.mark.parametrize("value", [2.7, True, "two", "", 0, -2, float("inf")])
+def test_a_sample_count_that_is_no_count_is_refused(value: Any) -> None:
+    # int() drew 2 cases for 2.7; 0 drew none, a sweep refused for matching
+    # nothing on the map (#1437).
+    with pytest.raises(ValueError, match=r"^sweep\.odd_sample\.count must "):
+        sample_count({"count": value})
+    with pytest.raises(ValueError, match=r"^sweep\.odd_sample\.count must "):
+        sampler_from_config({"count": value}, odd="default")
+
+
+@pytest.mark.parametrize(
+    ("odd_sample", "key"),
+    [({"count": 2.7}, "count"), ({"count": 2, "seed": -1}, "seed")],
+)
+def test_expanding_a_sweep_refuses_a_bad_count_or_seed_before_the_map(
+    odd_sample: dict[str, Any], key: str
+) -> None:
+    # The constraints would load the map first: the value is refused before.
+    cfg = OmegaConf.create(
+        {
+            "odd": "default",
+            "map": {"lanelet2_path": "/nonexistent/map.osm"},
+            "sweep": {
+                "constraints": {"ego.spawn": [{"type": "is_junction"}]},
+                "odd_sample": odd_sample,
+            },
+        }
+    )
+    with pytest.raises(ValueError, match=rf"^sweep\.odd_sample\.{key} must "):
+        expand_config(cfg, [])
 
 
 def test_a_flaky_search_with_a_null_seed_is_built() -> None:
@@ -652,6 +742,100 @@ def test_a_sweep_can_leave_the_grip_at_the_middle() -> None:
         assert not any("tire_friction" in o for o in case)
 
 
+# The grip and visibility switches are read strictly, not by truthiness:
+# "false" (what a Hydra override or ${oc.env:...} hands as text) turns a draw
+# off, and a typo is refused, named, before anything is drawn (#1756).
+@pytest.mark.parametrize("name", ["tire_friction", "visibility"])
+@pytest.mark.parametrize(
+    ("value", "draws"),
+    [
+        (False, False),
+        ("false", False),
+        ("off", False),
+        (" No ", False),
+        (0, False),
+        ("0", False),
+        (True, True),
+        ("true", True),
+        ("yes", True),
+        (1, True),
+        (None, True),
+    ],
+)
+def test_a_sample_switch_is_read_strictly(name: str, value: Any, draws: bool) -> None:
+    assert sample_draws({name: value}, name) is draws
+
+
+@pytest.mark.parametrize("name", ["tire_friction", "visibility"])
+def test_a_missing_sample_switch_draws(name: str) -> None:
+    assert sample_draws({}, name) is True
+
+
+@pytest.mark.parametrize("name", ["tire_friction", "visibility"])
+@pytest.mark.parametrize(
+    ("value", "shown"), [("ture", "'ture'"), (2, "2"), (0.5, "0.5"), ([], "[]")]
+)
+def test_a_bad_sample_switch_is_refused_naming_its_key(
+    name: str, value: Any, shown: str
+) -> None:
+    message = f"^sweep.odd_sample.{name} must be true or false, got {re.escape(shown)}$"
+    with pytest.raises(ValueError, match=message):
+        sample_draws({name: value}, name)
+    with pytest.raises(ValueError, match=message):
+        check_sample_settings({"count": 2, name: value})
+
+
+@pytest.mark.parametrize("name", ["tire_friction", "visibility"])
+def test_a_bad_sample_switch_is_refused_before_anything_is_drawn(
+    name: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.odd import sampler as sampler_module
+
+    def no_draw(*_args: Any, **_kwargs: Any) -> Any:
+        raise AssertionError("drew from the ODD")
+
+    monkeypatch.setattr(sampler_module, "OddSampler", no_draw)
+    cfg = OmegaConf.create(
+        {"odd": "default", "sweep": {"odd_sample": {"count": 2, name: "ture"}}}
+    )
+    with pytest.raises(ValueError, match=f"^sweep.odd_sample.{name} must be"):
+        expand_config(cfg)
+    with pytest.raises(ValueError, match=f"^sweep.odd_sample.{name} must be"):
+        search_from_config({"count": 2, name: "ture"}, odd="default")
+
+
+@pytest.mark.parametrize("value", ["false", "off", 0, "no"])
+def test_a_sweep_turns_the_draws_off_with_a_false_spelling(value: Any) -> None:
+    cfg = OmegaConf.create(
+        {
+            "odd": "default",
+            "sweep": {
+                "odd_sample": {"count": 2, "tire_friction": value, "visibility": value}
+            },
+        }
+    )
+
+    for case in expand_config(cfg):
+        assert not any("tire_friction" in o for o in case)
+        assert not any(o.startswith("environment.visibility") for o in case)
+
+
+@pytest.mark.parametrize("value", ["true", "yes", 1, None])
+def test_a_sweep_keeps_the_draws_with_a_true_spelling(value: Any) -> None:
+    cfg = OmegaConf.create(
+        {
+            "odd": "default",
+            "sweep": {
+                "odd_sample": {"count": 2, "tire_friction": value, "visibility": value}
+            },
+        }
+    )
+
+    for case in expand_config(cfg):
+        assert any(o.startswith("environment.tire_friction_quantile=") for o in case)
+        assert any(o.startswith("environment.visibility_quantile=") for o in case)
+
+
 def test_a_case_that_names_its_grip_keeps_it() -> None:
     from autoware_carla_scenario.odd.sampler import OddSample, with_tire_friction
 
@@ -728,6 +912,40 @@ def test_a_case_that_names_its_grip_draws_no_quantile_for_it() -> None:
 
     assert kept == fixed
     assert added.overrides[1].startswith("environment.tire_friction_quantile=")
+
+
+def test_an_int_seed_draws_the_grip_and_visibility_it_always_has() -> None:
+    # Pinned: a sweep with an int seed reproduces the quantiles it drew before
+    # the seed was read as a whole number (#1442).
+    from autoware_carla_scenario.odd.sampler import (
+        OddSample,
+        with_tire_friction,
+        with_visibility,
+    )
+
+    drawn = [OddSample(0, ["environment.rain=80"], {}, {})]
+
+    (grip,) = with_tire_friction(drawn, seed=4)
+    (sight,) = with_visibility(drawn, seed=4)
+
+    assert grip.overrides[-1] == "environment.tire_friction_quantile=0.185"
+    assert sight.overrides[-1] == "environment.visibility_quantile=0.04"
+
+
+@pytest.mark.parametrize("seed", [4.0, "4", " 4 "])
+def test_a_seed_that_names_4_expands_to_the_cases_4_does(seed: Any) -> None:
+    # The grip and the visibility were drawn from the seed as text, so 4.0
+    # drew the ODD cases 4 does but other quantiles (#1442).
+    def cfg(value: Any) -> Any:
+        return OmegaConf.create(
+            {"odd": "default", "sweep": {"odd_sample": {"count": 4, "seed": value}}}
+        )
+
+    expected = expand_config(cfg(4))
+
+    assert any("environment.tire_friction_quantile=" in o for o in expected[0])
+    assert any("environment.visibility_quantile=" in o for o in expected[0])
+    assert expand_config(cfg(seed)) == expected
 
 
 @pytest.mark.parametrize(
@@ -1431,6 +1649,22 @@ def test_an_unknown_flaky_field_is_refused() -> None:
         search_from_config({"flaky": {"bogus": 1}}, odd=_weather_odd())
     with pytest.raises(ValueError, match="search_from_config"):
         sampler_from_config({"flaky": True}, odd=_weather_odd())
+
+
+@pytest.mark.parametrize("flaky", [True, {}, {"scenario": "cut_in/left"}, "false"])
+def test_sampler_from_config_refuses_any_flaky_search(flaky: Any) -> None:
+    # ``{}`` is falsy, but search_from_config reads it as ``true``: the defaults.
+    with pytest.raises(ValueError, match="needs search_from_config"):
+        sampler_from_config({"count": 1, "flaky": flaky}, odd=_weather_odd())
+
+
+@pytest.mark.parametrize(
+    "raw", [{"count": 1}, {"count": 1, "flaky": None}, {"count": 1, "flaky": False}]
+)
+def test_sampler_from_config_takes_no_flaky_search(raw: dict[str, Any]) -> None:
+    sampler, count = sampler_from_config(raw, odd=_weather_odd())
+    assert count == 1
+    assert sampler is not None
 
 
 def test_a_run_reads_its_case_back_from_the_override() -> None:

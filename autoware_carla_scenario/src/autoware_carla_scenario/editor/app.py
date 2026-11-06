@@ -11,6 +11,7 @@ an architecture.
 
 from __future__ import annotations
 
+import errno
 import logging
 import os
 from pathlib import Path
@@ -23,8 +24,10 @@ from fastapi.templating import Jinja2Templates
 
 from ..authoring import registry
 from ..authoring._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
-from ..authoring.models import SIGNAL_STATE_NAMES
+from ..authoring.hydra_config import run_map_group
+from ..authoring.models import SIGNAL_STATE_NAMES, actor_kind
 from ..authoring.persistence import DraftStore, default_draft_dir
+from ..serve_cli import DEFAULT_HOST
 from ..trajectory.authoring import (
     format_relative_vertices,
     format_route_vertices,
@@ -33,8 +36,18 @@ from ..trajectory.authoring import (
     route_trajectory_summary,
     trajectory_summary,
 )
+from ..web_guard import HostAllowlist, RequestGuard
 from .forms import bool_choice, is_nullable_bool
-from .service import EditorError, EditorService, condition_actions, route_yaml
+from .service import (
+    GATE_CONSISTENCY_FIELDS,
+    GATE_FIELDS,
+    GATE_ITEM_FIELD,
+    EditorError,
+    EditorService,
+    EditorStorageError,
+    condition_actions,
+    route_yaml,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -48,7 +61,7 @@ _TEMPLATES_DIR = _EDITOR_DIR / "templates"
 _STATIC_DIR = _EDITOR_DIR / "static"
 
 #: Environment variable choosing where an exported package's archive is
-#: staged until the browser has fetched it.
+#: staged for download (kept until the draft is deleted or exported again).
 EXPORT_DIR_ENV = "SCENARIO_EDITOR_EXPORT_DIR"
 
 #: Environment variable pointing at a self-hosted build of the simple_lanelet2
@@ -145,18 +158,28 @@ def build_service(
 
 
 def create_app(
-    draft_dir: str | Path | None = None, export_dir: str | Path | None = None
+    draft_dir: str | Path | None = None,
+    export_dir: str | Path | None = None,
+    *,
+    host: str = DEFAULT_HOST,
 ) -> FastAPI:
     """Create the editor application.
 
     Args:
         draft_dir: Where drafts are stored.  Defaults to ``./scenario_drafts``.
         export_dir: Where exported archives are staged for download.
+        host: The address it is served on (``--host``): the ``Host`` name it
+            answers to besides the loopback ones, or any name when it is an
+            address of every interface (``0.0.0.0``, ``::``).
 
     Returns:
         A configured :class:`FastAPI` application.
     """
     application = FastAPI(title="Scenario Editor")
+    # Refuses cross-site state changes and foreign Host names (DNS
+    # rebinding): binding loopback keeps other machines out, not other
+    # sites' pages (#1844, web_guard).
+    application.add_middleware(RequestGuard, hosts=HostAllowlist(host))
     application.mount(
         "/static", _RevalidatedStatics(directory=str(_STATIC_DIR)), name="static"
     )
@@ -168,6 +191,7 @@ def create_app(
         map_viewer_url=map_viewer_url,
         picker_matches_id=picker_matches_id,
         action_specs=registry.action_specs,
+        acts_as=actor_kind,
         condition_specs=registry.condition_specs,
         constraint_specs=registry.constraint_specs,
         binding_specs=registry.binding_specs,
@@ -182,6 +206,10 @@ def create_app(
         condition_actions=condition_actions,
         # A logical scenario's route search, as the YAML its inspector edits.
         route_yaml=route_yaml,
+        # A logical scenario's gate, as the fields its inspector edits.
+        gate_fields=GATE_FIELDS,
+        gate_consistency_fields=GATE_CONSISTENCY_FIELDS,
+        gate_item_field=GATE_ITEM_FIELD,
         # The operator glyph comes from the same table the select does.
         rule_symbol=registry.rule_symbol,
         action_phases=registry.ACTION_PHASES,
@@ -198,6 +226,9 @@ def create_app(
         # A trajectory field's rows as the text the inspector edits.
         format_vertices=format_vertices,
         trajectory_summary=trajectory_summary,
+        # The `map=` an export of the document runs with: its own group when
+        # it names its map by source or directory.
+        run_map_group=run_map_group,
         format_relative_vertices=format_relative_vertices,
         relative_trajectory_summary=relative_trajectory_summary,
         format_route_vertices=format_route_vertices,
@@ -223,6 +254,30 @@ def create_app(
             name="error.html",
             context={"heading": "Not found", "message": str(exc), "page": "error"},
             status_code=404,
+        )
+
+    @application.exception_handler(EditorStorageError)
+    def _storage_error(request: Request, exc: Exception) -> Response:
+        """Render a drafts directory that refused a write as a page, not a 500 traceback.
+
+        The server's fault, not the request's, so a 5xx: 507 Insufficient
+        Storage when the disk is full (what that status means), and 500
+        otherwise -- a permission the editor lacks or a read-only file system
+        is a misconfiguration, which 507 would misdescribe (#1747).  The page
+        names the directory, which is what the person running the editor
+        has to fix.
+        """
+        full = getattr(exc, "errno", None) in (errno.ENOSPC, errno.EDQUOT)
+        logger.error("%s", exc)
+        return templates.TemplateResponse(
+            request=request,
+            name="error.html",
+            context={
+                "heading": "Cannot save drafts",
+                "message": str(exc),
+                "page": "error",
+            },
+            status_code=507 if full else 500,
         )
 
     from .routes import router  # noqa: PLC0415 -- avoids an import cycle

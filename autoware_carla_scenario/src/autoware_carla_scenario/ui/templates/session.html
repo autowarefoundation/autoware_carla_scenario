@@ -192,6 +192,20 @@
     var jobs = document.getElementById('slurm-jobs');
     jobs.innerHTML = '';
     st.submissions.forEach(function (sub) {
+      if (sub.unreadable) {
+        jobs.appendChild(el('div', 'font-medium text-gray-700 mt-1', 'Submission ' + sub.index + ': unreadable record'));
+        jobs.appendChild(el('div', 'text-xs text-amber-700', sub.note));
+        return;
+      }
+      if (!sub.job_id) {
+        // No job id (sbatch in flight, timed out, or a stale record): say why,
+        // never "job null ... ended" (#1791).
+        jobs.appendChild(el('div', 'font-medium text-gray-700 mt-1',
+          'Submission ' + sub.index + ': ' + sub.cases + ' case(s) -- ' +
+          (sub.in_flight ? 'being submitted' : (sub.sbatch_timed_out ? 'sbatch timed out' : 'no job'))));
+        if (sub.note) jobs.appendChild(el('div', 'text-xs text-amber-700', sub.note));
+        return;
+      }
       var head = el('div', 'font-medium text-gray-700 mt-1',
         'Submission ' + sub.index + ': job ' + sub.job_id + ', ' + sub.cases + ' case(s)' +
         (sub.collect_job_id ? ', collect job ' + sub.collect_job_id : '') +

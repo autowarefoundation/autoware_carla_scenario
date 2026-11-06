@@ -107,8 +107,7 @@ import autoware_carla_scenario.sweeper.lanelet_constraint_sweeper as lcs
 from autoware_carla_scenario.server import CarlaServerManager
 
 lcs.check_constraint_keys = lambda sweep: None
-lcs.resolve_map_paths = lambda cfg: None
-lcs.load_map = lambda paths: object()
+lcs.load_sweep_map = lambda map_cfg, **_: object()
 lcs.scenario_controls = lambda cfg: None
 lcs.expand_sweep = lambda sweep, lanelet_map, arguments, **_: [
     ["+case=1", *arguments],
@@ -452,27 +451,3 @@ def test_wait_until_carla_gone_returns_at_once_when_the_case_left_none() -> None
 
 def test_the_wait_outlasts_the_watchdog_grace_period() -> None:
     assert isolation._CARLA_GONE_TIMEOUT_S > _WATCHDOG_GRACE_S
-
-
-def test_the_library_check_is_given_the_wait_python_computes() -> None:
-    # sweeper.isolation hands the library check a literal in the
-    # `if TYPE_CHECKING:` branch (Codon cannot read server's global at its top
-    # level); it must stay the value Python computes in the `else` branch.
-    import ast
-    import inspect
-
-    tree = ast.parse(inspect.getsource(isolation))
-    branch = next(
-        node
-        for node in tree.body
-        if isinstance(node, ast.If)
-        and isinstance(node.test, ast.Name)
-        and node.test.id == "TYPE_CHECKING"
-        and any(
-            isinstance(stmt, ast.Assign)
-            and [ast.unparse(t) for t in stmt.targets] == ["_CARLA_GONE_TIMEOUT_S"]
-            for stmt in node.body
-        )
-    )
-    (assign,) = [stmt for stmt in branch.body if isinstance(stmt, ast.Assign)]
-    assert ast.literal_eval(assign.value) == isolation._CARLA_GONE_TIMEOUT_S

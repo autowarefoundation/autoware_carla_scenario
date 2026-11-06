@@ -35,6 +35,13 @@ def _make_ego_config() -> EgoConfig:
     )
 
 
+def _position(order: list[object], scenario: object) -> int:
+    """Where *scenario* first ran in *order*, by identity: the fakes keep the
+    scenarios themselves, not their id(), which CPython hands out again once
+    a released scenario is freed (a later scenario then took its position)."""
+    return next(i for i, seen in enumerate(order) if seen is scenario)
+
+
 class _NullScenario(BaseScenario):
     """Minimal scenario: setup is a no-op, is_done always returns True."""
 
@@ -97,14 +104,14 @@ class _SecondCaseRaises:
     def __init__(self, error: BaseException) -> None:
         self.error = error
         self.failing: BaseScenario | None = None
-        self.order: list[int] = []
+        self.order: list[object] = []
         self.ran: list[int] = []
         self.events: list[str] = []
 
     def run_scenario(self, scenario: BaseScenario, **_: object) -> ScenarioResult:
-        if id(scenario) not in self.order:
-            self.order.append(id(scenario))
-        self.ran.append(self.order.index(id(scenario)))
+        if not any(seen is scenario for seen in self.order):
+            self.order.append(scenario)
+        self.ran.append(_position(self.order, scenario))
         self.events.append("run")
         if scenario is self.failing:
             raise self.error
@@ -122,15 +129,15 @@ class _RaisesThenRuns:
     def __init__(self, *, run_failures: int = 1, reset_failures: int = 0) -> None:
         self.run_failures = run_failures
         self.reset_failures = reset_failures
-        self.order: list[int] = []
+        self.order: list[object] = []
         self.events: list[tuple[str, object]] = []
 
     def run_scenario(
         self, scenario: BaseScenario, *, reset_world: bool = True, **_: object
     ) -> ScenarioResult:
-        if id(scenario) not in self.order:
-            self.order.append(id(scenario))
-        self.events.append(("run", (self.order.index(id(scenario)), reset_world)))
+        if not any(seen is scenario for seen in self.order):
+            self.order.append(scenario)
+        self.events.append(("run", (_position(self.order, scenario), reset_world)))
         if self.run_failures > 0:
             self.run_failures -= 1
             raise RuntimeError("RPC timed out")
@@ -470,6 +477,36 @@ class TestScenarioQueueUnit:
         assert runner.events == ["run", "run", "reset", "run", "reset", "run"]
         if not release:
             assert queue.result_for(scenarios[1]) is results[1]
+
+    def test_on_result_hears_each_case_as_it_ends_errored_or_not(self) -> None:
+        """#1566: a batch writes its summary from it, case by case; a retried
+        case is heard once, after its last attempt, and an errored one is
+        among the errored indices by then."""
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(RuntimeError("no"))
+        heard: list[tuple[int, bool, list[int], int]] = []
+
+        def on_result(index: int, result: ScenarioResult) -> None:
+            heard.append(
+                (index, result.passed, queue.errored_indices(), len(runner.ran))
+            )
+
+        results = queue.run_all(continue_on_error=True, on_result=on_result)
+
+        assert heard == [(0, True, [], 1), (1, False, [1], 3), (2, True, [1], 4)]
+        assert [r.passed for r in results] == [True, False, True]
+
+    def test_what_on_result_raises_ends_the_run_and_is_no_failed_attempt(
+        self,
+    ) -> None:
+        queue, runner, _ = self._queue_whose_second_case_cannot_run(RuntimeError("no"))
+
+        def on_result(index: int, _result: ScenarioResult) -> None:
+            raise KeyboardInterrupt
+
+        with pytest.raises(KeyboardInterrupt):
+            queue.run_all(continue_on_error=True, on_result=on_result)
+
+        assert runner.ran == [0]
 
     def test_an_errored_last_case_leaves_the_world_to_the_next_run(self) -> None:
         queue, runner, _ = self._queue_whose_second_case_cannot_run(
@@ -1029,3 +1066,280 @@ def test_a_retry_waits_for_the_failed_attempts_recording_first(
     assert result.passed
     # Once, between the attempts, with the failed attempt's log still there.
     assert seen == [True]
+
+
+# ---------------------------------------------------------------------------
+# A server that dies mid-batch is restarted (issue #1834)
+# ---------------------------------------------------------------------------
+
+
+class _DyingServer:
+    """A CarlaServerManager stand-in that records its calls in *events*; it
+    is alive until :attr:`alive` is cleared, and its first *start_failures*
+    starts after the first raise."""
+
+    def __init__(
+        self, events: list[str], *, reused: bool = False, start_failures: int = 0
+    ) -> None:
+        self.events = events
+        self.alive = True
+        self.reused = reused
+        self.start_failures = start_failures
+        self.host = "localhost"
+        self.port = 2000
+        self.started = 0
+
+    def start(self) -> None:
+        self.events.append("start")
+        self.started += 1
+        if self.started > 1 and self.start_failures > 0:
+            self.start_failures -= 1
+            raise RuntimeError("CARLA did not come up")
+        self.alive = True
+
+    def stop(self) -> None:
+        self.events.append("stop")
+        self.alive = False
+
+    def is_alive(self) -> bool:
+        self.events.append("is_alive")
+        return self.alive
+
+
+class _CrashingRunner:
+    """A runner that kills *server* once it has run the case at position
+    *crash_after* (counted across every runner made); it records each run
+    and map load in *events*."""
+
+    def __init__(
+        self, server: _DyingServer, events: list[str], crash_after: int | None
+    ) -> None:
+        self.server = server
+        self.events = events
+        self.crash_after = crash_after
+        self.order: list[object] = []
+        self._world = None
+
+    def load_map_by_name(self, name: str) -> None:
+        self.events.append("load_map")
+
+    def run_scenario(self, scenario: BaseScenario, **_: object) -> ScenarioResult:
+        if not self.server.alive:
+            self.events.append("run on a dead server")
+            raise RuntimeError("time-out while waiting for the simulator")
+        if not any(seen is scenario for seen in self.order):
+            self.order.append(scenario)
+        position = _position(self.order, scenario)
+        self.events.append(f"run {position}")
+        if position == self.crash_after:
+            self.server.alive = False
+        return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
+
+    def reset_world(self, scenario_name: str = "") -> None:
+        self.events.append("reset")
+
+
+def _crashing_queue(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    *,
+    crash_after: int | None,
+    cases: int = 3,
+    given: bool = False,
+    retries: int = 0,
+    reused: bool = False,
+    start_failures: int = 0,
+) -> tuple[ScenarioQueue, _DyingServer, list[str], list[_CrashingRunner]]:
+    """A started queue of *cases* scenarios on a :class:`_DyingServer` that
+    dies after the case at *crash_after*, its own unless *given*."""
+    from autoware_carla_scenario import scenario_queue as sq
+
+    events: list[str] = []
+    server = _DyingServer(events, reused=reused, start_failures=start_failures)
+    shared: list[object] = []
+    runners: list[_CrashingRunner] = []
+
+    def make_runner(*args: object, **kwargs: object) -> _CrashingRunner:
+        events.append("runner")
+        runner = _CrashingRunner(server, events, crash_after)
+        runner.order = shared  # positions count across the restarts
+        runners.append(runner)
+        return runner
+
+    monkeypatch.setattr(sq, "ScenarioRunner", make_runner)
+    if not given:
+        monkeypatch.setattr(sq, "CarlaServerManager", lambda **_: server)
+    queue = ScenarioQueue(
+        server=server if given else None,  # type: ignore[arg-type]
+        map_name="Town10HD_Opt",
+        output_dir=tmp_path,
+        cooldown_max_retries=retries,
+    )
+    queue.start()
+    for _ in range(cases):
+        queue.add(_NullScenario(_make_ego_config()))
+    events.clear()
+    return queue, server, events, runners
+
+
+def test_a_server_that_dies_mid_batch_is_restarted_before_the_next_case(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    queue, server, events, runners = _crashing_queue(
+        monkeypatch, tmp_path, crash_after=1
+    )
+
+    results = queue.run_all(continue_on_error=True)
+
+    assert [r.passed for r in results] == [True, True, True]
+    assert queue.errored_indices() == []
+    # Case 1 kills the server; its own end-of-run reset is the runner's.  The
+    # next case finds it dead: stopped, started, a new runner, the map again.
+    assert events == [
+        "is_alive",
+        "run 0",
+        "is_alive",
+        "run 1",
+        "is_alive",
+        "stop",
+        "start",
+        "runner",
+        "load_map",
+        "run 2",
+    ]
+    assert len(runners) == 2
+    assert queue._runner is runners[-1]
+
+
+def test_a_server_that_died_between_run_alls_is_restarted_not_reset(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The SLURM worker runs each case with a run_all() of its own: the
+    server that died in the last one is restarted before the next, rather
+    than its world reset."""
+    queue, server, events, _ = _crashing_queue(
+        monkeypatch, tmp_path, crash_after=0, cases=1
+    )
+    (first,) = queue.run_all(release=True, continue_on_error=True)
+    queue.add(_NullScenario(_make_ego_config()))
+    events.clear()
+
+    (second,) = queue.run_all(release=True, continue_on_error=True)
+
+    assert first.passed and second.passed
+    assert "reset" not in events
+    assert events[:5] == ["is_alive", "is_alive", "stop", "start", "runner"]
+    assert events[-1] == "run 1"
+
+
+def test_a_failed_restart_is_the_failure_of_its_attempt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    queue, server, events, _ = _crashing_queue(
+        monkeypatch, tmp_path, crash_after=0, cases=2, start_failures=1, retries=1
+    )
+
+    results = queue.run_all(continue_on_error=True)
+
+    assert [r.passed for r in results] == [True, True]
+    assert queue.errored_indices() == []
+    # The first restart raises: that attempt fails, and the retry restarts
+    # again (without asking the server) before it runs.
+    assert events == [
+        "is_alive",
+        "run 0",
+        "is_alive",
+        "stop",
+        "start",
+        "stop",
+        "start",
+        "runner",
+        "load_map",
+        "run 1",
+    ]
+
+
+def test_a_case_whose_every_restart_fails_errors_and_the_next_restarts_again(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    queue, server, events, _ = _crashing_queue(
+        monkeypatch, tmp_path, crash_after=0, cases=3, start_failures=1
+    )
+
+    results = queue.run_all(continue_on_error=True)
+
+    assert [r.passed for r in results] == [True, False, True]
+    assert queue.errored_indices() == [1]
+    assert "CARLA did not come up" in results[1].message
+    # No reset of the dead server's world after the errored case.
+    assert "reset" not in events
+    assert events.count("start") == 2
+    # The errored case never reached the runner: the third is its second run.
+    assert events.count("run on a dead server") == 0
+    assert events[-1] == "run 1"
+
+
+def test_a_failed_restart_ends_a_run_that_does_not_continue_on_error(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    queue, _, _, _ = _crashing_queue(
+        monkeypatch, tmp_path, crash_after=0, cases=2, start_failures=1
+    )
+    with pytest.raises(RuntimeError, match="failed after 1 attempt") as info:
+        queue.run_all()
+    assert "CARLA did not come up" in str(info.value.__cause__)
+
+
+@pytest.mark.parametrize("given", [True, False], ids=["given", "reused"])
+def test_a_server_the_queue_does_not_own_is_never_restarted(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, given: bool
+) -> None:
+    """Neither a server the queue was given nor one its own manager found
+    running and reused is the queue's to restart: it is not even asked."""
+    queue, server, events, runners = _crashing_queue(
+        monkeypatch, tmp_path, crash_after=0, cases=2, given=given, reused=not given
+    )
+
+    results = queue.run_all(continue_on_error=True)
+
+    assert [r.passed for r in results] == [True, False]
+    assert not {"is_alive", "stop", "start", "runner"} & set(events)
+    assert len(runners) == 1
+
+
+def test_a_run_on_a_live_server_restarts_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    queue, server, events, runners = _crashing_queue(
+        monkeypatch, tmp_path, crash_after=None, cases=3
+    )
+
+    results = queue.run_all(continue_on_error=True)
+
+    assert [r.passed for r in results] == [True, True, True]
+    assert not {"stop", "start", "runner", "load_map"} & set(events)
+    assert events.count("is_alive") == 3
+    assert len(runners) == 1
+    assert server.started == 1
+
+
+def test_a_run_all_after_a_restart_still_resets_the_world_the_last_case_left(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Three single-case run_all()s (the SLURM worker's pattern), the server
+    dying in the first: the second restarts it, and its case still leaves its
+    world as it was, so the third resets that world before it runs."""
+    queue, server, events, _ = _crashing_queue(
+        monkeypatch, tmp_path, crash_after=0, cases=1
+    )
+    queue.run_all(release=True, continue_on_error=True)
+    queue.add(_NullScenario(_make_ego_config()))
+    queue.run_all(release=True, continue_on_error=True)
+    assert "start" in events
+    queue.add(_NullScenario(_make_ego_config()))
+    events.clear()
+
+    (third,) = queue.run_all(release=True, continue_on_error=True)
+
+    assert third.passed
+    assert events == ["is_alive", "reset", "is_alive", "run 2"]

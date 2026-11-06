@@ -9,9 +9,21 @@ when ``CARLA_EXECUTABLE`` is not set::
     scenario-setup --force    # download again regardless
 
 The archive (~16 GB, ~30 GB unpacked) is unpacked while it downloads, so it is
-never kept on disk; the new tree replaces the old one only once it is complete.
+never kept on disk; the new tree replaces the old one only once it is complete,
+by renames, so an interrupted run never leaves a half-deleted install in place.
 A connection that drops mid-download is picked up where it stopped with a range
 request, so a flaky link costs a retry rather than the whole transfer.
+
+One run at a time installs into a directory: each holds an exclusive ``flock``
+on ``<target>.lock`` beside it from the clean-up of what an interrupted run left
+to the swap, so a second ``scenario-setup`` for the same directory waits for the
+first (and then usually finds its install up to date) instead of deleting the
+first one's download. The lock file stays: deleting it would let a run lock the
+deleted file while another locks its replacement. A run that cannot open the
+lock file for writing (an install of another user's, or on a read-only file
+system) can only check the install: it takes a shared lock, which still waits
+for a writer, and reports an install it would have to replace rather than
+trying to.
 ``AUTOWARE_CARLA_SCENARIO_HOME`` moves ``~/.autoware_carla_scenario``.
 
 CARLA publishes its server for Linux x86_64 only, so on any other machine
@@ -24,21 +36,39 @@ from a URL or from a local path (``--url ~/Downloads/CARLA.tar.gz``).
 from __future__ import annotations
 
 import argparse
+import contextlib
+import errno
 import http.client
 import json
-import os
 import platform
-import re
 import shutil
 import sys
 import tarfile
 import time
 from email.message import Message
 from pathlib import Path, PurePosixPath
-from typing import IO, Callable, Optional, cast
+from typing import IO, Callable, Iterator, Optional, cast
 
-HOME_ENV = "AUTOWARE_CARLA_SCENARIO_HOME"
-"""Overrides the framework's home directory, ``~/.autoware_carla_scenario``."""
+# The path logic, which the library check compiles from its own module; every
+# name of it is re-exported here, where it has always been imported from.
+from .carla_install_paths import (
+    _LAUNCHER,
+    _STAMP,
+    _conditions_of,
+    _content_range,
+    _current_of,
+    _lock_path,
+    _replaced,
+    _room_needed,
+    _staging,
+    _swap_into_place,
+)
+from .carla_install_paths import _SCHEME as _SCHEME
+from .carla_install_paths import _UNPACKED_PER_PACKED as _UNPACKED_PER_PACKED
+from .carla_install_paths import HOME_ENV as HOME_ENV
+from .carla_install_paths import install_dir as install_dir
+from .carla_install_paths import installed_executable as installed_executable
+from .carla_install_paths import package_url as package_url
 
 NIGHTLY_URL = (
     "https://s3.us-east-005.backblazeb2.com/carla-releases/Linux/Dev/"
@@ -49,14 +79,8 @@ NIGHTLY_URL = (
 NIGHTLY_MACHINES = frozenset({"x86_64"})
 """The machines (``platform.machine()``) the nightly build runs on."""
 
-LAUNCHER = PurePosixPath("Linux/CarlaUnreal.sh")
+LAUNCHER = PurePosixPath(_LAUNCHER)
 """The server's launcher, relative to the unpacked package."""
-
-_STAMP = ".download.json"
-"""What the install was downloaded from, to tell whether it is still current."""
-
-_UNPACKED_PER_PACKED = 2.0
-"""The nightly unpacks to about twice its archive."""
 
 _TIMEOUT = 60.0
 """Seconds a read may stall before the connection counts as dropped."""
@@ -66,33 +90,6 @@ _RETRIES = 8
 
 _RETRY_DELAY = 2.0
 """Seconds before the first reconnection; each failed one doubles it, up to 60."""
-
-_SCHEME = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://|file:)", re.IGNORECASE)
-"""The ``scheme://`` (or ``file:``, which urllib takes without ``//``) that tells
-a URL from a local path."""
-
-
-def install_dir() -> Path:
-    """Where ``scenario-setup`` puts CARLA: ``<home>/bin/carla``."""
-    home = os.environ.get(HOME_ENV, "").strip() or "~/.autoware_carla_scenario"
-    return Path(home).expanduser() / "bin" / "carla"
-
-
-def installed_executable() -> Optional[Path]:
-    """The launcher of the CARLA ``scenario-setup`` installed, if there is one."""
-    launcher = install_dir() / LAUNCHER
-    return launcher if launcher.is_file() else None
-
-
-def package_url(url: str) -> str:
-    """*url* itself, or the ``file://`` URL of a local path given instead.
-
-    A value without a ``scheme://`` (or ``file:``) is a path: ``~`` expands
-    and a relative path is taken from the current directory.
-    """
-    if _SCHEME.match(url):
-        return url
-    return Path(url).expanduser().resolve().as_uri()
 
 
 def install(
@@ -104,6 +101,8 @@ def install(
     An install already made from the same download (same ETag, or Last-Modified
     and size) is kept unless *force*. The package's single top-level directory
     is dropped, so the launcher is always ``<target>/Linux/CarlaUnreal.sh``.
+    Another install into *target* running meanwhile is waited for (see
+    :func:`_locked`), so the two never delete each other's download.
 
     Raises:
         RuntimeError: There is not room for the package, it has no launcher, or
@@ -115,12 +114,9 @@ def install(
         ValueError: *url* has a scheme urllib cannot open.
     """
     _require_extraction_filters()  # before anything is downloaded
-    # The runner imports this module for install_dir() alone; these it does not need.
-    import urllib.error  # noqa: PLC0415
+    # Imported here: only a download needs them, not the commands that check an install.
     import urllib.parse  # noqa: PLC0415
     import urllib.request  # noqa: PLC0415
-
-    from tqdm import tqdm  # noqa: PLC0415
 
     url = package_url(url)
     parts = urllib.parse.urlsplit(url)
@@ -130,11 +126,35 @@ def install(
         if not local.is_file():
             raise FileNotFoundError(f"{local}: no such file")
     target = (target or install_dir()).expanduser().resolve()
+    # Before the lock, so a directory refused gets no lock file beside it; a
+    # run holding the lock only ever leaves *target* missing or stamped.
     if target.exists() and not (target / _STAMP).is_file() and any(target.iterdir()):
         raise RuntimeError(
             f"{target} is not empty and not a CARLA scenario-setup installed; "
             "pick an empty or new directory"
         )
+    with _locked(target) as writable:
+        return _install(url, target, force, writable)
+
+
+def _install(url: str, target: Path, force: bool, writable: bool = True) -> Path:
+    """:func:`install`'s work, with the lock on *target* held.
+
+    Not *writable* (see :func:`_locked`), it only checks the install, and raises
+    ``RuntimeError`` where it would have to download.
+    """
+    import urllib.error  # noqa: PLC0415
+    import urllib.request  # noqa: PLC0415
+
+    from tqdm import tqdm  # noqa: PLC0415
+
+    if not writable and force:
+        raise _cannot_install(target)
+    if writable:
+        # What an interrupted run left: an unfinished download and an old install
+        # moved aside but not yet deleted. Neither is ever trusted as an install.
+        for leftover in (_staging(target), _replaced(target)):
+            shutil.rmtree(leftover, ignore_errors=True)
     request = urllib.request.Request(
         url, headers={} if force else _conditions(target, url)
     )
@@ -155,10 +175,11 @@ def install(
         if not force and _current(target, source):
             print(f"CARLA at {target} is up to date.")
             return target / LAUNCHER
+        if not writable:
+            raise _cannot_install(target)
         size = int(source["size"]) if source["size"] else None
         target.parent.mkdir(parents=True, exist_ok=True)
-        staging = target.with_name(target.name + ".partial")
-        shutil.rmtree(staging, ignore_errors=True)  # an interrupted run's
+        staging = _staging(target)
         if size is not None:
             _check_room(target.parent, size)
 
@@ -184,9 +205,107 @@ def install(
         finally:
             stream.close()
     (staging / _STAMP).write_text(json.dumps(source, indent=2) + "\n")
-    shutil.rmtree(target, ignore_errors=True)
-    staging.rename(target)
+    _swap_into_place(staging, target)
     return target / LAUNCHER
+
+
+def _cannot_install(target: Path) -> RuntimeError:
+    """The error of a run that can only check *target* but would have to install."""
+    state = "out of date" if (target / LAUNCHER).is_file() else "not installed"
+    return RuntimeError(
+        f"CARLA at {target} is {state}, and this run cannot write there "
+        f"({_lock_path(target)} cannot be opened for writing); run scenario-setup "
+        "as a user who can write to it, or pass --dir to install elsewhere"
+    )
+
+
+#: The errors of a ``flock`` the file system does not support (some NFS mounts).
+_NO_FLOCK_ERRNOS = frozenset(
+    {errno.ENOSYS, errno.EOPNOTSUPP, errno.ENOTSUP, errno.ENOLCK, errno.EINVAL}
+)
+
+
+#: The errors of a lock file that cannot be created or written: a read-only
+#: file system, or a directory of another user's.
+_UNWRITABLE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
+
+
+@contextlib.contextmanager
+def _locked(target: Path) -> Iterator[bool]:
+    """Hold the lock on installing into *target*, waiting for it if taken.
+
+    Yields whether the run may write *target*: ``False`` where the lock file
+    could be opened read-only only.
+
+    A ``flock`` on :func:`_lock_path`, released when the file is closed, so also
+    when the process dies. The file is never deleted: a run that opened it just
+    before the deletion would lock a file no later run sees. Waiting is a
+    blocking ``flock``, which a Ctrl-C ends with ``KeyboardInterrupt``. Where
+    the file system has no ``flock``, the install goes ahead unlocked.
+
+    Checking an install needs no write access: where the lock file cannot be
+    opened for writing (a read-only or another user's install), an existing one
+    is opened read-only and locked shared, which still waits for a writer's
+    exclusive lock: an NFS client emulates ``flock`` with byte-range locks, and
+    refuses an exclusive one on a read-only descriptor (``EBADF``, which on such
+    a descriptor counts as no ``flock``). Without a lock file the run goes ahead
+    unlocked, as it can only find the install up to date or fail to write it.
+    """
+    import fcntl  # noqa: PLC0415
+
+    lock = _lock_path(target)
+    stream = _open_lock(lock)
+    if stream is None:
+        yield True
+        return
+    writable = stream.mode != "r"
+    mode = fcntl.LOCK_EX if writable else fcntl.LOCK_SH
+    with stream:
+        try:
+            fcntl.flock(stream.fileno(), mode | fcntl.LOCK_NB)
+        except BlockingIOError:
+            print(
+                f"Waiting for another scenario-setup on {target} to finish "
+                f"(lock {lock}) ...",
+                flush=True,
+            )
+            fcntl.flock(stream.fileno(), mode)
+        except OSError as exc:
+            if exc.errno not in _NO_FLOCK_ERRNOS and (
+                writable or exc.errno != errno.EBADF
+            ):
+                raise
+            print(
+                f"scenario-setup: no flock on {lock.parent} ({exc}); installing "
+                "unlocked, so run only one scenario-setup for it at a time",
+                file=sys.stderr,
+            )
+        yield writable
+
+
+def _open_lock(lock: Path) -> Optional[IO[str]]:
+    """*lock* opened to ``flock``: for writing, else read-only, else nothing.
+
+    Raises:
+        OSError: *lock* cannot be created for a reason other than permissions
+            or a read-only file system.
+    """
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        return open(lock, "a")  # noqa: SIM115 -- the caller closes it
+    except OSError as exc:
+        if exc.errno not in _UNWRITABLE_ERRNOS:
+            raise
+        error = exc
+    try:
+        return open(lock)  # noqa: SIM115 -- for a shared lock, see _locked
+    except OSError:
+        print(
+            f"scenario-setup: cannot create {lock} ({error}); going ahead "
+            "unlocked, so run only one scenario-setup for it at a time",
+            file=sys.stderr,
+        )
+        return None
 
 
 class _ResumingStream:
@@ -314,55 +433,49 @@ class _ResumingStream:
             pass
 
 
-def _content_range(
-    content_range: Optional[str],
-) -> tuple[Optional[int], Optional[int]]:
-    """First byte and size of a ``Content-Range: bytes <first>-<last>/<size>``."""
-    unit, _, span = (content_range or "").strip().partition(" ")
-    first, _, rest = span.partition("-")
-    _, _, total = rest.partition("/")
-    if unit != "bytes" or not first.isdigit() or not total.isdigit():
-        return None, None
-    return int(first), int(total)
+def _stamp(target: Path, shown: tuple[str, ...] = ()) -> dict[str, Optional[str]]:
+    """What *target* was downloaded from, or nothing for an incomplete install.
 
-
-def _stamp(target: Path) -> dict[str, Optional[str]]:
-    """What *target* was downloaded from, or nothing for an incomplete install."""
+    The values as the checked ``carla_install_paths`` takes them, strings or
+    ``None``, converted so that it decides as it did on the JSON's own values.
+    A stamp edited by hand can hold other types: such a value never equals the
+    string it is compared with, so it becomes ``None``, which never does either
+    (nor does a key missing). Under the keys in *shown*, whose value a request
+    header carries, a value that is not falsy becomes its ``str()`` instead,
+    which is what the header was given.
+    """
     if not (target / LAUNCHER).is_file():
         return {}
     try:
         stamp = json.loads((target / _STAMP).read_text())
     except (OSError, ValueError):
         return {}
-    return stamp if isinstance(stamp, dict) else {}
+    if not isinstance(stamp, dict):
+        return {}
+    return {
+        str(key): (
+            value
+            if value is None or isinstance(value, str)
+            else str(value)
+            if key in shown and value
+            else None
+        )
+        for key, value in stamp.items()
+    }
 
 
 def _conditions(target: Path, url: str) -> dict[str, str]:
     """Headers that make the server answer 304 for the download *target* holds."""
-    stamp = _stamp(target)
-    if stamp.get("url") != url:
-        return {}
-    headers = {}
-    if stamp.get("etag"):
-        headers["If-None-Match"] = str(stamp["etag"])
-    if stamp.get("last_modified"):
-        headers["If-Modified-Since"] = str(stamp["last_modified"])
-    return headers
+    return _conditions_of(_stamp(target, ("etag", "last_modified")), url)
 
 
 def _current(target: Path, source: dict[str, Optional[str]]) -> bool:
     """Whether *target* holds a complete install of the same download as *source*."""
-    stamp = _stamp(target)
-    if stamp.get("url") != source["url"]:
-        return False
-    if source["etag"]:
-        return bool(stamp.get("etag") == source["etag"])
-    keys = ("last_modified", "size")
-    return all(source[k] for k in keys) and all(stamp.get(k) == source[k] for k in keys)
+    return _current_of(_stamp(target), source)
 
 
 def _check_room(directory: Path, packed: int) -> None:
-    needed = int(packed * _UNPACKED_PER_PACKED)
+    needed = _room_needed(packed, _UNPACKED_PER_PACKED)
     free = shutil.disk_usage(directory).free
     if free < needed:
         raise RuntimeError(

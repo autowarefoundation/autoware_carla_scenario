@@ -53,7 +53,10 @@ from autoware_carla_scenario.typecheck.library_driver import (
     render_library_driver,
     workspace_module,
 )
-from autoware_carla_scenario.typecheck.transform import redirect_imports
+from autoware_carla_scenario.typecheck.transform import (
+    module_constants,
+    redirect_imports,
+)
 
 _PACKAGE = "autoware_carla_scenario"
 
@@ -519,6 +522,124 @@ def test_an_import_of_a_checked_module_names_its_workspace_module() -> None:
     assert len(lines) == 7  # every statement kept its line
 
 
+def _vector_constant(module: str, name: str) -> bool:
+    return module == f"{_PACKAGE}.kinematics.vector" and name in ("ZERO", "UNIT_M")
+
+
+@pytest.mark.codon_selftest
+def test_an_imported_constant_is_read_through_its_module() -> None:
+    # Codon 0.19 can report a constant imported by name, and read at module
+    # level, as not defined (#1693): it is read through the module instead,
+    # on the import's line, and the other names stay imported by name.
+    source = """
+        from .vector import (
+            Vector3,
+            ZERO,
+            UNIT_M as UNIT,
+        )
+        from .vector import ZERO as ZERO
+        from ..coordinate.frames import ZERO
+        X = ZERO
+        """
+    out, problems = redirect_imports(
+        textwrap.dedent(source),
+        f"{_PACKAGE}.kinematics.velocity",
+        False,
+        _target,
+        _MODULES.__contains__,
+        constant=_vector_constant,
+    )
+    assert problems == []
+    lines = out.splitlines()
+    vector = "_acs_lib.autoware_carla_scenario__kinematics__vector"
+    assert lines[1] == (
+        f"from {vector} import Vector3; import {vector} as _acs_const_2; "
+        "ZERO = _acs_const_2.ZERO; UNIT = _acs_const_2.UNIT_M"
+    )
+    # A re-export binds the name too.
+    assert lines[6] == f"import {vector} as _acs_const_7; ZERO = _acs_const_7.ZERO"
+    # Only the constants *constant* names: frames' ZERO is a plain import.
+    assert lines[7] == (
+        "from _acs_lib.autoware_carla_scenario__coordinate__frames import ZERO"
+    )
+    assert lines[8] == "X = ZERO"
+    assert len(lines) == 9  # every statement kept its line
+
+
+@pytest.mark.codon_selftest
+def test_two_imports_of_constants_on_a_line_get_two_module_names() -> None:
+    out, problems = redirect_imports(
+        "from .vector import ZERO; from .vector import UNIT_M\n",
+        f"{_PACKAGE}.kinematics.velocity",
+        False,
+        _target,
+        _MODULES.__contains__,
+        constant=_vector_constant,
+    )
+    assert problems == []
+    assert "as _acs_const_1;" in out
+    assert "as _acs_const_1_1;" in out
+    assert "UNIT_M = _acs_const_1_1.UNIT_M" in out
+
+
+def test_module_constants_are_plain_upper_case_assignments_and_re_exports() -> None:
+    def tree(source: str) -> ast.Module:
+        return ast.parse(textwrap.dedent(source))
+
+    constants = module_constants(
+        {
+            f"{_PACKAGE}.metrics": (
+                tree(
+                    """
+                    from typing import TypeAlias, TypeVar
+                    T = TypeVar("T")
+                    CRIME_TTR_S = "crime_ttr_s"
+                    _PRIVATE_M: float = 0.5
+                    JSON: TypeAlias = dict
+                    lower = 1
+                    A, B = 1, 2
+                    if True:
+                        HIDDEN = 1
+                    class UPPER:
+                        pass
+                    """
+                ),
+                False,
+            ),
+            f"{_PACKAGE}.commonroad": (
+                tree("from ..metrics import CRIME_TTR_S as CRIME_TTR_S, lower\n"),
+                True,
+            ),
+            f"{_PACKAGE}.heavy": (
+                tree(
+                    "from .commonroad import CRIME_TTR_S as TTR\n"
+                    "from .metrics import _PRIVATE_M as private\n"
+                ),
+                False,
+            ),
+        }
+    )
+    assert constants == {
+        f"{_PACKAGE}.metrics": {"CRIME_TTR_S", "_PRIVATE_M"},
+        f"{_PACKAGE}.commonroad": {"CRIME_TTR_S"},
+        f"{_PACKAGE}.heavy": {"TTR"},
+    }
+
+
+def test_heavy_metrics_reads_the_metrics_constant_through_its_module() -> None:
+    heavy, metrics = f"{_PACKAGE}.heavy_metrics", f"{_PACKAGE}.metrics"
+    every = package_modules()
+    sources = check._Sources()
+    for name in (heavy, metrics):
+        text = every[name].read_text(encoding="utf-8")
+        sources.modules[name] = check._Module(every[name], False, text, ast.parse(text))
+    files = check._library_files([heavy, metrics], sources, every)
+    text = next(f.text for f in files if f.module == heavy)
+    assert f"import {workspace_module(metrics)} as _acs_const_" in text
+    assert "CRIME_TTR_S = _acs_const_" in text
+    assert f"from {workspace_module(metrics)} import" not in text
+
+
 @pytest.mark.codon_selftest
 def test_an_import_of_an_unchecked_module_names_its_model() -> None:
     out, problems = _redirect(
@@ -637,7 +758,9 @@ def test_the_vehicle_entity_model_re_exports_the_checked_spawn_and_vehicle() -> 
     assert out["_vehicle_entity"].splitlines() == [
         f"from {workspace_module(spawn)} import SpawnLocation, SpawnPointIndex, "
         "SpawnTransform",
-        f"from {workspace_module(vehicle)} import VehicleEntity, VehicleEntityConfig",
+        f"from {workspace_module(vehicle)} import ANY_EMERGENCY_VEHICLE, "
+        "ANY_MOTORCYCLE, EmergencyVehicleEntity, EmergencyVehicleEntityConfig, "
+        "MotorcycleEntity, MotorcycleEntityConfig, VehicleEntity, VehicleEntityConfig",
     ]
 
 
@@ -1795,13 +1918,12 @@ def test_a_named_module_brings_the_checked_modules_it_imports() -> None:
 
 
 def test_a_modelled_import_is_not_followed() -> None:
-    deps = _dependencies(f"{_PACKAGE}.entity.ego")
+    # measures imports scenario_base (for the running BaseScenario it holds)
+    # through the model, so the scenario_base it names is not brought ...
+    deps = _dependencies(f"{_PACKAGE}.measures")
     assert f"{_PACKAGE}.scenario_base" not in deps  # MODELLED_IMPORTS
-    # entity._spawn brings the rest of the vehicle entity's replaced model,
-    # so the model re-exports the checked definitions, as in the full run.
-    assert {f"{_PACKAGE}.entity._spawn", f"{_PACKAGE}.entity.vehicle_entity"} <= set(
-        deps
-    )
+    # ... while the checked modules it imports from source are.
+    assert {f"{_PACKAGE}.metrics", f"{_PACKAGE}.coordinate.map_manager"} <= set(deps)
 
 
 def test_the_full_run_compiles_only_the_checked_modules() -> None:
@@ -1816,8 +1938,8 @@ def test_the_full_run_compiles_only_the_checked_modules() -> None:
         "entity.ego",
         # actions.lane_change too: it is the same program (the test below).
         "actions.turn",
-        # BridgedEgoEntity derives from EgoVehicle, which imports
-        # scenario_base through the model, and AutowareEgoEntity from it.
+        # BridgedEgoEntity derives from EgoVehicle, which defines the
+        # EgoConfig scenario_base re-exports, and AutowareEgoEntity from it.
         "entity.bridged_ego",
         "entity.autoware_entity",
         # The run starts at coordinate.frames, which the model's _poses.codon
@@ -3797,8 +3919,8 @@ def test_a_typed_star_args_is_called_with_one_value() -> None:
 
 
 # ---------------------------------------------------------------------------
-# The signal and atexit shims, a Popen's pipes, and the dotenv and
-# carla_install models (#119)
+# The signal and atexit shims, a Popen's pipes, the dotenv model (#119), and
+# the checked carla_install_paths, compiled from its source (#1635)
 # ---------------------------------------------------------------------------
 
 
@@ -3815,7 +3937,7 @@ from typing import Any, Optional
 import numpy as np
 from dotenv import load_dotenv
 
-from .carla_install import installed_executable
+from .carla_install_paths import installed_executable
 
 
 class Recorder:
@@ -3864,6 +3986,12 @@ class Recorder:
 
 def launcher() -> Optional[Path]:
     return installed_executable()
+
+
+def exit_handlers() -> None:
+    # CPython's undocumented helpers, which a forked child calls (#1647).
+    atexit._clear()
+    atexit._run_exitfuncs()
 """
 
 
@@ -3918,6 +4046,8 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_tak
         ),
         ("stdin.write(bgr.data)", "stdin.write(bgr.size)", None),
         ("installed_executable()", "installed_executable(True)", None),
+        ("atexit._clear()", "atexit._clear(True)", None),
+        ("atexit._run_exitfuncs()", "atexit._run_exitfuncs(0)", None),
     ],
     ids=[
         "signal-int-handler",
@@ -3931,6 +4061,8 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_take_what_cpython_tak
         "popen-unknown-keyword",
         "write-bytes-like",
         "installed-executable-arguments",
+        "clear-arguments",
+        "run-exitfuncs-arguments",
     ],
 )
 def test_the_signal_atexit_and_pipe_shims_and_their_models_refuse_what_cpython_refuses(
@@ -4010,6 +4142,7 @@ def opened(directory: Path) -> IO[bytes]:
 def logged(directory: Path) -> Optional[int]:
     log = opened(directory)
     log.write(b"start\\n")
+    end: int = log.seek(0, 2) + log.seek(0)
     process: subprocess.Popen[bytes] = subprocess.Popen(
         ["true"], stdout=log, stderr=subprocess.STDOUT, stdin=subprocess.DEVNULL
     )
@@ -4101,6 +4234,7 @@ def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
         ("path.is_symlink()", "path.is_symlink(True)", None),
         ('.open("ab")', '.open("ab", buffer=0)', None),
         ('log.write(b"start\\n")', 'log.write(len(b"start\\n"))', None),
+        ("log.seek(0)", 'log.seek("0")', None),
         ("stdout=log,", 'stdout="x.log",', "subprocess.Popen("),
     ],
     ids=[
@@ -4114,6 +4248,7 @@ def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
         "is-symlink-arguments",
         "open-keyword",
         "write-bytes",
+        "seek-offset-int",
         "popen-stream-file",
     ],
 )
@@ -4642,6 +4777,199 @@ def test_the_fnmatch_shim_matches_as_cpython_does() -> None:
         want = fnmatch.fnmatchcase(name, pattern)
         assert shim["fnmatchcase"](name, pattern) == want, (name, pattern)
         assert shim["fnmatch"](name, pattern) == want, (name, pattern)
+
+
+# ---------------------------------------------------------------------------
+# The keyword shim: kwlist and iskeyword() (#1654)
+# ---------------------------------------------------------------------------
+
+
+_KEYWORD = """
+from __future__ import annotations
+
+import keyword
+from keyword import iskeyword, kwlist
+
+
+def identifier(name: str) -> bool:
+    return name.isidentifier() and not keyword.iskeyword(name)
+
+
+def hard_keywords() -> list[str]:
+    first: str = kwlist[0]
+    return list(keyword.kwlist) if iskeyword(first) else []
+
+
+def no_keyword(number: int) -> bool:
+    return keyword.iskeyword(number)
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_keyword_shim_takes_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (model_dir() / "keyword.codon").is_file()
+    result = _check_case(_KEYWORD, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each fails in CPython 3.10 (the oldest Python the package supports)
+        # and 3.14 when it is called: a TypeError or an AttributeError.
+        ("not keyword.iskeyword(name)", "not keyword.iskeyword(s=name)"),
+        ("not keyword.iskeyword(name)", "not keyword.iskeyword(name, True)"),
+        ("not keyword.iskeyword(name)", "not keyword.iskeyword()"),
+        ("not keyword.iskeyword(name)", "not keyword.iskeywords(name)"),
+        ("first: str = kwlist[0]", "first: str = kwlist[0] + 1"),
+    ],
+    ids=[
+        "iskeyword-keyword",
+        "iskeyword-arguments",
+        "iskeyword-no-argument",
+        "unknown-name",
+        "kwlist-of-str",
+    ],
+)
+def test_the_keyword_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _KEYWORD.replace(right, wrong, 1)
+    assert source != _KEYWORD
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+@pytest.mark.codon_selftest
+def test_the_keyword_shim_lists_cpythons_hard_keywords() -> None:
+    # The shim's kwlist is generated from CPython's keyword.kwlist, the hard
+    # keywords, which every supported Python lists alike; its soft keywords,
+    # which differ between versions, are not declared.
+    import keyword
+
+    tree = ast.parse((model_dir() / "keyword.codon").read_text())
+    assigned = {
+        target.id: node.value
+        for node in tree.body
+        if isinstance(node, ast.Assign)
+        for target in node.targets
+        if isinstance(target, ast.Name)
+    }
+    assert ast.literal_eval(assigned["kwlist"]) == keyword.kwlist
+    declared = {n.name for n in tree.body if isinstance(n, ast.FunctionDef)}
+    assert declared == {"iskeyword"}
+    assert "softkwlist" not in assigned
+
+
+# ---------------------------------------------------------------------------
+# The socket shim: a bound socket, its name and the host's (#1498)
+# ---------------------------------------------------------------------------
+
+
+_SOCKETS = """
+from __future__ import annotations
+
+import socket
+
+
+def free_port() -> int:
+    with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+        probe.bind(("127.0.0.1", 0))
+        return int(probe.getsockname()[1])
+
+
+def other_port() -> int:
+    probe = socket.socket(family=socket.AF_INET, type=socket.SOCK_STREAM, proto=0)
+    probe.bind(("", 0))
+    host, port = probe.getsockname()
+    probe.close()
+    return port + len(host) + socket.socket().getsockname()[1]
+
+
+def owner(pid: int) -> str:
+    return f"{socket.gethostname()}:{pid}"
+
+
+def dial(port: int) -> None:
+    with socket.create_connection(("127.0.0.1", port), timeout=1.0):
+        pass
+    socket.create_connection(("127.0.0.1", port)).close()
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_socket_shim_takes_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_SOCKETS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too.
+        ('probe.bind(("127.0.0.1", 0))', 'probe.bind(address=("127.0.0.1", 0))'),
+        ('probe.bind(("127.0.0.1", 0))', 'probe.bind(("127.0.0.1", 0), 1)'),
+        ('probe.bind(("127.0.0.1", 0))', "probe.bind()"),
+        ('probe.bind(("127.0.0.1", 0))', 'probe.bind(("127.0.0.1", "0"))'),
+        ("probe.getsockname()[1]", "probe.getsockname(0)[1]"),
+        ("socket.gethostname()", "socket.gethostname(pid)"),
+        ("socket.gethostname()", "socket.hostname()"),
+        ("proto=0", "protocol=0"),
+    ],
+    ids=[
+        "bind-keyword",
+        "bind-arguments",
+        "bind-no-address",
+        "bind-port-type",
+        "getsockname-argument",
+        "gethostname-argument",
+        "unknown-name",
+        "unknown-keyword",
+    ],
+)
+def test_the_socket_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _SOCKETS.replace(right, wrong, 1)
+    assert source != _SOCKETS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+@pytest.mark.codon_selftest
+def test_the_socket_shim_constants_are_cpythons() -> None:
+    import socket
+
+    shim = (model_dir() / "socket.codon").read_text()
+    for name in ("AF_INET", "SOCK_STREAM"):
+        value = int(getattr(socket, name))
+        assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
 
 
 # Directories of codon/ that model a third-party package, not the standard

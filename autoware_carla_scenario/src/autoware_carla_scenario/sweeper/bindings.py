@@ -294,6 +294,18 @@ class RouteThroughBinding:
     With ``last_only: true`` only the last lanelet is returned, as an ID, which
     is what ``ego.goal_lanelet_id`` takes.
 
+    With ``through_junction: true`` the route goes on past ``depth`` while its
+    last lanelet is still in a junction (it has a ``turn_direction`` tag), to
+    the first lanelet out of it.  A turn's junction can be several lanelets
+    long, and a route that ends inside it never says which way out the turn
+    leads::
+
+        bindings:
+          scenario.expected_route_lanelet_ids:
+            type: route_through
+            depth: 1
+            through_junction: true
+
     Where the graph forks, the lowest lanelet ID is taken, so the same map
     always expands to the same cases.  A pick the route cannot be walked from
     raises, and the caller (:func:`~autoware_carla_scenario.sweeper.expand.expand_sweep`)
@@ -304,6 +316,9 @@ class RouteThroughBinding:
     depth: int = 1
     #: Only the route's last lanelet, as an ID rather than a list: a goal.
     last_only: bool = False
+    #: Walk on past ``depth`` until the route's last lanelet is out of a
+    #: junction.
+    through_junction: bool = False
 
     def __post_init__(self) -> None:
         if self.depth < 1:
@@ -315,7 +330,8 @@ class RouteThroughBinding:
         lanelet_map: LaneletMap,
         routing_graph: Optional[RoutingGraph] = None,
     ) -> BindingResult:
-        """Return the picked lanelet and the ``depth`` lanelets after it."""
+        """Return the picked lanelet and the ``depth`` lanelets after it, and
+        with ``through_junction`` the rest of the junction the last is in."""
         from .constraints import create_routing_graph
 
         if routing_graph is None:
@@ -323,7 +339,11 @@ class RouteThroughBinding:
         route = [lanelet_id]
         # A Lanelet, then the routing graph's ConstLanelets.
         current: ConstLanelet = lanelet_map.laneletLayer[lanelet_id]
-        for _ in range(self.depth):
+        steps = 0
+        while steps < self.depth or (
+            self.through_junction and "turn_direction" in current.attributes
+        ):
+            steps += 1
             following = sorted(routing_graph.following(current), key=lambda ll: ll.id)
             if not following:
                 raise ValueError(
@@ -332,6 +352,12 @@ class RouteThroughBinding:
                     f"lanelet {lanelet_id}."
                 )
             current = following[0]
+            if current.id in route:
+                raise ValueError(
+                    f"[{self.target_key}] the route from lanelet {lanelet_id} "
+                    f"comes back to lanelet {current.id} without leaving the "
+                    "junction."
+                )
             route.append(current.id)
         if self.last_only:
             return BindingResult(value=route[-1])
@@ -485,3 +511,35 @@ def parse_binding(target_key: str, cfg: dict[str, Any]) -> Binding:
         )
     kwargs = {k: v for k, v in cfg.items() if k != "type"}
     return cls(target_key=target_key, **kwargs)
+
+
+def _walk_back_lanelet_key(s_key: str, lanelet_id: int) -> str:
+    """The lanelet key of the spawn whose ``s`` a walk-back moved, by *s_key*.
+
+    A ``stop_line_offset`` binding that walks back off the pick puts its spawn
+    on a predecessor: that spawn's lanelet key has to say so, and no other.
+    The spawn keys come in pairs, so the lanelet key is the ``s`` key's
+    sibling: ``<prefix>.s`` -> ``<prefix>.lanelet_id`` (an entity's
+    ``scenario.spawn_overrides.<entity>``), ``<prefix>.spawn_s`` ->
+    ``<prefix>.spawn_lanelet_id`` and ``<prefix>.goal_s`` ->
+    ``<prefix>.goal_lanelet_id`` (the ego's).
+
+    Raises:
+        ValueError: If *s_key* is none of those, so there is no lanelet key
+            to move to *lanelet_id*.
+    """
+    prefix, _, leaf = s_key.rpartition(".")
+    sibling = {
+        "s": "lanelet_id",
+        "spawn_s": "spawn_lanelet_id",
+        "goal_s": "goal_lanelet_id",
+    }.get(leaf)
+    if sibling is None:
+        raise ValueError(
+            f"sweep.bindings: {s_key} walks back to lanelet {lanelet_id}, but "
+            "is not a spawn's s (<prefix>.s, <prefix>.spawn_s or "
+            "<prefix>.goal_s), so there is no lanelet key to move with it. "
+            "Bind stop_line_offset to a spawn's s, or use an offset that fits "
+            "on the pick."
+        )
+    return f"{prefix}.{sibling}" if prefix else sibling

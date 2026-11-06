@@ -1,0 +1,31 @@
+# Python's keyword, for the checker (docs/typecheck.md): kwlist and
+# iskeyword(), CPython's hard keywords (#1654).
+#
+# kwlist is generated from CPython's keyword.kwlist, the same list on every
+# Python the package supports (3.10 to 3.14; test_typecheck_library.py keeps
+# it in step). iskeyword(s) is CPython's frozenset(kwlist).__contains__: it
+# takes one value by position (`iskeyword(s="if")` is a TypeError) and tells
+# whether it is one of kwlist, so a value that is no str is no keyword.
+# softkwlist and issoftkeyword() are not declared: CPython's differ between
+# versions (3.12 added "type").
+
+import internal.static as static
+
+kwlist = [
+    "False", "None", "True", "and", "as", "assert", "async", "await",
+    "break", "class", "continue", "def", "del", "elif", "else", "except",
+    "finally", "for", "from", "global", "if", "import", "in", "is",
+    "lambda", "nonlocal", "not", "or", "pass", "raise", "return", "try",
+    "while", "with", "yield",
+]
+
+_KEYWORDS = set(kwlist)
+
+
+def iskeyword(*args) -> bool:
+    if static.len(args) != 1:
+        compile_error("iskeyword() takes exactly one argument, by position")
+    value = args[0]
+    if isinstance(value, str):
+        return value in _KEYWORDS
+    return False

@@ -18,6 +18,9 @@ import threading
 import time
 from datetime import datetime
 from pathlib import Path
+
+from ..run_dirs import multirun_dir as _multirun_dir  # noqa: F401  (its old name)
+from ..run_dirs import reserve_timestamped_dir
 from .models import RunProgress, Status
 
 logger = logging.getLogger(__name__)
@@ -27,6 +30,33 @@ RAW_OUTPUT_LOG = "raw_output.log"
 
 STOP_TIMEOUT_SECONDS = 10.0
 """How long a stopped job's process group has after ``SIGTERM``, before ``SIGKILL``."""
+
+_RAW_LOG_MAX_BYTES = 256 * 1024  # 256 KB cap per log
+
+
+def _read_raw_log(job_dir: Path) -> str:
+    """Read raw terminal log from a job directory.
+
+    Tries ``raw_output.log`` first (subprocess stdout/stderr captured by
+    the runner), then falls back to ``run.log`` (Python logging output).
+    Returns an empty string when neither file exists.  Large files are
+    truncated to the last ``_RAW_LOG_MAX_BYTES`` bytes.
+    """
+    for name in (RAW_OUTPUT_LOG, "run.log"):
+        try:
+            log_path = job_dir / name
+            size = log_path.stat().st_size
+            if size <= _RAW_LOG_MAX_BYTES:
+                return log_path.read_text(encoding="utf-8", errors="replace")
+            with log_path.open(encoding="utf-8", errors="replace") as f:
+                f.seek(size - _RAW_LOG_MAX_BYTES)
+                f.readline()  # discard partial first line
+                tail = f.read()
+            return f"... (truncated, showing last {len(tail)} chars) ...\n{tail}"
+        except OSError:
+            continue
+    return ""
+
 
 # Global state for the current run.
 _lock = threading.Lock()
@@ -246,11 +276,12 @@ def _run_worker(
     cwd = str(base_path) if base_path else None
 
     try:
-        # When grouping as multirun, create a shared timestamped directory.
+        # When grouping as multirun, create a shared timestamped directory,
+        # this run's alone (#1359).
         multirun_dir: str | None = None
         if group_as_multirun and total > 0:
             now = datetime.now()  # noqa: DTZ005
-            multirun_dir = _multirun_dir(now)
+            multirun_dir = _reserve_multirun_dir(Path(cwd) if cwd else Path.cwd(), now)
             logger.info("Grouping %d jobs under %s", total, multirun_dir)
 
         stopped = False
@@ -388,16 +419,20 @@ def _launch(cmd: list[str], cwd: str | None) -> subprocess.Popen[str] | None:
     return job
 
 
-def _multirun_dir(now: datetime) -> str:
-    """``multirun/{date}/{time}`` of *now*: ``f"multirun/{now:%Y-%m-%d}/{now:%H-%M-%S}"``.
+def _reserve_multirun_dir(base: Path, now: datetime) -> str:
+    """Create a ``multirun/{date}/{time}`` of *now* under *base* that is this
+    run's alone, and return it relative to *base*.
 
-    Spelled out from the fields, as Codon formats no datetime; the same string
-    for every year from 1000 on (strftime's ``%Y`` pads years before 1000
-    only on some Pythons).
+    Created with ``mkdir``, which fails when it exists, so a run started in
+    the same second as another (a CLI sweep, another viewer's run) never
+    shares it (#1359): the first gets :func:`_multirun_dir`'s ``{time}``, the
+    next ``{time}-1``, then ``{time}-2``, and so on, as a batch's output
+    directory does: the shared
+    :func:`~autoware_carla_scenario.run_dirs.reserve_timestamped_dir`, which
+    ``examples.run`` reserves its directories with too.  A symbolic link that
+    resolves to nothing is raised on, not numbered past, as it always was here.
     """
-    date = f"{now.year:04d}-{now.month:02d}-{now.day:02d}"
-    time = f"{now.hour:02d}-{now.minute:02d}-{now.second:02d}"
-    return f"multirun/{date}/{time}"
+    return reserve_timestamped_dir(base, "multirun", now, dangling_links_taken=False)
 
 
 def _save_raw_output(

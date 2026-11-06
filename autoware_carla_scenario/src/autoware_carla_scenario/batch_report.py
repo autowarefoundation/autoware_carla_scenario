@@ -17,6 +17,7 @@ from pathlib import Path
 # check compiles this module, docs/typecheck.md).
 from typing import Any, Collection, Mapping, Protocol, Sequence  # noqa: UP035
 
+from .atomic_file import write_text_atomically
 from .failure import Failure
 
 __all__ = ["print_summary", "write_batch_result_json"]
@@ -106,6 +107,33 @@ def _member(member_json: str) -> str:
     return "\n".join("  " + line for line in member_json.split("\n")[1:-1])
 
 
+#: The message of a pending entry (:func:`write_batch_result_json`).
+PENDING_MESSAGE = "No result yet (the batch has not run this case)"
+
+
+def _pending_entry(name: str, overrides: list[list[str]] | None, index: int) -> str:
+    """The entry of case *index*, *name*, which the batch has not run: as
+    ``json.dumps`` lays out ``{"scenario": name, "overrides": ...,
+    "passed": None, "message": PENDING_MESSAGE, "elapsed_seconds": None,
+    "pending": True}`` at an entry's depth."""
+    members = [_member(json.dumps({"scenario": name}, indent=2, ensure_ascii=False))]
+    if overrides is not None:
+        members.append(
+            _member(
+                json.dumps(
+                    {"overrides": overrides[index]}, indent=2, ensure_ascii=False
+                )
+            )
+        )
+    members.append('    "passed": null')
+    members.append(
+        _member(json.dumps({"message": PENDING_MESSAGE}, indent=2, ensure_ascii=False))
+    )
+    members.append('    "elapsed_seconds": null')
+    members.append('    "pending": true')
+    return "  {\n" + ",\n".join(members) + "\n  }"
+
+
 def write_batch_result_json(
     names: list[str],
     results: Sequence[_Result],
@@ -113,6 +141,7 @@ def write_batch_result_json(
     overrides: list[list[str]] | None = None,
     errored: Collection[int] = (),
     rerun_errors: Mapping[int, str] | None = None,
+    pending: bool = False,
 ) -> Path:
     """Write a machine-readable JSON summary to *output_dir* and return the path.
 
@@ -123,9 +152,21 @@ def write_batch_result_json(
     recording (``rerun_recording``) that failed to convert, and its entry
     says why in ``rerun_error``.
 
+    With *pending*, each name past *results* (a case the batch has not run,
+    or never will: it was cut short) is written too, as SLURM's cases without
+    an outcome are (``ui.cases``): ``"passed": null``, ``"pending": true``,
+    its *overrides* when they are given.  Without it those names are left
+    out.
+
     The file is what ``json.dumps(entries, indent=2, ensure_ascii=False)``
     gives, laid out as text a member at a time, since an entry's values (a
     condition's details) are of any type.
+
+    It is replaced in one rename
+    (:func:`~autoware_carla_scenario.atomic_file.write_text_atomically`): a
+    batch rewrites it as each case ends (``examples/run.py``), and the viewer,
+    reading it meanwhile, finds the cases run so far, whole, never half a
+    file (#1566).
     """
     failed_recordings: dict[int, str] = {}
     if rerun_errors is not None:
@@ -179,8 +220,11 @@ def write_batch_result_json(
             if key in own and key not in data:
                 members.append(own[key])
         entries.append("  {\n" + ",\n".join(members) + "\n  }")
+    if pending:
+        for i in range(len(results), len(names)):
+            entries.append(_pending_entry(names[i], overrides, i))
     text = "[\n" + ",\n".join(entries) + "\n]" if entries else "[]"
-    json_path.write_text(text, encoding="utf-8")
+    write_text_atomically(json_path, text)
     return json_path
 
 
@@ -201,6 +245,10 @@ def print_summary(
     any case has one, how many were written and each that failed
     (*rerun_errors*, index -> why).  They do not change whether the batch
     passed.
+
+    Raises:
+        OSError: The JSON file cannot be written; raised once the rest of
+            the summary is printed.
     """
     failed_recordings: dict[int, str] = {}
     if rerun_errors is not None:
@@ -228,30 +276,37 @@ def print_summary(
         if _recording(result) is not None:
             print(f"    Rerun: {_recording(result)}")  # noqa: T201
 
-    json_path = write_batch_result_json(
-        names,
-        results,
-        output_dir,
-        overrides,
-        errored=errored,
-        rerun_errors=failed_recordings,
-    )
-    print(thin)  # noqa: T201
-    print(f"Result JSON: {json_path}")  # noqa: T201
-    recorded = [i for i, result in enumerate(results) if _recording(result) is not None]
-    if recorded:
-        written = sum(1 for i in recorded if i not in failed_recordings)
-        print(  # noqa: T201
-            f"Rerun recordings: {written}/{len(recorded)} written "
-            "(open one with: rerun <file.rrd>)"
-        )
-        for i in sorted(failed_recordings):
-            print(f"  [FAILED] {names[i]}: {failed_recordings[i]}")  # noqa: T201
-
     passed = sum(1 for r in results if r.passed)
     total = len(results)
-    print(thin)  # noqa: T201
-    errors = f", {len(errored)} errored" if errored else ""
-    print(f"{passed}/{total} scenarios passed{errors}")  # noqa: T201
-    print(sep)  # noqa: T201
+    # A JSON file that cannot be written (an unwritable or read-only output
+    # directory) raises once the rest of the summary is printed, so the
+    # verdict is not lost (#1740).
+    try:
+        json_path = write_batch_result_json(
+            names,
+            results,
+            output_dir,
+            overrides,
+            errored=errored,
+            rerun_errors=failed_recordings,
+        )
+        print(thin)  # noqa: T201
+        print(f"Result JSON: {json_path}")  # noqa: T201
+    finally:
+        recorded = [
+            i for i, result in enumerate(results) if _recording(result) is not None
+        ]
+        if recorded:
+            written = sum(1 for i in recorded if i not in failed_recordings)
+            print(  # noqa: T201
+                f"Rerun recordings: {written}/{len(recorded)} written "
+                "(open one with: rerun <file.rrd>)"
+            )
+            for i in sorted(failed_recordings):
+                print(f"  [FAILED] {names[i]}: {failed_recordings[i]}")  # noqa: T201
+
+        print(thin)  # noqa: T201
+        errors = f", {len(errored)} errored" if errored else ""
+        print(f"{passed}/{total} scenarios passed{errors}")  # noqa: T201
+        print(sep)  # noqa: T201
     return passed == total

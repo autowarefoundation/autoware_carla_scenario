@@ -230,3 +230,59 @@ def test_the_wrapper_needs_no_graph_to_reject_a_missing_lanelet(
     monkeypatch.setattr(MapManager, "get_instance", classmethod(lambda cls: mm))
     with pytest.raises(ValueError, match=f"Lanelet ID {_MISSING} not found"):
         stop_line.get_stop_line_linestrings_with_following(_MISSING)
+
+
+# ---------------------------------------------------------------------------
+# The depth searched (issue #1383)
+# ---------------------------------------------------------------------------
+
+
+def test_a_negative_depth_is_refused() -> None:
+    lanelet_map, ids, _ = _road_with_stop_line_on(0)
+    with pytest.raises(ValueError, match="depth must not be negative, got -1"):
+        get_stop_line_linestrings_with_following(lanelet_map, ids[0], depth=-1)
+
+
+@pytest.mark.parametrize(
+    "wrapper",
+    ["get_stop_line_linestrings_with_following", "get_stop_line_poses_with_following"],
+)
+def test_the_wrappers_refuse_a_negative_depth_before_the_own_stop_line(
+    wrapper: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.coordinate import stop_line
+    from autoware_carla_scenario.coordinate.map_manager import MapManager
+
+    lanelet_map, ids, _ = _road_with_stop_line_on(0)
+    mm = _NoGraphMapManager(lanelet_map)
+    monkeypatch.setattr(MapManager, "get_instance", classmethod(lambda cls: mm))
+    with pytest.raises(ValueError, match="depth must not be negative, got -2"):
+        getattr(stop_line, wrapper)(ids[0], -2)
+
+
+def test_depth_zero_searches_the_lanelet_alone() -> None:
+    lanelet_map, ids, line = _road_with_stop_line_on(0)
+    found = get_stop_line_linestrings_with_following(lanelet_map, ids[0], depth=0)
+    assert [(owner, ls.id) for owner, ls in found] == [(ids[0], line)]
+    lanelet_map, ids, _ = _road_with_stop_line_on(1)
+    assert get_stop_line_linestrings_with_following(lanelet_map, ids[0], depth=0) == []
+
+
+def test_the_search_stops_where_the_successors_run_out(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from unittest.mock import MagicMock
+
+    lanelet_map, ids, _ = _road_with_stop_line_on(1)
+    graph = MagicMock()
+    graph.following.return_value = []
+    _no_graph_built(monkeypatch)
+    # The dead end is the first step, so the search asks for successors once
+    # rather than once per step (a small depth fails fast instead of hanging).
+    assert (
+        get_stop_line_linestrings_with_following(
+            lanelet_map, ids[0], depth=5, routing_graph=graph
+        )
+        == []
+    )
+    graph.following.assert_called_once()

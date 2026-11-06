@@ -143,7 +143,7 @@ driver:
   transport: tcp             # tcp | unix | direct; see "How the run reaches the policy"
   timeout_s: 60.0
   policy_timestep_s: 0.1     # a positive multiple of the 0.05 s tick; others are refused
-  image_quality: 90
+  image_quality: 90          # JPEG quality, a whole number in 1-100
   warmup_s: 0.0              # run-up onto the spawn pose; see "Warming up a policy"
   route_horizon_m: 80.0
   route_resolution_m: 2.0
@@ -153,7 +153,7 @@ driver:
   send_actor_ground_truth: true
   traffic_light_sight_distance_m: 60.0
   actor_horizon_m: 150.0
-  random_seed: null           # null: the run's seed (`seed`)
+  random_seed: null           # null: the run's seed (`seed`); else a whole number in 0..2**31 - 1
   cameras:
     - logical_id: camera_front_wide_120fov
       image_width: 960
@@ -171,6 +171,51 @@ driver:
     delay_compensation_time: 0.17 # ... and any of its parameters, by name
     throttle_deadband: 0.3      # vehicle interface: least throttle to pull away
 ```
+
+Every number in `driver` must be a number: an int or a float, never a boolean
+or a string. Hydra reads `driver.policy_timestep_s=true` as a boolean, which
+would otherwise be taken as 1 (a 1 s policy step), and a quoted `"0.1"` as a
+string; both are refused as the config is read, naming the key. This holds for
+the seconds and metres (`timeout_s`, `policy_timestep_s`, `warmup_s`,
+`route_horizon_m`, `route_resolution_m`, `rear_axle_offset_m`,
+`traffic_light_sight_distance_m`, `actor_horizon_m`, `t4_scene_history_s`,
+`t4_scene_wheel_base_m`), for every number of a camera, its lens and a LiDAR,
+and for `image_quality`, a whole number (see below) in 1-100: `90`, or `90.0`
+kept as `90`.
+
+The switches `send_ground_truth`, `send_renderer_data`,
+`send_actor_ground_truth` and `t4_scene` are each `true` or `false`, or one of
+their spellings as text in any case (`"false"`, `"no"`, `"off"`, `"0"`, and
+`"true"`, `"yes"`, `"on"`, `"1"`), or the integer `0` or `1`, as the run's
+other switches are ([The switches](usage.md#the-switches)). So a quoted
+`driver.t4_scene='false'` is false, not true; anything else (`ture`, `2`,
+null) is refused as the config is read, naming the key
+(`driver.send_ground_truth must be true or false, got 'ture'`).
+
+The same holds for `driver.control` (and `ros2.control`): each gain and limit
+is a finite int or float (an int is read as a float), each `enable_*` switch a
+boolean and `velocity_smoothing_window` a whole number, and a `*_deg` angle
+must be a number too. What the controller divides by -- `wheelbase_m`,
+`max_steer_angle_deg` (or `_rad`), `steer_exponent`, `min_lookahead_m` and
+`velocity_lookahead_time` -- must be positive, and `max_lookahead_m` at least
+`min_lookahead_m`. A value out of these bounds is refused before the run
+starts, naming its key (`driver.control.steer_exponent must be positive, got
+0.0`), not once the ego first steers.
+
+Each `driver.cameras` entry needs its own `logical_id`; two cameras under one id
+are refused. Its `image_width` and `image_height` must be positive whole
+numbers, its `fps` positive and finite, its `fov` in (0, 180) degrees -- CARLA
+renders the pinhole of the horizontal `fov` -- and its mount (`position_x/y/z`,
+`roll`, `pitch`, `yaw`) finite. A camera out of these bounds is refused as the
+config is read, not when it attaches after the ego spawned.
+
+A whole number is an integral value: `960`, or `960.0` (or `9.6e2`), which is
+kept as the int `960`, so the policy's `CameraSpec` resolution (an integer
+protobuf field, which refuses any float) is given `960` and CARLA
+`image_size_x="960"`. `960.5`, NaN, infinity, a boolean and a string are
+refused, naming the field, as the config is read. Every whole-number setting
+of a camera, a LiDAR or the ROS 2 ego follows this rule, as a seed does
+(`noise_seed`, `driver.random_seed`).
 
 ### A camera with a lens of its own: `driver.cameras[].lens`
 
@@ -462,6 +507,15 @@ driver:
     - {logical_id: lidar_top, channels: 64, range_m: 100.0, position_z: 2.0}
 ```
 
+LiDAR logical ids must be unique, and every number a LiDAR takes must be finite:
+`channels` and `points_per_second` positive whole numbers (`64`, or `64.0`
+and `1.2e6`, which YAML reads as floats, kept as the ints `64` and `1200000`
+for CARLA; not `64.5`), `range_m` positive, `lower_fov_deg` below
+`upper_fov_deg`, `dropoff_general_rate` (the fraction of points CARLA drops at
+random) from 0 to 1, `weather_noise` not negative, `noise_seed` a whole number
+(`3` or `3.0`; not `1.9`, a boolean or a string) from 0 to 2147483647,
+`fog_density_scale` positive.
+
 CARLA's ray-cast LiDAR ignores the weather, so the sweep sent has the world's rain
 (`precipitation`) and fog (`fog_density`, beyond `fog_distance`) put on it, read when the
 sweep is taken -- the ODD's `rain` and `fog` knobs (`environment.rain`,
@@ -486,7 +540,9 @@ Each grows with its intensity (0-100). Clear weather leaves a sweep as CARLA cas
 How thick a `fog_density` looks is the server's `carla.Weather.FogDensityScale`, and the
 LiDAR's fog follows it so that it matches the cameras': the model is tuned at `0.01`, the
 scale that draws fog a camera sees, and CARLA's default `0.001` gives a tenth of its fog.
-`server.fog_density_scale` sets both: a server the run starts is started with
+`server.fog_density_scale` (a finite number above 0, as a LiDAR's own must be, or
+`null`; anything else is refused before the run starts, LiDARs or none) sets both: a
+server the run starts is started with
 `-ExecCmds="carla.Weather.FogDensityScale <scale>"`, and every LiDAR that sets no scale of
 its own takes it. A server already running keeps the scale it was started with (the run
 warns), so start it with the same one. Built without the runner, pass

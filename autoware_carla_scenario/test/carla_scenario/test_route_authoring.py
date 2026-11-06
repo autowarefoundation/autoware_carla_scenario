@@ -473,7 +473,9 @@ class TestBuild:
         assert "constraints" not in config["sweep"]
         # The keys the expansion writes are declared, so struct mode takes them.
         written = RouteMatch((1,), 0.0, 1.0, ()).to_config()
-        assert set(config["scenario"]["route"]) == set(written)
+        # case_count is the expansion's own, written beside the match (a
+        # gate's case coverage, docs/gate.md).
+        assert set(config["scenario"]["route"]) == {*written, "case_count"}
         assert "goal_lanelet_id" not in config["ego"]
 
     def test_the_package_config_class_takes_the_route_keys(self) -> None:
@@ -638,7 +640,8 @@ class TestTheRunPicksItsRoute:
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
     return TestClient(
-        create_app(draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages")
+        create_app(draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages"),
+        base_url="http://127.0.0.1",
     )
 
 

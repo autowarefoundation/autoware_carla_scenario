@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from .compiler import BuildContext, CompiledAction, CompiledCondition
 
 __all__ = [
+    "FAILURE_ONLY_CONDITIONS",
     "ONCE_ACTIONS",
     "OVERRIDING_ACTIONS",
     "build_and_condition",
@@ -92,6 +93,7 @@ __all__ = [
     "build_walk_straight_action",
     "build_traffic_parameters_action",
     "build_communication_loss_action",
+    "build_emergency_action",
     "build_turn_indicator_action",
     "build_despawn_action",
     "build_lane_change_action",
@@ -120,6 +122,7 @@ OVERRIDING_ACTIONS: frozenset[str] = frozenset(
         "play_motion",
         "smart_pedestrian",
         "walk_straight",
+        "emergency",
         "turn_indicator",
         "lane_change",
         "routing",
@@ -152,6 +155,7 @@ ONCE_ACTIONS: frozenset[str] = frozenset(
         "walk_straight",
         "traffic_parameters",
         "communication_loss",
+        "emergency",
         "turn_indicator",
         "despawn",
         "lane_change",
@@ -160,6 +164,18 @@ ONCE_ACTIONS: frozenset[str] = frozenset(
         "spawn",
         "turn",
         "vehicle_parameters",
+    }
+)
+
+#: The condition types that only ever report a failure (their class sets
+#: ``REPORTS_ONLY_FAILURE``): a persistent block counts only passing results,
+#: so it never fires around one of them.
+FAILURE_ONLY_CONDITIONS: frozenset[str] = frozenset(
+    {
+        "entity_existence",
+        "off_road_fraction",
+        "collision",
+        "timeout",
     }
 )
 
@@ -1704,6 +1720,28 @@ def build_communication_loss_action(
         timing=timing,
         label=compiled.label,
         once=compiled.node.once,
+    )
+
+
+def build_emergency_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build an :class:`EmergencyAction`."""
+    from ..actions import EmergencyAction  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return EmergencyAction(
+        entity_name=compiled.actor_role,
+        active=params["active"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
+        overrides=compiled.node.overrides,
     )
 
 

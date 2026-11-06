@@ -9,15 +9,18 @@ library check compiles it (docs/typecheck.md) and a checked module, such as
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, Mapping, Tuple
+import math
+from typing import Any, Dict, Mapping, Optional, Tuple
 
 __all__ = [
     "COMMAND_FIELDS",
     "COMMAND_MODES",
+    "COMMAND_VALUE_LIMIT",
     "DEFAULT_PORT",
     "LINK_DIRECTIONS",
     "PROTOCOL_VERSION",
     "RUNNER_MESSAGES",
+    "command_value",
     "encode",
     "format_address",
     "parse_address",
@@ -55,6 +58,21 @@ COMMAND_FIELDS: Dict[str, Dict[str, str]] = {
         "jerk": "m/s^3",
     },
 }
+
+#: The largest magnitude a command field may have: CARLA's controls are 32-bit
+#: floats, which turn a larger (finite) double into an infinity.
+COMMAND_VALUE_LIMIT = 3.4028234663852886e38
+
+
+def command_value(value: float) -> Optional[float]:
+    """A command field's *value* as a float, or ``None`` when it is not a
+    number CARLA can take: not finite (NaN, an infinity), or beyond
+    :data:`COMMAND_VALUE_LIMIT`.  A caller holding an integer too large for a
+    float (``float()`` raises ``OverflowError``) has one beyond the limit."""
+    number = float(value)
+    if not math.isfinite(number) or abs(number) > COMMAND_VALUE_LIMIT:
+        return None
+    return number
 
 
 #: The messages a run sends the bridge (the table of :mod:`.protocol`).

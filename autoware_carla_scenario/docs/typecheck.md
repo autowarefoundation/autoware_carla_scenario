@@ -156,9 +156,40 @@ builds of a machine record what they hold in one directory
 (`$TMPDIR/acs-codon-gate-<uid>`), and one is started when what the running
 builds hold plus its own estimate fits the machine's memory (or its cgroup's
 limit) less 1.5 GB, or when none is running: a build too large for the machine
-still runs, alone. The holds of a process that died are forgotten. Set
-`AUTOWARE_CARLA_SCENARIO_CODON_GATE` to another directory to share it
-differently, or to `0` to start every build at once.
+still runs, alone. The holds of a process that died are forgotten, and so
+are those whose pid now names another process (a hold records its process's
+start time, from `/proc/<pid>/stat`; without `/proc`, only the pid is
+checked). Files in the directory that are not holds are ignored. The
+directory is per user; set `AUTOWARE_CARLA_SCENARIO_CODON_GATE` to another
+directory of yours to use that one instead, or to `0` to start every build at
+once.
+
+The directory's name is predictable and sits in a world-writable one, so the
+gate trusts it only if it is private: it is created with mode `0o700`, opened
+without following a symlink, and used only if it is a real directory owned by
+you that neither its group nor others can write to. Every later use goes
+through that open directory, so it cannot be swapped once checked;
+`gate.lock` and the holds are opened without following symlinks, a hold is
+created only if it does not exist, a file that is not a regular one (a FIFO)
+is ignored, a hold another user owns is removed and never counted, and a
+`gate.lock` another user owns starts the build ungated. The lock is made
+`0o600`, and a build tries for it for at most two minutes
+(`LOCK_TIMEOUT_S`; the gate's own builds hold it for milliseconds) before it
+warns and starts ungated, so no one holding it can stall the checks.
+
+A directory set with `AUTOWARE_CARLA_SCENARIO_CODON_GATE` must be private in
+the same way (yours, mode `0o700` or at least not group- or other-writable),
+or it is skipped; the gate never changes it. Only the gate's own directories
+are repaired: one of them that its group or others can use at all (as an older
+gate left it, `0o755`, or `0o775` under a umask of `002`) is made `0o700` and
+cleared of what other users own, if it holds nothing but `gate.lock` and
+holds, and is used only if nothing of another user's remains. When the
+directory fails these rules (or there is no temporary directory), the gate
+warns and falls back to `$XDG_RUNTIME_DIR/acs-codon-gate`, then to
+`~/.cache/autoware_carla_scenario/codon-gate`; when none is usable, or the
+gate's own files or the memory budget fail (a lock refused on NFS, a full
+disk), it warns and starts the build ungated. The gate never holds up or fails
+a check on its own account, and never hides what a build raised.
 
 ### Installing Codon and typesafe_carla
 
@@ -774,7 +805,7 @@ What `test_typecheck_model.py` compares, model by model:
 - **`coverage.codon`, `entity.codon`, `odd.codon`**: the names the checked
   modules import (`_BOUNDARY`), `COVERAGE_SCHEMA` and `CoverGroup` by value.
 - **The models of one framework module each** (`_MODULE_MODELS`):
-  `_bridge_pose`, `action_state`, `carla_install`, `debug_markers`,
+  `_bridge_pose`, `action_state`, `debug_markers`,
   `trajectory_recorder`, `environment`, `autoware_bridge/grpc_server`,
   `autoware_stack/launcher`, `autoware_stack/devcontainer` (and its values),
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
@@ -2324,7 +2355,9 @@ package without Codon.
 A run that names modules is a slice of the full run. With the named
 modules, it compiles from their source the `CHECKED` modules they import,
 transitively. It does not follow an import that `MODELLED_IMPORTS` routes
-through the model, or one inside an `UNCALLED` function. It also brings the
+through the model (an import cycle Codon cannot resolve, or a call of an
+`UNCALLED` function of the imported module, see *A call of another checked
+module's `UNCALLED` function* below), or one inside an `UNCALLED` function. It also brings the
 other modules of a `REPLACED_MODELS` entry once one of them is in, so that the
 model re-exports the checked definitions, as it does in the full run.
 `scenario_base`, for example, imports `register_vehicle_entity` from the
@@ -2401,13 +2434,68 @@ modules ({{ library.checked_percent }}%; about {{ library.checked_lines }} of
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
-base, its runner and its queue, the traffic backends' interface, the signal
-controllers, the adversity math, the measures, the metrics and the ODD's
-probes, the example scenarios and their configs, and the parts of the tooling
-around a run that need nothing Codon lacks. A checked package's `__init__`
-re-exports what is not checked through models of it (see *A class a checked
-package only re-exports* below). Each checked module is listed here with the
-first paragraph of its docstring:
+base, its runner and its queue, the traffic backends' interface, the
+plain-typed parts of the SUMO backend (its geometry, its physics control, the
+signal states it sets, and its command-line options, mode bits, vehicle types
+and type files, with the command line of `randomTrips.py` and the options of
+each demand it generates: `traffic.sumo.options`, #1679), the signal
+controllers, the adversity math, the measures, the metrics (and which of the
+CommonRoad metrics are heavy, the environment that turns them off and the
+checks of their periods: `heavy_metrics`, #1689; not `commonroad.session`,
+which runs the workers and re-exports it) and the ODD's
+probes (and the names, knob keys, limits and ranges of the traffic
+parameters' probes: `odd.traffic_ranges`, #1680; not the probes themselves,
+`odd.traffic_probes`, which builds openodd's knobs), the gate package's
+`__init__`, its per-run record and probe,
+and the typed criteria its evaluator judges (`gate.criteria`: the criterion
+results, the trajectory consistency, the case coverage and the changes from a
+baseline; and `gate.report`, #1738: a verdict's and a comparison's Markdown,
+the criteria and the cases compared from a baseline's runs to a candidate's,
+and the records grouped by scenario; not the evaluator itself, which reads the
+gate's pydantic model and openodd's merged coverage), the HILS bridge's wire format (a command's values included)
+and its configuration's sensor spec and the check of a field's signal name
+(not the YAML reading around it), how an error shows an integer too long for
+`repr()` (`value_text.huge_integer()`, which `hils.config` re-exports, #1704), the
+example scenarios and their configs, the SLURM launcher's job scripts, where
+a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
+and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
+`scontrol`, `sinfo`: `slurm.queue`, #1634), the naming rules of
+`scenario-new` (`scaffold.names`, #1654) and those of the Scenario Editor's
+export, which ids it refuses and the framework pin's lines in
+the package's README (`authoring.package_names`, #1695; the rule against the
+framework's own name is `scaffold.names`', which both apply), where the viewer keeps its
+recordings and its copy of Rerun's web viewer, and which web viewer it picks
+(`ui.web_viewer_paths`, #1672), what a run names its outputs, the path
+rule of a trajectory log and its recordings among them (`run_outputs`, #1678:
+the stem a log is of, its recording and its sensor recording, which `rerun`,
+`rerun_lidar` and `ui.web_viewer_paths` all name them with; `ui.case_paths`
+names a case's log and recording with it too; the suffixes of a run's result
+and coverage file are its too, which `scenario_runner`, `ui.case_paths`,
+`ui.scanner` and `examples/run.py` name them with, #1704; so are those of a
+run's environment and lock and of its T4Scene and map, which `environment` and
+`t4_scene.convert` re-export, #1713; so are those of the metrics' scratch
+recording, which `rerun_metrics` re-exports, and of the ODD archive, which
+`ui.case_paths` names, #1748), the typed core of the sensors
+in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
+entities are the sensors', the parse of `rerun rrd print` and the scan of a
+recording's bytes for those entities: `rerun_sensor_mount`, #1688, #1697; not `rerun_lidar`, which holds the Rerun SDK as
+`Any` and re-exports it), the frame math
+of the T4Scene converter (CARLA's world frame to Autoware's `map` frame, and the rotations
+and quaternions of its angles, and the check of the ego's rear-axle offset:
+`t4_scene.frames`, #1665, #1697; the converter
+itself, which reads the log's mixed-type records and builds protobuf
+messages, re-exports it), the file names of a driver policy's map set and the
+id it is written under (`driver.hdmap_files`, #1728; `driver.hdmap_export`,
+which writes the set with roadgen, re-exports them), what the weather rules
+read and which `vehicles` entry of `environment.rules` a vehicle follows
+(`weather_inputs`, #1732; `weather_rules`, which reads the rules with openodd,
+re-exports it), the fields of a control and of `sweep.odd_sample` and the keys
+a sweep sets (`odd.control_fields`, #1733; `odd.controls` and `odd.sampler`
+re-export them), and the parts of the
+tooling around a run that need nothing Codon lacks. A checked package's
+`__init__` re-exports what is not checked through models of it (see *A class
+a checked package only re-exports* below). Each checked module is listed here
+with the first paragraph of its docstring:
 
 {{ library.checked_table }}
 
@@ -2433,9 +2521,9 @@ the first:
 - **Those that import what Codon cannot compile**: a package (pydantic,
   pickle, grpc, protobuf, omegaconf and hydra, yaml, jinja2, fastapi, cv2,
   cyclonedds, or openodd and hilspy, Rust extensions) or a standard module
-  Codon lacks (`socket`, `inspect`, `concurrent.futures`, `importlib` beyond
+  Codon lacks (`inspect`, `concurrent.futures`, `importlib` beyond
   `importlib.metadata`, or more of `os`, `pathlib`, `shlex`, `shutil`,
-  `signal`, `subprocess`, `tempfile`, `threading`, `dataclasses`,
+  `signal`, `socket`, `subprocess`, `tempfile`, `threading`, `dataclasses`,
   `importlib.metadata` or `urllib.parse` than their shims declare), at module
   level or inside a function the check calls. This is most of the tooling
   around a run (the editor, the UI, authoring, the sweeper's expansion and
@@ -2561,8 +2649,8 @@ the transform, with no change to a module:
   `NoneType`, which has no elements and no call, and a body that tests it
   for `None` first is compiled with it all the same. The transform makes
   such a default the `None` of the `Optional` the library check calls with:
-  `Optional[List[Lanelet2Pose]]()`, `Optional[Callable[[float, float],
-  Optional[float]]]()`, and for a `Callable` with a union among its
+  `Optional[List[Lanelet2Pose]]()`, `Optional[Callable[[float, float,
+  float], Optional[float]]]()`, and for a `Callable` with a union among its
   arguments `Optional[_acs_Returning[CarlaWorldPose, 1]]()` (the transform's
   prelude imports `_acs_Returning`; the check's own function does not import
   it again, which Codon 0.19 cannot type: "cannot typecheck").
@@ -2803,8 +2891,7 @@ stands in for it in the check's workspace:
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
   `maps/cache.codon`, `autoware_stack/devcontainer.codon`,
   `ros2/cyclone.codon`, `pedestrian/soma.codon`), or, for a module of
-  the top-level package, a model of that module (`carla_install.codon`, for
-  `server`, declares `installed_executable()`; `trajectory_recorder.codon`,
+  the top-level package, a model of that module (`trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
   closes, whose JSON lines hold values of mixed types; `environment.codon`,
   for `scenario_runner`, `capture()` and the id of the `RunEnvironment` it
@@ -2813,6 +2900,19 @@ stands in for it in the check's workspace:
   `vehicle_rules_in_use()` they read the weather rules through). A module with no
   model (`utils.config`) cannot be imported by a checked module until it is
   checked itself.
+
+A module that is excluded for most of what it does can have the part a
+checked module needs split into a checked module of its own, which the
+excluded one re-exports, instead of a model: `server` imports
+`installed_executable()` from `carla_install_paths`, which holds the path
+logic of the installer `carla_install` (tqdm, urllib.request, tarfile) and is
+compiled from its source (#1635). It holds the decision whether an install is
+current and the headers of the conditional request too (`_current_of()`,
+`_conditions_of()`, #1671), over the stamp as a `dict[str, Optional[str]]`:
+`carla_install` reads the stamp's JSON and converts it at that boundary, so
+that a value of another type, in a stamp edited by hand, decides as it did. A
+constant a test replaces in the excluded module (`_UNPACKED_PER_PACKED`) is
+passed to the checked function (`_room_needed()`) rather than read there.
 
 Each checked module gets the `__file__` Python sets on it (its source's path,
 a `str`), which Codon 0.19 does not, bound on the last line of the prelude so
@@ -2824,23 +2924,46 @@ function: `autoware_stack.bridge_node` finds the installed
 Codon has no module object, so `from .. import autoware_bridge` and
 `autoware_bridge.__file__` do not compile.
 
+A **constant** imported from another checked module is read through that
+module (#1693): Codon 0.19 can report a constant imported with `from M import
+NAME` and read at module level as not defined, depending on what precedes it
+in `M` (`heavy_metrics` reading `metrics.CRIME_TTR_S`). So, on the import's
+own line, `from .metrics import CRIME_TTR_S, ego_progress` becomes
+
+```python
+from _acs_lib.autoware_carla_scenario__metrics import ego_progress; import _acs_lib.autoware_carla_scenario__metrics as _acs_const_12; CRIME_TTR_S = _acs_const_12.CRIME_TTR_S
+```
+
+(`from M import X as NAME` binds `NAME`). A constant is an UPPER_CASE name of
+more than one letter (not a `T` TypeVar) that the imported module binds with a
+plain assignment at module level (`NAME = ...` or `NAME: type = ...`, not
+`NAME: TypeAlias = ...`), or re-exports from another checked module that has
+it as a constant (`from .metrics import CRIME_TTR_S as CRIME_TTR_S`);
+`module_constants()` in `typecheck/transform.py` finds them. Every other name,
+and an import through the model (`MODELLED_IMPORTS`), stays a `from M import`.
+An UPPER_CASE assignment that holds a type (`JSON = dict[str, Any]`) would
+read as a variable, not a type, through the module: annotate it `TypeAlias`.
+
 Two checked modules that import each other can each need the other's types
 the moment Codon reads it: `BaseScenario` declares `_measures: dict[str,
 Measure]` at class level, and `measures` declares the running scenario
 (`_MEASURED: dict[str, Optional[BaseScenario]]`) as a global, so neither can
 be read first. `MODELLED_IMPORTS` in `typecheck/library.py` breaks such a
-cycle: the module it names (`measures`, `entity.ego`) imports the other
+cycle: the module it names (`measures`, `odd.route_plan`) imports the other
 (`scenario_base`) through its model, as it did before that one was checked.
 Its types are the model's, which never meet the checked module's.
+A cycle that only a definition in the wrong module made is better broken by
+moving the definition: `EgoConfig` is defined in `entity.ego`, next to the
+`EgoVehicle.spawn()` that takes it, and `scenario_base` re-exports it, so
+`entity.ego` imports nothing from `scenario_base` and needs no entry, and the
+runner's `ego.spawn(world, scenario.ego_config)` is checked as it runs.
 The egos derived from `EgoVehicle` (`entity.bridged_ego`,
-`entity.autoware_entity`) do not override `EgoVehicle.spawn()`, so they never
-name `EgoConfig` and need no entry: Codon 0.19 cannot call `super().spawn()`
-through an intermediate class ("'EgoVehicle' does not match expected type"
-in its dispatch thunk), and an override that repeated the spawn instead would
-take `scenario_base` through the model as `entity.ego` does. Through the
-checked `scenario_base`, a run with an example scenario in it failed in Codon
-0.19's code generation (`LLVM: error: value doesn't match function result
-type '{ ptr, ptr }'`, in `opt_ref_new` of the model's `BaseScenario`).
+`entity.autoware_entity`) do not override `EgoVehicle.spawn()`: Codon 0.19
+cannot call `super().spawn()` through an intermediate class ("'EgoVehicle'
+does not match expected type" in its dispatch thunk). Through the checked
+`scenario_base`, a run with an example scenario in it failed in Codon 0.19's
+code generation (`LLVM: error: value doesn't match function result type
+'{ ptr, ptr }'`, in `opt_ref_new` of the model's `BaseScenario`).
 
 A model module that stands in for unchecked code declares only what the
 checked modules and scenarios use of it. `coordinate.codon` still declares,
@@ -2987,8 +3110,8 @@ What Codon 0.19 needs that Python does not, beyond
 
   <!-- shims:start -->
   `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `fnmatch`, `hashlib`,
-  `importlib.metadata`, `json`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
-  `shlex`, `shutil`, `signal`, `subprocess`, `sys`, `tempfile`, `threading`,
+  `importlib.metadata`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
+  `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions` and `urllib.parse`
   <!-- shims:end -->
 
@@ -3047,6 +3170,9 @@ What Codon 0.19 needs that Python does not, beyond
   whatever the mode, since the check reads `bytes` as `str` (so `IO[bytes]`
   and `IO[str]` are one type). `typing.IO` declares `name`, `mode`,
   `closed`, `close()`, `fileno()`, `flush()`, `read()`, `readline()`,
+  `seek(offset, whence=0)`, which returns the new position (`ui.runner` reads
+  the tail of a job's log, #1647; it takes `whence` by keyword, as `typing.IO`
+  declares it, where a CPython file object takes it by position only),
   `write()` (of a `str`, read as bytes too), iteration over the lines and
   `with`. `stat()` (no argument) returns a result of the five fields the
   framework reads (`st_dev`, `st_ino`, `st_size`, `st_mtime_ns`, `st_mtime`),
@@ -3212,13 +3338,29 @@ What Codon 0.19 needs that Python does not, beyond
   which Codon's `re` has no syntax for); `fnmatch()` takes a `str` or an
   `os.PathLike` for either, read through `os.fspath()` as CPython's
   `normcase()` reads it on POSIX, and `fnmatchcase()` two `str`s, as
-  CPython's does. `filter()` and `translate()` are not declared (#728). `sys` replaces Codon's, keeping all of it (`argv`,
+  CPython's does. `filter()` and `translate()` are not declared (#728).
+  `keyword` declares `kwlist`, CPython's hard keywords (the same on every
+  supported Python, generated from `keyword.kwlist`), and `iskeyword(s)`,
+  which takes one value by position, as CPython's
+  `frozenset(kwlist).__contains__` does, and is `False` for any value that is
+  no `str`; `softkwlist` and `issoftkeyword()`, which differ between
+  versions, are not declared (#1654).
+  `socket` declares `create_connection(address, timeout=None)`,
+  `gethostname()`, `AF_INET`, `SOCK_STREAM` and `socket(family=AF_INET,
+  type=SOCK_STREAM, proto=0)`, whose socket has `bind(address, /)` and
+  `getsockname()` of an AF_INET (host, port) pair, `close()` and `with`;
+  nothing connects or binds, and `fileno` and the rest of the module are not
+  declared (#1498). `sys` replaces Codon's, keeping all of it (`argv`,
   the standard streams, `exit()`, `maxsize`), and adds `platform`
   (`"linux"`) and `executable` (a `str`). `atexit`
   declares `register(func, *args, **kwargs)`, which takes the function by
   position only and returns it, and which calls it with the arguments it is
   given, so a function that cannot take them is refused where CPython
   reports it only at exit, and `unregister(func)`, of one value by position.
+  So do CPython's undocumented `_clear()` and `_run_exitfuncs()`, of no
+  argument, which `sweeper.isolation` calls in a forked case to drop the
+  handlers it inherited from the sweep and to run its own before `os._exit`
+  (#1647).
   `copy2()` and `move()` return a `str` for a `str`
   destination, as CPython does; for a `Path` one CPython returns the `Path`,
   or a `str` when it names a directory, so the check returns a path that
@@ -3262,7 +3404,7 @@ What Codon 0.19 needs that Python does not, beyond
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
   and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
   `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata`,
-  `urllib.parse`, `signal`, `atexit`, `shlex`, `fnmatch` and `sys` and call what they
+  `urllib.parse`, `signal`, `atexit`, `shlex`, `fnmatch`, `keyword` and `sys` and call what they
   declare,
   file-system queries and the two writes included (`Path(...).exists()`, `Path(...).write_text(...)`), read
   and set the environment (`os.environ.get()`), copy, move and remove files
@@ -3721,12 +3863,16 @@ What Codon 0.19 needs that Python does not, beyond
   = CoordinateFrame.LANELET2`) rather than from a function run after the
   class.
 - **A global of a module whose top level runs a statement** (`server`, which
-  calls `load_dotenv()` on import) cannot be read at another module's top
-  level: Codon 0.19 reports "name '_WATCHDOG_GRACE_S' is not defined" for
-  `_CARLA_GONE_TIMEOUT_S = _WATCHDOG_GRACE_S + 5.0`, though a function of
-  the module, or a parameter default, reads it. `sweeper.isolation` computes
-  that constant in the `else` branch of `if TYPE_CHECKING:` and gives the
-  check its value in the first (#719).
+  calls `load_dotenv()` on import) could not be read at another module's top
+  level: Codon 0.19 reported "name '_WATCHDOG_GRACE_S' is not defined" for
+  `_CARLA_GONE_TIMEOUT_S = _WATCHDOG_GRACE_S + 5.0`, and `sweeper.isolation`
+  gave the check a copy of its value under `if TYPE_CHECKING:` (#719). A
+  constant imported from another checked module is now read through that
+  module (#1693, *Checked modules and the model* above), so the module
+  computes it once, as Python does (#1704). Any other name is still imported
+  with `from M import`, which Codon 0.19 may report as not defined at the
+  importing module's top level; a function of the module, or a parameter
+  default, reads it.
 - **Codon does not narrow an `Optional`** after `if x is None: return`. Where
   the narrowed value goes into something typed (a tuple the function
   returns), assign it to an annotated local first (`od: OpenDrivePose = x`),
@@ -3936,8 +4082,11 @@ What Codon 0.19 needs that Python does not, beyond
 - **A call into a module Codon cannot compile, from a function it must**: a
   function `UNCALLED` names is still compiled when a checked function calls
   it. Call it in the `else` branch of `if TYPE_CHECKING:` and check in the
-  first branch what it can (`ScenarioRunner` calls `create_ego()`, built
-  on the ego's class, in the `else` branch). A
+  first branch what it can (`ScenarioRunner` calls `_judge_metrics()`,
+  which evaluates the recorded frames with the unchecked `metric_batch`, in
+  the `else` branch, and the check leaves the run's result as it is; how
+  the verdicts merge into that result is a helper of its own,
+  `_merge_metric_verdicts()`, which the check compiles). A
   private helper that imports such a module inside it needs an `UNCALLED`
   entry of its own: its import is rewritten, and refused, even when nothing
   compiled calls it.
@@ -3995,7 +4144,11 @@ What Codon 0.19 needs that Python does not, beyond
   `numpy.typing`. Annotate with numpy's shape-typed array instead,
   `np.ndarray[tuple[int, int], np.dtype[np.float32]]` (two dimensions),
   which mypy reads as precisely and the check translates; a shape of
-  `tuple[int, ...]` or `Any`, and `NDArray`, are dropped. An annotation
+  `tuple[int, ...]` or `Any`, and `NDArray`, are dropped (`pedestrian.soma`
+  holds a motion's bone directions as `np.ndarray[tuple[int, int, int],
+  np.dtype[np.float64]]` and its rotations with four dimensions; its
+  `_as_matrices()`, whose poses have three dimensions or four, takes
+  `np.ndarray[Any, np.dtype[np.float64]]` and is `UNCALLED`). An annotation
   broken over lines keeps its line breaks inside its brackets, so
   `newest: Optional[\n    ...\n] = None` still compiles.
 - **A measurement's `raw_data` is a view** in typesafe_carla's Codon library,
@@ -4021,7 +4174,13 @@ What Codon 0.19 needs that Python does not, beyond
 - **A datetime is formatted from its fields**: Codon's `datetime` has no
   `__format__`, so `f"{now:%Y-%m-%d}"` is
   `f"{now.year:04d}-{now.month:02d}-{now.day:02d}"`, the same string for
-  every year from 1000 on (`ui.runner._multirun_dir()`).
+  every year from 1000 on (`run_dirs.timestamped_dir()`, which
+  `examples.run` and `ui.runner` share, #1653).
+- **`FileExistsError` is `OSError` and a test of the path**: Codon does not
+  name `FileExistsError`, so `except FileExistsError:` around a `mkdir()` is
+  `except OSError:` that raises again unless the path exists, or is a
+  symbolic link (one that resolves to nothing fails `mkdir()` with
+  `FileExistsError` too) (`run_dirs.reserve_timestamped_dir()`).
 - **A dataclass derived from a dataclass** is constructed with its base's
   fields first, as Python's constructor and Codon's take them, wherever the
   base is checked (`CarlaCameraSensorConfig(CameraSensorConfig)`). Of two
@@ -4034,8 +4193,14 @@ What Codon 0.19 needs that Python does not, beyond
   `a + (b,)`) is not, and turning the source's tuple into a list changes what
   the class does (a frozen dataclass's hash, its equality with a tuple). A
   function that returns one is checked as returning a `List[X]` (#191):
-  return `tuple(x)` of a list (`signals.registry.registered_signal_controllers()`),
-  not a tuple display, which is a fixed-length Codon tuple, nor `()`.
+  return `tuple(x)` of a list (`signals.registry.registered_signal_controllers()`,
+  `ui.case_paths.batch_stamp()`), not a tuple display, which is a
+  fixed-length Codon tuple, nor `()`.
+- **A lookup with a default is a loop**: `next((f(x) for x in xs if p(x)),
+  None)` is a `for` loop that returns `f(x)` at the first `x` that passes
+  and `None` after it, and `sorted(f(x) for x in xs if p(x))` sorts a list
+  built in a loop (`ui.case_paths._override_label()` and `_job_indices()`,
+  #1637). Both do what the generator did, in the same order.
 - **No `**` of a dict in a call** (`f(**extra)` with `extra` a `dict`):
   Codon unpacks only a named tuple into keyword arguments. Write one call
   per set of keywords (`RoutingAction` passes `waypoints=` only when there
@@ -4234,13 +4399,22 @@ What Codon 0.19 needs that Python does not, beyond
   makes `other` a `Lanelet`, and a list of `(float, ConstLanelet)` then
   refuses it. Give the upcast a name of its own (`nearby: ConstLanelet =
   near`, `route.geometry`).
+- **A call of another checked module's `UNCALLED` function**: Codon
+  compiles a function when something calls it, so a checked module that
+  calls an `UNCALLED` function of another compiles that function's body
+  through the call, and its `UNCALLED` entry does not keep it out. When the
+  other module has a model that declares the function, the caller imports
+  the module through the model (`MODELLED_IMPORTS`), and is compiled against
+  that declaration instead: `actions.play_motion` imports `pedestrian.soma`
+  through `pedestrian/soma.codon`, so its call of `load_soma_motion()`, whose
+  `numpy.load` of an .npz Codon cannot compile, compiles against the model,
+  while `pedestrian.soma` itself is checked from its source. The caller then
+  holds the model's types (`SomaMotion`), as below.
 - **A value of a type the model holds**: a checked module that hands a checked
   value to a checked module that imports it through the model
   (`MODELLED_IMPORTS`) hands the wrong type. `scenario_runner` hands the
-  checked `BaseScenario` to `measures.set_measured_scenario()`, and its
-  `EgoConfig` to `EgoVehicle.spawn()`, which take the model's: it makes those
-  calls in the `else` branch of `if TYPE_CHECKING:`, and takes the spawned
-  actor from `ego.actor` in the first.
+  checked `BaseScenario` to `measures.set_measured_scenario()`, which takes
+  the model's: it makes that call in the `else` branch of `if TYPE_CHECKING:`.
 - **No module object to assign a global through**
   (`vehicle_entity._warmup_done = True`): Codon 0.19 imports no module as a
   value. The module sets its global in a function of its own

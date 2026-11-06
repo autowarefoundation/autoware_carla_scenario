@@ -224,6 +224,29 @@ def test_a_control_command_keeps_its_own_jerk_when_it_defines_one() -> None:
     assert _last_ackermann(actor).jerk == pytest.approx(2.5)
 
 
+def test_a_control_command_s_negative_jerk_reaches_carla_as_its_magnitude(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """#1804: Autoware's jerk is signed; CARLA's Ackermann jerk is a limit."""
+    entity, transport, actor, clock = _started()
+    with caplog.at_level("INFO", logger="autoware_carla_scenario.entity.ros2_entity"):
+        transport.deliver("si", ControlCommand(0.2, 4.0, -3.0, jerk_mps3=-2.5))
+        _tick(entity, clock)
+        assert _last_ackermann(actor).jerk == pytest.approx(2.5)
+        transport.deliver("si", ControlCommand(0.2, 4.0, -3.0, jerk_mps3=-1.5))
+        _tick(entity, clock)
+        assert _last_ackermann(actor).jerk == pytest.approx(1.5)
+    # Logged once, not every tick: a braking Autoware sends one every cycle.
+    assert [
+        record.getMessage()
+        for record in caplog.records
+        if "negative jerk" in record.getMessage()
+    ] == [
+        "Command source 'si' sent a negative jerk (-2.5 m/s^3); CARLA's "
+        "Ackermann controller takes its magnitude as the jerk limit (logged once)"
+    ]
+
+
 def test_the_safety_island_overrides_visionpilot_while_fresh() -> None:
     entity, transport, actor, clock = _started()
     transport.deliver("vp", SteerAccelCommand(0.1, 0.5))

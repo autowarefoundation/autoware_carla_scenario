@@ -151,9 +151,9 @@ def test_cli_exits_on_no_match(
     with pytest.raises(SystemExit) as excinfo:
         run._resolve_scenario_glob("no_such_*")
     assert excinfo.value.code == 1
-    out = capsys.readouterr().out
-    assert "no scenario configs match pattern 'no_such_*'" in out
-    assert str(glob_package / "scenario") in out
+    err = capsys.readouterr().err
+    assert "no scenario configs match pattern 'no_such_*'" in err
+    assert str(glob_package / "scenario") in err
 
 
 def test_each_name_once_across_directories(tmp_path: Path) -> None:
@@ -306,9 +306,9 @@ def test_the_cli_reports_a_malformed_pattern(
     with pytest.raises(SystemExit) as excinfo:
         run._resolve_scenario_glob(pattern)
     assert excinfo.value.code == 1
-    out = capsys.readouterr().out
-    assert out.startswith("Error: invalid scenario pattern")
-    assert repr(pattern) in out
+    err = capsys.readouterr().err
+    assert err.startswith("Error: invalid scenario pattern")
+    assert repr(pattern) in err
 
 
 def test_the_odd_cli_reports_a_malformed_pattern() -> None:
@@ -347,7 +347,7 @@ def test_the_viewer_answers_a_malformed_pattern_with_an_error(
 
     monkeypatch.setattr(runner, "start_run", no_run)
     monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [star_star_conf])
-    client = TestClient(app_module.app)
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
     response = client.post(
         "/api/run",
         json={"scenario": "x/**a", "extra_overrides": [], "sweeper": sweeper},
@@ -369,7 +369,7 @@ def test_the_viewer_runs_every_config_below_a_double_star(
 
     monkeypatch.setattr(runner, "start_run", fake_start_run)
     monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [star_star_conf])
-    client = TestClient(app_module.app)
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
     response = client.post("/api/run", json={"scenario": "x/**"})
     assert response.json() == {"status": "started"}
     assert seen == [[[f"scenario={name}"] for name in _EVERY_X]]
@@ -414,9 +414,9 @@ def test_the_cli_reports_a_pattern_outside_scenario(
     with pytest.raises(SystemExit) as excinfo:
         run._resolve_scenario_glob(pattern)
     assert excinfo.value.code == 1
-    out = capsys.readouterr().out
-    assert out.startswith("Error: invalid scenario pattern")
-    assert repr(pattern) in out
+    err = capsys.readouterr().err
+    assert err.startswith("Error: invalid scenario pattern")
+    assert repr(pattern) in err
 
 
 @pytest.mark.parametrize("pattern", _OUTSIDE)
@@ -444,7 +444,7 @@ def test_the_viewer_answers_a_pattern_outside_scenario_with_an_error(
 
     monkeypatch.setattr(runner, "start_run", no_run)
     monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [star_star_conf])
-    client = TestClient(app_module.app)
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
     response = client.post("/api/run", json={"scenario": pattern})
     assert response.status_code == 200
     body = response.json()

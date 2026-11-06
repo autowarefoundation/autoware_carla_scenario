@@ -165,6 +165,43 @@ def test_start_session_sends_the_camera_rig(policy: _StubPolicy) -> None:
     assert intrinsics.opencv_pinhole_param.principal_point_x == pytest.approx(480.0)
 
 
+def test_camera_specs_take_a_whole_float_size_as_ints(policy: _StubPolicy) -> None:
+    """protobuf's integer resolution refuses a float, even 960.0, with a
+    TypeError, once the session starts (#1472): the config keeps 960.0 as the
+    int 960, so the session starts."""
+    cameras = DriverClientConfig.from_mapping(
+        {
+            "cameras": [
+                {
+                    "logical_id": "camera_front_wide_120fov",
+                    "image_width": 960.0,
+                    "image_height": 6.04e2,
+                }
+            ]
+        }
+    ).cameras
+    config = DriverClientConfig(
+        address=f"localhost:{policy.port}",  # type: ignore[attr-defined]
+        timeout_s=10.0,
+        cameras=cameras,
+    )
+    client = EgoDriverGrpcClient(
+        config,
+        channel=grpc.insecure_channel(config.address, options=channel_options()),
+    )
+    try:
+        client.start_session("session-1", "Town10HD_Opt")
+    finally:
+        client.close_session()
+    (camera,) = policy.sessions[0].rollout_spec.vehicle.available_cameras
+    assert (camera.intrinsics.resolution_w, camera.intrinsics.resolution_h) == (
+        960,
+        604,
+    )
+    with pytest.raises(ValueError, match="image_width must be a whole number"):
+        DriverClientConfig.from_mapping({"cameras": [{"image_width": 960.5}]})
+
+
 def test_a_camera_with_a_lens_is_advertised_as_its_ftheta_lens(
     policy: _StubPolicy,
 ) -> None:

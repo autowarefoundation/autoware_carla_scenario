@@ -21,6 +21,7 @@ from autoware_carla_scenario.adversity import (
 from autoware_carla_scenario.adversity.nade import (
     ImportanceSampler,
     NadeAdversity,
+    _Futures,
     NadeSettings,
     candidates,
     ego_command,
@@ -28,6 +29,7 @@ from autoware_carla_scenario.adversity.nade import (
 )
 from autoware_carla_scenario.adversity.observation import AgentSnapshot, Scene
 from autoware_carla_scenario.adversity.geometry import PredictedState
+from autoware_carla_scenario.adversity.triggers import DEFAULT_THRESHOLDS
 from autoware_carla_scenario.route.geometry import MapFeatures
 
 from . import _route_maps as rm
@@ -104,6 +106,76 @@ def test_the_candidates_are_the_nearest_vehicles_then_the_pedestrians(
 )
 def test_the_is_probability(p: float, settings: NadeSettings, q: float) -> None:
     assert is_probability(p, settings) == pytest.approx(q)
+
+
+# -- bounds (#1458) -------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_is_probability", 1.5),
+        ("max_is_probability", 3.0),
+        ("max_is_probability", -0.1),
+        ("max_is_probability", math.nan),
+        ("fixed_is_probability", 1.5),
+        ("fixed_is_probability", -0.5),
+        ("fixed_is_probability", math.inf),
+        ("fixed_is_probability", math.nan),
+        ("cooldown", -2.0),
+        ("cooldown", math.inf),
+        ("cooldown", math.nan),
+        ("control_radius", -5.0),
+        ("control_radius", math.inf),
+        ("magnitude", -1.0),
+        ("magnitude", math.inf),
+        ("magnitude", math.nan),
+        ("horizon", 0.0),
+        ("horizon", -1.0),
+        ("horizon", math.inf),
+        ("resolution", 0.0),
+        ("resolution", -0.5),
+        ("resolution", math.nan),
+        ("max_controlled", -1),
+    ],
+)
+def test_a_setting_out_of_its_bounds_is_refused(field: str, value: Any) -> None:
+    with pytest.raises(ValueError, match=f"^{field} must .*, not {value}$"):
+        NadeSettings(**{field: value})
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_is_probability", 0.0),
+        ("max_is_probability", 1.0),
+        ("fixed_is_probability", 1.0),
+        ("cooldown", 0.0),
+        ("control_radius", 0.0),
+        ("magnitude", 0.0),
+        ("horizon", 0.1),
+        ("resolution", 0.1),
+        ("max_controlled", 0),
+    ],
+)
+def test_a_setting_on_its_bounds_is_accepted(field: str, value: Any) -> None:
+    assert getattr(NadeSettings(**{field: value}), field) == value
+
+
+@pytest.mark.parametrize(
+    "settings",
+    [
+        NadeSettings(),
+        NadeSettings(max_is_probability=1.0, magnitude=1e6),
+        NadeSettings(fixed_is_probability=1.0),
+    ],
+)
+@pytest.mark.parametrize("p", [0.0, 1e-5, 0.5, 1.0])
+def test_the_is_probability_never_exceeds_1(p: float, settings: NadeSettings) -> None:
+    """A draw of random() is below a q above 1 every time, so the adversity
+    would be sampled always and still weighted by p / q (#1458)."""
+    for avoidable in (True, False):
+        assert 0.0 <= is_probability(p, settings, avoidable) <= 1.0
 
 
 # -- sampling -----------------------------------------------------------------
@@ -288,3 +360,69 @@ def test_the_ego_is_predicted_from_its_indicator(
 ) -> None:
     scene = _scene(features, _car("ego", -40.0))
     assert ego_command(scene, "ego", indicator) == expected
+
+
+# -- stacked lanes (#1596) ----------------------------------------------------
+
+#: A car's box: 1.5 m high, its centre 0.75 m above the road it stands on.
+_HEIGHT = 1.5
+
+
+def _at(name: str, x: float, road_z: float, y: float = 0.0) -> AgentSnapshot:
+    """A car at *x* standing on a road at *road_z*, east at 10 m/s."""
+    return AgentSnapshot(
+        name, x, y, 0.0, 10.0, 0.0, CAR, z=road_z + _HEIGHT / 2, height=_HEIGHT
+    )
+
+
+@pytest.fixture(scope="module")
+def stacked() -> MapFeatures:
+    lanelet_map = rm.stacked(8.0)
+    return MapFeatures(lanelet_map, rm.routing_graph(lanelet_map))
+
+
+def test_the_candidates_are_on_the_ego_s_level(stacked: MapFeatures) -> None:
+    scene = _scene(
+        stacked,
+        _at("ego", 50.0, 8.0),
+        _at("below", 60.0, 0.0),
+        _at("above", 80.0, 8.0),
+        AgentSnapshot("p_below", 55.0, 5.0, 0.0, 1.0, 0.0, PERSON, z=0.9, height=1.8),
+        AgentSnapshot("p_above", 55.0, 3.0, 0.0, 1.0, 0.0, PERSON, z=8.9, height=1.8),
+    )
+    controllable = {"below", "above", "p_below", "p_above"}
+    assert candidates(scene, "ego", controllable) == ["above", "p_above"]
+
+
+def test_a_vehicle_below_does_not_challenge_the_ego_on_the_deck(
+    stacked: MapFeatures,
+) -> None:
+    # npc1 15 m ahead of the ego: a brake check on the deck, nothing from
+    # the street below, however near it is in the plane.
+    same = ImportanceSampler(settings=ALWAYS)
+    on_deck = _scene(stacked, _at("ego", 50.0, 8.0), _at("npc1", 65.0, 8.0))
+    choice = _step(same, on_deck)
+    assert choice is not None and choice.name == "npc1"
+    assert same.weight == pytest.approx(0.01)
+    below = ImportanceSampler(settings=ALWAYS)
+    on_street = _scene(stacked, _at("ego", 50.0, 8.0), _at("npc1", 65.0, 0.0))
+    assert _step(below, on_street) is None
+    assert below.weight == 1.0
+
+
+def test_the_victims_are_on_the_adversary_s_level(features: MapFeatures) -> None:
+    # npc1 braking hard 15 m ahead of the ego: the ego is its victim on one
+    # level, not when npc1 is on a bridge over its lane (the bridge left out
+    # of the map, so both are located on W_IN2 and their paths meet).
+    brake = AdversarialCommand.accelerate(-9.0, 2.0)
+    ego = _at("ego", -55.0, 0.0, INNER)
+    level = _scene(features, ego, _at("npc1", -40.0, 0.0, INNER))
+    hit, future = _Futures(level, ALWAYS, DEFAULT_THRESHOLDS).victims(
+        "npc1", brake, "ego", ["npc1"]
+    )
+    assert future and hit == ["ego"]
+    bridge = _scene(features, ego, _at("npc1", -40.0, 8.0, INNER))
+    hit, future = _Futures(bridge, ALWAYS, DEFAULT_THRESHOLDS).victims(
+        "npc1", brake, "ego", ["npc1"]
+    )
+    assert future and hit == []

@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import sys
 from pathlib import Path
 
@@ -63,6 +64,7 @@ from omegaconf.errors import OmegaConfBaseException
 from tqdm import tqdm
 
 from autoware_carla_scenario.coordinate.map_manager import MapManager
+from autoware_carla_scenario.coordinate.snap import check_ray_distances
 from autoware_carla_scenario.coordinate.transform import (
     _interpolate_at_s as _interpolate_at_s_4,
 )
@@ -79,6 +81,7 @@ from autoware_carla_scenario.maps.opendrive import (
     map_asset_path,
 )
 from autoware_carla_scenario.scenario_config import EntityConfig
+from autoware_carla_scenario.serve_cli import port
 
 logger = logging.getLogger(__name__)
 
@@ -136,7 +139,19 @@ def detect_no_3d_model_lanelets(
     -------
     list[int]
         Sorted lanelet IDs where ground projection found no hit.
+
+    Raises
+    ------
+    ValueError
+        A negative or non-finite distance, or a ray of no length (one that
+        cannot hit would flag every lanelet).
     """
+    check_ray_distances(
+        ray_distance_upper,
+        ray_distance_lower,
+        "ray_distance_upper",
+        "ray_distance_lower",
+    )
     no_model_ids: list[int] = []
     total = len(lanelet_map.laneletLayer)
 
@@ -398,7 +413,8 @@ def _update_yaml(yaml_path: Path, lanelet_ids: list[int]) -> None:
     The file is edited as text (see :func:`update_no_3d_model_lanelet_ids_text`)
     and replaced atomically (a symlink's target, not the link itself); when
     the edit cannot be made safely, :class:`YamlUpdateError` is raised and
-    the file is left untouched.
+    the file is left untouched.  A file that cannot be read or written
+    raises ``OSError``.
     """
     raw = yaml_path.read_bytes()
     try:
@@ -415,6 +431,31 @@ def _update_yaml(yaml_path: Path, lanelet_ids: list[int]) -> None:
     _write_atomically(Path(os.path.realpath(yaml_path)), updated.encode("utf-8"))
 
 
+class _PartialWriteError(OSError):
+    """Writing a file in place failed after it was opened and emptied."""
+
+
+def _write_in_place(path: Path, data: bytes) -> None:
+    """Overwrite *path* with *data* without replacing the file.
+
+    The file keeps its mode and owner.  Opening it does not truncate, so
+    an error from the open leaves it unchanged and propagates as is; an
+    error after that (a full disk, an I/O error, a quota) may leave it
+    empty or partial and is raised as :class:`_PartialWriteError`.
+    """
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        try:
+            os.ftruncate(fd, 0)
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view) :]
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise _PartialWriteError(exc.errno, exc.strerror, str(path)) from exc
+
+
 def _write_atomically(path: Path, data: bytes) -> None:
     """Replace *path*'s content with *data* through a temporary file.
 
@@ -428,7 +469,7 @@ def _write_atomically(path: Path, data: bytes) -> None:
             dir=path.parent, prefix=f".{path.name}.", suffix=".tmp"
         )
     except PermissionError:
-        path.write_bytes(data)
+        _write_in_place(path, data)
         return
     tmp_path = Path(tmp_name)
     try:
@@ -636,9 +677,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--port",
-        type=int,
+        type=port,
         default=2000,
-        help="CARLA server port (default: 2000)",
+        help="CARLA server port, 1-65535 (default: 2000)",
     )
     parser.add_argument(
         "--ray-upper",
@@ -646,7 +687,8 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_RAY_DISTANCE_UPPER,
         help=(
             "Ray search range above z estimate in metres, as the runner's "
-            "entity.ground_projection_ray_distance_upper (default: %(default)s)"
+            "entity.ground_projection_ray_distance_upper; non-negative, and "
+            "with --ray-lower a positive length (default: %(default)s)"
         ),
     )
     parser.add_argument(
@@ -655,14 +697,15 @@ def _build_parser() -> argparse.ArgumentParser:
         default=DEFAULT_RAY_DISTANCE_LOWER,
         help=(
             "Ray search range below z estimate in metres, as the runner's "
-            "entity.ground_projection_ray_distance_lower (default: %(default)s)"
+            "entity.ground_projection_ray_distance_lower; non-negative "
+            "(default: %(default)s)"
         ),
     )
     parser.add_argument(
         "--timeout",
         type=float,
         default=10.0,
-        help="CARLA client timeout in seconds (default: 10.0)",
+        help="CARLA client timeout in seconds, positive (default: 10.0)",
     )
     parser.add_argument(
         "-v",
@@ -673,9 +716,28 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _check_args(parser: argparse.ArgumentParser, args: argparse.Namespace) -> None:
+    """Refuse a ray or timeout the detection cannot run with, by
+    ``parser.error`` (exit 2), before CARLA is connected to or the YAML read.
+
+    A ray of no length, or a negative or non-finite one, hits nothing: every
+    lanelet would be flagged and written to the YAML (#1416).
+    """
+    try:
+        check_ray_distances(
+            args.ray_upper, args.ray_lower, "--ray-upper", "--ray-lower"
+        )
+    except ValueError as exc:
+        parser.error(str(exc))
+    if not math.isfinite(args.timeout) or args.timeout <= 0.0:
+        parser.error(f"--timeout must be positive and finite, got {args.timeout}")
+
+
 def main(argv: Sequence[str] | None = None) -> None:
     """CLI entry point for detecting lanelets without a CARLA 3D model."""
-    args = _build_parser().parse_args(argv)
+    parser = _build_parser()
+    args = parser.parse_args(argv)
+    _check_args(parser, args)
 
     logging.basicConfig(
         level=logging.DEBUG if args.verbose else logging.INFO,
@@ -759,13 +821,47 @@ def main(argv: Sequence[str] | None = None) -> None:
     # ------------------------------------------------------------------
     # Update YAML config
     # ------------------------------------------------------------------
+    _write_detected_ids(args.yaml_path, no_model_ids)
+
+
+def _describe_os_error(path: Path, exc: OSError) -> str:
+    """*exc* as text, prefixed with *path* unless it already names it."""
+    if exc.filename is not None and os.fspath(exc.filename) in (
+        str(path),
+        os.path.realpath(path),
+    ):
+        return str(exc)
+    return f"{path}: {exc}"
+
+
+def _write_detected_ids(yaml_path: Path, lanelet_ids: list[int]) -> None:
+    """Write *lanelet_ids* into *yaml_path*, or say how to do it by hand.
+
+    Runs after the long ray-cast pass, so a failure must not be a
+    traceback that loses the result: whether the edit was refused
+    (:class:`YamlUpdateError`) or the file could not be read or written
+    (``OSError``: a read-only filesystem, an unreadable file, a directory
+    and file that are both unwritable, a write in place that failed half
+    way), the detected IDs are printed and the process exits with status 1.
+    """
     try:
-        _update_yaml(args.yaml_path, no_model_ids)
+        _update_yaml(yaml_path, lanelet_ids)
     except YamlUpdateError as exc:
         logger.error("%s; the file was not changed", exc)
-        logger.error("Set %s by hand to: %s", NO_3D_MODEL_KEY, no_model_ids)
+        logger.error("Set %s by hand to: %s", NO_3D_MODEL_KEY, lanelet_ids)
         sys.exit(1)
-    logger.info("Updated %s with %d lanelet IDs", args.yaml_path, len(no_model_ids))
+    except _PartialWriteError as exc:
+        logger.error(
+            "%s; the file may have been left incomplete",
+            _describe_os_error(yaml_path, exc),
+        )
+        logger.error("Set %s by hand to: %s", NO_3D_MODEL_KEY, lanelet_ids)
+        sys.exit(1)
+    except OSError as exc:
+        logger.error("%s; the file was not changed", _describe_os_error(yaml_path, exc))
+        logger.error("Set %s by hand to: %s", NO_3D_MODEL_KEY, lanelet_ids)
+        sys.exit(1)
+    logger.info("Updated %s with %d lanelet IDs", yaml_path, len(lanelet_ids))
 
 
 if __name__ == "__main__":

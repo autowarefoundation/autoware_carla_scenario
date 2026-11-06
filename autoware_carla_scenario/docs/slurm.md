@@ -29,12 +29,35 @@ On the machine you run `scenario` on (a SLURM submit host):
 1. The batch is expanded, labelled, built and statically checked exactly as a
    local batch is: the ODD sampling, the case labels, the [static
    check](typecheck.md) (once a config shape), the map fetched. A config error
-   is refused here, before anything is submitted.
+   is refused here, before anything is submitted, and so is a scenario whose
+   sweep expands to no case (`Error: <scenario>: the sweep expands to no
+   case ...`, exit 1).
 2. A manifest is written into the batch's output directory
    (`slurm/manifest.json`): every case's scenario and overrides, its resolved
    config, and the file stem it is to be named by.
 3. `sbatch --array=0-(N-1)%K` submits the cases, `launcher.cases_per_task` to a
-   task, at most `launcher.array_parallelism` tasks at once.
+   task, at most `launcher.array_parallelism` tasks at once. An `sbatch` that
+   has not returned after 120 s (a controller that does not answer) is
+   stopped, and the submit fails with `sbatch timed out after 120.0 s`. Unlike
+   a refused sbatch, whose submission record is removed, the controller may
+   have taken this job all the same, so its record is kept with no job id,
+   and says that sbatch timed out, and when (`sbatch_timed_out`,
+   `sbatch_timed_out_at`): if `squeue --me` lists the job, its tasks find
+   their cases and run, and
+   `scenario-slurm collect` collects the batch once it ends (`cancel` knows no
+   job id to cancel: `scancel` it by hand). Its index is not given to another
+   submission, and the record counts as in flight, so a `resubmit` of the
+   batch is refused until 600 s (`SBATCH_IN_FLIGHT_SECONDS`) after it was
+   made, saying that its sbatch timed out and to check `squeue --me`; after
+   that a `resubmit` is taken -- one that would run the cases a still-queued
+   job also runs, so check `squeue --me` first. `status` and the viewer show
+   such a submission as `no job id: sbatch timed out at <time>; the job may
+   exist all the same: check squeue --me`, its cases `unknown` in the viewer
+   (not `missing`), and `wait` says it has no job id to follow and where to
+   look for the job (and, within those 600 s, that a `resubmit` is refused);
+   `collect` reports each of its cases as `task <n> of submission <i> never
+   started` with the same note, never `job None`, and (within those 600 s)
+   that a `resubmit` is refused.
 4. By default `scenario` follows the array (`squeue`, and the outcome each task
    records) until it ends, then prints the summary and writes
    `batch_results.json`, as a local batch does, and exits 0 when every case
@@ -91,18 +114,68 @@ scenario-slurm resubmit outputs/2026-10-18/12-00-00   # the cases with no result
 scenario-slurm cancel   outputs/2026-10-18/12-00-00   # scancel the batch's jobs
 ```
 
+`cancel` gives `scancel` 60 s; one that has not returned by then is
+stopped, `cancel` says so on one line and exits 1. The same 120 s limit on
+`sbatch`, and the kept record, as above hold for `resubmit`; should the
+collect job's `sbatch` time out, the array runs all the same and `scenario`
+says how to collect it by hand.
+
+`status`, `collect` and `cancel` take nothing but the batch directory. The
+options of the others (`scenario-slurm <command> --help` says the same):
+
+| Command | Option | |
+|---|---|---|
+| `wait` | `--submission K` | the submission to follow, by its index (`slurm/submissions/<K>.json`; `0` is the first); default: the latest |
+| `wait` | `--poll-seconds S` | seconds between two polls of `squeue`; default: the batch's `launcher.poll_seconds`. Below 0.1 is taken as 0.1, a negative number is refused |
+| `resubmit` | `--failed` | also the cases that ran and failed |
+| `resubmit` | `--cases a,b` | these cases instead, by label or index; a case named twice runs once |
+| `resubmit` | `--array-parallelism K` | at most this many tasks at once (at least 1); default: the batch's `launcher.array_parallelism` |
+| `resubmit` | `--cases-per-task N` | cases a task runs (at least 1); default: the batch's `launcher.cases_per_task` |
+| `resubmit` | `--wait`, `--no-wait` | follow the new submission until it ends and collect, or submit and exit; default: the batch's `launcher.wait`. With nothing to resubmit, it collects at once, but only with an explicit `--wait` (and not with `--dry-run`) |
+| `resubmit` | `--force` | submit even while a job of the batch is queued or running, `squeue` cannot tell whether one is, or another submission of the batch is in flight or its sbatch timed out less than 600 s after its record was made |
+| `resubmit` | `--dry-run` | print the cases it would resubmit, submitting and collecting nothing, even with `--wait`, and exit 0; it still exits 1 where a resubmit would refuse: a busy batch without `--force`, an unknown `--cases` entry or an out-of-range option, and on an error reading the batch |
+
 A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message
-saying so, and `collect` lists them. `resubmit` submits again the cases with no
-outcome and those that raised on every attempt (`ERROR`); `--failed` adds the
-ones that ran and failed, `--cases a,b` names them (labels or indices; a case
-named twice runs once), and `--array-parallelism`/`--cases-per-task` change
-how they are spread. A case run again replaces its earlier files: before it
-runs, the task removes every output of its stem (`run_outputs`), its T4
-dataset directory (`{stem}.t4`) included, so none of the last attempt's is left
-beside the new result. So `resubmit` refuses while a job of the batch is queued
-or running, while `squeue` cannot tell whether one is, or while another
-submission of the batch is in flight (`--force` submits all the same).
+saying so, and `collect` lists them, saying what to do about them, chosen from
+the batch's records alone (#1803): where the case's task may still be queued
+or running (it has a job, and it has no status yet, or its status says
+`starting`, `waiting`, `building` or `running`), to wait for it with
+`scenario-slurm wait` (with `--submission <k>` when its submission is not the
+latest) if `squeue --me` still lists it and to `resubmit` once it has ended;
+where its submission is in flight, to try again once sbatch returns; where its
+sbatch timed out less than 600 s ago, to `collect` once the job ends if
+`squeue --me` lists it, and otherwise to `resubmit`, which is refused until
+those 600 s have passed unless with `--force`; and otherwise to `resubmit`. So
+is a case whose recorded outcome holds no verdict -- no `result` object, or a
+`passed` that is not `true` or `false` (`"false"` and `1` are none) -- or a
+result that cannot be reported: a `message` that is missing or not a string,
+an `elapsed_seconds` that is not a number (`true` is none),
+`condition_statuses` that are not a list of objects each with a string `label`
+and `message` and a boolean `satisfied`, or a `failure` that is not an object
+or cannot be read (an `at` of the wrong type, say). What the worker writes
+always is readable; `rerun_recording` and `failure` may be missing. It did not
+pass, and `collect` reports it as `ERROR` naming its file; a `rerun_error` the
+task recorded for it is kept in `batch_results.json`. `status`, `wait` and the
+viewer count it as not passed: the results pages show it as an error.
+`resubmit` submits again the cases with no outcome or no verdict and those
+that raised on every attempt (`ERROR`); `--failed` adds the ones that ran and
+failed, `--cases a,b` names them (labels or indices; a case named twice runs
+once), and `--array-parallelism`/`--cases-per-task` change how they are
+spread. A case run again replaces its earlier files: before it runs, the task
+removes every output of its stem (`run_outputs`), its T4 dataset directory
+(`{stem}.t4`) included, so none of the last attempt's is left beside the new
+result. So `resubmit` refuses while a job of the batch is queued or running,
+while `squeue` cannot tell whether one is, or while another submission of the
+batch is in flight (`--force` submits all the same).
+
+A batch directory that `scenario-slurm` cannot read or write -- a manifest it
+may not read, or shared storage mounted read-only -- is one `Error: ...` line
+naming the file, and the command exits 1, as for a directory that holds no
+batch. `collect` (and `wait`, and `resubmit --wait`, which end in it) prints
+the summary's verdict even when `batch_results.json` cannot be written, and
+writes `slurm/collected.json` after its hints, so the verdict is not lost
+(#1740).
 
 Two resubmits of one batch may run at once -- from two viewer tabs, or from
 the viewer and `scenario-slurm resubmit`. Each submission's record,
@@ -117,9 +190,23 @@ resubmit checks the submissions before it once more, and refuses should one
 be in flight or queued, so of two resubmits at once the later one submits
 nothing. A record whose sbatch fails is removed. One left with no job id by a
 submitter that was killed stops counting as in flight 600 s
-(`SBATCH_IN_FLIGHT_SECONDS`) after it was made. A record that cannot be read
+(`SBATCH_IN_FLIGHT_SECONDS`) after it was made. `wait` follows a
+submission only once it has a job id: on one still in flight it asks `squeue`
+nothing, collects nothing and exits non-zero, saying to try again once sbatch
+has returned; on one whose sbatch timed out, that the job may exist (check
+`squeue --me`, then `collect` or `resubmit`); and on one left with no job id
+it says the record is stale. `status` asks `squeue` nothing about a
+submission with no job id either: it never reads as a job that ended, but as
+`no job id yet (sbatch in flight)`, as one whose sbatch timed out (above), or
+as a stale record; the viewer shows its cases pending, unknown or missing
+respectively.
+A record that cannot be read
 (empty, or not a JSON object) refuses a resubmit for as long after the file
-was last modified, then is ignored with a warning.
+was last modified, then is ignored with a warning. The other readers skip
+such a record with a warning naming it: `status` lists it as unreadable,
+`cancel` says it skipped it (cancel its job with `scancel` if it had one),
+`collect` counts its cases as not submitted by it, and the viewer's batch page
+shows the batch with a note on that submission.
 `collect` can be run any number of times.
 
 `sacct` is not needed: the batch is followed through `squeue` and the files the
@@ -137,9 +224,9 @@ command line (`launcher.mem=12G`), or in a config.
 
 | Key | Default | |
 |---|---|---|
-| `partition`, `account`, `qos` | `null` | `sbatch --partition/--account/--qos` |
-| `time` | `null` | `sbatch --time`; the task is sent SIGTERM `signal_grace_seconds` before it runs out |
-| `mem`, `cpus_per_task`, `gres` | `null` | `sbatch --mem/--cpus-per-task/--gres` (`gpu:1`, or `shard:1` to share a GPU) |
+| `partition`, `account`, `qos` | `null` | `sbatch --partition/--account/--qos`; `partition` may list several (`gpu,cpu`) |
+| `time` | `null` | `sbatch --time` in any of its forms (`90`, `120:00`, `168:00:00`, `2-00`, `1-12:30`, `1-00:00:00`, `UNLIMITED`); the task is sent SIGTERM `signal_grace_seconds` before it runs out |
+| `mem`, `cpus_per_task`, `gres` | `null` | `sbatch --mem/--cpus-per-task/--gres` (`gpu:1`, or `shard:1` to share a GPU; a list: `gpu:1,shard:2`) |
 | `array_parallelism` | `null` | at most this many tasks at once (`--array=...%K`); `null`: no cap |
 | `cases_per_task` | `null` | cases a task runs on its CARLA; `null`: the cases spread evenly over `array_parallelism` tasks (one case a task without a cap), in no more tasks than the cluster's `MaxArraySize` ([Array size](#array-size)) |
 | `job_name` | `null` | `acs-<date>-<time>` of the output directory |
@@ -157,9 +244,25 @@ command line (`launcher.mem=12G`), or in a config.
 | `cancel_on_interrupt` | `true` | Ctrl-C while waiting cancels the batch's jobs |
 | `collect_job` | `true` | with `wait: false`, a job that collects once the array ends |
 | `collect_mem` | `2G` | its `--mem` |
-| `signal_grace_seconds` | `120` | `--signal=B:TERM@N` |
-| `port_base`, `port_slots` | `20000`, `1000` | where the tasks' port slots are ([Ports](#ports)); `port_slots` at least 1 |
+| `signal_grace_seconds` | `120` | `--signal=B:TERM@N`; at least 0 |
+| `port_base`, `port_slots` | `20000`, `1000` | where the tasks' port slots are ([Ports](#ports)); `port_base` at least 1024, `port_slots` at least 1, and every slot's ports within 65535 |
 | `port_lock_dir` | `null` | where the slots' locks are; `null`: `/dev/shm/acs-slurm-ports-<uid>`, else `/tmp` ([Ports](#ports)) |
+
+Each value is checked before anything is written, and one of the wrong type is
+refused with an error naming its key (`launcher.<key>`), never quietly read
+as something else:
+
+- The counts (`cpus_per_task`, `array_parallelism`, `cases_per_task`),
+  `signal_grace_seconds`, `port_base` and `port_slots` are whole numbers: `2`,
+  `2.0` or `"2"`, not `2.7`, `true`, NaN or infinity. The counts and
+  `port_slots` are at least 1.
+- The seconds (`start_stagger_seconds`, `poll_seconds`) are finite numbers, at
+  least 0, not `true`.
+- The flags (`wait`, `headless`, `collect_job`, `cancel_on_interrupt`) are
+  `true` or `false`, or one of their spellings as text (`"false"`, `"no"`,
+  `"off"`, `"0"`, and `"true"`, `"yes"`, `"on"`, `"1"`); `"false"` is false.
+- The text keys are text or a number, not a boolean, a list or a mapping;
+  `extra_sbatch_args` and `setup` are lists (or one string), `env` a mapping.
 
 `cases_per_task` trades a task's start -- CARLA takes about 50 s to start, and
 a driver policy about as long to load -- against how evenly the cases spread
@@ -337,7 +440,20 @@ dialled by every task, as a TCP one is.
   under one temporary name, so two loads at the same moment fail one case
   with `filesystem error: cannot rename`) needs `start_stagger_seconds`,
   enough for one task to load it before the next starts (30 s for
-  OnePlanner, which loads it once a task).
+  OnePlanner, which loads it once a task). The stagger is held with `flock`
+  on `slurm/start.lock`, or where the file system has none, with a lock file
+  beside it created with `O_EXCL`. One a killed task left is taken over once
+  it is `start_stagger_seconds` + 60 s old by the file server's clock, so a
+  node whose clock is off does not break a live one. One waiter takes a
+  stale lock over: the waiters share a mutex of `.takeover.*` files beside
+  the lock, one per attempt, created with `O_EXCL` (a waiter killed holding
+  one is superseded by the next attempt 10 s later), and the one that wins
+  judges the lock stale again before removing it. A task removes the lock
+  on release only while it is still its own. So no waiter removes a live
+  lock, and no two tasks start together, except when a task is still alive
+  past the point its file is judged stale: one that held the lock that
+  long, or a waiter that stalled for 10 s in the middle of taking a lock
+  over.
 - **ROS 2 and Autoware egos** (`ego.entity=ros2`, `ego.entity=autoware` with
   a launcher) run their stacks on DDS, whose domain the tasks would share; give
   each its own `ROS_DOMAIN_ID` (the Autoware launcher's `ros_domain_ids`), or

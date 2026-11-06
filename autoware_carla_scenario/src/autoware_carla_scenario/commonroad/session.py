@@ -6,8 +6,8 @@ When a run that reads a CommonRoad metric is over,
 :func:`evaluate_commonroad` the frames every :attr:`CommonRoadSettings.period_s`
 -- every :meth:`CommonRoadSettings.period_for` a metric, for the slow ones
 (:attr:`CommonRoadSettings.metric_periods_s`).  The heaviest
-(:data:`HEAVY_METRICS`) can be turned off altogether
-(:attr:`CommonRoadSettings.heavy_metrics`).
+(:data:`~autoware_carla_scenario.heavy_metrics.HEAVY_METRICS`) can be turned
+off altogether (:attr:`CommonRoadSettings.heavy_metrics`).
 It converts the world's map to CommonRoad (:mod:`.map`, once per machine),
 starts :attr:`CommonRoadSettings.workers` workers on it (:mod:`.worker`, kept
 for the next run on the map), and shares the frames out among them, each
@@ -22,19 +22,32 @@ from __future__ import annotations
 
 import atexit
 import logging
-import math
 import operator
 import os
 import threading
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
 
-from ..metrics import COMMONROAD_METRICS, CRIME_TTR_S
+# Re-exported under the names they had: the heavy metrics' settings live in
+# the checked heavy_metrics (#1689).
+from ..heavy_metrics import (  # noqa: F401
+    DEFAULT_METRIC_PERIODS_S,
+    HEAVY_METRICS,
+    HEAVY_METRICS_DECIDED_ENV,
+    HEAVY_METRICS_ENV,
+    _check_period,
+    _heavy_metrics_default,
+    _heavy_metrics_from_user,
+    _heavy_metrics_on,
+    evaluates,
+)
+from ..metrics import COMMONROAD_METRICS
 from .frame import read_frame
 from .map import commonroad_map
 from .worker import CommonRoadWorker, CommonRoadWorkerError, worker_command
+
 
 if TYPE_CHECKING:
     from ..metric_batch import Frame
@@ -52,53 +65,6 @@ logger = logging.getLogger(__name__)
 
 def _default_workers() -> int:
     return max(1, min(4, os.cpu_count() or 1))
-
-
-#: The CommonRoad metrics that take seconds a frame: CriMe's TTR simulates
-#: the ego's evasive manoeuvres, about 2 s a frame with a collision ahead.
-HEAVY_METRICS: frozenset[str] = frozenset({CRIME_TTR_S})
-
-#: The metrics evaluated less often than every :attr:`CommonRoadSettings.period_s`
-#: by default, and how often (simulated seconds): the heavy ones every 0.5 s.
-DEFAULT_METRIC_PERIODS_S: dict[str, float] = {key: 0.5 for key in HEAVY_METRICS}
-
-#: Set to ``0`` (or ``false``, ``off``, ``no``) to turn the heavy metrics off
-#: (:attr:`CommonRoadSettings.heavy_metrics`).
-HEAVY_METRICS_ENV = "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS"
-
-#: What the ``scenario`` command decided (``1`` or ``0``), from its configs'
-#: ``metrics.heavy`` and :data:`HEAVY_METRICS_ENV`: set by it, not by the user,
-#: to carry the decision to the runs' own processes.  Read before
-#: :data:`HEAVY_METRICS_ENV` when set; the command never changes the user's
-#: :data:`HEAVY_METRICS_ENV`.
-HEAVY_METRICS_DECIDED_ENV = "AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS_DECIDED"
-
-
-def _heavy_metrics_on(value: Optional[str]) -> bool:
-    """Whether *value* (an environment variable's, ``None``: unset) leaves
-    the heavy metrics on: unless it is ``0``, ``false``, ``off`` or ``no``."""
-    return (value or "").strip().lower() not in ("0", "false", "off", "no")
-
-
-def _heavy_metrics_from_user() -> bool:
-    """Whether :data:`HEAVY_METRICS_ENV`, as the user set it, leaves the heavy
-    metrics on."""
-    return _heavy_metrics_on(os.environ.get(HEAVY_METRICS_ENV))
-
-
-def _heavy_metrics_default() -> bool:
-    """Whether the heavy metrics are on by default: as the ``scenario``
-    command decided (:data:`HEAVY_METRICS_DECIDED_ENV`), else as
-    :data:`HEAVY_METRICS_ENV` says."""
-    decided = os.environ.get(HEAVY_METRICS_DECIDED_ENV, "").strip()
-    if decided:
-        return _heavy_metrics_on(decided)
-    return _heavy_metrics_from_user()
-
-
-def _check_period(name: str, period: float) -> None:
-    if not (math.isfinite(period) and period > 0.0):
-        raise ValueError(f"{name} must be positive and finite, got {period}")
 
 
 def _check_workers(workers: Any) -> int:
@@ -171,8 +137,8 @@ class CommonRoadSettings:
 
     def evaluates(self, key: str) -> bool:
         """Whether the metric *key* is evaluated: not when it is heavy and the
-        heavy metrics are off."""
-        return self.heavy_metrics or key not in HEAVY_METRICS
+        heavy metrics are off (:func:`~autoware_carla_scenario.heavy_metrics.evaluates`)."""
+        return evaluates(self.heavy_metrics, key)
 
     def period_for(self, key: str) -> float:
         """Simulated seconds between two frames the metric *key* is evaluated
@@ -248,7 +214,26 @@ def _workers_for(carla_map: Any) -> list[CommonRoadWorker]:
         close_commonroad_workers()
         started = _start_workers(carla_map, name)
         _POOL.workers, _POOL.map_name = started, name
+        _close_at_exit()
         return started
+
+
+#: The process that registered :func:`close_commonroad_workers` with
+#: ``atexit``, if any.
+_CLOSE_AT_EXIT_PID: Optional[int] = None
+
+
+def _close_at_exit() -> None:
+    """Have this process close its workers at exit, once.
+
+    Per process, not at import: a sweep's case, forked
+    (``sweeper/isolation.py``), runs none of the ``atexit`` handlers it
+    inherited from the sweep, only those it registered itself (#1568).
+    """
+    global _CLOSE_AT_EXIT_PID
+    if _CLOSE_AT_EXIT_PID != os.getpid():
+        _CLOSE_AT_EXIT_PID = os.getpid()
+        atexit.register(close_commonroad_workers)
 
 
 def _start_workers(carla_map: Any, name: str) -> list[CommonRoadWorker]:
@@ -267,14 +252,45 @@ def _start_workers(carla_map: Any, name: str) -> list[CommonRoadWorker]:
     logger.info(
         "starting %d CommonRoad workers: %s", settings.workers, " ".join(command)
     )
+    # Every worker whose process runs, its map given or not, so that an
+    # interrupt closes it: in a session of its own, Ctrl-C does not reach it,
+    # and the pool (closed at exit) does not hold it yet (#1780).
+    spawned: list[CommonRoadWorker] = []
+    spawned_lock = threading.Lock()
+    interrupted = False
+
+    def on_start(worker: CommonRoadWorker) -> None:
+        with spawned_lock:
+            if interrupted:
+                # Started after the snapshot below: the worker closes itself.
+                raise CommonRoadWorkerError("interrupted while starting")
+            spawned.append(worker)
+
     # Started together: each spends its first seconds importing CommonRoad.
-    with ThreadPoolExecutor(settings.workers) as starting:
-        futures: list[Future[CommonRoadWorker]] = [
-            starting.submit(
-                CommonRoadWorker, command, map_path, settings.worker_settings()
-            )
-            for _ in range(settings.workers)
-        ]
+    starting = ThreadPoolExecutor(settings.workers)
+    futures: list[Future[CommonRoadWorker]] = [
+        starting.submit(
+            CommonRoadWorker,
+            command,
+            map_path,
+            settings.worker_settings(),
+            on_start=on_start,
+        )
+        for _ in range(settings.workers)
+    ]
+    try:
+        wait(futures)
+    except BaseException:
+        # Not ``with``: its exit would wait for every worker to take the map.
+        starting.shutdown(wait=False, cancel_futures=True)
+        with spawned_lock:
+            interrupted = True
+            closing = list(spawned)
+        # A worker still waiting for its init answer reads the end of its
+        # output once closed, and raises in its own thread.
+        _close_all(closing)
+        raise
+    starting.shutdown()
     started = [f.result() for f in futures if f.exception() is None]
     failed = [f.exception() for f in futures if f.exception() is not None]
     if failed:
@@ -309,11 +325,16 @@ def evaluate_commonroad(
         read = read_frame(world, settings.radius_m)  # type: ignore[arg-type]
         requests.append(None if read is None else (read.ego, read.others))
     reported: set[str] = set()
+    # Set when the evaluation is given up: the shares stop at their next
+    # frame rather than evaluate the rest of theirs (#1780).
+    stop = threading.Event()
 
     def share(k: int) -> list[tuple[int, dict[str, Optional[float]], dict[str, str]]]:
         worker = workers[k]
         done = []
         for i in range(k, len(frames), len(workers)):
+            if stop.is_set():
+                break
             request = requests[i]
             if request is None:
                 continue
@@ -321,16 +342,34 @@ def evaluate_commonroad(
             done.append((i, got, errors))
         return done
 
+    # Not ``with``: on an interrupt its exit would wait for every share to
+    # evaluate all of its frames before the workers are closed (#1780).
+    pool = ThreadPoolExecutor(len(workers))
+    futures = [pool.submit(share, k) for k in range(len(workers))]
     try:
-        with ThreadPoolExecutor(len(workers)) as pool:
-            shares = list(pool.map(share, range(len(workers))))
+        wait(futures, return_when=FIRST_EXCEPTION)
+        for future in futures:
+            if future.done() and future.exception() is not None:
+                raise future.exception()  # type: ignore[misc]
+        shares = [future.result() for future in futures]
     except BaseException:
+        stop.set()
+        pool.shutdown(wait=False, cancel_futures=True)
         # A worker that failed, answered out of protocol or was interrupted
         # mid-request is not reused: the next run starts the pool afresh.
+        # Closing it also ends the requests of the shares still running:
+        # they read the end of its output, and raise in their own threads.
         with _POOL_LOCK:
             if _POOL.workers is workers:
                 close_commonroad_workers()
+        # Bounded: a share is not waited for longer than a worker's closing.
+        # Not those cancelled before they ran, which wait() never sees done.
+        wait(
+            [future for future in futures if not future.cancelled()],
+            timeout=_SHARES_JOIN_S,
+        )
         raise
+    pool.shutdown()
     for done in shares:
         for i, got, errors in done:
             for key in keys:
@@ -342,6 +381,11 @@ def evaluate_commonroad(
     return values
 
 
+#: How long :func:`evaluate_commonroad`, given up, waits for its shares to
+#: stop once their workers are closed, in seconds.
+_SHARES_JOIN_S = 5.0
+
+
 def close_commonroad_workers() -> None:
     """Stop the workers, if any run."""
     with _POOL_LOCK:
@@ -351,13 +395,29 @@ def close_commonroad_workers() -> None:
 
 
 def _close_all(workers: list[CommonRoadWorker]) -> None:
-    """Close each of *workers*: one that cannot be closed neither stops the
-    others' closing nor masks the error being raised, if any."""
-    for worker in workers:
+    """Close each of *workers*, all at once: one that cannot be closed neither
+    stops the others' closing nor masks the error being raised, if any.
+
+    At once, so that stuck workers take one close timeout, not one each.
+    Each close is bounded, so the threads are joined without a bound.
+    """
+
+    def close(worker: CommonRoadWorker) -> None:
         try:
             worker.close()
         except Exception:  # noqa: BLE001
             logger.warning("could not close a CommonRoad worker", exc_info=True)
 
-
-atexit.register(close_commonroad_workers)
+    if len(workers) == 1:
+        close(workers[0])
+        return
+    threads = [
+        threading.Thread(
+            target=close, args=(worker,), name="commonroad-close", daemon=False
+        )
+        for worker in workers
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()

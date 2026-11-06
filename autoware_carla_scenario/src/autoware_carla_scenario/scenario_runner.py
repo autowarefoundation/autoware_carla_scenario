@@ -39,10 +39,12 @@ from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkers
 from .failure import Failure, FailureCategory, progress_detail
 from .maps.opendrive import map_asset_env_var, map_asset_path
+from .maps.resolver import _short_map_name
 from .coordinate.map_manager import run_carla_map
 from .coordinate.poses import CarlaWorldPose
 from .coverage.collector import CoverageCollector, prepare_measures
 from .measures import set_measured_scenario
+from .metric_frames import FrameRecorder
 from .metrics import (
     BUILT_IN_METRICS,
     ego_progress,
@@ -55,9 +57,10 @@ from .coordinate.transform import to_opendrive
 from .entity.vehicle_entity import _clear_entry_speeds, _set_warmup_done
 from .ego_base_link import clear_ego_base_link
 from .scenario_base import BaseScenario
-from .seed import set_run_seed
+from .signals.registry import clear_signal_controllers
+from .seed import check_seed, set_run_seed
 from .server import CarlaServerManager
-from .traffic.base import TrafficBackend, TrafficContext
+from .traffic.base import DrivenEntity, TrafficBackend, TrafficContext
 from .traffic.driven import BackendDriven
 from .world_reset import (
     RESET_RELOAD,
@@ -74,7 +77,12 @@ from .world_reset import (
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter, recording_path
-from .run_outputs import run_outputs_exist
+from .run_outputs import (
+    COVERAGE_SUFFIX,
+    RESULT_SUFFIX,
+    TRAJECTORY_SUFFIX,
+    run_outputs_exist,
+)
 from .t4 import T4Recorder, T4Recording
 from .t4_scene import T4SceneExporter
 from .visibility import forget_visibility
@@ -384,15 +392,12 @@ def _npc_collision_monitor(backend: TrafficBackend) -> "NpcCollisionMonitor":
     return NpcCollisionMonitor(traffic_backend=backend)
 
 
-def _metric_recorder(scenario: BaseScenario) -> Optional[Any]:
+def _metric_recorder(scenario: BaseScenario) -> Optional[FrameRecorder]:
     """What records the run's frames for its MetricConditions, judged once it
     is over (:mod:`~autoware_carla_scenario.metric_batch`); ``None`` when it
-    has none.  Recorded frames are duck-typed actors, which the check
-    (docs/typecheck.md) does not compile."""
+    has none."""
     if not any(is_post_run(c) for c in scenario._fail_conditions):
         return None
-    from .metric_batch import FrameRecorder  # noqa: PLC0415
-
     return FrameRecorder()
 
 
@@ -494,10 +499,13 @@ def _judge_metrics(
     series = evaluate_metrics(recorder.frames, run_carla_map(world), keys)
     if trajectory is not None:
         _record_metrics(trajectory, recorder.frames, series, judged)
+    # The run's end, in the frames' time base: a metric sampled less often
+    # than every tick counts its last sample until then.
+    end: Optional[float] = recorder.frames[-1].t if recorder.frames else None
     first: Optional[tuple[int, BaseCondition, ScenarioResult]] = None
     for i, condition in judged:
         metric = series[condition.metric]  # type: ignore[attr-defined]
-        verdict = condition.judge(metric.times, metric.values)  # type: ignore[attr-defined]
+        verdict = condition.judge(metric.times, metric.values, end)  # type: ignore[attr-defined]
         if verdict is None:
             logger.info(
                 "[%s] Metric condition [%d](%s) held: %s",
@@ -519,36 +527,55 @@ def _judge_metrics(
     statuses = _condition_statuses(
         scenario, world, result.elapsed_seconds, scenario_name
     )
-    if first is None or (
-        not result.passed and result.elapsed_seconds <= first[2].elapsed_seconds
-    ):
-        # The run's own outcome stands; its statuses now hold the judgements.
-        judged_labels = {_status_label("fail", i, c) for i, c in judged}
-        result.condition_statuses = [
-            s for s in result.condition_statuses if s.label not in judged_labels
-        ] + [s for s in statuses if s.label in judged_labels]
-        if result.failure is not None:
-            also = result.failure.also_triggered
-            also.extend(
-                s.label
-                for s in statuses
-                if s.label in judged_labels and s.satisfied and s.label not in also
+    judged_labels = {_status_label("fail", i, c) for i, c in judged}
+    return _merge_metric_verdicts(scenario, result, judged_labels, first, statuses)
+
+
+def _merge_metric_verdicts(
+    scenario: BaseScenario,
+    result: ScenarioResult,
+    judged_labels: set[str],
+    first: Optional[tuple[int, BaseCondition, ScenarioResult]],
+    statuses: list[ConditionStatus],
+) -> ScenarioResult:
+    """The run's *result* once its MetricConditions are judged
+    (:func:`_judge_metrics`): failed by *first*, the earliest failing one
+    (its index, the condition and its verdict; ``None`` when none failed),
+    when it fails earlier than the run did, or a run that passed; otherwise
+    the run's own result, its statuses of the conditions *judged_labels*
+    names now from *statuses*, and those that held added to its failure's
+    other conditions."""
+    if first is not None:
+        earliest: tuple[int, BaseCondition, ScenarioResult] = first
+        if not (
+            not result.passed and result.elapsed_seconds <= earliest[2].elapsed_seconds
+        ):
+            i, condition, verdict = earliest
+            return ScenarioResult(
+                passed=False,
+                message=verdict.message,
+                elapsed_seconds=verdict.elapsed_seconds,
+                condition_statuses=statuses,
+                failure=_failure(
+                    _status_label("fail", i, condition),
+                    scenario.fail_category(i),
+                    verdict.elapsed_seconds,
+                    verdict.message,
+                    statuses,
+                ),
             )
-        return result
-    i, condition, verdict = first
-    return ScenarioResult(
-        passed=False,
-        message=verdict.message,
-        elapsed_seconds=verdict.elapsed_seconds,
-        condition_statuses=statuses,
-        failure=_failure(
-            _status_label("fail", i, condition),
-            scenario.fail_category(i),
-            verdict.elapsed_seconds,
-            verdict.message,
-            statuses,
-        ),
-    )
+    # The run's own outcome stands; its statuses now hold the judgements.
+    result.condition_statuses = [
+        s for s in result.condition_statuses if s.label not in judged_labels
+    ] + [s for s in statuses if s.label in judged_labels]
+    failure = result.failure
+    if failure is not None:
+        also = failure.also_triggered
+        # One at a time, as extend() took them: a label is added once.
+        for s in statuses:
+            if s.label in judged_labels and s.satisfied and s.label not in also:
+                also.append(s.label)
+    return result
 
 
 def _traffic_record(backend: TrafficBackend, scenario_name: str) -> Optional[Any]:
@@ -604,6 +631,59 @@ def _write_result(
     if traffic is not None:
         data["traffic"] = traffic
     json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+
+
+def _write_gate_record(
+    output_dir: Path,
+    file_stem: str,
+    scenario: "BaseScenario",
+    result: ScenarioResult,
+    *,
+    result_follows: bool = False,
+) -> None:
+    """Write ``{file_stem}_gate.json``: what a run of a logical scenario with a
+    gate leaves for it (``docs/gate.md``), when the scenario has one to give.
+
+    *result_follows* says the run's result (``{file_stem}_result.json``) is
+    written right after the record, so the record names it although it is
+    not there yet: the runner writes the record first, so that a result on
+    disk means the record is too (#1840).
+
+    A scenario gives one with a ``gate_record(result, file_stem)`` method
+    (:meth:`~autoware_carla_scenario.declarative.DeclarativeScenario.gate_record`)
+    returning a :class:`~autoware_carla_scenario.gate.record.GateRecord` or
+    ``None``.  Best effort, as the coverage file: a record that cannot be made
+    or written is logged, and the run's result stands.  The check leaves it
+    out: the scenario's method is found with ``getattr()``, and the record is
+    written as JSON of mixed value types.
+    """
+    make = getattr(scenario, "gate_record", None)
+    if not callable(make):
+        return
+    from .gate.record import GATE_RECORD_SUFFIX, write_gate_record  # noqa: PLC0415
+    from .rerun import TRAJECTORY_SUFFIX  # noqa: PLC0415
+
+    path = output_dir / f"{file_stem}{GATE_RECORD_SUFFIX}"
+    try:
+        record = make(result, file_stem)
+        if record is None:
+            return
+        # The outputs the run wrote beside it, by role: what the gate reads
+        # (the coverage file) is named only when it is there.
+        for role, suffix in (
+            ("result", RESULT_SUFFIX),
+            ("coverage", COVERAGE_SUFFIX),
+            ("trajectory", TRAJECTORY_SUFFIX),
+        ):
+            if (role == "result" and result_follows) or (
+                output_dir / f"{file_stem}{suffix}"
+            ).exists():
+                record.files[role] = f"{file_stem}{suffix}"
+        write_gate_record(path, record)
+    except Exception:  # noqa: BLE001 - the run's result matters more than this
+        logger.warning("could not write the gate record %s", path, exc_info=True)
+        return
+    logger.info("Gate record written to: %s", path)
 
 
 def _record_run(
@@ -1173,7 +1253,7 @@ class ScenarioRunner:
                 f"Environment variable '{env_var}' is not set. "
                 f"Set it to the path of the internal .xodr file for map '{map_name}' "
                 f"inside the CARLA installation "
-                f"(e.g. /opt/carla/CarlaUE5/Content/Carla/Maps/{map_name}.xodr)."
+                f"(e.g. /opt/carla/CarlaUE5/Content/Carla/Maps/{_short_map_name(map_name)}.xodr)."
             )
         shutil.copy2(xodr_path, dest)
         self._xodr_path = xodr_path
@@ -1452,10 +1532,21 @@ class ScenarioRunner:
 
         Returns:
             The outcome of the scenario execution.
+
+        Raises:
+            ValueError: If the scenario's ``random_seed`` is not a whole
+                number from 0 to :data:`~autoware_carla_scenario.seed.MAX_SEED`
+                (:func:`~autoware_carla_scenario.seed.check_seed`), before the
+                world is touched.
         """
         if timeout_seconds is None:
             timeout_seconds = self.timeout_seconds
         scenario_name = type(scenario).__name__
+        # Checked before the world is touched (autoware_carla_scenario.seed):
+        # a scenario's random_seed may be assigned after it was built, and a
+        # seed CARLA or SUMO refuses would otherwise raise once the world is
+        # synchronous, outside the cleanup that puts it back.
+        seed = check_seed("random_seed", scenario.random_seed)
         world = self._world_for_next_run(scenario_name)
         if file_stem is None:
             file_stem = _run_file_stem(self.output_dir, scenario_name)
@@ -1471,6 +1562,10 @@ class ScenarioRunner:
         # What a scenario before carried out is not under way in this one.
         clear_adversities()
         clear_props()
+        # And the signal controllers a DeclarativeScenario registered: a
+        # Python scenario next would still find them by name (#1599), their
+        # tick callbacks gone with the run.
+        clear_signal_controllers()
         _set_warmup_done(False)
         _clear_entry_speeds()
         # And where the last run's ego had its base_link: this run's ego says
@@ -1480,15 +1575,7 @@ class ScenarioRunner:
         # The ego is built before the cleanup, not after it: an entity that
         # attaches to an actor someone else spawned has to be able to say so
         # before that actor would be destroyed.
-        if TYPE_CHECKING:
-            # create_ego() instantiates the ego's class (`ego_type`), which
-            # Codon cannot hold as a value: the check takes the entity a
-            # scenario was given, or a plain EgoVehicle.
-            ego = EgoVehicle()
-            if scenario.ego_entity is not None:
-                ego = scenario.ego_entity
-        else:
-            ego = scenario.create_ego()
+        ego = scenario.create_ego()
         # Handed on as the vehicle it is (a typed local: the static check
         # upcasts there); anything else (a test double) goes through
         # register_entity, which keeps it as it always has.  Codon resolves
@@ -1529,7 +1616,7 @@ class ScenarioRunner:
         recording_start_frame = 0
         warmup_ticks = 0
         trajectory = TrajectoryRecorder(
-            self.output_dir / f"{file_stem}.trajectory.jsonl",
+            self.output_dir / f"{file_stem}{TRAJECTORY_SUFFIX}",
             self.map_source,
             self.lanelet2_path,
             self._xodr_path,
@@ -1540,12 +1627,14 @@ class ScenarioRunner:
         coverage: Optional[CoverageCollector] = None
         t4_recording: Optional[T4Recording] = None
         npc_events: Optional["NpcCollisionMonitor"] = None
+        # The scenario time of the last tick, which the contacts still under
+        # way when the run ends are ended at.
+        last_elapsed = 0.0
         # The log the Rerun converter takes once the result JSON is written.
         rerun_log: Optional[Path] = None
         # The scenario's seed is the run's (autoware_carla_scenario.seed): what
         # setup() builds with no seed of its own draws from it.  The one before
         # comes back when the run ends.
-        seed = int(scenario.random_seed)
         previous_seed = set_run_seed(seed)
         logger.info("[%s] Seed: %d", scenario_name, seed)
 
@@ -1574,8 +1663,11 @@ class ScenarioRunner:
                     # happens to match it: a backend stepping a second simulator
                     # against the wrong number drifts silently.
                     fixed_delta_seconds=settings.fixed_delta_seconds,
-                    random_seed=scenario.random_seed,
+                    random_seed=seed,
                     output_dir=self.output_dir,
+                    # A batch shares output_dir: what the backend writes per
+                    # run goes under the run's stem (run_outputs).
+                    file_stem=file_stem,
                 )
             )
             # What the run's road users draw their parameters from, for the
@@ -1635,24 +1727,17 @@ class ScenarioRunner:
             # replaced, which reads what its own reader reads.
             prepare_measures(self.odd, scenario)
             logger.info("[%s] Spawning ego vehicle ...", scenario_name)
-            if TYPE_CHECKING:
-                # EgoVehicle.spawn() takes the model's EgoConfig (entity.ego
-                # imports scenario_base through the model: MODELLED_IMPORTS in
-                # typecheck/library.py), which the checked BaseScenario's is
-                # not, so the check takes the actor the entity holds once
-                # spawned.
-                spawned = ego.actor
-                assert spawned is not None
-                ego_actor = spawned
-            else:
-                ego_actor = ego.spawn(world, scenario.ego_config)
+            ego_actor = ego.spawn(world, scenario.ego_config)
             logger.info(
                 "[%s] Ego spawned: id=%d blueprint=%s",
                 scenario_name,
                 ego_actor.id,
                 ego_actor.type_id,
             )
-            backend.adopt(ego)
+            # A typed local: Codon passes a subclass to a method a backend
+            # overrides only once it is that type (docs/typecheck.md).
+            adopted: DrivenEntity = ego
+            backend.adopt(adopted)
 
             # Register ego existence fail condition so the scenario fails
             # immediately if the ego is destroyed (e.g. falls through map).
@@ -1802,12 +1887,7 @@ class ScenarioRunner:
                 set_measured_scenario(scenario)
             set_importance_sampling_weight(scenario.importance_sampling_weight)
             reset_ego_motion()
-            metric_recorder: Optional[Any] = None
-            if TYPE_CHECKING:
-                # Duck-typed recorded actors (UNCALLED in typecheck/library.py).
-                pass
-            else:
-                metric_recorder = _metric_recorder(scenario)
+            metric_recorder = _metric_recorder(scenario)
             # Walkers measured outside a run (or by a run that never reached
             # its cleanup) are not this run's.
             forget_walkers()
@@ -1846,6 +1926,7 @@ class ScenarioRunner:
                 # The world has advanced; everything from here reads the time
                 # it advanced to.
                 elapsed = clock.simulated
+                last_elapsed = elapsed
                 trajectory.record(world, elapsed)
 
                 # Give the ego entity a chance to drive itself before the
@@ -1909,17 +1990,12 @@ class ScenarioRunner:
                 set_importance_sampling_weight(scenario.importance_sampling_weight)
                 # The ego's motion, which the weaving metrics read.
                 track_ego_motion(world, elapsed)
-                if TYPE_CHECKING:
-                    # Duck-typed recorded actors (UNCALLED in
-                    # typecheck/library.py).
-                    pass
-                else:
-                    # The frames the MetricConditions are judged on once the
-                    # run is over.
-                    if metric_recorder is not None:
-                        metric_recorder.record(
-                            world, elapsed, scenario.importance_sampling_weight
-                        )
+                # The frames the MetricConditions are judged on once the run
+                # is over.
+                if metric_recorder is not None:
+                    metric_recorder.record(
+                        world, elapsed, scenario.importance_sampling_weight
+                    )
 
                 # Coverage samples the world the hooks above have acted on.
                 coverage.tick(world, elapsed)
@@ -2043,8 +2119,9 @@ class ScenarioRunner:
                 )
 
             if TYPE_CHECKING:
-                # Duck-typed recorded actors, and worker processes spoken to
-                # in JSON (UNCALLED in typecheck/library.py).
+                # Recorded frames replayed as a world of duck-typed actors,
+                # and worker processes spoken to in JSON (UNCALLED in
+                # typecheck/library.py).
                 pass
             else:
                 # The MetricConditions, on the metrics of the recorded frames,
@@ -2102,11 +2179,24 @@ class ScenarioRunner:
                     exc_info=True,
                 )
             if npc_events is not None:
+                # The contacts still under way end with the run, however it
+                # ended, while the trajectory log is still open to take them.
+                try:
+                    for collision in npc_events.finish(last_elapsed):
+                        trajectory.record_collision(collision)
+                except Exception:
+                    logger.warning(
+                        "[%s] Ending the NPC contacts still under way failed",
+                        scenario_name,
+                        exc_info=True,
+                    )
                 # Its sensors, through their own handles, as the conditions'.
                 npc_events.close()
             # And the props a SpawnAction placed: the leftovers' sweep takes
             # vehicles, walkers and sensors, not static props.
             clear_props()
+            # And the run's signal controllers (#1599).
+            clear_signal_controllers()
 
             # The T4 dataset's sensors go before the ego they are on.
             if t4_recording is not None:
@@ -2196,9 +2286,35 @@ class ScenarioRunner:
                 result.message,
                 result.elapsed_seconds,
             )
-            json_path = self.output_dir / f"{file_stem}_result.json"
+            json_path = self.output_dir / f"{file_stem}{RESULT_SUFFIX}"
             json_path.parent.mkdir(parents=True, exist_ok=True)
             try:
+                # The coverage file and the gate record go before the result:
+                # a job killed after writing its result then holds its gate
+                # record too, if its scenario has a gate, and a sweep's job
+                # left with a result and no record ran one without a gate
+                # (gate.evaluate's _errored_jobs, #1840).
+                if coverage is not None:
+                    _record_run(coverage, case, result, scenario.outcome_weight)
+                    coverage_path = self.output_dir / f"{file_stem}{COVERAGE_SUFFIX}"
+                    coverage.write(coverage_path, scenario_name)
+                    logger.info(
+                        "[%s] Coverage written to: %s", scenario_name, coverage_path
+                    )
+                if TYPE_CHECKING:
+                    # A logical scenario's gate record: _write_gate_record
+                    # calls a scenario method found with getattr() and writes
+                    # JSON of mixed value types (UNCALLED in
+                    # typecheck/library.py).
+                    pass
+                else:
+                    _write_gate_record(
+                        self.output_dir,
+                        file_stem,
+                        scenario,
+                        result,
+                        result_follows=True,
+                    )
                 if TYPE_CHECKING:
                     # The result document of mixed value types, with the
                     # traffic and environment records (UNCALLED in
@@ -2218,13 +2334,6 @@ class ScenarioRunner:
                     written: RerunConverter = self.rerun
                     written.submit(rerun_log, file_stem)
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
-            if coverage is not None:
-                _record_run(coverage, case, result, scenario.outcome_weight)
-                coverage_path = self.output_dir / f"{file_stem}_coverage.json"
-                coverage.write(coverage_path, scenario_name)
-                logger.info(
-                    "[%s] Coverage written to: %s", scenario_name, coverage_path
-                )
 
         if reset_world:
             self.reset_world(scenario_name)

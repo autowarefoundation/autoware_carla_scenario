@@ -46,6 +46,15 @@ Because the last `@` decides, a ref may not contain an `@`, and neither may
 the path of a remote repository (write one as `%40`:
 `https://example.com/o/a%40b@v1`).
 
+A ref must be a name `git check-ref-format` accepts (a branch, a tag,
+`refs/...`, `HEAD`, or a full or abbreviated commit hash), and it may not begin
+with `-`, which git would read as an option. So no space, control character,
+`~`, `^`, `:`, `?`, `*`, `[`, `\`, `..` or `@{`; no empty, leading or
+trailing `/`; no trailing `.`; and no `/`-separated part that begins with `.`
+or ends in `.lock`. A repository may not begin with `-` either, and an `@`
+must be followed by a ref. Such a source is refused when it is parsed, before
+any git command runs.
+
 A local repository — a plain absolute path or a `file://` URL — may have an
 `@` in a directory name (a Nix store path, a `user@domain` home directory), so
 there the filesystem decides:
@@ -225,7 +234,9 @@ editor's preview and a constraint sweep work with no OpenDRIVE and no CARLA
 anywhere. A *run* needs it, and a run has CARLA: `ScenarioQueue` writes the
 loaded world's OpenDRIVE into the cache the first time a scenario runs on it.
 
-To fetch it ahead of time, use **Fetch OpenDRIVE** in the Scenario inspector, or:
+To fetch it ahead of time, use **Fetch OpenDRIVE** in the Scenario inspector
+(a CARLA port outside 1-65535 is refused beside the form, before anything
+connects), or:
 
 ```python
 from autoware_carla_scenario.maps import ensure_xodr, resolve_map
@@ -319,6 +330,25 @@ and OpenDRIVE file fields unless they were edited in the same change, and takes
 the CARLA map name from the directory. The editor only serves a map from inside
 `SCENARIO_EDITOR_MAP_ROOTS` (the working directory unless set) or the map cache, so a directory
 elsewhere has to be added to `SCENARIO_EDITOR_MAP_ROOTS` to be previewed.
+
+A scenario whose map is a source or a directory is exported with a map group of
+its own, `conf/map/<id>_map.yaml` inside the package, setting every `map` key
+(the paths the document leaves empty as `null`, `overwrite_xodr: false`, its own
+`no_3d_model_lanelet_ids`), and runs with `map=<id>_map`. Selecting a built-in
+group instead would put that group's map under the scenario: the `map` group is
+composed after the scenario's config, and its explicit paths win over a source.
+A run that does -- including one that leaves `map=` out and gets the default
+group -- is refused before anything starts, naming `map=<id>_map`: its
+`map.name`, or its `map.source` when no `map.directory` is set, is not the
+document's
+([Running an authored scenario](scenario_editor.md#running-an-authored-scenario)).
+
+The group never installs an OpenDRIVE into CARLA (`overwrite_xodr: false`),
+even when the document names its own `.xodr`: that file is what the run reads
+the road geometry from, and replacing the simulator's road network is an
+opt-in only the built-in `nishishinjuku` group makes, for CARLA assets that ship
+without one. A map whose CARLA assets need it installed is run with
+`map.overwrite_xodr=true` on the command line.
 
 ## Troubleshooting
 

@@ -760,6 +760,53 @@ def _set_up_once(runner: ScenarioRunner) -> None:
         runner.run_scenario(scenario, reset_world=False)
 
 
+class TestTheRunsSeed:
+    """A scenario's random_seed is checked before the run touches the world
+    (#1576): one assigned after construction that CARLA or SUMO would refuse
+    leaves the world as it was, not synchronous."""
+
+    @pytest.mark.parametrize("seed", [-1, 2**31, 2**32 - 1, 1.5])
+    def test_a_seed_out_of_range_is_refused_before_the_world_is_touched(
+        self, seed: object
+    ) -> None:
+        from autoware_carla_scenario.seed import run_seed
+
+        runner = _make_runner(None)
+        client = runner._client
+        built = list(client.mock_calls)  # type: ignore[attr-defined]
+        world = MagicMock()
+        runner._world = world
+        scenario = MagicMock()
+        scenario.random_seed = seed
+        before = run_seed()
+
+        with (
+            patch.object(runner, "_world_for_next_run") as next_world,
+            pytest.raises(ValueError, match=r"^random_seed must"),
+        ):
+            runner.run_scenario(scenario, reset_world=False)
+
+        next_world.assert_not_called()
+        scenario.create_ego.assert_not_called()
+        world.apply_settings.assert_not_called()
+        assert client.mock_calls == built  # type: ignore[attr-defined]
+        assert run_seed() == before
+
+    def test_a_seed_on_the_bound_runs_on(self) -> None:
+        runner = _make_runner(None)
+        scenario = MagicMock()
+        scenario.random_seed = 2**31 - 1
+        scenario.create_ego.side_effect = _Stop
+
+        with (
+            patch.object(runner, "_world_for_next_run") as next_world,
+            pytest.raises(_Stop),
+        ):
+            runner.run_scenario(scenario, reset_world=False)
+
+        next_world.assert_called_once()
+
+
 class TestTheBatchMap:
     """A batch runs on the map it loaded, even when another client loads a
     world of its own on the same server between (or during) its runs."""
@@ -1185,6 +1232,21 @@ class TestTheDefaultTimeout:
         with pytest.raises(ValueError, match="scenario.timeout_seconds"):
             run_timeout_seconds(cfg)
 
+    @pytest.mark.parametrize(
+        "timeout",
+        [10**400, -(10**400), 10**5000],
+        ids=["huge", "-huge", "too-long-for-repr"],
+    )
+    def test_the_command_line_refuses_a_timeout_too_big_for_a_float(self, timeout):
+        """#1652: ``float()`` raised OverflowError on it, and ``repr()`` refuses
+        one of more than ``sys.get_int_max_str_digits()`` digits."""
+        from autoware_carla_scenario.run_timeout import run_timeout_seconds
+
+        with pytest.raises(
+            ValueError, match="^scenario.timeout_seconds must be positive and finite"
+        ):
+            run_timeout_seconds({"scenario": {"timeout_seconds": timeout}})
+
     def test_the_command_line_timeout_is_read_as_given(self):
         from omegaconf import OmegaConf
 
@@ -1351,3 +1413,44 @@ class TestRunScenarioForgetsTheLastRunsWeather:
 
         assert world_visibility(795) is None
         assert world_tire_friction(795) is None
+
+
+class TestRunScenarioNamesTheTrafficBackendsRun:
+    """The traffic backend is told the run's file stem, so what it writes per
+    run (SUMO's FCD and clock) is not overwritten by the next run of a batch
+    sharing the output directory (#1544)."""
+
+    @staticmethod
+    def _context(tmp_path, file_stem=None):
+        from autoware_carla_scenario.traffic.base import TrafficContext
+
+        contexts: list[TrafficContext] = []
+
+        def prepare(context: TrafficContext) -> None:
+            contexts.append(context)
+            raise _Stop
+
+        runner = _make_runner(None)
+        runner.output_dir = tmp_path
+        runner._world = MagicMock()
+        runner._traffic_backend = MagicMock()
+        runner._traffic_backend.prepare.side_effect = prepare
+        scenario = MagicMock()
+        scenario.STABILIZE_TICKS = 0
+        with (
+            patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
+            pytest.raises(_Stop),
+        ):
+            runner.run_scenario(scenario, reset_world=False, file_stem=file_stem)
+        (context,) = contexts
+        assert context.output_dir == tmp_path
+        return context
+
+    def test_the_stem_given_is_the_backends(self, tmp_path):
+        assert self._context(tmp_path, "CutInScenario-3").file_stem == (
+            "CutInScenario-3"
+        )
+
+    def test_the_stem_taken_skips_an_earlier_runs_sumo_outputs(self, tmp_path):
+        (tmp_path / "MagicMock.sumo").mkdir()
+        assert self._context(tmp_path).file_stem == "MagicMock-1"

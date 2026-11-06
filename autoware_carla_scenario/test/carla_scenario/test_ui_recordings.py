@@ -410,7 +410,7 @@ def test_a_fetched_copy_is_served_by_the_app(
     assert target == _cache / "rerun-web-viewer" / "0.38.1"
     viewer = recordings.web_viewer()
     assert (viewer.source, viewer.base_url) == ("local", "/rerun-web-viewer/0.38.1")
-    client = TestClient(app_module.app)
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
     wasm = client.get("/rerun-web-viewer/0.38.1/re_viewer_bg.wasm")
     assert wasm.status_code == 200
     assert wasm.headers["content-type"] == "application/wasm"
@@ -560,7 +560,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     _batch(tmp_path)
     monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
     scanner.clear_cache()
-    return TestClient(app_module.app)
+    return TestClient(app_module.app, base_url="http://127.0.0.1")
 
 
 SESSION = "batch/2026-10-18/16-09-52"
@@ -606,6 +606,45 @@ def test_a_recording_is_made_and_served(
     client.get(body["url"])
     assert len(converter.calls) == 1
     assert "Case-3.rrd" in client.get(f"/session/{SESSION}/4").text
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [
+        {"Sec-Fetch-Site": "cross-site"},
+        {"Sec-Fetch-Site": "same-site"},
+        {"Origin": "https://attacker.example"},
+    ],
+    ids=lambda h: ",".join(f"{k}={v}" for k, v in h.items()),
+)
+def test_another_site_cannot_make_a_recording_through_the_get(
+    client: TestClient, converter: _FakeConverter, headers: dict[str, str]
+) -> None:
+    """Making one converts the log and writes a file (#1850)."""
+    refused = client.get(f"/recording/{SESSION}/4.rrd", headers=headers)
+    assert refused.status_code == 403
+    assert converter.calls == []
+    # One already made is served to any page: a Rerun viewer hosted
+    # elsewhere may load its URL.
+    assert client.post(f"/api/recording/{SESSION}/4").status_code == 200
+    served = client.get(f"/recording/{SESSION}/4.rrd", headers=headers)
+    assert served.status_code == 200
+    assert served.content == b"RRF2fake"
+    assert len(converter.calls) == 1
+
+
+@pytest.mark.parametrize(
+    "headers",
+    [{}, {"Sec-Fetch-Site": "same-origin"}, {"Sec-Fetch-Site": "none"}],
+    ids=["no-headers", "same-origin", "none"],
+)
+def test_the_get_still_makes_a_recording_for_this_site(
+    client: TestClient, converter: _FakeConverter, headers: dict[str, str]
+) -> None:
+    served = client.get(f"/recording/{SESSION}/4.rrd", headers=headers)
+    assert served.status_code == 200
+    assert served.content == b"RRF2fake"
+    assert len(converter.calls) == 1
 
 
 def test_a_case_without_a_log_has_no_recording(

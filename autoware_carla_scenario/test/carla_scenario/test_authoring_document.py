@@ -6,6 +6,11 @@ deleting or reshuffling it must never change what a scenario does.
 
 from __future__ import annotations
 
+import logging
+import os
+from pathlib import Path
+from typing import Any
+
 import pytest
 import yaml
 
@@ -37,6 +42,7 @@ from autoware_carla_scenario.authoring.registry import (
     FieldSpec,
     SelectOption,
     action_specs,
+    get_action_spec,
 )
 from autoware_carla_scenario.authoring.starter import blank_document, new_document
 from autoware_carla_scenario.authoring.validator import validate_document
@@ -77,7 +83,7 @@ class TestRoundTrip:
     def test_draft_wrapper_is_accepted_by_load_document(self, tmp_path) -> None:
         store = DraftStore(tmp_path)
         draft = store.create(new_document())
-        assert load_document(store.path_for(draft.id)).id == "cut_in"
+        assert load_document(store.path_for(draft.id)).id == "my_cut_in"
 
     def test_draft_ids_cannot_escape_the_store(self, tmp_path) -> None:
         store = DraftStore(tmp_path)
@@ -123,6 +129,106 @@ class TestRoundTrip:
         (tmp_path / "notes.yaml").write_text("just some text\n", encoding="utf-8")
         (tmp_path / "items.yaml").write_text("- a\n- b\n", encoding="utf-8")
         assert [d.id for d in store.list()] == [draft.id]
+
+
+_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _refuse_reading(monkeypatch: pytest.MonkeyPatch, refused: Path) -> None:
+    """Make reading *refused* fail as a missing read permission would.
+
+    A monkeypatch rather than ``chmod``, so it also holds as root, whom no
+    permission bit stops.
+    """
+    read_text = Path.read_text
+
+    def _read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == refused:
+            raise PermissionError(13, "Permission denied", str(self))
+        return read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", _read_text)
+
+
+class TestUnusableDraftFiles:
+    """A drafts directory the server cannot fully read or write (#1747)."""
+
+    def test_get_reports_an_unreadable_file_as_a_value_error(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        store = DraftStore(tmp_path)
+        draft = store.create(new_document())
+        _refuse_reading(monkeypatch, store.path_for(draft.id))
+        with pytest.raises(ValueError, match="cannot be read"):
+            store.get(draft.id)
+
+    def test_get_reports_a_file_that_is_not_utf8_as_a_value_error(
+        self, tmp_path: Path
+    ) -> None:
+        (tmp_path / "binary.yaml").write_bytes(b"\xff\xfe\x00garbage")
+        with pytest.raises(ValueError, match="cannot be read"):
+            DraftStore(tmp_path).get("binary")
+
+    def test_list_skips_an_unreadable_file_and_lists_the_rest(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        store = DraftStore(tmp_path)
+        kept = store.create(new_document())
+        locked = store.create(new_document())
+        (tmp_path / "binary.yaml").write_bytes(b"\xff\xfe\x00garbage")
+        _refuse_reading(monkeypatch, store.path_for(locked.id))
+        with caplog.at_level(logging.WARNING):
+            assert [d.id for d in store.list()] == [kept.id]
+        assert locked.id in caplog.text
+        assert "binary.yaml" in caplog.text
+
+    @pytest.mark.skipif(_AS_ROOT, reason="root reads files whatever their mode")
+    def test_list_skips_a_file_without_read_permission(self, tmp_path: Path) -> None:
+        store = DraftStore(tmp_path)
+        kept = store.create(new_document())
+        locked = store.create(new_document())
+        path = store.path_for(locked.id)
+        path.chmod(0)
+        try:
+            assert [d.id for d in store.list()] == [kept.id]
+            with pytest.raises(ValueError, match="cannot be read"):
+                store.get(locked.id)
+        finally:
+            path.chmod(0o644)
+
+    def test_a_failed_write_leaves_the_draft_and_no_partial_file(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import autoware_carla_scenario.authoring.persistence as persistence
+
+        store = DraftStore(tmp_path)
+        draft = store.create(new_document())
+        before = store.path_for(draft.id).read_text(encoding="utf-8")
+
+        def _replace(*_: Any) -> None:
+            raise OSError(28, "No space left on device")
+
+        monkeypatch.setattr(persistence.os, "replace", _replace)
+        draft.document.title = "Changed"
+        with pytest.raises(OSError, match="No space left"):
+            store.save(draft)
+        assert store.path_for(draft.id).read_text(encoding="utf-8") == before
+        assert sorted(p.name for p in tmp_path.iterdir()) == [f"{draft.id}.yaml"]
+
+    @pytest.mark.skipif(_AS_ROOT, reason="root writes whatever the mode")
+    def test_writing_into_a_read_only_directory_raises_os_error(
+        self, tmp_path: Path
+    ) -> None:
+        tmp_path.chmod(0o555)
+        try:
+            with pytest.raises(PermissionError):
+                DraftStore(tmp_path).create(new_document())
+            assert list(tmp_path.iterdir()) == []
+        finally:
+            tmp_path.chmod(0o755)
 
 
 class TestLayoutIsPresentationOnly:
@@ -353,6 +459,80 @@ class TestValidation:
             for i in validate_document(document).errors
         )
 
+    @pytest.mark.parametrize("entity_id", ["ego", "npc1"])
+    def test_a_negative_initial_speed_is_an_error_on_its_path(
+        self, entity_id: str
+    ) -> None:
+        """#1809: the entity's config refuses it at run time, once CARLA runs."""
+        document = new_document()
+        index, entity = next(
+            (i, e) for i, e in enumerate(document.entities) if e.id == entity_id
+        )
+        entity.initial_speed_kmh = -5.0
+        errors = [
+            i
+            for i in validate_document(document).errors
+            if i.path == f"entities[{index}].initial_speed_kmh"
+        ]
+        assert [i.message for i in errors] == [
+            "This must be 0 or more: a speed is never below zero."
+        ]
+
+    @pytest.mark.parametrize("speed", [0.0, -0.0, 12.5])
+    def test_a_still_or_moving_initial_speed_is_not_an_error(
+        self, speed: float
+    ) -> None:
+        document = new_document()
+        npc = next(e for e in document.entities if e.id == "npc1")
+        npc.initial_speed_kmh = speed
+        assert not [
+            i
+            for i in validate_document(document).errors
+            if i.path.endswith(".initial_speed_kmh")
+        ]
+
+    @pytest.mark.parametrize(
+        "speed", [-5.0, -0.0, 0.0, 30.0, float("nan"), float("inf"), -float("inf")]
+    )
+    def test_a_speed_the_validator_accepts_builds_the_vehicle_config(
+        self, speed: float
+    ) -> None:
+        """#1809: every speed the validator accepts on a vehicle is one
+        ``VehicleEntityConfig`` (and the configs built on it) accepts, and every
+        one it refuses is refused there too -- at run time, too late."""
+        import typesafe_carla.carla as carla
+
+        from autoware_carla_scenario import (
+            EgoConfig,
+            MotorcycleEntityConfig,
+            SpawnTransform,
+            VehicleEntityConfig,
+        )
+
+        document = new_document()
+        npc = next(e for e in document.entities if e.id == "npc1")
+        npc.initial_speed_kmh = speed
+        accepted = not [
+            i
+            for i in validate_document(document).errors
+            if i.path.endswith(".initial_speed_kmh")
+        ]
+        spawn = SpawnTransform(carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0)))
+        for build in (
+            lambda: VehicleEntityConfig(
+                role_name="npc1", spawn_location=spawn, initial_speed_kmh=speed
+            ),
+            lambda: MotorcycleEntityConfig(
+                role_name="npc1", spawn_location=spawn, initial_speed_kmh=speed
+            ),
+            lambda: EgoConfig(spawn_location=spawn, initial_speed_kmh=speed),
+        ):
+            if accepted:
+                build()
+            else:
+                with pytest.raises(ValueError, match="initial_speed_kmh"):
+                    build()
+
     def test_an_override_on_an_action_on_no_entity_is_an_error(self) -> None:
         document = new_document()
         document.actions.append(ActionNode(type="environment", overrides=True))
@@ -473,6 +653,104 @@ class TestValidation:
         report = validate_document(document)
         assert report.ok
         assert any("searches one lanelet" in i.message for i in report.warnings)
+
+
+class TestBoolFields:
+    """A ``bool`` field holds true or false, never a misspelling of one (#1459).
+
+    The compiler used to read anything outside the truthy spellings as
+    ``False`` with nothing said, so ``freeze: ture`` turned a signal's freeze
+    off, and ``lane_changes: keep`` stored ``False`` instead of the run's.
+    """
+
+    BAD = ["ture", "enabled", "2", "t", "y", "keep", 2, -1, 1.0, [True], {}]
+    TRUE = [True, 1, "1", "true", "True", " TRUE ", "on", "On", "yes", "YES"]
+    FALSE = [False, 0, "0", "false", "False", " FALSE ", "off", "Off", "no", "NO"]
+
+    @staticmethod
+    def _signal(freeze: object) -> ScenarioDocument:
+        document = new_document()
+        document.actions.append(
+            ActionNode(
+                id="lights",
+                type="traffic_signal",
+                params={"state": "red", "target": "all", "freeze": freeze},
+            )
+        )
+        return document
+
+    @staticmethod
+    def _freeze_errors(document: ScenarioDocument) -> list[str]:
+        return [
+            i.message
+            for i in validate_document(document).errors
+            if i.path.endswith(".freeze")
+        ]
+
+    @pytest.mark.parametrize("value", BAD)
+    def test_a_misspelt_bool_is_an_error(self, value: object) -> None:
+        spec = get_action_spec("traffic_signal")
+        assert spec is not None
+        label = next(f.label for f in spec.fields if f.name == "freeze")
+        assert self._freeze_errors(self._signal(value)) == [
+            f"{label} must be true or false, got {value!r}."
+        ]
+
+    @pytest.mark.parametrize("value", [*TRUE, *FALSE, None, "", "  "])
+    def test_every_bool_spelling_validates(self, value: object) -> None:
+        assert self._freeze_errors(self._signal(value)) == []
+
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [(v, True) for v in TRUE] + [(v, False) for v in FALSE],
+    )
+    def test_the_compiler_reads_what_the_validator_accepts(
+        self, value: object, expected: bool
+    ) -> None:
+        fields = (FieldSpec("flag", "Flag", "bool", not expected),)
+        assert coerce_params(fields, {"flag": value}) == {"flag": expected}
+
+    @pytest.mark.parametrize("value", BAD)
+    def test_the_compiler_refuses_what_the_validator_refuses(
+        self, value: object
+    ) -> None:
+        """Never the quiet ``False`` it used to be."""
+        fields = (FieldSpec("flag", "Flag", "bool", True),)
+        with pytest.raises(ValueError, match="must be true or false"):
+            coerce_params(fields, {"flag": value})
+
+    def test_a_blank_bool_compiles_to_its_default(self) -> None:
+        fields = (
+            FieldSpec("freeze", "Freeze", "bool", True),
+            FieldSpec("keep", "Keep", "bool", None, required=False),
+        )
+        assert coerce_params(fields, {"freeze": "", "keep": " "}) == {
+            "freeze": True,
+            "keep": None,
+        }
+
+    def test_a_misspelt_signal_freeze_does_not_compile(self) -> None:
+        with pytest.raises(CompilationError, match="must be true or false"):
+            compile_document(self._signal("ture"))
+
+    @pytest.mark.parametrize("value", ["keep", "unset", "default"])
+    def test_keep_the_run_s_is_written_blank_not_as_a_word(self, value: str) -> None:
+        """A nullable bool's unset value is ``None`` or blank, as the editor
+        stores it; a word is an error, not the ``False`` it used to compile to."""
+        document = new_document()
+        document.actions.append(
+            ActionNode(
+                id="traffic",
+                type="traffic_parameters",
+                params={"lane_changes": value, "follow_visibility": None},
+            )
+        )
+        errors = [
+            i.path
+            for i in validate_document(document).errors
+            if i.path.endswith((".lane_changes", ".follow_visibility"))
+        ]
+        assert len(errors) == 1 and errors[0].endswith(".lane_changes")
 
 
 class TestEgoGoal:
@@ -1383,3 +1661,112 @@ class TestSignalGroupValidation:
     def test_a_group_name_on_a_map_with_none_says_so(self) -> None:
         document = self._document([], self._phase("p", ns="green"))
         assert any("This map declares none" in m for m in self._messages(document))
+
+    # -- names are read without surrounding whitespace (issue #1457) --------
+    #
+    # The validator compares names stripped and the runtime compares them
+    # exactly, so a stray space used to pass the one and match nothing in the
+    # other.  The document now strips them as it is read, so both see one form.
+
+    @staticmethod
+    def _hand_written(
+        document: ScenarioDocument, signals: dict[str, object]
+    ) -> ScenarioDocument:
+        """*document* re-read with a hand-written ``map`` signal section."""
+        raw = document.model_dump(mode="json")
+        raw["map"].update(signals)
+        return ScenarioDocument.model_validate(raw)
+
+    def test_a_group_name_with_surrounding_whitespace_is_read_without_it(
+        self,
+    ) -> None:
+        """A group ``"ns "`` and a phase naming ``ns`` are the same group."""
+        document = self._hand_written(
+            new_document(),
+            {
+                "signal_groups": [
+                    {
+                        "name": "ns ",
+                        "lanelet2_regulatory_element_ids": [1001, 1003],
+                        "conflicts_with": [" ew"],
+                    },
+                    {"name": "\tew", "lanelet2_regulatory_element_ids": [1002]},
+                ],
+                "traffic_signal_controllers": [
+                    {
+                        "name": " crossing ",
+                        "phases": [
+                            {
+                                "name": "go ",
+                                "duration_seconds": 5.0,
+                                "states": [
+                                    {"group": "ns", "state": "green"},
+                                    {"group": " ew ", "state": "red"},
+                                ],
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+        report = validate_document(document)
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+        groups = document.map.signal_groups
+        assert [g.name for g in groups] == ["ns", "ew"]
+        assert groups[0].conflicts_with == ["ew"]
+        (controller,) = document.map.traffic_signal_controllers
+        assert controller.name == "crossing"
+        assert controller.phases[0].name == "go"
+        assert [s.group for s in controller.phases[0].states] == ["ns", "ew"]
+
+    def test_a_reference_with_surrounding_whitespace_is_read_without_it(
+        self,
+    ) -> None:
+        controller = SignalControllerRef(
+            name="second", reference=" first ", delay_seconds=3.0
+        )
+        assert controller.reference == "first"
+
+    def test_an_edited_name_is_stripped_too(self) -> None:
+        """The editor assigns names, and assignment is validated the same way."""
+        group = SignalGroupRef(name="ns", lanelet2_regulatory_element_ids=[1001])
+        group.name = " ns "
+        assert group.name == "ns"
+
+    def test_a_blank_name_is_still_refused(self) -> None:
+        """Stripping does not turn a blank into a name."""
+        document = self._document(
+            [SignalGroupRef(name=" ", lanelet2_regulatory_element_ids=[1001])],
+            SignalPhaseRef(name="  "),
+        )
+        messages = self._messages(document)
+        assert any("A signal group needs a name" in m for m in messages)
+        assert any("A phase needs a name" in m for m in messages)
+
+    def test_padded_controller_and_phase_in_a_card_compile_to_the_bare_names(
+        self,
+    ) -> None:
+        """The card's params reach the builder in the form the validator checked."""
+        document = self._document(
+            self._crossing_groups(), self._phase("go", ns="green", ew="red")
+        )
+        document.actions.append(
+            ActionNode(
+                type="traffic_signal_controller",
+                params={"controller": "crossing ", "signal_phase": "go "},
+            )
+        )
+        document.assertions.pass_conditions = [
+            ConditionNode(
+                type="traffic_signal_controller",
+                params={"controller": " crossing", "signal_phase": "\tgo"},
+            )
+        ]
+        report = validate_document(document)
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+
+        compiled = compile_document(document)
+        expected = {"controller": "crossing", "signal_phase": "go"}
+        assert compiled.actions[-1].params == expected
+        assert compiled.pass_conditions[0].params == expected

@@ -17,7 +17,9 @@ CARLA server) and checks it against the ODD (:mod:`.route`).  Scenario
 configs are named as ``scenario=`` names them (globs too); arguments with an
 ``=`` are Hydra overrides for every one of them.  The exit status is 0 when no
 route leaves the ODD, 1 when one does, and 2 when a route could not be
-planned (no goal, no path, no map) or the ODD could not be read.
+planned (no goal, no path, no map; or an exported scenario composed on another
+map than its document names, refused before any map is read: run it with
+``map=<id>_map``) or the ODD could not be read.
 """
 
 from __future__ import annotations
@@ -27,6 +29,7 @@ import json
 import logging
 import os
 import sys
+import sysconfig
 from pathlib import Path
 from types import TracebackType
 from typing import Any, Optional, Sequence
@@ -60,6 +63,36 @@ def _library_dirs() -> tuple[str, ...]:
     )
 
 
+#: The directories of installed packages, which are not the standard library
+#: even when they sit under it (a venv's ``platstdlib`` holds ``site-packages``).
+_SITE_DIRECTORIES = frozenset({"site-packages", "dist-packages"})
+
+
+def _stdlib_dirs() -> tuple[Path, ...]:
+    paths = sysconfig.get_paths()
+    out: list[Path] = []
+    for key in ("stdlib", "platstdlib"):
+        value = paths.get(key)
+        if value:
+            resolved = Path(value).resolve()
+            if resolved not in out:
+                out.append(resolved)
+    return tuple(out)
+
+
+def _is_stdlib(path: str) -> bool:
+    """Whether ``path`` is a module of CPython's standard library (``importlib``)."""
+    resolved = Path(path).resolve()
+    for root in _stdlib_dirs():
+        try:
+            relative = resolved.relative_to(root)
+        except ValueError:
+            continue
+        if not _SITE_DIRECTORIES.intersection(relative.parts):
+            return True
+    return False
+
+
 def _frames(tb: Optional[TracebackType]) -> list[TracebackType]:
     out = []
     while tb is not None:
@@ -72,7 +105,7 @@ def _is_library(tb: TracebackType, library: tuple[str, ...]) -> bool:
     path = tb.tb_frame.f_code.co_filename
     if path.startswith("<"):
         return True
-    return str(Path(path).resolve()).startswith(library)
+    return str(Path(path).resolve()).startswith(library) or _is_stdlib(path)
 
 
 def _own_package(spec: Optional[str]) -> Optional[str]:
@@ -90,8 +123,16 @@ def _user_location(
 
     A frame is the author's when it is in the package of the ODD module
     (also when that package is installed, i.e. under site-packages), or in a
-    file that is neither the library's, a frozen module nor in site-packages.
+    file that is neither the library's, the standard library's, a frozen
+    module nor in site-packages.  A :class:`SyntaxError` names the line it is
+    on itself: the frames that raised it are only the import machinery's.
     """
+    if (
+        isinstance(exc, SyntaxError)
+        and exc.filename
+        and not exc.filename.startswith("<")
+    ):
+        return exc.filename, exc.lineno or 0
     library = _library_dirs()
     own = _own_package(spec)
     found = None
@@ -104,8 +145,6 @@ def _user_location(
             if "site-packages" in path:
                 continue
         found = (path, tb.tb_lineno)
-    if found is None and isinstance(exc, SyntaxError) and exc.filename:
-        return exc.filename, exc.lineno or 0
     return found
 
 
@@ -284,6 +323,10 @@ def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
     for name in names:
         try:
             cfg = run._compose_config(name, overrides)
+            # Before the route is planned on any map: a scenario composed on
+            # another map than its document names would plan its lanelet ids
+            # on that one (#1428).  Not planned, naming map=<id>_map.
+            run.check_scenario_maps([cfg])
             route = run.build_planned_route(cfg, name)
             paths = resolve_map_paths(cfg.map)
             key = (paths.lanelet2_path, paths.xodr_path, paths.projector_type)

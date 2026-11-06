@@ -9,7 +9,7 @@ that one says so.  Those are the parts a scenario's timing actually rests on.
 
 from __future__ import annotations
 
-from typing import Iterator
+from typing import Any, Iterator, cast
 from unittest.mock import MagicMock, patch
 
 import typesafe_carla.carla as carla
@@ -19,13 +19,21 @@ from autoware_carla_scenario import (
     TrafficSignalControllerAction,
     TrafficSignalControllerCondition,
 )
+from autoware_carla_scenario.authoring._builders_generated import (
+    build_traffic_signal_controller_action,
+    build_traffic_signal_controller_condition,
+)
+from autoware_carla_scenario.authoring.compiler import compile_document
 from autoware_carla_scenario.authoring.models import (
     SIGNAL_STATE_NAMES,
+    ScenarioDocument,
     SignalControllerRef,
     SignalGroupRef,
     SignalPhaseRef,
     SignalStateRef,
 )
+from autoware_carla_scenario.authoring.starter import new_document
+from autoware_carla_scenario.authoring.validator import validate_document
 from autoware_carla_scenario.signals import (
     STATE_NAMES,
     Phase,
@@ -33,6 +41,7 @@ from autoware_carla_scenario.signals import (
     SignalController,
     build_controllers,
     clear_signal_controllers,
+    find_signal_controller,
     register_signal_controller,
 )
 
@@ -1155,3 +1164,119 @@ class TestSignalGroupsAreResolvedAtBuild:
                 controller.tick(_World())
 
         assert "4242 (group 'ns')" in caplog.text
+
+
+class TestPaddedNamesResolve:
+    """A name the validator accepted is a name the runtime finds (issue #1457).
+
+    The validator compares signal names stripped and the runtime compares them
+    exactly, so a hand-written ``"ns "`` or ``"go "`` used to validate clean and
+    then drive no light.  Each test runs the whole way: the document read from
+    its raw form, validated, compiled, built, registered and looked up.
+    """
+
+    @staticmethod
+    def _document(
+        *, group: str, controller: str, phase: str, card: tuple[str, str]
+    ) -> ScenarioDocument:
+        raw = new_document().model_dump(mode="json")
+        raw["map"]["signal_groups"] = [
+            {
+                "name": group,
+                "lanelet2_regulatory_element_ids": [_NORTH],
+                "conflicts_with": ["ew"],
+            },
+            {"name": "ew", "lanelet2_regulatory_element_ids": [_EAST]},
+        ]
+        raw["map"]["traffic_signal_controllers"] = [
+            {
+                "name": controller,
+                "phases": [
+                    {
+                        "name": "stop",
+                        "duration_seconds": 5.0,
+                        "states": [
+                            {"group": "ns", "state": "red"},
+                            {"group": "ew", "state": "red"},
+                        ],
+                    },
+                    {
+                        "name": phase,
+                        "duration_seconds": 5.0,
+                        "states": [
+                            {"group": "ns", "state": "green"},
+                            {"group": "ew", "state": "red"},
+                        ],
+                    },
+                ],
+            }
+        ]
+        params = {"controller": card[0], "signal_phase": card[1]}
+        raw["actions"].append({"type": "traffic_signal_controller", "params": params})
+        raw["assertions"]["pass_conditions"] = [
+            {"type": "traffic_signal_controller", "params": params}
+        ]
+        document = ScenarioDocument.model_validate(raw)
+        report = validate_document(document)
+        assert report.ok, [f"{i.path}: {i.message}" for i in report.errors]
+        return document
+
+    @staticmethod
+    def _register(document: ScenarioDocument) -> SignalController:
+        (controller,) = build_controllers(
+            document.map.traffic_signal_controllers, document.map.signal_groups
+        )
+        register_signal_controller(controller)
+        return controller
+
+    def test_a_padded_group_name_still_drives_its_lights(
+        self, junction: dict[int, MagicMock], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A group ``"ns "`` named ``ns`` by a phase is that group."""
+        document = self._document(
+            group="ns ", controller="crossing", phase="go", card=("crossing", "go")
+        )
+
+        with caplog.at_level("WARNING"):
+            controller = self._register(document)
+        assert "does not declare" not in caplog.text
+        assert [
+            (s.lanelet2_regulatory_element_id, s.group)
+            for s in controller.phases[1].states
+        ] == [(_NORTH, "ns"), (_EAST, "ew")]
+
+        world = _World()
+        controller.tick(world)
+        assert controller.change_phase_to("go", world)
+        junction[_NORTH].set_state.assert_called_with(_GREEN)
+
+    def test_a_padded_controller_and_phase_in_a_card_are_found(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """``controller: "crossing "``, ``signal_phase: "go "`` find the phase."""
+        document = self._document(
+            group="ns",
+            controller=" crossing ",
+            phase="go ",
+            card=("crossing ", "go "),
+        )
+        controller = self._register(document)
+        assert find_signal_controller("crossing") is controller
+
+        compiled = compile_document(document)
+        action = build_traffic_signal_controller_action(
+            compiled.actions[-1], None, None, cast(Any, None)
+        )
+        condition = build_traffic_signal_controller_condition(
+            compiled.pass_conditions[0], [], cast(Any, None)
+        )
+
+        world = _World()
+        controller.tick(world)
+        assert condition.check(world, 1.0) is None
+        action.execute(world)
+        assert controller.current_phase is not None
+        assert controller.current_phase.name == "go"
+        result = condition.check(world, 1.0)
+        assert result is not None
+        assert result.passed

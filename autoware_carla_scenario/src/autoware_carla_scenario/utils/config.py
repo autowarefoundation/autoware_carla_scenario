@@ -14,9 +14,9 @@ layer.  This module imports nothing but the standard library.
 from __future__ import annotations
 
 from dataclasses import fields
-from typing import Any, Mapping, Optional
+from typing import Any, Mapping, Optional, Sequence
 
-__all__ = ["checked_options"]
+__all__ = ["checked_options", "checked_str_list"]
 
 
 def checked_options(
@@ -50,3 +50,42 @@ def checked_options(
             f"Known keys: {sorted(known)}"
         )
     return {key: value for key, value in mapping.items() if key not in skip}
+
+
+def checked_str_list(key: str, value: Any) -> list[str]:
+    """*value*, a list setting such as ``traffic.options.sumo_args``, checked:
+    a list (a tuple, an OmegaConf ``ListConfig``) of strings or numbers, each
+    made a ``str``; null is empty.
+
+    A string is refused rather than taken as a list of one or split: Python
+    would iterate it into characters (``sumo_args=--verbose`` became
+    ``['-', '-', 'v', ...]``), and only the author knows whether
+    ``'--seed 42'`` is one item or two.  An item that is a list, a mapping,
+    null or a boolean is refused too: its ``str()`` (``"['a']"``, ``"None"``,
+    ``"True"``) is never the item that was meant.
+
+    Args:
+        key: The setting's full name, for the error.
+        value: The value to check.
+
+    Returns:
+        The items as a new list of strings.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    if value is None:
+        return []
+    if isinstance(value, (str, bytes)) or not isinstance(value, Sequence):
+        raise ValueError(
+            f"{key} must be a list, not {type(value).__name__} {value!r}: "
+            f"write '{key}=[a,b,c]'"
+        )
+    items = list(value)
+    for index, item in enumerate(items):
+        if isinstance(item, bool) or not isinstance(item, (str, int, float)):
+            raise ValueError(
+                f"{key}[{index}] must be a string or a number, not "
+                f"{type(item).__name__} {item!r}"
+            )
+    return [str(item) for item in items]

@@ -38,6 +38,7 @@ from ..pedestrian.poser import WalkerPoser
 from ..pedestrian.skeleton import Vector, directions_from_joints
 from ..prepare.declare import need_prepare
 from ..prepare.pool import running_backend
+from ..seed import check_seed, resolve_seed
 from .base import BaseAction, TickTiming
 
 logger = logging.getLogger(__name__)
@@ -113,15 +114,20 @@ class SmartPedestrianControllerAction(BaseAction):
         keyframes: A JSON file of full-body poses.  A relative path is taken
             from the working directory.
         duration_s: Stop after this many simulated seconds.
-        seed: The seed of the generator's draws.
+        seed: The seed of the generator's draws; ``None`` (the default)
+            takes the run's seed (:func:`~autoware_carla_scenario.seed.resolve_seed`).
         overrides: Take over a control domain of the pedestrian another
             action holds (:attr:`~BaseAction.overrides`).
 
     Raises:
         FileNotFoundError: If there is no file at *keyframes*.
         ValueError: If *speed_ms* or *duration_s* is not finite and
-            positive, a prompt's time is not finite or is negative, or the
-            keyframes file is malformed (a keyframe's ``time_s`` included).
+            positive, a prompt's time is not finite or is negative, a
+            waypoint is not finite, or the keyframes file is malformed (a
+            keyframe's ``time_s``, joints, ``x``, ``y`` or ``yaw_deg`` not
+            finite included), or *seed* is not a whole number (``2`` or
+            ``2.0``, read as 2; not ``2.5``, NaN, infinity or a boolean) or
+            is negative.  The error names the parameter.
     """
 
     _entity_name: str
@@ -157,7 +163,7 @@ class SmartPedestrianControllerAction(BaseAction):
         speed_ms: float = 1.3,
         keyframes: Optional[str] = None,
         duration_s: Optional[float] = None,
-        seed: int = 0,
+        seed: Optional[int] = None,
         overrides: bool = False,
     ) -> None:
         # NaN passes `<= 0` and `< 0`: it would fail int() at start, or never
@@ -170,6 +176,10 @@ class SmartPedestrianControllerAction(BaseAction):
             raise ValueError(
                 f"duration_s must be finite and positive, not {duration_s!r}"
             )
+        # Checked as TrafficSourceAction's seed is: int() alone would read
+        # 2.5 or True as a seed, and take a negative one (#1495).
+        if seed is not None:
+            seed = check_seed("seed", seed)
         texts = [(0.0, prompt)] if prompt else []
         for timed in prompts:
             if not math.isfinite(timed.time_s) or timed.time_s < 0:
@@ -178,6 +188,16 @@ class SmartPedestrianControllerAction(BaseAction):
                     f"not {timed.time_s!r}"
                 )
             texts.append((float(timed.time_s), str(timed.text)))
+        # A NaN or infinite point would fail int() only when the action
+        # starts, after the generator is up and the walker taken over.
+        points = []
+        for index, point in enumerate(waypoints):
+            x, y = float(point.x), float(point.y)
+            if not (math.isfinite(x) and math.isfinite(y)):
+                raise ValueError(
+                    f"waypoint {index} must be finite, not ({point.x!r}, {point.y!r})"
+                )
+            points.append((x, y))
         super().__init__(
             label=label,
             condition=condition,
@@ -188,11 +208,13 @@ class SmartPedestrianControllerAction(BaseAction):
         )
         self._entity_name = str(entity_name)
         self._texts = tuple(sorted(texts, key=lambda span: span[0]))
-        self._waypoints = tuple((float(p.x), float(p.y)) for p in waypoints)
+        self._waypoints = tuple(points)
         self._speed_ms = float(speed_ms)
         self._keyframes = () if keyframes is None else _read_keyframes(keyframes)
         self._duration_s = duration_s
-        self._seed = int(seed)
+        # None takes the run's seed, as the other actions that draw do
+        # (:mod:`~autoware_carla_scenario.seed`, #1835).
+        self._seed = resolve_seed(seed)
         self._poser = WalkerPoser(self._entity_name, "SmartPedestrianControllerAction")
         self._client = None
         self._session = ""
@@ -420,25 +442,44 @@ def _read_keyframes(path: Union[str, Path]) -> tuple[_Keyframe, ...]:
                     f"time_s must be finite and not negative, not {time_s!r}"
                 )
             joints = {
-                str(name): (float(p[0]), float(p[1]), float(p[2]))
+                str(name): (
+                    _finite(p[0], f"joint {name}"),
+                    _finite(p[1], f"joint {name}"),
+                    _finite(p[2], f"joint {name}"),
+                )
                 for name, p in entry["joints"].items()
             }
             root = (
-                (float(entry["x"]), float(entry["y"]))
+                (_finite(entry["x"], "x"), _finite(entry["y"], "y"))
                 if "x" in entry and "y" in entry
                 else None
             )
-            yaw = float(entry["yaw_deg"]) if "yaw_deg" in entry else None
+            yaw = _finite(entry["yaw_deg"], "yaw_deg") if "yaw_deg" in entry else None
             poses.append(_Keyframe(time_s, joints, root, yaw))
     except (
         KeyError,
         TypeError,
+        ValueError,
         IndexError,
         AttributeError,
         json.JSONDecodeError,
     ) as error:
         raise ValueError(f"{file}: not a keyframes file ({error})") from None
     return tuple(sorted(poses, key=lambda pose: pose.time_s))
+
+
+def _finite(value: float, what: str) -> float:
+    """*value* (a keyframes file's) as a float.  ``json`` reads ``NaN`` and
+    ``Infinity``, which would fail ``int()`` or place the pose nowhere only
+    when the action starts.
+
+    Raises:
+        ValueError: If *value* is not finite.
+    """
+    number = float(value)
+    if not math.isfinite(number):
+        raise ValueError(f"{what} must be finite, not {number!r}")
+    return number
 
 
 def _timed_waypoints(

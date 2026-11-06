@@ -4,20 +4,27 @@ calls it, against the function it was split out of.
 ``_original_case_states`` is ``ui.slurm_launch._case_states`` as it was before
 the split (#839), copied verbatim; over many batches of records, submissions,
 ``squeue`` answers and task statuses, the new one must give the same entries,
-their keys in the same order.
+their keys in the same order.  Only for submissions with a job id: a case of
+one with none is no longer ``missing`` with "job None" (#1791), which the
+tests at the end cover.
 """
 
 from __future__ import annotations
 
 import itertools
 import random
+import time
 from typing import Any
 
 import pytest
 
+from autoware_carla_scenario.slurm.manifest import (
+    SBATCH_IN_FLIGHT_SECONDS,
+    readable_result,
+)
 from autoware_carla_scenario.slurm.submit import ACTIVE_STATES
 from autoware_carla_scenario.ui import slurm_launch
-from autoware_carla_scenario.ui.slurm_case_state import case_state
+from autoware_carla_scenario.ui.slurm_case_state import case_state, no_job_case_state
 
 
 def _original_case_states(
@@ -44,11 +51,20 @@ def _original_case_states(
             "overrides": case.get("case_overrides") or [],
         }
         if record is not None:
-            result = record.get("result") or {}
+            # A result that is no object reads as an empty one, and only a
+            # boolean ``true`` as a pass (#1718), in a result that can be
+            # reported (#1726).
+            result = record.get("result")
+            if not isinstance(result, dict):
+                result = {}
             entry.update(
                 state="errored"
                 if record.get("errored")
-                else ("passed" if result.get("passed") else "failed"),
+                else (
+                    "passed"
+                    if result.get("passed") is True and readable_result(result)
+                    else "failed"
+                ),
                 message=result.get("message", ""),
                 elapsed_seconds=result.get("elapsed_seconds"),
                 host=record.get("host"),
@@ -100,6 +116,9 @@ class _Layout:
     def read_submission(self, index: int) -> dict[str, Any]:
         return self._submissions[index]
 
+    def submission_record(self, index: int) -> dict[str, Any] | None:
+        return self._submissions[index]
+
     def read_result(self, index: int) -> dict[str, Any] | None:
         return self._results.get(index)
 
@@ -119,16 +138,28 @@ def _record(rng: random.Random) -> dict[str, Any]:
     if kind < 0.15:
         pass  # no result
     elif kind < 0.25:
-        record["result"] = rng.choice([None, {}])
+        record["result"] = rng.choice([None, {}, "passed", [True], 3, True])
     else:
         result: dict[str, Any] = {}
-        passed = rng.choice([True, False, None, 1, 0, "", "x", "missing"])
+        passed = rng.choice(
+            [True, False, None, 1, 0, "", "x", "true", "false", 1.0, "missing"]
+        )
         if passed != "missing":
             result["passed"] = passed
         if rng.random() < 0.7:
             result["message"] = rng.choice(["", "ok", "collided", None, 3])
         if rng.random() < 0.7:
             result["elapsed_seconds"] = rng.choice([0.0, 12.5, None])
+        if rng.random() < 0.3:
+            result["condition_statuses"] = rng.choice(
+                [
+                    [],
+                    None,
+                    "x",
+                    [{"label": "a", "satisfied": True, "message": "ok"}],
+                    [{"label": "a", "satisfied": "yes", "message": "ok"}],
+                ]
+            )
         record["result"] = result
     if rng.random() < 0.7:
         record["host"] = rng.choice(["node1", None])
@@ -180,9 +211,9 @@ def _batch(rng: random.Random) -> tuple[_Layout, dict[str, Any], dict[int, Any]]
             pool = pool[size:]
             chunks.append([c if rng.random() < 0.8 else str(c) for c in chunk])
         sub: dict[str, Any] = {"chunks": chunks if rng.random() < 0.95 else None}
-        job = rng.choice(["1000", 1000, None, "missing"])
-        if job != "missing":
-            sub["job_id"] = job
+        # A submission with no job id differs from the original on purpose
+        # (#1791): see the no-job tests below.
+        sub["job_id"] = rng.choice(["1000", 1000])
         submissions[sub_index] = sub
         answer = rng.random()
         if answer < 0.2:
@@ -232,6 +263,63 @@ def test_a_task_file_holding_no_object_fails_where_it_did(
     except Exception as error:  # noqa: BLE001
         got = type(error)
     assert got == want
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"passed": "false"},
+        {"passed": "true"},
+        {"passed": 1},
+        {"passed": None},
+        {},
+        "passed",
+        [True],
+        None,
+        "missing",
+        {"passed": True},
+        {"passed": True, "message": "ok", "elapsed_seconds": "soon"},
+        {
+            "passed": True,
+            "message": "ok",
+            "elapsed_seconds": 1.0,
+            "condition_statuses": [3],
+        },
+    ],
+    ids=[
+        "str-false",
+        "str-true",
+        "int",
+        "null",
+        "no-passed",
+        "str-result",
+        "list-result",
+        "null-result",
+        "no-result",
+        "passed-only",
+        "str-elapsed",
+        "int-status",
+    ],
+)
+def test_a_result_with_no_verdict_is_failed_not_passed(result: Any) -> None:
+    """#1718: only a boolean ``passed`` in a ``result`` object is a verdict,
+    and only in one that can be reported (#1726); any other record is a case
+    that failed, and none raises."""
+    record: dict[str, Any] = {"errored": False, "host": "node1"}
+    if result != "missing":
+        record["result"] = result
+    layout = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {0: record}, {})
+    manifest = {"cases": [{"index": 0}]}
+    (entry,) = slurm_launch._case_states(layout, manifest, {0: {}})  # type: ignore[arg-type]
+    assert entry["state"] == "failed"
+    assert entry["host"] == "node1"
+    passed = {
+        "errored": False,
+        "result": {"passed": True, "message": "", "elapsed_seconds": 1.0},
+    }
+    layout = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {0: passed}, {})
+    (entry,) = slurm_launch._case_states(layout, manifest, {0: {}})  # type: ignore[arg-type]
+    assert entry["state"] == "passed"
 
 
 def test_the_typed_active_states_are_squeue_s() -> None:
@@ -295,3 +383,80 @@ def test_every_combination_of_inputs(
         else:
             why = "done" if task_error is None else "done: boom"
             assert (state, message) == ("missing", f"no result: task 2 of job 77 {why}")
+
+
+@pytest.mark.parametrize(
+    ("timed_out", "in_flight", "at", "want_state", "want_message"),
+    [
+        (
+            True,
+            True,
+            "2026-11-06T12:00:00+09:00",
+            "unknown",
+            "no job id: the sbatch of submission 3 timed out at "
+            "2026-11-06T12:00:00+09:00; the job may exist all the same: check "
+            "`squeue --me`",
+        ),
+        (
+            True,
+            False,
+            "",
+            "unknown",
+            "no job id: the sbatch of submission 3 timed out; the job may exist "
+            "all the same: check `squeue --me`",
+        ),
+        (
+            False,
+            True,
+            "",
+            "pending",
+            "no job id yet: submission 3 is being submitted (sbatch in flight)",
+        ),
+        (
+            False,
+            False,
+            "",
+            "missing",
+            "no result: submission 3 has no job id (its submitter stopped "
+            "before sbatch returned)",
+        ),
+    ],
+    ids=["timed-out", "timed-out-no-time", "in-flight", "stale"],
+)
+def test_no_job_case_state(
+    timed_out: bool, in_flight: bool, at: str, want_state: str, want_message: str
+) -> None:
+    """#1791: a case of a submission with no job id names no job, and is
+    missing only when the record is stale."""
+    state, message = no_job_case_state(3, timed_out, in_flight, at)
+    assert (state, message) == (want_state, want_message)
+    assert "None" not in message
+
+
+@pytest.mark.parametrize("job", [None, "missing", ""], ids=["null", "absent", "empty"])
+@pytest.mark.parametrize("kind", ["in-flight", "timed-out", "stale"])
+def test_a_case_of_a_submission_with_no_job_id(job: Any, kind: str) -> None:
+    """#1791: _case_states asks no squeue answer and reads no task status for
+    a case whose submission has no job id; it says why there is none."""
+    sub: dict[str, Any] = {
+        "chunks": [[0, 1]],
+        "submitted_at": time.time()
+        - (SBATCH_IN_FLIGHT_SECONDS + 1 if kind == "stale" else 0),
+    }
+    if job != "missing":
+        sub["job_id"] = job
+    if kind == "timed-out":
+        sub["sbatch_timed_out"] = True
+        sub["sbatch_timed_out_at"] = "2026-11-06T12:00:00+09:00"
+    passed = {
+        "errored": False,
+        "result": {"passed": True, "message": "ok", "elapsed_seconds": 1.0},
+    }
+    layout = _Layout({0: sub}, {1: passed}, {(0, 0): {"state": "done"}})
+    manifest = {"cases": [{"index": 0}, {"index": 1}, {"index": 2}]}
+    entries = slurm_launch._case_states(layout, manifest, {0: {}})  # type: ignore[arg-type]
+    states = [entry["state"] for entry in entries]
+    want = {"in-flight": "pending", "timed-out": "unknown", "stale": "missing"}[kind]
+    assert states == [want, "passed", "missing"]
+    assert "None" not in entries[0]["message"]
+    assert "job None" not in str(entries)

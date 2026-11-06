@@ -86,6 +86,25 @@ def test_an_actor_is_read_into_the_lanelet2_frame() -> None:
     assert agent.speed_limit == 40.0
 
 
+def test_the_elevation_is_the_box_centre_in_the_map_s(offset_map: None) -> None:
+    # Origin 0.3 m up, the box's centre 0.7 m above it, the map 40 m higher
+    # than CARLA's world: the centre at 41.0, the box 1.6 m high (#1596).
+    MapManager.get_instance()._z_offset = 40.0
+    car = _actor(
+        "vehicle.audi.tt",
+        10.0,
+        5.0,
+        0.0,
+        _vector(0.0, 0.0),
+        _vector(0.0, 0.0),
+        _vector(2.0, 1.0, 0.8),
+    )
+    car.bounding_box.location = _vector(0.0, 0.0, 0.7)
+    agent = snapshot.snapshot_actor(car, "npc1")
+    assert agent.z == pytest.approx(41.0)
+    assert agent.height == pytest.approx(1.6)
+
+
 @pytest.mark.usefixtures("offset_map")
 def test_a_walker_is_no_vehicle() -> None:
     walker = _actor(

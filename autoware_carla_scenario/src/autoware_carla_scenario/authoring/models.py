@@ -51,7 +51,11 @@ __all__ = [
     "Entity",
     "EntitySize",
     "DEFAULT_MODELS",
+    "GATE_CRITERIA",
+    "GateCoverageItem",
+    "GateSpec",
     "EntityKind",
+    "actor_kind",
     "GoalSpec",
     "JunctionPath",
     "JunctionSegment",
@@ -86,7 +90,7 @@ __all__ = [
 #: Bumped whenever the on-disk shape of a document changes incompatibly.
 DOCUMENT_FORMAT_VERSION = 1
 
-EntityKind = Literal["ego", "vehicle", "pedestrian"]
+EntityKind = Literal["ego", "vehicle", "motorcycle", "pedestrian"]
 #: The CARLA blueprint an entity of each kind gets when nothing says otherwise.
 #: A pedestrian is not a vehicle with a different model -- it spawns from a
 #: different blueprint family, is driven by nothing, and has no goal -- so the
@@ -94,9 +98,24 @@ EntityKind = Literal["ego", "vehicle", "pedestrian"]
 DEFAULT_MODELS: dict[str, str] = {
     "ego": "vehicle.mini.cooper",
     "vehicle": "vehicle.mini.cooper",
+    # Whichever motorcycle the running CARLA has: which ones a build has
+    # differs between builds (``entity.MotorcycleEntity``).
+    "motorcycle": "auto",
     # 0001-0014 are gone from CARLA 0.10; 0015 is in every release.
     "pedestrian": "walker.pedestrian.0015",
 }
+#: A kind that performs actions as another kind does: an action spec names the
+#: kinds it is for (``ActionSpec.actor_kinds``), and a motorcycle may do
+#: whatever a vehicle may.
+_ACTS_AS: dict[str, str] = {"motorcycle": "vehicle"}
+
+
+def actor_kind(kind: str) -> str:
+    """The kind an entity of *kind* is matched against an action's
+    ``actor_kinds`` as."""
+    return _ACTS_AS.get(kind, kind)
+
+
 #: Which stack drives the ego, rendered as the framework's ``ego.entity`` key.
 #:
 #: ``autopilot`` is CARLA's TrafficManager, which is driven for the ego and
@@ -396,9 +415,10 @@ class GoalSpec(LaneletChoice):
     s: float = 0.0
 
 
-#: An entity's ``vehicle_type`` that names no blueprint: the vehicle of the
-#: running CARLA nearest the entity's :attr:`Entity.size`, chosen when it is
-#: spawned (:mod:`autoware_carla_scenario.entity.fit`).
+#: An entity's ``vehicle_type`` that names no blueprint: for a vehicle, the
+#: vehicle of the running CARLA nearest the entity's :attr:`Entity.size`,
+#: chosen when it is spawned (:mod:`autoware_carla_scenario.entity.fit`); for a
+#: motorcycle, whichever motorcycle the running CARLA has.
 AUTO_MODEL = "auto"
 
 
@@ -425,6 +445,11 @@ class Entity(_Node):
     thing it can be asked to do is walk -- so :attr:`vehicle_type` follows the
     kind's default (see :data:`DEFAULT_MODELS`) and the actions it may perform
     are the ones whose spec names its kind.
+
+    A ``motorcycle`` is an NPC vehicle on a motorcycle's blueprint
+    (:class:`~autoware_carla_scenario.entity.MotorcycleEntity`): it does
+    whatever a ``vehicle`` may, and its :attr:`vehicle_type` is by default
+    ``auto``, whichever motorcycle the running CARLA has.
 
     A vehicle other than the ego may have ``vehicle_type: auto`` and a
     :attr:`size`: it is then the vehicle of the running CARLA whose bounding
@@ -730,6 +755,45 @@ class UiLayout(_Node):
 SIGNAL_STATE_NAMES: tuple[str, ...] = ("green", "yellow", "red", "off", "unknown")
 
 
+def _lower_signal_state(value: Any) -> Any:
+    """Return a phase's signal state in the lower case :data:`SIGNAL_STATE_NAMES` uses.
+
+    A CARLA spelling (``"Red"``) is a valid state: the validator compares it
+    lower-cased and the runtime lower-cases it before driving a light.  Kept as
+    written, though, it was the one place the two spellings meant different
+    things -- the editor's colour select matched it against the lower-case names,
+    showed no colour chosen, and the next edit of the phase posted the first one
+    (#1519).  Lower-casing here, as the document is read, makes the spelling the
+    document holds the one everything else already means; a saved document
+    then writes the canonical word.  Only the case changes: an unknown word stays
+    unknown (and the validator still names it), and whitespace is left alone,
+    because the validator and runtime have never accepted a padded state.
+    """
+    return value.lower() if isinstance(value, str) else value
+
+
+def _strip_signal_name(value: Any) -> Any:
+    """Return a signal name without surrounding whitespace.
+
+    Signal groups, phases and controllers are found by name at runtime, and
+    there the lookup is exact.  The validator compared names stripped, so a
+    hand-written ``"ns "`` passed it and then matched nothing: a phase naming
+    ``ns`` drove no light, and an action naming ``"go "`` found no phase.
+    Stripping here, as the document is read, is what makes the name the
+    validator accepted the one every consumer sees -- the same normalisation the
+    editor already applies to what it is typed.  Anything that is not a string
+    is left for pydantic to refuse.
+    """
+    return value.strip() if isinstance(value, str) else value
+
+
+def _strip_signal_names(value: Any) -> Any:
+    """:func:`_strip_signal_name` over a list of names."""
+    if isinstance(value, (list, tuple)):
+        return [_strip_signal_name(item) for item in value]
+    return value
+
+
 class SignalGroupRef(_Node):
     """Signals that move together, named once for every phase that drives them.
 
@@ -758,6 +822,13 @@ class SignalGroupRef(_Node):
     lanelet2_regulatory_element_ids: list[int] = Field(default_factory=list)
     conflicts_with: list[str] = Field(default_factory=list)
 
+    _strip_name = field_validator("name", mode="before")(
+        classmethod(lambda cls, v: _strip_signal_name(v))
+    )
+    _strip_conflicts = field_validator("conflicts_with", mode="before")(
+        classmethod(lambda cls, v: _strip_signal_names(v))
+    )
+
 
 class SignalStateRef(_Node):
     """What one signal, or one group of them, shows for the duration of a phase.
@@ -775,12 +846,20 @@ class SignalStateRef(_Node):
         lanelet2_regulatory_element_id: One signal, named by the Lanelet2
             regulatory element it belongs to -- the same id every other signal
             primitive here takes.
-        state: ``green``, ``yellow``, ``red``, ``off`` or ``unknown``.
+        state: ``green``, ``yellow``, ``red``, ``off`` or ``unknown``.  A
+            CARLA spelling (``"Red"``) is read as the lower-case word.
     """
 
     group: Optional[str] = None
     lanelet2_regulatory_element_id: Optional[int] = None
     state: str = "red"
+
+    _strip_group = field_validator("group", mode="before")(
+        classmethod(lambda cls, v: _strip_signal_name(v))
+    )
+    _lower_state = field_validator("state", mode="before")(
+        classmethod(lambda cls, v: _lower_signal_state(v))
+    )
 
 
 class SignalPhaseRef(_Node):
@@ -800,6 +879,10 @@ class SignalPhaseRef(_Node):
     name: str
     duration_seconds: float = 10.0
     states: list[SignalStateRef] = Field(default_factory=list)
+
+    _strip_name = field_validator("name", mode="before")(
+        classmethod(lambda cls, v: _strip_signal_name(v))
+    )
 
 
 class SignalControllerRef(_Node):
@@ -834,6 +917,10 @@ class SignalControllerRef(_Node):
     phases: list[SignalPhaseRef] = Field(default_factory=list)
     delay_seconds: float = 0.0
     reference: Optional[str] = None
+
+    _strip_names = field_validator("name", "reference", mode="before")(
+        classmethod(lambda cls, v: _strip_signal_name(v))
+    )
 
 
 class MapRef(_Node):
@@ -1201,6 +1288,130 @@ class RouteSearch(_Node):
 
 
 # ---------------------------------------------------------------------------
+# Gate: when a logical scenario as a whole passes
+# ---------------------------------------------------------------------------
+
+#: The criteria a gate can judge, in the order a report lists them.  Each is a
+#: field of :class:`GateSpec` that judges nothing while it is ``None`` (the
+#: coverage items: while the list is empty).
+GATE_CRITERIA: tuple[str, ...] = (
+    "min_runs",
+    "min_success_rate",
+    "min_case_coverage",
+    "min_scenario_coverage",
+    "min_odd_coverage",
+    "coverage_items",
+    "max_lateral_spread_m",
+    "max_speed_spread_mps",
+)
+
+
+class GateCoverageItem(_Node):
+    """One cover item a gate asks a grade of.
+
+    Attributes:
+        item: The cover item's (or cross's) name, as the coverage report
+            names it (``speed_at_cut_in``, ``odd.scenery.speed_limit``).
+        min: The grade it needs, 0..1: its covered buckets over its buckets.
+    """
+
+    item: str = Field(min_length=1)
+    min: float = Field(ge=0.0, le=1.0, allow_inf_nan=False)
+
+
+class GateSpec(_Node):
+    """When a logical scenario passes as a whole: its gate.
+
+    A concrete scenario -- one match of the route search, one run -- passes or
+    fails on its own pass and fail conditions.  The gate judges the *logical*
+    scenario over all its runs: whether there were enough of them, how many
+    passed, how much of the scenario's space they covered, and whether the ego
+    drove the same way through the pattern each time.  Each run records what
+    the gate needs (``{stem}_gate.json``); ``scenario-gate`` judges the records
+    after the runs, so the gate can be re-judged -- with other thresholds
+    too -- without running anything again.  See ``docs/gate.md``.
+
+    Every threshold is optional: one left ``None`` (an empty
+    :attr:`coverage_items`) is not judged.
+
+    Attributes:
+        min_runs: How many runs the gate needs at least, whatever they found.
+        min_success_rate: The share of runs that must pass, 0..1.
+        min_case_coverage: The share of the route search's matches (the
+            logical scenario's concrete cases, per map) that must have run at
+            least once, 0..1.
+        min_scenario_coverage: The grade the runs' scenario coverage group
+            (``register_cover``) must reach, 0..1.
+        min_odd_coverage: The grade the runs' ODD coverage group must reach.
+        coverage_items: Grades single cover items must reach.
+        max_lateral_spread_m: Trajectory consistency: how far apart (standard
+            deviation across runs, m) the ego's lateral offset from the route
+            may be at any station of the pattern.
+        max_speed_spread_mps: Trajectory consistency: the same for its speed
+            (m/s).
+        consistency_stations: How many stations each segment of the pattern is
+            measured at.  A station sits at the same fraction of its segment
+            on every match, so routes of different lengths compare.
+        consistency_min_runs: How many runs must have passed a station for its
+            spread to count.
+    """
+
+    min_runs: int = Field(default=1, ge=1)
+    min_success_rate: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    min_case_coverage: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    min_scenario_coverage: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    min_odd_coverage: Optional[float] = Field(
+        default=None, ge=0.0, le=1.0, allow_inf_nan=False
+    )
+    coverage_items: list[GateCoverageItem] = Field(default_factory=list)
+    max_lateral_spread_m: Optional[float] = Field(
+        default=None, gt=0.0, allow_inf_nan=False
+    )
+    max_speed_spread_mps: Optional[float] = Field(
+        default=None, gt=0.0, allow_inf_nan=False
+    )
+    consistency_stations: int = Field(default=20, ge=1, le=200)
+    consistency_min_runs: int = Field(default=2, ge=2)
+
+    @field_validator(
+        "min_runs", "consistency_stations", "consistency_min_runs", mode="before"
+    )
+    @classmethod
+    def _count_not_a_bool(cls, value: Any) -> Any:
+        """Refuse ``true`` / ``false`` for a count, which pydantic reads as 1 / 0."""
+        if isinstance(value, bool):
+            raise ValueError("must be a whole number, not a boolean")
+        return value
+
+    @property
+    def judges_consistency(self) -> bool:
+        """Whether the gate judges the ego's trajectory at all."""
+        return (
+            self.max_lateral_spread_m is not None
+            or self.max_speed_spread_mps is not None
+        )
+
+    def judged(self) -> list[str]:
+        """The criteria this gate judges, in :data:`GATE_CRITERIA` order.
+
+        ``min_runs`` is always judged: a gate with no run behind it passes
+        nothing.
+        """
+        # An unset threshold is None, unset cover items an empty list.
+        return [n for n in GATE_CRITERIA if getattr(self, n) not in (None, [])]
+
+    def to_dict(self) -> dict[str, Any]:
+        """The gate as the document stores it: unset thresholds left out."""
+        return cast(dict[str, Any], self.model_dump(mode="json", exclude_none=True))
+
+
+# ---------------------------------------------------------------------------
 # Document
 # ---------------------------------------------------------------------------
 
@@ -1220,6 +1431,9 @@ class ScenarioDocument(_Node):
     #: A logical scenario's route search; ``None`` for a scenario whose ego
     #: spawns where :attr:`entities` say.
     route: Optional[RouteSearch] = None
+    #: A logical scenario's gate: when it passes over all its runs; ``None``
+    #: judges none (``docs/gate.md``).
+    gate: Optional[GateSpec] = None
     ui: UiLayout = Field(default_factory=UiLayout)
 
     @field_validator("id")
@@ -1595,10 +1809,15 @@ class ScenarioDocument(_Node):
 
         A document with no route search says nothing about one, as it did
         before routes existed; a route search leaves its unset bounds out.
+        Likewise a document with no gate, and a gate its unset thresholds.
         """
         out = self.model_dump(mode="json", by_alias=True)
         if self.route is None:
             out.pop("route", None)
         else:
             out["route"] = self.route.to_sweep_dict()
+        if self.gate is None:
+            out.pop("gate", None)
+        else:
+            out["gate"] = self.gate.to_dict()
         return out

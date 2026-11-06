@@ -13,6 +13,7 @@ import importlib.util
 import logging
 import itertools
 import math
+import re
 from pathlib import Path
 from typing import Any
 
@@ -72,6 +73,70 @@ def test_sumo_is_a_built_in_backend_that_builds_without_sumo_loaded() -> None:
     assert backend.describe()["scenario_vehicles"] == "traffic_manager"
     assert backend.describe()["scenario_pedestrians"] == "traffic_manager"
     assert backend.describe()["vehicle_control"] == "physics"
+
+
+_SUMO_SWITCHES = (
+    (("publish_walkers",), True),
+    (("pedestrian_crossings",), True),
+    (("cycle_on_sidewalks",), False),
+    (("use_libsumo",), True),
+    (("fcd_output",), False),
+    (("ambient", "enabled"), False),
+    (("ambient", "use_safe_weights"), True),
+    (("pedestrians", "enabled"), False),
+    (("bicycles", "enabled"), False),
+)
+
+
+def _nested(path: tuple[str, ...], value: Any) -> dict[str, Any]:
+    """The options mapping that sets *path* to *value*."""
+    mapping: dict[str, Any] = {path[-1]: value}
+    for key in reversed(path[:-1]):
+        mapping = {key: mapping}
+    return mapping
+
+
+def _read(config: Any, path: tuple[str, ...]) -> Any:
+    for key in path:
+        config = getattr(config, key)
+    return config
+
+
+@pytest.mark.parametrize(("path", "default"), _SUMO_SWITCHES)
+def test_a_sumo_switch_is_read_strictly_by_its_key(
+    path: tuple[str, ...], default: bool
+) -> None:
+    # Read by truthiness, "false" (a quoted override, an ${oc.env:...}) was
+    # true and a typo true as well (#1757).
+    assert _read(SumoBackendConfig(), path) is default
+    assert _read(SumoBackendConfig.from_mapping({}), path) is default
+    for value, expected in (
+        ("false", False),
+        (" OFF ", False),
+        ("0", False),
+        (0, False),
+        ("true", True),
+        ("yes", True),
+        ("1", True),
+        (1, True),
+        (False, False),
+    ):
+        config = SumoBackendConfig.from_mapping(_nested(path, value))
+        assert _read(config, path) is expected
+    key = ".".join(path)
+    for bad in ("maybe", 2, 0.5, None, ["true"]):
+        with pytest.raises(
+            ValueError, match=rf"^{re.escape(key)} must be true or false, got "
+        ):
+            SumoBackendConfig.from_mapping(_nested(path, bad))
+
+
+def test_a_nested_sumo_config_reads_its_switch_when_built_directly() -> None:
+    assert AmbientTrafficConfig(enabled="no").enabled is False  # type: ignore[arg-type]
+    assert PedestrianConfig(enabled="1").enabled is True  # type: ignore[arg-type]
+    assert BicycleConfig(enabled=0).enabled is False  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=r"^bicycles\.enabled must be true or false"):
+        BicycleConfig(enabled="maybe")  # type: ignore[arg-type]
 
 
 def test_the_config_refuses_unknown_keys_and_light_modes() -> None:
@@ -513,6 +578,7 @@ def _prepared(
 
     vehicles = options.pop("vehicles", None)
     box_location = options.pop("box_location", None)
+    file_stem = options.pop("file_stem", "")
     config = SumoBackendConfig(
         scenario_vehicles=options.pop("scenario_vehicles", "sumo"),
         ambient=AmbientTrafficConfig(
@@ -532,6 +598,7 @@ def _prepared(
             fixed_delta_seconds=0.05,
             random_seed=3,
             output_dir=tmp_path / "out",
+            file_stem=file_stem,
         )
     )
     npc = _FakeActor(
@@ -573,6 +640,330 @@ def test_sumo_drives_the_npc_and_mirrors_the_ego(
     finally:
         backend.close()
     assert backend.describe()["backend"] == "sumo"
+
+
+@pytest.mark.parametrize(
+    ("sumo_args", "expected"),
+    [
+        ([], ["-a", "own.add.xml", "-r", "own.rou.xml"]),
+        (
+            ["--additional-files", "a.xml,b.xml", "--verbose"],
+            ["-a", "own.add.xml,a.xml,b.xml", "-r", "own.rou.xml", "--verbose"],
+        ),
+        (
+            ["-a", "a.xml", "--additional=b.xml", "--additional", "c.xml"],
+            ["-a", "own.add.xml,a.xml,b.xml,c.xml", "-r", "own.rou.xml"],
+        ),
+        (
+            ["--step-length", "0.1", "-r", "x.rou.xml", "--routes=y.rou.xml"],
+            [
+                "-a",
+                "own.add.xml",
+                "-r",
+                "own.rou.xml,x.rou.xml,y.rou.xml",
+                "--step-length",
+                "0.1",
+            ],
+        ),
+        (
+            ["--route-files", "x.rou.xml", "--additional-files"],
+            ["-a", "own.add.xml", "-r", "own.rou.xml,x.rou.xml", "--additional-files"],
+        ),
+    ],
+)
+def test_sumo_args_files_join_the_backends_own(
+    sumo_args: list[str], expected: list[str]
+) -> None:
+    """SUMO refuses an option twice: sumo_args' files join the backend's own."""
+    from autoware_carla_scenario.traffic.sumo.backend import _merge_file_options
+
+    assert _merge_file_options(sumo_args, ["own.add.xml"], ["own.rou.xml"]) == expected
+
+
+def test_sumo_args_files_alone_keep_their_option() -> None:
+    """Without route files of the backend's own, sumo_args' are passed on alone."""
+    from autoware_carla_scenario.traffic.sumo.backend import _merge_file_options
+
+    assert _merge_file_options(["--routes", "x.rou.xml"], ["own.add.xml"], []) == [
+        "-a",
+        "own.add.xml",
+        "-r",
+        "x.rou.xml",
+    ]
+
+
+# The command lines traffic.sumo.network built before they moved into the
+# checked traffic.sumo.options (#1679), copied verbatim: the argv must not
+# change by a byte.
+
+
+def _old_random_trips_cmd(
+    python: str,
+    tool: Path,
+    net_file: Path,
+    out: Path,
+    *,
+    seed: int,
+    period: float,
+    end: float,
+    prefix: str,
+    options: list[str],
+) -> list[str]:
+    return [
+        python,
+        str(tool),
+        "-n",
+        str(net_file),
+        "-o",
+        str(out.with_suffix(".trips.xml")),
+        "-r",
+        str(out),
+        "-b",
+        "0",
+        "-e",
+        str(end),
+        "-p",
+        str(period),
+        "--seed",
+        str(seed),
+        "--validate",
+        "--prefix",
+        prefix,
+        *options,
+    ]
+
+
+def _old_trip_options(
+    weights_prefix: Path, safe_weights: bool, fringe_factor: float
+) -> list[str]:
+    if safe_weights:
+        weights = ["--weights-prefix", str(weights_prefix)]
+    else:
+        weights = ["--fringe-factor", f"{fringe_factor:g}"]
+    return ["--vehicle-class", "passenger", *weights]
+
+
+def _old_walk_options(max_distance: float) -> list[str]:
+    return ["--pedestrians", "--max-distance", f"{max_distance:g}"]
+
+
+def _old_ride_options(
+    out: Path,
+    min_distance: float,
+    max_distance: float | None,
+    bicycle_type: Path | None,
+) -> list[str]:
+    options = [
+        "--vclass",
+        "bicycle",
+        "--trip-attributes",
+        'type="DEFAULT_BIKETYPE"',
+        "--min-distance",
+        f"{min_distance:g}",
+    ]
+    if max_distance is not None:
+        options += ["--max-distance", f"{max_distance:g}"]
+    if bicycle_type is not None:
+        options += [
+            "--additional-files",
+            str(bicycle_type),
+            "--vtype-output",
+            str(out.with_suffix(".vtypes.xml")),
+        ]
+    return options
+
+
+@pytest.mark.parametrize(
+    ("seed", "period", "end", "prefix", "options"),
+    [
+        (0, 1.0, 3600.0, "sumo", []),
+        (42, 0.25, 600, "sumoped", ["--pedestrians", "--max-distance", "300"]),
+        (
+            7,
+            2,
+            1e6,
+            "sumobike",
+            ["--vclass", "bicycle", "--trip-attributes", 'type="x"'],
+        ),
+        (-1, 1.5e-3, 0.1, "", ["--fringe-factor", "5"]),
+    ],
+)
+def test_random_trips_argv_is_the_command_network_built(
+    seed: int, period: float, end: float, prefix: str, options: list[str]
+) -> None:
+    """randomTrips.py's argv, now built in the checked options, is unchanged."""
+    from autoware_carla_scenario.traffic.sumo.options import random_trips_argv
+
+    python = "/usr/bin/python3"
+    tool = Path("/opt/sumo/tools/randomTrips.py")
+    net_file = Path("/cache/abc/network.net.xml")
+    out = Path("/run/out.sumo/ambient.rou.xml")
+    given = list(options)
+    assert random_trips_argv(
+        python, tool, net_file, out, seed, period, end, prefix, given
+    ) == _old_random_trips_cmd(
+        python,
+        tool,
+        net_file,
+        out,
+        seed=seed,
+        period=period,
+        end=end,
+        prefix=prefix,
+        options=options,
+    )
+    assert given == options  # the options are not changed
+
+
+@pytest.mark.parametrize("safe_weights", [True, False])
+@pytest.mark.parametrize("fringe_factor", [5.0, 1, 0.5, 1e-7, 12345678.0])
+def test_trip_options_are_the_ones_network_built(
+    safe_weights: bool, fringe_factor: float
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.options import trip_options
+
+    prefix = Path("/cache/abc/network.safe")
+    assert trip_options(prefix, safe_weights, fringe_factor) == _old_trip_options(
+        prefix, safe_weights, fringe_factor
+    )
+
+
+@pytest.mark.parametrize("max_distance", [300.0, 0, 2.5, 1e9])
+def test_walk_options_are_the_ones_network_built(max_distance: float) -> None:
+    from autoware_carla_scenario.traffic.sumo.options import walk_options
+
+    assert walk_options(max_distance) == _old_walk_options(max_distance)
+
+
+@pytest.mark.parametrize("min_distance", [0.0, 50, 12.75])
+@pytest.mark.parametrize("max_distance", [None, 0.0, 800.0, 1e6])
+@pytest.mark.parametrize("bicycle_type", [None, Path("/run/out.sumo/bicycle.add.xml")])
+def test_ride_options_are_the_ones_network_built(
+    min_distance: float, max_distance: float | None, bicycle_type: Path | None
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.options import ride_options
+
+    out = Path("/run/out.sumo/bicycles.rou.xml")
+    assert ride_options(
+        out, min_distance, max_distance, bicycle_type
+    ) == _old_ride_options(out, min_distance, max_distance, bicycle_type)
+
+
+def test_generate_demand_runs_the_command_network_built(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """generate_trips/walks/rides still hand subprocess.run the old argv,
+    with sys.executable and sumo_home() as network finds them."""
+    import subprocess
+    import sys
+
+    from autoware_carla_scenario.traffic.sumo import network as network_module
+
+    home = tmp_path / "sumo_home"
+    monkeypatch.setattr(network_module, "sumo_home", lambda: home)
+    commands: list[list[str]] = []
+
+    def run(cmd: list[str], **kwargs: Any) -> subprocess.CompletedProcess[str]:
+        commands.append(cmd)
+        Path(cmd[cmd.index("-r") + 1]).write_text("<routes/>")
+        return subprocess.CompletedProcess(cmd, 0, "", "")
+
+    monkeypatch.setattr(network_module.subprocess, "run", run)
+    cache = tmp_path / "cache"
+    cache.mkdir()
+    network = network_module.SumoNetwork(
+        cache / "network.net.xml", cache / "network.safe"
+    )
+    out = tmp_path / "out"
+    tool = home / "tools" / "randomTrips.py"
+    bicycle_type = tmp_path / "bicycle.add.xml"
+
+    def old(name: str, prefix: str, options: list[str]) -> list[str]:
+        return _old_random_trips_cmd(
+            sys.executable,
+            tool,
+            network.net_file,
+            out / name,
+            seed=3,
+            period=1.5,
+            end=900.0,
+            prefix=prefix,
+            options=options,
+        )
+
+    timing: dict[str, Any] = {"seed": 3, "period": 1.5, "end": 900.0}
+    network_module.generate_trips(network, out / "a.rou.xml", **timing)
+    (cache / "network.safe.src.xml").write_text("<edgedata/>")
+    network_module.generate_trips(network, out / "b.rou.xml", **timing)
+    network_module.generate_trips(
+        network, out / "c.rou.xml", safe_weights=False, fringe_factor=2.0, **timing
+    )
+    network_module.generate_walks(
+        network, out / "d.rou.xml", max_distance=250.0, **timing
+    )
+    network_module.generate_rides(network, out / "e.rou.xml", **timing)
+    network_module.generate_rides(
+        network,
+        out / "f.rou.xml",
+        min_distance=20.0,
+        max_distance=900.0,
+        bicycle_type=bicycle_type,
+        **timing,
+    )
+    assert commands == [
+        old("a.rou.xml", "sumo", _old_trip_options(network.weights_prefix, False, 5.0)),
+        old("b.rou.xml", "sumo", _old_trip_options(network.weights_prefix, True, 5.0)),
+        old("c.rou.xml", "sumo", _old_trip_options(network.weights_prefix, False, 2.0)),
+        old("d.rou.xml", "sumoped", _old_walk_options(250.0)),
+        old(
+            "e.rou.xml",
+            "sumobike",
+            _old_ride_options(out / "e.rou.xml", 0.0, None, None),
+        ),
+        old(
+            "f.rou.xml",
+            "sumobike",
+            _old_ride_options(out / "f.rou.xml", 20.0, 900.0, bicycle_type),
+        ),
+    ]
+
+
+@needs_sumo
+def test_sumo_args_may_name_additional_and_route_files(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """SUMO starts with sumo_args' additional and route files, theirs loaded
+    with the backend's own (it refused the option twice, issue #1532)."""
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        EMERGENCY_TYPE,
+        MOTORCYCLE_TYPE,
+    )
+
+    additional = tmp_path / "user.add.xml"
+    additional.write_text(
+        '<additional>\n    <vType id="user_additional" vClass="passenger"/>\n'
+        "</additional>\n"
+    )
+    routes = tmp_path / "user.rou.xml"
+    routes.write_text(
+        '<routes>\n    <vType id="user_route" vClass="passenger"/>\n</routes>\n'
+    )
+    backend, *_ = _prepared(
+        crossroads,
+        tmp_path,
+        period_s=2.0,  # ambient traffic: the backend's own route file
+        sumo_args=["--additional-files", str(additional), f"--route-files={routes}"],
+    )
+    try:
+        types = set(backend._traci.vehicletype.getIDList())
+        assert {
+            "user_additional",
+            "user_route",
+            MOTORCYCLE_TYPE,
+            EMERGENCY_TYPE,
+        } <= types
+    finally:
+        backend.close()
 
 
 @needs_sumo
@@ -912,8 +1303,54 @@ def test_a_construction_zone_closes_and_reopens_the_lane(
         backend.close()
 
 
+@needs_sumo
+def test_a_construction_zone_reopens_a_lane_open_to_every_class(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """A lane with no allow or disallow attribute (netgenerate's, most user
+    nets') lists no allowed class: reopening it must not close it to
+    everything for the rest of the run (#1533)."""
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    tc = backend._traci
+    try:
+        lane = "0.fwd_0"
+        tc.lane.setAllowed(lane, ["all"])
+        assert tuple(tc.lane.getAllowed(lane)) == ()
+        assert tuple(tc.lane.getDisallowed(lane)) == ()
+        assert backend.close_lane(world, _carla_transform(-60.0, 5.25, 0.0)) == lane
+        assert "passenger" in tc.lane.getDisallowed(lane)
+        backend.reopen_lane(world, lane)
+        assert tuple(tc.lane.getAllowed(lane)) == ()
+        assert tuple(tc.lane.getDisallowed(lane)) == ()
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_construction_zone_reopens_a_lane_to_exactly_its_allow_list(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """A lane with an allow list gets exactly that list back (#1533)."""
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    tc = backend._traci
+    try:
+        lane = "0.fwd_0"
+        tc.lane.setAllowed(lane, ["passenger", "bus"])
+        before = (tc.lane.getAllowed(lane), tc.lane.getDisallowed(lane))
+        assert backend.close_lane(world, _carla_transform(-60.0, 5.25, 0.0)) == lane
+        backend.reopen_lane(world, lane)
+        assert (tc.lane.getAllowed(lane), tc.lane.getDisallowed(lane)) == before
+        assert set(tc.lane.getAllowed(lane)) == {"passenger", "bus"}
+    finally:
+        backend.close()
+
+
 class _LaneTraci:
-    """The TraCI calls close_lane / reopen_lane make, on one lane."""
+    """The TraCI calls close_lane / reopen_lane make, on one lane, with
+    SUMO's permissions: getAllowed() lists nothing on a lane open to every
+    class, and setAllowed(lane, []) closes it to everything (#1533)."""
+
+    CLASSES = ("passenger", "truck", "bus", "pedestrian")
 
     def __init__(self) -> None:
         self.allowed = {"0.fwd_0": ["passenger", "truck"]}
@@ -924,10 +1361,18 @@ class _LaneTraci:
         self.lane = self
 
     def getAllowed(self, lane: str) -> list[str]:
-        return list(self.allowed[lane])
+        allowed = self.allowed[lane]
+        return [] if sorted(allowed) == sorted(self.CLASSES) else list(allowed)
+
+    def getDisallowed(self, lane: str) -> list[str]:
+        return [c for c in self.CLASSES if c not in self.allowed[lane]]
 
     def setDisallowed(self, lane: str, classes: list[str]) -> None:
-        self.allowed[lane] = []
+        if "all" in classes:
+            self.allowed[lane] = []
+            return
+        self.allowed[lane] = [c for c in self.CLASSES if c not in classes]
+        self.restored.append(list(self.allowed[lane]))
 
     def setAllowed(self, lane: str, classes: list[str]) -> None:
         self.allowed[lane] = list(classes)
@@ -971,6 +1416,17 @@ def test_a_lane_two_zones_close_stays_closed_until_both_reopen() -> None:
     backend.reopen_lane(None, first)
     backend.reopen_lane(None, "1.fwd_0")
     assert traci.restored == [["passenger", "truck"]]
+
+
+def test_a_lane_open_to_every_class_reopens_to_every_class() -> None:
+    """SUMO lists no allowed class on a lane open to every class: reopening it
+    restores what it disallowed (nothing), not an empty allow list (#1533)."""
+    backend, traci = _lane_backend()
+    traci.allowed["0.fwd_0"] = list(_LaneTraci.CLASSES)
+    lane = backend.close_lane(None, _lane_transform(-60.0))
+    assert traci.allowed["0.fwd_0"] == []
+    backend.reopen_lane(None, lane)
+    assert traci.allowed["0.fwd_0"] == list(_LaneTraci.CLASSES)
 
 
 def test_a_construction_zone_cleared_first_leaves_the_other_closed() -> None:
@@ -1221,7 +1677,7 @@ def test_background_vehicles_are_sumo_traffic_mirrored_into_carla(
         # Mirrored into CARLA like the rest of SUMO's traffic.
         mirror = backend._ambient[handle]
         assert mirror in world.spawned
-        (x, y) = backend.background_vehicles(world)[handle]
+        (x, y, _z) = backend.background_vehicles(world)[handle]
         assert -60.0 < x < -50.0 and y == pytest.approx(5.25, abs=1.0)
 
         backend.remove_background(world, handle)
@@ -1647,6 +2103,31 @@ def test_fcd_output_records_how_sumo_time_maps_onto_carla_time(
     assert sumo_t == pytest.approx(1.05)
     assert (carla_t, frame) == (pytest.approx(100.05), 1)
     assert len(rows) == 11
+
+
+@needs_sumo
+def test_each_run_of_a_batch_keeps_its_own_fcd_and_clock(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    # A batch shares one output directory: each run's SUMO outputs go under its
+    # file stem, so the second run does not overwrite the first's (#1544).
+    runs = (("CutInScenario", 4), ("CutInScenario-1", 8))
+    for stem, ticks in runs:
+        backend, world, _npc, _ego = _prepared(
+            crossroads, tmp_path, fcd_output=True, file_stem=stem
+        )
+        try:
+            for i in range(ticks):
+                backend.tick(world, i * 0.05)
+        finally:
+            backend.close()
+    out = tmp_path / "out"
+    assert not (out / "sumo").exists()
+    for stem, ticks in runs:
+        assert (out / f"{stem}.sumo" / "fcd.xml").is_file()
+        assert (out / f"{stem}.sumo" / "sumo.log").is_file()
+        rows = (out / f"{stem}.sumo" / "clock.csv").read_text().splitlines()
+        assert len(rows) == 1 + ticks
 
 
 # ---------------------------------------------------------------------------
@@ -2103,7 +2584,7 @@ def test_background_vehicles_are_where_their_mirrors_origins_are(
         for i in range(5):
             backend.tick(world, i * 0.05)
         assert handle in backend._ambient
-        x, y = backend.background_vehicles(world)[handle]
+        x, y, _z = backend.background_vehicles(world)[handle]
         yaw = math.radians(_carla_yaw(backend, handle))
         reach = float(tc.vehicle.getLength(handle)) / 2.0 + (
             box_location[0] if box_location else 0.0
@@ -2628,6 +3109,31 @@ def test_the_scenarios_vehicles_stay_in_carla_unless_let_go(
         assert entity.simulation_fidelity is SimulationFidelity.MICROSCOPIC
         assert entity.actor is not None and not entity.actor.destroyed
         assert len(backend._meso) == 0
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_background_vehicle_the_queue_model_holds_has_no_height(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    # The queue model places a vehicle on a lane's 2D shape: its height is
+    # not known (None), so a sink or a construction zone places it in plan
+    # view (#1586).  One SUMO drives has its height.
+    backend, world, _entity, _ego = _mesoscopic(crossroads, tmp_path)
+    try:
+        near = backend.spawn_background(
+            world, _carla_transform(-100.0, 5.25, 0.0), speed_kmh=5.0
+        )
+        far = backend.spawn_background(
+            world, _carla_transform(-20.0, 5.25, 0.0), speed_kmh=5.0
+        )
+        assert near is not None and far is not None
+        _tick_until(backend, world, lambda: far in backend._meso)
+        vehicles = backend.background_vehicles(world)
+        assert vehicles[far][2] is None
+        assert near not in backend._meso
+        assert isinstance(vehicles[near][2], float)
     finally:
         backend.close()
 
@@ -3500,6 +4006,238 @@ def test_a_scenario_bicycle_joins_sumo_as_a_bicycle(
         backend.close()
 
 
+def test_a_motorcycle_is_a_vehicle_whose_base_type_says_so() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import is_motorcycle
+
+    bike = _FakeActor(None, type_id="vehicle.yamaha.yzf")
+    bike.attributes["base_type"] = "Motorcycle"
+    assert is_motorcycle(bike)
+    bicycle = _FakeActor(None, type_id="vehicle.bh.crossbike")
+    bicycle.attributes["base_type"] = "bicycle"
+    assert not is_motorcycle(bicycle)
+    assert not is_motorcycle(_FakeActor(None))
+    assert not is_motorcycle(SimpleNamespace())
+
+
+@needs_sumo
+@pytest.mark.parametrize("scenario_vehicles", ["sumo", "traffic_manager"])
+def test_a_scenario_motorcycle_joins_sumo_as_a_motorcycle(
+    crossroads: Path, tmp_path: Path, scenario_vehicles: str
+) -> None:
+    """Of the run's motorcycle type, on the carriageway, whether SUMO rides
+    it or is told where CARLA has it (the TrafficManager riding it)."""
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        MOTORCYCLE_TYPE,
+        SumoTrafficBackend,
+    )
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            scenario_vehicles=scenario_vehicles,
+            traffic_light_authority="none",
+            warmup_s=0.0,
+            vehicle_control="teleport",
+            cache_dir=str(tmp_path / "cache"),
+            ambient=AmbientTrafficConfig(enabled=False),
+        )
+    )
+    backend.prepare(
+        TrafficContext(
+            xodr_path=crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    # On the eastbound carriageway of the west arm (CARLA y > 0 is
+    # OpenDRIVE's right).
+    rider = _FakeActor(
+        _carla_transform(-80.0, 1.75, 0.0), "rider", "vehicle.yamaha.yzf"
+    )
+    rider.attributes["base_type"] = "motorcycle"
+    rider.bounding_box.extent = _Extent(1.1, 0.4)
+    world = _FakeWorld([rider])
+    backend.adopt(_Entity(rider, "rider"))
+    backend.start(world)
+    tc = backend._traci
+    try:
+        for i in range(40):
+            backend.tick(world, i * 0.05)
+        (sumo_id,) = [v for v in tc.vehicle.getIDList() if "rider" in v]
+        assert tc.vehicle.getVehicleClass(sumo_id) == "motorcycle"
+        # Its own copy of it, once its size is set.
+        assert tc.vehicle.getTypeID(sumo_id).split("@", 1)[0] == MOTORCYCLE_TYPE
+        # Its own box, not a car's.
+        assert tc.vehicle.getLength(sumo_id) == pytest.approx(2.2)
+        assert tc.vehicle.getWidth(sumo_id) == pytest.approx(0.8)
+        assert all(
+            backend._net.getEdge(edge).allows("motorcycle")
+            for edge in tc.vehicle.getRoute(sumo_id)
+        )
+        if scenario_vehicles == "sumo":
+            # Ridden on by SUMO, and CARLA's motorcycle follows it.
+            assert rider.transform.location.x > -80.0
+    finally:
+        backend.close()
+
+
+def test_an_emergency_vehicle_is_a_vehicle_whose_special_type_says_so() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        EMERGENCY_TYPE,
+        _sumo_class,
+        is_emergency,
+    )
+
+    ambulance = _FakeActor(None, type_id="vehicle.ford.ambulance")
+    ambulance.attributes["base_type"] = "van"
+    ambulance.attributes["special_type"] = "Emergency"
+    assert is_emergency(ambulance)
+    # Whatever its body: an emergency vehicle before a van.
+    assert _sumo_class(ambulance) == ("emergency", EMERGENCY_TYPE)
+    taxi = _FakeActor(None, type_id="vehicle.mercedes.sprinter")
+    taxi.attributes["special_type"] = "taxi"
+    assert not is_emergency(taxi)
+    # CARLA 0.10's have no special_type: their id says so.
+    assert is_emergency(_FakeActor(None, type_id="vehicle.carlamotors.firetruck"))
+    assert not is_emergency(_FakeActor(None))
+    assert not is_emergency(SimpleNamespace())
+
+
+def test_a_siren_lets_a_vehicle_sumo_drives_through_red_lights() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import _with_siren
+
+    # SUMO's own speed mode (31) without the bit that brakes for a red light,
+    # still giving way at the junction (8).
+    assert _with_siren(31, True) == 15
+    assert _with_siren(15, False) == 31
+    assert _with_siren(31, True) & 8
+
+
+@needs_sumo
+@pytest.mark.parametrize("scenario_vehicles", ["sumo", "traffic_manager"])
+def test_a_scenario_emergency_vehicle_joins_sumo_with_a_silent_siren(
+    crossroads: Path, tmp_path: Path, scenario_vehicles: str
+) -> None:
+    """Of the run's emergency type, its bluelight device silent until it is
+    on a call: then SUMO's vehicles make way for it, and one SUMO drives no
+    longer brakes for red lights; off duty, both as before."""
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        EMERGENCY_REACTION_DIST_M,
+        EMERGENCY_TYPE,
+        SumoTrafficBackend,
+    )
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            scenario_vehicles=scenario_vehicles,
+            traffic_light_authority="none",
+            warmup_s=0.0,
+            vehicle_control="teleport",
+            cache_dir=str(tmp_path / "cache"),
+            ambient=AmbientTrafficConfig(enabled=False),
+        )
+    )
+    backend.prepare(
+        TrafficContext(
+            xodr_path=crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    actor = _FakeActor(
+        _carla_transform(-80.0, 1.75, 0.0), "ambulance", "vehicle.ford.ambulance"
+    )
+    actor.attributes["base_type"] = "van"
+    actor.attributes["special_type"] = "emergency"
+    world = _FakeWorld([actor])
+    entity = _Entity(actor, "ambulance")
+    backend.adopt(entity)
+    backend.start(world)
+    tc = backend._traci
+    reach = "device.bluelight.reactiondist"
+    try:
+        for i in range(10):
+            backend.tick(world, i * 0.05)
+        (sumo_id,) = [v for v in tc.vehicle.getIDList() if "ambulance" in v]
+        assert tc.vehicle.getVehicleClass(sumo_id) == "emergency"
+        assert tc.vehicle.getTypeID(sumo_id).split("@", 1)[0] == EMERGENCY_TYPE
+        assert float(tc.vehicle.getParameter(sumo_id, reach)) == 0.0
+        mode = int(tc.vehicle.getSpeedMode(sumo_id))
+        if scenario_vehicles == "sumo":
+            # SUMO's own, not the device's 7 (through every red light).
+            assert mode == 31
+        backend.set_emergency(entity, True)
+        assert float(tc.vehicle.getParameter(sumo_id, reach)) == pytest.approx(
+            EMERGENCY_REACTION_DIST_M
+        )
+        if scenario_vehicles == "sumo":
+            # Through red lights, still giving way at the junction.
+            assert int(tc.vehicle.getSpeedMode(sumo_id)) == 15
+        else:
+            # Published: CARLA's side drives it, and its speed mode is SUMO's
+            # for a vehicle it does not drive.
+            assert int(tc.vehicle.getSpeedMode(sumo_id)) == mode
+        backend.set_emergency(entity, False)
+        assert float(tc.vehicle.getParameter(sumo_id, reach)) == 0.0
+        assert int(tc.vehicle.getSpeedMode(sumo_id)) == mode
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_an_emergency_vehicle_on_a_call_before_the_run_joins_on_one(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import (
+        EMERGENCY_REACTION_DIST_M,
+        SumoTrafficBackend,
+    )
+    from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
+
+    backend = SumoTrafficBackend(
+        SumoBackendConfig(
+            scenario_vehicles="sumo",
+            traffic_light_authority="none",
+            warmup_s=0.0,
+            vehicle_control="teleport",
+            cache_dir=str(tmp_path / "cache"),
+            ambient=AmbientTrafficConfig(enabled=False),
+        )
+    )
+    backend.prepare(
+        TrafficContext(
+            xodr_path=crossroads,
+            fixed_delta_seconds=0.05,
+            random_seed=3,
+            output_dir=tmp_path / "out",
+        )
+    )
+    actor = _FakeActor(
+        _carla_transform(-80.0, 1.75, 0.0), "police", "vehicle.dodge.charger_police"
+    )
+    actor.attributes["special_type"] = "emergency"
+    world = _FakeWorld([actor])
+    entity = _Entity(actor, "police")
+    # On a call from its spawn, as EmergencyVehicleEntity(emergency=True) is.
+    entity.in_emergency = True  # type: ignore[attr-defined]
+    backend.adopt(entity)
+    backend.start(world)
+    tc = backend._traci
+    try:
+        for i in range(10):
+            backend.tick(world, i * 0.05)
+        (sumo_id,) = [v for v in tc.vehicle.getIDList() if "police" in v]
+        assert float(
+            tc.vehicle.getParameter(sumo_id, "device.bluelight.reactiondist")
+        ) == pytest.approx(EMERGENCY_REACTION_DIST_M)
+        assert int(tc.vehicle.getSpeedMode(sumo_id)) == 15
+    finally:
+        backend.close()
+
+
 @needs_sumo
 def test_signalled_bicycle_rides_go_with_the_traffic_carlas_lights_let_go(
     signalled_crossroads: Path, tmp_path: Path
@@ -3743,7 +4481,9 @@ def test_a_car_sumo_drives_stops_for_what_stands_in_its_way_in_carla(
     npc.get_world = lambda: world  # type: ignore[attr-defined]
     standing: list[Any] = []
 
-    def in_way(world_: Any, self_id: int, x: float, y: float, *rest: Any) -> Any:
+    def in_way(
+        world_: Any, self_id: int, x: float, y: float, *rest: Any, **kwargs: Any
+    ) -> Any:
         if not standing or rest[1] != "vehicle":
             return None
         found = clearance.Obstacle(7, standing[0], 5.25, 2.5, 0.0)
@@ -4026,6 +4766,235 @@ def test_the_generated_demand_refuses_negative_and_non_finite_numbers() -> None:
             AmbientTrafficConfig(fringe_factor=bad)
         with pytest.raises(ValueError, match="^bicycles.min_distance_m must be finite"):
             BicycleConfig(min_distance_m=bad)
+
+
+#: Every number option of the SUMO backend, as (group, key, message start,
+#: whether null is accepted, a valid value): the top-level options with no
+#: group, the generated demand's under theirs.
+_SUMO_NUMBER_OPTIONS: tuple[tuple[str, str, str, bool, float], ...] = (
+    ("", "feedback_distance_m", "must be finite and not negative", False, 1.0),
+    ("", "resync_distance_m", "must be positive", False, 8.0),
+    (
+        "",
+        "curve_lateral_acceleration",
+        "must be positive and finite or null",
+        True,
+        3.0,
+    ),
+    ("", "lateral_resolution_m", "must be positive and finite or null", True, 0.4),
+    ("", "step_length_s", "must be positive and finite or null", True, 0.05),
+    ("", "warmup_s", "must be finite and not negative", False, 30.0),
+    ("", "spawn_radius_m", "must be positive and finite or null", True, 50.0),
+    ("ambient", "vehicles_per_hour", "must be finite and not negative", False, 900.0),
+    ("ambient", "period_s", "must be positive and finite or null", True, 2.0),
+    ("ambient", "end_s", "must be positive and finite", False, 3600.0),
+    ("ambient", "fringe_factor", "must be finite and not negative", False, 5.0),
+    (
+        "pedestrians",
+        "persons_per_hour",
+        "must be finite and not negative",
+        False,
+        600.0,
+    ),
+    ("pedestrians", "period_s", "must be positive and finite or null", True, 2.0),
+    ("pedestrians", "end_s", "must be positive and finite", False, 3600.0),
+    ("pedestrians", "max_distance_m", "must be positive", False, 500.0),
+    ("pedestrians", "radius_m", "must be positive and finite or null", True, 80.0),
+    ("bicycles", "bicycles_per_hour", "must be finite and not negative", False, 300.0),
+    ("bicycles", "period_s", "must be positive and finite or null", True, 2.0),
+    ("bicycles", "end_s", "must be positive and finite", False, 3600.0),
+    ("bicycles", "min_distance_m", "must be finite and not negative", False, 10.0),
+    ("bicycles", "max_distance_m", "must be positive or null", True, 2000.0),
+    ("bicycles", "radius_m", "must be positive and finite or null", True, 80.0),
+)
+
+
+def _sumo_option(group: str, key: str, value: Any) -> SumoBackendConfig:
+    if group:
+        return SumoBackendConfig.from_mapping({group: {key: value}})
+    return SumoBackendConfig.from_mapping({key: value})
+
+
+def _sumo_option_value(config: SumoBackendConfig, group: str, key: str) -> Any:
+    return getattr(getattr(config, group) if group else config, key)
+
+
+@pytest.mark.parametrize(
+    ("group", "key", "message", "nullable", "valid"),
+    _SUMO_NUMBER_OPTIONS,
+    ids=[f"{group or 'options'}.{key}" for group, key, *_ in _SUMO_NUMBER_OPTIONS],
+)
+def test_a_sumo_number_option_refuses_what_is_no_number_by_its_key(
+    group: str, key: str, message: str, nullable: bool, valid: float
+) -> None:
+    # A bool passed as 0 or 1 (period_s: true was a 1 s period), and a string
+    # or a null in a required field raised a TypeError naming no key (#1663).
+    name = re.escape(f"{group}.{key}" if group else key)
+    bad: list[Any] = [True, False, "2", "", [1.0], {"a": 1}, 10**400, -(10**400)]
+    if not nullable:
+        bad.append(None)
+    for value in bad:
+        with pytest.raises(ValueError, match=f"^{name} {message}"):
+            _sumo_option(group, key, value)
+    # A huge int is shown without repr()'s digit limit (#1652).
+    with pytest.raises(ValueError, match=r"got an integer of about 10\*\*5000\)$"):
+        _sumo_option(group, key, 10**5000)
+    # A valid number is kept, an int as its float.
+    assert _sumo_option_value(_sumo_option(group, key, valid), group, key) == valid
+    whole = _sumo_option_value(_sumo_option(group, key, int(valid) or 1), group, key)
+    assert type(whole) is float and whole == float(int(valid) or 1)
+    if nullable:
+        assert _sumo_option_value(_sumo_option(group, key, None), group, key) is None
+
+
+def test_the_lane_change_duration_refuses_what_is_no_number_by_its_key() -> None:
+    def build(value: Any) -> SumoBackendConfig:
+        return SumoBackendConfig.from_mapping(
+            {"lane_change_duration_s": value, "lateral_resolution_m": None}
+        )
+
+    for value in (True, "3", 10**400):
+        with pytest.raises(
+            ValueError, match="^lane_change_duration_s must be positive and finite"
+        ):
+            build(value)
+    duration = build(3).lane_change_duration_s
+    assert type(duration) is float and duration == 3.0
+    assert build(None).lane_change_duration_s is None
+
+
+def test_the_shipped_sumo_options_still_load_and_a_bool_is_refused_up_front() -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    run.check_run_config(_shipped(["traffic=sumo"]))
+    for override, key in (
+        ("traffic.options.ambient.vehicles_per_hour=true", "ambient.vehicles_per_hour"),
+        ("traffic.options.warmup_s='30'", "warmup_s"),
+        ("traffic.options.mesoscopic.headway_s=true", "headway_s"),
+    ):
+        with pytest.raises(run.RunConfigError, match=f"{re.escape(key)} must be"):
+            run.check_run_config(_shipped(["traffic=sumo", override]))
+
+
+def test_the_bicycle_ride_distances_must_be_an_interval() -> None:
+    # randomTrips.py keeps a ride min <= distance < max: an inverted or equal
+    # pair kept none, and generated no ride without a word (#1452).
+    for low, high in ((3000.0, 2000.0), (2000.0, 2000.0)):
+        with pytest.raises(
+            ValueError,
+            match="^bicycles.min_distance_m must be less than bicycles.max_distance_m",
+        ):
+            BicycleConfig(enabled=True, min_distance_m=low, max_distance_m=high)
+        with pytest.raises(ValueError, match="^bicycles.min_distance_m must be less"):
+            SumoBackendConfig.from_mapping(
+                {"bicycles": {"min_distance_m": low, "max_distance_m": high}}
+            )
+    ride = BicycleConfig(min_distance_m=100.0, max_distance_m=100.5)
+    assert (ride.min_distance_m, ride.max_distance_m) == (100.0, 100.5)
+    # No limit above leaves any shortest ride allowed.
+    assert (
+        BicycleConfig(min_distance_m=5000.0, max_distance_m=None).max_distance_m is None
+    )
+    assert (
+        BicycleConfig(min_distance_m=5000.0, max_distance_m=math.inf).min_distance_m
+        == 5000.0
+    )
+
+
+def test_a_string_is_refused_where_a_sumo_list_setting_belongs() -> None:
+    # A string was iterated into its characters: `sumo_args=--verbose` became
+    # ['-', '-', 'v', ...] and failed SUMO only once CARLA was up, and a
+    # blueprint became ['v', 'e', ...], so no bicycle was mirrored (#1534).
+    for bad in ("--verbose", b"--verbose", 3, True, {"a": "b"}):
+        with pytest.raises(
+            ValueError, match=r"^traffic\.options\.sumo_args must be a list, not"
+        ):
+            SumoBackendConfig.from_mapping({"sumo_args": bad})
+        with pytest.raises(
+            ValueError,
+            match=r"^traffic\.options\.bicycles\.blueprints must be a list, not",
+        ):
+            BicycleConfig.from_mapping({"blueprints": bad})
+        with pytest.raises(
+            ValueError,
+            match=r"^traffic\.options\.bicycles\.blueprints must be a list, not",
+        ):
+            SumoBackendConfig.from_mapping({"bicycles": {"blueprints": bad}})
+    # An item that is not a string or a number has no str() that was meant.
+    for item in (None, True, ["--verbose"], {"a": "b"}):
+        with pytest.raises(
+            ValueError,
+            match=r"^traffic\.options\.sumo_args\[1\] must be a string or a number",
+        ):
+            SumoBackendConfig.from_mapping({"sumo_args": ["--verbose", item]})
+        with pytest.raises(
+            ValueError,
+            match=r"^traffic\.options\.bicycles\.blueprints\[0\] must be a string",
+        ):
+            BicycleConfig.from_mapping({"blueprints": [item]})
+    # A list, a tuple or a ListConfig is read; null is empty.
+    from omegaconf import OmegaConf
+
+    for args in (
+        ["--verbose", 1],
+        ("--verbose", 1),
+        OmegaConf.create(["--verbose", 1]),
+    ):
+        assert SumoBackendConfig.from_mapping({"sumo_args": args}).sumo_args == [
+            "--verbose",
+            "1",
+        ]
+    assert SumoBackendConfig.from_mapping({"sumo_args": None}).sumo_args == []
+    assert BicycleConfig.from_mapping(
+        {"blueprints": ("vehicle.bh.crossbike",)}
+    ).blueprints == ["vehicle.bh.crossbike"]
+    assert BicycleConfig.from_mapping({"blueprints": None}).blueprints == []
+
+
+@pytest.mark.parametrize(
+    ("override", "key"),
+    [
+        ("traffic.options.sumo_args=--verbose", "traffic.options.sumo_args"),
+        (
+            "traffic.options.bicycles.blueprints=vehicle.bh.crossbike",
+            "traffic.options.bicycles.blueprints",
+        ),
+    ],
+)
+def test_a_run_with_a_string_sumo_list_setting_is_refused_up_front(
+    override: str, key: str
+) -> None:
+    import re
+
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    cfg = _shipped(["traffic=sumo", override])
+    with pytest.raises(
+        run.RunConfigError, match=f"{re.escape(key)} must be a list, not str"
+    ):
+        run.check_run_config(cfg)
+
+
+def test_a_run_with_inverted_bicycle_ride_distances_is_refused_up_front() -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    cfg = _shipped(
+        [
+            "traffic=sumo",
+            "traffic.options.bicycles.min_distance_m=3000.0",
+            "traffic.options.bicycles.max_distance_m=2000.0",
+        ]
+    )
+    with pytest.raises(
+        run.RunConfigError, match="bicycles.min_distance_m must be less"
+    ):
+        run.check_run_config(cfg)
 
 
 @needs_sumo

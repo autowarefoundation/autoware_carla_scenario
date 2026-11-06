@@ -27,7 +27,10 @@ documents had before, is refused with a message saying so.
 
 The parsing here is pure Python, so the editor process -- which never imports
 CARLA or lanelet2 -- can check a document with it.  Building a lanelet path
-needs the loaded map and imports it only then.
+needs the loaded map and imports it only then.  The builders that take
+values already typed -- the goal, the via lanelets, the timing and the
+lanelet path -- are :mod:`.authored`'s, which the library check compiles,
+re-exported here.
 """
 
 from __future__ import annotations
@@ -35,9 +38,18 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence
 
+from ..value_text import shown
+from .authored import (
+    LANELET_PATH_STEP_M,
+    PATH_SOURCES,
+    TIME_DOMAINS,
+    _lanelet_path,
+    authored_goal,
+    authored_timing,
+    authored_waypoints,
+)
 from .model import (
     MapPose,
-    ReferenceContext,
     RelativeLanePose,
     RouteCrossingPose,
     RouteCrosswalkPose,
@@ -45,7 +57,6 @@ from .model import (
     RouteOppositePose,
     RouteRoadsidePose,
     Trajectory,
-    TrajectoryTiming,
     TrajectoryVertex,
 )
 from .vertex_text import (
@@ -63,9 +74,9 @@ from .vertex_text import (
 
 if TYPE_CHECKING:
     from ..conditions.base import BaseCondition
-    from ..coordinate.poses import Lanelet2Pose
 
 __all__ = [
+    "LANELET_PATH_STEP_M",
     "PATH_SOURCES",
     "ROUTE_ROW_FIELDS",
     "RelativeVertexRow",
@@ -90,22 +101,6 @@ __all__ = [
     "trajectory_summary",
     "vertex_problems",
 ]
-
-#: Where a document's route comes from: ``goal`` names a goal and via
-#: lanelets; the others write the waypoints out as a trajectory.
-PATH_SOURCES: tuple[str, ...] = (
-    "goal",
-    "vertices",
-    "lanelets",
-    "relative_lane",
-    "route",
-)
-
-#: A document's time reference: ``none`` ignores the vertex times.
-TIME_DOMAINS: tuple[str, ...] = ("none", "relative", "absolute")
-
-#: How far apart (m) the vertices of a lanelet path are.
-LANELET_PATH_STEP_M = 2.0
 
 
 def _no_time(index: int, time: Any) -> ValueError:
@@ -136,9 +131,37 @@ def _number(index: int, cell: Any, name: str, required: bool) -> Optional[float]
         number = float(cell)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"vertex {index}: {cell!r} is not a number") from exc
+    except OverflowError:
+        # An int too big for a float (10**400): not finite (#1652).
+        raise ValueError(
+            f"vertex {index}: {shown(cell)} is not a finite number"
+        ) from None
     if not math.isfinite(number):
         raise ValueError(f"vertex {index}: {cell!r} is not a finite number")
     return number
+
+
+def _field_float(name: str, value: Any) -> float:
+    """``float(value)`` of the card's field *name*; for a value ``float()``
+    cannot read -- not a number, or an int too big for a float
+    (``10**400``) -- a ``ValueError`` naming the field (#1660).  What
+    ``float()`` reads is read as before."""
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        raise ValueError(f"{name} must be a number, got {shown(value)}") from None
+    except OverflowError:
+        raise ValueError(f"{name} must be finite, got {shown(value)}") from None
+
+
+def _field_int(name: str, value: Any) -> int:
+    """``int(value)`` of the card's field *name*; for a value ``int()`` cannot
+    read, a ``ValueError`` naming the field (#1660).  What ``int()`` reads is
+    read as before."""
+    try:
+        return int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(f"{name} must be a whole number, got {shown(value)}") from None
 
 
 # ---------------------------------------------------------------------------
@@ -559,46 +582,12 @@ def authored_trajectory(
                 "no waypoint conditions"
             )
         return _lanelet_path(
-            name, list(lanelet_ids or ()), speed_kmh, float(lateral_offset_m or 0.0)
+            name,
+            list(lanelet_ids or ()),
+            speed_kmh,
+            _field_float(f"{name}: lateral_offset_m", lateral_offset_m or 0.0),
         )
     raise ValueError(f"{name}: unknown path source {path_source!r}")
-
-
-def _lanelet_path(
-    name: str,
-    lanelet_ids: list[int],
-    speed_kmh: Optional[float],
-    lateral_offset_m: float,
-) -> Trajectory:
-    """A path along the centrelines of *lanelet_ids*, timed at *speed_kmh*."""
-    if not lanelet_ids:
-        raise ValueError(f"{name}: a lanelet path needs at least one lanelet")
-    from ..conditions.trajectory_time import (  # noqa: PLC0415
-        TrajectoryTimeCondition,
-    )
-    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
-    from ..coordinate.transform import lanelet_length  # noqa: PLC0415
-
-    speed_ms = (speed_kmh or 0.0) / 3.6
-    vertices: list[TrajectoryVertex] = []
-    travelled = 0.0
-    for position, lanelet_id in enumerate(lanelet_ids):
-        length = lanelet_length(int(lanelet_id))
-        steps = max(1, math.ceil(length / LANELET_PATH_STEP_M))
-        # A lanelet's start is the previous one's end: taken once.
-        first = 0 if position == 0 else 1
-        for step in range(first, steps + 1):
-            s = length * step / steps
-            vertices.append(
-                TrajectoryVertex(
-                    Lanelet2Pose(lanelet_id=int(lanelet_id), s=s, t=lateral_offset_m),
-                    TrajectoryTimeCondition((travelled + s) / speed_ms)
-                    if speed_ms > 0.0
-                    else None,
-                )
-            )
-        travelled += length
-    return Trajectory(name, vertices)
 
 
 def authored_route(
@@ -640,18 +629,6 @@ def authored_route(
     )
 
 
-def authored_goal(
-    path_source: str, lanelet_id: Optional[int] = None, s: Optional[float] = None
-) -> "Optional[Lanelet2Pose]":
-    """A ``goal`` card's goal, *s* metres along lanelet *lanelet_id*; ``None``
-    for a card that writes its waypoints out."""
-    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
-
-    if path_source != "goal":
-        return None
-    return Lanelet2Pose(lanelet_id=int(lanelet_id or 0), s=float(s or 0.0))
-
-
 def authored_place(
     lanelet_id: Optional[int] = 0,
     s: Optional[float] = 0.0,
@@ -675,33 +652,8 @@ def authored_place(
     if rows:
         return route_pose(rows[0])
     return Lanelet2Pose(
-        lanelet_id=int(lanelet_id or 0),
-        s=float(s or 0.0),
-        t=float(t or 0.0),
-        heading=float(heading or 0.0),
-    )
-
-
-def authored_waypoints(
-    path_source: str, lanelet_ids: Optional[Sequence[int]] = None
-) -> "list[Lanelet2Pose]":
-    """A ``goal`` card's via lanelets, each a pose at its start; none for a
-    card that writes its waypoints out."""
-    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
-
-    if path_source != "goal":
-        return []
-    return [Lanelet2Pose(lanelet_id=int(i), s=0.0) for i in lanelet_ids or ()]
-
-
-def authored_timing(
-    time_domain: str, scale: float = 1.0, offset: float = 0.0
-) -> Optional[TrajectoryTiming]:
-    """The time reference a card's ``time_domain`` names, or ``None`` for none."""
-    if time_domain == "none":
-        return None
-    return TrajectoryTiming(
-        domain=ReferenceContext(time_domain),
-        scale=1.0 if scale is None else float(scale),
-        offset=0.0 if offset is None else float(offset),
+        lanelet_id=_field_int("lanelet_id", lanelet_id or 0),
+        s=_field_float("s", s or 0.0),
+        t=_field_float("t", t or 0.0),
+        heading=_field_float("heading", heading or 0.0),
     )

@@ -20,7 +20,9 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..config_flags import check_flag
 from ..constants import tick_multiple
+from ..seed import check_seed, check_whole_number
 from ..sensor.carla_camera import CarlaCameraSensorConfig
 from ..sensor.carla_lidar import CarlaLidarSensorConfig
 from .geometry import Pose, Trajectory
@@ -43,6 +45,29 @@ DRIVER_TRANSPORTS: Tuple[str, ...] = ("tcp", "unix", "direct")
 #: Logical camera id used by alpasim's reference rig for the forward-facing camera.
 #: Policies look their inputs up by this string, so it must match what the policy expects.
 DEFAULT_CAMERA_LOGICAL_ID: str = "camera_front_wide_120fov"
+
+
+def _number(key: str, value: float) -> float:
+    """*value*, a config's float field as it holds it, checked and returned as
+    a ``float``.
+
+    A config dataclass is not coerced, so a field typed ``float`` may hold
+    whatever its mapping did: Hydra reads ``=true`` as a bool, which
+    ``float()`` would take as 1.0, and a quoted ``="0.3"`` as a string, which
+    ``math.isfinite()`` would refuse with a ``TypeError`` naming no key
+    (#1506).  An int or a float is a number; a bool, a string or anything
+    ``float()`` refuses (``None``, a list) is not.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    if isinstance(value, bool) or isinstance(value, str):
+        raise ValueError(f"{key} must be a number, got {value!r}")
+    try:
+        number = float(value)
+    except TypeError:
+        raise ValueError(f"{key} must be a number, got {value!r}")
+    return number
 
 
 #: The lens models a camera's frames may be drawn through (:class:`DriverCameraLens`).
@@ -88,6 +113,16 @@ class DriverCameraLens:
     reference_poly: str = "pixeldist_to_angle"
 
     def __post_init__(self) -> None:
+        # Not coerced: a bool would be read as 1.0 (#1506).
+        _number("lens.max_angle", self.max_angle)
+        for value in self.principal_point:
+            _number("lens.principal_point", value)
+        for value in self.pixeldist_to_angle_poly:
+            _number("lens.pixeldist_to_angle_poly", value)
+        for value in self.angle_to_pixeldist_poly:
+            _number("lens.angle_to_pixeldist_poly", value)
+        for value in self.linear_cde:
+            _number("lens.linear_cde", value)
         if self.model not in CAMERA_LENS_MODELS:
             raise ValueError(
                 f"lens.model must be one of {CAMERA_LENS_MODELS}, got {self.model!r}"
@@ -128,7 +163,8 @@ class DriverCameraLens:
             "linear_cde",
         ):
             if key in values:
-                values[key] = [float(v) for v in values[key]]
+                # Checked before float(), which would take true as 1.0.
+                values[key] = [_number(f"lens.{key}", v) for v in values[key]]
         return cls(**values)
 
 
@@ -146,6 +182,14 @@ class DriverCameraConfig:
     origin is the rear axle (``base_link``): moved by the rear-axle offset
     (:attr:`DriverClientConfig.rear_axle_offset_m`, else derived), the way
     :func:`~autoware_carla_scenario.driver.observation.sensor_pose_in_rig` moves it.
+
+    Raises:
+        ValueError: If the image size is not a positive whole number
+            (:func:`~autoware_carla_scenario.seed.check_whole_number`: ``960``
+            or ``960.0``, kept as the int ``960``; not ``960.5``, a bool or a
+            string), a float field is not a number (a bool or a string), the
+            fps is not positive and finite, the ``fov`` is outside (0, 180)
+            degrees, or the mount is not finite.
     """
 
     logical_id: str = DEFAULT_CAMERA_LOGICAL_ID
@@ -162,6 +206,69 @@ class DriverCameraConfig:
     #: The lens the frames are drawn through; ``None`` is CARLA's pinhole of
     #: :attr:`fov`.
     lens: Optional[DriverCameraLens] = None
+
+    def __post_init__(self) -> None:
+        # The mapping is not coerced, so an int field may hold a float, a
+        # bool or a string.  The size is the egodriver contract's integer
+        # ``resolution_w``/``_h``, which refuses any float, even 960.0, only
+        # when the session starts, after the ego has spawned (#1472): a whole
+        # number is kept as an int, anything else refused here.
+        owner = f"camera {self.logical_id!r}"
+        # A float field may likewise hold a bool, which the checks below would
+        # take as 1.0 (fps=true would stream at 1 fps), or a string (#1506).
+        for key, value in (
+            ("fov", self.fov),
+            ("fps", self.fps),
+            ("position_x", self.position_x),
+            ("position_y", self.position_y),
+            ("position_z", self.position_z),
+            ("roll", self.roll),
+            ("pitch", self.pitch),
+            ("yaw", self.yaw),
+        ):
+            _number(f"{owner}: {key}", value)
+        object.__setattr__(
+            self,
+            "image_width",
+            check_whole_number(f"{owner}: image_width", self.image_width),
+        )
+        object.__setattr__(
+            self,
+            "image_height",
+            check_whole_number(f"{owner}: image_height", self.image_height),
+        )
+        # A zero, negative, NaN or infinite fps would only fail (or misbehave)
+        # as the camera attaches, after the ego has spawned (#1391).
+        if (
+            self.image_width <= 0
+            or self.image_height <= 0
+            or not math.isfinite(self.fps)
+            or self.fps <= 0.0
+        ):
+            raise ValueError(
+                f"camera {self.logical_id!r}: image size and fps must be positive "
+                f"and finite, got {self.image_width}x{self.image_height} "
+                f"at {self.fps} fps"
+            )
+        # CARLA renders a pinhole of the horizontal fov, which only spans
+        # (0, 180) degrees; a lens camera is still made with it.
+        if not 0.0 < self.fov < 180.0:
+            raise ValueError(
+                f"camera {self.logical_id!r}: fov must be in (0, 180) degrees, "
+                f"got {self.fov}"
+            )
+        for key, value in (
+            ("position_x", self.position_x),
+            ("position_y", self.position_y),
+            ("position_z", self.position_z),
+            ("roll", self.roll),
+            ("pitch", self.pitch),
+            ("yaw", self.yaw),
+        ):
+            if not math.isfinite(value):
+                raise ValueError(
+                    f"camera {self.logical_id!r}: {key} must be finite, got {value}"
+                )
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "DriverCameraConfig":
@@ -274,7 +381,8 @@ class DriverClientConfig:
     """Cameras rendered and streamed to the policy."""
 
     image_quality: int = 90
-    """JPEG quality (1-100) for the streamed camera frames."""
+    """JPEG quality (1-100) for the streamed camera frames: a whole number
+    (``90``, or ``90.0`` kept as ``90``; not a bool or a string)."""
 
     lidars: Tuple[DriverLidarConfig, ...] = ()
     """LiDARs mounted on the ego, their sweeps sent in ``CarlaRendererData.lidar``.
@@ -418,6 +526,8 @@ class DriverClientConfig:
     those."""
 
     def __post_init__(self) -> None:
+        # First: the checks below compare the numbers.
+        self._check_types()
         if self.transport not in DRIVER_TRANSPORTS:
             raise ValueError(
                 "driver.transport must be one of tcp, unix, direct, "
@@ -440,6 +550,9 @@ class DriverClientConfig:
                 "unset, so it must name a Unix socket (unix:///path/policy.sock), "
                 f"got {self.address!r}"
             )
+        camera_ids = [camera.logical_id for camera in self.cameras]
+        if len(set(camera_ids)) != len(camera_ids):
+            raise ValueError(f"camera logical ids must be unique, got {camera_ids}")
         ids = [lidar.logical_id for lidar in self.lidars]
         if len(set(ids)) != len(ids):
             raise ValueError(f"LiDAR logical ids must be unique, got {ids}")
@@ -466,7 +579,69 @@ class DriverClientConfig:
             raise ValueError(
                 f"driver.t4_scene_history_s must not be negative, got {self.t4_scene_history_s}"
             )
+        seed = self.random_seed
+        if seed is not None:
+            # A whole number, not negative, as the run's seed: not 1.9 or
+            # True, which the session would be handed as 1.
+            check_seed("driver.random_seed", seed)
         self._check_numbers()
+
+    def _check_types(self) -> None:
+        """Read the switches strictly, and refuse a number field holding a
+        bool or a string.
+
+        Hydra does not coerce a switch either, and ``bool("false")`` is true
+        (#1760), so ``send_ground_truth``,
+        ``send_renderer_data``, ``send_actor_ground_truth`` and ``t4_scene``
+        are read with :func:`~autoware_carla_scenario.config_flags.check_flag`
+        (a boolean, ``"true"``/``"false"`` and the other spellings, 1 or 0)
+        and kept as bools, before :meth:`__post_init__` reads ``t4_scene``.
+
+        The mapping is not coerced, and Hydra reads ``=true`` as a bool, which
+        a number check takes as 1 and the T4 dataset's ``float()``/``int()``
+        read as 1: ``policy_timestep_s=true`` would drive at a 1 s step and
+        ``image_quality=true`` encode at quality 1 (#1506).  The JPEG quality
+        is kept as an int (``90.0`` as ``90``), as a camera's size is.
+        """
+        object.__setattr__(
+            self,
+            "send_ground_truth",
+            check_flag("driver.send_ground_truth", self.send_ground_truth),
+        )
+        object.__setattr__(
+            self,
+            "send_renderer_data",
+            check_flag("driver.send_renderer_data", self.send_renderer_data),
+        )
+        object.__setattr__(
+            self,
+            "send_actor_ground_truth",
+            check_flag("driver.send_actor_ground_truth", self.send_actor_ground_truth),
+        )
+        object.__setattr__(
+            self, "t4_scene", check_flag("driver.t4_scene", self.t4_scene)
+        )
+        for key, value in (
+            ("timeout_s", self.timeout_s),
+            ("policy_timestep_s", self.policy_timestep_s),
+            ("warmup_s", self.warmup_s),
+            ("route_horizon_m", self.route_horizon_m),
+            ("route_resolution_m", self.route_resolution_m),
+            ("traffic_light_sight_distance_m", self.traffic_light_sight_distance_m),
+            ("actor_horizon_m", self.actor_horizon_m),
+            ("t4_scene_history_s", self.t4_scene_history_s),
+        ):
+            _number(f"driver.{key}", value)
+        offset = self.rear_axle_offset_m
+        if offset is not None:
+            _number("driver.rear_axle_offset_m", offset)
+        wheel_base = self.t4_scene_wheel_base_m
+        if wheel_base is not None:
+            _number("driver.t4_scene_wheel_base_m", wheel_base)
+        quality = check_whole_number("driver.image_quality", self.image_quality)
+        if not 1 <= quality <= 100:
+            raise ValueError(f"driver.image_quality must be 1-100, got {quality}")
+        object.__setattr__(self, "image_quality", quality)
 
     def _check_numbers(self) -> None:
         """Refuse the numbers a NaN or an infinity would silently break.

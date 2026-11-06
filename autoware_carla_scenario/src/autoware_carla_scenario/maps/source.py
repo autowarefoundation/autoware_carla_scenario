@@ -72,6 +72,46 @@ _SCP_HOST = re.compile(r"^[A-Za-z0-9_.+-]+@[A-Za-z0-9_.-]+:")
 _FULL_COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
 
 
+#: Characters ``git check-ref-format`` refuses anywhere in a ref name.
+_REF_FORBIDDEN_CHARACTERS = " ~^:?*[\\"
+
+
+def _ref_problem(ref: str) -> str:
+    """Why *ref* is not a ref this package hands to git, or ``""`` if it is.
+
+    The rules are those of ``git check-ref-format --allow-onelevel``, checked
+    here rather than by running git: a branch, a tag, ``refs/...``, ``HEAD``
+    and a full or abbreviated commit hash all pass.  On top of them a ref may
+    not begin with ``-``, which git would read as an option of the command
+    the ref is handed to (#1848).  An empty *ref* -- the default branch -- is
+    not checked here; :class:`MapSource` allows it.
+    """
+    if ref.startswith("-"):
+        return "it begins with '-'"
+    for character in ref:
+        code = ord(character)
+        if code < 0x20 or code == 0x7F:
+            return "it contains a control character"
+        if character in _REF_FORBIDDEN_CHARACTERS:
+            return f"it contains {character!r}"
+    if ref == "@":
+        return "'@' alone is not a ref"
+    if ".." in ref:
+        return "it contains '..'"
+    if "@{" in ref:
+        return "it contains '@{'"
+    if ref.startswith("/") or ref.endswith("/") or "//" in ref:
+        return "it has an empty '/'-separated component"
+    if ref.endswith("."):
+        return "it ends with '.'"
+    for component in ref.split("/"):
+        if component.startswith("."):
+            return "a '/'-separated component begins with '.'"
+        if component.endswith(".lock"):
+            return "a '/'-separated component ends with '.lock'"
+    return ""
+
+
 def _repository_path_start(url: str) -> int:
     """Index in *url* where the repository path begins.
 
@@ -239,7 +279,9 @@ class MapSource:
 
     Attributes:
         repo_url: The URL :mod:`~autoware_carla_scenario.maps.cache` clones.
-        ref: Branch, tag or commit.  Empty means the default branch.
+        ref: Branch, tag or commit.  Empty means the default branch.  Any
+            other value must be a name ``git check-ref-format`` accepts and
+            must not begin with ``-`` (see :func:`_ref_problem`).
         path: POSIX path of the map directory inside the repository.  Empty
             means the repository root.
     """
@@ -251,6 +293,20 @@ class MapSource:
     def __post_init__(self) -> None:
         if not self.repo_url:
             raise MapSourceError("A map source needs a repository URL.")
+        # Both reach a git command line (maps/cache.py), where a leading '-'
+        # would be read as an option.  The cache ends git's options before
+        # them as well; refusing them here is what makes a bad source fail
+        # where it was written rather than in the middle of a fetch (#1848).
+        if self.repo_url.startswith("-"):
+            raise MapSourceError(
+                f"{self.repo_url!r} is not a repository URL: it begins with '-'."
+            )
+        if self.ref:
+            problem = _ref_problem(self.ref)
+            if problem:
+                raise MapSourceError(
+                    f"{self.ref!r} is not a usable git ref: {problem}."
+                )
 
     # -- parsing --------------------------------------------------------
 
@@ -259,7 +315,8 @@ class MapSource:
         """Return the source *uri* names.
 
         Raises:
-            MapSourceError: If *uri* is empty or names no repository.
+            MapSourceError: If *uri* is empty, names no repository, or its
+                ref is not one git accepts (see :func:`_ref_problem`).
         """
         text = (uri or "").strip()
         if not text:
@@ -273,7 +330,11 @@ class MapSource:
 
         # The explicit ref wins over one read out of a browser URL: a person who
         # wrote `@main` meant `@main`, whatever page the rest was copied from.
+        written = text
         text, ref = _split_trailing_ref(text)
+        if not ref and len(text) < len(written):
+            # `repo@` with nothing after it: a ref was meant, and none given.
+            raise MapSourceError(f"{uri!r} has an '@' but names no ref after it.")
         repo_url, web_ref, web_path = _normalise_web_url(text)
         ref = ref or web_ref
         path = path.strip("/") or web_path

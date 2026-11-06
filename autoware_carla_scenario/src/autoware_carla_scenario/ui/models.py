@@ -18,6 +18,9 @@ class SessionSummary(BaseModel):
     scenario_name: str
     passed_count: int
     total_count: int
+    #: Cases with no result yet (a SLURM batch's cases not collected), which
+    #: neither passed nor failed.
+    pending_count: int = 0
 
 
 class SessionItem(BaseModel):

@@ -8,20 +8,24 @@ only way to catch a template that renders but shows the wrong thing.
 
 from __future__ import annotations
 
+import errno
+import html
 import io
 import math
+import os
 import re
 import threading
 import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, MutableMapping, TypeVar
 
 import pytest
 import yaml
 from fastapi.testclient import TestClient
 
 from autoware_carla_scenario.authoring.models import (
+    AUTO_MODEL,
     ActionNode,
     ConditionNode,
     Entity,
@@ -167,7 +171,8 @@ def client(tmp_path: Path, at_repo_root: Path) -> TestClient:
     # A new draft names the fixture map relative to the repository root, and
     # the editor resolves it (and its map roots) against the working directory.
     return TestClient(
-        create_app(draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages")
+        create_app(draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages"),
+        base_url="http://127.0.0.1",
     )
 
 
@@ -1025,6 +1030,132 @@ class TestFieldsAFormCannotLeaveUnset:
         assert params["lane_changes"] is None
         assert params["follow_visibility"] is None
 
+    def test_what_the_bool_controls_post_validates(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The editor's own output is never refused by the bool check (#1459):
+        a checkbox checked and cleared, a nullable select on, off and blank."""
+        for type_id in ("traffic_signal", "traffic_parameters"):
+            client.post(
+                f"/draft/{draft_id}/action", data={"type_id": type_id, "actor": ""}
+            )
+        nodes = {
+            a.type: a.id
+            for a in _document(store, draft_id).actions
+            if a.type in ("traffic_signal", "traffic_parameters")
+        }
+        signal_url = f"/draft/{draft_id}/action/{nodes['traffic_signal']}"
+        traffic_url = f"/draft/{draft_id}/action/{nodes['traffic_parameters']}"
+
+        def bool_issues() -> list[str]:
+            return [
+                f"{i.path}: {i.message}"
+                for i in validate_document(_document(store, draft_id)).issues
+                if "true or false" in i.message
+            ]
+
+        for node_id in nodes.values():
+            data = _inspector_post(client, draft_id, "action", node_id)
+            client.post(f"/draft/{draft_id}/action/{node_id}", data=data)
+        assert _action(store, draft_id, nodes["traffic_signal"]).params["freeze"]
+        assert bool_issues() == []
+
+        data = _inspector_post(client, draft_id, "action", nodes["traffic_signal"])
+        data.pop("freeze", None)  # the box cleared
+        client.post(signal_url, data=data)
+        stored = _action(store, draft_id, nodes["traffic_signal"]).params
+        assert stored["freeze"] is False
+        assert bool_issues() == []
+
+        for choice, expected in (("on", True), ("off", False), ("", None)):
+            client.post(traffic_url, data={"lane_changes": choice})
+            stored = _action(store, draft_id, nodes["traffic_parameters"]).params
+            assert stored["lane_changes"] is expected
+            assert bool_issues() == []
+
+    @pytest.mark.parametrize(
+        ("spelling", "expected"),
+        [
+            ("false", False),
+            ("OFF", False),
+            ("0", False),
+            ("no", False),
+            ("yes", True),
+            (" On ", True),
+            ("1", True),
+        ],
+    )
+    def test_a_hand_written_bool_shows_what_the_compiler_reads(
+        self,
+        client: TestClient,
+        store: DraftStore,
+        draft_id: str,
+        spelling: str,
+        expected: bool,
+    ) -> None:
+        """A bool spelled in text renders as the compiler reads it (#1462): a
+        checkbox for ``"false"`` is unchecked, so the next post keeps it off,
+        and a nullable select shows On or Off, not by the text's truthiness."""
+        for type_id in ("traffic_signal", "traffic_parameters"):
+            client.post(
+                f"/draft/{draft_id}/action", data={"type_id": type_id, "actor": ""}
+            )
+        draft = _draft(store, draft_id)
+        nodes = {
+            a.type: a
+            for a in draft.document.actions
+            if a.type in ("traffic_signal", "traffic_parameters")
+        }
+        nodes["traffic_signal"].params["freeze"] = spelling
+        nodes["traffic_parameters"].params["lane_changes"] = spelling
+        store.save(draft)
+        signal_id = nodes["traffic_signal"].id
+        traffic_id = nodes["traffic_parameters"].id
+
+        data = _inspector_post(client, draft_id, "action", signal_id)
+        assert ("freeze" in data) is expected
+        client.post(f"/draft/{draft_id}/action/{signal_id}", data=data)
+        assert _action(store, draft_id, signal_id).params["freeze"] is expected
+
+        data = _inspector_post(client, draft_id, "action", traffic_id)
+        assert data["lane_changes"] == ("on" if expected else "off")
+        client.post(f"/draft/{draft_id}/action/{traffic_id}", data=data)
+        assert _action(store, draft_id, traffic_id).params["lane_changes"] is expected
+
+    def test_a_blank_bool_checkbox_shows_its_default(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Blank text is the field's default to the compiler, so to the box."""
+        client.post(
+            f"/draft/{draft_id}/action",
+            data={"type_id": "traffic_signal", "actor": ""},
+        )
+        draft = _draft(store, draft_id)
+        node = next(a for a in draft.document.actions if a.type == "traffic_signal")
+        node.params["freeze"] = ""
+        store.save(draft)
+        data = _inspector_post(client, draft_id, "action", node.id)
+        # freeze defaults to True.
+        assert data.get("freeze") == "on"
+
+    def test_a_forged_bool_post_is_refused_not_stored_as_off(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        client.post(
+            f"/draft/{draft_id}/action",
+            data={"type_id": "traffic_parameters", "actor": ""},
+        )
+        node = next(
+            a
+            for a in _document(store, draft_id).actions
+            if a.type == "traffic_parameters"
+        )
+        client.post(f"/draft/{draft_id}/action/{node.id}", data={"lane_changes": "on"})
+        client.post(
+            f"/draft/{draft_id}/action/{node.id}", data={"lane_changes": "keep"}
+        )
+        assert _action(store, draft_id, node.id).params["lane_changes"] is True
+
     def test_a_required_select_with_no_value_stores_nothing(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
@@ -1080,6 +1211,60 @@ class TestFieldsAFormCannotLeaveUnset:
         client.post(f"/draft/{draft_id}/action/{node.id}", data={"location": "parking"})
         data = _inspector_post(client, draft_id, "action", node.id)
         assert data["location"] == "parking"
+
+    def test_an_entity_the_document_lacks_survives_a_save(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Shown as "choose", it was cleared by the next post (#1519)."""
+        draft = _draft(store, draft_id)
+        trigger = _present(draft.document.actions[0].trigger, "trigger")
+        node = next(c for c in trigger.children if c.type == "entity_distance")
+        node.params["source"] = "ghost"
+        store.save(draft)
+
+        body = client.get(f"/draft/{draft_id}/inspector/{node.id}").text
+        select = body.split('name="source"')[1].split("</select>")[0]
+        assert '<option value="ghost" selected>' in select
+        assert "no such entity" in select
+
+        data = _inspector_post(client, draft_id, "condition", node.id)
+        assert data["source"] == "ghost"
+        client.post(f"/draft/{draft_id}/condition/{node.id}", data=data)
+        assert _condition(store, draft_id, node.id).params["source"] == "ghost"
+
+    def test_an_action_the_document_lacks_survives_a_save(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The action picker keeps an unknown id as the entity picker does."""
+        client.post(
+            f"/draft/{draft_id}/condition",
+            data={"slot": "pass", "type_id": "action_state"},
+        )
+        draft = _draft(store, draft_id)
+        node = draft.document.assertions.pass_conditions[-1]
+        assert node.type == "action_state"
+        node.params["action"] = "deleted_action"
+        store.save(draft)
+
+        body = client.get(f"/draft/{draft_id}/inspector/{node.id}").text
+        select = body.split('name="action"')[1].split("</select>")[0]
+        assert '<option value="deleted_action" selected>' in select
+        assert "no such action" in select
+
+        data = _inspector_post(client, draft_id, "condition", node.id)
+        assert data["action"] == "deleted_action"
+        client.post(f"/draft/{draft_id}/condition/{node.id}", data=data)
+        assert _condition(store, draft_id, node.id).params["action"] == "deleted_action"
+
+    def test_a_known_entity_shows_no_extra_option(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        trigger = _present(_document(store, draft_id).actions[0].trigger, "trigger")
+        node = next(c for c in trigger.children if c.type == "entity_distance")
+        body = client.get(f"/draft/{draft_id}/inspector/{node.id}").text
+        select = body.split('name="source"')[1].split("</select>")[0]
+        assert "no such entity" not in select
+        assert len(re.findall(r"\bselected\b", select)) == 1
 
 
 class TestPredicateEditing:
@@ -1432,7 +1617,9 @@ class TestSpawnConstraints:
 
         monkeypatch.setenv(MAP_VIEWER_ENV, "/vendor/viewer.js")
         map_preview.clear_cache()
-        client = TestClient(create_app(draft_dir=tmp_path / "drafts"))
+        client = TestClient(
+            create_app(draft_dir=tmp_path / "drafts"), base_url="http://127.0.0.1"
+        )
         draft_id = (
             client.post("/new", data={"kind": "cut_in"}, follow_redirects=False)
             .headers["location"]
@@ -1514,6 +1701,28 @@ class TestScenarioMetadata:
         )
         assert document.map.no_3d_model_lanelet_ids == [3, 4, 41]
 
+    @pytest.mark.parametrize("ids", ["12, 3.5", "12 abc"])
+    def test_a_bad_excluded_lanelet_id_is_explained_and_not_stored(
+        self, client: TestClient, store: DraftStore, draft_id: str, ids: str
+    ) -> None:
+        """A typo in the id list is an inline error, not an HTTP 500 (#1518)."""
+        client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"map_no_3d_model_lanelet_ids": "3, 4"},
+        )
+        response = client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"title": "Renamed", "map_no_3d_model_lanelet_ids": ids},
+        )
+        assert response.status_code == 200
+        bad = ids.split()[-1]
+        assert f"Excluded lanelet IDs: must be whole numbers, got {bad!r}" in (
+            html.unescape(response.text)
+        )
+        document = _document(store, draft_id)
+        assert document.map.no_3d_model_lanelet_ids == [3, 4]
+        assert document.title != "Renamed"
+
     def test_an_invalid_identifier_is_refused(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
@@ -1521,7 +1730,7 @@ class TestScenarioMetadata:
             f"/draft/{draft_id}/scenario", data={"scenario_id": "Not Valid"}
         )
         assert "Scenario id" in response.text
-        assert _document(store, draft_id).id == "cut_in"
+        assert _document(store, draft_id).id == "my_cut_in"
 
     @pytest.mark.parametrize(
         ("field", "label"),
@@ -1607,6 +1816,17 @@ class TestValidateSaveExport:
         response = client.post(f"/draft/{draft_id}/validate")
         assert "cannot be exported" in response.text
 
+    def test_a_built_in_scenario_id_is_an_error(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The id ``cut_in`` names a built-in scenario: stored, then refused (#1808)."""
+        client.post(f"/draft/{draft_id}/scenario", data={"scenario_id": "cut_in"})
+        assert _document(store, draft_id).id == "cut_in"
+        response = client.post(f"/draft/{draft_id}/validate")
+        text = html.unescape(response.text)
+        assert "cannot be exported" in text
+        assert "names a built-in scenario" in text
+
     def test_saving_a_draft_reports_where_it_went(
         self, client: TestClient, draft_id: str
     ) -> None:
@@ -1644,7 +1864,7 @@ class TestValidateSaveExport:
         assert download.status_code == 200
         assert download.headers["content-type"] == "application/zip"
         assert (
-            'filename="cut_in-wheelhouse.zip"'
+            'filename="my_cut_in-wheelhouse.zip"'
             in download.headers["content-disposition"]
         )
 
@@ -1653,11 +1873,11 @@ class TestValidateSaveExport:
         # One top-level directory, so unpacking does not spray wheels into the
         # CWD -- and one named after the scenario, so two of them can be
         # unpacked side by side.
-        assert {n.split("/")[0] for n in names} == {"cut_in_scenario_wheelhouse"}
+        assert {n.split("/")[0] for n in names} == {"my_cut_in_scenario_wheelhouse"}
         assert any(n.endswith(".whl") for n in names)
-        assert "cut_in_scenario_wheelhouse/requirements.txt" in names
+        assert "my_cut_in_scenario_wheelhouse/requirements.txt" in names
         # Provenance travels in the download; the tree holding it is deleted.
-        assert "cut_in_scenario_wheelhouse/manifest.yaml" in names
+        assert "my_cut_in_scenario_wheelhouse/manifest.yaml" in names
 
     def test_the_uv_project_is_not_left_on_the_host(
         self, client: TestClient, offline_export: None, tmp_path: Path, draft_id: str
@@ -1667,7 +1887,7 @@ class TestValidateSaveExport:
         client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
         packages = tmp_path / "packages"
         staged = sorted(str(p.relative_to(packages)) for p in packages.rglob("*"))
-        assert staged == [draft_id, f"{draft_id}/cut_in-wheelhouse.zip"]
+        assert staged == [draft_id, f"{draft_id}/my_cut_in-wheelhouse.zip"]
 
     def test_downloading_before_an_export_is_an_error_not_a_traceback(
         self, client: TestClient, draft_id: str
@@ -1754,6 +1974,165 @@ class TestFilesThatAreNotDrafts:
         assert (tmp_path / "notes.yaml").is_file()
 
 
+_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _refuse_writes(monkeypatch: pytest.MonkeyPatch, code: int = errno.EACCES) -> None:
+    """Make every draft write fail as a drafts directory refusing it would.
+
+    A monkeypatch rather than ``chmod``, so it also holds as root.  The store
+    writes a temporary ``.partial`` file first, so refusing that refuses the
+    write, before anything reaches the draft itself.
+    """
+    open_ = Path.open
+
+    def _open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name.endswith(".partial"):
+            raise OSError(code, os.strerror(code), str(self))
+        return open_(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _open)
+
+
+def _assert_storage_page(response: Any, drafts: Path, status: int = 500) -> None:
+    assert response.status_code == status
+    assert "Cannot save drafts" in response.text
+    assert str(drafts) in html.unescape(response.text)
+    assert "Traceback" not in response.text
+
+
+class TestADraftsDirectoryTheEditorCannotUse:
+    """An unreadable draft or an unwritable drafts directory is no 500 traceback (#1747)."""
+
+    def test_the_list_skips_an_unreadable_draft(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        other = client.post("/new", data={"title": "Other"}, follow_redirects=False)
+        other_id = other.headers["location"].rsplit("/", 1)[-1]
+        refused = tmp_path / "drafts" / f"{draft_id}.yaml"
+        read_text = Path.read_text
+
+        def _read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+            if self == refused:
+                raise PermissionError(13, "Permission denied", str(self))
+            return read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _read_text)
+        response = client.get("/")
+        assert response.status_code == 200
+        assert other_id in response.text
+        assert draft_id not in response.text
+        opened = client.get(f"/draft/{draft_id}")
+        assert opened.status_code == 404
+        assert "cannot be read" in opened.text
+
+    @pytest.mark.skipif(_AS_ROOT, reason="root reads files whatever their mode")
+    def test_a_draft_without_read_permission_is_skipped_and_a_404(
+        self, client: TestClient, tmp_path: Path, draft_id: str
+    ) -> None:
+        path = tmp_path / "drafts" / f"{draft_id}.yaml"
+        path.chmod(0)
+        try:
+            assert client.get("/").status_code == 200
+            assert client.get(f"/draft/{draft_id}").status_code == 404
+        finally:
+            path.chmod(0o644)
+
+    def test_a_new_draft_that_cannot_be_written_names_the_directory(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _refuse_writes(monkeypatch)
+        response = client.post("/new", data={"kind": "cut_in"}, follow_redirects=False)
+        _assert_storage_page(response, tmp_path / "drafts")
+        assert "Permission denied" in response.text
+        assert not list((tmp_path / "drafts").glob("*"))
+
+    def test_saving_into_an_unwritable_directory_keeps_the_draft(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        drafts = tmp_path / "drafts"
+        before = (drafts / f"{draft_id}.yaml").read_text(encoding="utf-8")
+        _refuse_writes(monkeypatch)
+        response = client.post(f"/draft/{draft_id}/save", data={"title": "Renamed"})
+        _assert_storage_page(response, drafts)
+        assert (drafts / f"{draft_id}.yaml").read_text(encoding="utf-8") == before
+        assert sorted(p.name for p in drafts.iterdir()) == [f"{draft_id}.yaml"]
+
+    def test_an_edit_that_cannot_be_saved_is_the_storage_error(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The inspector's edits save through the same path; the storage error
+        # is not shown as a notice beside the form, as an EditorError is.
+        _refuse_writes(monkeypatch)
+        response = client.post(f"/draft/{draft_id}/entity", data={"kind": "vehicle"})
+        _assert_storage_page(response, tmp_path / "drafts")
+
+    def test_a_full_disk_is_a_507(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _refuse_writes(monkeypatch, errno.ENOSPC)
+        response = client.post(f"/draft/{draft_id}/save", data={"title": "Renamed"})
+        _assert_storage_page(response, tmp_path / "drafts", status=507)
+
+    def test_a_new_draft_on_a_map_that_cannot_be_written(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(EditorService, "use_map", lambda self, document, uri: None)
+        _refuse_writes(monkeypatch)
+        response = client.post(
+            "/maps/new",
+            data={"uri": "https://example.com/maps.git#town", "title": "On a map"},
+            follow_redirects=False,
+        )
+        _assert_storage_page(response, tmp_path / "drafts")
+
+    def test_a_delete_the_directory_refuses_is_the_storage_error(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def _unlink(self: Path, missing_ok: bool = False) -> None:
+            raise PermissionError(13, "Permission denied", str(self))
+
+        monkeypatch.setattr(Path, "unlink", _unlink)
+        response = client.post(f"/draft/{draft_id}/delete", follow_redirects=False)
+        _assert_storage_page(response, tmp_path / "drafts")
+        assert "could not be removed from" in response.text
+
+    @pytest.mark.skipif(_AS_ROOT, reason="root writes whatever the mode")
+    def test_a_read_only_drafts_directory(
+        self, client: TestClient, tmp_path: Path, draft_id: str
+    ) -> None:
+        drafts = tmp_path / "drafts"
+        drafts.chmod(0o555)
+        try:
+            saved = client.post(f"/draft/{draft_id}/save", data={"title": "Renamed"})
+            _assert_storage_page(saved, drafts)
+            created = client.post("/new", data={"kind": "cut_in"})
+            _assert_storage_page(created, drafts)
+        finally:
+            drafts.chmod(0o755)
+        assert sorted(p.name for p in drafts.iterdir()) == [f"{draft_id}.yaml"]
+
+
 class TestADraftWhoseStoredIdIsNotItsFileName:
     """A draft is the file it is read from, whatever id it stores (#820)."""
 
@@ -1826,6 +2205,29 @@ class TestEnvironmentTrack:
             "traffic_source",
             "urban_construction_zone",
         }
+
+    def test_a_motorcycle_track_offers_what_a_vehicles_does(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A motorcycle is a vehicle on a motorcycle's blueprint: added from
+        the canvas as one, it is offered every action an NPC vehicle is."""
+        client.post(f"/draft/{draft_id}/entity", data={"kind": "motorcycle"})
+        rider = _entity(store, draft_id, "moto1")
+        assert rider.kind == "motorcycle"
+        assert rider.vehicle_type == AUTO_MODEL
+        body = client.get(f"/draft/{draft_id}").text
+        assert '<option value="motorcycle">Motorcycle</option>' in body
+
+        forms = re.findall(r'<form[^>]*?/action"[\s\S]*?</form>', body)
+        offers = {}
+        for form in forms:
+            actor = re.search(r'name="actor" value="([^"]*)"', form)
+            assert actor is not None
+            offers[actor.group(1)] = set(re.findall(r'<option value="([^"]+)"', form))
+        assert offers["moto1"] == offers["npc1"]
+        inspector = client.get(f"/draft/{draft_id}/inspector/moto1").text
+        assert ">Motorcycle<" in inspector
+        assert 'name="initial_speed_kmh"' in inspector
 
     def test_a_pedestrian_track_offers_walking_and_following_a_path(
         self, client: TestClient, draft_id: str
@@ -2001,7 +2403,9 @@ class TestScenarioMap:
         body = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
 
         assert "Pattern <b>1</b> of" in body
-        assert "bound: match 1 of" in body
+        # "bound: match 1 of", or "match 1 of N is dropped by the sweep" when
+        # the starter's stop_line_offset fails on it (#1524).
+        assert "match 1 of" in body
         # The bound lanelet is a match of the search, not the stored default.
         highlight = body.split('data-highlight="', 1)[1].split('"', 1)[0]
         assert "183" in highlight and "141" in highlight
@@ -2126,6 +2530,92 @@ class TestScenarioMap:
         client.get(f"/draft/{draft_id}/map-view")
 
         assert len(scans) == 2
+
+    @staticmethod
+    def _offset_from_the_stop_line(store: DraftStore, draft_id: str) -> None:
+        """Derive NPC1's spawn s 40 m before its lanelet's stop line (#1524).
+
+        On the fixture map that walks some picks back onto a predecessor and
+        fails on others, which have no stop line ahead -- the two ways the
+        sweep's binding moves or drops a run.
+        """
+        from autoware_carla_scenario.authoring.models import BindingRef
+
+        draft = _draft(store, draft_id)
+        spawn = _present(draft.document.entity("npc1"), "npc1").spawn
+        spawn.s.mode = "derived"
+        spawn.s.binding = BindingRef(type="stop_line_offset", params={"offset": 40.0})
+        store.save(draft)
+
+    def test_each_pattern_is_the_run_the_sweep_performs(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A derived spawn offset places the spawn where the sweep puts it (#1524).
+
+        The pattern used to pin the spawn on the pick, while the sweep resolves
+        its binding: a walk-back moves it to a predecessor, and a pick whose
+        binding fails is no run at all.  Stepping every pattern must give the
+        sweep's cases, in order, with the dropped picks said to be dropped.
+        """
+        from autoware_carla_scenario.authoring.hydra_config import (
+            build_scenario_config,
+            swept_slot,
+        )
+        from autoware_carla_scenario.editor import map_preview, scenario_map
+        from autoware_carla_scenario.sweeper.expand import _expand_lanelets
+
+        self._offset_from_the_stop_line(store, draft_id)
+        document = _document(store, draft_id)
+        slot = _present(swept_slot(document), "the swept slot")
+        sweep = build_scenario_config(document)["sweep"]
+        (key,) = sweep["constraints"]
+        sweep["constraints"][key] = map_preview.materialize_constraints(
+            slot.choice.constraints, document
+        )
+        loaded = map_preview._load(document, map_preview.map_paths(document))
+        cases = [
+            dict(item.split("=", 1) for item in case)
+            for case in _expand_lanelets(sweep, loaded.lanelet_map)
+        ]
+
+        count = scenario_map.build_map_view(document, load_map=True).pattern_count
+        runs: list[tuple[str, str]] = []
+        walked_back = dropped = 0
+        for pattern in range(count):
+            view = scenario_map.build_map_view(document, pattern=pattern)
+            (spawn,) = [
+                p for p in view.points if p.owner_id == "npc1" and p.role == "spawn"
+            ]
+            if view.dropped:
+                dropped += 1
+                assert "dropped by the sweep" in spawn.note
+                assert not spawn.bound
+                continue
+            walked_back += "walked back" in spawn.note
+            runs.append((str(spawn.lanelet_id), spawn.detail))
+
+        assert dropped and walked_back, "the fixture no longer exercises #1524"
+        assert dropped == count - len(cases)
+        assert [lanelet for lanelet, _ in runs] == [case[key] for case in cases]
+        assert [detail.split(" m ", 1)[0] for _, detail in runs] == [
+            f"{float(case['scenario.spawn_overrides.npc1.s']):.1f}" for case in cases
+        ]
+
+    def test_a_pattern_the_sweep_drops_says_so(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._offset_from_the_stop_line(store, draft_id)
+        first = client.get(f"/draft/{draft_id}/map-view?load_map=1").text
+        count = int(first.split("Pattern <b>1</b> of ", 1)[1].split("\n", 1)[0].strip())
+
+        bodies = (
+            client.get(f"/draft/{draft_id}/map-view?pattern={pattern}").text
+            for pattern in range(count)
+        )
+        body = next(b for b in bodies if "The sweep drops pattern" in b)
+        assert "is dropped by the sweep: its offset binding fails" in body
+        # The binding's own reason, which is what the sweep logs.
+        assert "stop_line_offset" in body
 
     def test_the_script_places_the_pins_it_is_handed(self) -> None:
         """The labels are the server's; only the coordinates are the viewer's."""
@@ -2369,6 +2859,22 @@ class TestTheJunctionEditor:
             "group_2",
         ]
 
+    def test_a_bad_regulatory_element_id_is_explained_and_not_stored(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A typo in the id list is an inline error, not an HTTP 500 (#1518)."""
+        self._groups(client, draft_id, "ns")
+        response = client.post(
+            f"/draft/{draft_id}/signal-group/0",
+            data={"name": "renamed", "lanelet2_regulatory_element_ids": "1330, 1333x"},
+        )
+        assert response.status_code == 200
+        assert "Regulatory element IDs: must be whole numbers, got '1333x'" in (
+            html.unescape(response.text)
+        )
+        group = self._map(store, draft_id).signal_groups[0]
+        assert (group.name, group.lanelet2_regulatory_element_ids) == ("ns", [1330])
+
     def test_renaming_a_group_carries_into_the_phases_that_set_it(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
@@ -2396,13 +2902,90 @@ class TestTheJunctionEditor:
             },
         )
 
+        # The form ticks "ew" on ns's side too, so a browser posts it back.
         client.post(
             f"/draft/{draft_id}/signal-group/0",
-            data={"name": "north_south", "lanelet2_regulatory_element_ids": "1330"},
+            data={
+                "name": "north_south",
+                "lanelet2_regulatory_element_ids": "1330",
+                "conflicts_with": "ew",
+            },
         )
 
         groups = self._map(store, draft_id).signal_groups
         assert groups[1].conflicts_with == ["north_south"]
+
+    def test_unticking_a_conflict_declared_on_the_other_side_removes_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The box reads both sides, so unticking it clears both (#1517)."""
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(
+            f"/draft/{draft_id}/signal-group/1",
+            data={
+                "name": "ew",
+                "lanelet2_regulatory_element_ids": "1331",
+                "conflicts_with": "ns",
+            },
+        )
+
+        client.post(
+            f"/draft/{draft_id}/signal-group/0",
+            data={"name": "ns", "lanelet2_regulatory_element_ids": "1330"},
+        )
+
+        groups = self._map(store, draft_id).signal_groups
+        assert groups[0].conflicts_with == []
+        assert groups[1].conflicts_with == []
+        body = client.get(f"/draft/{draft_id}/inspector/environment").text
+        first = body.split('name="conflicts_with" value="ew"')[1].split(">")[0]
+        assert "checked" not in first
+
+    def test_unticking_one_conflict_keeps_the_ticked_ones(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Only the groups left unticked lose their reference to this one."""
+        self._groups(client, draft_id, "ns", "ew", "diag")
+        document = _document(store, draft_id)
+        document.map.signal_groups[1].conflicts_with = ["ns", "diag"]
+        document.map.signal_groups[2].conflicts_with = ["ns"]
+
+        EditorService(store).update_signal_group(
+            document, 0, {"name": "ns", "conflicts_with": ["diag"]}
+        )
+
+        groups = document.map.signal_groups
+        assert groups[0].conflicts_with == ["diag"]
+        assert groups[1].conflicts_with == ["diag"]
+        assert groups[2].conflicts_with == ["ns"]
+
+    def test_renaming_and_unticking_in_one_post_drops_the_renamed_reference(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The rename carries the reference first; the untick then removes it."""
+        self._groups(client, draft_id, "ns", "ew")
+        document = _document(store, draft_id)
+        document.map.signal_groups[1].conflicts_with = ["ns"]
+
+        EditorService(store).update_signal_group(
+            document, 0, {"name": "north_south", "conflicts_with": []}
+        )
+
+        assert document.map.signal_groups[1].conflicts_with == []
+
+    def test_unticking_on_one_of_two_same_named_groups_leaves_the_references(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """An ``ns`` in another group's list may mean the other ``ns``."""
+        self._same_named_groups(client, store, draft_id)
+        document = _document(store, draft_id)
+
+        EditorService(store).update_signal_group(
+            document, 0, {"name": "ns", "conflicts_with": []}
+        )
+
+        assert document.map.signal_groups[1].conflicts_with == ["ns"]
+        assert document.map.signal_groups[2].conflicts_with == ["ns", "ew"]
 
     def test_a_conflict_reads_the_same_from_either_side(
         self, client: TestClient, store: DraftStore, draft_id: str
@@ -2435,6 +3018,106 @@ class TestTheJunctionEditor:
         assert [g.name for g in document_map.signal_groups] == ["ew"]
         phase = document_map.traffic_signal_controllers[0].phases[0]
         assert [state.group for state in phase.states] == ["ew"]
+
+    def test_deleting_a_group_takes_the_conflicts_naming_it_with_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(
+            f"/draft/{draft_id}/signal-group/1",
+            data={
+                "name": "ew",
+                "lanelet2_regulatory_element_ids": "1331",
+                "conflicts_with": "ns",
+            },
+        )
+
+        client.post(f"/draft/{draft_id}/signal-group/0/delete")
+
+        assert self._map(store, draft_id).signal_groups[0].conflicts_with == []
+
+    def _same_named_groups(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """``ns``, ``ew`` and a hand-written second ``ns``, with a cycle.
+
+        The editor never makes two groups share a name, so the duplicate is
+        written into the draft the way a hand-edited document would hold it.
+        """
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-group")
+        draft = _draft(store, draft_id)
+        groups = draft.document.map.signal_groups
+        groups[1].conflicts_with = ["ns"]
+        groups[2].name = "ns"
+        groups[2].conflicts_with = ["ns", "ew"]
+        store.save(draft)
+
+    def test_deleting_one_of_two_same_named_groups_keeps_the_references(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A hand-written duplicate: the name the phases use is still declared."""
+        self._same_named_groups(client, store, draft_id)
+
+        client.post(f"/draft/{draft_id}/signal-group/2/delete")
+
+        document_map = self._map(store, draft_id)
+        assert [g.name for g in document_map.signal_groups] == ["ns", "ew"]
+        assert document_map.signal_groups[1].conflicts_with == ["ns"]
+        phase = document_map.traffic_signal_controllers[0].phases[0]
+        assert [state.group for state in phase.states] == ["ns", "ew"]
+
+    def test_renaming_one_of_two_same_named_groups_leaves_the_other_its_references(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The phases and conflicts naming ``ns`` still mean the ``ns`` left."""
+        self._same_named_groups(client, store, draft_id)
+
+        client.post(
+            f"/draft/{draft_id}/signal-group/2",
+            data={
+                "name": "diagonal",
+                "lanelet2_regulatory_element_ids": "1332",
+                "conflicts_with": ["ns", "ew"],
+            },
+        )
+
+        groups = self._map(store, draft_id).signal_groups
+        assert [g.name for g in groups] == ["ns", "ew", "diagonal"]
+        assert groups[0].conflicts_with == []
+        assert groups[1].conflicts_with == ["ns"]
+        assert groups[2].conflicts_with == ["ns", "ew"]
+        phase = self._map(store, draft_id).traffic_signal_controllers[0].phases[0]
+        assert [state.group for state in phase.states] == ["ns", "ew"]
+
+    def test_renaming_a_group_that_conflicts_with_itself_keeps_the_self_reference(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Rewritten with the rest, so the validator still has it to report.
+
+        The form always posts the conflicts and never offers a group its own
+        name, so this is the service, applying a rename alone.
+        """
+        self._groups(client, draft_id, "ns", "ew")
+        document = _document(store, draft_id)
+        document.map.signal_groups[0].conflicts_with = ["ns"]
+
+        EditorService(store).update_signal_group(document, 0, {"name": "north_south"})
+
+        assert document.map.signal_groups[0].conflicts_with == ["north_south"]
+
+    def test_renaming_one_of_two_same_named_groups_keeps_its_conflict_with_the_other(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Its ``ns`` is the sibling it shared the name with, not itself."""
+        self._same_named_groups(client, store, draft_id)
+        document = _document(store, draft_id)
+
+        EditorService(store).update_signal_group(document, 2, {"name": "diagonal"})
+
+        assert document.map.signal_groups[2].conflicts_with == ["ns", "ew"]
+        assert document.map.signal_groups[1].conflicts_with == ["ns"]
 
     # -- controllers and phases -------------------------------------------
 
@@ -2485,6 +3168,85 @@ class TestTheJunctionEditor:
         assert phase.name == "ns_amber"
         assert phase.duration_seconds == 3.0
         assert {s.group: s.state for s in phase.states} == {"ns": "yellow", "ew": "red"}
+
+    @staticmethod
+    def _phase_states_spelled(store: DraftStore, draft_id: str, **states: str) -> None:
+        """Set the first phase's group states as a hand-written file spells them.
+
+        The draft is read back through the model, so a CARLA spelling arrives
+        lower-cased; the template compares lower-cased as well, and either
+        alone keeps these tests green.  An unknown word passes both untouched,
+        which is what the "not a state" test relies on.
+        """
+        from autoware_carla_scenario.authoring.models import SignalStateRef
+
+        draft = _draft(store, draft_id)
+        phase = draft.document.map.traffic_signal_controllers[0].phases[0]
+        phase.states = [
+            SignalStateRef(group=group, state=state) for group, state in states.items()
+        ]
+        store.save(draft)
+
+    @staticmethod
+    def _colour_select(client: TestClient, draft_id: str, group: str) -> str:
+        body = client.get(f"/draft/{draft_id}/inspector/environment").text
+        return body.split(f'name="state_{group}"')[1].split("</select>")[0]
+
+    def test_a_carla_spelled_state_is_read_lower_cased(self) -> None:
+        """The model stores the spelling the validator and runtime mean (#1519)."""
+        from autoware_carla_scenario.authoring.models import SignalStateRef
+
+        assert SignalStateRef(group="ns", state="Red").state == "red"
+        assert SignalStateRef(group="ns", state="YELLOW").state == "yellow"
+        # Only the case is normalised; an unknown word stays for the validator.
+        assert SignalStateRef(group="ns", state="Purple").state == "purple"
+
+    def test_a_carla_spelled_state_shows_as_its_colour(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """It used to match no option, so the browser showed "green"."""
+        self._groups(client, draft_id, "ns", "ew")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        self._phase_states_spelled(store, draft_id, ns="Red", ew="Yellow")
+
+        ns = self._colour_select(client, draft_id, "ns")
+        ew = self._colour_select(client, draft_id, "ew")
+        assert re.search(r'<option value="red"\s+selected>', ns)
+        assert re.search(r'<option value="yellow"\s+selected>', ew)
+        assert len(re.findall(r"\bselected\b", ns)) == 1
+        assert "not a state" not in ns
+
+    def test_editing_only_the_duration_keeps_a_carla_spelled_red(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The silent flip of #1519: a duration edit posted state=green."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        self._phase_states_spelled(store, draft_id, ns="Red")
+
+        target = f"/draft/{draft_id}/signal-controller/0/phase/0"
+        form = _FormPost(target)
+        form.feed(client.get(f"/draft/{draft_id}/inspector/environment").text)
+        assert form.found
+        assert form.data["state_ns"] == "red"
+        form.data["duration_seconds"] = "7"
+        client.post(target, data=form.data)
+
+        phase = self._map(store, draft_id).traffic_signal_controllers[0].phases[0]
+        assert phase.duration_seconds == 7.0
+        assert {s.group: s.state for s in phase.states} == {"ns": "red"}
+
+    def test_a_state_that_is_no_colour_is_kept_by_the_form(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """Left for the validator to name, not replaced by the first colour."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        self._phase_states_spelled(store, draft_id, ns="purple")
+
+        select = self._colour_select(client, draft_id, "ns")
+        assert '<option value="purple" selected>' in select
+        assert "not a state" in select
 
     def test_a_state_named_by_element_id_survives_the_form(
         self, client: TestClient, store: DraftStore, draft_id: str
@@ -2689,6 +3451,38 @@ class TestTheJunctionEditor:
         node = _present(_document(store, draft_id).action(node_id), "the card")
         assert node.params["signal_phase"] == ""
 
+    def test_deleting_a_phase_shared_within_its_cycle_keeps_the_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """A hand-written duplicate: the other ``phase_1`` is still declared."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase")
+        node_id = self._card(client, store, draft_id)
+        draft = _draft(store, draft_id)
+        draft.document.map.traffic_signal_controllers[0].phases[1].name = "phase_1"
+        store.save(draft)
+
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase/1/delete")
+
+        document = _document(store, draft_id)
+        phases = document.map.traffic_signal_controllers[0].phases
+        assert [p.name for p in phases] == ["phase_1"]
+        node = _present(document.action(node_id), "the card")
+        assert node.params["signal_phase"] == "phase_1"
+
+    def test_deleting_a_phase_of_one_of_two_same_named_controllers_keeps_the_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The other ``junction_1`` still has a ``phase_1`` the card resolves to."""
+        node_id = self._same_named_controllers(client, store, draft_id)
+
+        client.post(f"/draft/{draft_id}/signal-controller/1/phase/0/delete")
+
+        node = _present(_document(store, draft_id).action(node_id), "the card")
+        assert node.params["controller"] == "junction_1"
+        assert node.params["signal_phase"] == "phase_1"
+
     def test_deleting_a_controller_clears_the_cards_that_named_it(
         self, client: TestClient, store: DraftStore, draft_id: str
     ) -> None:
@@ -2772,6 +3566,102 @@ class TestTheJunctionEditor:
 
         node = _present(_document(store, draft_id).action(node_id), "the card")
         assert node.params["controller"] == "junction_1"
+        assert node.params["signal_phase"] == "phase_1"
+
+    def test_renaming_a_controller_carries_into_the_offsets_measuring_from_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(
+            f"/draft/{draft_id}/signal-controller/1",
+            data={
+                "name": "junction_2",
+                "reference": "junction_1",
+                "delay_seconds": "8",
+            },
+        )
+
+        client.post(f"/draft/{draft_id}/signal-controller/0", data={"name": "crossing"})
+
+        controllers = self._map(store, draft_id).traffic_signal_controllers
+        assert [c.name for c in controllers] == ["crossing", "junction_2"]
+        assert controllers[1].reference == "crossing"
+        assert controllers[1].delay_seconds == 8.0
+
+    def _same_named_controllers(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> Any:
+        """Two cycles called ``junction_1``, a third offset from it, and a card.
+
+        The editor never makes two controllers share a name, so the duplicate
+        is written into the draft the way a hand-edited document would hold it.
+        """
+        self._groups(client, draft_id, "ns")
+        for _ in range(3):
+            client.post(f"/draft/{draft_id}/signal-controller")
+        node_id = self._card(client, store, draft_id)
+        draft = _draft(store, draft_id)
+        controllers = draft.document.map.traffic_signal_controllers
+        controllers[1].name = "junction_1"
+        controllers[2].reference = "junction_1"
+        controllers[2].delay_seconds = 8.0
+        store.save(draft)
+        return node_id
+
+    def test_renaming_one_of_two_same_named_controllers_leaves_the_other_its_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The cards and offsets naming ``junction_1`` still mean the one left."""
+        node_id = self._same_named_controllers(client, store, draft_id)
+
+        client.post(f"/draft/{draft_id}/signal-controller/1", data={"name": "crossing"})
+
+        document = _document(store, draft_id)
+        controllers = document.map.traffic_signal_controllers
+        assert [c.name for c in controllers] == ["junction_1", "crossing", "junction_3"]
+        assert controllers[2].reference == "junction_1"
+        assert controllers[2].delay_seconds == 8.0
+        node = _present(document.action(node_id), "the card")
+        assert node.params["controller"] == "junction_1"
+        assert node.params["signal_phase"] == "phase_1"
+
+    def test_renaming_a_phase_shared_within_its_cycle_leaves_the_cards_alone(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The other ``phase_1`` of the cycle is still what the card names."""
+        self._groups(client, draft_id, "ns")
+        client.post(f"/draft/{draft_id}/signal-controller")
+        client.post(f"/draft/{draft_id}/signal-controller/0/phase")
+        node_id = self._card(client, store, draft_id)
+        draft = _draft(store, draft_id)
+        draft.document.map.traffic_signal_controllers[0].phases[1].name = "phase_1"
+        store.save(draft)
+
+        client.post(
+            f"/draft/{draft_id}/signal-controller/0/phase/1",
+            data={"name": "ns_green", "duration_seconds": "20", "state_ns": "green"},
+        )
+
+        document = _document(store, draft_id)
+        phases = document.map.traffic_signal_controllers[0].phases
+        assert [p.name for p in phases] == ["phase_1", "ns_green"]
+        node = _present(document.action(node_id), "the card")
+        assert node.params["signal_phase"] == "phase_1"
+
+    def test_renaming_a_phase_of_one_of_two_same_named_controllers_keeps_the_cards(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The other ``junction_1`` still has a ``phase_1`` the card resolves to."""
+        node_id = self._same_named_controllers(client, store, draft_id)
+
+        client.post(
+            f"/draft/{draft_id}/signal-controller/1/phase/0",
+            data={"name": "ns_green", "duration_seconds": "20", "state_ns": "green"},
+        )
+
+        node = _present(_document(store, draft_id).action(node_id), "the card")
         assert node.params["signal_phase"] == "phase_1"
 
     def test_deleting_a_controller_drops_the_offsets_that_measured_from_it(
@@ -3034,7 +3924,7 @@ class TestDerivedLanelets:
 class TestDraftsDoNotShareAnExport:
     """The staged wheelhouse belongs to a draft, not to a document id (#678).
 
-    Every draft made from one starter has the same document id -- ``cut_in``,
+    Every draft made from one starter has the same document id -- ``my_cut_in``,
     ``new_scenario`` -- so an archive keyed by it was one archive shared by all
     of them: one draft's link served another's export.
     """
@@ -3044,21 +3934,23 @@ class TestDraftsDoNotShareAnExport:
         service = app.state.service
         a = service.create_draft("cut_in", title="Draft A")
         b = service.create_draft("cut_in", title="Draft B")
-        assert a.document.id == b.document.id == "cut_in"
+        assert a.document.id == b.document.id == "my_cut_in"
         assert service.archive_path(a) != service.archive_path(b)
 
         archive = service.archive_path(a)
         archive.parent.mkdir(parents=True, exist_ok=True)
         archive.write_bytes(b"PK-wheelhouse-of-draft-A")
 
-        client = TestClient(app)
+        client = TestClient(app, base_url="http://127.0.0.1")
         other = client.get(f"/draft/{b.id}/wheelhouse.zip")
         assert other.status_code == 404
         assert "No exported wheelhouse" in other.text
         own = client.get(f"/draft/{a.id}/wheelhouse.zip")
         assert own.status_code == 200
         assert own.content == b"PK-wheelhouse-of-draft-A"
-        assert 'filename="cut_in-wheelhouse.zip"' in own.headers["content-disposition"]
+        assert (
+            'filename="my_cut_in-wheelhouse.zip"' in own.headers["content-disposition"]
+        )
 
     def test_exporting_one_draft_gives_the_other_nothing_to_download(
         self, client: TestClient, offline_export: None
@@ -3086,7 +3978,7 @@ class TestDraftsDoNotShareAnExport:
         download = client.get(f"/draft/{draft_id}/wheelhouse.zip")
         assert download.status_code == 200
         assert (
-            'filename="cut_in-wheelhouse.zip"'
+            'filename="my_cut_in-wheelhouse.zip"'
             in download.headers["content-disposition"]
         )
 
@@ -3139,6 +4031,219 @@ class TestDraftsDoNotShareAnExport:
         assert during.content == first
         after = client.get(f"/draft/{draft_id}/wheelhouse.zip").content
         assert zipfile.ZipFile(io.BytesIO(after)).namelist()
+
+
+class TestTheStagedWheelhouseLivesAsLongAsItsDraft:
+    """A staged wheelhouse is kept for every download, and goes with its draft (#1702).
+
+    The archive is a few hundred MB.  Nothing removed it, so a deleted draft's
+    archive -- which no route can reach any more -- stayed in the export
+    directory for good.
+    """
+
+    @staticmethod
+    def _stage(service: EditorService, draft: Draft, tmp_path: Path) -> Path:
+        """Stage a tiny wheelhouse for *draft*, as a finished export does."""
+        source = tmp_path / "src" / f"{draft.id}_wheelhouse"
+        source.mkdir(parents=True)
+        (source / "a-0.1.0-py3-none-any.whl").write_text("x", encoding="utf-8")
+        return service._stage_archive(source, draft)
+
+    def test_deleting_a_draft_removes_its_archive(self, tmp_path: Path) -> None:
+        service = EditorService(DraftStore(tmp_path / "drafts"), tmp_path / "exports")
+        doomed = service.create_draft()
+        kept = service.create_draft()
+        doomed_archive = self._stage(service, doomed, tmp_path)
+        kept_archive = self._stage(service, kept, tmp_path)
+        assert doomed_archive.is_file() and kept_archive.is_file()
+
+        assert service.delete_draft(doomed.id) is True
+        assert not (tmp_path / "exports" / doomed.id).exists()
+        # Another draft's archive is not the deleted draft's to remove.
+        assert kept_archive.is_file()
+        assert service.staged_archive(kept) == kept_archive
+
+    def test_deleting_a_missing_draft_touches_no_archive(self, tmp_path: Path) -> None:
+        """Nothing was deleted, so nothing staged is removed either."""
+        service = EditorService(DraftStore(tmp_path / "drafts"), tmp_path / "exports")
+        draft = service.create_draft()
+        archive = self._stage(service, draft, tmp_path)
+        service.store.path_for(draft.id).unlink()
+        assert service.delete_draft(draft.id) is False
+        assert archive.is_file()
+
+    def test_the_delete_route_removes_the_archive(
+        self, client: TestClient, offline_export: None, draft_id: str
+    ) -> None:
+        client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
+        packages = client.app.state.service.export_dir  # type: ignore[attr-defined]
+        assert (packages / draft_id / "my_cut_in-wheelhouse.zip").is_file()
+
+        response = client.post(f"/draft/{draft_id}/delete", follow_redirects=False)
+        assert response.status_code == 303
+        assert list(packages.iterdir()) == []
+
+    def test_the_download_link_can_be_followed_again(
+        self, client: TestClient, offline_export: None, draft_id: str
+    ) -> None:
+        """The report keeps its link on the page, and an interrupted or
+        mislaid download is fetched again rather than re-exported -- an export
+        is minutes of resolving and building -- so serving the zip keeps it."""
+        client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
+        first = client.get(f"/draft/{draft_id}/wheelhouse.zip")
+        second = client.get(f"/draft/{draft_id}/wheelhouse.zip")
+        assert first.status_code == second.status_code == 200
+        assert second.content == first.content
+        assert zipfile.ZipFile(io.BytesIO(second.content)).namelist()
+
+    def test_a_draft_deleted_during_its_export_gets_nothing_staged(
+        self,
+        client: TestClient,
+        offline_export: None,
+        monkeypatch: pytest.MonkeyPatch,
+        draft_id: str,
+    ) -> None:
+        """An export that finishes after its draft was deleted would otherwise
+        stage an archive no route can reach -- the leak this issue is about."""
+        from autoware_carla_scenario.editor import service as service_module
+
+        zipping = threading.Event()
+        release = threading.Event()
+        real_zip = service_module._zip_directory
+
+        def _slow_zip(source: Path, archive: Path) -> None:
+            zipping.set()
+            assert release.wait(_HANG_S)
+            real_zip(source, archive)
+
+        monkeypatch.setattr(service_module, "_zip_directory", _slow_zip)
+        exporter = threading.Thread(
+            target=lambda: client.post(
+                f"/draft/{draft_id}/export", data={"dev_mode": "on"}
+            )
+        )
+        exporter.start()
+        try:
+            assert zipping.wait(_HANG_S)
+            deleted = client.post(f"/draft/{draft_id}/delete", follow_redirects=False)
+            assert deleted.status_code == 303
+        finally:
+            release.set()
+            exporter.join(_HANG_S)
+        assert not exporter.is_alive(), "the export never finished"
+        packages = client.app.state.service.export_dir  # type: ignore[attr-defined]
+        assert not (packages / draft_id).exists()
+
+
+class TestTheDownloadOpensTheArchiveUnderItsLock:
+    """The download opens the archive before it responds, under the archive lock (#1719).
+
+    The route used to hand ``FileResponse`` a path, which it stats and opens
+    only once the response is sent.  A draft deleted, or re-exported under a
+    new scenario id, in between removed the file, and Starlette's
+    ``RuntimeError`` was a 500 rather than the "No exported wheelhouse" 404 a
+    stale link gets.
+    """
+
+    _PAYLOAD = b"PK-" + bytes(range(256)) * 9000
+
+    @classmethod
+    def _staged(cls, tmp_path: Path) -> tuple[Any, EditorService, Draft, Path]:
+        """An app whose one draft has :attr:`_PAYLOAD` staged as its archive."""
+        app = create_app(tmp_path / "drafts", tmp_path / "packages")
+        service = app.state.service
+        draft = service.create_draft("cut_in")
+        archive = service.archive_path(draft)
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_bytes(cls._PAYLOAD)
+        return app, service, draft, archive
+
+    def test_a_download_serves_the_bytes_length_and_name(self, tmp_path: Path) -> None:
+        app, _, draft, _ = self._staged(tmp_path)
+        download = TestClient(app, base_url="http://127.0.0.1").get(
+            f"/draft/{draft.id}/wheelhouse.zip"
+        )
+        assert download.status_code == 200
+        assert download.content == self._PAYLOAD
+        assert download.headers["content-length"] == str(len(self._PAYLOAD))
+        assert download.headers["content-type"] == "application/zip"
+        assert download.headers["content-disposition"] == (
+            'attachment; filename="my_cut_in-wheelhouse.zip"'
+        )
+
+    def test_an_archive_removed_after_its_lookup_is_a_404_not_a_500(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The archive goes between finding its path and opening it -- as a
+        delete or a re-export under a new id removed it before the fix."""
+        app, service, draft, archive = self._staged(tmp_path)
+        real_lookup = service.staged_archive
+
+        def _lookup_then_lose(staged: Draft) -> Path | None:
+            found = real_lookup(staged)
+            archive.unlink()
+            return found
+
+        monkeypatch.setattr(service, "staged_archive", _lookup_then_lose)
+        # raise_server_exceptions stays on: a 500 would raise here.
+        download = TestClient(app, base_url="http://127.0.0.1").get(
+            f"/draft/{draft.id}/wheelhouse.zip"
+        )
+        assert download.status_code == 404
+        assert "No exported wheelhouse" in download.text
+
+    def test_an_archive_removed_once_opened_still_downloads_whole(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Once opened, the draft deleted mid-download costs it nothing, and the
+        handle is closed when the response is done."""
+        app, service, draft, _ = self._staged(tmp_path)
+        real_open = service.open_staged_archive
+        opened: list[Any] = []
+
+        def _open_then_delete(staged: Draft) -> Any:
+            result = real_open(staged)
+            opened.append(result)
+            assert service.delete_draft(staged.id) is True
+            return result
+
+        monkeypatch.setattr(service, "open_staged_archive", _open_then_delete)
+        download = TestClient(app, base_url="http://127.0.0.1").get(
+            f"/draft/{draft.id}/wheelhouse.zip"
+        )
+        assert download.status_code == 200
+        assert download.content == self._PAYLOAD
+        assert not (tmp_path / "packages" / draft.id).exists()
+        assert opened and opened[0].file.closed
+
+    def test_a_client_that_disconnects_has_the_archive_closed(
+        self, tmp_path: Path
+    ) -> None:
+        import anyio
+        from starlette.requests import ClientDisconnect
+
+        from autoware_carla_scenario.editor.routes import _ArchiveResponse
+
+        _, service, draft, _ = self._staged(tmp_path)
+        archive = service.open_staged_archive(draft)
+        assert archive is not None
+        response = _ArchiveResponse(archive)
+
+        async def _receive() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        async def _send(message: MutableMapping[str, Any]) -> None:
+            if message["type"] == "http.response.body":
+                raise OSError("connection reset")
+
+        scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+
+        async def _serve() -> None:
+            await response(scope, _receive, _send)
+
+        with pytest.raises(ClientDisconnect):
+            anyio.run(_serve)
+        assert archive.file.closed
 
 
 class TestMapActionsKeepConcurrentEdits:
@@ -3286,7 +4391,7 @@ class TestLaneletPreviewOffTheLoop:
         app = create_app(
             draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages"
         )
-        with TestClient(app) as client:
+        with TestClient(app, base_url="http://127.0.0.1") as client:
             draft_id = (
                 client.post("/new", data={"kind": "cut_in"}, follow_redirects=False)
                 .headers["location"]
@@ -3416,3 +4521,151 @@ def test_a_form_number_that_is_not_finite_is_refused(raw: str) -> None:
         _as_float(raw, "Timeout", 60.0)
     assert _as_float(" 12.5 ", "Timeout", 60.0) == 12.5
     assert _as_float("", "Timeout", 60.0) == 60.0
+
+
+class TestTheGate:
+    """A logical scenario's gate, edited in the scenario inspector (docs/gate.md).
+
+    A checkbox, a bar and a number per threshold; shares in percent.
+    """
+
+    @staticmethod
+    def _on(client: TestClient, draft_id: str, **fields: str) -> Any:
+        data = {"gate_form": "1", "gate_enabled": "1", **fields}
+        return client.post(f"/draft/{draft_id}/scenario", data=data)
+
+    def test_the_inspector_offers_a_gate(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert 'name="gate_enabled"' in body
+        assert "add a route search first" in body
+
+    def test_turning_the_gate_on_shows_a_row_per_threshold(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._on(client, draft_id)
+        gate = _document(store, draft_id).gate
+        assert gate is not None and gate.judged() == ["min_runs"]
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert 'name="gate_on_min_success_rate"' in body
+        assert 'type="range"' in body
+        # Unticked: its bar and number are disabled, so they are not sent.
+        row = body.split('name="gate_on_min_success_rate"')[1].split(
+            "</div>\n  </div>"
+        )[0]
+        assert "disabled" in row
+
+    def test_a_ticked_threshold_without_a_value_takes_its_default(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._on(client, draft_id, gate_on_min_success_rate="1")
+        gate = _document(store, draft_id).gate
+        assert gate is not None and gate.min_success_rate == pytest.approx(0.9)
+
+    def test_shares_are_edited_in_percent(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._on(
+            client,
+            draft_id,
+            gate_min_runs="8",
+            gate_on_min_success_rate="1",
+            gate_min_success_rate="95",
+            gate_on_max_lateral_spread_m="1",
+            gate_max_lateral_spread_m="0.4",
+            # Not ticked: not judged, whatever its number says.
+            gate_min_odd_coverage="50",
+        )
+        gate = _document(store, draft_id).gate
+        assert gate is not None
+        assert (gate.min_runs, gate.min_success_rate) == (8, pytest.approx(0.95))
+        assert gate.max_lateral_spread_m == 0.4
+        assert gate.min_odd_coverage is None
+        body = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert (
+            'name="gate_min_success_rate"\n             min="0" step="1" value="95"'
+            in body
+        )
+        # A spread is judged: how it is measured is shown.
+        assert 'name="gate_consistency_stations"' in body
+
+    def test_cover_items_are_added_kept_and_dropped(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._on(client, draft_id, gate_item_new="speed_at_cut_in")
+        gate = _document(store, draft_id).gate
+        assert gate is not None
+        assert [(e.item, e.min) for e in gate.coverage_items] == [
+            ("speed_at_cut_in", 1.0)
+        ]
+        self._on(
+            client,
+            draft_id,
+            gate_item_name_0="speed_at_cut_in",
+            gate_item_on_0="1",
+            gate_item_min_0="80",
+            gate_item_new="gap",
+        )
+        gate = _document(store, draft_id).gate
+        assert gate is not None
+        assert [(e.item, e.min) for e in gate.coverage_items] == [
+            ("speed_at_cut_in", pytest.approx(0.8)),
+            ("gap", 1.0),
+        ]
+        # Unticked: dropped.
+        self._on(
+            client,
+            draft_id,
+            gate_item_name_0="speed_at_cut_in",
+            gate_item_min_0="80",
+            gate_item_name_1="gap",
+            gate_item_on_1="1",
+            gate_item_min_1="100",
+        )
+        gate = _document(store, draft_id).gate
+        assert gate is not None
+        assert [e.item for e in gate.coverage_items] == ["gap"]
+
+    def test_every_threshold_of_the_gate_has_a_row(self) -> None:
+        """A new GateSpec threshold must reach the editor, as a share in %
+        exactly when the model bounds it to 0-1."""
+        from annotated_types import Le
+
+        from autoware_carla_scenario.authoring.models import GateSpec
+        from autoware_carla_scenario.editor.service import (
+            GATE_CONSISTENCY_FIELDS,
+            GATE_FIELDS,
+        )
+
+        fields = {f.name: f for f in GATE_FIELDS + GATE_CONSISTENCY_FIELDS}
+        assert set(fields) | {"coverage_items"} == set(GateSpec.model_fields)
+        for name, field in fields.items():
+            share = any(
+                isinstance(m, Le) and m.le == 1.0
+                for m in GateSpec.model_fields[name].metadata
+            )
+            assert field.percent == share, name
+
+    def test_turning_the_gate_off_drops_it(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        self._on(client, draft_id)
+        client.post(f"/draft/{draft_id}/scenario", data={"gate_form": "1"})
+        assert _document(store, draft_id).gate is None
+
+    def test_a_share_over_100_percent_is_refused(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        response = self._on(
+            client, draft_id, gate_on_min_success_rate="1", gate_min_success_rate="150"
+        )
+        assert "Gate:" in response.text
+        assert _document(store, draft_id).gate is None
+
+    def test_a_cover_item_name_with_a_space_is_refused(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        response = self._on(client, draft_id, gate_item_new="speed at")
+        assert "has no spaces" in response.text
+        assert _document(store, draft_id).gate is None

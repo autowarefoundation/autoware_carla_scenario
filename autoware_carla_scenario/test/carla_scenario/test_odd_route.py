@@ -168,6 +168,40 @@ class TestOnLanelet:
         assert on(lanelet, None, None) is UNDECIDED
         assert probes.lanelet_speed_limit_kph.on_lanelet(lanelet, None, None) is None  # type: ignore[attr-defined]
 
+    @pytest.mark.parametrize("tag", ["nan", "inf", "-inf", "0", "-5"])
+    def test_a_speed_limit_that_is_not_finite_and_positive(self, tag: str) -> None:
+        # A bad tag reads as a missing one (#1798): undecided on the map, as
+        # the run falls back to CARLA's limit, not a bogus bucket or NaN.
+        lanelet = _fake_lanelet(speed_limit=tag)
+        on = probes.speed_limit_kph.on_lanelet  # type: ignore[attr-defined]
+        assert on(lanelet, None, None) is UNDECIDED
+        assert probes.lanelet_speed_limit_kph.on_lanelet(lanelet, None, None) is None  # type: ignore[attr-defined]
+        assert probes.lanelet_speed_limit(lanelet) is None
+
+    @pytest.mark.parametrize("tag", ["nan", "inf", "0", "-5"])
+    def test_a_bad_speed_limit_leaves_the_route_undecided(
+        self, tag: str, nishishinjuku: tuple[Any, Any]
+    ) -> None:
+        # Every lanelet of the route read as if tagged *tag*: its metres are
+        # undecided, under no bucket, and no NaN reaches the output.
+        def limit(world: Any) -> Any:
+            return None
+
+        bad = _fake_lanelet(speed_limit=tag)
+        limit.on_lanelet = lambda ll, m, g: probes.speed_limit_kph.on_lanelet(  # type: ignore[attr-defined]
+            bad, m, g
+        )
+        x = OddAttribute("x", limit, unit="km/h", buckets=[0, 30, 60, 120])
+        odd = OddDefinition("t", [x])
+        route = _cover(odd, LEFT_TURN, nishishinjuku)
+        assert route.expected_m["x"] == {
+            UNDECIDED_BUCKET: pytest.approx(route.length_m)
+        }
+        summary = combine_route_coverage(odd, [route])
+        assert summary.undetermined == ["x"]
+        json.dumps(route.describe(), allow_nan=False)
+        json.dumps(summary.describe(), allow_nan=False)
+
     def test_a_junction_lanelet_has_a_turn_direction(self) -> None:
         on = probes.in_junction.on_lanelet  # type: ignore[attr-defined]
         assert on(_fake_lanelet(turn_direction="left"), None, None) is True

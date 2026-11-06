@@ -44,6 +44,22 @@ whose blueprint is a bicycle joins SUMO as one, published or driven like the
 rest, and SUMO routes it where bicycles may go.  How SUMO's bicycles ride is
 ``bicycles``' own, not the drivers' parameters.
 
+Motorcycles are SUMO vehicles of the class ``motorcycle``.  A scenario's own
+vehicle whose blueprint is a motorcycle (:func:`is_motorcycle`, a
+:class:`~autoware_carla_scenario.entity.MotorcycleEntity`) joins SUMO as one
+of the run's motorcycle type, which has SUMO's defaults for the class,
+published or driven like the rest; it rides the carriageway, with the drivers'
+parameters, as a car does.
+
+Emergency vehicles are SUMO vehicles of the class ``emergency`` with a
+bluelight device.  A scenario's own vehicle whose blueprint is an emergency
+vehicle's (:func:`is_emergency`, an
+:class:`~autoware_carla_scenario.entity.EmergencyVehicleEntity`) joins SUMO as
+one of the run's emergency type, published or driven like the rest.  Its
+device is silent until it is on a call (:meth:`SumoTrafficBackend.set_emergency`):
+then SUMO's vehicles near it make way (a rescue lane), and, when SUMO drives
+it, it goes through red lights, still giving way at the junction.
+
 Nothing joins the run that the run did not ask for: SUMO's own vehicles
 (``ambient``), pedestrians (``pedestrians``) and bicycles (``bicycles``) are
 off by default, so the road holds the scenario's vehicles and pedestrians, and
@@ -94,7 +110,6 @@ from __future__ import annotations
 import logging
 import math
 import random
-import re
 from pathlib import Path
 from typing import Any, ClassVar, Collection, Optional
 
@@ -102,6 +117,7 @@ from ...constants import EGO_ROLE_NAME
 from ...coordinate.map_manager import run_carla_map
 from ...utils.clearance import actor_box_centre
 from ...utils.traffic_light import traffic_light_state_name
+from ...utils.vehicles import is_emergency_vehicle_type
 from ...visibility import driver_quantile, sight_speed_at, world_visibility
 from ...world_reset import episode_of
 from ..base import (
@@ -147,6 +163,36 @@ from .network import (
     generate_walks,
     sumo_home,
 )
+
+# Re-exported: what the backend's callers and tests import from it lives in
+# the checked .options (#1633).
+from .options import (
+    EMERGENCY_TYPE as EMERGENCY_TYPE,
+    LANE_CHANGE_DURATION_S as LANE_CHANGE_DURATION_S,
+    LANE_CHANGE_SETTLED_M as LANE_CHANGE_SETTLED_M,
+    MOTORCYCLE_TYPE as MOTORCYCLE_TYPE,
+    OUTPUT_SUFFIX as OUTPUT_SUFFIX,
+    _ADDITIONAL_OPTIONS as _ADDITIONAL_OPTIONS,
+    _BICYCLE_TYPE as _BICYCLE_TYPE,
+    _EMERGENCY as _EMERGENCY,
+    _LANE_CHANGE_MODE_DEFAULT as _LANE_CHANGE_MODE_DEFAULT,
+    _LANE_CHANGE_MODE_EXTERNAL as _LANE_CHANGE_MODE_EXTERNAL,
+    _LANE_CHANGE_MODE_STRATEGIC as _LANE_CHANGE_MODE_STRATEGIC,
+    _PASSENGER as _PASSENGER,
+    _ROUTE_OPTIONS as _ROUTE_OPTIONS,
+    _SPEED_MODE_DEFAULT as _SPEED_MODE_DEFAULT,
+    _SPEED_MODE_EXTERNAL as _SPEED_MODE_EXTERNAL,
+    _SPEED_MODE_RED_LIGHT as _SPEED_MODE_RED_LIGHT,
+    _SPEED_MODE_RIGHT_OF_WAY as _SPEED_MODE_RIGHT_OF_WAY,
+    _SPEED_MODE_THROUGH_JUNCTION as _SPEED_MODE_THROUGH_JUNCTION,
+    _SUMO_CLASSES as _SUMO_CLASSES,
+    _merge_file_options as _merge_file_options,
+    _net_offset as _net_offset,
+    _with_siren as _with_siren,
+    _write_scenario_types as _write_scenario_types,
+    _write_type_distribution as _write_type_distribution,
+    run_output_dir as run_output_dir,
+)
 from .physics_control import (
     longitudinal,
     lookahead_distance,
@@ -168,27 +214,17 @@ logger = logging.getLogger(__name__)
 #: turn: the lowest CARLA takes, so it does not drop onto the road (#1003).
 _SPAWN_LIFTS_M = (0.05, 0.2, 0.5)
 
-__all__ = ["SumoTrafficBackend", "is_bicycle"]
+__all__ = [
+    "OUTPUT_SUFFIX",
+    "SumoTrafficBackend",
+    "is_bicycle",
+    "is_emergency",
+    "is_motorcycle",
+    "run_output_dir",
+]
 
-#: SUMO's lane-change duration for a manoeuvre a scenario asks for, seconds.
-LANE_CHANGE_DURATION_S: float = 3.0
-#: How close to its lane's centre a vehicle must be for a lane change to count
-#: as settled, metres.
-LANE_CHANGE_SETTLED_M: float = 0.3
 #: How many edges ahead a turn looks for a junction offering it.
 TURN_SEARCH_EDGES: int = 8
-#: Speed mode bits of a vehicle SUMO does not control (all checks off).
-_SPEED_MODE_EXTERNAL = 0
-#: Lane-change mode bits of a vehicle SUMO does not control (none).
-_LANE_CHANGE_MODE_EXTERNAL = 0
-#: Lane-change mode bits of a vehicle that changes lane only where its route
-#: needs it: SUMO's default (1621) without the cooperative, speed-gain and
-#: keep-right changes.
-_LANE_CHANGE_MODE_STRATEGIC = 1537
-#: SUMO's own lane-change mode bits, which ``lane_changes: true`` puts back.
-_LANE_CHANGE_MODE_DEFAULT = 1621
-#: SUMO's own speed mode bits (every check on).
-_SPEED_MODE_DEFAULT = 31
 #: A vehicle this far (m) below the map is parked out of the world (spawned
 #: hidden): it joins SUMO only once a spawn brings it up.
 _HIDDEN_BELOW_M = -100.0
@@ -217,12 +253,6 @@ _GUARD_PIECE_M = 2.0
 _JUNCTION_WAIT_S = 2.0
 # How often (s) a vehicle standing that long asks SUMO what it gives way to.
 _JUNCTION_FOES_EVERY_S = 1.0
-#: The speed mode bit by which a vehicle disregards the right of way of
-#: vehicles already in the junction, and the one by which it regards that of
-#: vehicles coming to it (off: vehicle_40, waiting short of its left turn's
-#: own stop, took those standing across the turn for ones coming).
-_SPEED_MODE_THROUGH_JUNCTION = 32
-_SPEED_MODE_RIGHT_OF_WAY = 8
 #: The pedestrian parameters a run can change: the walking speed and the gap
 #: are set on each person, but ``jmDriveAfterRedTime`` only on a type, and
 #: the types are written before SUMO starts.
@@ -246,7 +276,11 @@ PEDESTRIAN_TYPES = 100
 #: The same for SUMO's default bicycle type, and the vType attribute each
 #: bicycle parameter (``traffic.bicycles``) sets.
 BICYCLE_TYPES = 100
-_BICYCLE_TYPE = "DEFAULT_BIKETYPE"
+#: How far (m) SUMO's vehicles react to an emergency vehicle on a call
+#: (its bluelight device's ``reactiondist``; SUMO's default).  Off duty, 0:
+#: none does.
+EMERGENCY_REACTION_DIST_M = 25.0
+_BLUELIGHT_REACTION = "device.bluelight.reactiondist"
 #: The bicycle parameters a run can change, each set on every bicycle; the
 #: speed (desiredMaxSpeed) and the red light only on a type, before the run.
 _BICYCLE_SETTERS = {
@@ -306,47 +340,49 @@ def _load_traci(use_libsumo: bool) -> Any:
         ) from exc
 
 
-def _net_offset(net_file: Path) -> tuple[float, float]:
-    """The ``netOffset`` of *net_file*, read from its ``<location>``."""
-    with net_file.open() as f:
-        for line in f:
-            found = re.search(r'netOffset="([-\d.eE+]+),([-\d.eE+]+)"', line)
-            if found:
-                return float(found[1]), float(found[2])
-            if "<edge" in line:
-                break
-    return 0.0, 0.0
+def _blueprint_attribute(actor: Any, name: str) -> str:
+    """The CARLA vehicle *actor*'s blueprint attribute *name*, lower case;
+    empty for an actor without one."""
+    try:
+        return str(actor.attributes.get(name, "")).lower()
+    except Exception:  # noqa: BLE001 - an actor without attributes is a car
+        return ""
+
+
+def _base_type(actor: Any) -> str:
+    """The CARLA vehicle *actor*'s blueprint ``base_type``, lower case."""
+    return _blueprint_attribute(actor, "base_type")
 
 
 def is_bicycle(actor: Any) -> bool:
     """Whether the CARLA vehicle *actor* is a bicycle: its blueprint's
     ``base_type`` says so, as CARLA's bicycles' do."""
-    try:
-        base_type = str(actor.attributes.get("base_type", ""))
-    except Exception:  # noqa: BLE001 - an actor without attributes is a car
-        return False
-    return base_type.lower() == "bicycle"
+    return _base_type(actor) == "bicycle"
 
 
-def _write_type_distribution(
-    path: Path, type_id: str, vclass: str, members: list[dict[str, float]]
-) -> Path:
-    """Write *type_id* as a distribution of one type of *vclass* per member,
-    each with that member's attributes, to *path* (an additional file)."""
-    lines = []
-    for index, attributes in enumerate(members):
-        written = " ".join(f'{key}="{value:.4g}"' for key, value in attributes.items())
-        lines.append(
-            f'        <vType id="{vclass}{index}" vClass="{vclass}" {written}/>'
-        )
-    path.write_text(
-        "<additional>\n"
-        f'    <vTypeDistribution id="{type_id}">\n'
-        + "\n".join(lines)
-        + "\n    </vTypeDistribution>\n"
-        "</additional>\n"
+def is_motorcycle(actor: Any) -> bool:
+    """Whether the CARLA vehicle *actor* is a motorcycle: its blueprint's
+    ``base_type`` says so, as CARLA's motorcycles' do."""
+    return _base_type(actor) == "motorcycle"
+
+
+def is_emergency(actor: Any) -> bool:
+    """Whether the CARLA vehicle *actor* is an emergency vehicle: its
+    blueprint's ``special_type`` says so (CARLA 0.9), or, with none, its id
+    (CARLA 0.10; :func:`~autoware_carla_scenario.utils.vehicles.is_emergency_vehicle_type`)."""
+    type_id = str(getattr(actor, "type_id", ""))
+    return is_emergency_vehicle_type(
+        type_id, _blueprint_attribute(actor, "special_type")
     )
-    return path
+
+
+def _sumo_class(actor: Any) -> tuple[str, str]:
+    """The SUMO vehicle class and type the scenario's vehicle *actor* joins
+    SUMO as: an emergency vehicle's whatever its body, else by its
+    blueprint's ``base_type`` (:data:`_SUMO_CLASSES`)."""
+    if is_emergency(actor):
+        return _EMERGENCY
+    return _SUMO_CLASSES.get(_base_type(actor), _PASSENGER)
 
 
 def _parked(actor: Any) -> bool:
@@ -486,8 +522,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._walking: dict[str, tuple[float, float, float, float]] = {}
         #: SUMO ids of the background vehicles spawn_background added.
         self._background: set[str] = set()
-        #: Lane id -> the vehicle classes it allowed before its first
-        #: close_lane(), and how many close_lane() calls are not yet matched
+        #: Lane id -> the vehicle classes it disallowed before its first
+        #: close_lane() (its permissions, kept as what it disallows: see
+        #: close_lane()), and how many close_lane() calls are not yet matched
         #: by a reopen_lane(): two zones on one lane share the closure, and
         #: the lane opens only once both are cleared (#1294).
         self._closed_lanes: dict[str, tuple[list[str], int]] = {}
@@ -498,6 +535,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._ambient: dict[str, Any] = {}
         #: SUMO id -> its vehicle class, read once.
         self._vclasses: dict[str, str] = {}
+        #: Entity ``id()`` -> the SUMO id of its emergency vehicle in SUMO.
+        self._emergency_ids: dict[int, str] = {}
         #: The bicycle blueprints the world has, of ``bicycles.blueprints``;
         #: looked up on the first bicycle mirrored.
         self._bicycle_blueprints: Optional[list[str]] = None
@@ -659,6 +698,63 @@ class SumoTrafficBackend(TrafficBackend):
             shared = overrides.restricted_to(self._tm.supported_vehicle_parameters())
             self._warn_dropped(overrides, shared)
             self._tm.override_entity_parameters(world, shared, entity)
+
+    def set_emergency(self, entity: Any, active: bool) -> None:
+        """Put *entity*'s emergency vehicle on a call (*active*) or off duty.
+
+        On a call its bluelight device reaches
+        :data:`EMERGENCY_REACTION_DIST_M`, so SUMO's vehicles near it make way
+        (a rescue lane), and one SUMO drives goes through red lights, still
+        giving way at the junction; off duty the device is silent and it
+        brakes for red lights again.  The TrafficManager, when it drives the
+        scenario's vehicles, is told too.  A vehicle not in SUMO yet joins
+        as its entity's ``in_emergency`` says.  A vehicle whose blueprint is not
+        an emergency vehicle's (:func:`is_emergency`) has no device: SUMO's
+        vehicles do not make way for it.
+        """
+        if self._tm_drives_scenario:
+            self._tm.set_emergency(entity, active)
+        sumo_id = self._emergency_ids.get(id(entity))
+        if sumo_id is not None and self._running:
+            self._sound_siren(sumo_id, entity, active)
+
+    def _sound_siren(self, sumo_id: str, entity: Any, active: bool) -> None:
+        """Switch the bluelight device of *entity*'s emergency vehicle
+        *sumo_id* on (*active*) or off, and have SUMO drive it through red
+        lights or not when SUMO drives it (now, past a junction it is
+        unsticking from, or once a released one is resumed)."""
+        tc = self._traci
+        reach = EMERGENCY_REACTION_DIST_M if active else 0.0
+        try:
+            tc.vehicle.setParameter(sumo_id, _BLUELIGHT_REACTION, f"{reach:.2f}")
+        except Exception as exc:  # noqa: BLE001 - gone from SUMO
+            logger.debug("SUMO could not sound %s's siren: %s", sumo_id, exc)
+            return
+        handed = self._handed.get(id(entity))
+        if handed is not None and handed[0] == sumo_id:
+            # Released: its speed mode is the one resume() gives back.
+            if handed[1] >= 0:
+                self._handed[id(entity)] = (
+                    sumo_id,
+                    _with_siren(handed[1], active),
+                    handed[2],
+                )
+        elif sumo_id in self._driven and sumo_id not in self._external:
+            try:
+                mode = int(tc.vehicle.getSpeedMode(sumo_id))
+                tc.vehicle.setSpeedMode(sumo_id, _with_siren(mode, active))
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("SUMO could not set %s's speed mode: %s", sumo_id, exc)
+                return
+            if sumo_id in self._unstuck:
+                self._unstuck[sumo_id] = _with_siren(self._unstuck[sumo_id], active)
+        logger.info(
+            "SUMO: %s %s",
+            sumo_id,
+            "is on a call: SUMO's vehicles make way for it"
+            if active
+            else "is off duty",
+        )
 
     def override_vehicle_parameters(
         self, world: Any, overrides: VehicleParameters
@@ -839,7 +935,7 @@ class SumoTrafficBackend(TrafficBackend):
         if self._config.mesoscopic.enabled:
             self._meso = self._build_mesoscopic()
 
-        out = Path(context.output_dir) / "sumo"
+        out = run_output_dir(context)
         out.mkdir(parents=True, exist_ok=True)
         binary = self._config.binary
         if "/" not in binary:
@@ -916,19 +1012,21 @@ class SumoTrafficBackend(TrafficBackend):
         types = [
             str(path) for path in (pedestrian_type, bicycle_type) if path is not None
         ]
-        if types:
-            # Before the demand: SUMO's default types are redefined only
-            # before anything uses them.
-            cmd += ["-a", ",".join(types)]
-        if routes:
-            cmd += ["-r", ",".join(str(r) for r in routes)]
+        # Always: a scenario's motorcycle or emergency vehicle may join at
+        # any point of the run.
+        types.append(str(_write_scenario_types(out / "scenario_types.add.xml")))
+        # Before the demand: SUMO's default types are redefined only before
+        # anything uses them.  sumo_args' own additional and route files join
+        # these (SUMO refuses an option twice), after them.
+        cmd += _merge_file_options(
+            list(self._config.sumo_args), types, [str(r) for r in routes]
+        )
         if self._config.fcd_output:
             cmd += ["--fcd-output", str(out / "fcd.xml"), "--fcd-output.geo", "false"]
             # How SUMO's clock maps onto CARLA's, to line the FCD up with
             # anything else recorded on CARLA's (camera frames, a rosbag).
             self._clock_log = (out / "clock.csv").open("w")
             self._clock_log.write("sumo_time,carla_elapsed_seconds,carla_frame\n")
-        cmd += self._config.sumo_args
         try:
             self._traci.start(cmd)
         except Exception as exc:
@@ -940,8 +1038,11 @@ class SumoTrafficBackend(TrafficBackend):
             self._tm.prepare(context)
 
     def adopt(self, entity: Any) -> None:
-        """Remember *entity*; it joins SUMO when the run starts."""
+        """Remember *entity*; it joins SUMO when the run starts, an emergency
+        vehicle on a call as one (:meth:`_join`)."""
         self._entities.append(entity)
+        if self._tm_drives_scenario and getattr(entity, "in_emergency", False):
+            self._tm.set_emergency(entity, True)
 
     def start(self, world: Any, *, skip_actor_ids: Collection[int] = ()) -> None:
         """Put the run's vehicles into SUMO, warm the traffic up and go."""
@@ -1019,6 +1120,10 @@ class SumoTrafficBackend(TrafficBackend):
             tc.vehicle.setColor(sumo_id, _DRIVEN_COLOR)
             self._driven[sumo_id] = entity
             self._unplaced[sumo_id] = actor
+        if entity is not None and is_emergency(actor):
+            self._emergency_ids[id(entity)] = sumo_id
+            if getattr(entity, "in_emergency", False):
+                self._sound_siren(sumo_id, entity, True)
 
     def _place_driven(self, on_the_road: Collection[str]) -> None:
         """Put each scenario vehicle that has just come on SUMO's road
@@ -1309,6 +1414,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._blueprints = {}
         self._ambient = {}
         self._vclasses = {}
+        self._emergency_ids = {}
         self._bicycle_blueprints = None
         self._lane_targets = {}
         self._signals = {}
@@ -2241,11 +2347,14 @@ class SumoTrafficBackend(TrafficBackend):
 
         A bicycle (:func:`is_bicycle`) as one of SUMO's default bicycle type,
         on the nearest lane a bicycle may use -- a sidewalk's, when bicycles
-        ride them.
+        ride them; a motorcycle (:func:`is_motorcycle`) as one of
+        :data:`MOTORCYCLE_TYPE`, on the nearest lane a motorcycle may use; an
+        emergency vehicle (:func:`is_emergency`) as one of
+        :data:`EMERGENCY_TYPE`, off duty (its bluelight device silent, braking
+        for red lights) until it joins on a call (:meth:`_join`).
         """
         tc = self._traci
-        bicycle = is_bicycle(actor)
-        vclass = "bicycle" if bicycle else "passenger"
+        vclass, type_id = _sumo_class(actor)
         place = self._road_position(self._carla_pose_to_sumo(actor), sumo_id, vclass)
         if place is None:
             return False
@@ -2274,7 +2383,7 @@ class SumoTrafficBackend(TrafficBackend):
             tc.vehicle.add(
                 sumo_id,
                 route_id,
-                typeID=_BICYCLE_TYPE if bicycle else "DEFAULT_VEHTYPE",
+                typeID=type_id,
                 departLane=str(lane),
                 departPos=f"{pos:.2f}",
                 departSpeed=f"{speed:.2f}",
@@ -2285,6 +2394,12 @@ class SumoTrafficBackend(TrafficBackend):
             )
             return False
         self._vclasses[sumo_id] = vclass
+        if type_id == EMERGENCY_TYPE:
+            # Off duty until a call: its device silent, and its speed mode
+            # SUMO's own, not the 7 (through red lights and the right of way)
+            # the device gives it.
+            tc.vehicle.setParameter(sumo_id, _BLUELIGHT_REACTION, "0")
+            tc.vehicle.setSpeedMode(sumo_id, _SPEED_MODE_DEFAULT)
         tc.vehicle.setLength(sumo_id, self._length(actor))
         tc.vehicle.setWidth(sumo_id, max(2.0 * float(actor.bounding_box.extent.y), 0.5))
         return True
@@ -2402,16 +2517,22 @@ class SumoTrafficBackend(TrafficBackend):
         if closure is not None:
             # Closed already (by another zone, or another span of this one):
             # one more owner, whose reopen_lane() the lane waits for too.
-            allowed, owners = closure
-            self._closed_lanes[lane_id] = (allowed, owners + 1)
+            disallowed, owners = closure
+            self._closed_lanes[lane_id] = (disallowed, owners + 1)
             return lane_id
         try:
-            allowed = list(tc.lane.getAllowed(lane_id))
+            # Kept as what the lane disallows, not what it allows: SUMO lists
+            # no class as allowed on a lane open to every class (no allow or
+            # disallow attribute, as netgenerate and most nets have), and
+            # setAllowed(lane, []) closes it to everything (#1533). The
+            # disallowed classes restore both that lane and one with an
+            # allow list exactly, with libsumo and TraCI alike.
+            disallowed = list(tc.lane.getDisallowed(lane_id))
             tc.lane.setDisallowed(lane_id, ["all"])
         except Exception as exc:  # noqa: BLE001 - a closure must not end the run
             logger.warning("SUMO could not close lane %s: %s", lane_id, exc)
             return None
-        self._closed_lanes[lane_id] = (allowed, 1)
+        self._closed_lanes[lane_id] = (disallowed, 1)
         logger.info("SUMO: lane %s closed", lane_id)
         return lane_id
 
@@ -2423,23 +2544,28 @@ class SumoTrafficBackend(TrafficBackend):
         closure = self._closed_lanes.get(handle)
         if closure is None:
             return
-        allowed, owners = closure
+        disallowed, owners = closure
         if owners > 1:
             # Another zone still stands on the lane: it stays closed.
-            self._closed_lanes[handle] = (allowed, owners - 1)
+            self._closed_lanes[handle] = (disallowed, owners - 1)
             return
         del self._closed_lanes[handle]
         if not self._running:
             return
         try:
-            self._traci.lane.setAllowed(handle, allowed)
+            self._traci.lane.setDisallowed(handle, disallowed)
         except Exception as exc:  # noqa: BLE001
             logger.warning("SUMO could not reopen lane %s: %s", handle, exc)
             return
         logger.info("SUMO: lane %s reopened", handle)
 
-    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
-        """Every background vehicle SUMO still has, at its CARLA ``(x, y)``."""
+    def background_vehicles(
+        self, world: Any
+    ) -> dict[str, tuple[float, float, Optional[float]]]:
+        """Every background vehicle SUMO still has, at its CARLA ``(x, y, z)``.
+
+        One the queue model holds has no height (``None``): the model places
+        it on a lane's 2D shape."""
         del world
         if not self._running:
             return {}
@@ -2452,7 +2578,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._background &= (
             present | pending | {i for i in self._background if i in meso}
         )
-        out: dict[str, tuple[float, float]] = {}
+        out: dict[str, tuple[float, float, Optional[float]]] = {}
         if self._meso is not None:
             now = self._now()
             for sumo_id in self._background:
@@ -2460,7 +2586,7 @@ class SumoTrafficBackend(TrafficBackend):
                     pose = self._background_origin(
                         sumo_id, self._meso_carla_pose(sumo_id, now)
                     )
-                    out[sumo_id] = (pose.x, pose.y)
+                    out[sumo_id] = (pose.x, pose.y, None)
         for sumo_id in self._background & present:
             x, y, z = vehicle.getPosition3D(sumo_id)
             pose = self._background_origin(
@@ -2471,7 +2597,7 @@ class SumoTrafficBackend(TrafficBackend):
                     self._offset,
                 ),
             )
-            out[sumo_id] = (pose.x, pose.y)
+            out[sumo_id] = (pose.x, pose.y, pose.z)
         return out
 
     def _background_origin(self, sumo_id: str, centre: Pose2D) -> Pose2D:
@@ -3193,7 +3319,16 @@ class SumoTrafficBackend(TrafficBackend):
             for kind in ("vehicle", "walker"):
                 try:
                     found = first_box_in_way(
-                        world, int(actor.id), x0, y0, heading, kind, span, half_width
+                        world,
+                        int(actor.id),
+                        x0,
+                        y0,
+                        heading,
+                        kind,
+                        span,
+                        half_width,
+                        z=float(tf.location.z),
+                        along=travelled,
                     )
                 except (AttributeError, RuntimeError):
                     continue

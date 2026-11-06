@@ -55,6 +55,13 @@ A scenario's life, with `ego.entity=hils`:
    `scenario_end` steps, stops the periodic messages, removes its sensors and
    answers `ended`. A run that goes away mid-scenario ends it as well.
 
+A message that cannot be sent on the link ends the link: either side gives a
+peer that does not read 10 s to take it, and a send that fails or times out
+may have written part of its line, so nothing is sent after it. The bridge
+then shuts the connection down and counts the run as gone (ending its
+scenario, as above), and the run fails with "The HILS bridge's link failed".
+Waiting for what the peer sends never shortens or lengthens that 10 s.
+
 Without a run connected (any other `ego.entity`), the bridge streams the ego to
 the ECUs all the same, and the ego appearing and disappearing start and end the
 scenario; the ECUs' commands then go nowhere. The ego of a run that went away
@@ -82,7 +89,8 @@ uvx --from 'autoware-carla-scenario[hils]' --with 'carla-canvas[client]>=0.2' \
 ```
 
 `--host`, `--port`, `--role-name` and `--listen` override the file's CARLA
-address, ego and run link. In a checkout, `uv sync --dev` installs hilspy and
+address, ego and run link; a `--port` outside 1-65535 is a usage error
+(exit 2). In a checkout, `uv sync --dev` installs hilspy and
 `uv run scenario-hils hils.yaml` runs it.
 
 Then run scenarios with the ego driven by the ECUs, on the same CARLA server:
@@ -276,7 +284,9 @@ networks, SOME/IP, SBF, NMEA, UBX, RTCM).
 ### Sensor devices
 
 The bridge spawns the sensor on the ego (its `role_name` is the device's
-name), listens to it, and sends each measurement:
+name), listens to it, and sends each measurement. A blueprint attribute is
+text, a number or a bool; an empty value (YAML's null), a list or a mapping
+is refused. A sensor that fails to attach is destroyed, not left on the ego:
 
 ```yaml
 lidar_top:
@@ -307,9 +317,15 @@ front_camera:
   packets, paced over the revolution as the sensor streams them. A
   revolution is one sweep of `horizontal_fov` (360 degrees by default; CARLA
   turns the rays through azimuths [-fov/2, fov/2)), which may be anything in
-  (0, 360]. A `sensor_tick` other than 0 is refused: CARLA sweeps only one
+  (0, 360], at `rotation_frequency` revolutions a second, which must be a
+  finite positive number. A `sensor_tick` other than 0 is refused: CARLA sweeps only one
   world tick per measurement, so a LiDAR measured less often turns slower
-  than its `rotation_frequency`. Points go from CARLA's sensor frame (y
+  than its `rotation_frequency`. `dropoff_general_rate` (the proportion of
+  points CARLA drops at random) and `dropoff_zero_intensity` (the probability
+  a point of zero intensity is dropped) must be in [0, 1]: CARLA clamps
+  neither, so `45` would empty every sweep without a word.
+  `dropoff_intensity_limit`, an intensity threshold rather than a proportion,
+  is passed as it is. Points go from CARLA's sensor frame (y
   right) to the sensor's (y left). Match `channels`, the field of view and
   `rotation_frequency` to the model.
 - **Cameras** (`sensor.camera.*`, codec `raw`). Each image is one frame,

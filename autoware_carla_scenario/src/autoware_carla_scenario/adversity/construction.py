@@ -49,15 +49,22 @@ intersection it ends at), with no taper in, buffer or termination zone:
 
 The zones step up to their end inclusive, as TeraSim's do, but for a work
 zone that ends at the merge taper, whose first cone stands there.  :data:`URBAN_CONSTRUCTION` holds TeraSim's urban numbers.
+
+Every length and spacing is finite, the lengths not negative and the
+spacings positive (:class:`ConstructionSettings` refuses others), and a zone
+starts and ends at a finite ``s``, with no more than
+:data:`MAX_ZONE_OBJECTS` objects in it, so a layout always ends (#1479).
 """
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 
 __all__ = [
     "DEFAULT_CONSTRUCTION",
     "HIGHWAY",
+    "MAX_ZONE_OBJECTS",
     "URBAN",
     "URBAN_CONSTRUCTION",
     "BARRIER",
@@ -99,11 +106,61 @@ _MERGE_SIGN_SPACING_M = 50.0
 _EPSILON_M = 1e-9
 #: One foot (m): MUTCD's spacings are the speed limit in feet.
 _FOOT_M = 0.3048
+#: The most objects one zone is laid out with: a spacing so fine (or a zone
+#: so long) that it would take more is refused, not stepped through for ever.
+MAX_ZONE_OBJECTS = 100_000
+
+
+def _check_finite(name: str, value: float) -> None:
+    """Refuse *value* for the field *name* unless it is finite."""
+    if not math.isfinite(value):
+        raise ValueError(f"{name} must be finite, not {value}")
+
+
+def _check_length(name: str, value: float) -> None:
+    """Refuse *value* for the field *name* unless it is finite and >= 0."""
+    if not math.isfinite(value) or value < 0.0:
+        raise ValueError(f"{name} must be finite and not negative, not {value}")
+
+
+def _check_spacing(name: str, value: float) -> None:
+    """Refuse *value* for the field *name* unless it is finite and > 0."""
+    if not math.isfinite(value) or value <= 0.0:
+        raise ValueError(f"{name} must be finite and positive, not {value}")
+
+
+def _check_span(start: float, end: float) -> None:
+    """Refuse a zone from *start* to *end* unless both are finite and *end*
+    is after *start*: an infinite one would be stepped through for ever."""
+    if not math.isfinite(start) or not math.isfinite(end):
+        raise ValueError(
+            f"a construction zone starts and ends at a finite s, not {start} to {end}"
+        )
+    if not end > start:
+        raise ValueError(f"a construction zone ends after it starts, not at {end}")
+
+
+def _check_steps(zone: str, length: float, step: float) -> None:
+    """Refuse a *zone* *length* long whose *step* is not positive or would
+    lay out more than :data:`MAX_ZONE_OBJECTS` objects."""
+    if not step > 0.0:
+        raise ValueError(f"the {zone} zone's spacing is {step}, not positive")
+    if length / step > MAX_ZONE_OBJECTS:
+        raise ValueError(
+            f"the {zone} zone, {length} m at {step} m apart, is more than "
+            f"{MAX_ZONE_OBJECTS} objects"
+        )
 
 
 @dataclass(frozen=True)
 class ConstructionSettings:
     """TeraSim's construction-zone numbers, as the defaults.
+
+    Each is refused when built outside its bounds (#1479): every number
+    finite, the spacings (``spacing``, ``warning_zone_spacing``) positive,
+    and the lengths, ``speed_limit_mph`` and ``merge_signs`` not negative
+    (0 for none).  ``work_zone_offset`` and ``warning_sign_offset`` may be of
+    either sign.
 
     Attributes:
         construction_type: The work zone's objects: ``"cone"``,
@@ -153,6 +210,23 @@ class ConstructionSettings:
     merge_distance: float = 150.0
     merge_signs: int = 2
 
+    def __post_init__(self) -> None:
+        _check_spacing("spacing", self.spacing)
+        _check_finite("work_zone_offset", self.work_zone_offset)
+        _check_length("speed_limit_mph", self.speed_limit_mph)
+        _check_length("taper_length_in", self.taper_length_in)
+        _check_length("taper_length_out", self.taper_length_out)
+        _check_length("warning_zone_length", self.warning_zone_length)
+        _check_spacing("warning_zone_spacing", self.warning_zone_spacing)
+        _check_length("buffer_zone_length", self.buffer_zone_length)
+        _check_length("termination_zone_length", self.termination_zone_length)
+        _check_finite("warning_sign_offset", self.warning_sign_offset)
+        _check_length("merge_distance", self.merge_distance)
+        if self.merge_signs < 0:
+            raise ValueError(
+                f"merge_signs must not be negative, not {self.merge_signs}"
+            )
+
 
 DEFAULT_CONSTRUCTION = ConstructionSettings()
 
@@ -195,9 +269,10 @@ def construction_zones(
     no length, its signs clamped to *start* (as TeraSim's).
 
     Raises:
-        ValueError: a layout that is neither :data:`HIGHWAY` nor
-            :data:`URBAN`.
+        ValueError: *start* or *end* not finite, *end* not after *start*, or
+            a layout that is neither :data:`HIGHWAY` nor :data:`URBAN`.
     """
+    _check_span(start, end)
     if settings.layout == URBAN:
         return _urban_zones(start, end, settings)
     if settings.layout != HIGHWAY:
@@ -333,12 +408,13 @@ def construction_layout(
     past the lane's edge; everything else inside the lane.
 
     Raises:
-        ValueError: *end* not after *start*, a spacing that is not
-            positive, or a layout that is neither :data:`HIGHWAY` nor
-            :data:`URBAN`.
+        ValueError: *start* or *end* not finite, *end* not after *start*, a
+            spacing that is not positive, a zone of more than
+            :data:`MAX_ZONE_OBJECTS` objects, a spacing too fine to step
+            from where the zone starts, or a layout that is neither
+            :data:`HIGHWAY` nor :data:`URBAN`.
     """
-    if not end > start:
-        raise ValueError(f"a construction zone ends after it starts, not at {end}")
+    _check_span(start, end)
     sign = 1.0 if settings.side == "left" else -1.0
     half = lane_width / 2.0 - _EDGE_MARGIN_M
     shoulder = (lane_width / 2.0 + abs(settings.warning_sign_offset)) * sign
@@ -349,8 +425,7 @@ def construction_layout(
     objects: list[ConstructionObject] = []
     for zone, zone_start, zone_end in construction_zones(start, end, settings):
         step = _spacing(zone, settings)
-        if not step > 0.0:
-            raise ValueError(f"the {zone} zone's spacing is {step}, not positive")
+        _check_steps(zone, zone_end - zone_start, step)
         kinds = _kinds(zone, settings)
         s = zone_start
         index = 0
@@ -360,7 +435,13 @@ def construction_layout(
             if kind != SIGN:
                 t = _offset(zone, s, zone_start, zone_end, half, sign, settings)
             objects.append(ConstructionObject(kind, zone, s, t))
-            s += step
+            following = s + step
+            if not following > s:
+                # Far along a lane a step can be below the float's resolution.
+                raise ValueError(
+                    f"the {zone} zone's spacing {step} is too fine to step from {s}"
+                )
+            s = following
             index += 1
     return objects
 
@@ -381,12 +462,16 @@ def _urban_layout(
     for zone, zone_start, zone_end in construction_zones(start, end, settings):
         if zone == "merge_signs":
             # Nearest the taper first, 50 m apart, none before the start.
+            # Once a sign is clamped to the start, so is every one after it.
+            _check_steps(zone, zone_end - zone_start, _MERGE_SIGN_SPACING_M)
             placed: list[float] = []
             for index in range(settings.merge_signs):
                 s = max(start, zone_end - (index + 1) * _MERGE_SIGN_SPACING_M)
                 if s not in placed:
                     placed.append(s)
                     objects.append(ConstructionObject(SIGN, zone, s, shoulder))
+                if s <= start:
+                    break
             continue
         if zone == "warning":
             step = settings.warning_zone_spacing
@@ -394,8 +479,9 @@ def _urban_layout(
             step = settings.spacing
         else:
             step = settings.spacing * _URBAN_TAPER_SHARE
-        if not step > 0.0:
-            raise ValueError(f"the {zone} zone's spacing is {step}, not positive")
+        # The warning zone stops at its third sign, however fine its spacing.
+        length = 0.0 if zone == "warning" else zone_end - zone_start
+        _check_steps(zone, length, step)
         if zone == "merge_taper":
             # TeraSim's: cones at both ends, from the closed side's edge
             # across the lane to the other's.

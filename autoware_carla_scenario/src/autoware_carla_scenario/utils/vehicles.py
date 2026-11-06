@@ -7,7 +7,36 @@ from typing import TYPE_CHECKING, Collection
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
-__all__ = ["as_vehicle", "hold_vehicles_still", "release_vehicle"]
+__all__ = [
+    "EMERGENCY_BLUEPRINT_WORDS",
+    "EMERGENCY_SPECIAL_TYPE",
+    "as_vehicle",
+    "hold_vehicles_still",
+    "is_emergency_vehicle_type",
+    "release_vehicle",
+    "set_siren_lights",
+    "with_siren_lights",
+]
+
+#: The ``special_type`` CARLA 0.9 gives an emergency vehicle's blueprint (a
+#: police car's, an ambulance's, a fire engine's), whatever its ``base_type``.
+EMERGENCY_SPECIAL_TYPE: str = "emergency"
+#: What an emergency vehicle's blueprint id holds, for CARLA 0.10, which gives
+#: none a ``special_type`` (``entity.fit.FIT_EXCLUDED`` leaves the same out).
+EMERGENCY_BLUEPRINT_WORDS: tuple[str, ...] = ("firetruck", "ambulance", "cop", "police")
+
+
+def is_emergency_vehicle_type(type_id: str, special_type: str) -> bool:
+    """Whether the vehicle blueprint *type_id*, of ``special_type``
+    *special_type* (empty when it has none), is an emergency vehicle's: its
+    special type says so, or, with none, its id does."""
+    if special_type:
+        return special_type.lower() == EMERGENCY_SPECIAL_TYPE
+    lowered = type_id.lower()
+    for word in EMERGENCY_BLUEPRINT_WORDS:
+        if word in lowered:
+            return True
+    return False
 
 
 def as_vehicle(actor: "carla.Actor") -> "carla.Vehicle":
@@ -24,6 +53,34 @@ def as_vehicle(actor: "carla.Actor") -> "carla.Vehicle":
         return actor.as_vehicle()
     else:
         return actor
+
+
+def _siren_bit() -> int:
+    """CARLA's ``VehicleLightState.Special1``: the light bar (the beacons) of
+    an emergency vehicle's blueprint -- a police car's, an ambulance's, a fire
+    engine's.  A vehicle without one shows nothing for it."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    return int(carla.VehicleLightState.Special1)
+
+
+def with_siren_lights(light_state: int, on: bool) -> int:
+    """*light_state* with its siren lights (:func:`_siren_bit`) *on* or off,
+    every other bit kept."""
+    bit = _siren_bit()
+    if on:
+        return light_state | bit
+    return light_state & ~bit
+
+
+def set_siren_lights(actor: "carla.Actor", on: bool) -> None:
+    """Switch vehicle *actor*'s siren lights *on* or off, its other lights
+    (the turn indicators, the brake lights, ...) as they are."""
+    vehicle = as_vehicle(actor)
+    state = int(vehicle.get_light_state())
+    lit = with_siren_lights(state, on)
+    if lit != state:
+        vehicle.set_light_state(lit)
 
 
 def hold_vehicles_still(world: "carla.World", spare: Collection[int] = ()) -> None:

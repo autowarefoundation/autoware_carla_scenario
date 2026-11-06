@@ -167,6 +167,7 @@ scenario's classes.)
 
 from __future__ import annotations
 
+import _string
 import ast
 import contextlib
 import contextvars
@@ -175,6 +176,7 @@ import json
 import keyword
 import re
 import string
+import unicodedata
 from collections.abc import Iterator
 
 from .scopes import ShadowScopes, _scope_bindings
@@ -408,8 +410,6 @@ _VIEW_COMPARISONS = (ast.Lt, ast.LtE, ast.Gt, ast.GtE, ast.Eq, ast.NotEq)
 _COMPREHENSION_NODES = (ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
 _ORDERING = ("__lt__", "__le__", "__gt__", "__ge__")
 _MAX_PASSES = 20
-_FORMAT_REFERENCE = re.compile(r"(?:\.\w+|\[[^\]\[]+\])*")
-_ACCESS = re.compile(r"\.(\w+)|\[([^\]\[]+)\]")
 
 
 #: ``open()`` keywords of CPython that Codon's ``open`` lacks (#562): they
@@ -2111,13 +2111,18 @@ class _Pass(ShadowScopes):
                     chunk += _escaped(char)
             if field is None:
                 continue
-            head = re.match(r"[^.\[]*", field)
-            assert head is not None
-            first, rest = head.group(0), field[head.end() :]
-            if not _FORMAT_REFERENCE.fullmatch(rest):
-                self._refuse(node, f"the format field {field!r} cannot be rewritten")
+            # The field split as str.format splits it (#1614): CPython's own
+            # grammar, `arg_name ("." attribute | "[" index "]")*`, which a
+            # hand-written pattern gets wrong on `{0..a}` or `{0[1]a}`.  The
+            # first part is an int for a decimal index ("٣" is 3, while "²"
+            # is a digit to isdigit() but no number, so a keyword, #1612).
+            try:
+                first, rest = _string.formatter_field_name_split(field)
+                accesses = list(rest)
+            except ValueError as error:
+                self._refuse(node, f"the format field {field!r} is invalid: {error}")
                 return None
-            if first == "" or first.isdigit():
+            if first == "" or isinstance(first, int):
                 kind = "auto" if first == "" else "manual"
                 if numbering not in (None, kind):
                     self._refuse(
@@ -2127,7 +2132,7 @@ class _Pass(ShadowScopes):
                     )
                     return None
                 numbering = kind
-                index = auto if first == "" else int(first)
+                index = first if isinstance(first, int) else auto
                 auto += first == ""
                 if index >= len(positional):
                     self._refuse(
@@ -2158,16 +2163,41 @@ class _Pass(ShadowScopes):
                 )
                 return None
             access = ""
-            for attribute, subscript in _ACCESS.findall(rest):
-                if attribute:
-                    access += "." + attribute
-                elif subscript.isdigit():
-                    access += f"[{subscript}]"
-                elif any(c in subscript for c in "\"'\\"):
+            for is_attribute, name in accesses:
+                if isinstance(name, int):
+                    access += f"[{name}]"
+                elif is_attribute:
+                    # str.format does getattr(x, name) with any text; an
+                    # f-string spells only an identifier, and one NFKC leaves
+                    # as it is (Python reads `x.ﬁ` as `x.fi`), and not a
+                    # private name, which a class body would mangle (#1614).
+                    if (
+                        not name.isidentifier()
+                        or keyword.iskeyword(name)
+                        or unicodedata.normalize("NFKC", name) != name
+                        or (name.startswith("__") and not name.endswith("__"))
+                    ):
+                        self._refuse(
+                            node,
+                            f"the format field {field!r} reads attribute "
+                            f"{name!r}, which an f-string cannot spell as "
+                            f"x.{name}; use getattr(x, {name!r}) in an "
+                            "f-string",
+                        )
+                        return None
+                    access += "." + name
+                elif any(c in name for c in "\"'\\"):
                     self._refuse(node, f"the format field {field!r} has odd quoting")
                     return None
+                elif any(c in name for c in "{}") or not name.isprintable():
+                    self._refuse(
+                        node,
+                        f"the format field {field!r} has a key an f-string "
+                        "cannot spell: index with a variable in an f-string",
+                    )
+                    return None
                 else:
-                    access += f"['{subscript}']"
+                    access += f"['{name}']"
             value = params[key]
             if inline:
                 expression = self._text(value)

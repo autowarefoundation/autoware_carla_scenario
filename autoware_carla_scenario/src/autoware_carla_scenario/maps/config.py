@@ -19,7 +19,13 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Optional
 
-from .resolver import ResolvedMap, cached_map, resolve_directory, resolve_map
+from .resolver import (
+    ResolvedMap,
+    _short_map_name,
+    cached_map,
+    resolve_directory,
+    resolve_map,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -151,13 +157,36 @@ def resolve_map_paths(
         MapSourceError, MapCacheError, MapResolutionError: If ``map.source``
             or ``map.directory`` is set and cannot be resolved.
     """
-    directory = _setting(map_config, "directory")
-    source = _setting(map_config, "source")
-    lanelet2 = _setting(map_config, "lanelet2_path")
-    xodr = _setting(map_config, "xodr_path")
-    name = _setting(map_config, "name") or ""
-    projector_type = _setting(map_config, "projector_type")
+    return _resolve(
+        directory=_setting(map_config, "directory"),
+        source=_setting(map_config, "source"),
+        lanelet2=_setting(map_config, "lanelet2_path"),
+        xodr=_setting(map_config, "xodr_path"),
+        name=_setting(map_config, "name") or "",
+        projector_type=_setting(map_config, "projector_type"),
+        overwrite_xodr=_flag(map_config, "overwrite_xodr"),
+        allow_fetch=allow_fetch,
+        refresh=refresh,
+    )
 
+
+def _resolve(
+    directory: Optional[str],
+    source: Optional[str],
+    lanelet2: Optional[str],
+    xodr: Optional[str],
+    name: str,
+    projector_type: Optional[str],
+    overwrite_xodr: bool,
+    allow_fetch: bool,
+    refresh: bool,
+) -> MapPaths:
+    """Resolve the map settings :func:`resolve_map_paths` read off a config.
+
+    Each string setting is ``None`` when the config leaves it unset (a blank
+    one reads as unset too); *name* is ``""`` then.  The other arguments are
+    :func:`resolve_map_paths`'s.
+    """
     resolved: Optional[ResolvedMap] = None
     if directory is not None:
         if source is not None:
@@ -166,21 +195,22 @@ def resolve_map_paths(
                 directory,
                 source,
             )
-        resolved = resolve_directory(directory)
-        name = name or resolved.name
+        local = resolve_directory(directory)
+        resolved = local
+        if not name:
+            name = local.name
     elif source is not None:
-        resolved = (
-            resolve_map(source, refresh=refresh)
-            if allow_fetch or refresh
-            else cached_map(source)
-        )
-        if resolved is not None:
-            name = name or resolved.name
+        if allow_fetch or refresh:
+            resolved = resolve_map(source, refresh=refresh)
+        else:
+            resolved = cached_map(source)
+        if resolved is not None and not name:
+            name = resolved.name
 
     if (
         resolved is not None
         and name
-        and name != resolved.name
+        and _short_map_name(name) != _short_map_name(resolved.name)
         and (resolved.xodr_path is None or resolved.xodr_is_derived)
     ):
         # The resolver looks for an OpenDRIVE taken from CARLA under the map
@@ -192,22 +222,25 @@ def resolve_map_paths(
             resolved, xodr_path=captured, xodr_is_derived=captured is not None
         )
 
+    lanelet2_path: Optional[Path] = None
+    if lanelet2:
+        lanelet2_path = Path(lanelet2).expanduser()
+    elif resolved is not None:
+        lanelet2_path = resolved.lanelet2_path
+    xodr_path: Optional[Path] = None
+    xodr_is_derived = False
+    if xodr:
+        xodr_path = Path(xodr).expanduser()
+    elif resolved is not None:
+        xodr_path = resolved.xodr_path
+        xodr_is_derived = resolved.xodr_is_derived
+
     return MapPaths(
         name=name,
-        lanelet2_path=(
-            Path(lanelet2).expanduser()
-            if lanelet2
-            else (resolved.lanelet2_path if resolved else None)
-        ),
-        xodr_path=(
-            Path(xodr).expanduser()
-            if xodr
-            else (resolved.xodr_path if resolved else None)
-        ),
+        lanelet2_path=lanelet2_path,
+        xodr_path=xodr_path,
         resolved=resolved,
         projector_type=projector_type,
-        xodr_is_derived=(
-            not xodr and resolved is not None and resolved.xodr_is_derived
-        ),
-        overwrite_xodr=_flag(map_config, "overwrite_xodr"),
+        xodr_is_derived=xodr_is_derived,
+        overwrite_xodr=overwrite_xodr,
     )

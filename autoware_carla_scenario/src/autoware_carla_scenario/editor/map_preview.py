@@ -24,7 +24,10 @@ from pathlib import Path
 from typing import Any, Optional
 
 from ..authoring.models import ConstraintNode, LaneletSlot, ScenarioDocument
-from ..authoring.validator import MAP_EXCLUSION_REF
+from ..authoring.hydra_config import (
+    MAP_EXCLUSION_REF,
+    effective_no_3d_model_lanelet_ids,
+)
 from ..maps import MapCacheError, MapPaths, MapSource, MapSourceError, map_root
 from ..maps.config import resolve_map_paths
 from ..maps.resolver import MapResolutionError
@@ -34,6 +37,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "MAP_ROOTS_ENV",
     "PreviewResult",
+    "SpawnOffset",
     "clear_cache",
     "evaluate_slot",
     "is_map_loaded",
@@ -43,6 +47,7 @@ __all__ = [
     "map_status",
     "materialize_constraints",
     "missing_map_reason",
+    "resolve_spawn_offset",
 ]
 
 #: Parsed maps kept in memory, newest last.  Parsing is measured in seconds, so
@@ -92,6 +97,35 @@ class _LoadedMap:
     derived: "OrderedDict[tuple[str, int], Optional[int]]" = field(
         default_factory=OrderedDict
     )
+    #: Swept spawns' derived offsets, by binding and pick, for the same reason.
+    offsets: "OrderedDict[tuple[str, int], SpawnOffset]" = field(
+        default_factory=OrderedDict
+    )
+
+
+@dataclass(frozen=True)
+class SpawnOffset:
+    """Where a swept spawn's derived ``s`` puts it for one pick.
+
+    Attributes:
+        lanelet_id: The lanelet the spawn is on: the pick, or the predecessor
+            a ``stop_line_offset`` walks back to when the pick is too short.
+        s: The offset along :attr:`lanelet_id`, or ``None`` when there is
+            none to show.
+        walked_back: Whether :attr:`lanelet_id` is not the pick.
+        error: Why the binding failed, which is also whether the sweep drops
+            the pick.
+    """
+
+    lanelet_id: int
+    s: Optional[float] = None
+    walked_back: bool = False
+    error: str = ""
+
+    @property
+    def dropped(self) -> bool:
+        """Whether the sweep skips this pick because the binding failed."""
+        return bool(self.error)
 
 
 @dataclass
@@ -141,17 +175,20 @@ def materialize_constraints(
     ``${map.no_3d_model_lanelet_ids}`` is an OmegaConf interpolation that only
     resolves once Hydra composes the config.  The editor has no Hydra in the
     loop, so the one reference the constraint vocabulary uses is substituted
-    from the document's own map here -- keeping the stored YAML identical to
-    what an exported package ships.
+    here -- keeping the stored YAML identical to what an exported package
+    ships -- with the list a run of the export resolves it to
+    (:func:`~..authoring.hydra_config.effective_no_3d_model_lanelet_ids`): the
+    document's own when it lists any, else the built-in map group's, so the
+    preview matches what a sweep enumerates (#1523).
     """
-    exclusions = list(document.map.no_3d_model_lanelet_ids)
+    exclusions = effective_no_3d_model_lanelet_ids(document)
 
     def _resolve(raw: Any) -> Any:
         if isinstance(raw, dict):
             return {key: _resolve(value) for key, value in raw.items()}
         if isinstance(raw, list):
             return [_resolve(value) for value in raw]
-        if raw == MAP_EXCLUSION_REF:
+        if isinstance(raw, str) and raw.strip() == MAP_EXCLUSION_REF:
             return exclusions
         return raw
 
@@ -626,3 +663,55 @@ def derive_lanelet(
         while len(loaded.derived) > _MATCH_CACHE_SIZE:
             loaded.derived.popitem(last=False)
     return derived
+
+
+def resolve_spawn_offset(
+    document: ScenarioDocument,
+    s_key: str,
+    binding: dict[str, Any],
+    picked_id: int,
+    *,
+    paths: Optional[MapPaths] = None,
+) -> Optional[SpawnOffset]:
+    """Return where the swept spawn lands for the pick *picked_id*.
+
+    *s_key* and *binding* are the spawn's offset binding as ``sweep.bindings``
+    carries it (:func:`~autoware_carla_scenario.authoring.hydra_config.spawn_s_binding`),
+    and the sweeper's own binding resolves it, exactly as
+    :func:`~autoware_carla_scenario.sweeper.expand.expand_sweep` does: it may
+    walk back to a predecessor, which moves the spawn there, and a binding that
+    fails drops the pick from the sweep.  ``None`` when the map is not loaded.
+    """
+    try:
+        loaded = _loaded(document, paths, load_map=False)
+    except (FileNotFoundError, RuntimeError):
+        return None
+    if loaded is None:
+        return None
+    asked = (json.dumps([s_key, binding], sort_keys=True), picked_id)
+    with _CACHE_LOCK:
+        if asked in loaded.offsets:
+            return loaded.offsets[asked]
+
+    from ..sweeper.bindings import parse_binding  # noqa: PLC0415
+
+    try:
+        result = parse_binding(s_key, binding).resolve(
+            picked_id, loaded.lanelet_map, loaded.routing_graph
+        )
+    except Exception as exc:  # noqa: BLE001 -- shown as "dropped", not raised
+        logger.info("Binding for %s did not resolve: %s", s_key, exc)
+        offset = SpawnOffset(lanelet_id=picked_id, error=str(exc) or type(exc).__name__)
+    else:
+        moved = result.lanelet_id_override
+        value = result.value
+        offset = SpawnOffset(
+            lanelet_id=picked_id if moved is None else moved,
+            s=float(value) if isinstance(value, (int, float)) else None,
+            walked_back=moved is not None and moved != picked_id,
+        )
+    with _CACHE_LOCK:
+        loaded.offsets[asked] = offset
+        while len(loaded.offsets) > _MATCH_CACHE_SIZE:
+            loaded.offsets.popitem(last=False)
+    return offset

@@ -29,6 +29,7 @@ the framework says to it is on its command line (and over the bridge).
 from __future__ import annotations
 
 import logging
+import math
 import os
 import shutil
 import signal
@@ -205,6 +206,49 @@ def _dying_with_parent(argv: Sequence[str]) -> list[str]:
     return [sys.executable, "-c", _DIE_WITH_PARENT, str(os.getpid()), *argv]
 
 
+def _check_stop_timeout_s(stop_timeout_s: float) -> None:
+    """Refuse a *stop_timeout_s* that is not positive and finite.
+
+    A NaN fails every comparison, so ``Popen.wait(timeout=nan)`` never times
+    out: a stack that ignores the stop signal would never be sent the next,
+    and the run would wait for it forever.  A negative or zero wait skips the
+    grace a stack is given to shut its nodes down.  The message names the
+    field; a caller prefixes the group it came from
+    (``autoware.launcher.``).
+
+    Raises:
+        ValueError: ``stop_timeout_s must be positive and finite, got ...``.
+    """
+    if not math.isfinite(stop_timeout_s) or stop_timeout_s <= 0.0:
+        raise ValueError(
+            f"stop_timeout_s must be positive and finite, got {stop_timeout_s}"
+        )
+
+
+def _check_argument_list(name: str, value: Sequence[str]) -> None:
+    """Refuse a *value* of argument list *name* that is a ``str`` or ``bytes``.
+
+    Python's typing takes a ``str`` as a ``Sequence[str]``, and the launcher
+    would then pass each of its characters as an argument
+    (``docker_args="--shm-size=8g"`` ran ``docker run - - s h m ...``).  It is
+    refused rather than split or wrapped: ``"ros2 launch x y"`` may be one
+    argument (a ``bash -c`` script) or four.  The message names the field; a
+    caller prefixes the group it came from (``autoware.launcher.``).
+
+    Raises:
+        ValueError: ``<name> must be a sequence of arguments, not a str ...``.
+    """
+    if not TYPE_CHECKING:
+        # The static check takes `value` as the list it declares, so the test
+        # would be statically false there (docs/typecheck.md); Python can be
+        # handed a str.
+        if isinstance(value, (str, bytes)):
+            raise ValueError(
+                f"{name} must be a sequence of arguments (a list or a tuple), "
+                f"not a {type(value).__name__}: {value!r}"
+            )
+
+
 def _signal_group(pgid: int, sig: signal.Signals) -> None:
     try:
         os.killpg(pgid, sig)
@@ -249,7 +293,12 @@ class ProcessGroup:
         env: The child's environment; ``None`` inherits this process's.
         log_path: Where its stdout and stderr go; ``None`` discards them.
         stop_signal: The first signal :meth:`stop` sends.
-        stop_timeout_s: How long :meth:`stop` waits after each signal.
+        stop_timeout_s: How long :meth:`stop` waits after each signal,
+            positive and finite.
+
+    Raises:
+        ValueError: If *stop_timeout_s* is not positive and finite.
+        AutowareStackError: If the command could not be started.
     """
 
     _stop_signal: signal.Signals
@@ -267,6 +316,7 @@ class ProcessGroup:
         stop_signal: signal.Signals = signal.SIGINT,
         stop_timeout_s: float = 20.0,
     ) -> None:
+        _check_stop_timeout_s(stop_timeout_s)
         self._stop_signal = stop_signal
         self._stop_timeout_s = stop_timeout_s
         self._log = None
@@ -354,8 +404,13 @@ class CommandAutowareLauncher:
         )
 
     ``{bridge_address}``, ``{index}`` and ``{name}`` in any argument are
-    replaced with the episode's (see :class:`AutowareEpisode`); the address is
-    in the environment as ``AUTOWARE_BRIDGE_ADDRESS`` too.  ``{scenario_bridge}``
+    replaced with the episode's (see :class:`AutowareEpisode`), in one pass
+    (:func:`fill_placeholders`); the address is in the environment as
+    ``AUTOWARE_BRIDGE_ADDRESS`` too.  ``{name}`` is the name with every
+    character but ``A-Z a-z 0-9 . _ -`` replaced by ``_``, as in the log's file
+    name, so it is safe in a shell script; the name as given is in the
+    environment as ``AUTOWARE_SCENARIO_NAME``, for a script to quote
+    (``"$AUTOWARE_SCENARIO_NAME"``).  ``{scenario_bridge}``
     is a shell command running the ``scenario_bridge`` node
     (:mod:`.bridge_node`) with that address and *bridge_parameters*: the command
     runs it in Autoware's ROS 2 environment, beside the launch.
@@ -366,10 +421,16 @@ class CommandAutowareLauncher:
         log_dir: Where each stack's output goes, as
             ``autoware-<index>-<name>.log``; ``None`` discards it.  A
             ``log_dir`` passed to :meth:`prepare` replaces it.
-        stop_timeout_s: How long stopping waits after each signal.
+        stop_timeout_s: How long stopping waits after each signal, positive
+            and finite.
         bridge_parameters: ROS parameters of the ``scenario_bridge`` node
             besides its address (``auto_engage``, ``initialize_localization``,
             ``require_localization_initialized``, ...).
+
+    Raises:
+        ValueError: Naming the field, when ``argv`` is a ``str`` (or
+            ``bytes``) rather than a sequence of arguments, or
+            ``stop_timeout_s`` is not positive and finite.
     """
 
     argv: Sequence[str]
@@ -382,6 +443,11 @@ class CommandAutowareLauncher:
 
     _process: Optional[ProcessGroup] = field(default=None, init=False, repr=False)
     _episodes: int = field(default=0, init=False, repr=False)
+
+    def __post_init__(self) -> None:
+        # Checked here, not when the first stack is stopped.
+        _check_argument_list("argv", self.argv)
+        _check_stop_timeout_s(self.stop_timeout_s)
 
     def prepare(self, log_dir: Optional[Path] = None) -> None:
         if log_dir is not None:
@@ -412,6 +478,10 @@ class CommandAutowareLauncher:
         env = os.environ.copy()
         env.update(self.env)
         env["AUTOWARE_BRIDGE_ADDRESS"] = episode.bridge_address
+        # The name as given, for a script that quotes it: `{name}` is only
+        # its shell-safe form.
+        # Without NUL, which no environment can hold.
+        env["AUTOWARE_SCENARIO_NAME"] = episode.name.replace("\0", "")
         logger.info("Starting the Autoware stack for %s: %s", episode.name, argv)
         self._process = ProcessGroup(
             argv,
@@ -435,14 +505,32 @@ class CommandAutowareLauncher:
         self.stop()
 
 
+#: What a scenario's name keeps in a file name or a command line: everything
+#: else becomes ``_`` (:func:`_safe_name`).
+_SAFE_NAME_CHARACTERS = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+)
+
+
+def _safe_name(name: str) -> str:
+    """*name* with every character but ``A-Z a-z 0-9 . _ -`` replaced by ``_``.
+
+    Safe as a file name component and as a word of a shell script: none of
+    the characters it keeps means anything to a shell, nor is a brace.
+    """
+    return "".join(c if c in _SAFE_NAME_CHARACTERS else "_" for c in name)
+
+
 def episode_log_path(
     log_dir: Optional[Path], episode: AutowareEpisode
 ) -> Optional[Path]:
-    """``<log_dir>/autoware-<index>-<name>.log``, or ``None`` without a directory."""
+    """``<log_dir>/autoware-<index>-<name>.log``, or ``None`` without a directory.
+
+    The name is :func:`_safe_name`'s, as ``{name}`` in a command is.
+    """
     if log_dir is None:
         return None
-    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in episode.name)
-    return log_dir / f"autoware-{episode.index:03d}-{safe_name}.log"
+    return log_dir / f"autoware-{episode.index:03d}-{_safe_name(episode.name)}.log"
 
 
 def fill_placeholders(
@@ -451,15 +539,38 @@ def fill_placeholders(
     """Replace ``{bridge_address}``, ``{index}``, ``{name}`` and *extra*'s keys in *text*.
 
     Only those: every other brace is the command's own -- a shell's
-    ``${VAR}``, a Python one-liner's dict -- and stays as written.
+    ``${VAR}``, a Python one-liner's dict -- and stays as written.  The text
+    is scanned once, so what a placeholder is replaced with is never scanned
+    again: a ``{scenario_bridge}`` in a scenario's name stays as it is.
+    ``{name}`` is :func:`_safe_name`'s form of the name, which a shell script
+    can hold unquoted; the name as given is the launcher's to pass (the
+    command launcher's ``AUTOWARE_SCENARIO_NAME``).
     """
-    replacements = [
-        ("bridge_address", episode.bridge_address),
-        ("index", str(episode.index)),
-        ("name", episode.name),
-    ]
+    # *extra* first: a key of its own never replaces a built-in one, so
+    # `{name}` stays the shell-safe form whatever the caller passes.
+    values: dict[str, str] = {}
     if extra is not None:
-        replacements.extend(extra.items())
-    for key, value in replacements:
-        text = text.replace("{" + key + "}", value)
-    return text
+        for key, value in extra.items():
+            values[key] = value
+    values["bridge_address"] = episode.bridge_address
+    values["index"] = str(episode.index)
+    values["name"] = _safe_name(episode.name)
+    # A hand-written scan rather than re.sub() with a callback, which Codon
+    # does not compile (typecheck/library.py checks this module).
+    parts: list[str] = []
+    done = 0
+    opening = text.find("{")
+    while opening >= 0:
+        closing = text.find("}", opening + 1)
+        if closing < 0:
+            break
+        key = text[opening + 1 : closing]
+        if key in values:
+            parts.append(text[done:opening])
+            parts.append(values[key])
+            done = closing + 1
+            opening = text.find("{", done)
+        else:
+            opening = text.find("{", opening + 1)
+    parts.append(text[done:])
+    return "".join(parts)

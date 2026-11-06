@@ -23,10 +23,12 @@ from .models import (
     ConstraintNode,
     Entity,
     LaneletSlot,
+    RouteSearch,
     ScenarioDocument,
+    actor_kind,
     condition_refs,
 )
-from ..route.model import anchor_problem, parse_route_search
+from ..route.model import anchor_problem, parse_anchor, parse_route_search
 from ..trajectory.authoring import (
     parse_relative_vertices,
     parse_route_vertices,
@@ -35,7 +37,13 @@ from ..trajectory.authoring import (
     vertex_problems,
 )
 from ..constants import MIN_BACKGROUND_SPEED_KMH
-from ._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
+from .hydra_config import MAP_EXCLUSION_REF
+from .package_names import framework_name_problem, scenario_id_problem
+from ._builders_generated import (
+    FAILURE_ONLY_CONDITIONS,
+    ONCE_ACTIONS,
+    OVERRIDING_ACTIONS,
+)
 from .registry import (
     EQUAL_TO_DEFAULT_TOLERANCE,
     INT_KINDS,
@@ -47,28 +55,17 @@ from .registry import (
     get_binding_spec,
     get_condition_spec,
     get_constraint_spec,
+    read_bool,
 )
 
 __all__ = ["Issue", "Severity", "ValidationReport", "validate_document"]
 
 Severity = Literal["error", "warning"]
 
-#: Value accepted by ``in_set`` in place of a literal list, resolved from the
-#: map config exactly as the existing sweep YAML does.
-MAP_EXCLUSION_REF = "${map.no_3d_model_lanelet_ids}"
-
 #: The signal states that let traffic through.  Amber is one of them: a junction
 #: showing amber to one movement still has vehicles in it, which is exactly why
 #: a real one never shows amber to a movement that crosses it either.
 PERMISSIVE_SIGNAL_STATES = frozenset({"green", "yellow"})
-
-#: Python package names an exported scenario must not take: installing it would
-#: replace the distribution that already owns the name.  An exported package's
-#: name always ends in ``_scenario``, so only the framework's own can collide.
-RESERVED_PACKAGE_NAMES = frozenset({"autoware_carla_scenario"})
-
-#: The suffix an exported package always adds to the scenario id.
-PACKAGE_SUFFIX = "_scenario"
 
 #: Appended to a :func:`scenario_id_problem` reported as a validation warning.
 EXPORT_REFUSAL_NOTE = (
@@ -209,6 +206,16 @@ def _check_field(
             )
         else:
             _check_bounds(out, path, spec, float(str(value).strip()), object_id)
+    elif spec.kind == "bool":
+        # The compiler reads it with the same read_bool, so a spelling it
+        # would not take as true or false is refused here, not compiled to
+        # a quiet False (#1459).
+        if read_bool(value) is None:
+            out.error(
+                f"{path}.{spec.name}",
+                f"{spec.label} must be true or false, got {value!r}.",
+                object_id,
+            )
     elif spec.kind == "select":
         allowed = {o.value for o in spec.options}
         if str(value) not in allowed:
@@ -289,19 +296,37 @@ def _check_bounds(
     out.error(f"{path}.{spec.name}", f"{spec.label} {_bounds_text(spec)}.", object_id)
 
 
+def _bound_text(spec: FieldSpec, bound: float) -> str:
+    """*bound* as the message prints it: a whole number field's in full (a
+    seed's ``2147483647``, not ``2.14748e+09``), any other's with ``:g``."""
+    if spec.kind == "int" and float(bound).is_integer():
+        return str(int(bound))
+    return f"{bound:g}"
+
+
 def _bounds_text(spec: FieldSpec) -> str:
     """What :func:`_check_bounds` asks of *spec*'s value, as a predicate."""
     low, inclusive, high = spec.exclusive_minimum, spec.minimum, spec.maximum
     if high is not None and (low is not None or inclusive is not None):
-        opening = f"({low:g}" if low is not None else f"[{inclusive:g}"
-        return f"must be in {opening}, {high:g}]"
+        if low is not None:
+            opening = f"({_bound_text(spec, low)}"
+        else:
+            assert inclusive is not None  # noqa: S101 -- by the test above
+            opening = f"[{_bound_text(spec, inclusive)}"
+        return f"must be in {opening}, {_bound_text(spec, high)}]"
     if high is not None:
-        return f"must be at most {high:g}"
+        return f"must be at most {_bound_text(spec, high)}"
     if low is not None:
-        return "must be positive" if low == 0 else f"must be above {low:g}"
+        return (
+            "must be positive"
+            if low == 0
+            else f"must be above {_bound_text(spec, low)}"
+        )
     assert inclusive is not None  # noqa: S101 -- only called out of bounds
     return (
-        "must not be negative" if inclusive == 0 else f"must be at least {inclusive:g}"
+        "must not be negative"
+        if inclusive == 0
+        else f"must be at least {_bound_text(spec, inclusive)}"
     )
 
 
@@ -438,6 +463,7 @@ def _check_condition(
         )
 
     _check_collision_names_one_target(out, path, node)
+    _check_persistent_child(out, path, node)
     _check_filter_ranges(out, path, node)
     _check_condition_frame(out, path, node)
     _check_equal_tolerance(out, path, spec, node)
@@ -468,6 +494,39 @@ def _check_collision_names_one_target(
             "A collision condition names an entity or a class of object, not "
             "both: they are two ways of saying what was hit, so one of them "
             "would have to be ignored.",
+            node.id,
+        )
+
+
+def _check_persistent_child(out: _Collector, path: str, node: ConditionNode) -> None:
+    """Warn about a persistent block around a condition that only ever reports
+    a failure (#1374).
+
+    A persistent block counts only the ticks its child passes, and a
+    collision, off-road, existence or timeout condition never passes: it
+    fails or says nothing.  The block then never fires, and a fail condition
+    built that way never fails the run.  A warning, not an error: such a
+    document built and ran before this check, and still does.
+    """
+    if node.type != "persistent":
+        return
+    for child in node.children:
+        if child.type not in FAILURE_ONLY_CONDITIONS:
+            continue
+        spec = get_condition_spec(child.type)
+        title = spec.title if spec is not None else child.type
+        out.warn(
+            path,
+            f"Persistent never fires around {title}: that condition only ever "
+            "reports a failure, and Persistent counts only the ticks its child "
+            "passes. A Collision or Timeout keeps its failure once it has "
+            "fired, so there is nothing to wait out: use it on its own (under "
+            "a NOT it would only fail the run later). Off the road and Exists "
+            "re-check every tick: under a NOT, which turns their failure into "
+            "a pass, Persistent fires once the failure has held for its "
+            "duration. To say a state has not held for a while, put the "
+            "condition for that state under a NOT with *Holds while the child "
+            "does not* (holds_when_pending), as the cut-in example does.",
             node.id,
         )
 
@@ -559,7 +618,7 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
             )
         else:
             kind = refs.entity_kinds.get(str(node.actor), "")
-            if kind and kind not in spec.actor_kinds:
+            if kind and actor_kind(kind) not in spec.actor_kinds:
                 out.error(
                     f"{path}.actor",
                     f"{spec.title} cannot be performed by a {kind}; it is for "
@@ -1126,9 +1185,11 @@ def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> N
             "or a route pose.",
             node.id,
         )
+    # A bool is read as the compiler reads it, so "yes" or "on" is checked as
+    # True is (#1462).
     if (
         node.type == "entity_distance"
-        and params.get("signed") is True
+        and read_bool(params.get("signed")) is True
         and str(params.get("measure", "entity")) != "lane"
     ):
         out.error(
@@ -1153,7 +1214,7 @@ def _check_condition_frame(out: _Collector, path: str, node: ConditionNode) -> N
     if (
         node.type in ("entity_distance", "ttc")
         and in_lane
-        and params.get("edge_to_edge") is True
+        and read_bool(params.get("edge_to_edge")) is True
     ):
         out.error(
             f"{path}.edge_to_edge",
@@ -1271,10 +1332,14 @@ def _check_binding(
 
 
 def _check_entity_numbers(out: _Collector, path: str, entity: Entity) -> None:
-    """Reject a NaN or infinite speed, offset, heading or size.
+    """Reject a NaN or infinite speed, offset, heading or size, and a
+    negative initial speed.
 
     The model accepts them (a Pydantic float does), and the runtime would
-    place the actor at no position, or drive it at no speed.
+    place the actor at no position, or drive it at no speed.  A negative
+    speed is refused by the entity's config at run time
+    (``VehicleEntityConfig``, ``ego.initial_speed_kmh``, #1809), once CARLA
+    is already running: refused here, it is refused on its path.
     """
     numbers: list[tuple[str, float]] = [
         ("initial_speed_kmh", entity.initial_speed_kmh),
@@ -1290,6 +1355,12 @@ def _check_entity_numbers(out: _Collector, path: str, entity: Entity) -> None:
     for key, number in numbers:
         if not math.isfinite(number):
             out.error(f"{path}.{key}", "This must be a finite number.", entity.id)
+    if math.isfinite(entity.initial_speed_kmh) and entity.initial_speed_kmh < 0.0:
+        out.error(
+            f"{path}.initial_speed_kmh",
+            "This must be 0 or more: a speed is never below zero.",
+            entity.id,
+        )
 
 
 def _check_unread_fields(out: _Collector, path: str, entity: Entity) -> None:
@@ -1329,10 +1400,23 @@ def _check_model(out: _Collector, path: str, entity: Entity) -> None:
     is one the editor accepted and the runtime cannot spawn.  Caught here so
     the answer arrives while the scenario is being written rather than as a
     failed spawn against a live server.
+
+    A motorcycle's ``auto`` is whichever motorcycle the running CARLA has, so
+    it needs no size and takes none.  Whether a named blueprint is a
+    motorcycle's only the server can say; it is refused when it is spawned.
     """
     wanted = "walker." if entity.kind == "pedestrian" else "vehicle."
     if entity.vehicle_type == AUTO_MODEL:
-        if entity.kind != "vehicle":
+        if entity.kind == "motorcycle":
+            if entity.size is not None:
+                out.error(
+                    f"{path}.size",
+                    f"A motorcycle of vehicle_type: {AUTO_MODEL} is whichever "
+                    "motorcycle the server has, so the size would be ignored. "
+                    "Remove it.",
+                    entity.id,
+                )
+        elif entity.kind != "vehicle":
             out.error(
                 f"{path}.vehicle_type",
                 f"Only a vehicle other than the ego is chosen by its size "
@@ -1492,44 +1576,6 @@ def _check_duplicate_ego_routing(out: _Collector, document: ScenarioDocument) ->
         )
 
 
-def scenario_id_problem(scenario_id: str) -> Optional[str]:
-    """Return why *scenario_id* cannot name an exported package, or ``None``.
-
-    The exported package is ``<id>_scenario`` (distribution
-    ``<id>-scenario``), and installers compare distribution names with every
-    run of ``_`` folded into one ``-`` (PEP 503).  So ``__`` and a trailing
-    ``_``, which the model's pattern accepts, would give an id the package of
-    the id without them, and one id would give the framework's own package;
-    installing either would replace the package already there (#1358).  They
-    are refused by :func:`~autoware_carla_scenario.authoring.package_export.export_package`
-    alone: :func:`validate_document` only warns, because it also gates every
-    run, and a package exported with such an id before #1358 has to keep
-    running.  The model's pattern still accepts them, so a draft that uses
-    one opens and can be renamed.
-    """
-    stem = "_".join(part for part in scenario_id.split("_") if part)
-    package = stem + PACKAGE_SUFFIX
-    if package in RESERVED_PACKAGE_NAMES:
-        return (
-            f"Scenario id {scenario_id!r} would be exported as the package "
-            f"`{package}`, which is the framework's own name; installing it "
-            "would replace the framework. Choose another id."
-        )
-    if "__" in scenario_id:
-        return (
-            f"Scenario id {scenario_id!r} contains `__`, so it would be "
-            f"exported as `{package}`, the same package as the id {stem!r}. "
-            "Use a single `_` between words."
-        )
-    if scenario_id.endswith("_"):
-        return (
-            f"Scenario id {scenario_id!r} ends in `_`, so it would be exported "
-            f"as `{package}`, the same package as the id {stem!r}. Drop the "
-            "trailing `_`."
-        )
-    return None
-
-
 def _check_step_order(out: _Collector, document: ScenarioDocument) -> None:
     """Warn when a stored layout draws an order the runtime cannot honour.
 
@@ -1601,6 +1647,28 @@ def _check_hidden_spawns(out: _Collector, document: ScenarioDocument) -> None:
             )
 
 
+def _check_id(out: _Collector, scenario_id: str) -> None:
+    """Check the package the id *scenario_id* exports as (#1695).
+
+    An error when that package would be the framework's own
+    (``autoware_carla``), so the editor shows it before an export starts
+    rather than ``uv lock`` failing on a package that depends on itself; and
+    when the id names a built-in scenario (``cut_in``, ``lane_change``, ...,
+    #1808), which the installed package would replace.  A warning when the
+    package would be another id's (``__``, a trailing ``_``, #1358), which
+    the export refuses.
+    """
+    problem = framework_name_problem(scenario_id)
+    if problem is not None:
+        out.error("id", problem)
+        return
+    # A warning, not an error: an id the export refuses still runs, compiles
+    # and passes the tests of a package exported before #1358.
+    shared = scenario_id_problem(scenario_id)
+    if shared is not None:
+        out.warn("id", f"{shared} {EXPORT_REFUSAL_NOTE}")
+
+
 def validate_document(document: ScenarioDocument) -> ValidationReport:
     """Return every problem found in *document*.
 
@@ -1608,12 +1676,7 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     incomplete draft is still saveable).
     """
     out = _Collector()
-
-    # A warning, not an error: an id the export refuses still runs, compiles
-    # and passes the tests of a package exported before #1358.
-    id_problem = scenario_id_problem(document.id)
-    if id_problem is not None:
-        out.warn("id", f"{id_problem} {EXPORT_REFUSAL_NOTE}")
+    _check_id(out, document.id)
 
     entity_ids: set[str] = set()
     for index, entity in enumerate(document.entities):
@@ -1688,8 +1751,50 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     _check_sweep_shape(out, document)
     _check_signal_controllers(out, document)
     _check_route(out, document)
+    _check_gate(out, document)
 
     return ValidationReport(issues=tuple(out.issues))
+
+
+def _check_gate(out: _Collector, document: ScenarioDocument) -> None:
+    """Check a logical scenario's gate (``docs/gate.md``).
+
+    The thresholds' ranges are the model's own; what is checked here is what
+    the gate is judged on.  A gate belongs to a logical scenario: its cases
+    are the route search's matches and its trajectories are measured along the
+    route, so a document with no route search has nothing for it to judge.
+    """
+    gate = document.gate
+    if gate is None:
+        return
+    if document.route is None:
+        out.error(
+            "gate",
+            "A gate judges a logical scenario over its runs: its cases are the "
+            "route search's matches and the ego's trajectory is measured along "
+            "the route. Add a route search, or drop the gate.",
+        )
+    if gate.judged() == ["min_runs"]:
+        out.warn(
+            "gate",
+            "The gate judges nothing but the number of runs: set a success "
+            "rate, a coverage or a trajectory spread.",
+        )
+    seen: set[str] = set()
+    for index, entry in enumerate(gate.coverage_items):
+        if entry.item in seen:
+            out.error(
+                f"gate.coverage_items[{index}]",
+                f"Cover item {entry.item!r} is named twice.",
+            )
+        seen.add(entry.item)
+    if gate.judges_consistency and gate.min_runs < gate.consistency_min_runs:
+        out.warn(
+            "gate.min_runs",
+            f"The trajectory spread needs {gate.consistency_min_runs} runs at a "
+            f"station, and the gate asks for {gate.min_runs} run(s) in all: "
+            "with fewer, the spread is not measured and the gate fails.",
+        )
 
 
 def _route_sets_goal(document: ScenarioDocument) -> bool:
@@ -1825,6 +1930,112 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
             problem = anchor_problem(node.params.get("anchor"), segments, junctions)
             if problem is not None:
                 out.error(node.id, f"Route progress: {problem}.", node.id)
+                continue
+            _check_route_progress_bounds(out, node, route)
+
+
+def _route_bound(anchor: Any, route: RouteSearch) -> Optional[str]:
+    """``"start"`` when *anchor* is route s 0 on every match of *route*,
+    ``"end"`` when it is the route's length on every match, else ``None``.
+
+    The route's length is only known once the search runs on a map, but its
+    first segment always starts at 0 and its last always ends at the length,
+    so these anchors are pinned to a bound whatever the map.
+    """
+    text = "start" if anchor is None or not str(anchor).strip() else str(anchor)
+    try:
+        kind, index, end = parse_anchor(text)
+    except ValueError:
+        return None
+    if kind in ("start", "end"):
+        return kind
+    if kind == "junction":
+        junction_at = [
+            k for k, segment in enumerate(route.segments) if segment.kind == "junction"
+        ]
+        if index >= len(junction_at):
+            return None
+        index = junction_at[index]
+    if index == 0 and end in ("start", "entry"):
+        return "start"
+    if index == len(route.segments) - 1 and end in ("end", "exit"):
+        return "end"
+    return None
+
+
+def _check_route_progress_bounds(
+    out: _Collector, node: ConditionNode, route: RouteSearch
+) -> None:
+    """Warn about a ``route_progress`` whose target lies off the route (#1385).
+
+    An entity's route s is clamped to ``[0, length]``, so a target before the
+    route's start or past its end is one the rule always or never meets: from
+    ``start - 15 m``, ``>=`` holds from the first tick the entity is on the map
+    (one not spawned yet, or hidden below the route, has no progress), even
+    behind the start; to ``end + 5 m`` it never holds, and a waypoint waiting
+    on it never departs.  A target exactly on a bound with a strict rule
+    pointing off the route never holds either (#1389): ``<`` the start, ``>``
+    the end.  The other rules there -- the default ``>=`` the start, and
+    ``<=`` the end, ``>`` the start, ``<`` the end, ``=`` either -- can all
+    hold.  Only an anchor pinned to a bound (:func:`_route_bound`) is judged,
+    the length being the map's.  A warning, not an error, as for the other
+    conditions that never fire (:func:`_check_persistent_child`,
+    :func:`_check_equal_tolerance`): the document builds and runs as it did.
+    """
+    params = node.params
+    value = _number(params, "value")
+    if value is None:
+        return
+    bound = _route_bound(params.get("anchor"), route)
+    rule = str(params.get("rule") or "greater_than_or_equal")
+    hint = "Give a distance that puts the target on the route."
+    if bound == "start" and value < 0:
+        where = f"{-value:g} m before the route's start"
+        below = True
+    elif bound == "end" and value > 0:
+        where = f"{value:g} m past the route's end"
+        below = False
+    elif bound == "start" and value == 0 and rule == "less_than":
+        where = "the route's start"
+        below = True
+        hint = 'Use "less than or equal" (or a positive distance) instead.'
+    elif bound == "end" and value == 0 and rule == "greater_than":
+        where = "the route's end"
+        below = False
+        hint = 'Use "greater than or equal" (or a negative distance) instead.'
+    else:
+        return
+    rising = rule in ("greater_than", "greater_than_or_equal")
+    falling = rule in ("less_than", "less_than_or_equal")
+    if rule == "equal_to":
+        tolerance = _number(params, "tolerance")
+        if tolerance is None:
+            tolerance = EQUAL_TO_DEFAULT_TOLERANCE
+        if abs(value) <= tolerance:
+            return
+        always = False
+    elif rising or falling:
+        always = rising == below
+    else:
+        return  # an unknown rule is the field check's
+    reading = rule.replace("_", " ")
+    if always:
+        extreme = "behind the route's start" if below else "at the route's end"
+        verdict = (
+            f'"{reading}" holds from the first tick the entity is on the map, '
+            f"even for one {extreme}"
+        )
+    else:
+        verdict = (
+            f'"{reading}" can never hold: an action waiting on it never '
+            "fires, and a waypoint never departs"
+        )
+    out.warn(
+        node.id,
+        f"Route progress: the target is {where}. Progress is clamped to the "
+        f"route, from 0 to its length, so {verdict}. {hint}",
+        node.id,
+    )
 
 
 def _check_lanelet_slots(out: _Collector, document: ScenarioDocument) -> None:

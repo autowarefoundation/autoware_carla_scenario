@@ -152,6 +152,35 @@ def test_ego_is_its_rear_axle_in_the_map_frame(tmp_path: Path) -> None:
     assert not shape.HasField("wheel_base")
 
 
+@pytest.mark.parametrize(
+    ("passed", "tag"),
+    [
+        (True, "result:passed"),
+        (False, "result:failed"),
+        ("false", "result:failed"),
+        ("true", "result:failed"),
+        (1, "result:failed"),
+        ([0], "result:failed"),
+        (None, "result:failed"),
+    ],
+)
+def test_only_a_boolean_true_tags_the_scene_passed(
+    tmp_path: Path, passed: Any, tag: str
+) -> None:
+    # bool("false") is True: a truthy value must not tag a run as passed.
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl",
+        EGO,
+        _tick(100, _state(1, 10.0, 20.0)),
+        {"type": "result", "passed": passed},
+    )
+    tags = list(
+        trajectory_log_to_t4_scene(log, with_map=False).scene.scene_metadata.tags
+    )
+    assert tag in tags
+    assert [t for t in tags if t.startswith("result:")] == [tag]
+
+
 def test_ego_velocity_flips_y_and_speed_is_along_the_heading(tmp_path: Path) -> None:
     # CARLA -y: the map's +y, the way it faces.
     state = _state(1, 0.0, 0.0, yaw=-90.0, vy=-5.0)
@@ -853,8 +882,8 @@ def test_the_route_is_the_lanelets_the_ego_drove_along(route_log: Path) -> None:
     assert len(rows) == len(_numeric(scene.timestamps_ns))
     for row in rows:
         assert row.HasField("value")
-        assert _numeric(row.value.lane_ids).tolist() == [4, 98, 102]
-        assert not row.value.HasField("preferred_lane_ids")
+        assert [list(seg.lane_ids) for seg in row.value.segments] == [[4], [98], [102]]
+        assert not any(seg.HasField("preferred_lane_id") for seg in row.value.segments)
 
 
 def test_the_route_can_be_left_out(route_log: Path, tmp_path: Path) -> None:
@@ -1025,6 +1054,105 @@ def test_a_step_that_does_not_fit_the_tick_is_refused_before_anything_runs() -> 
         )
 
 
+# Hydra reads ``true`` as a bool, which float() would take for a 1 s step:
+# every scene would be written at 1 s with no error (#1502).
+@pytest.mark.parametrize("override", ["true", "false", "'0.1'", "[0.1]"])
+def test_a_step_that_is_not_a_number_is_refused_before_anything_runs(
+    override: str,
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    cfg = _shipped(["t4scene.enabled=true", f"t4scene.step_s={override}"])
+    with pytest.raises(ValueError, match=r"^t4scene\.step_s must be a number"):
+        run.build_t4scene_exporter(cfg)
+    with pytest.raises(run.RunConfigError, match=r"^t4scene\.step_s must be a number"):
+        run.check_run_config(cfg)
+
+
+@pytest.mark.parametrize("step_s", [True, False, "0.1", None, [0.1]])
+def test_the_exporter_refuses_a_step_that_is_not_a_number(step_s: Any) -> None:
+    from autoware_carla_scenario.t4_scene import T4SceneExporter
+
+    with pytest.raises(ValueError, match=r"^t4scene\.step_s must be a number"):
+        T4SceneExporter(step_s=step_s)
+
+
+@pytest.mark.parametrize("step_s", [0.07, 0.0, -0.1, math.nan, math.inf])
+def test_the_exporter_refuses_a_step_that_does_not_fit_the_tick(step_s: float) -> None:
+    """Refused when it is built, naming the key, not per run as a logged
+    warning of the best-effort export."""
+    from autoware_carla_scenario.t4_scene import T4SceneExporter
+
+    with pytest.raises(
+        ValueError, match=r"^t4scene\.step_s=.* is not a positive multiple"
+    ):
+        T4SceneExporter(step_s=step_s)
+
+
+@pytest.mark.parametrize("step_s", [0.05, 0.1, 1, 0.15])
+def test_the_exporter_takes_a_multiple_of_the_tick(step_s: float) -> None:
+    from autoware_carla_scenario.t4_scene import T4SceneExporter
+
+    exporter = T4SceneExporter(step_s=step_s)
+    assert exporter.step_s == float(step_s)
+    assert type(exporter.step_s) is float
+
+
+def test_the_runner_takes_a_whole_number_step() -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    exporter = run.build_t4scene_exporter(
+        _shipped(["t4scene.enabled=true", "t4scene.step_s=1"])
+    )
+    assert exporter is not None
+    assert exporter.step_s == 1.0
+
+
+@pytest.mark.parametrize("override", ["'100'", "[100]"])
+def test_a_distance_that_is_not_a_number_is_refused_before_anything_runs(
+    override: str,
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    with pytest.raises(ValueError, match="t4scene.max_distance_m must be positive"):
+        run.build_t4scene_exporter(
+            _shipped(["t4scene.enabled=true", f"t4scene.max_distance_m={override}"])
+        )
+
+
+@pytest.mark.parametrize("seconds", [math.inf, -math.inf, math.nan])
+def test_tick_multiple_refuses_a_value_that_is_not_finite(seconds: float) -> None:
+    """#1384: a ValueError naming the key, not round()'s OverflowError (for
+    infinity) or its unnamed ValueError (for NaN)."""
+    from autoware_carla_scenario.constants import tick_multiple
+
+    with pytest.raises(
+        ValueError,
+        match=rf"^t4scene\.step_s={seconds} is not a positive multiple of the 0\.05 s tick$",
+    ):
+        tick_multiple(seconds, "t4scene.step_s")
+
+
+@pytest.mark.parametrize("override", ["inf", "nan"])
+def test_the_run_check_refuses_a_step_that_is_not_finite(override: str) -> None:
+    """#1384: refused as a RunConfigError naming the key, as a lanelet sweep and
+    a batch refuse it, rather than an OverflowError out of the check."""
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    with pytest.raises(run.RunConfigError, match=r"^t4scene\.step_s="):
+        run.check_run_config(
+            _shipped(["t4scene.enabled=true", f"t4scene.step_s={override}"])
+        )
+
+
 # 0, a negative distance and NaN would keep no road user, infinity is what
 # null says: each is refused, by every entry point, before a scene is written.
 _BAD_DISTANCES = (0.0, -100.0, math.nan, math.inf)
@@ -1112,6 +1240,22 @@ def test_cli_refuses_a_distance_that_is_not_positive_and_finite(
         main([str(log), "--no-map", f"--max-distance={override}"])
     assert raised.value.code == 2
     assert "--max-distance must be positive and finite" in capsys.readouterr().err
+    assert not (tmp_path / f"Run{SCENE_SUFFIX}").exists()
+
+
+@pytest.mark.parametrize("override", ["0", "-0.1", "0.07", "nan", "inf"])
+def test_cli_refuses_a_step_that_is_not_a_multiple_of_the_tick(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], override: str
+) -> None:
+    """#1384: refused up front (2), as --max-distance is, not once per log (1)."""
+    log = _one_car_log(tmp_path)
+    with pytest.raises(SystemExit) as raised:
+        main([str(log), "--no-map", f"--step={override}"])
+    assert raised.value.code == 2
+    assert "is not a positive multiple of the 0.05 s tick" in (
+        err := capsys.readouterr().err
+    )
+    assert "--step=" in err
     assert not (tmp_path / f"Run{SCENE_SUFFIX}").exists()
 
 

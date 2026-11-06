@@ -10,6 +10,9 @@ result is parsed again before anything is written.
 
 from __future__ import annotations
 
+import errno
+import logging
+import os
 import tempfile
 from pathlib import Path
 
@@ -17,9 +20,11 @@ import pytest
 import yaml
 
 from autoware_carla_scenario.tools.detect_no_3d_model_lanelets import (
+    NO_3D_MODEL_KEY,
     YamlUpdateError,
     _resolve_map_config,
     _update_yaml,
+    _write_detected_ids,
     update_no_3d_model_lanelet_ids_text,
 )
 
@@ -328,3 +333,148 @@ def test_unwritable_directory_falls_back_to_writing_in_place(
     path.write_text("map:\n  name: M\n")
     _update_yaml(path, _IDS)
     assert yaml.safe_load(path.read_text())["map"]["no_3d_model_lanelet_ids"] == _IDS
+
+
+# ---------------------------------------------------------------------------
+# A file that cannot be read or written ends in the guidance, not a
+# traceback (issue #1741)
+# ---------------------------------------------------------------------------
+
+
+def _assert_guidance(
+    path: Path,
+    ids: list[int],
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    ending: str = "; the file was not changed",
+) -> list[str]:
+    caplog.set_level(logging.INFO)
+    with pytest.raises(SystemExit) as excinfo:
+        _write_detected_ids(path, ids)
+    assert excinfo.value.code == 1
+    captured = capsys.readouterr()
+    assert "Traceback" not in captured.err + captured.out
+    errors = [r.getMessage() for r in caplog.records if r.levelno >= logging.ERROR]
+    assert len(errors) == 2, errors
+    assert errors[0].count(str(path)) == 1, errors[0]
+    assert errors[0].endswith(ending)
+    assert errors[1] == f"Set {NO_3D_MODEL_KEY} by hand to: {ids}"
+    return errors
+
+
+@pytest.mark.parametrize("ids", [_IDS, []])
+def test_read_only_filesystem_prints_the_guidance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+    ids: list[int],
+) -> None:
+    # EROFS is an OSError but not a PermissionError, so it skips the
+    # write-in-place fallback.
+    def refuse(*args: object, **kwargs: object) -> tuple[int, str]:
+        raise OSError(errno.EROFS, "Read-only file system")
+
+    monkeypatch.setattr(tempfile, "mkstemp", refuse)
+    path = tmp_path / "map.yaml"
+    path.write_text("map:\n  name: M\n")
+    errors = _assert_guidance(path, ids, caplog, capsys)
+    assert "Read-only file system" in errors[0]
+    assert path.read_text() == "map:\n  name: M\n"
+
+
+def test_unwritable_directory_and_file_prints_the_guidance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def refuse(*args: object, **kwargs: object) -> tuple[int, str]:
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    def refuse_open(path: str | os.PathLike[str], flags: int, *args: object) -> int:
+        raise PermissionError(errno.EACCES, "Permission denied", os.fspath(path))
+
+    monkeypatch.setattr(tempfile, "mkstemp", refuse)
+    monkeypatch.setattr(os, "open", refuse_open)
+    path = tmp_path / "map.yaml"
+    path.write_text("map:\n  name: M\n")
+    errors = _assert_guidance(path, _IDS, caplog, capsys)
+    assert "Permission denied" in errors[0]
+    assert path.read_text() == "map:\n  name: M\n"
+
+
+def test_unreadable_yaml_prints_the_guidance(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    def refuse_read(self: Path) -> bytes:
+        raise PermissionError(errno.EACCES, "Permission denied", str(self))
+
+    path = tmp_path / "map.yaml"
+    path.write_text("map:\n  name: M\n")
+    monkeypatch.setattr(Path, "read_bytes", refuse_read)
+    errors = _assert_guidance(path, _IDS, caplog, capsys)
+    assert "Permission denied" in errors[0]
+
+
+def test_refused_edit_still_prints_the_same_guidance(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    path = tmp_path / "map.yaml"
+    path.write_text("- a\n- b\n")
+    _assert_guidance(path, [], caplog, capsys)
+    assert path.read_text() == "- a\n- b\n"
+
+
+def _refuse_temporary_file(monkeypatch: pytest.MonkeyPatch) -> None:
+    def refuse(*args: object, **kwargs: object) -> tuple[int, str]:
+        raise PermissionError(errno.EACCES, "Permission denied")
+
+    monkeypatch.setattr(tempfile, "mkstemp", refuse)
+
+
+def test_write_in_place_failing_after_the_open_says_it_may_be_incomplete(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    # The fallback has emptied the file by the time the write fails, so it
+    # must not claim the file was not changed.
+    def full_disk(fd: int, data: object) -> int:
+        raise OSError(errno.ENOSPC, "No space left on device")
+
+    _refuse_temporary_file(monkeypatch)
+    path = tmp_path / "map.yaml"
+    path.write_text("map:\n  name: M\n")
+    monkeypatch.setattr(os, "write", full_disk)
+    errors = _assert_guidance(
+        path, _IDS, caplog, capsys, "; the file may have been left incomplete"
+    )
+    assert "No space left on device" in errors[0]
+
+
+def test_write_in_place_keeps_mode_and_handles_short_writes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    real_write = os.write
+
+    def one_byte(fd: int, data: bytes) -> int:
+        return real_write(fd, bytes(data[:1]))
+
+    _refuse_temporary_file(monkeypatch)
+    path = tmp_path / "map.yaml"
+    path.write_text("map:\n  name: M\n  comment: a much longer old value\n")
+    path.chmod(0o640)
+    monkeypatch.setattr(os, "write", one_byte)
+    _update_yaml(path, _IDS)
+    monkeypatch.undo()
+    loaded = yaml.safe_load(path.read_text())
+    assert loaded["map"]["no_3d_model_lanelet_ids"] == _IDS
+    assert loaded["map"]["comment"] == "a much longer old value"
+    assert path.stat().st_mode & 0o777 == 0o640

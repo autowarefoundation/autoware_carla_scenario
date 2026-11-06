@@ -17,11 +17,12 @@ from __future__ import annotations
 
 import logging
 import re
+import socket
 from pathlib import Path
 from typing import TYPE_CHECKING, Optional
 
 from .cache import _copy_atomically, _write_atomically
-from .resolver import ResolvedMap
+from .resolver import ResolvedMap, _short_map_name
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -60,10 +61,11 @@ def map_asset_env_var(map_name: str) -> str:
     The variable names the ``.xodr`` inside the CARLA installation -- both where
     this module reads one from and where ``load_map_by_overwriting_xodr`` writes
     one to.  ``NishishinjukuMap`` -> ``NISHISHINJUKU_MAP_PATH``, ``Town10HD_Opt``
-    -> ``TOWN10_HD_OPT_PATH``.
+    -> ``TOWN10_HD_OPT_PATH``.  A full asset path is named by its town:
+    ``/Game/Carla/Maps/Town10HD_Opt`` -> ``TOWN10_HD_OPT_PATH`` too (#1559).
     """
     # Insert underscore between a lowercase/digit and the following uppercase letter
-    snake = re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", map_name)
+    snake = re.sub(r"(?<=[a-z0-9])([A-Z])", r"_\1", _short_map_name(map_name))
     return snake.upper() + "_PATH"
 
 
@@ -90,11 +92,6 @@ def installed_xodr(map_name: str) -> Optional[Path]:
     """
     path = map_asset_path(map_name)
     return path if path is not None and path.is_file() else None
-
-
-def _short_map_name(name: str) -> str:
-    """Return the bare town name from whatever CARLA calls a map."""
-    return name.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
 
 
 def capture_opendrive(world: carla.World, destination: Path) -> Path:
@@ -140,6 +137,17 @@ def _from_server(
         ) from exc
 
     wanted = _short_map_name(map_name)
+    # Nothing listening is said here, before the CARLA client is made: on
+    # arm64 its get_world() on a refused connection can abort the process
+    # (std::terminate, not a RuntimeError), and with it the editor serving
+    # the request.
+    try:
+        socket.create_connection((host, port), timeout=min(timeout, 2.0)).close()
+    except OSError as exc:
+        raise OpenDriveUnavailable(
+            f"Could not read OpenDRIVE from the CARLA server at {host}:{port}: "
+            f"nothing accepts a connection there ({exc})."
+        ) from exc
     try:
         client = carla.Client(host, port)
         client.set_timeout(timeout)
@@ -207,7 +215,8 @@ def ensure_xodr(
         # A derived file is only this CARLA map's when it was captured under
         # its name; the one resolve_map found is named after the directory.
         if resolved.xodr_path is not None and (
-            not resolved.xodr_is_derived or name == resolved.name
+            not resolved.xodr_is_derived
+            or _short_map_name(name) == _short_map_name(resolved.name)
         ):
             return resolved.xodr_path
         cached = resolved.cached_derived_xodr(name)

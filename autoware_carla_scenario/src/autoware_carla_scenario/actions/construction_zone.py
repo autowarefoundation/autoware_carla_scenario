@@ -97,8 +97,9 @@ class ConstructionZoneAction(_BackendAction):
         label: Human-readable identifier.
 
     Raises:
-        ValueError: *end_s* not after *start_s*, a negative or non-finite
-            *start_time*, or an *end_time* not after it.
+        ValueError: a non-finite *start_s* or *end_s*, *end_s* not after
+            *start_s*, a negative or non-finite *start_time*, or an
+            *end_time* not after it.
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -133,6 +134,9 @@ class ConstructionZoneAction(_BackendAction):
         timing: TickTiming = TickTiming.PRE_TICK,
         label: str = "construction_zone",
     ) -> None:
+        # An infinite zone would be laid out for ever (#1479).
+        if not math.isfinite(start_s) or not math.isfinite(end_s):
+            raise ValueError(f"{label}: start_s and end_s must be finite")
         if not end_s > start_s:
             raise ValueError(f"{label}: end_s must be after start_s")
         # NaN fails every comparison, so a NaN start_time would never place it.
@@ -242,6 +246,8 @@ class ConstructionZoneAction(_BackendAction):
                     world, driver, _spans(features, start, min(closed), max(closed))
                 )
         # Fetched once for every prop of the zone, and a missing prop said once.
+        # Each prop reads the road near its lanelet's own height (SpawnAction),
+        # so a zone on a road under an overpass stands on that road.
         library = world.get_blueprint_library()
         ground = road_height(run_carla_map(world))
         available: set[str] = set()
@@ -291,10 +297,12 @@ class ConstructionZoneAction(_BackendAction):
         spans: list[tuple[int, float, float]],
     ) -> None:
         """Take the backend's background vehicles in *spans* off the road."""
-        for handle, (x, y) in backend.background_vehicles(world).items():
-            pose = CarlaWorldPose(x, y, 0.0)
+        for handle, (x, y, z) in backend.background_vehicles(world).items():
+            # Without its height (None), the vehicle is placed in plan view.
+            by_height = z is not None
+            pose = CarlaWorldPose(x, y, z if z is not None else 0.0)
             for lanelet_id, s_from, s_to in spans:
-                if not on_lanelet(pose, lanelet_id):
+                if not on_lanelet(pose, lanelet_id, by_height=by_height):
                     continue
                 s = project_onto_lanelet(pose, lanelet_id).s
                 if s_from <= s <= s_to:

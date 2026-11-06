@@ -1,6 +1,6 @@
 {% extends "base.html" %}
 {% import "partials/icons.html" as ic %}
-{% block title %}Not found · Scenario Editor{% endblock %}
+{% block title %}{{ heading or "Not found" }} · Scenario Editor{% endblock %}
 {% block content %}
 <div class="ed-panel" style="max-width:520px; margin:48px auto">
   <div class="ed-panel-body" style="text-align:center; padding:36px 24px">

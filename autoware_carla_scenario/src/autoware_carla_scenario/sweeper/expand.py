@@ -54,6 +54,10 @@ from omegaconf import DictConfig, OmegaConf
 
 from ..seed import DEFAULT_SEED
 from .bindings import Binding, parse_binding
+
+# The lanelet key a walk-back moves is the checked bindings's (#1697); the
+# name it had here stays importable from here.
+from .bindings import _walk_back_lanelet_key as _walk_back_lanelet_key
 from .case_choice import case_lanelet as _case_lanelet
 from .case_choice import choose_cases as _choose_cases
 from .case_choice import fits as _fits
@@ -82,6 +86,22 @@ def _override_value(value: Any) -> str:
     if isinstance(value, (list, tuple)):
         return "[" + ",".join(_override_value(v) for v in value) + "]"
     return str(value)
+
+
+def _case_index(value: Any) -> int | None:
+    """``sweep.case_index``, checked before anything is drawn or searched:
+    a whole number >= 0, or ``None`` when unset.  Not ``int()``, which reads
+    ``1.9`` and ``true`` as 1 and does not name the key on ``"abc"`` (#1819).
+
+    Raises:
+        ValueError: Naming ``sweep.case_index``
+            (:func:`~autoware_carla_scenario.odd.sampler.whole_number_setting`).
+    """
+    if value is None:
+        return None
+    from ..odd.sampler import whole_number_setting  # noqa: PLC0415
+
+    return whole_number_setting("sweep.case_index", value, minimum=0)
 
 
 def expand_sweep(
@@ -116,9 +136,11 @@ def expand_sweep(
         ValueError: If ``sweep`` has none of constraints, a route search and
             ``odd_sample``, or both constraints and a route search, or
             constraints for more than one target key, or a ``case_index``
-            past the cases it expands to.
+            that is not a non-negative whole number or is past the cases it
+            expands to.
     """
     check_constraint_keys(sweep)
+    index = _case_index(sweep.get("case_index"))
     odd_sample = sweep.get("odd_sample") or {}
     if odd_sample and odd_sample.get("seed") is None:
         # A run without a seed draws as one with DEFAULT_SEED does.
@@ -148,9 +170,7 @@ def expand_sweep(
             drawn,
             lanelet_map=lanelet_map if base_cases != [[]] else None,
         )
-    case_index = sweep.get("case_index")
-    if case_index is not None:
-        index = int(case_index)
+    if index is not None:
         if not 0 <= index < len(base_cases):
             raise ValueError(
                 f"sweep.case_index {index} is out of range: the sweep expands "
@@ -302,12 +322,18 @@ def _with_odd_samples(
     from ..odd.sampler import (  # noqa: PLC0415
         ODD_CASE_KEY,
         encode_case,
+        sample_draws,
+        sample_seed,
         search_from_config,
         with_tire_friction,
         with_visibility,
     )
 
     raw = {str(k): v for k, v in odd_sample.items()}
+    # Read before anything is drawn, and strictly (check_sample_settings()):
+    # "false" turns a draw off, "ture" is refused (#1756).
+    draws_grip = sample_draws(raw, "tire_friction")
+    draws_visibility = sample_draws(raw, "visibility")
     readings: list[dict[str, tuple[str, Any]]] = []
     buckets: list[dict[str, str]] = []
     map_attributes: list[str] = []
@@ -349,15 +375,14 @@ def _with_odd_samples(
         cases = [base_cases[i % len(base_cases)] for i in range(len(samples))]
     if drawn is not None:
         drawn.add(sampler.odd, samples)
-    # expand_sweep() has filled a null seed in; the value as given (not int()
-    # of it) is what these draws have always hashed.
-    draw_seed = raw.get("seed")
-    if draw_seed is None:
-        draw_seed = DEFAULT_SEED
-    if raw.get("tire_friction", True):
+    # The seed the ODD was drawn from (expand_sweep() has filled a null one
+    # in), as the int it names: 4.0, "4" and " 4 " draw the grip and the
+    # visibility seed 4 does, as they draw its cases (#1442).
+    draw_seed = sample_seed(raw)
+    if draws_grip:
         # After the draws are recorded: the grip is no attribute of the ODD.
         samples = with_tire_friction(samples, draw_seed)
-    if raw.get("visibility", True):
+    if draws_visibility:
         # Nor is how far drivers see.
         samples = with_visibility(samples, draw_seed)
     logger.info(
@@ -419,38 +444,6 @@ def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
         )
 
 
-def _walk_back_lanelet_key(s_key: str, lanelet_id: int) -> str:
-    """The lanelet key of the spawn whose ``s`` a walk-back moved, by *s_key*.
-
-    A ``stop_line_offset`` binding that walks back off the pick puts its spawn
-    on a predecessor: that spawn's lanelet key has to say so, and no other.
-    The spawn keys come in pairs, so the lanelet key is the ``s`` key's
-    sibling: ``<prefix>.s`` -> ``<prefix>.lanelet_id`` (an entity's
-    ``scenario.spawn_overrides.<entity>``), ``<prefix>.spawn_s`` ->
-    ``<prefix>.spawn_lanelet_id`` and ``<prefix>.goal_s`` ->
-    ``<prefix>.goal_lanelet_id`` (the ego's).
-
-    Raises:
-        ValueError: If *s_key* is none of those, so there is no lanelet key
-            to move to *lanelet_id*.
-    """
-    prefix, _, leaf = s_key.rpartition(".")
-    sibling = {
-        "s": "lanelet_id",
-        "spawn_s": "spawn_lanelet_id",
-        "goal_s": "goal_lanelet_id",
-    }.get(leaf)
-    if sibling is None:
-        raise ValueError(
-            f"sweep.bindings: {s_key} walks back to lanelet {lanelet_id}, but "
-            "is not a spawn's s (<prefix>.s, <prefix>.spawn_s or "
-            "<prefix>.goal_s), so there is no lanelet key to move with it. "
-            "Bind stop_line_offset to a spawn's s, or use an offset that fits "
-            "on the pick."
-        )
-    return f"{prefix}.{sibling}" if prefix else sibling
-
-
 def _write_override(
     values: dict[str, tuple[str, str | None]],
     key: str,
@@ -503,6 +496,7 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
         parse_binding(key, b_cfg)
         for key, b_cfg in (sweep.get("bindings") or {}).items()
     ]
+    excluded = _excluded_overrides(sweep)
     cases: list[list[str]] = []
     for lid in matched_ids:
         # Key -> (value, who wrote it).  The pick is only the target key's
@@ -539,10 +533,36 @@ def _expand_lanelets(sweep: Mapping[Any, Any], lanelet_map: Any) -> list[list[st
                     lid,
                 )
         else:
+            hit = next(
+                (
+                    key
+                    for key, (value, _) in values.items()
+                    if value in excluded.get(key, ())
+                ),
+                None,
+            )
+            if hit is not None:
+                logger.info(
+                    "Lanelet %d's case ends with %s=%s, which sweep.exclude "
+                    "names; skipping this lanelet.",
+                    lid,
+                    hit,
+                    values[hit][0],
+                )
+                continue
             cases.append([f"{key}={value}" for key, (value, _) in values.items()])
     if not cases:
         logger.warning("All lanelets were skipped due to binding failures.")
     return cases
+
+
+def _excluded_overrides(sweep: Mapping[Any, Any]) -> dict[str, frozenset[str]]:
+    """``sweep.exclude``, each key's values rendered as the case's overrides
+    hold them (:func:`_override_value`), so a case is checked on what it runs."""
+    return {
+        str(key): frozenset(_override_value(v) for v in (values or ()))
+        for key, values in (sweep.get("exclude") or {}).items()
+    }
 
 
 def expand_route(
@@ -554,8 +574,10 @@ def expand_route(
     returns them: the ego's spawn (``ego.spawn_lanelet_id`` / ``ego.spawn_s``,
     ``ego_spawn_s`` along the route), its goal (``ego.goal_lanelet_id`` /
     ``ego.goal_s``, the route's end less ``ego_goal_margin``) when
-    ``ego_goal`` is set, and the match as the ``scenario.route.*`` keys.  A
-    match the ego cannot be placed on is skipped (and logged).
+    ``ego_goal`` is set, the match as the ``scenario.route.*`` keys, and how
+    many cases the search expanded to (``scenario.route.case_count``).  A
+    match the ego cannot be placed on is skipped (and logged), and not
+    counted.
 
     Raises:
         ValueError: If ``route`` is not a well-formed route search.
@@ -598,8 +620,22 @@ def expand_route(
             f"scenario.route.{key}={_override_value(value)}"
             for key, value in match.to_config().items()
         ]
-        cases.append([*overrides, *arguments])
-    return cases
+        cases.append(overrides)
+    # Every case says how many there are on this map: what a logical
+    # scenario's gate counts its case coverage against (docs/gate.md).
+    count = f"scenario.route.case_count={len(cases)}"
+    return [[*overrides, count, *arguments] for overrides in cases]
+
+
+#: Why a sweep that expands to no case is refused -- by the lanelet sweeper,
+#: a ``--multirun`` batch, the viewer and ``scenario-expand`` alike (#1407).
+#: Exit 0 means every case passed: a sweep that tests nothing (a misspelt
+#: constraint, the wrong map) must not look like one. A config without a
+#: sweep is not refused: it expands to itself, one case.
+EMPTY_SWEEP_MESSAGE = (
+    "the sweep expands to no case (its constraints, route or ODD sample match "
+    "nothing on this map)"
+)
 
 
 def expand_config(
@@ -617,10 +653,23 @@ def expand_config(
         ControlsError: When the config's ``controls`` are invalid, whether or
             not it has a sweep -- as ``scenario-check`` refuses them
             (:func:`scenario_controls`).
+        ValueError: When the sweep itself is invalid -- a ``case_index`` out
+            of range, a route search beside constraints, more than one
+            constraint key, an empty constraints section, or a constraint or
+            binding the parsers refuse (:func:`expand_sweep`) -- or when the
+            run's ``seed``, or ``sweep.odd_sample``'s ``seed`` or ``count``,
+            is not a whole number (a negative seed, a count below 1), checked
+            before any map is read -- or when the Lanelet2 map a constraint or
+            route sweep needs is not named, is missing, or cannot be read,
+            whether ``map.lanelet2_path``, ``map.directory`` or ``map.source``
+            names it (a map that cannot be resolved or fetched;
+            :func:`load_sweep_map`).
     """
     # Checked before anything else, a concrete config's too: the check needs
     # only the config, no map, ODD or CARLA.
     controls = scenario_controls(cfg)
+    # And the run's seed, which every case runs with (a run refuses it too).
+    seed = _config_seed(cfg)
     sweep_cfg = OmegaConf.select(cfg, "sweep")
     sweep = (
         OmegaConf.to_container(sweep_cfg, resolve=True) if sweep_cfg is not None else {}
@@ -632,17 +681,19 @@ def expand_config(
 
     check_constraint_keys(sweep)
     odd = OmegaConf.select(cfg, "odd")
-    seed = _config_seed(cfg)
+    # Before any map is read, as the constraint keys are.
+    odd_sample = sweep.get("odd_sample")
+    if isinstance(odd_sample, Mapping):
+        from ..odd.sampler import check_sample_settings  # noqa: PLC0415
+
+        check_sample_settings(odd_sample)
     if not (sweep.get("constraints") or sweep.get("route")):
         # Drawing from the ODD alone needs no map.
         return expand_sweep(
             sweep, None, arguments, odd=odd, controls=controls, drawn=drawn, seed=seed
         )
 
-    from ..maps import resolve_map_paths  # noqa: PLC0415 -- clones a map on demand
-    from .map_loader import load_map  # noqa: PLC0415
-
-    lanelet_map = load_map(resolve_map_paths(OmegaConf.select(cfg, "map")))
+    lanelet_map = load_sweep_map(OmegaConf.select(cfg, "map"))
     return expand_sweep(
         sweep,
         lanelet_map,
@@ -654,11 +705,80 @@ def expand_config(
     )
 
 
+def load_sweep_map(map_cfg: Any, *, prefix: str = "") -> Any:
+    """Resolve and load the Lanelet2 map a sweep's ``map`` config names.
+
+    ``scenario-expand``, a ``--multirun`` batch (:func:`expand_config`) and
+    the Hydra sweeper (``LaneletConstraintSweeper``) all load a sweep's map
+    this way, so each refuses a map that is missing or unreadable alike: as
+    an invalid sweep, an authoring error of this scenario that its caller
+    reports by name, not a crash (#1444, #1447).
+
+    Args:
+        map_cfg: The config's ``map`` node (``None`` when it has none).
+        prefix: Put before the message, to say who refuses the map.
+
+    Raises:
+        ValueError: Naming the map, its cause the original error, when it is
+            not named, is missing or cannot be read, whether
+            ``map.lanelet2_path``, ``map.directory`` or ``map.source`` names
+            it -- a map that cannot be resolved or fetched (MapSourceError,
+            MapResolutionError, MapCacheError), an ``OSError`` resolving it
+            (the map cache's root not a directory, say), a Lanelet2 file that
+            is missing (``FileNotFoundError``) or that Lanelet2 cannot read
+            (any ``OSError``, or its parser's ``RuntimeError``).
+    """
+    from ..maps import (  # noqa: PLC0415 -- clones a map on demand
+        MapCacheError,
+        MapResolutionError,
+        MapSourceError,
+        resolve_map_paths,
+    )
+    from .map_loader import load_map  # noqa: PLC0415
+
+    try:
+        paths = resolve_map_paths(map_cfg)
+    except (MapSourceError, MapResolutionError, MapCacheError) as exc:
+        raise ValueError(f"{prefix}{exc}") from exc  # each names the map
+    except OSError as exc:  # the map cache's own directory, say
+        raise ValueError(
+            f"{prefix}Could not resolve the map{_map_label(map_cfg)}: {exc}"
+        ) from exc
+    try:
+        return load_map(paths)
+    except FileNotFoundError as exc:  # names the file, or says none is named
+        raise ValueError(f"{prefix}{exc}") from exc
+    except (OSError, RuntimeError) as exc:  # RuntimeError: Lanelet2's parser
+        raise ValueError(
+            f"{prefix}Could not read the Lanelet2 map {paths.lanelet2_path}: {exc}"
+        ) from exc
+
+
+def _map_label(map_cfg: Any) -> str:
+    """`` map.<key>=<value>`` for the setting *map_cfg*'s map is resolved
+    from -- ``map.directory`` wins over ``map.source``, as in
+    :func:`~autoware_carla_scenario.maps.resolve_map_paths` -- or its
+    ``map.name``; ``""`` when none is set."""
+    if not isinstance(map_cfg, DictConfig):
+        return ""
+    for key in ("directory", "source", "name"):
+        value = OmegaConf.select(map_cfg, key)
+        if value is not None and str(value).strip():
+            return f" map.{key}={value}"
+    return ""
+
+
 def _config_seed(cfg: DictConfig) -> int | None:
     """The run's seed, the config's top-level ``seed``; ``None`` when it has none
-    (:mod:`autoware_carla_scenario.seed`)."""
-    value = OmegaConf.select(cfg, "seed")
-    return None if value is None else int(value)
+    (:mod:`autoware_carla_scenario.seed`).
+
+    Raises:
+        ValueError: When it is not a non-negative whole number
+            (:func:`~autoware_carla_scenario.odd.sampler.seed_setting`).
+    """
+    from ..odd.sampler import seed_setting  # noqa: PLC0415 -- imports openodd
+
+    return seed_setting("seed", OmegaConf.select(cfg, "seed"))
 
 
 def scenario_controls(cfg: DictConfig) -> dict[str, Any]:
@@ -681,6 +801,7 @@ def scenario_controls(cfg: DictConfig) -> dict[str, Any]:
 
 
 __all__ = [
+    "EMPTY_SWEEP_MESSAGE",
     "check_constraint_keys",
     "expand_config",
     "expand_route",

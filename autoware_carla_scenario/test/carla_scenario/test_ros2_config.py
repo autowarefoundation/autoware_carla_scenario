@@ -7,8 +7,11 @@ simulation run.
 
 from __future__ import annotations
 
+import math
 from pathlib import Path
+from typing import Any
 
+import numpy as np
 import pytest
 
 from autoware_carla_scenario.driver.control import ControlConfig
@@ -165,6 +168,94 @@ def test_from_mapping_rejects_an_unknown_camera_key() -> None:
         )
 
 
+_CAMERA_TOPIC = "/carla/hero/main_cam/image"
+
+
+@pytest.mark.parametrize("fov", [0.0, -30.0, 180.0, 270.0])
+def test_a_camera_refuses_a_fov_outside_0_to_180(fov: float) -> None:
+    # CARLA's pinhole only spans (0, 180) degrees; outside it the camera would
+    # only fail as it attaches, after the ego spawned (#1399).
+    with pytest.raises(ValueError, match=r"fov must be in \(0, 180\) degrees"):
+        Ros2CameraConfig(topic=_CAMERA_TOPIC, fov=fov)
+
+
+def test_a_camera_refuses_a_nan_fov() -> None:
+    with pytest.raises(ValueError, match="fov must be finite"):
+        Ros2CameraConfig(topic=_CAMERA_TOPIC, fov=math.nan)
+
+
+@pytest.mark.parametrize("fov", [0.001, 90.0, 179.9])
+def test_a_camera_accepts_a_fov_inside_0_to_180(fov: float) -> None:
+    assert Ros2CameraConfig(topic=_CAMERA_TOPIC, fov=fov).fov == fov
+
+
+@pytest.mark.parametrize("key", ["image_width", "image_height"])
+@pytest.mark.parametrize("value", [0, -1])
+def test_a_camera_refuses_a_bad_image_size(key: str, value: Any) -> None:
+    with pytest.raises(
+        ValueError, match="image size and fps must be positive and finite"
+    ):
+        Ros2CameraConfig(topic=_CAMERA_TOPIC, **{key: value})
+
+
+@pytest.mark.parametrize("key", ["image_width", "image_height"])
+@pytest.mark.parametrize("value", [960, 960.0, 9.6e2, np.int64(960)])
+def test_a_camera_keeps_a_whole_number_size_as_an_int(key: str, value: Any) -> None:
+    """CARLA's image_size_x reads "960.0" as 960 (atoi), so 960.0 worked; it
+    still does, and CARLA is handed "960", as a driver camera's protobuf
+    resolution is handed 960 (#1472)."""
+    for camera in (
+        Ros2CameraConfig(topic=_CAMERA_TOPIC, **{key: value}),
+        Ros2EgoConfig.from_mapping(
+            {"cameras": [{"topic": _CAMERA_TOPIC, key: value}]}
+        ).cameras[0],
+    ):
+        assert type(getattr(camera, key)) is int
+        assert str(getattr(camera.to_sensor_config(), key)) == "960"
+
+
+@pytest.mark.parametrize("key", ["image_width", "image_height"])
+@pytest.mark.parametrize("value", [960.5, True, "960", None])
+def test_a_camera_refuses_a_size_that_is_no_whole_number(key: str, value: Any) -> None:
+    """Not truncated to 960 or 1 (#1472)."""
+    match = rf"^camera 'camera': {key} must be a whole number"
+    with pytest.raises(ValueError, match=match):
+        Ros2CameraConfig(topic=_CAMERA_TOPIC, **{key: value})
+    with pytest.raises(ValueError, match=match):
+        Ros2EgoConfig.from_mapping({"cameras": [{"topic": _CAMERA_TOPIC, key: value}]})
+
+
+def test_a_camera_hands_carla_an_int_size() -> None:
+    sensor = Ros2CameraConfig(
+        topic=_CAMERA_TOPIC, image_width=1280, image_height=720
+    ).to_sensor_config()
+    assert str(sensor.image_width) == "1280"
+    assert str(sensor.image_height) == "720"
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "match"),
+    [
+        ("fov", 0.0, r"fov must be in \(0, 180\) degrees"),
+        ("fov", -30.0, r"fov must be in \(0, 180\) degrees"),
+        ("fov", 180.0, r"fov must be in \(0, 180\) degrees"),
+        ("fov", 270.0, r"fov must be in \(0, 180\) degrees"),
+        ("fov", math.nan, "fov must be finite"),
+        ("image_width", math.nan, "image_width must be finite"),
+        ("image_height", math.nan, "image_height must be finite"),
+        ("image_width", math.inf, "image_width must be finite"),
+        ("image_height", 0, "image size and fps must be positive and finite"),
+    ],
+)
+def test_from_mapping_refuses_a_camera_out_of_bounds(
+    key: str, value: Any, match: str
+) -> None:
+    # The mapping is not coerced, so a YAML `.nan` reaches an int field as a
+    # float; it is refused as the config is read.
+    with pytest.raises(ValueError, match=match):
+        Ros2EgoConfig.from_mapping({"cameras": [{"topic": _CAMERA_TOPIC, key: value}]})
+
+
 # ---------------------------------------------------------------------------
 # The shipped config group
 # ---------------------------------------------------------------------------
@@ -201,6 +292,14 @@ def test_visionpilot_safety_island_preset_replaces_the_bench_bridge() -> None:
     assert config.kinematic_state_topic == "/localization/kinematic_state"
 
 
+def test_the_documented_ros2_run_composes() -> None:
+    # docs/ros2.md's command line, and the one the "not paced" warning advises
+    # (#1438): server.max_tick_rate_hz must be a key of the shipped server.
+    cfg = _composed(["ego.entity=ros2", "server.max_tick_rate_hz=20"])
+    assert cfg.ego.entity == "ros2"
+    assert cfg.server.max_tick_rate_hz == 20
+
+
 def test_run_builds_the_ros2_entity() -> None:
     from autoware_carla_scenario.entity.ros2_entity import Ros2EgoEntity
     from autoware_carla_scenario.examples.run import build_ego_entity
@@ -222,6 +321,22 @@ def test_run_warns_when_the_run_is_not_paced(caplog: pytest.LogCaptureFixture) -
     caplog.clear()
     build_ego_entity(_composed(["ros2=visionpilot_safety_island"]))
     assert "max_tick_rate_hz" not in caplog.text
+
+    caplog.clear()
+    build_ego_entity(_composed(["ego.entity=ros2", "server.max_tick_rate_hz=20"]))
+    assert "max_tick_rate_hz" not in caplog.text
+
+
+@pytest.mark.parametrize("rate", ["0", "-20", "nan"])
+def test_run_warns_when_the_rate_paces_nothing(
+    rate: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    # A run refuses such a rate first (check_run_config); built without that
+    # check, the runner reads it as uncapped, so the warning says so (#1439).
+    from autoware_carla_scenario.examples.run import build_ego_entity
+
+    build_ego_entity(_composed(["ego.entity=ros2", f"server.max_tick_rate_hz={rate}"]))
+    assert "max_tick_rate_hz" in caplog.text
 
 
 def test_run_refuses_ros2_without_its_group() -> None:
@@ -249,3 +364,175 @@ def test_pair_window_s_defaults_to_measured_and_takes_null_or_seconds() -> None:
         CommandSourceConfig.from_mapping({**base, "pair_window_s": 0.03}).pair_window_s
         == 0.03
     )
+
+
+# ---------------------------------------------------------------------------
+# Value types and the domain (#1468): refused as the config is built, naming
+# the key, not once the ego has spawned and joined the domain
+# ---------------------------------------------------------------------------
+
+
+def _source(**overrides: Any) -> dict[str, Any]:
+    return {"name": "planner", "kind": "trajectory", "topic": "/t", **overrides}
+
+
+@pytest.mark.parametrize("domain_id", [0, 1, 101, 232])
+def test_domain_id_takes_a_ros_domain_id(domain_id: int) -> None:
+    assert Ros2EgoConfig(domain_id=domain_id).domain_id == domain_id
+
+
+@pytest.mark.parametrize("domain_id", [7.0, np.int64(7)])
+def test_domain_id_keeps_a_whole_number_as_an_int(domain_id: Any) -> None:
+    """A whole number as a camera's size is (#1472), handed DDS as an int."""
+    config = Ros2EgoConfig.from_mapping({"domain_id": domain_id})
+    assert type(config.domain_id) is int
+    assert config.domain_id == 7
+
+
+@pytest.mark.parametrize(
+    "domain_id", [-1, 233, 300, True, False, "7", 1.5, math.nan, -1.0, None]
+)
+def test_domain_id_refuses_what_is_no_ros_domain_id(domain_id: Any) -> None:
+    with pytest.raises(ValueError, match=r"^domain_id must be a ROS domain id"):
+        Ros2EgoConfig.from_mapping({"domain_id": domain_id})
+
+
+def test_domain_id_shares_the_docker_launcher_s_bound() -> None:
+    from autoware_carla_scenario.autoware_stack import docker
+    from autoware_carla_scenario.constants import MAX_ROS_DOMAIN_ID
+
+    assert MAX_ROS_DOMAIN_ID == 232
+    assert docker.MAX_ROS_DOMAIN_ID is MAX_ROS_DOMAIN_ID
+
+
+@pytest.mark.parametrize("priority", [-5, 0, 10])
+def test_priority_takes_an_int(priority: int) -> None:
+    assert CommandSourceConfig.from_mapping(_source(priority=priority)).priority == (
+        priority
+    )
+
+
+@pytest.mark.parametrize("priority", [10.0, np.int64(10)])
+def test_priority_keeps_a_whole_number_as_an_int(priority: Any) -> None:
+    source = CommandSourceConfig.from_mapping(_source(priority=priority))
+    assert type(source.priority) is int
+    assert source.priority == 10
+
+
+@pytest.mark.parametrize("priority", ["10", True, 10.5, math.nan, None])
+def test_priority_refuses_what_is_no_whole_number(priority: Any) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"^command source 'planner': priority must be (a whole number|finite)",
+    ):
+        CommandSourceConfig.from_mapping(_source(priority=priority))
+
+
+@pytest.mark.parametrize(
+    "key", ["stale_s", "steering_sign", "speed_horizon_s", "jerk_mps3", "pair_window_s"]
+)
+@pytest.mark.parametrize("value", ["0.3", True, [0.3]])
+def test_a_source_refuses_a_number_that_is_no_number(key: str, value: Any) -> None:
+    with pytest.raises(
+        ValueError, match=rf"^command source 'planner': {key} must be a number"
+    ):
+        CommandSourceConfig.from_mapping(_source(**{key: value}))
+
+
+def test_a_source_takes_an_int_for_a_float() -> None:
+    source = CommandSourceConfig.from_mapping(
+        _source(stale_s=1, steering_sign=-1, speed_horizon_s=2, jerk_mps3=5)
+    )
+    assert source.stale_us == 1_000_000
+    assert source.steering_sign == -1
+
+
+@pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("speed_horizon_s", 0.0, "speed_horizon_s must be positive, got 0.0"),
+        ("speed_horizon_s", -2.0, "speed_horizon_s must be positive, got -2.0"),
+        ("jerk_mps3", -1.0, "jerk_mps3 must not be negative, got -1.0"),
+        ("steering_sign", 0.0, "steering_sign must not be zero, got 0.0"),
+        ("steering_sign", 0, "steering_sign must not be zero, got 0"),
+    ],
+)
+def test_a_source_refuses_a_gain_out_of_bounds(
+    key: str, value: Any, message: str
+) -> None:
+    """#1804: a negative horizon turned a request to accelerate into braking, a
+    zero one pinned the target speed, and a zero sign pinned the steering."""
+    with pytest.raises(ValueError) as raised:
+        CommandSourceConfig.from_mapping(_source(**{key: value}))
+    assert str(raised.value) == f"command source 'planner': {message}"
+    assert "\n" not in str(raised.value)
+
+
+@pytest.mark.parametrize("sign", [-1.0, -0.5, 2.0])
+def test_a_source_takes_a_negative_or_scaled_steering_sign(sign: float) -> None:
+    assert CommandSourceConfig.from_mapping(
+        _source(steering_sign=sign)
+    ).steering_sign == pytest.approx(sign)
+
+
+def test_a_source_takes_a_zero_jerk_carlas_default() -> None:
+    """``carla.VehicleAckermannControl`` takes ``jerk=0.0`` by default."""
+    assert CommandSourceConfig.from_mapping(_source(jerk_mps3=0)).jerk_mps3 == 0
+
+
+@pytest.mark.parametrize(
+    "key",
+    [
+        "fov",
+        "fps",
+        "position_x",
+        "position_y",
+        "position_z",
+        "roll",
+        "pitch",
+        "yaw",
+    ],
+)
+@pytest.mark.parametrize("value", ["1", True])
+def test_a_camera_refuses_a_number_that_is_no_number(key: str, value: Any) -> None:
+    with pytest.raises(ValueError, match=rf"^camera 'camera': {key} must be a number"):
+        Ros2CameraConfig.from_mapping({"topic": "/c", key: value})
+
+
+@pytest.mark.parametrize("value", ["0.5", True])
+def test_rear_axle_offset_m_refuses_what_is_no_number(value: Any) -> None:
+    with pytest.raises(ValueError, match=r"^rear_axle_offset_m must be a number"):
+        Ros2EgoConfig.from_mapping({"rear_axle_offset_m": value})
+
+
+def test_shipped_ros2_configs_build() -> None:
+    for overrides in (["ego.entity=ros2"], ["ros2=visionpilot_safety_island"]):
+        Ros2EgoConfig.from_mapping(_to_dict(_composed(overrides).ros2))
+
+
+def test_the_run_check_refuses_a_bad_ros2_setting_up_front() -> None:
+    from autoware_carla_scenario.examples import run
+
+    run.check_run_config(_composed(["ros2=visionpilot_safety_island"]))
+
+    cfg = _composed(["ego.entity=ros2", "ros2.domain_id=233"])
+    with pytest.raises(run.RunConfigError, match=r"^ros2: domain_id must be"):
+        run.check_run_config(cfg)
+
+    cfg = _composed(["ros2=visionpilot_safety_island"])
+    cfg.ros2.sources[1].priority = "10"
+    with pytest.raises(
+        run.RunConfigError,
+        match=r"^ros2: command source 'safety_island': priority must be",
+    ):
+        run.check_run_config(cfg)
+
+    cfg = _composed(["ego.entity=ros2", "+ros2.control.no_such_gain=1"])
+    with pytest.raises(
+        run.RunConfigError,
+        match=r"^ros2\.control\.no_such_gain: Unknown ControlConfig key",
+    ):
+        run.check_run_config(cfg)
+
+    # Another ego reads no ros2 settings.
+    run.check_run_config(_composed(["ros2.domain_id=233"]))

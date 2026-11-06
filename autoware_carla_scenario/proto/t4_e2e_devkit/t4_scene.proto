@@ -213,9 +213,12 @@ message MapReference {
   Scope scope = 5;
   optional bool has_elevation = 7; // Required; false means z is a planar placeholder.
 }
+message RouteSegment {
+  repeated int64 lane_ids = 1; // Nonempty alternatives; IDs refer to Scene.map.
+  optional int64 preferred_lane_id = 2; // If present, must belong to this segment.
+}
 message RouteData {
-  NumericArray lane_ids = 1; // Required int64 [R], known ordered IDs in Scene.map; may be empty.
-  NumericArray preferred_lane_ids = 2; // Optional int64 [P], known IDs in the same map.
+  repeated RouteSegment segments = 1; // Route order; empty means an empty route.
 }
 message RouteRow { RouteData value = 1; }
 message RouteSequence { repeated RouteRow rows = 1; } // [T], absent row != empty route.

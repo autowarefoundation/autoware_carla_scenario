@@ -1,5 +1,7 @@
 """Package-wide constants for autoware_carla_scenario."""
 
+import math
+
 from .entity_role import EntityRole
 
 # CARLA role_name attribute value assigned to the ego vehicle actor.
@@ -37,28 +39,40 @@ def tick_multiple(seconds: float, key: str) -> int:
     goes through this one check, so a value between two ticks is refused when
     the config is read instead of being rounded to the next tick at run time.
     A value within 1e-9 s of a multiple counts as one (0.15 is not exact in
-    binary).
+    binary).  NaN and infinity are refused the same way, naming *key*.
 
     Args:
         seconds: The interval.
         key: The setting's name, which the error names (``driver.policy_timestep_s``).
 
     Raises:
-        ValueError: If *seconds* is not a positive multiple of the tick (and
-            OverflowError for an infinite *seconds*, as ``round`` raises).
+        ValueError: If *seconds* is not a positive multiple of the tick.
     """
+    error = ValueError(
+        f"{key}={seconds} is not a positive multiple of the "
+        f"{FIXED_DELTA_SECONDS} s tick"
+    )
+    # Before round(): it raises OverflowError for infinity and ValueError
+    # without the key for NaN.
+    if not math.isfinite(seconds):
+        raise error
     ticks = int(round(seconds / FIXED_DELTA_SECONDS))
     if ticks < 1 or abs(ticks * FIXED_DELTA_SECONDS - seconds) > 1e-9:
-        raise ValueError(
-            f"{key}={seconds} is not a positive multiple of the "
-            f"{FIXED_DELTA_SECONDS} s tick"
-        )
+        raise error
     return ticks
 
 
 # Microseconds per second: simulation time as an integer, the clock the
 # trajectory follower, the ego observation and the ROS 2 command arbiter keep.
 US_PER_S: int = 1_000_000
+
+# The highest ``ROS_DOMAIN_ID`` ROS 2 can use: the DDS (RTPS) port of a domain
+# above it is past 65535 ("The ROS_DOMAIN_ID", ROS 2 documentation,
+# https://docs.ros.org/en/rolling/Concepts/Intermediate/About-Domain-ID.html).
+# On Linux that page advises 0 to 101, below the kernel's ephemeral ports.
+# Both the docker launcher's ``ros_domain_ids`` and the ROS 2 ego's
+# ``domain_id`` are refused above it.
+MAX_ROS_DOMAIN_ID: int = 232
 
 # When a lane change counts as completed.
 #

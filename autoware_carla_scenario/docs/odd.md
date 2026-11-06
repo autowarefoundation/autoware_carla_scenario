@@ -246,7 +246,8 @@ What they read off a lanelet is public too, for code that has to judge a
 lanelet exactly as the ODD does: `lanelet_in_junction(lanelet)` (a
 `turn_direction` tag, `scenery.junction`), `lanelet_road_type(lanelet)` (the
 `subtype` tag, `scenery.road_type`) and `lanelet_speed_limit(lanelet)` (the
-`speed_limit` tag, km/h). The adversities' location gate reads them
+`speed_limit` tag, km/h; None for a tag that is not a finite number above 0,
+as for a missing one). The adversities' location gate reads them
 (`autoware_carla_scenario.adversity.location`).
 
 Import them from `autoware_carla_scenario.odd` itself
@@ -265,8 +266,8 @@ generically around the ego:
 |---|---|---|---|
 | `vehicle_ahead_gap_m` | m | 2 | The free road to the nearest vehicle ahead on the ego's lane or a lane beside it: its rear bumper less the ego's front bumper, along the ego's lane on the Lanelet2 map (up to `AHEAD_RANGE_M`); a vehicle about to cut in is measured from before it changes lanes |
 | `vehicle_ahead_relative_speed_kph` | km/h | 2 | That vehicle's speed along the ego's lane less the ego's |
-| `crossing_pedestrian_gap_m` | m | How far ahead the nearest pedestrian ahead that is moving was when it set off, held while it crosses |
-| `crossing_pedestrian_speed_ms` | m/s | That pedestrian's speed |
+| `crossing_pedestrian_gap_m` | m | 1 | How far ahead the nearest pedestrian ahead that is moving was when it set off, held while it crosses |
+| `crossing_pedestrian_speed_ms` | m/s | 1 | That pedestrian's speed |
 | `stop_line_distance_m` | m | 1 | Along the ego's lane, from its front bumper to the nearest stop line ahead -- a traffic light's, a traffic sign's, a detection area's or a road marking's, as a `stop_line_offset` binding finds them -- up to `AHEAD_RANGE_M`, on any branch of the lane where it forks (the measure does not know the route); nothing without a lane to read along |
 
 The pedestrian measures read in the ego's frame: ahead along its heading,
@@ -742,6 +743,10 @@ uv run scenario --multirun 'scenario=cut_in/*' map=town10hd_opt \
   +sweep.odd_sample.count=3 +sweep.odd_sample.strategy=coverage
 ```
 
+`scenario-expand` on the same glob lists those same cases (without the
+arguments the batch adds), each scenario going on from the earlier ones'
+draws, as in the batch.
+
 The same seed, ODD, knobs, coverage and scenarios, in the same order, give
 the same cases, on any machine (openodd's sampler draws from ChaCha8 seeded
 with the seed's SHA-256). Two ODDs are one when they are built alike (their
@@ -753,8 +758,8 @@ or in the scenario's YAML:
 ```yaml
 sweep:
   odd_sample:
-    count: 20              # cases; one per lanelet case when left out
-    seed: null             # the run's (`seed`) when null, `DEFAULT_SEED` (0) when the run has none either; same seed, ODD, knobs and coverage: same cases
+    count: 20              # cases, a whole number >= 1; one per lanelet case when left out
+    seed: null             # a whole number in 0..2147483647 (2**31 - 1); the run's (`seed`) when null, `DEFAULT_SEED` (0) when the run has none either; same seed, ODD, knobs and coverage: same cases
     strategy: coverage     # uniform | coverage | weighted (weighted when `weights` is given)
     coverage_from: [outputs]   # earlier runs' *_coverage.json (files or directories)
     weights: null          # module -> share of the cases, or a YAML file of them; see "Sampling by shares of the ODD"
@@ -764,6 +769,10 @@ sweep:
     tire_friction: true    # draw each case's grip in the range its weather allows; see "Tire friction follows the weather"
     visibility: true       # draw how far each case's drivers see in the range its weather allows; see "Visibility follows the weather"
 ```
+
+`count` and `seed` are whole numbers (`20` or `20.0`, not `2.7` or a
+boolean), `count` at least 1 and `seed` from 0 to 2147483647 (`2**31 - 1`); any other value is
+refused, naming the key, before the map is read or anything starts.
 
 Each case is a list of Hydra overrides. A sweep that also has `constraints`
 gives each drawn case the next lanelet case in turn; one without draws from
@@ -956,9 +965,10 @@ still reads back as its bucket. `rain` and `precipitation` cannot both be set
 (the run fails at its start), and the `none` bucket, `rain=0`, is a dry road
 under a clear sky whatever the map's own weather.
 
-Every `environment.*` value must be a finite number: NaN or infinity fails
-the run at its start, naming the key (`environment.rain must be finite, got
-nan`). `cloudiness`, `precipitation`, `precipitation_deposits`, `wetness`,
+Every `environment.*` value must be a finite number -- an integer or a
+float, not a boolean or a string (`true` and `"15"` are refused, not read as
+1 and 15): any other value, NaN or infinity is refused before the run
+starts, naming the key (`environment.rain must be finite, got nan`). `cloudiness`, `precipitation`, `precipitation_deposits`, `wetness`,
 `wind_intensity` and `fog_density` must be within 0-100, `tire_friction` and
 `visibility_m` positive, and the two quantiles within 0-1; `rain` outside 0-100
 is clamped to it. `EnvironmentAction` refuses the same values with a
@@ -1009,7 +1019,11 @@ among the case's overrides, recorded in its coverage file), from the sweep's
 `seed` and the case, so the same sweep draws the same grip. The weather comes
 from the ODD and the grip from the range that weather allows: a heavy-rain
 case never runs on a dry road's grip. `tire_friction: false` in the
-`odd_sample` leaves every case at the median, and
+`odd_sample` leaves every case at the median (`true` or `false`, or one of
+their spellings, as [the run's switches](usage.md#the-switches) take: `"off"`,
+`"no"` and `0` are false; a missing or null one is true; anything else, such
+as `ture` or `2`, is refused, naming `sweep.odd_sample.tire_friction`, before
+any case is drawn), and
 `environment.tire_friction` fixes the grip whatever the weather (it wins over
 the quantile, and a case that names one draws no quantile; the ODD's
 `tire_friction` probe draws it through that knob).
@@ -1076,7 +1090,8 @@ high end; the median when not set); `environment.visibility_m` fixes it whatever
 the weather. A `sweep.odd_sample` draws the quantile for every case, as it
 draws the grip, so the ODD's `rain`, `fog` and `illumination` knobs are what
 shorten it: a night case's drivers see 50-150 m, a heavy-fog case's 15-40 m.
-`visibility: false` in the `odd_sample` leaves every case at the median. An ODD that names the visibility itself (the `visibility` probe)
+`visibility: false` in the `odd_sample` leaves every case at the median
+(read as `tire_friction` is, [strictly](usage.md#the-switches)). An ODD that names the visibility itself (the `visibility` probe)
 sets it through its own knob, `environment.visibility_m`, and a case with one
 keeps it. A run that sets no weather records none, and its traffic sees as
 it always did; each run starts with none, whatever the last left.
@@ -1189,8 +1204,13 @@ environment:
       "vehicle.mini.*": weather/mini.yaml   # a blueprint pattern
 ```
 
-Each vehicle's file is read over the run's default rules. An
-`EnvironmentAction` that sets the road's water gives each vehicle the grip of
+Each vehicle's file is read over the run's default rules. `default` and
+every `vehicles` entry name one file each -- a path or an `https://` URL, as
+`environment.rules` itself does; a pinned `{url, sha256}` is for `extends`
+alone, so a file to pin goes in one that `extends` it. Anything else (a
+number, a mapping, a list, an unknown key) is refused before the batch runs
+(`openodd.RulesError`, naming the key; `weather_rules.check_weather_rules`).
+An `EnvironmentAction` that sets the road's water gives each vehicle the grip of
 its own rules, all at the same `tire_friction_quantile` (a case draws one),
 and a vehicle spawned later its own too; the ODD's `tire_friction` probe
 reads the ego's. `tire_friction`, the grip named outright, is every
@@ -1400,8 +1420,14 @@ The binding file names the regions file with the ODD's
 (`openodd: [urban.yaml, regions.yaml]`), and the ODD names its roots under
 `ODD:`: a module that is a root -- a document with no `ODD:` section takes
 every module that is not a situation as one -- would bound the ODD, and is
-refused a share (every case is in it). A file of shares is relative to the
-directory the sweep is started from.
+refused a share (every case is in it). A relative path to a file of shares
+is resolved against the working directory the command is started from (a
+`--multirun`, a batch, `scenario-expand`), not the directory of the scenario's
+config, as `coverage_from` is: the path is given on the command line, or in a
+config the command line composes. Give an absolute path for a file next to a
+scenario package. A file that cannot be read or parsed, or that names a module
+the ODD does not have, refuses the sweep before any case runs, with one line
+`Error: <scenario>: <why>` and exit 1.
 
 Each module holds its share of the cases, however the modules overlap: with
 `heavy_rain: 0.3` and `night: 0.3`, 30% of the cases are in heavy rain and
@@ -1499,7 +1525,10 @@ the map's routing graph, leg by leg. A scenario that derives its goal in
 `setup()` from `scenario.expected_route_lanelet_ids`, as
 `intersection_passing` does, gets that goal here too (a configured goal
 wins). A goal derived any other way is only known once the scenario runs:
-that route is reported as not planned.
+that route is reported as not planned. So is an exported scenario on a map of
+its own composed on another map (`map=<id>_map` left out), before any map is
+read: its lanelet ids are its own map's
+([Running an authored scenario](scenario_editor.md#running-an-authored-scenario)).
 
 The ODD's attributes are then read lanelet by lanelet along the route, and
 each lanelet gets one of three verdicts:
@@ -1529,7 +1558,7 @@ What the lanelet forms read, and where that differs from the run:
 |---|---|---|
 | `in_junction` | The lanelet has a `turn_direction` tag (Autoware tags every lanelet in an intersection with one; the sweeper's `is_junction` reads it the same way) | The same, on the ego's lanelet; without a Lanelet2 map, CARLA waypoint `is_junction` |
 | `lane_count` | The lanelet and every same-direction neighbour, walked left and right in the routing graph (`left`/`right`, else `adjacentLeft`/`adjacentRight`, so lanes behind a solid line count too); nothing in a junction | The same, on the ego's lanelet; without a Lanelet2 map, the driving lanes of the same sign on the CARLA waypoint's OpenDRIVE road |
-| `speed_limit_kph` | The `speed_limit` tag, else (no tag, or not a number) undecided | The tag, else CARLA's `get_speed_limit()` |
+| `speed_limit_kph` | The `speed_limit` tag, else (no tag, or not a finite number above 0: `nan`, `inf`, `0`, `-30`) undecided | The tag, else (the same) CARLA's `get_speed_limit()` |
 | `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph` | The tag | The tag of the lanelet the ego is on |
 
 A run with a Lanelet2 map reads the junction and the lane count off the

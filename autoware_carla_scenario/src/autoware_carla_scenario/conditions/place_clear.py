@@ -68,6 +68,8 @@ class PlaceClearCondition(BaseCondition):
     _width: float
     _margin: float
     _spot: Optional[tuple[float, float, float]]
+    # The height of the road at the place, where known (#1588).
+    _spot_z: Optional[float]
     # Placed against an entity, afresh on every tick (placed_against_entity).
     _follows: bool
     _unplaced: bool
@@ -106,6 +108,7 @@ class PlaceClearCondition(BaseCondition):
         self._width = float(width)
         self._margin = float(margin)
         self._spot = None
+        self._spot_z = None
         self._follows = placed_against_entity(position)
         self._unplaced = False
         self._said_unplaced = False
@@ -116,6 +119,7 @@ class PlaceClearCondition(BaseCondition):
         a route pose is placed on the run's route, which may be another."""
         super().reset()
         self._spot = None
+        self._spot_z = None
         self._unplaced = False
         self._said_unplaced = False
         self._said_blocker = -1
@@ -170,6 +174,7 @@ class PlaceClearCondition(BaseCondition):
             self._length / 2.0,
             self._width / 2.0,
             self._margin,
+            self._spot_z,
         )
         if blocker >= 0:
             if blocker != self._said_blocker:
@@ -207,9 +212,9 @@ class PlaceClearCondition(BaseCondition):
             if self._follows:
                 # Without a heading of its own, along the lane it is placed
                 # on: no lane is looked up for it afterwards (lane_place).
-                x0, y0, _z, yaw0 = resolve_along_lane(position, reference.pose)
+                x0, y0, z0, yaw0 = resolve_along_lane(position, reference.pose)
             else:
-                x0, y0, _z, yaw0 = resolve_position(position, reference.pose)
+                x0, y0, z0, yaw0 = resolve_position(position, reference.pose)
         except ReferenceAbsentError:
             # Waited for, quietly: the place is nowhere until it is there.
             return None
@@ -235,6 +240,11 @@ class PlaceClearCondition(BaseCondition):
                 _lx, _ly, _lz, lane_yaw = resolve_position(along, reference.pose)
                 if lane_yaw is not None:
                     yaw_deg = float(lane_yaw)
+        # On the level of road it is on: one on a bridge over it, or under
+        # one, does not stand on it (#1588).
+        self._spot_z = None
+        if z0 is not None:
+            self._spot_z = float(z0)
         return (x0, y0, yaw_deg)
 
 
@@ -246,13 +256,15 @@ def _occupant(
     half_length: float,
     half_width: float,
     margin: float,
+    z: Optional[float],
 ) -> int:
     """The id of a road user whose outline comes within *margin* of the
-    rectangle at CARLA ``(x, y)`` facing *yaw*, or ``-1``."""
+    rectangle at CARLA ``(x, y)`` facing *yaw*, on the level of road at
+    height *z* (``None``: on any), or ``-1``."""
     from ..utils.clearance import overlaps  # noqa: PLC0415
 
     try:
-        found = overlaps(world, -1, x, y, yaw, half_length, half_width, margin)
+        found = overlaps(world, -1, x, y, yaw, half_length, half_width, margin, z=z)
     except (AttributeError, RuntimeError):
         return -1
     return -1 if found is None else int(found)

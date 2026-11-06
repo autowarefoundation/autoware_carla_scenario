@@ -25,7 +25,7 @@
 {% if oo_styles %}<style>{{ oo_styles | safe }}</style>{% endif %}
 
 <h1 class="text-2xl font-bold text-gray-800 mb-1">Compare runs</h1>
-<p class="text-sm text-gray-500 mb-4">Cases are matched by what they ran (their sweep overrides, else the ODD values they were drawn at), not by their position. The oldest session picked is the baseline.</p>
+<p class="text-sm text-gray-500 mb-4">Cases are matched by what they ran (their sweep overrides, else the ODD values they were drawn at), not by their position; every run of a case a session repeats is kept, and a case a session both passed and failed is flaky. The oldest session picked is the baseline.</p>
 
 <form method="get" action="/compare" class="bg-white rounded-lg shadow p-4 mb-6" id="compare-form">
   <div class="text-sm font-medium text-gray-700 mb-2">Sessions{% if selected %} of the same scenarios{% endif %}</div>
@@ -37,7 +37,7 @@
         <td class="px-3 py-1 font-mono whitespace-nowrap">{{ s.date }} {{ s.time }}</td>
         <td class="px-3 py-1 text-gray-500">{{ s.session_type }}</td>
         <td class="px-3 py-1 text-gray-700 truncate max-w-md" title="{{ s.scenario_name }}">{{ s.scenario_name.split(',')[0].split('#')[0] }}</td>
-        <td class="px-3 py-1 text-right whitespace-nowrap {% if s.passed_count == s.total_count %}text-green-700{% else %}text-red-700{% endif %}">{{ s.passed_count }}/{{ s.total_count }}</td>
+        <td class="px-3 py-1 text-right whitespace-nowrap {% if s.passed_count == s.total_count %}text-green-700{% elif s.total_count - s.passed_count - s.pending_count > 0 %}text-red-700{% else %}text-gray-700{% endif %}">{{ s.passed_count }}/{{ s.total_count }}{% if s.pending_count %} <span class="text-gray-500">{{ s.pending_count }} pending</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </table>
@@ -67,12 +67,13 @@
   {% for ref in comparison.sessions %}
   <div class="bg-white rounded-lg shadow p-3">
     <div class="text-xs text-gray-500 font-mono">{{ ref }}{% if loop.first %} (baseline){% endif %}</div>
-    <div class="text-2xl font-bold {% if comparison.totals[loop.index0][0] == comparison.totals[loop.index0][1] %}text-green-600{% else %}text-gray-800{% endif %}">{{ pct(comparison.rate(loop.index0)) }}</div>
-    <div class="text-xs text-gray-500">{{ comparison.totals[loop.index0][0] }}/{{ comparison.totals[loop.index0][1] }} passed</div>
+    {% set waiting = pending[loop.index0] %}
+    <div class="text-2xl font-bold {% if comparison.totals[loop.index0][0] == comparison.totals[loop.index0][1] and not waiting %}text-green-600{% else %}text-gray-800{% endif %}">{{ pct(comparison.rate(loop.index0)) }}</div>
+    <div class="text-xs text-gray-500">{{ comparison.totals[loop.index0][0] }}/{{ comparison.totals[loop.index0][1] }} passed{% if waiting %} <span class="text-blue-700" data-pending="{{ waiting }}">&middot; {{ waiting }} pending (not collected)</span>{% endif %}</div>
   </div>
   {% endfor %}
   <div class="bg-white rounded-lg shadow p-3">
-    <div class="text-xs text-gray-500">First to last run of each case</div>
+    <div class="text-xs text-gray-500" title="A case a session both passed and failed is flaky">First to last session of each case</div>
     <div class="text-sm mt-1"><span class="font-bold {% if comparison.count('regression') %}text-red-600{% else %}text-gray-400{% endif %}" id="regressions">{{ comparison.count('regression') }} regression(s)</span></div>
     <div class="text-sm"><span class="font-bold {% if comparison.count('fixed') %}text-green-600{% else %}text-gray-400{% endif %}">{{ comparison.count('fixed') }} fixed</span>,
       {{ comparison.count('flaky') }} flaky, {{ comparison.count('new') }} new, {{ comparison.count('gone') }} gone</div>
@@ -83,7 +84,7 @@
 {% if comparison.x and comparison.cells %}
 <div class="mb-6">
   <h2 class="text-lg font-semibold text-gray-700 mb-2">Pass rate per ODD cell</h2>
-  <p class="text-xs text-gray-500 mb-2">The buckets each case was drawn in. Each cell shows the pass rate of every session (baseline first); red: lower in the latest, green: higher.</p>
+  <p class="text-xs text-gray-500 mb-2">The buckets each case was drawn in. Each cell shows the passes and runs of every session (baseline first), every run of a repeated case counted; red: a lower pass rate in the latest, green: higher.</p>
   <div class="bg-white rounded-lg shadow p-4 overflow-x-auto">
     <table class="text-sm cmp-grid" id="cell-grid">
       <thead>
@@ -163,9 +164,12 @@
             <div class="whitespace-nowrap">{{ c.first.label }}</div>
             <div class="text-xs text-gray-500">{% for name, bucket in c.first.buckets.items() %}{% if name in (comparison.x, comparison.y) %}<span class="font-mono mr-2">{{ name.split('.')[-1] }} {{ bucket }}</span>{% endif %}{% endfor %}</div>
           </td>
-          {% for r in c.runs %}
-          <td class="px-3 py-2 whitespace-nowrap">
-            {% if r %}<a href="/session/{{ comparison.sessions[loop.index0] }}/{{ r.index }}#recording" title="#{{ r.index }}: {{ r.message }}">{{ outcome_badge(r) }}</a>{% else %}{{ outcome_badge(none) }}{% endif %}
+          {% for runs in c.runs %}
+          {% set ref = comparison.sessions[loop.index0] %}
+          {% set t = c.tally(loop.index0) %}
+          <td class="px-3 py-2 whitespace-nowrap" data-runs="{{ t[1] }}" data-passed="{{ t[0] }}">
+            {% for r in runs %}<a href="/session/{{ ref }}/{{ r.index }}#recording" title="#{{ r.index }}: {{ r.message }}">{{ outcome_badge(r) }}</a>{% if not loop.last %} {% endif %}{% else %}{{ outcome_badge(none) }}{% endfor %}
+            {% if t[1] > 1 %}<div class="text-xs font-mono {% if c.verdict(loop.index0) == 'mixed' %}text-amber-700{% else %}text-gray-500{% endif %}">{{ t[0] }}/{{ t[1] }} passed</div>{% endif %}
           </td>
           {% endfor %}
           {% for key in comparison.metrics %}
@@ -174,9 +178,10 @@
           <td class="px-3 py-2 text-right font-mono {% if c.significant(key) and better is not none and ((d > 0) == better) %}text-green-700 font-semibold{% elif c.significant(key) and better is not none %}text-red-700 font-semibold{% elif c.significant(key) %}text-gray-900 font-semibold{% else %}text-gray-400{% endif %}">{% if d is none %}<span class="text-gray-300">-</span>{% else %}{{ "%+.2f" | format(d) }}{% endif %}</td>
           {% endfor %}
           <td class="px-3 py-2 whitespace-nowrap">
+            {# The first run of the first session that ran it, and the last run of the last. #}
             {% set ns = namespace(q=[]) %}
-            {% for r in c.runs %}{% if r %}{% set ns.q = ns.q + ["run=" ~ (comparison.sessions[loop.index0] ~ "/" ~ r.index) | urlencode] %}{% endif %}{% endfor %}
-            {% if ns.q | length > 1 %}<a class="text-blue-600 hover:text-blue-800 text-xs" href="/compare/runs?{{ [ns.q[0], ns.q[-1]] | join('&') }}">side by side</a>{% endif %}
+            {% for runs in c.runs %}{% if runs %}{% set ref = comparison.sessions[loop.index0] %}{% if not ns.q %}{% set ns.q = ["run=" ~ (ref ~ "/" ~ runs[0].index) | urlencode] %}{% else %}{% set ns.q = [ns.q[0], "run=" ~ (ref ~ "/" ~ runs[-1].index) | urlencode] %}{% endif %}{% endif %}{% endfor %}
+            {% if ns.q | length > 1 %}<a class="text-blue-600 hover:text-blue-800 text-xs" href="/compare/runs?{{ ns.q | join('&') }}">side by side</a>{% endif %}
           </td>
         </tr>
         {% endfor %}

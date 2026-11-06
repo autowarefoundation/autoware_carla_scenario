@@ -33,7 +33,7 @@ from ..adversity.triggers import (
     adversity_command,
 )
 from ..entity_role import EntityRole
-from ..seed import resolve_seed
+from ..seed import check_seed, resolve_seed
 from .base import BaseCondition, ScenarioResult
 
 if TYPE_CHECKING:
@@ -55,6 +55,11 @@ class AdversityFeasibleCondition(BaseCondition):
             a stopped crosser's wait); ``None`` (default) takes the run's
             seed (:mod:`~autoware_carla_scenario.seed`).
         thresholds: The triggers' numbers; TeraSim's by default.
+
+    Raises:
+        ValueError: If *seed* (when given) is not a whole number (``2`` or
+            ``2.0``, read as 2; not ``2.5``, NaN, infinity or a boolean) or is
+            negative.  The error names the parameter.
     """
 
     _entity_name: str
@@ -76,6 +81,11 @@ class AdversityFeasibleCondition(BaseCondition):
         seed: Optional[int] = None,
         thresholds: TriggerThresholds = DEFAULT_THRESHOLDS,
     ) -> None:
+        # Checked at construction, as TrafficSourceAction's seed is: int()
+        # alone would read 2.5 or True as a seed, and take a negative one
+        # (#1495).
+        if seed is not None:
+            seed = check_seed("seed", seed)
         super().__init__(label=label)
         self._entity_name = str(entity_name)
         self._kind = kind

@@ -91,7 +91,7 @@ class TestNoCoupling:
         original = viewer_module.BASE_PATH
         viewer_module.BASE_PATH = tmp_path
         try:
-            client = TestClient(viewer_module.app)
+            client = TestClient(viewer_module.app, base_url="http://127.0.0.1")
             assert client.get("/").status_code == 200
             assert client.get("/api/scenarios").status_code == 200
         finally:
@@ -100,7 +100,9 @@ class TestNoCoupling:
     def test_the_editor_serves_its_own_pages(self, tmp_path: Path) -> None:
         from autoware_carla_scenario.editor.app import create_app
 
-        client = TestClient(create_app(draft_dir=tmp_path / "drafts"))
+        client = TestClient(
+            create_app(draft_dir=tmp_path / "drafts"), base_url="http://127.0.0.1"
+        )
         assert client.get("/").status_code == 200
 
 

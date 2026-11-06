@@ -60,6 +60,8 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
+from ..value_text import shown
+
 if TYPE_CHECKING:
     from lanelet2.core import ConstLanelet, LaneletMap
     from lanelet2.routing import RoutingGraph
@@ -126,6 +128,91 @@ class HasStopLineConstraint(Constraint):
         return len(results) > 0
 
 
+def _lanelet_id(owner: str, name: str, value: Any) -> int:
+    """*value* as a lanelet id, or ``ValueError`` naming ``owner.name``.
+
+    A string of ASCII digits -- quoted in YAML, or typed into the editor --
+    names the lanelet of that id, and so does any whole, finite real number
+    (``1001.0``, numpy's ``float32(1001)``, ``Fraction(1001)`` and
+    ``Decimal("1001")`` all equal ``1001``).  A bool, a number with a fraction, and any other text name no
+    lanelet: kept, they would silently match nothing.
+    """
+    if isinstance(value, bool):
+        raise ValueError(f"{owner}.{name}: a lanelet id is no bool, got {shown(value)}")
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        number = float(value)
+        if math.isfinite(number) and number.is_integer():
+            return int(number)
+    elif isinstance(value, str):
+        text = str(value)
+        if text.isascii() and text.isdigit():
+            return int(text)
+    elif TYPE_CHECKING:
+        pass
+    else:
+        # Another number (numpy's, a Fraction, a Decimal) still names its
+        # lanelet when it is whole; numpy's bool_ is none of them.
+        import decimal  # noqa: PLC0415 -- run time only
+        import numbers  # noqa: PLC0415
+        import operator  # noqa: PLC0415
+
+        try:
+            return operator.index(value)
+        except TypeError:
+            pass
+        if isinstance(value, (numbers.Real, decimal.Decimal)):
+            try:
+                whole = int(value)
+            except (ValueError, OverflowError):  # NaN, an infinity
+                pass
+            else:
+                if whole == value:
+                    return whole
+    raise ValueError(
+        f"{owner}.{name}: a lanelet id is a whole number or a string of "
+        f"digits, got {shown(value)}"
+    )
+
+
+def _unresolved(values: Any) -> bool:
+    """Whether *values* is one interpolation (``${...}``) Hydra has yet to resolve.
+
+    The editor and an export parse a scenario's constraints before Hydra
+    composes it, with ``${map.no_3d_model_lanelet_ids}`` still a string.  Only
+    a string that is a single whole reference is one: ``"${x} junk"`` and
+    ``"${a}${b}"`` are refused as any other text.
+    """
+    if not isinstance(values, str):
+        return False
+    if TYPE_CHECKING:
+        return False
+    else:
+        import re  # noqa: PLC0415 -- run time only
+
+        return re.fullmatch(r"\s*\$\{[^{}]+\}\s*", values) is not None
+
+
+def _lanelet_ids(owner: str, name: str, values: Any) -> tuple[int, ...]:
+    """Each of *values* as a lanelet id (:func:`_lanelet_id`)."""
+    if isinstance(values, str):
+        # A string is iterable, and its characters are no ids.
+        raise ValueError(
+            f"{owner}.{name}: a list of lanelet ids, got the string {shown(values)}"
+        )
+    if TYPE_CHECKING:
+        pass
+    else:
+        try:
+            iter(values)
+        except TypeError:
+            raise ValueError(
+                f"{owner}.{name}: a list of lanelet ids, got {shown(values)}"
+            ) from None
+    return tuple(_lanelet_id(owner, name, value) for value in values)
+
+
 @dataclass(frozen=True)
 class EqualsConstraint(Constraint):
     """Matches a lanelet whose ID equals the given value.
@@ -144,13 +231,29 @@ class EqualsConstraint(Constraint):
     value: int | str = 0
 
     def __post_init__(self) -> None:
-        # An id written as a string -- quoted in YAML, or typed into the
-        # editor's text field -- still names a lanelet.
+        # The id is read as in_set and on_route read theirs (_lanelet_id): a
+        # string of digits -- quoted in YAML, or typed into the editor's text
+        # field -- or a whole number names a lanelet; a bool, a number with a
+        # fraction and any other text are refused, naming equals.value, as
+        # kept they would silently match nothing (or True lanelet 1).
+        # Exactly "any", the wildcard evaluate() matches, and an unresolved
+        # ${...} reference, which the editor and an export parse before Hydra
+        # resolves it, are kept as they are.
         # (`value` is a str there: Codon narrows no union, so it is read
         # through str() -- itself, for a str.)
         value = self.value
-        if isinstance(value, str) and str(value).isdigit():
-            object.__setattr__(self, "value", int(str(value)))
+        if isinstance(value, str) and (str(value) == "any" or _unresolved(str(value))):
+            return
+        if TYPE_CHECKING:
+            # Codon passes no union on as a value of any type: the int or the
+            # str it holds.
+            if isinstance(value, int):
+                number = _lanelet_id("equals", "value", int(value))
+            else:
+                number = _lanelet_id("equals", "value", str(value))
+        else:
+            number = _lanelet_id("equals", "value", value)
+        object.__setattr__(self, "value", number)
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         value = self.value
@@ -186,7 +289,16 @@ class InSetConstraint(Constraint):
     _lookup: frozenset[int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_lookup", frozenset(self.values))
+        if _unresolved(self.values):
+            # Kept as it always was, before Hydra resolves it: matching nothing.
+            if TYPE_CHECKING:
+                pass
+            else:
+                object.__setattr__(self, "_lookup", frozenset(self.values))
+            return
+        values = _lanelet_ids("in_set", "values", self.values)
+        object.__setattr__(self, "values", values)
+        object.__setattr__(self, "_lookup", frozenset(values))
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         return lanelet.id in self._lookup
@@ -211,7 +323,16 @@ class OnRouteConstraint(Constraint):
     _lookup: frozenset[int] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        object.__setattr__(self, "_lookup", frozenset(self.lanelet_ids))
+        if _unresolved(self.lanelet_ids):
+            # Kept as it always was, before Hydra resolves it: matching nothing.
+            if TYPE_CHECKING:
+                pass
+            else:
+                object.__setattr__(self, "_lookup", frozenset(self.lanelet_ids))
+            return
+        lanelet_ids = _lanelet_ids("on_route", "lanelet_ids", self.lanelet_ids)
+        object.__setattr__(self, "lanelet_ids", lanelet_ids)
+        object.__setattr__(self, "_lookup", frozenset(lanelet_ids))
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         return not self._lookup or lanelet.id in self._lookup
@@ -349,6 +470,7 @@ class LaneletLengthConstraint(Constraint):
         valid = {r.name.lower() for r in rules}
         if self.rule not in valid:
             raise ValueError(f"Unknown rule {self.rule!r}. Available: {sorted(valid)}")
+        _check_length(self.value)
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Return ``True`` if lanelet length satisfies the comparison rule."""
@@ -359,6 +481,39 @@ class LaneletLengthConstraint(Constraint):
         length = lanelet2.geometry.length2d(lanelet)
         rule_enum = _comparison_rule(self.rule.upper())
         return compare(length, rule_enum, self.value)
+
+
+def _check_length(value: Any) -> None:
+    """Refuse a ``lanelet_length`` value that is no finite number of metres.
+
+    An int or a float, or another real number (numpy's ``int64`` or
+    ``float32``, say), as ``compare`` takes one; never a bool.  An int too
+    large for a float is no finite length either.
+    """
+    number = math.nan
+    if isinstance(value, bool):
+        pass
+    elif isinstance(value, int) or isinstance(value, float):
+        try:
+            number = float(value)
+        except OverflowError:
+            number = math.inf
+    elif TYPE_CHECKING:
+        pass
+    else:
+        import numbers  # noqa: PLC0415 -- run time only
+
+        # numpy registers its integers and floats as numbers.Real, and its
+        # bool_ as none of them.
+        if isinstance(value, numbers.Real):
+            try:
+                number = float(value)
+            except OverflowError:
+                number = math.inf
+    if not math.isfinite(number):
+        raise ValueError(
+            f"lanelet_length.value: a finite number of metres, got {shown(value)}"
+        )
 
 
 def _comparison_rule(name: str) -> ComparisonRule:

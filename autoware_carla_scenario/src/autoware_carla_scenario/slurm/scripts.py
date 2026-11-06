@@ -10,10 +10,15 @@ launcher's settings and what they read of the batch's manifest
 (:class:`ScriptInputs`), with nothing of the file system, of SLURM or of the
 manifest's JSON: :mod:`.submit` writes and runs them, and the library check
 compiles this module (docs/typecheck.md).
+
+Also where the launcher's files of a batch are (:class:`BatchPaths`, with the
+indices of the submissions it holds) and the SHA-256 of a file
+(:func:`file_sha256`), which :mod:`.manifest` builds on (#1648).
 """
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shlex
 from collections.abc import Mapping
@@ -30,6 +35,7 @@ __all__ = [
     "BatchPaths",
     "ScriptInputs",
     "collect_script",
+    "file_sha256",
     "job_script",
     "relative_batch_dir",
     "sbatch_command",
@@ -49,12 +55,24 @@ CLI_MODULE = "autoware_carla_scenario.slurm.cli"
 REMOTE_EARLY_OUTPUT_DIR = "/tmp"
 
 
+def file_sha256(path: Path) -> str:
+    """The SHA-256 of the file *path*, hex."""
+    digest = hashlib.sha256()
+    with path.open("rb") as stream:
+        block = stream.read(1 << 20)
+        while block:
+            digest.update(block)
+            block = stream.read(1 << 20)
+    return digest.hexdigest()
+
+
 @dataclass(frozen=True)
 class BatchPaths:
     """Where the launcher's files of the batch in *batch_dir* are.
 
-    Only the paths: :class:`~autoware_carla_scenario.slurm.manifest.BatchLayout`
-    derives from it, and reads the files.
+    The paths, and which submissions the batch holds:
+    :class:`~autoware_carla_scenario.slurm.manifest.BatchLayout` derives from
+    it, and reads the files.
     """
 
     batch_dir: Path
@@ -91,6 +109,24 @@ class BatchPaths:
     @property
     def logs(self) -> Path:
         return self.root / "logs"
+
+    def submissions(self) -> list[int]:
+        """The indices of the batch's submissions, in order."""
+        directory = self.root / "submissions"
+        if not directory.is_dir():
+            return []
+        return sorted(
+            int(p.stem)
+            for p in directory.glob("*.json")
+            if p.stem.isascii() and p.stem.isdigit()
+        )
+
+    def next_submission(self) -> int:
+        """The index after the batch's last submission.  Not reserved: two
+        submitters may both be told it
+        (:meth:`~autoware_carla_scenario.slurm.manifest.BatchLayout.reserve_submission`)."""
+        existing = self.submissions()
+        return existing[-1] + 1 if existing else 0
 
 
 class ScriptInputs(NamedTuple):
@@ -478,6 +514,6 @@ def squeue_task_states(job: str, output: str) -> dict[int, str]:
                 states[task] = state
             continue
         head, _, task_id = job_task.partition("_")
-        if head == str(job) and task_id.isdigit():
+        if head == str(job) and task_id.isascii() and task_id.isdigit():
             states[int(task_id)] = state
     return states

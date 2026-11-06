@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import enum
 import logging
+import math
 from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 from ..conditions.base import BaseCondition
@@ -61,10 +62,13 @@ class TrafficSignalAction(BaseAction):
         once: If ``True`` (default) the action fires at most once.
         freeze: If ``True`` (default), freeze every light so that the
             CARLA traffic manager does not override the state.
-        route_junction / route_approach / route_turn: The route target.
+        route_junction / route_approach / route_turn: The route target;
+            ``route_junction`` is a whole number from 0 (``2.0`` read as 2).
 
     Raises:
-        ValueError: For a route approach or turn that is not one.
+        ValueError: For a route approach or turn that is not one, or a
+            ``route_junction`` that is a boolean, a fraction, NaN, infinite
+            or negative.
     """
 
     _state: "carla.TrafficLightState"
@@ -120,7 +124,20 @@ class TrafficSignalAction(BaseAction):
                     f"{label}: route_turn must be one of {list(PATH_TURNS)}"
                 )
             turn = route_turn
-        if route_junction < 0:
+        # int() alone would take junction 0.5 as 0 and True as 1, and fail on
+        # NaN with its own message.
+        if isinstance(route_junction, (bool, str)):
+            raise ValueError(
+                f"{label}: route_junction must be a whole number, "
+                f"got {route_junction!r}"
+            )
+        junction = float(route_junction)
+        if not math.isfinite(junction) or math.floor(junction) != junction:
+            raise ValueError(
+                f"{label}: route_junction must be a whole number, "
+                f"got {route_junction!r}"
+            )
+        if junction < 0.0:
             raise ValueError(f"{label}: route_junction counts from 0")
         self._route_junction = int(route_junction)
         self._route_approach = route_approach
@@ -153,8 +170,6 @@ class TrafficSignalAction(BaseAction):
 
     def _route_light_ids(self) -> list[int]:
         """The route target's lights on the map the run is on (said if none)."""
-        if TYPE_CHECKING:
-            return []  # the route's frame is not compiled (docs/typecheck.md)
         from ..route.active import scenario_route_frame  # noqa: PLC0415
         from ..route.positions import junction_traffic_lights  # noqa: PLC0415
 
@@ -170,13 +185,16 @@ class TrafficSignalAction(BaseAction):
             logger.warning("TrafficSignalAction [%s]: %s", self.label, exc)
             return []
         if not ids:
+            shown = "any way"
+            if turn:
+                shown = turn
             logger.warning(
                 "TrafficSignalAction [%s]: no traffic light on the paths into route "
                 "junction %d from %s turning %s",
                 self.label,
                 self._route_junction,
                 self._route_approach,
-                turn or "any way",
+                shown,
             )
         return ids
 

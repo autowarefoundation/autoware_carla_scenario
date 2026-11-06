@@ -454,14 +454,32 @@ class ControlConfig:
         ``time_indexed`` field set away from its default for the ``pid`` controller,
         which does not read it, is warned about.
 
+        The mapping is not coerced, so each value is checked against its field's
+        default (#1662): a number field takes a finite int or float (an int is
+        kept as a float), not a bool, which ``float()`` would read as 1, nor a
+        quoted number, which the controller would fail on mid-run; a switch
+        takes a bool; ``velocity_smoothing_window`` a whole number.  What the
+        controller divides by (``wheelbase_m``, ``max_steer_angle_rad``,
+        ``steer_exponent``, ``min_lookahead_m``, ``velocity_lookahead_time``)
+        must be positive, and ``max_lookahead_m`` at least ``min_lookahead_m``.
+
+        Each error starts with the key it is for, the ``*_deg`` alias when the
+        mapping gave that, and no section: the run reads this config from
+        ``driver.control`` and from ``ros2.control``, and heads it with the
+        one it read (``driver.control.kp must be a number, got '0.5'``), as
+        it heads :class:`~autoware_carla_scenario.AutowareBridgeConfig`'s.
+
         Raises:
             ValueError: If *mapping* holds a key this config does not define,
-                sets one to NaN, or names an unknown
+                sets one to a value outside its domain, or names an unknown
                 :attr:`longitudinal_controller`.
         """
         # Imported here: the Codon check does not compile this method, and Codon's
         # dataclasses has no fields() (docs/typecheck.md).
         from dataclasses import fields  # noqa: PLC0415
+
+        from ..seed import check_whole_number  # noqa: PLC0415
+        from ..value_text import shown  # noqa: PLC0415
 
         known = {field.name for field in fields(cls)}
         aliases = {
@@ -470,34 +488,60 @@ class ControlConfig:
             if name.endswith("_rad")
         }
         values = dict(mapping)
+        # The key each value was given under, and the degrees an alias gave,
+        # for the errors: they show what the mapping held.
+        keys = {name: name for name in known}
+        given: dict[str, Any] = {}
         for alias, name in aliases.items():
             degrees = values.pop(alias, None)
             if degrees is not None:
-                values[name] = math.radians(float(degrees))
+                values[name] = math.radians(_config_number(alias, degrees))
+                keys[name] = alias
+                given[name] = degrees
 
         unknown = sorted(set(values) - known)
         if unknown:
             raise ValueError(
-                f"Unknown ControlConfig key(s): {unknown}. "
+                f"{unknown[0]}: Unknown ControlConfig key(s) {unknown}. "
                 f"Known keys: {sorted(known | set(aliases))}"
             )
-        # Hydra reads ``=nan`` as a float, and a NaN gain or limit makes every
-        # command non-finite: the follower refuses each one and the ego brakes
-        # for the whole run.
-        not_a_number = sorted(
-            name
-            for name, value in values.items()
-            if isinstance(value, float) and math.isnan(value)
-        )
-        if not_a_number:
-            raise ValueError(
-                f"ControlConfig key(s) {not_a_number} must be numbers, got NaN"
-            )
+        for name, value in values.items():
+            key = keys[name]
+            # The field's default says what it holds.
+            field_default = getattr(cls, name)
+            if isinstance(field_default, bool):
+                if not isinstance(value, bool):
+                    raise ValueError(f"{key} must be true or false, got {shown(value)}")
+            elif isinstance(field_default, int):
+                values[name] = check_whole_number(key, value)
+            elif isinstance(field_default, float):
+                values[name] = _config_number(key, value)
         config = cls(**values)
         if config.longitudinal_controller not in LONGITUDINAL_CONTROLLERS:
             raise ValueError(
-                f"Unknown longitudinal_controller {config.longitudinal_controller!r}; "
-                f"expected one of {list(LONGITUDINAL_CONTROLLERS)}"
+                f"longitudinal_controller must be one of "
+                f"{list(LONGITUDINAL_CONTROLLERS)}, "
+                f"got {shown(config.longitudinal_controller)}"
+            )
+        # Divisors: the steering map divides by the full lock and by the
+        # exponent (steer_command), pure pursuit by the lookahead it clips to
+        # min_lookahead_m, the yaw rate trim scales by the wheelbase, and the
+        # velocity lookahead feedback divides by its time.
+        for name in (
+            "wheelbase_m",
+            "max_steer_angle_rad",
+            "steer_exponent",
+            "min_lookahead_m",
+            "velocity_lookahead_time",
+        ):
+            value = getattr(config, name)
+            if value <= 0.0:
+                shown_value = shown(given[name]) if name in given else value
+                raise ValueError(f"{keys[name]} must be positive, got {shown_value}")
+        if config.max_lookahead_m < config.min_lookahead_m:
+            raise ValueError(
+                f"max_lookahead_m must be at least min_lookahead_m "
+                f"({config.min_lookahead_m}), got {config.max_lookahead_m}"
             )
         if config.longitudinal_controller == "pid":
             default = cls()
@@ -513,6 +557,35 @@ class ControlConfig:
                     ", ".join(unread),
                 )
         return config
+
+
+def _config_number(key: str, value: Any) -> float:
+    """*value*, a :class:`ControlConfig` number as its mapping holds it, checked
+    and returned as a ``float``, as :func:`~.base._number` checks a driver
+    config's.
+
+    A bool (Hydra's ``=true``), a string (a quoted ``"0.5"``) or anything
+    ``float()`` refuses is no number; NaN, an infinity and an int too large
+    for a float (``10**400``, on which ``float()`` raises ``OverflowError``)
+    are not finite.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    # Imported here: the Codon check does not compile this function.
+    from ..value_text import shown  # noqa: PLC0415
+
+    if isinstance(value, bool) or isinstance(value, str):
+        raise ValueError(f"{key} must be a number, got {shown(value)}")
+    try:
+        number = float(value)
+    except OverflowError:
+        raise ValueError(f"{key} must be finite, got {shown(value)}") from None
+    except (TypeError, ValueError):
+        raise ValueError(f"{key} must be a number, got {shown(value)}") from None
+    if not math.isfinite(number):
+        raise ValueError(f"{key} must be finite, got {shown(value)}")
+    return number
 
 
 def steer_command(angle_rad: float, config: ControlConfig) -> float:

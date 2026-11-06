@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import math
-from typing import TYPE_CHECKING, Any, Optional
+from typing import TYPE_CHECKING, Any, ClassVar, Optional
 
 from .base import BaseCondition, ScenarioResult
 from ..failure import FailureCategory
@@ -25,6 +25,11 @@ class TimeoutCondition(BaseCondition):
     an :class:`OrCondition` or a :class:`StickyCondition`) runs for as long as
     it says, and the run's default timeout does not apply to it.
     """
+
+    #: It only ever reports a failure (``passed=False``): a
+    #: :class:`PersistentCondition` around it never fires
+    #: (:func:`~autoware_carla_scenario.conditions.base.reports_only_failure`).
+    REPORTS_ONLY_FAILURE: ClassVar[bool] = True
 
     # Declared for the static check (docs/typecheck.md).
     timeout_seconds: float

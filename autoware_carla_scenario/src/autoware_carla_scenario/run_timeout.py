@@ -15,6 +15,8 @@ import math
 from collections.abc import Mapping
 from typing import Any
 
+from .value_text import shown
+
 __all__ = [
     "DEFAULT_RUN_TIMEOUT_SECONDS",
     "check_run_timeout",
@@ -66,4 +68,11 @@ def run_timeout_seconds(cfg: Mapping[str, Any]) -> float:
             "scenario.timeout_seconds must be a number of seconds, "
             f"got {value!r} ({type(value).__name__})"
         )
-    return check_run_timeout(float(value))
+    try:
+        seconds = float(value)
+    except OverflowError:
+        # An int too big for a float (10**400): not finite (#1652).
+        raise ValueError(
+            f"scenario.timeout_seconds must be positive and finite, got {shown(value)}"
+        ) from None
+    return check_run_timeout(seconds)

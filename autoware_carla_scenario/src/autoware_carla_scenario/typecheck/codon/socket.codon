@@ -1,0 +1,67 @@
+# The part of Python's socket the checked framework names, for the checker
+# (docs/typecheck.md), with CPython 3.10's signatures for the arguments it is
+# given:
+#
+# - create_connection(address, timeout): address a (host, port) pair, timeout
+#   a float or None. source_address and all_errors are not declared.
+# - socket(family, type, proto), with the AF_INET and SOCK_STREAM constants
+#   (ints here; CPython's are IntEnum members of the same values). fileno is
+#   not declared.
+# - On a socket: bind(address, /) and getsockname() of an AF_INET socket, whose
+#   address is a (host, port) pair, close(), and `with` (__enter__ returns
+#   the socket, __exit__ closes it).
+# - gethostname().
+#
+# The rest of the module is not declared. Nothing here connects, binds or
+# asks the system: the check sees a socket bound to port 0 of an empty host,
+# on a host whose name is empty.
+
+import internal.static as static
+
+AF_INET = 2
+SOCK_STREAM = 1
+
+
+def _positional_only(args, where: Literal[str]):
+    # Codon 0.19 has no `/`: a positional-only parameter is a `*args` of one,
+    # so no keyword reaches it.
+    if static.len(args) != 1:
+        compile_error(where + " takes exactly one argument")
+
+
+class socket:
+    family: int
+    type: int
+    proto: int
+
+    def __init__(self, family: int = AF_INET, type: int = SOCK_STREAM, proto: int = 0):
+        self.family = family
+        self.type = type
+        self.proto = proto
+
+    # bind(address, /): positional only in CPython.
+    def bind(self, *address) -> None:
+        _positional_only(address, "bind()")
+        value: tuple[str, int] = address[0]
+
+    def getsockname(self) -> tuple[str, int]:
+        return ("", 0)
+
+    def close(self) -> None:
+        pass
+
+    def __enter__(self) -> socket:
+        return self
+
+    def __exit__(self, *args) -> None:
+        self.close()
+
+
+def create_connection(
+    address: tuple[str, int], timeout: Optional[float] = None
+) -> socket:
+    return socket()
+
+
+def gethostname() -> str:
+    return ""

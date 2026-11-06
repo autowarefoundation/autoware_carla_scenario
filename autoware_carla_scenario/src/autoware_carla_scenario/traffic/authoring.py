@@ -29,8 +29,11 @@ def _spread(mean: Optional[float], std: Optional[float], name: str) -> Optional[
     """``mean`` and ``std`` as a spread; ``None`` when no mean is given.
 
     Raises:
-        ValueError: If a std is given without a mean.
+        ValueError: If a std is given without a mean, or either is a bool
+            (which ``float()`` would read as 0 or 1).
     """
+    if isinstance(mean, bool) or isinstance(std, bool):
+        raise ValueError(f"{name}: a mean or std must be a number, not a bool")
     if mean is None:
         if std is not None:
             raise ValueError(f"{name}: a std needs a mean")

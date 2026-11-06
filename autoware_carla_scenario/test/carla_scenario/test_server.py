@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import socket
 from pathlib import Path
 from typing import Optional
 
@@ -50,6 +51,23 @@ def test_extra_args_are_kept_as_given_or_empty() -> None:
     empty: list[str] = []
     kept = CarlaServerManager(extra_args=empty).extra_args
     assert kept == [] and kept is not empty
+
+
+def test_a_closed_port_does_not_ping_without_asking_the_carla_client(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """On arm64 the CARLA client can abort the process on a refused
+    connection, so a closed port is answered before it is made."""
+    from autoware_carla_scenario import server as server_module
+
+    def no_client(*_args: object) -> None:
+        raise AssertionError("the CARLA client was made for a closed port")
+
+    monkeypatch.setattr(server_module.carla, "Client", no_client)
+    with socket.socket() as free:
+        free.bind(("127.0.0.1", 0))
+        port = free.getsockname()[1]
+    assert not CarlaServerManager(host="127.0.0.1", port=port)._ping()
 
 
 def test_a_reused_server_warns_that_it_keeps_its_own_arguments(

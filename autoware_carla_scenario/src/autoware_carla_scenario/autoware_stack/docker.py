@@ -47,6 +47,7 @@ from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
+from ..constants import MAX_ROS_DOMAIN_ID
 from .bridge_node import (
     BRIDGE_APT_PACKAGES,
     bridge_command,
@@ -58,6 +59,8 @@ from .launcher import (
     AutowareEpisode,
     AutowareStackError,
     ProcessGroup,
+    _check_argument_list,
+    _check_stop_timeout_s,
     episode_log_path,
     fill_placeholders,
 )
@@ -92,6 +95,17 @@ _INTERFACE_PACKAGE = "autoware_carla_interface"
 #: container: the directory put on ``PYTHONPATH``.
 _BRIDGE_PYTHON_ROOT = "/opt/autoware_carla_scenario/python"
 
+#: How long a captured docker call (``ps``, ``image inspect``, ``rm``) may
+#: take before it is given up on: a daemon that stops answering fails the
+#: call rather than hang the batch between scenarios (#1790).
+_DOCKER_TIMEOUT_S = 60.0
+
+#: How long ``docker commit`` of the dependency image may take: it writes the
+#: container's whole layer (apt packages and, with ``rosdep``, the workspace's
+#: dependencies, gigabytes of them), once per digest.  The workspace's build
+#: and the dependencies' install stream their output and are not bounded.
+_DOCKER_COMMIT_TIMEOUT_S = 1800.0
+
 
 def _label_value() -> str:
     """The value of :data:`STACK_LABEL` on this user's containers."""
@@ -107,7 +121,9 @@ class DockerAutowareConfig:
         launch: The ``ros2 launch`` arguments (package, file, ``name:=value``
             arguments), with ``scenario_mode:=true``.  ``{bridge_address}``,
             ``{index}`` and ``{name}`` are replaced with the episode's (see
-            :class:`~autoware_carla_scenario.autoware_stack.AutowareEpisode`).
+            :class:`~autoware_carla_scenario.autoware_stack.AutowareEpisode`;
+            ``{name}`` with only ``A-Z a-z 0-9 . _ -``, as in the log's file
+            name).
         devcontainer: The dev container variant under ``.devcontainer/`` whose
             image and workspace mount are used.
         image: The image to use instead of the dev container's; its mount and
@@ -131,15 +147,26 @@ class DockerAutowareConfig:
         ros_domain_ids: ``ROS_DOMAIN_ID`` for each scenario in turn, cycling;
             empty keeps the dev container's.  Moving to another domain keeps a
             stack from discovering what is left of the last one before its
-            participants time out.
+            participants time out.  Each is an ``int`` from 0 to 232, the
+            range ROS 2 can use (0 to 101 is safe on Linux; see
+            :data:`~autoware_carla_scenario.constants.MAX_ROS_DOMAIN_ID`).
         gpus: Docker's ``--gpus`` value; ``None`` for no GPU.
         user: Docker's ``--user`` value.  ``None`` leaves it to the image, which
             maps its ``aw`` user to ``HOST_UID``/``HOST_GID`` (set to this
             user's ids) so the files a build writes stay this user's.
         docker_args: Further ``docker run`` arguments.
         docker: The Docker CLI.
-        stop_timeout_s: How long stopping waits after each signal.
+        stop_timeout_s: How long stopping waits after each signal, positive
+            and finite.
         container_prefix: Container names start with this.
+
+    Raises:
+        ValueError: Naming the field, when ``build`` is not a
+            :data:`BuildPolicy`, ``launch``, ``colcon_args`` or
+            ``docker_args`` is a ``str`` (or ``bytes``) rather than a sequence
+            of arguments, ``launch`` is empty, ``stop_timeout_s`` is not
+            positive and finite, a ``ros_domain_ids`` entry is a boolean or
+            outside 0 to 232, or ``rosdep`` is not a ``bool``.
     """
 
     workspace: Path
@@ -174,11 +201,29 @@ class DockerAutowareConfig:
             raise ValueError(
                 f"build must be 'auto', 'always' or 'never', not {self.build!r}"
             )
+        # A str would be run a character per argument.
+        _check_argument_list("launch", self.launch)
+        _check_argument_list("colcon_args", self.colcon_args)
+        _check_argument_list("docker_args", self.docker_args)
         if not self.launch:
             raise ValueError(
                 "launch is required: the ros2 launch package, file and arguments "
                 "that start Autoware in scenario mode"
             )
+        # Checked here: an id out of range would only be refused inside the
+        # container, by the stack's DDS, once a scenario has started.
+        for domain_id in self.ros_domain_ids:
+            if isinstance(domain_id, bool) or not (0 <= domain_id <= MAX_ROS_DOMAIN_ID):
+                raise ValueError(
+                    "ros_domain_ids must be ROS domain ids, whole numbers from 0 "
+                    f"to {MAX_ROS_DOMAIN_ID}, got {domain_id}"
+                )
+        _check_stop_timeout_s(self.stop_timeout_s)
+        # Read by truthiness (it runs rosdep and feeds the image's hash): a
+        # "false" would run it.  The run's config reads its spellings
+        # strictly (config_flags.check_flag) before it gets here (#1761).
+        if not isinstance(self.rosdep, bool):
+            raise ValueError(f"rosdep must be true or false, got {self.rosdep!r}")
 
 
 class DockerAutowareLauncher:
@@ -462,7 +507,13 @@ class DockerAutowareLauncher:
         the workspace's dependencies.
         """
         tag = f"{DEPENDENCY_IMAGE_REPOSITORY}:{self._dependency_digest(base_image)}"
-        if self._docker("image", "inspect", tag, check=False).returncode == 0:
+        # A non-zero exit is "no such image"; no answer at all is not, and
+        # read as one it would reinstall and recommit an image that may well
+        # exist, through an install that is not bounded (#1797).
+        inspected = self._docker(
+            "image", "inspect", tag, check=False, timeout_is_error=True
+        )
+        if inspected.returncode == 0:
             logger.info("Workspace dependencies: %s", tag)
             return tag
         name = f"{self._config.container_prefix}-{os.getpid()}-deps"
@@ -512,6 +563,7 @@ class DockerAutowareLauncher:
                 name,
                 tag,
                 check=True,
+                timeout_s=_DOCKER_COMMIT_TIMEOUT_S,
             )
         finally:
             self._docker("rm", "--force", name, check=False)
@@ -653,21 +705,65 @@ class DockerAutowareLauncher:
             argv.append(self._container.image)
         return argv
 
-    def _docker(self, *args: str, check: bool) -> subprocess.CompletedProcess[str]:
-        return self._run_docker(list(args), check=check)
+    def _docker(
+        self,
+        *args: str,
+        check: bool,
+        timeout_s: Optional[float] = None,
+        timeout_is_error: bool = False,
+    ) -> subprocess.CompletedProcess[str]:
+        return self._run_docker(
+            list(args),
+            check=check,
+            timeout_s=timeout_s,
+            timeout_is_error=timeout_is_error,
+        )
 
     def _run_docker(
-        self, args: list[str], *, check: bool
+        self,
+        args: list[str],
+        *,
+        check: bool,
+        timeout_s: Optional[float] = None,
+        timeout_is_error: bool = False,
     ) -> subprocess.CompletedProcess[str]:
-        """The Docker CLI run with *args*, its output captured."""
+        """The Docker CLI run with *args*, its output captured, within
+        *timeout_s* seconds (:data:`_DOCKER_TIMEOUT_S` when None).
+
+        A call that fails to run or to finish raises
+        :class:`AutowareStackError` with *check*; without, it is logged and
+        answers as a failed one (exit status 1).  *timeout_is_error* raises
+        on a call that does not finish even without *check*: for a caller
+        that reads a non-zero exit as an answer ("no such image"), which no
+        answer at all must not pass for.
+        """
+        # Read here, not as a default: a default is bound once, at definition.
+        timeout = _DOCKER_TIMEOUT_S
+        if timeout_s is not None:
+            timeout = timeout_s
         try:
             completed = subprocess.run(  # noqa: S603 - argv comes from the user's own config
                 [self._config.docker] + args,
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
+                timeout=timeout,
                 check=False,
             )
+        except subprocess.TimeoutExpired:
+            # subprocess.run() has killed the docker CLI by now.
+            if check or timeout_is_error:
+                raise AutowareStackError(
+                    f"{self._config.docker} {' '.join(args)} did not finish "
+                    f"within {timeout:.0f} s"
+                ) from None
+            logger.warning(
+                "%s %s did not finish within %.0f s; going on without it",
+                self._config.docker,
+                " ".join(args),
+                timeout,
+            )
+            return subprocess.CompletedProcess([self._config.docker] + args, 1, "", "")
         except OSError as exc:
             if check:
                 raise AutowareStackError(

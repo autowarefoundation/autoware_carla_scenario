@@ -109,8 +109,29 @@ class T4Settings:
             raise ValueError(_bad_max_distance(distance))
         if not 1 <= self.jpeg_quality <= 100:
             raise ValueError("driver.image_quality must be 1-100")
-        if self.workers < 1:
-            raise ValueError("t4.workers must be positive")
+        # A bool is an int to Python and a float would be cut to one
+        # (``true`` -> 1, ``2.9`` -> 2): neither is a thread count.
+        workers = self.workers
+        if isinstance(workers, bool) or not isinstance(workers, int) or workers < 1:
+            raise ValueError(f"t4.workers must be a positive integer, not {workers!r}")
+        self._check_lenses()
+
+    def _check_lenses(self) -> None:
+        """Refuse a camera's F-theta lens the dataset cannot hold: one with no
+        OpenCV model (:func:`opencv_of_ftheta`), which the writer would
+        otherwise refuse only as each run's dataset starts (#1686).  A lens
+        whose logical id names no camera is not written, so not checked."""
+        for logical_id, lens in self.lenses:
+            for camera_id, cam in self.cameras:
+                if camera_id != logical_id:
+                    continue
+                try:
+                    opencv_of_ftheta(lens, cam.image_width, cam.image_height)
+                except ValueError as error:
+                    raise ValueError(
+                        f"t4: the lens of camera '{logical_id}' cannot be written "
+                        f"to a T4 dataset: {error}"
+                    ) from None
 
     @property
     def interval_ticks(self) -> int:
@@ -126,11 +147,20 @@ class T4Settings:
         values: dict[str, Any] = {}
         if "max_distance_m" in config:
             distance = config["max_distance_m"]
-            if isinstance(distance, bool):  # float() would read true as 1 m
+            # float() would read true as 1 m and parse a string; neither is a
+            # distance, and anything else it cannot read is refused naming
+            # the key rather than with its own message.
+            not_a_number = isinstance(distance, (bool, str))
+            if not_a_number:
                 raise ValueError(_bad_max_distance(distance))
-            values["max_distance_m"] = None if distance is None else float(distance)
+            try:
+                values["max_distance_m"] = None if distance is None else float(distance)
+            except TypeError:
+                raise ValueError(_bad_max_distance(distance)) from None
         if config.get("workers") is not None:
-            values["workers"] = int(config["workers"])
+            # As given: __post_init__ refuses a bool or a float, which int()
+            # would turn into a count nobody asked for.
+            values["workers"] = config["workers"]
         return cls(
             lidars=tuple(driver.lidars),
             cameras=tuple(

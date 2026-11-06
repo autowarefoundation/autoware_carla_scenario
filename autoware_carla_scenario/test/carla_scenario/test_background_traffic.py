@@ -33,7 +33,7 @@ class _Backend(TrafficBackend):
     name = "fake"
 
     def __init__(self) -> None:
-        self.vehicles: dict[str, tuple[float, float]] = {}
+        self.vehicles: dict[str, tuple[float, float, Optional[float]]] = {}
         self.removed: list[str] = []
 
     def spawn_background(
@@ -45,10 +45,16 @@ class _Backend(TrafficBackend):
         blueprint: Optional[str] = None,
     ) -> Optional[str]:
         handle = f"bg{len(self.vehicles) + len(self.removed) + 1}"
-        self.vehicles[handle] = (transform.location.x, transform.location.y)
+        self.vehicles[handle] = (
+            transform.location.x,
+            transform.location.y,
+            transform.location.z,
+        )
         return handle
 
-    def background_vehicles(self, world: Any) -> dict[str, tuple[float, float]]:
+    def background_vehicles(
+        self, world: Any
+    ) -> dict[str, tuple[float, float, Optional[float]]]:
         return dict(self.vehicles)
 
     def remove_background(self, world: Any, handle: str) -> None:
@@ -86,13 +92,16 @@ def _map(monkeypatch: pytest.MonkeyPatch) -> None:
         return SimpleNamespace(
             x=x,
             y=y,
+            z=0.0,
             to_carla_transform=lambda: carla.Transform(carla.Location(x=x, y=y, z=0.0)),
         )
 
     monkeypatch.setattr(coordinate, "to_carla_world", to_carla_world)
     # On the region: lanelets 1 and 2 only, i.e. y < 15.
     monkeypatch.setattr(
-        background_traffic.LaneletRegion, "contains", lambda self, x, y: y < 15.0
+        background_traffic.LaneletRegion,
+        "contains",
+        lambda self, x, y, z=None: y < 15.0,
     )
 
 
@@ -200,7 +209,7 @@ class TestSource:
                 assert ((a[0] - b[0]) ** 2 + (a[1] - b[1]) ** 2) ** 0.5 >= 20.0
 
     def test_the_same_seed_places_the_same_vehicles(self) -> None:
-        def placed(seed: int) -> list[tuple[float, float]]:
+        def placed(seed: int) -> list[tuple[float, float, Optional[float]]]:
             backend = _Backend()
             source = TrafficSourceAction(_NOT_JUNCTION, initial_vehicles=5, seed=seed)
             source.set_traffic_backend(backend)
@@ -223,6 +232,40 @@ class TestSource:
             TrafficSourceAction(_NOT_JUNCTION, initial_vehicles=-1)
         with pytest.raises(ValueError):
             TrafficSourceAction(_NOT_JUNCTION, vehicles_per_minute=-1.0)
+
+    @pytest.mark.parametrize("key", ["initial_vehicles", "max_vehicles", "seed"])
+    @pytest.mark.parametrize("value", [2.5, math.nan, math.inf, True, -1, "2"])
+    def test_counts_and_seed_must_be_whole_numbers(self, key: str, value: Any) -> None:
+        # #1492: 2.5, NaN or True passed `< 0` and reached range() mid-run.
+        with pytest.raises(ValueError, match=key):
+            TrafficSourceAction(_NOT_JUNCTION, **{key: value})
+
+    def test_whole_float_counts_are_read_as_ints(self) -> None:
+        # Typed Any: the point is a float where an int is declared.
+        two: Any = 2.0
+        three: Any = 3.0
+        four: Any = 4.0
+        source = TrafficSourceAction(
+            _NOT_JUNCTION, initial_vehicles=two, max_vehicles=three, seed=four
+        )
+        assert source._initial == 2 and type(source._initial) is int  # noqa: SLF001
+        assert source._max == 3 and type(source._max) is int  # noqa: SLF001
+        assert source._seed == 4 and type(source._seed) is int  # noqa: SLF001
+        world, backend = _World(), _Backend()
+        source.set_traffic_backend(backend)
+        source.tick(world, 0.0)
+        assert source.spawned == 2
+        assert len(backend.vehicles) == 2
+
+    def test_a_whole_float_limit_caps_the_vehicles(self) -> None:
+        limit: Any = 4.0
+        source = TrafficSourceAction(
+            _NOT_JUNCTION, initial_vehicles=6, max_vehicles=limit, min_gap_m=0.0
+        )
+        world, backend = _World(), _Backend()
+        source.set_traffic_backend(backend)
+        source.tick(world, 0.0)
+        assert len(backend.vehicles) == 4
 
     @pytest.mark.parametrize("rate", [math.nan, math.inf, -math.inf])
     def test_a_rate_must_be_finite(self, rate: float) -> None:
@@ -248,13 +291,19 @@ class TestSource:
         world.get_actors = lambda: SimpleNamespace(  # type: ignore[method-assign]
             filter=lambda pattern: [vehicle(1.0, 2.0, 0.3), vehicle(5.0, 6.0, -499.7)]
         )
-        assert background_traffic._vehicle_positions(world) == [(1.0, 2.0)]
+        assert background_traffic._vehicle_positions(world) == [
+            (1.0, 2.0, pytest.approx(0.3))
+        ]
 
 
 class TestSink:
     def test_it_removes_the_vehicles_on_its_lanelets_only(self) -> None:
         backend, world = _Backend(), _World()
-        backend.vehicles = {"a": (5.0, 0.0), "b": (5.0, 10.0), "c": (5.0, 20.0)}
+        backend.vehicles = {
+            "a": (5.0, 0.0, 0.0),
+            "b": (5.0, 10.0, 0.0),
+            "c": (5.0, 20.0, 0.0),
+        }
         sink = TrafficSinkAction(_NOT_JUNCTION)
         sink.set_traffic_backend(backend)
         _run(sink, world, 0.2)
@@ -268,11 +317,11 @@ class TestSink:
         )
         sink.set_traffic_backend(backend)
         _run(sink, world, 1.0)
-        backend.vehicles["late"] = (5.0, 0.0)
+        backend.vehicles["late"] = (5.0, 0.0, 0.0)
         _run(sink, world, 0.5)
         assert "late" not in backend.vehicles
         _run(sink, world, 1.0)  # past 2 s: the sink has ended
-        backend.vehicles["after"] = (5.0, 0.0)
+        backend.vehicles["after"] = (5.0, 0.0, 0.0)
         _run(sink, world, 1.0)
         assert "after" in backend.vehicles
 
@@ -365,6 +414,232 @@ class TestHydraSwitch:
         ]
         assert isinstance(source._until, ElapsedTimeCondition)
 
+    @staticmethod
+    def _composed(overrides: list[str]) -> Any:
+        from pathlib import Path
+
+        from hydra import compose, initialize_config_dir
+
+        from autoware_carla_scenario.examples import conf as conf_package
+
+        conf_dir = str(Path(conf_package.__file__).parent.resolve())
+        with initialize_config_dir(config_dir=conf_dir, version_base=None):
+            return compose(
+                config_name="config",
+                overrides=["background_traffic.enabled=true", *overrides],
+            )
+
+    @pytest.mark.parametrize(
+        ("override", "key"),
+        [
+            # What int() alone read as 1, 1, 2, 1 and 7 (#1445).
+            ("background_traffic.seed=1.9", "background_traffic.seed"),
+            ("background_traffic.seed=true", "background_traffic.seed"),
+            ("background_traffic.seed=-5", "background_traffic.seed"),
+            ("background_traffic.seed=abc", "background_traffic.seed"),
+            # Above 2**31 - 1, what CARLA and SUMO take (#1560).
+            ("background_traffic.seed=2147483648", "background_traffic.seed"),
+            (
+                "background_traffic.source.initial_vehicles=2.9",
+                "background_traffic.source.initial_vehicles",
+            ),
+            (
+                "background_traffic.source.initial_vehicles=true",
+                "background_traffic.source.initial_vehicles",
+            ),
+            (
+                "background_traffic.source.initial_vehicles=-1",
+                "background_traffic.source.initial_vehicles",
+            ),
+            (
+                "background_traffic.source.max_vehicles=1.5",
+                "background_traffic.source.max_vehicles",
+            ),
+            (
+                "background_traffic.source.max_vehicles=false",
+                "background_traffic.source.max_vehicles",
+            ),
+            (
+                "background_traffic.source.max_vehicles=-2",
+                "background_traffic.source.max_vehicles",
+            ),
+        ],
+    )
+    def test_a_count_or_seed_that_is_no_whole_number_is_refused_up_front(
+        self, override: str, key: str
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([override])
+        with pytest.raises(ValueError, match=rf"^{key} must "):
+            run.add_background_traffic(cfg, _scenario())
+        # Before anything is built, as the run's other settings are.
+        with pytest.raises(run.RunConfigError, match=rf"^{key} must "):
+            run.check_run_config(cfg)
+
+    def test_whole_floats_are_those_numbers(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed(
+            [
+                "background_traffic.seed=7.0",
+                "background_traffic.source.initial_vehicles=3.0",
+                "background_traffic.source.max_vehicles=4.0",
+                "background_traffic.source.vehicles_per_minute=0",
+            ]
+        )
+        settings = run.background_traffic_settings(cfg)
+        assert settings is not None
+        assert (settings.seed, settings.initial_vehicles, settings.max_vehicles) == (
+            7,
+            3,
+            4,
+        )
+        assert isinstance(settings.initial_vehicles, int)
+        scenario = _scenario()
+        run.add_background_traffic(cfg, scenario)
+        (initial,) = scenario._init_actions
+        assert isinstance(initial, TrafficSourceAction)
+        assert (initial._initial, initial._max, initial._seed) == (3, 4, 7)
+
+    @pytest.mark.parametrize(
+        ("key", "message"),
+        [
+            ("speed_kmh", "is not a background speed"),
+            ("min_gap_m", "must be finite and not negative"),
+            ("vehicles_per_minute", "must be finite and not negative"),
+        ],
+    )
+    @pytest.mark.parametrize(
+        ("value", "shown"),
+        [
+            (10**400, "1000"),
+            # More digits than str() turns into text (#1660).
+            (10**5000, "an integer of about 10\\*\\*"),
+            (-(10**5000), "an integer of about -10\\*\\*"),
+        ],
+        ids=["huge", "too-long-for-str", "-too-long-for-str"],
+    )
+    def test_an_amount_too_big_for_a_float_is_refused_by_its_key(
+        self, key: str, message: str, value: int, shown: str
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([])
+        cfg.background_traffic.source[key] = value
+        prefix = rf"^background_traffic\.source\.{key}: {shown}.* {message}"
+        with pytest.raises(ValueError, match=prefix):
+            run.background_traffic_settings(cfg)
+        with pytest.raises(run.RunConfigError, match=prefix):
+            run.check_run_config(cfg)
+
+    @pytest.mark.parametrize("key", ["speed_kmh", "min_gap_m", "vehicles_per_minute"])
+    def test_a_list_holding_such_an_int_is_not_a_number(self, key: str) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([])
+        cfg.background_traffic.source[key] = [10**5000]
+        with pytest.raises(
+            ValueError,
+            match=rf"^background_traffic\.source\.{key}: a list holding an integer",
+        ):
+            run.background_traffic_settings(cfg)
+
+    @pytest.mark.parametrize("block", ["source", "sink"])
+    @pytest.mark.parametrize(
+        ("value", "shown"),
+        [
+            ("abc", "'abc'"),
+            (True, "True"),
+            (0, "0"),
+            (10**400, "1000"),
+            (10**5000, "an integer of about 10\\*\\*"),
+        ],
+        ids=["text", "bool", "zero", "huge", "too-long-for-str"],
+    )
+    def test_a_stop_after_seconds_that_is_no_duration_is_refused_by_its_key(
+        self, block: str, value: object, shown: str
+    ) -> None:
+        """#1660: refused, naming the key, where it was refused without it."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([])
+        cfg.background_traffic[block].stop_after_seconds = value
+        with pytest.raises(
+            ValueError,
+            match=rf"^background_traffic\.{block}\.stop_after_seconds: "
+            rf"{shown}.* is not a duration",
+        ):
+            run.add_background_traffic(cfg, _scenario())
+
+    @pytest.mark.parametrize("value", [12.5, 3, "7.5"])
+    def test_a_stop_after_seconds_is_read_as_before(self, value: float | str) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([])
+        cfg.background_traffic.source.stop_after_seconds = value
+        cfg.background_traffic.sink.stop_after_seconds = value
+        scenario = _scenario()
+        run.add_background_traffic(cfg, scenario)
+        ends = [a._until for a in scenario._pre_tick_actions]
+        assert len(ends) == 2
+        durations = set()
+        for end in ends:
+            assert isinstance(end, ElapsedTimeCondition)
+            durations.add(end.duration_seconds)
+        assert durations == {float(value)}
+
+    @pytest.mark.parametrize("off", ["'false'", "no", "0", "'0'"])
+    def test_enabled_spelled_off_as_text_is_off(self, off: str) -> None:
+        """``${oc.env:VAR,false}`` gives text: ``"false"`` is off, where
+        ``bool("false")`` turned the traffic on (#1753)."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed(
+            [f"background_traffic.enabled={off}", "background_traffic.seed=1.9"]
+        )
+        assert run.background_traffic_settings(cfg) is None
+        scenario = _scenario()
+        run.add_background_traffic(cfg, scenario)
+        assert not scenario._init_actions and not scenario._pre_tick_actions
+        run.check_run_config(cfg)
+
+    @pytest.mark.parametrize("on", ["'true'", "yes", "1", "' On '"])
+    def test_enabled_spelled_on_as_text_is_on(self, on: str) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([f"background_traffic.enabled={on}"])
+        assert run.background_traffic_settings(cfg) is not None
+
+    @pytest.mark.parametrize(
+        ("bad", "shown"), [("ture", "'ture'"), ("2", "2"), ("0.0", "0.0")]
+    )
+    def test_enabled_that_spells_neither_is_refused_up_front(
+        self, bad: str, shown: str
+    ) -> None:
+        import re
+
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([f"background_traffic.enabled={bad}"])
+        message = (
+            rf"^background_traffic\.enabled must be true or false, "
+            rf"got {re.escape(shown)}$"
+        )
+        with pytest.raises(ValueError, match=message):
+            run.add_background_traffic(cfg, _scenario())
+        with pytest.raises(run.RunConfigError, match=message):
+            run.check_run_config(cfg)
+
+    def test_a_disabled_block_is_not_read(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed(
+            ["background_traffic.enabled=false", "background_traffic.seed=1.9"]
+        )
+        assert run.background_traffic_settings(cfg) is None
+        run.check_run_config(cfg)
+
 
 class TestConstraintsFromText:
     """How the scenario editor hands a source or sink its constraints."""
@@ -429,6 +704,7 @@ class TestMinGapDistance:
         pose = SimpleNamespace(
             x=0.0,
             y=0.0,
+            z=0.0,
             to_carla_transform=lambda: carla.Transform(
                 carla.Location(x=0.0, y=0.0, z=0.0)
             ),
@@ -437,5 +713,69 @@ class TestMinGapDistance:
         backend, world = _Backend(), _World()
         source = TrafficSourceAction(_NOT_JUNCTION, min_gap_m=15.0)
         # 15 m away (9, 12): far enough; 14.9 m away: too close.
-        assert source._spawn_one(world, backend, [(9.0, 12.0)]) is not None
-        assert source._spawn_one(world, backend, [(0.0, 14.9)]) is None
+        assert source._spawn_one(world, backend, [(9.0, 12.0, 0.0)]) is not None
+        assert source._spawn_one(world, backend, [(0.0, 14.9, 0.0)]) is None
+
+
+class TestMinGapLevels:
+    """#1599: a vehicle on another level of road, near in plan, takes no room
+    from a spawn; one whose height is unknown is placed in plan alone."""
+
+    @pytest.fixture
+    def source(self, monkeypatch: pytest.MonkeyPatch) -> TrafficSourceAction:
+        import autoware_carla_scenario.coordinate as coordinate
+
+        pose = SimpleNamespace(
+            x=0.0,
+            y=0.0,
+            z=10.0,
+            to_carla_transform=lambda: carla.Transform(
+                carla.Location(x=0.0, y=0.0, z=10.0)
+            ),
+        )
+        monkeypatch.setattr(coordinate, "to_carla_world", lambda _pose: pose)
+        return TrafficSourceAction(_NOT_JUNCTION, initial_vehicles=1, min_gap_m=15.0)
+
+    @pytest.mark.parametrize("z", [3.2, 16.8, 10.0 - 2.01, 12.01])
+    def test_a_vehicle_on_another_level_does_not_block(
+        self, source: TrafficSourceAction, z: float
+    ) -> None:
+        # 6.8 m under, as lanelet 552 runs under 132 on the fixture map.
+        assert source._spawn_one(_World(), _Backend(), [(1.0, 1.0, z)]) is not None
+
+    @pytest.mark.parametrize("z", [10.0, 10.5, 8.0, 12.0])
+    def test_a_vehicle_on_the_same_level_blocks(
+        self, source: TrafficSourceAction, z: float
+    ) -> None:
+        assert source._spawn_one(_World(), _Backend(), [(1.0, 1.0, z)]) is None
+
+    def test_a_vehicle_of_unknown_height_blocks_in_plan(
+        self, source: TrafficSourceAction
+    ) -> None:
+        # A vehicle SUMO's queue model holds has no height.
+        assert source._spawn_one(_World(), _Backend(), [(1.0, 1.0, None)]) is None
+        assert source._spawn_one(_World(), _Backend(), [(20.0, 1.0, None)]) is not None
+
+    def test_execute_keeps_the_backends_heights(
+        self, source: TrafficSourceAction
+    ) -> None:
+        backend = _Backend()
+        backend.vehicles = {"under": (1.0, 1.0, 3.2), "flat": (40.0, 0.0, None)}
+        source.set_traffic_backend(backend)
+        source.tick(_World(), 0.0)
+        assert len(backend.vehicles) == 3
+
+    def test_a_world_vehicle_on_another_level_does_not_block(
+        self, source: TrafficSourceAction
+    ) -> None:
+        world = _World()
+        under = SimpleNamespace(
+            get_location=lambda: carla.Location(x=1.0, y=1.0, z=3.2)
+        )
+        world.get_actors = lambda: SimpleNamespace(  # type: ignore[method-assign]
+            filter=lambda pattern: [under]
+        )
+        backend = _Backend()
+        source.set_traffic_backend(backend)
+        source.tick(world, 0.0)
+        assert len(backend.vehicles) == 1

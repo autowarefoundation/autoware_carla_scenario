@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import itertools
 import math
+import os
 import threading
 import time
 import types
@@ -118,6 +119,11 @@ def _lidar(attributes: dict[str, Any]) -> dict[str, Any]:
         {"sensor_tick": "0.0"},
         {"horizontal_fov": 360},
         {"horizontal_fov": 90.5, "sensor_tick": 0.0},
+        {"rotation_frequency": 10, "horizontal_fov": 360},
+        {"rotation_frequency": "20.0"},
+        {"dropoff_general_rate": 0, "dropoff_zero_intensity": 1},
+        {"dropoff_general_rate": 0.45, "dropoff_zero_intensity": "0.4"},
+        {"dropoff_general_rate": "1", "dropoff_intensity_limit": 0.8},
     ],
 )
 def test_a_lidar_sweeping_its_field_of_view_every_tick_is_read(
@@ -281,6 +287,37 @@ def test_fields_are_constants_signals_or_scaled_signals() -> None:
         (_lidar({"horizontal_fov": 400}), r"horizontal_fov: must be in \(0, 360\]"),
         (_lidar({"horizontal_fov": 0}), r"horizontal_fov: must be in \(0, 360\]"),
         (_lidar({"horizontal_fov": "nan"}), "horizontal_fov: .*finite"),
+        # It turns a finite number of times a second, forward (#1478).
+        (_lidar({"rotation_frequency": 0}), "rotation_frequency: must be positive"),
+        (_lidar({"rotation_frequency": -10}), "rotation_frequency: must be positive"),
+        (_lidar({"rotation_frequency": math.nan}), "rotation_frequency: .*finite"),
+        (_lidar({"rotation_frequency": math.inf}), "rotation_frequency: .*finite"),
+        (_lidar({"rotation_frequency": "abc"}), "rotation_frequency: .*finite"),
+        # CARLA's drop-off proportions are from 0 to 1, unclamped (#1770).
+        (
+            _lidar({"dropoff_general_rate": 45}),
+            r"dropoff_general_rate: must be in \[0, 1\]",
+        ),
+        (
+            _lidar({"dropoff_general_rate": -0.1}),
+            r"dropoff_general_rate: must be in \[",
+        ),
+        (_lidar({"dropoff_general_rate": "1.01"}), r"dropoff_general_rate: must be in"),
+        (
+            _lidar({"dropoff_zero_intensity": 1.5}),
+            r"dropoff_zero_intensity: must be in",
+        ),
+        (_lidar({"dropoff_general_rate": "all"}), "dropoff_general_rate: .*finite"),
+        # An attribute is text, a number or a bool, not "None" or "[1, 2]".
+        (_lidar({"rotation_frequency": None}), "rotation_frequency: expected text"),
+        (_lidar({"channels": [16, 32]}), "attributes.channels: expected text"),
+        (
+            _device(
+                codec="raw",
+                sensor={"blueprint": "sensor.camera.rgb", "attributes": {"fov": {}}},
+            ),
+            "attributes.fov: expected text",
+        ),
     ],
 )
 def test_a_bad_configuration_is_refused(document: Any, message: str) -> None:
@@ -327,12 +364,20 @@ def test_the_port_and_durations_in_range_are_read() -> None:
     assert config.steps("startup")[0].seconds == 0.0
 
 
-def test_the_command_refuses_a_bad_port_override(tmp_path: Path) -> None:
+def test_the_command_refuses_a_bad_port_override(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     path = tmp_path / "hils.yaml"
     path.write_text(example_config())
-    for port in ("0", "70000", "2000.7"):
-        with pytest.raises(SystemExit):
+    for port, message in (
+        ("0", "must be within 1-65535, got 0"),
+        ("70000", "must be within 1-65535, got 70000"),
+        ("2000.7", "expected an integer, got '2000.7'"),
+    ):
+        with pytest.raises(SystemExit) as exc:
             main([str(path), "--check", "--port", port])
+        assert exc.value.code == 2
+        assert f"argument --port: {message}" in capsys.readouterr().err
 
 
 def test_relative_files_are_relative_to_the_configuration(tmp_path: Path) -> None:
@@ -421,6 +466,58 @@ def test_a_relative_profiles_option_is_relative_to_the_configuration(
 def test_a_missing_file_is_refused(tmp_path: Path) -> None:
     with pytest.raises(HilsConfigError, match="not a file"):
         load_config(tmp_path / "absent.yaml")
+
+
+def test_a_file_that_is_not_utf8_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_bytes(b"devices: {d: {url: mem://x, codec: nmea}}\n# \xff\xfe\n")
+    with pytest.raises(HilsConfigError, match="not UTF-8") as info:
+        load_config(path)
+    assert str(path) in str(info.value)
+
+
+@pytest.mark.skipif(
+    not hasattr(os, "geteuid") or os.geteuid() == 0,
+    reason="root reads a file whatever its mode",
+)
+def test_an_unreadable_file_is_refused(tmp_path: Path) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_text(example_config())
+    path.chmod(0)
+    try:
+        with pytest.raises(HilsConfigError, match="cannot be read") as info:
+            load_config(path)
+    finally:
+        path.chmod(0o600)
+    assert str(path) in str(info.value)
+
+
+def test_a_failing_read_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_text(example_config())
+
+    def refuse(self: Path, *args: Any, **kwargs: Any) -> str:
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "read_text", refuse)
+    with pytest.raises(HilsConfigError, match="cannot be read") as info:
+        load_config(path)
+    assert str(path) in str(info.value)
+
+
+def test_the_command_reports_an_undecodable_file_on_one_line(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    path = tmp_path / "hils.yaml"
+    path.write_bytes(b"\xff\xfe\x00")
+    assert main([str(path)]) == 2
+    captured = capsys.readouterr()
+    lines = captured.err.splitlines()
+    assert len(lines) == 1, captured.err
+    assert lines[0].startswith(f"scenario-hils: {path}: not UTF-8")
+    assert "Traceback" not in captured.err
 
 
 # -- measurements ---------------------------------------------------------------
@@ -779,6 +876,62 @@ def test_lidar_revolutions_go_out_as_the_sensors_packets(world: _World) -> None:
     finally:
         bridge.close()
         receiver.close()
+
+
+class _BrokenListen(Exception):
+    pass
+
+
+def _nan_frequency(sensor: _Sensor) -> None:
+    # What CARLA reports, which the configuration did not see.
+    sensor.attributes["rotation_frequency"] = "nan"
+
+
+def _failing_listen(sensor: _Sensor) -> None:
+    def listen(callback: Callable[[Any], None]) -> None:
+        raise _BrokenListen("listen failed")
+
+    sensor.listen = listen  # type: ignore[method-assign]
+
+
+@pytest.mark.parametrize(
+    ("breaks", "error"),
+    [(_nan_frequency, ValueError), (_failing_listen, _BrokenListen)],
+)
+def test_a_sensor_that_fails_to_attach_is_destroyed(
+    world: _World,
+    monkeypatch: pytest.MonkeyPatch,
+    breaks: Callable[[_Sensor], None],
+    error: type[BaseException],
+) -> None:
+    # Spawned but never the device's, it would stay on the ego (#1478).
+    from autoware_carla_scenario.hils.bridge import HilsBridge
+
+    spawn = world.spawn_actor
+
+    def spawn_broken(blueprint: _Blueprint, transform: Any, attach_to: Any) -> Any:
+        sensor = spawn(blueprint, transform, attach_to)
+        breaks(sensor)
+        return sensor
+
+    monkeypatch.setattr(world, "spawn_actor", spawn_broken)
+    bridge = HilsBridge(
+        parse_config(
+            _lidar({"rotation_frequency": 10, "channels": 16}),
+        ),
+        carla_module=_carla(world),
+    )
+    bridge.connect()
+    bridge.open_devices()
+    [device] = bridge._sensors
+    try:
+        with pytest.raises(error):
+            device.attach(_carla(world), world, world.actors[0], 0.05)
+        assert not device.attached
+        [sensor] = world.sensors
+        assert not sensor.is_alive and sensor.callback is None
+    finally:
+        bridge.close()
 
 
 def _fov_measurement(time: float, angles: np.ndarray, fov: float) -> Any:
@@ -2100,21 +2253,33 @@ def test_a_bridge_error_or_silence_ends_the_run() -> None:
 def test_a_stale_command_brakes_or_holds(on_stale: str) -> None:
     command = {"type": "command", "mode": "control", "throttle": 0.6, "gear": 3}
     bridge = _ScriptedBridge([{"type": "ready"}, command])
-    entity = _entity(bridge.port, stale_s=0.1, on_stale=on_stale)
+    # A long stale_s keeps the command fresh however slow the machine is; it
+    # goes stale only when the test ages it (#1841).
+    stale_s = 60.0
+    entity = _entity(bridge.port, stale_s=stale_s, on_stale=on_stale)
     ego = entity.actor
     assert _ticked(entity, lambda: entity.command is not None)
     assert entity.is_initialized
     entity.on_tick(None, 0.0)
     assert ego.controls[-1].throttle == pytest.approx(0.6)
+    assert ego.controls[-1].brake == 0.0
     assert ego.controls[-1].gear == 3
-    time.sleep(0.15)
+    assert not entity._stale
+    # Age the command past stale_s without waiting for the wall clock.
+    entity._command_at -= stale_s + 1.0
     entity.on_tick(None, 0.0)
+    assert entity._stale
     if on_stale == "brake":
         assert ego.controls[-1].brake == 1.0
+        assert ego.controls[-1].throttle == 0.0
     else:
         assert ego.controls[-1].throttle == pytest.approx(0.6)
+        assert ego.controls[-1].brake == 0.0
     bridge.send(command)
-    assert _ticked(entity, lambda: ego.controls[-1].throttle == pytest.approx(0.6))
+    assert _ticked(
+        entity,
+        lambda: not entity._stale and ego.controls[-1].throttle == pytest.approx(0.6),
+    )
     entity.on_scenario_end(None)
     assert [m["type"] for m in bridge.received] == ["start", "end"]
     assert bridge.received[0]["ego_id"] == 1
@@ -2421,6 +2586,39 @@ def test_a_scale_too_large_for_a_float_is_refused(dbc: Path) -> None:
         parse_config(document)
 
 
+@pytest.mark.parametrize(
+    "value", [10**400, -(10**400), 10**5000], ids=["huge", "-huge", "too-long"]
+)
+def test_a_constant_too_large_for_a_float_is_refused(dbc: Path, value: int) -> None:
+    # float() ran before the check, raising a bare OverflowError (#1618).
+    document = _hils_config(_mem(), dbc, commands={"mode": "control"})
+    document["devices"]["can"]["inputs"][0]["command"] = {"throttle": value}
+    with pytest.raises(
+        HilsConfigError,
+        match=r"inputs\[0\]\.command\.throttle: expected a number a float can hold",
+    ):
+        parse_config(document)
+
+
+@pytest.mark.parametrize(("value", "constant"), [(True, 1.0), (False, 0.0), (1, 1.0)])
+def test_a_bool_or_integer_constant_is_a_float(
+    dbc: Path, value: Any, constant: float
+) -> None:
+    document = _hils_config(_mem(), dbc, commands={"mode": "control"})
+    document["devices"]["can"]["inputs"][0]["command"] = {"throttle": value}
+    source = parse_config(document).devices[0].inputs[0].command["throttle"]
+    assert source.constant == constant
+    assert type(source.constant) is float
+
+
+def test_an_integer_too_long_for_text_is_refused_naming_the_key() -> None:
+    # str() of an integer of more than sys.get_int_max_str_digits() digits
+    # raises a bare ValueError (#1618).
+    huge = 10**5000
+    with pytest.raises(HilsConfigError, match=r"attributes\.channels: .*10\*\*5000"):
+        parse_config(_lidar({"channels": huge}))
+
+
 # -- forwarding the ECUs' commands from several receiving threads ------------------
 
 
@@ -2620,3 +2818,323 @@ def test_no_command_follows_ended(world: _World, dbc: Path) -> None:
     # A command merged after the end is not forwarded.
     bridge._on_input(steering, types.SimpleNamespace(name="Steer", fields={"S": 0.3}))
     assert [m["type"] for m in link.sent] == ["command", "ended"]
+
+
+# -- a peer sending what is not a message (#1367) ----------------------------------
+
+
+def test_a_line_reader_refuses_what_is_not_a_message_and_reads_on() -> None:
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    a, b = socket.socketpair()
+    with a, b:
+        reader = LineReader(b)
+        for bad in (b"[" * 100000, b"{nope", b"\xff\xfe", b"[1]", b'{"x": 1}'):
+            a.sendall(bad + b"\n")
+            with pytest.raises(ValueError, match="not a message"):
+                reader.read(timeout=1.0)
+        # The bad line is dropped; the next one still reads.
+        a.sendall(b'{"type": "hello"}\n')
+        assert reader.read(timeout=1.0) == [{"type": "hello"}]
+        assert not reader.closed
+
+
+def test_a_line_reader_refuses_an_overlong_line_without_rescanning_it() -> None:
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import MAX_LINE_BYTES, LineReader
+
+    a, b = socket.socketpair()
+    with a, b:
+        reader = LineReader(b)
+        stop = threading.Event()
+
+        def stream() -> None:
+            chunk = b"x" * 4096
+            while not stop.is_set():
+                try:
+                    a.sendall(chunk)
+                except OSError:
+                    return
+
+        sender = _start(stream)
+        started = time.monotonic()
+        with pytest.raises(ValueError, match="longer than"):
+            while True:
+                reader.read(timeout=0.2)
+        # One linear pass over the line, not a rescan per chunk.
+        assert time.monotonic() - started < 5.0
+        assert reader.closed
+        assert len(reader._buffer) <= MAX_LINE_BYTES
+        stop.set()
+        b.close()
+        sender.join(5.0)
+
+
+def test_a_line_reader_returns_while_a_peer_streams_a_line() -> None:
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    a, b = socket.socketpair()
+    with a, b:
+        reader = LineReader(b)
+        stop = threading.Event()
+
+        def trickle() -> None:
+            while not stop.is_set():
+                a.sendall(b"x")
+                time.sleep(0.01)
+
+        sender = _start(trickle)
+        started = time.monotonic()
+        assert reader.read(timeout=0.2) == []
+        assert time.monotonic() - started < 1.0
+        stop.set()
+        sender.join(5.0)
+
+
+def _greeted(port: int) -> Any:
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    sock = socket.create_connection(("127.0.0.1", port), timeout=5.0)
+    messages = LineReader(sock).read(timeout=5.0)
+    assert messages and messages[0]["type"] == "hello"
+    return sock
+
+
+@pytest.mark.parametrize("bad", ["nested", "overlong"])
+def test_a_run_sending_garbage_does_not_stop_the_link(bad: str) -> None:
+    import queue as queue_module
+
+    from autoware_carla_scenario.hils.link import RunnerLink
+
+    events: "queue_module.Queue[Any]" = queue_module.Queue()
+    link = RunnerLink("127.0.0.1:0", events)
+    link.start()
+    port = link.address[1]
+    try:
+        first = _greeted(port)
+        if bad == "nested":
+            first.sendall(b"[" * 100000 + b"\n")
+        else:
+            # More than a line may hold, and no newline: the link refuses it
+            # (and closes) rather than buffering it.
+            try:
+                for _ in range(400):
+                    first.sendall(b"x" * 8192)
+            except OSError:
+                pass
+        assert _until(lambda: not link.connected)
+        first.close()
+        # The next run is still greeted and heard.
+        second = _greeted(port)
+        with second:
+            second.sendall(b'{"type": "end"}\n')
+            seen: List[str] = []
+
+            def heard() -> bool:
+                while not events.empty():
+                    seen.append(events.get_nowait()[0])
+                return "end" in seen
+
+            assert _until(heard)
+    finally:
+        started = time.monotonic()
+        link.close()
+        assert time.monotonic() - started < 2.0
+
+
+def test_a_run_ends_on_a_broken_reply_from_the_bridge() -> None:
+    bridge = _ScriptedBridge([])
+    entity = _entity(bridge.port)
+    assert not entity.termination_requested
+    assert _until(lambda: bridge.conn is not None)
+    assert bridge.conn is not None
+    bridge.conn.sendall(b"[" * 100000 + b"\n")
+    assert _ticked(entity, lambda: entity.termination_requested)
+    assert "not a message" in entity.termination_reason
+
+
+# -- a send that fails ends the link (#1792) ---------------------------------------
+
+
+def _not_reading_peer(port: int) -> Any:
+    """A run that is greeted, then reads nothing: its receive buffer fills."""
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+    sock.settimeout(5.0)
+    sock.connect(("127.0.0.1", port))
+    return sock
+
+
+def test_a_failed_send_ends_the_link_rather_than_leave_a_partial_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import queue as queue_module
+
+    from autoware_carla_scenario.hils import link as link_module
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    monkeypatch.setattr(link_module, "SEND_TIMEOUT_S", 1.0)
+    events: "queue_module.Queue[Any]" = queue_module.Queue()
+    link = link_module.RunnerLink("127.0.0.1:0", events)
+    link.start()
+    try:
+        peer = _not_reading_peer(link.address[1])
+        with peer:
+            assert _until(lambda: link.connected)
+            big = {"type": "command", "pad": "x" * 65536}
+            deadline = time.monotonic() + 30.0
+            took = 0.0
+            while time.monotonic() < deadline:
+                started = time.monotonic()
+                if not link.send(big):
+                    took = time.monotonic() - started
+                    break
+            else:
+                pytest.fail("the send never failed")
+            # The send waited its own timeout, not the reader's 0.2 s poll.
+            assert took >= 0.9
+            assert not link.connected
+            # Nothing more goes on the connection after the partial line.
+            assert not link.send({"type": "ready"})
+            seen: List[str] = []
+
+            def gone() -> bool:
+                while not events.empty():
+                    seen.append(events.get_nowait()[0])
+                return "gone" in seen
+
+            assert _until(gone)
+            # The run reads what came (whole lines, then at most part of one)
+            # and then the end of the link: never a corrupt line.
+            reader = LineReader(peer)
+            deadline = time.monotonic() + 10.0
+            while not reader.closed and time.monotonic() < deadline:
+                for message in reader.read(timeout=0.5):
+                    assert message["type"] in ("hello", "command")
+            assert reader.closed
+            assert b"\n" not in reader._buffer
+    finally:
+        started = time.monotonic()
+        link.close()
+        assert time.monotonic() - started < 3.0
+
+
+def test_sends_go_through_while_the_link_polls_for_the_run() -> None:
+    import queue as queue_module
+
+    from autoware_carla_scenario.hils.link import RunnerLink
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    events: "queue_module.Queue[Any]" = queue_module.Queue()
+    link = RunnerLink("127.0.0.1:0", events)
+    link.start()
+    try:
+        peer = _greeted(link.address[1])
+        with peer:
+            assert _until(lambda: link.connected)
+            reader = LineReader(peer)
+            got: List[dict[str, Any]] = []
+            for i in range(20):
+                assert link.send({"type": "command", "i": i})
+                # The link's reader polls (0.2 s) meanwhile, and the run talks.
+                peer.sendall(b'{"type": "end"}\n')
+                time.sleep(0.02)
+            deadline = time.monotonic() + 5.0
+            while len(got) < 20 and time.monotonic() < deadline:
+                got += reader.read(timeout=0.5)
+            assert [m["i"] for m in got] == list(range(20))
+            ends = 0
+
+            def heard() -> bool:
+                nonlocal ends
+                while not events.empty():
+                    ends += events.get_nowait()[0] == "end"
+                return ends == 20
+
+            assert _until(heard)
+            assert link.connected
+    finally:
+        link.close()
+
+
+def test_a_line_reader_polls_without_touching_the_sockets_timeout() -> None:
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    a, b = socket.socketpair()
+    with a, b:
+        b.settimeout(7.0)
+        reader = LineReader(b)
+        started = time.monotonic()
+        assert reader.read(timeout=0.2) == []
+        assert 0.15 <= time.monotonic() - started < 2.0
+        started = time.monotonic()
+        assert reader.read(timeout=0.0) == []
+        assert time.monotonic() - started < 0.5
+        assert b.gettimeout() == 7.0
+
+        def later() -> None:
+            time.sleep(0.1)
+            a.sendall(b'{"type": "ready"}\n')
+
+        sender = _start(later)
+        started = time.monotonic()
+        assert reader.read(timeout=5.0) == [{"type": "ready"}]
+        assert time.monotonic() - started < 2.0
+        sender.join(5.0)
+        assert b.gettimeout() == 7.0
+        a.close()
+        assert reader.read(timeout=1.0) == []
+        assert reader.closed
+
+
+def test_a_run_whose_send_fails_closes_its_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import socket
+
+    from autoware_carla_scenario.entity import hils_entity
+    from autoware_carla_scenario.hils.protocol import encode
+
+    monkeypatch.setattr(hils_entity, "_SEND_TIMEOUT_S", 0.5)
+    server = socket.create_server(("127.0.0.1", 0))
+    accepted: List[Any] = []
+
+    def greet_and_never_read() -> None:
+        conn, _ = server.accept()
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        accepted.append(conn)
+        conn.sendall(encode({"type": "hello", "protocol": 1}))
+
+    serving = _start(greet_and_never_read)
+    try:
+        entity = _entity(server.getsockname()[1])
+        assert not entity.termination_requested
+        sock = entity._sock
+        assert sock is not None and sock.gettimeout() == 0.5
+        entity.on_tick(None, 0.0)  # type: ignore[arg-type]
+        # Reading did not change the timeout the sends have.
+        assert sock.gettimeout() == 0.5
+        big = {"type": "reconnect", "id": "x" * 65536}
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline and entity._send(big):
+            pass
+        assert entity.termination_requested
+        assert "link failed" in entity.termination_reason
+        assert entity._sock is None and sock.fileno() == -1
+        assert not entity._send({"type": "end"})
+    finally:
+        serving.join(5.0)
+        for conn in accepted:
+            conn.close()
+        server.close()

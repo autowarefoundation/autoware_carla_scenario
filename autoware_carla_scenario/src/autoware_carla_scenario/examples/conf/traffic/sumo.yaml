@@ -123,10 +123,13 @@ traffic:
     # extra demand beside the ambient traffic.
     net_path: null
     route_path: null
-    # Record SUMO's floating car data to <output_dir>/sumo/fcd.xml.
+    # Record SUMO's floating car data to <output_dir>/<stem>.sumo/fcd.xml
+    # (<stem>: the run's, as in <stem>_result.json).
     fcd_output: false
     use_libsumo: true
     binary: sumo
+    # Extra SUMO arguments; additional (-a) and route (-r) files given here
+    # are loaded after the backend's own.
     sumo_args: []
   # How vehicles drive and pedestrians walk, in the terms every backend
   # shares (VehicleParameters / PedestrianParameters,

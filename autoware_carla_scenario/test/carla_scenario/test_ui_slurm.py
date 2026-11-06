@@ -283,6 +283,94 @@ def test_a_command_that_cannot_be_run_fails_the_submission(tmp_path: Path) -> No
     assert "Could not run" in record.output
 
 
+def test_a_batch_directory_with_spaces_is_read_whole(tmp_path: Path) -> None:
+    batch_dir = tmp_path / "My Runs" / "outputs" / "2026-01-01" / "00-00-00"
+    line = f"SLURM job 1: 1 case(s) in 1 task(s) of up to 1 case(s); outputs in {batch_dir}"
+    record = slurm_launch.Submission(
+        command=[sys.executable, "-c", f"print({line!r}); print('more output')"]
+    )
+    slurm_launch._submit(record.command, tmp_path, record)
+    assert record.batch_dir == str(batch_dir)
+    assert record.state == "submitted"
+
+
+def _alive(pid: int) -> bool:
+    """Whether *pid* runs (a zombie, ended but not yet reaped, does not)."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return False
+    return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+
+def _group_running(pgid: int) -> list[int]:
+    """The processes of group *pgid* that run (zombies left out)."""
+    running = []
+    for stat_path in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            stat = stat_path.read_text()
+        except OSError:
+            continue
+        fields = stat.rsplit(")", 1)[1].split()
+        if fields[0] != "Z" and int(fields[2]) == pgid:
+            running.append(int(stat_path.parent.name))
+    return running
+
+
+def _wait_for(predicate: Any, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def test_a_submit_that_hangs_is_stopped_and_a_new_one_taken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1786: a submit that does not end in time kills its whole process
+    group and is recorded failed (124), so the viewer takes the next one."""
+    monkeypatch.setattr(slurm_launch, "SUBMIT_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(slurm_launch, "_submission", None)
+    pids = tmp_path / "pids"
+    # The child starts a grandchild (as `uv run` starts `scenario`), writes
+    # both pids, says it started and hangs; stdin must not be the viewer's.
+    hang = (
+        "import os, subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        f"open({str(pids)!r}, 'w').write(f'{{os.getpid()}} {{child.pid}}')\n"
+        "print('checking the batch', flush=True)\n"
+        "assert sys.stdin.read() == ''\n"
+        "time.sleep(60)\n"
+    )
+    record = slurm_launch.start_submit([sys.executable, "-c", hang], tmp_path)
+    started: list[int] = []
+    try:
+        assert _wait_for(lambda: record.state != "submitting", 30.0)
+        started = [int(p) for p in pids.read_text().split()]
+        assert record.state == "failed"
+        assert record.returncode == slurm_launch.TIMED_OUT == 124
+        assert "checking the batch" in record.output
+        assert "did not end within 1 s" in record.output
+        assert _wait_for(lambda: not any(_alive(p) for p in started), 10.0)
+        # The group (the child's session) has no process left running.
+        assert _wait_for(lambda: not _group_running(started[0]), 10.0)
+    finally:
+        for pid in started:  # only what this test started, should it run
+            if _alive(pid):
+                os.kill(pid, 9)
+    batch_dir = tmp_path / "outputs" / "2026-01-01" / "00-00-00"
+    line = f"SLURM job 1: 1 case(s); outputs in {batch_dir}"
+    again = slurm_launch.start_submit(
+        [sys.executable, "-c", f"print({line!r})"], tmp_path
+    )
+    assert again is not record
+    assert _wait_for(lambda: again.state != "submitting", 30.0)
+    assert again.state == "submitted"
+    assert again.batch_dir == str(batch_dir)
+
+
 def test_the_command_submits_and_does_not_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("VIEWER_SCENARIO_COMMAND", raising=False)
     options = SlurmOptions(partition="main")
@@ -314,7 +402,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
     monkeypatch.setenv("VIEWER_CACHE_DIR", str(tmp_path / "cache"))
     scanner.clear_cache()
-    return TestClient(app_module.app)
+    return TestClient(app_module.app, base_url="http://127.0.0.1")
 
 
 def test_without_sbatch_slurm_is_offered_disabled_with_why(
@@ -463,6 +551,58 @@ def test_a_running_batch_s_cases_and_tasks(
     assert [i.passed for i in items] == [True, None, False, None]
 
 
+def _pending_batch(base: Path, time_: str = "13-00-00") -> Path:
+    """A SLURM batch of three cases submitted, none of them collected yet."""
+    batch = base / "outputs" / "2026-10-19" / time_
+    root = batch / "slurm"
+    (root / "results").mkdir(parents=True)
+    manifest = {
+        "version": 1,
+        "batch_dir": str(batch),
+        "scenario_names": ["s"],
+        "launcher": {"type": "slurm"},
+        "cases": [
+            {"index": i, "label": f"s#{i + 1}", "scenario": "s", "stem": f"C-{i}"}
+            for i in range(3)
+        ],
+    }
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    return batch
+
+
+def test_a_batch_s_pending_cases_are_counted_apart(tmp_path: Path) -> None:
+    """Cases without a result yet are pending (#1820): all of a batch none of
+    whose cases was collected, and the one case of a batch that never ran."""
+    _pending_batch(tmp_path)
+    _manifest_batch(tmp_path)
+    sessions = scanner.scan_sessions(tmp_path)
+    assert [
+        (s.time, s.passed_count, s.pending_count, s.total_count) for s in sessions
+    ] == [("13-00-00", 0, 3, 3), ("12-00-00", 1, 1, 4)]
+
+
+def test_an_all_pending_batch_is_not_listed_as_failed(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """``/`` and the ``/compare`` picker show an all-pending batch's cases as
+    pending, in a neutral colour, not as failures (#1820)."""
+    _pending_batch(tmp_path)
+    index = client.get("/")
+    assert index.status_code == 200
+    assert "3 pending" in index.text
+    assert "0/3 passed" in index.text
+    assert "bg-red-100" not in index.text
+    compare = client.get("/compare")
+    assert compare.status_code == 200
+    row = compare.text[compare.text.index("2026-10-19 13-00-00") :]
+    row = row[: row.index("</tr>")]
+    assert "0/3" in row and "3 pending" in row
+    assert (
+        "text-red-700" not in row
+        and "text-right whitespace-nowrap text-gray-700" in row
+    )
+
+
 def test_an_ended_batch_names_its_missing_cases(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -482,6 +622,156 @@ def test_an_ended_batch_names_its_missing_cases(
     assert client.post("/api/slurm/2026-10-19/12-00-00/rm").status_code == 404
 
 
+@pytest.mark.parametrize(
+    "content", ["", "{not json", "[1, 2]", "null"], ids=["empty", "bad", "list", "null"]
+)
+def test_a_batch_with_an_unreadable_submission_record_is_shown_with_a_note(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str
+) -> None:
+    """#1356: a corrupt record does not keep the batch's page (and its
+    Resubmit) from the user: that submission is noted, the others shown."""
+    batch = _manifest_batch(tmp_path)
+    path = batch / "slurm" / "submissions" / "1.json"
+    path.write_text(content)
+    _fake_squeue(tmp_path, monkeypatch, "")
+    response = client.get("/api/slurm/2026-10-19/12-00-00/status")
+    assert response.status_code == 200
+    status = response.json()
+    assert [c["state"] for c in status["cases"]] == [
+        "passed",
+        "failed",
+        "errored",
+        "missing",
+    ]
+    assert "CARLA did not start" in status["cases"][3]["message"]
+    first, second = status["submissions"]
+    assert first["job_id"] == "999999" and not first["unreadable"]
+    assert second["unreadable"] and str(path) in second["note"]
+    assert not status["active"]
+    assert client.get("/session/batch/2026-10-19/12-00-00").status_code == 200
+
+
+@pytest.mark.parametrize("kind", ["in-flight", "timed-out", "stale"])
+def test_a_submission_with_no_job_id_names_no_job_and_its_cases_are_not_missing(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """#1791: a resubmit of case 3 whose sbatch is in flight, or timed out
+    (the job may exist), shows no "job None" and leaves case 3 pending or
+    unknown, not missing; a stale record's case is missing, naming no job."""
+    from autoware_carla_scenario.slurm.manifest import SBATCH_IN_FLIGHT_SECONDS
+
+    batch = _manifest_batch(tmp_path)
+    record: dict[str, Any] = {
+        "index": 1,
+        "job_id": None,
+        "submitted_at": time.time()
+        - (SBATCH_IN_FLIGHT_SECONDS + 1 if kind == "stale" else 0),
+        "cases": [3],
+        "chunks": [[3]],
+    }
+    if kind == "timed-out":
+        record["sbatch_timed_out"] = True
+        record["sbatch_timed_out_at"] = "2026-11-06T12:00:00+09:00"
+    (batch / "slurm" / "submissions" / "1.json").write_text(json.dumps(record))
+    asked: list[str] = []
+    real = slurm_launch.squeue_states
+
+    def squeue_states(job: str) -> Any:
+        asked.append(job)
+        return real(job)
+
+    monkeypatch.setattr(slurm_launch, "squeue_states", squeue_states)
+    _fake_squeue(tmp_path, monkeypatch, "")
+    status = slurm_launch.batch_status(batch)
+    assert status is not None
+    assert asked == ["999999"]  # never squeue -j None
+    want = {"in-flight": "pending", "timed-out": "unknown", "stale": "missing"}[kind]
+    assert [c["state"] for c in status["cases"]] == [
+        "passed",
+        "failed",
+        "errored",
+        want,
+    ]
+    message = status["cases"][3]["message"]
+    assert "None" not in message and "job" in message
+    if kind == "timed-out":
+        assert "timed out at 2026-11-06T12:00:00+09:00" in message
+        assert "squeue --me" in message
+    second = status["submissions"][1]
+    assert second["job_id"] is None and not second["unreadable"]
+    assert second["in_flight"] is (kind == "in-flight")
+    assert second["sbatch_timed_out"] is (kind == "timed-out")
+    note = second["note"]
+    assert "None" not in note and "ended" not in note
+    if kind == "in-flight":
+        assert note == "no job id yet (sbatch in flight)"
+    elif kind == "timed-out":
+        assert "sbatch timed out" in note and "squeue --me" in note
+    else:
+        assert "stale" in note
+    # Being submitted is followed as a queued job is; the others are not.
+    assert status["active"] is (kind == "in-flight")
+    response = client.get("/api/slurm/2026-10-19/12-00-00/status")
+    assert response.status_code == 200
+    assert "job None" not in response.text
+    assert client.get("/session/batch/2026-10-19/12-00-00").status_code == 200
+
+
+@pytest.mark.parametrize(
+    "content", ["[]", "null", '{"version": true}'], ids=["list", "null", "bool"]
+)
+def test_a_batch_whose_manifest_is_not_an_object_is_not_a_slurm_batch(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, content: str
+) -> None:
+    """#1630: a manifest that is not an object is a 404, not a 500."""
+    batch = _manifest_batch(tmp_path)
+    (batch / "slurm" / "manifest.json").write_text(content)
+    _fake_squeue(tmp_path, monkeypatch, "")
+    assert slurm_launch.batch_status(batch) is None
+    response = client.get("/api/slurm/2026-10-19/12-00-00/status")
+    assert response.status_code == 404
+
+
+@pytest.mark.parametrize(
+    "result",
+    [{"passed": "true"}, {"passed": 1}, "passed", [True], None, "missing"],
+    ids=["str-true", "int", "str-result", "list-result", "null-result", "no-result"],
+)
+def test_a_result_with_no_verdict_is_shown_failed_and_collected_as_an_error(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    result: Any,
+) -> None:
+    """#1718: case 0's record holds no boolean verdict: the batch status is
+    no 500 and shows it failed, and collect reports it as an error naming its
+    file."""
+    batch = _manifest_batch(tmp_path)
+    path = batch / "slurm" / "results" / "0.json"
+    record = json.loads(path.read_text())
+    if result == "missing":
+        del record["result"]
+    else:
+        record["result"] = result
+    path.write_text(json.dumps(record))
+    _fake_squeue(tmp_path, monkeypatch, "")
+    response = client.get("/api/slurm/2026-10-19/12-00-00/status")
+    assert response.status_code == 200
+    status = response.json()
+    assert [c["state"] for c in status["cases"]] == [
+        "failed",
+        "failed",
+        "errored",
+        "missing",
+    ]
+    collected = client.post("/api/slurm/2026-10-19/12-00-00/collect").json()
+    assert collected["ok"] and collected["code"] == 1
+    assert str(path) in collected["output"]
+    summary = json.loads((batch / "batch_results.json").read_text())
+    assert [e["passed"] for e in summary] == [False, False, False, False]
+    assert summary[0].get("error") is True
+
+
 def test_collect_writes_the_summary(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -493,6 +783,72 @@ def test_collect_writes_the_summary(
     summary = json.loads((batch / "batch_results.json").read_text())
     assert [e["passed"] for e in summary] == [True, False, False, False]
     assert scanner.load_session(tmp_path, "batch", "2026-10-19", "12-00-00")[0].passed
+    # Collecting again rewrites collected.json: still collected.
+    again = client.post("/api/slurm/2026-10-19/12-00-00/collect").json()
+    assert again["ok"] and again["code"] == 1
+
+
+def test_a_collect_that_could_not_collect_is_not_ok(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1746: ``scenario-slurm collect`` exits 1 on an ``Error:`` too (an
+    unreadable manifest here): the viewer reports it failed, not "collected,
+    a case failed" -- even with an earlier collect's record in place."""
+    batch = _manifest_batch(tmp_path)
+    _fake_squeue(tmp_path, monkeypatch, "")
+    assert client.post("/api/slurm/2026-10-19/12-00-00/collect").json()["ok"]
+    (batch / "slurm" / "manifest.json").write_text("{not json")
+    # _slurm_batch() only asks that the manifest be there.
+    collected = client.post("/api/slurm/2026-10-19/12-00-00/collect").json()
+    assert collected["code"] == 1 and "Error:" in collected["output"]
+    assert not collected["ok"]
+
+
+def test_a_collect_that_exits_1_without_collecting_is_not_ok(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1746: exit 1 with no new ``collected.json`` (a traceback, say) is not
+    collected."""
+    _manifest_batch(tmp_path)
+    monkeypatch.setattr(
+        slurm_launch, "run_cli", lambda args, timeout=300.0: (1, "Traceback ...")
+    )
+    collected = client.post("/api/slurm/2026-10-19/12-00-00/collect").json()
+    assert collected == {"ok": False, "code": 1, "output": "Traceback ..."}
+
+
+@pytest.mark.parametrize(
+    ("raised", "code"),
+    [
+        (subprocess.TimeoutExpired(["scenario-slurm"], 300.0), slurm_launch.TIMED_OUT),
+        (FileNotFoundError("no python"), slurm_launch.NOT_STARTED),
+    ],
+    ids=["timeout", "oserror"],
+)
+@pytest.mark.parametrize("action", ["collect", "cancel", "resubmit"])
+def test_a_scenario_slurm_that_could_not_run_is_not_ok(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raised: Exception,
+    code: int,
+    action: str,
+) -> None:
+    """#1746: run_cli turns a timeout or an OSError into a code of its own,
+    neither 0 nor 1, which no action reports done."""
+    _manifest_batch(tmp_path)
+    monkeypatch.setattr(slurm_launch, "availability", lambda: (True, ""))
+
+    def run(*args: Any, **kwargs: Any) -> Any:
+        raise raised
+
+    monkeypatch.setattr(slurm_launch.subprocess, "run", run)
+    assert slurm_launch.run_cli(["status", "x"])[0] == code
+    response = client.post(f"/api/slurm/2026-10-19/12-00-00/{action}", json={})
+    assert response.status_code == 200
+    out = response.json()
+    assert not out["ok"] and out["code"] == code
+    assert out["output"] == str(raised)
 
 
 # ── Through the fake SLURM ─────────────────────────────────────────────────
@@ -630,3 +986,138 @@ def test_a_batch_submitted_from_the_viewer_is_followed_and_collected(
         client, status_url, lambda d: len(d["submissions"]) == 2 and not d["active"]
     )
     assert status["submissions"][1]["cases"] == len(failed)
+
+
+# ── The submission's body (#1500) ──────────────────────────────────────────
+
+
+@pytest.fixture
+def submitted(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+    """The commands submitted through sbatch (nothing is submitted)."""
+    commands: list[list[str]] = []
+    monkeypatch.setattr(slurm_launch, "availability", lambda: (True, ""))
+    monkeypatch.setattr(
+        slurm_launch,
+        "start_submit",
+        lambda command, base: commands.append(command),
+    )
+    monkeypatch.delenv("VIEWER_SCENARIO_COMMAND", raising=False)
+    return commands
+
+
+@pytest.mark.parametrize(
+    ("body", "names"),
+    [
+        (
+            {"scenario": "x", "extra_overrides": "carla.port=2001"},
+            "extra_overrides",
+        ),
+        ({"scenario": "x", "extra_overrides": ["a=1", None]}, "extra_overrides"),
+        ({"scenario": 1}, "scenario"),
+        ({"scenario": "x", "sweeper": ["lanelet_constraint"]}, "sweeper"),
+        ({"scenario": "x", "slurm": "partition=main"}, "slurm"),
+        ({"scenario": "x", "slurm": {"time": {"h": 2}}}, "slurm.time"),
+        ({"scenario": "x", "slurm": {"array_parallelism": [4]}}, "slurm."),
+    ],
+)
+def test_a_slurm_body_of_the_wrong_type_is_not_submitted(
+    client: TestClient, submitted: list[list[str]], body: dict[str, Any], names: str
+) -> None:
+    response = client.post("/api/run", json={**body, "launcher": "slurm"})
+    assert response.status_code == 400
+    assert response.json()["status"] == "error"
+    assert names in response.json()["message"]
+    assert submitted == []
+
+
+def test_the_slurm_panel_s_body_is_submitted_with_whole_overrides(
+    client: TestClient, submitted: list[list[str]]
+) -> None:
+    """What base.html's collectRunOptions() sends for SLURM: every field text."""
+    slurm = {
+        "partition": "main",
+        "array_parallelism": "4",
+        "cases_per_task": "",
+        "time": "",
+        "mem": "",
+        "gres": "",
+        "start_stagger_seconds": "",
+        "remote_cwd": "",
+        "python": "",
+        "setup": "",
+        "env": "",
+    }
+    body = {
+        "scenario": "x",
+        "extra_overrides": ["carla.port=2001"],
+        "sweeper": "",
+        "launcher": "slurm",
+        "slurm": slurm,
+    }
+    assert client.post("/api/run", json=body).json() == {"status": "submitting"}
+    assert submitted == [
+        [
+            "uv",
+            "run",
+            "scenario",
+            "scenario=x",
+            "carla.port=2001",
+            "launcher=slurm",
+            "launcher.partition=main",
+            "launcher.array_parallelism=4",
+            "--no-wait",
+        ]
+    ]
+
+
+@pytest.mark.parametrize(
+    ("body", "names"),
+    [
+        ([1], "JSON object"),
+        ({"failed": "false"}, "failed"),
+        ({"array_parallelism": [2]}, "array_parallelism"),
+        ({"cases_per_task": True}, "cases_per_task"),
+    ],
+)
+def test_a_resubmit_body_of_the_wrong_type_is_refused(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    body: Any,
+    names: str,
+) -> None:
+    _manifest_batch(tmp_path)
+    ran: list[list[str]] = []
+    monkeypatch.setattr(slurm_launch, "availability", lambda: (True, ""))
+
+    def run_cli(args: list[str], timeout: float = 300.0) -> tuple[int, str]:
+        ran.append(args)
+        return 0, ""
+
+    monkeypatch.setattr(slurm_launch, "run_cli", run_cli)
+    response = client.post("/api/slurm/2026-10-19/12-00-00/resubmit", json=body)
+    assert response.status_code == 400
+    assert not response.json()["ok"] and names in response.json()["output"]
+    assert ran == []
+    # What session.html sends is accepted.
+    accepted = client.post(
+        "/api/slurm/2026-10-19/12-00-00/resubmit",
+        json={"failed": False, "array_parallelism": "2", "cases_per_task": ""},
+    )
+    assert accepted.status_code == 200 and accepted.json()["ok"]
+    assert ran[-1][-3:] == ["--array-parallelism", "2", "--no-wait"]
+
+
+def test_new_manifests_are_ordered_by_session_number(tmp_path: Path) -> None:
+    """#1845: a submit that finds no batch in its output takes the last new
+    manifest, and ``-10`` comes after ``-9`` (a text sort reverses them)."""
+    for time_dir in ("12-00-00-10", "12-00-00-9", "12-00-00"):
+        manifest = tmp_path / "outputs" / "2026-11-01" / time_dir / "slurm"
+        manifest.mkdir(parents=True)
+        (manifest / "manifest.json").write_text("{}")
+    found = slurm_launch._new_manifests(tmp_path, set())
+    assert [p.parents[1].name for p in found] == [
+        "12-00-00",
+        "12-00-00-9",
+        "12-00-00-10",
+    ]

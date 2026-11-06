@@ -21,7 +21,15 @@ from autoware_carla_scenario import (
     TrajectoryTiming,
     TrajectoryVertex,
 )
-from autoware_carla_scenario.trajectory.model import ResolvedTrajectory
+from autoware_carla_scenario.trajectory.model import (
+    RelativeLanePose,
+    ResolvedTrajectory,
+    RouteCrossingPose,
+    RouteCrosswalkPose,
+    RouteLanePose,
+    RouteOppositePose,
+    RouteRoadsidePose,
+)
 from autoware_carla_scenario.trajectory.resolve import (
     map_pose_to_carla,
     resolve_trajectory,
@@ -426,6 +434,84 @@ class TestResolve:
                 return position.x, -position.y, None, None
             return position.x, position.y, position.z, position.yaw
 
-        resolved = resolve_trajectory(trajectory, lambda x, y: 2.5, resolve=resolve)
+        resolved = resolve_trajectory(trajectory, lambda x, y, z: 2.5, resolve=resolve)
         assert resolved.zs == pytest.approx([7.0, 2.5])
         assert resolved.times == [0.0, 1.0]
+
+
+# ---------------------------------------------------------------------------
+# Non-finite numbers (#1480)
+# ---------------------------------------------------------------------------
+
+_NOT_FINITE = [math.nan, math.inf, -math.inf]
+
+
+class TestNotFinite:
+    @pytest.mark.parametrize("bad", _NOT_FINITE)
+    @pytest.mark.parametrize("field", ["x", "y", "yaw", "z"])
+    def test_a_map_pose_refuses_a_number_that_is_not_finite(
+        self, field: str, bad: float
+    ) -> None:
+        values: dict = {"x": 1.0, "y": 2.0, "yaw": 0.5, "z": 3.0}
+        values[field] = bad
+        with pytest.raises(ValueError, match=rf"MapPose\.{field} must be finite"):
+            MapPose(**values)
+
+    def test_a_map_pose_still_leaves_yaw_and_z_unset(self) -> None:
+        pose = MapPose(1.0, 2.0)
+        assert pose.yaw is None and pose.z is None
+
+    @pytest.mark.parametrize("bad", _NOT_FINITE)
+    @pytest.mark.parametrize(
+        "build",
+        [
+            lambda yaw: RelativeLanePose(yaw=yaw),
+            lambda yaw: RouteLanePose(yaw=yaw),
+            lambda yaw: RouteOppositePose(yaw=yaw),
+            lambda yaw: RouteCrossingPose(yaw=yaw),
+            lambda yaw: RouteCrosswalkPose(yaw=yaw),
+            lambda yaw: RouteRoadsidePose(yaw=yaw),
+        ],
+    )
+    def test_a_relative_pose_refuses_a_yaw_that_is_not_finite(
+        self, build, bad: float
+    ) -> None:
+        with pytest.raises(ValueError, match=r"\.yaw must be finite"):
+            build(bad)
+        assert build(None).yaw is None
+        assert build(0.25).yaw == 0.25
+
+    @pytest.mark.parametrize("bad", _NOT_FINITE)
+    @pytest.mark.parametrize("column", ["xs", "ys", "zs", "yaws", "times"])
+    def test_a_resolved_trajectory_refuses_a_value_that_is_not_finite(
+        self, column: str, bad: float
+    ) -> None:
+        columns: dict = {
+            "xs": [0.0, 10.0, 20.0],
+            "ys": [0.0, 0.0, 0.0],
+            "zs": [0.0, 0.0, 0.0],
+            "yaws": [None, 0.0, None],
+            "times": [0.0, 1.0, 2.0],
+        }
+        columns[column][1] = bad
+        with pytest.raises(
+            ValueError, match=rf"ResolvedTrajectory\.{column}\[1\] must be finite"
+        ):
+            ResolvedTrajectory(**columns)
+
+    def test_a_carla_world_vertex_resolving_to_nan_is_refused(self) -> None:
+        """No pose of the coordinate package checks itself: the backstop does."""
+        trajectory = Trajectory(
+            "t",
+            [
+                TrajectoryVertex(CarlaWorldPose(0.0, 0.0, 0.0), _at(0.0)),
+                TrajectoryVertex(CarlaWorldPose(math.nan, 0.0, 0.0), _at(1.0)),
+                TrajectoryVertex(CarlaWorldPose(20.0, 0.0, 0.0), _at(2.0)),
+            ],
+        )
+
+        def resolve(position):
+            return position.x, position.y, position.z, position.yaw
+
+        with pytest.raises(ValueError, match=r"ResolvedTrajectory\.xs\[1\]"):
+            resolve_trajectory(trajectory, None, resolve=resolve)

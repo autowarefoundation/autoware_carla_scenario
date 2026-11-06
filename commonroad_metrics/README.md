@@ -110,6 +110,19 @@ output; logs go to the standard error.
 {"ok": true}
 ```
 
+The worker exits after answering `close`, and at the end of its input too.
+The framework does not wait for the answer to `close`: it sends the request,
+closes the worker's input, and kills a worker that has not exited within five
+seconds (one deep in an evaluation).
+
+The worker runs in a session and process group of its own, so the kill reaches
+all of it: the worker started by `uv run` too, not only `uv`. The terminal's
+Ctrl-C does not reach the worker then; the framework closes it instead, when a
+run's evaluation is interrupted or fails, and when the framework exits. An
+interrupted evaluation stops at once rather than finishing its remaining
+frames. A framework killed outright (`SIGKILL`) closes the worker's input, and a
+worker exits at its end, so a worker must not ignore the end of its input.
+
 A road user is `id` (positive), `kind` (`car`, `truck`, `bus`, `motorcycle`,
 `bicycle`, `pedestrian`), `x`, `y`, `yaw`, `vx`, `vy`, `ax`, `ay`, `yaw_rate`,
 `length` and `width`. A value is a number, `Infinity` (no conflict: TTC never

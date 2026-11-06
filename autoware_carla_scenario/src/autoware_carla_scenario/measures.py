@@ -31,11 +31,12 @@ The vehicle ahead, along the ego's lane
 ahead, measured along the ego's lane on the Lanelet2 map:
 
 * the **ego's lane** is the lanelet the ego is on (the one under it whose
-  centreline runs closest to its heading), the lanelets following it -- every
-  branch, up to :data:`AHEAD_RANGE_M` ahead, for the measure does not know
-  the route -- and back from it through the first lanelet before each
-  (``previous[0]``); its arc length ``s`` runs along their centrelines,
-  continued from one to the next;
+  centreline runs closest to its heading; where lanes are stacked -- an
+  elevated road over a street -- the one at the ego's height), the
+  lanelets following it -- every branch, up to :data:`AHEAD_RANGE_M` ahead,
+  for the measure does not know the route -- and back from it through the
+  first lanelet before each (``previous[0]``); its arc length ``s`` runs
+  along their centrelines, continued from one to the next;
 * a vehicle **counts** when it is on one of those lanelets or on a lanelet
   beside one (its left or right neighbour in the routing graph, a lane change
   allowed or not), and its origin is further along the lane than the ego's;
@@ -101,9 +102,11 @@ import lanelet2.geometry
 
 from .constants import BUMPER_PROBE_ROLE_NAME, EGO_ROLE_NAME
 from .coordinate.map_manager import MapManager
+from .coordinate.transform import _STACKED_HEIGHT_TOLERANCE, _project_with_height
 from .entity_role import find_actor_in_world
 from .kinematics.walker_motion import WalkerVelocities, simulated_seconds
 from .metrics import is_metric
+from .utils.clearance import _vertical_span, on_another_level
 from .utils.stop_line import regulatory_element_stop_lines
 
 if TYPE_CHECKING:
@@ -383,15 +386,26 @@ def _pedestrians_around(
 ) -> list[_Around]:
     """*actors*' walkers in *ego*'s frame, each with its speed measured from
     where it stood when last read (*elapsed* the simulated time now; without
-    one, what CARLA reports)."""
+    one, what CARLA reports).  A walker on another level of road -- on a
+    footbridge over the ego, or in an underpass beneath it -- is not around
+    it (#1587); its speed is still measured, so it reads true once the
+    walker comes down to the ego's level.  One on the same road climbing or
+    falling away is around
+    (:func:`~autoware_carla_scenario.utils.clearance.on_another_level`)."""
     transform = ego.get_transform()
+    ego_span = _vertical_span(ego, transform)
     found: list[_Around] = []
     for actor in actors:
         if actor.id == ego.id or not actor.type_id.startswith("walker."):
             continue
-        location = actor.get_location()
-        ahead, lateral = in_ego_frame(transform, location)
+        placed = actor.get_transform()
+        location = placed.location
         velocity = _WALKERS.walker(actor, elapsed, location)
+        ahead, lateral = in_ego_frame(transform, location)
+        if on_another_level(
+            ego_span, _vertical_span(actor, placed), math.hypot(ahead, lateral)
+        ):
+            continue
         found.append(
             _Around(
                 actor_id=actor.id,
@@ -411,10 +425,12 @@ def _pedestrians_around(
 @dataclass(frozen=True)
 class _Vehicle:
     """Where a vehicle is (CARLA world, yaw in radians), its bumpers, its
-    velocity."""
+    velocity.  Its height ``z`` tells the lanelet it is on from one stacked
+    over or under it (#1595)."""
 
     x: float
     y: float
+    z: float
     yaw: float
     front: float
     rear: float
@@ -433,6 +449,7 @@ def _placed(transform: "carla.Transform", bumpers: Bumpers) -> _Vehicle:
     return _Vehicle(
         x=float(transform.location.x),
         y=float(transform.location.y),
+        z=float(transform.location.z),
         yaw=math.radians(float(transform.rotation.yaw)),
         front=bumpers.front,
         rear=bumpers.rear,
@@ -446,6 +463,7 @@ def _moving(actor: "carla.Actor") -> _Vehicle:
     return _Vehicle(
         x=float(transform.location.x),
         y=float(transform.location.y),
+        z=float(transform.location.z),
         yaw=math.radians(float(transform.rotation.yaw)),
         front=bumpers.front,
         rear=bumpers.rear,
@@ -782,15 +800,55 @@ def _runs_closer(angle: float, d2: float, best_angle: float, best_d2: float) -> 
     )
 
 
+def _at_the_egos_level(
+    ego: _Vehicle, running: list[tuple[int, float, float]]
+) -> list[tuple[int, float, float]]:
+    """Of *running* (``(lanelet, angle, d2)``), those at the ego's level: no
+    more than ``_STACKED_HEIGHT_TOLERANCE`` farther from its height than the
+    nearest, their centreline's height at its foot read as
+    :func:`~autoware_carla_scenario.coordinate.transform.on_lanelet` reads it.
+    Lanelets overlapping on one level -- a junction's -- all stay; of lanes
+    stacked over one another -- an elevated road and the street beneath it --
+    only the ego's does (#1595).  All stay where the map's height offset is
+    not known."""
+    mm = MapManager.get_instance()
+    try:
+        z_offset = mm.z_offset
+    except RuntimeError:
+        return running
+    offset_x, offset_y = mm.mgrs_offset
+    layer = mm.lanelet_map.laneletLayer
+    x, y, z = ego.x + offset_x, -ego.y + offset_y, ego.z + z_offset
+    heights: list[float] = []
+    for lanelet_id, _angle, _d2 in running:
+        heights.append(_project_with_height(layer[lanelet_id], x, y, z)[0])
+    nearest = min(heights)
+    level: list[tuple[int, float, float]] = []
+    for i in range(len(running)):
+        if heights[i] <= nearest + _STACKED_HEIGHT_TOLERANCE:
+            level.append(running[i])
+    return level
+
+
 def _ego_lanelet(ego: _Vehicle) -> Optional[int]:
-    """The lanelet the ego is on: of those under it, the one whose centreline
-    runs closest to its heading (within :data:`EGO_LANE_HEADING_DEG`)."""
-    best: Optional[int] = None
-    best_angle = math.radians(EGO_LANE_HEADING_DEG)
-    best_d2 = math.inf
+    """The lanelet the ego is on: of those under it at its level (where lanes
+    are stacked, :func:`_at_the_egos_level`), the one whose centreline runs
+    closest to its heading (within :data:`EGO_LANE_HEADING_DEG`)."""
+    limit = math.radians(EGO_LANE_HEADING_DEG)
+    running: list[tuple[int, float, float]] = []
     for lanelet_id in _lanelets_at(ego.x, ego.y):
         _s, d2, yaw = _line(lanelet_id).project(ego.x, ego.y)
         angle = _angle_between(yaw, ego.yaw)
+        if _runs_closer(angle, d2, limit, math.inf):
+            running.append((lanelet_id, angle, d2))
+    if len(running) > 1:
+        # Only where several run its way: heights are read off Lanelet2's
+        # centreline, slow for a long lanelet.
+        running = _at_the_egos_level(ego, running)
+    best: Optional[int] = None
+    best_angle = limit
+    best_d2 = math.inf
+    for lanelet_id, angle, d2 in running:
         if _runs_closer(angle, d2, best_angle, best_d2):
             best, best_angle, best_d2 = lanelet_id, angle, d2
     return best
@@ -956,7 +1014,9 @@ class _LaneFrame:
         still on it, running its way, and no rival under the ego runs closer
         to its heading -- the rule :func:`_ego_lanelet` chooses by, asked of
         the lanelets that overlap the ego's where a lane branches or merges,
-        so a moment's heading drift there does not hold the wrong branch."""
+        so a moment's heading drift there does not hold the wrong branch.  A
+        rival stacked over or under the ego's lanelet, not at the ego's level
+        (:func:`_at_the_egos_level`), never displaces it (#1595)."""
         if not _area(self.ego_lanelet).holds(ego.x, ego.y):
             return False
         _s, d2, yaw = _line(self.ego_lanelet).project(ego.x, ego.y)
@@ -967,8 +1027,18 @@ class _LaneFrame:
             if not _area(rival).holds(ego.x, ego.y):
                 continue
             _rs, rival_d2, rival_yaw = _line(rival).project(ego.x, ego.y)
-            if _runs_closer(_angle_between(rival_yaw, ego.yaw), rival_d2, angle, d2):
-                return False
+            rival_angle = _angle_between(rival_yaw, ego.yaw)
+            if not _runs_closer(rival_angle, rival_d2, angle, d2):
+                continue
+            # Asked only of a rival that would win: heights are read off
+            # Lanelet2's centreline, slow for a long lanelet.
+            level = _at_the_egos_level(
+                ego,
+                [(self.ego_lanelet, angle, d2), (rival, rival_angle, rival_d2)],
+            )
+            for lanelet_id, _angle, _d2 in level:
+                if lanelet_id == rival:
+                    return False
         return True
 
     def __init__(self, ego_lanelet: int, reach: float) -> None:
@@ -1100,16 +1170,20 @@ class _LaneFrame:
 
 
 class _FrameMemo:
-    """The last lane frame built, the ego's front bumper it was built for and
-    the map (:attr:`_Lines.generation`): kept while the ego stays on its
-    lanelet."""
+    """The last lane frame built, the ego's front bumper and height it was
+    built for and the map (:attr:`_Lines.generation`): kept while the ego
+    stays on its lanelet, at that level."""
 
     frame: Optional[_LaneFrame] = None
     front: float = 0.0
+    #: The ego's height when the frame was built: one that has since climbed
+    #: or dropped more than ``_STACKED_HEIGHT_TOLERANCE`` -- placed on the
+    #: deck over or under where it was -- is looked for again (#1595).
+    z: float = 0.0
     generation: int = -1
-    #: Where the ego was found on no lanelet running its way (x, y, yaw), so
-    #: the map is not searched again until it has moved or turned.
-    nowhere: Optional[tuple[float, float, float]] = None
+    #: Where the ego was found on no lanelet running its way (x, y, yaw, z),
+    #: so the map is not searched again until it has moved or turned.
+    nowhere: Optional[tuple[float, float, float, float]] = None
 
 
 _FRAME_MEMO = _FrameMemo()
@@ -1138,6 +1212,7 @@ def _lane_frame(ego: _Vehicle) -> Optional[_LaneFrame]:
         kept is not None
         and _FRAME_MEMO.generation == _LINES.generation
         and _FRAME_MEMO.front == ego.front
+        and abs(ego.z - _FRAME_MEMO.z) <= _STACKED_HEIGHT_TOLERANCE
         and kept.still_the_egos(ego)
     ):
         return kept
@@ -1148,6 +1223,7 @@ def _lane_frame(ego: _Vehicle) -> Optional[_LaneFrame]:
         and _FRAME_MEMO.generation == _LINES.generation
         and math.hypot(ego.x - nowhere[0], ego.y - nowhere[1]) < _NOWHERE_M
         and _angle_between(ego.yaw, nowhere[2]) < math.radians(_NOWHERE_DEG)
+        and abs(ego.z - nowhere[3]) <= _STACKED_HEIGHT_TOLERANCE
     ):
         return None
     frame: Optional[_LaneFrame] = None
@@ -1158,8 +1234,9 @@ def _lane_frame(ego: _Vehicle) -> Optional[_LaneFrame]:
         frame = _LaneFrame(found, reach)
         _FRAMES_BUILT["count"] += 1
     _FRAME_MEMO.frame, _FRAME_MEMO.front = frame, ego.front
+    _FRAME_MEMO.z = ego.z
     _FRAME_MEMO.generation = _LINES.generation
-    _FRAME_MEMO.nowhere = (ego.x, ego.y, ego.yaw) if frame is None else None
+    _FRAME_MEMO.nowhere = (ego.x, ego.y, ego.yaw, ego.z) if frame is None else None
     return frame
 
 
@@ -1254,6 +1331,26 @@ def vehicle_ahead_definition(ego: "carla.Transform") -> str:
     return ALONG_LANE
 
 
+def _off_the_ego_s_level(
+    ego_z: float,
+    ego_span: tuple[float, float],
+    z: float,
+    span: tuple[float, float],
+    planar: float,
+) -> bool:
+    """Whether a vehicle whose origin is at height *z* and whose vertical
+    span (bottom, top) is *span*, *planar* metres from the ego in the plane,
+    is on no road of the ego's (origin at *ego_z*, span *ego_span*): far
+    above or below it (:data:`_OFF_THE_ROAD_M`; vehicle_bumpers()'s probe,
+    for one), or on another level of road -- on a bridge over the ego, or in
+    an underpass beneath it (#1587) -- though one up or down a slope ahead is
+    not (:func:`~autoware_carla_scenario.utils.clearance.on_another_level`).
+    The live measure and :func:`vehicle_ahead_gap_between` both ask it."""
+    if abs(z - ego_z) > _OFF_THE_ROAD_M:
+        return True
+    return on_another_level(ego_span, span, planar)
+
+
 def vehicle_ahead_gap_between(
     ego: "carla.Transform",
     ego_bumpers: Bumpers,
@@ -1265,15 +1362,27 @@ def vehicle_ahead_gap_between(
     lane (the module docstring), or along its heading without one.
 
     ``None`` when the measure would not count it as ahead (not on the ego's
-    lane or a lane beside it, behind the ego, or further than
-    :data:`AHEAD_RANGE_M`).  The built-in measure reads the nearest such
-    vehicle with this same code, so a vehicle placed where this reads *v*,
-    alone ahead of the ego, is measured at *v*
+    lane or a lane beside it, behind the ego, further than
+    :data:`AHEAD_RANGE_M`, or on another level of road: on a bridge over the
+    ego or in an underpass beneath it, #1604).  The built-in measure reads the
+    nearest such vehicle with this same code, so a vehicle placed where this
+    reads *v*, alone ahead of the ego, is measured at *v*
     (:func:`~autoware_carla_scenario.placement.place_at_vehicle_ahead_gap`).
+    With transforms and no boxes, each vehicle's vertical span is the point
+    at its origin's height.
     """
-    lead, _definition = _nearest_ahead(
-        _placed(ego, ego_bumpers), [_placed(other, other_bumpers)]
-    )
+    placed_ego = _placed(ego, ego_bumpers)
+    placed_other = _placed(other, other_bumpers)
+    planar = math.hypot(placed_other.x - placed_ego.x, placed_other.y - placed_ego.y)
+    if _off_the_ego_s_level(
+        placed_ego.z,
+        (placed_ego.z, placed_ego.z),
+        placed_other.z,
+        (placed_other.z, placed_other.z),
+        planar,
+    ):
+        return None
+    lead, _definition = _nearest_ahead(placed_ego, [placed_other])
     if lead is None:
         return None
     return lead.gap
@@ -1291,19 +1400,31 @@ def _vehicle_ahead(world: "carla.World") -> Optional[_Lead]:
         if ego_actor is not None:
             actors = list(world.get_actors().filter("vehicle.*"))
             ego = _moving(ego_actor)
-            ego_z = float(ego_actor.get_location().z)
+            ego_placed = ego_actor.get_transform()
+            ego_z = float(ego_placed.location.z)
+            ego_span = _vertical_span(ego_actor, ego_placed)
             reach = AHEAD_RANGE_M + 2 * _REACH_MARGIN_M
             others: list[_Vehicle] = []
             for actor in actors:
                 if actor.id == ego_actor.id or not actor.type_id.startswith("vehicle."):
                     continue
-                location = actor.get_location()
+                placed = actor.get_transform()
+                location = placed.location
                 # Along the lane is never shorter than the straight line; and
                 # a vehicle far above or below is on no road of the ego's
-                # (vehicle_bumpers()'s probe, for one).
-                if math.hypot(location.x - ego.x, location.y - ego.y) > reach:
+                # (vehicle_bumpers()'s probe, for one), nor is one on another
+                # level of road: on a bridge over the ego, or in an underpass
+                # beneath it (#1587), though one up or down a slope ahead is.
+                planar = math.hypot(location.x - ego.x, location.y - ego.y)
+                if planar > reach:
                     continue
-                if abs(float(location.z) - ego_z) > _OFF_THE_ROAD_M:
+                if _off_the_ego_s_level(
+                    ego_z,
+                    ego_span,
+                    float(location.z),
+                    _vertical_span(actor, placed),
+                    planar,
+                ):
                     continue
                 attributes = actor.attributes
                 if "role_name" in attributes and attributes["role_name"] == PROBE_ROLE:

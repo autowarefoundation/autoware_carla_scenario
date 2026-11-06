@@ -99,6 +99,19 @@ def _stop(chase: subprocess.Popen) -> None:
             chase.kill()
 
 
+def _result_json_paths(log: str) -> list[str]:
+    """The result files a run's log names, in order.
+
+    A written result's line is ``Result JSON: <path>``; one that could not be
+    written says ``Result JSON: not written (<path>)`` and names no result.
+    """
+    return [
+        path
+        for path in re.findall(r"^Result JSON: (.+)$", log, re.MULTILINE)
+        if not path.startswith("not written (")
+    ]
+
+
 def _render(
     name: str, scenario: str, spawn: str, title: str, extra: list[str], work: Path
 ) -> tuple[str, bool]:
@@ -128,7 +141,7 @@ def _render(
         _stop(chase)
     text = (run_dir / "run.log").read_text()
     result = (re.findall(r"Result: ([A-Z]+)", text) or ["UNKNOWN"])[-1]
-    json_paths = re.findall(r"Result JSON: (\S+)", text)
+    json_paths = _result_json_paths(text)
     nets = re.findall(r"SUMO started on (\S+)", text)
     if not json_paths or not nets:
         return (
@@ -137,7 +150,8 @@ def _render(
         )
     out_dir = Path(json_paths[-1]).parent
     net = nets[-1]
-    sumo_out = out_dir / "sumo"
+    # The run's SUMO outputs are named by its stem, as its result is (#1544).
+    sumo_out = out_dir / (Path(json_paths[-1]).name[: -len("_result.json")] + ".sumo")
     with (run_dir / "replay.log").open("w") as log:
         replay = subprocess.run(
             [

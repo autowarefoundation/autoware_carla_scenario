@@ -31,6 +31,9 @@ import re
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
+from ..config_flags import check_flag
+from ..value_text import shown
+
 __all__ = [
     "ANCHOR_PATTERN",
     "APPROACHES",
@@ -149,7 +152,11 @@ class Range:
         if value is None:
             return cls()
         if isinstance(value, (int, float)) and not isinstance(value, bool):
-            number = float(value)
+            try:
+                number = float(value)
+            except OverflowError:
+                # An int too big for a float (10**400): not finite (#1652).
+                raise ValueError(f"{name}: a range bound must be finite") from None
             # Built inside the try, as a mapping's is: an infinite bare number
             # is refused with the field's name.
             try:
@@ -177,6 +184,9 @@ class Range:
                 number = float(raw)
             except (TypeError, ValueError) as exc:
                 raise ValueError(f"{name}.{key} must be a number, got {raw!r}") from exc
+            except OverflowError:
+                # An int too big for a float (10**400): not finite (#1652).
+                raise ValueError(f"{name}: a range bound must be finite") from None
             if whole and not number.is_integer():
                 raise ValueError(f"{name}.{key} is a count, a whole number")
             bounds.append(number)
@@ -507,11 +517,12 @@ def parse_route_search(raw: Mapping[str, Any]) -> RouteSearchSpec:
         max_matches = DEFAULT_MAX_MATCHES
     if not 1 <= max_matches <= MAX_MATCHES_LIMIT:
         raise ValueError(f"max_matches must be between 1 and {MAX_MATCHES_LIMIT}")
-    goal = raw.get("ego_goal", True)
+    goal = raw.get("ego_goal")
     return RouteSearchSpec(
         segments=segments,
         ego_spawn_s=spawn_s,
-        ego_goal=True if goal is None else bool(goal),
+        # Strictly: "false" hands over no goal, "ture" is refused (#1756).
+        ego_goal=True if goal is None else check_flag("ego_goal", goal),
         ego_goal_margin=margin,
         match_index=match_index,
         max_matches=max_matches,
@@ -537,6 +548,9 @@ def _distance(name: str, value: Any) -> float:
         number = float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name} must be a number, got {value!r}") from exc
+    except OverflowError:
+        # An int too big for a float (10**400): not finite (#1652).
+        raise ValueError(f"{name} must be finite, got {shown(value)}") from None
     if not math.isfinite(number):
         raise ValueError(f"{name} must be finite, got {value!r}")
     if number < 0.0:
@@ -565,6 +579,9 @@ def _whole_number(name: str, value: Any) -> Optional[int]:
         number = float(value)
     except (TypeError, ValueError) as exc:
         raise ValueError(f"{name} must be a whole number, got {value!r}") from exc
+    except OverflowError:
+        # A number too big for a float, but no int (Fraction(10**400)) (#1652).
+        raise ValueError(f"{name} must be a whole number, got {shown(value)}") from None
     if not math.isfinite(number) or not number.is_integer():
         raise ValueError(f"{name} must be a whole number, got {value!r}")
     return int(number)
@@ -684,14 +701,41 @@ class RouteMatch:
         """The match ``scenario.route`` holds, or ``None`` when it holds none.
 
         Raises:
-            ValueError: On keys that do not describe one route.
+            ValueError: On keys that do not describe one route, naming the
+                key of a value that is not a number.
         """
-        lanelet_ids = [int(v) for v in (raw.get("lanelet_ids") or [])]
+
+        def whole(key: str, value: Any) -> int:
+            # int() as before; what it cannot read, refused by its key (#1660).
+            try:
+                return int(value)
+            except (TypeError, ValueError, OverflowError):
+                raise ValueError(
+                    f"scenario.route.{key}: {shown(value)} is not a whole number"
+                ) from None
+
+        def number(key: str, value: Any) -> float:
+            # float() as before; what it cannot read, refused by its key (#1660).
+            try:
+                return float(value)
+            except (TypeError, ValueError):
+                raise ValueError(
+                    f"scenario.route.{key}: {shown(value)} is not a number"
+                ) from None
+            except OverflowError:
+                raise ValueError(
+                    f"scenario.route.{key}: {shown(value)} is not finite"
+                ) from None
+
+        lanelet_ids = [whole("lanelet_ids", v) for v in (raw.get("lanelet_ids") or [])]
         if not lanelet_ids:
             return None
         kinds = [str(v) for v in (raw.get("segment_kinds") or [])]
-        ends = [float(v) for v in (raw.get("segment_ends") or [])]
-        counts = [int(v) for v in (raw.get("segment_lanelet_counts") or [])]
+        ends = [number("segment_ends", v) for v in (raw.get("segment_ends") or [])]
+        counts = [
+            whole("segment_lanelet_counts", v)
+            for v in (raw.get("segment_lanelet_counts") or [])
+        ]
         turns = [str(v) for v in (raw.get("junction_turns") or [])]
         if not (len(kinds) == len(ends) == len(counts)) or not kinds:
             raise ValueError(
@@ -720,10 +764,10 @@ class RouteMatch:
             start, first = end, first + count
         return cls(
             lanelet_ids=tuple(lanelet_ids),
-            start_s=float(raw.get("start_s") or 0.0),
-            end_s=float(raw.get("end_s") or 0.0),
+            start_s=number("start_s", raw.get("start_s") or 0.0),
+            end_s=number("end_s", raw.get("end_s") or 0.0),
             segments=tuple(segments),
-            index=int(raw.get("index") or 0),
+            index=whole("index", raw.get("index") or 0),
         )
 
 

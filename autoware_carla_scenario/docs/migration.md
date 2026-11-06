@@ -22,6 +22,17 @@ does) in all.
   afterwards, at the time the metric went NG. Give a scenario that should stop
   at a collision a `CollisionCondition` as well.
 
+## SUMO's outputs are the run's own
+
+The SUMO backend (`traffic=sumo`) writes its log, its generated demand and,
+with `fcd_output`, `fcd.xml` and `clock.csv` to `<output>/{stem}.sumo/`,
+named by the run's file stem like its `{stem}_result.json`, instead of
+`<output>/sumo/`, which every run of a batch overwrote
+([Traffic Backends](traffic_backends.md)). A tool reading
+`<output>/sumo/fcd.xml` reads `<output>/{stem}.sumo/fcd.xml`: the stem is the
+result file's name without `_result.json`. A backend prepared without a run
+(`TrafficContext` with no `file_stem`) still writes to `<output>/sumo/`.
+
 ## The Speed card's Longitudinal and Lateral follow the entity
 
 The editor's **Speed** card (`type_id: speed`) now measures its Longitudinal

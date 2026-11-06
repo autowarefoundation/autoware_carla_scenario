@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import json
 import os
+import socket
 import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -22,6 +23,7 @@ if TYPE_CHECKING:
     from fastapi.testclient import TestClient
 
     from autoware_carla_scenario.authoring.persistence import DraftStore
+    from autoware_carla_scenario.editor.service import EditorService
 
 from autoware_carla_scenario.maps import (
     GitMapCache,
@@ -441,6 +443,161 @@ class TestMapSource:
             MapSource.parse("   ")
         with pytest.raises(MapSourceError):
             MapSource.parse("not a url")
+
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            "main",
+            "feature/x",
+            "release/1.0",
+            "v1.0",
+            "v%201",
+            "HEAD",
+            "refs/heads/main",
+            "refs/pr/3",
+            "1a2b3c4",
+            "a1" * 20,
+            "my-branch_2",
+        ],
+    )
+    def test_accepts_the_refs_git_accepts(self, ref: str) -> None:
+        source = MapSource.parse(f"git+https://example.com/o/n@{ref}#m")
+        assert source.ref == ref
+        assert MapSource.parse(source.uri) == source
+
+    @pytest.mark.parametrize(
+        "ref",
+        [
+            # Read by git as an option of the command it is handed to (#1848).
+            "-x",
+            "--foo=bar",
+            "-",
+            # What `git check-ref-format` refuses.
+            "a..b",
+            "a b",
+            "a\tb",
+            "a~1",
+            "a^",
+            "a:b",
+            "a?",
+            "a*",
+            "a[b",
+            "a\\b",
+            "/a",
+            "a/",
+            "a//b",
+            "a.",
+            "a.lock",
+            "refs/heads/x.lock",
+            ".hidden",
+            "refs/.hidden",
+        ],
+    )
+    def test_refuses_a_ref_git_would_not_take_as_one(self, ref: str) -> None:
+        with pytest.raises(MapSourceError, match="not a usable git ref"):
+            MapSource.parse(f"git+https://example.com/o/n@{ref}#m")
+        with pytest.raises(MapSourceError):
+            MapSource(repo_url="https://example.com/o/n", ref=ref)
+
+    @pytest.mark.parametrize("ref", ["a@{1}", "@"])
+    def test_refuses_an_at_ref_built_directly(self, ref: str) -> None:
+        # parse() never yields these -- the last '@' splits the ref off -- but
+        # a MapSource can be built from its fields.
+        with pytest.raises(MapSourceError, match="not a usable git ref"):
+            MapSource(repo_url="https://example.com/o/n", ref=ref)
+
+    def test_refuses_a_ref_read_out_of_a_page_url(self) -> None:
+        with pytest.raises(MapSourceError, match="begins with '-'"):
+            MapSource.parse("https://github.com/o/n/tree/--foo=bar/maps/T")
+
+    def test_refuses_an_at_with_no_ref_after_it(self) -> None:
+        with pytest.raises(MapSourceError, match="names no ref"):
+            MapSource.parse("https://example.com/o/n@")
+
+    def test_refuses_a_repository_that_begins_with_a_dash(self) -> None:
+        with pytest.raises(MapSourceError, match="begins with '-'"):
+            MapSource.parse("-oProxyCommand@host:repo.git")
+        with pytest.raises(MapSourceError):
+            MapSource(repo_url="--upload-pack=x")
+
+
+class TestGitArguments:
+    """Every user-supplied argument reaches git after ``--`` (#1848).
+
+    git is never run: ``subprocess.run`` is replaced by a recorder, so these
+    tests execute nothing whatever the cache hands it.
+    """
+
+    _COMMIT = "a1" * 20
+
+    @pytest.fixture
+    def argv(self, monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        seen: list[list[str]] = []
+
+        def _record(args: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+            seen.append(list(args))
+            out = ""
+            if "ls-remote" in args:
+                out = f"{self._COMMIT}\trefs/heads/main\n"
+            elif "rev-parse" in args:
+                out = f"{self._COMMIT}\n"
+            return subprocess.CompletedProcess(args, 0, out, "")
+
+        monkeypatch.setattr(cache_module.subprocess, "run", _record)
+        return seen
+
+    @staticmethod
+    def _after_end_of_options(argv: list[str], *values: str) -> None:
+        assert "--" in argv, argv
+        end = argv.index("--")
+        for value in values:
+            assert argv.index(value) > end, argv
+
+    def test_at_tip(self, argv: list[list[str]], cache: GitMapCache) -> None:
+        source = MapSource(repo_url="https://example.invalid/o/n", ref="main")
+        assert cache.at_tip(source).ref == self._COMMIT
+        (call,) = argv
+        assert call[:2] == ["git", "ls-remote"]
+        self._after_end_of_options(call, source.repo_url, "main", "main^{}")
+
+    def test_fetch_ref(
+        self, argv: list[list[str]], cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        # Handed straight to the method, past MapSource's own check: the
+        # option-shaped ref still lands where git reads it as a ref.
+        cache._fetch_ref(tmp_path / "w", "https://example.invalid/o/n", "-x")
+        (remote,) = [call for call in argv if call[1:3] == ["remote", "add"]]
+        self._after_end_of_options(remote, "origin", "https://example.invalid/o/n")
+        (fetch,) = [call for call in argv if call[1] == "fetch"]
+        self._after_end_of_options(fetch, "origin", "-x")
+
+    def test_fetch(
+        self, argv: list[list[str]], cache: GitMapCache, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario.maps.cache import CachedRepo
+
+        source = MapSource(repo_url="https://example.invalid/o/n", ref="main")
+        (tmp_path / "entry").mkdir()
+        cache._fetch(
+            CachedRepo(source=source, root=tmp_path / "entry", worktree=tmp_path / "w")
+        )
+        (fetch,) = [call for call in argv if call[1] == "fetch"]
+        self._after_end_of_options(fetch, "origin", "main")
+
+    def test_clone(self, argv: list[list[str]], cache: GitMapCache) -> None:
+        source = MapSource(repo_url="https://example.invalid/o/n")
+        with pytest.raises(MapCacheError):
+            # Nothing is cloned, so there is no entry to find afterwards.
+            cache._clone(source)
+        (clone,) = [call for call in argv if call[1] == "clone"]
+        self._after_end_of_options(clone, source.repo_url)
+
+    def test_a_tip_note_that_is_not_a_ref_is_ignored(self, cache: GitMapCache) -> None:
+        source = MapSource(repo_url="https://example.invalid/o/n", ref="main")
+        cache.remember_tip(source, "--not-a-commit")
+        assert cache.last_tip(source) == ""
 
 
 # ---------------------------------------------------------------------------
@@ -1501,6 +1658,73 @@ class TestResolveDirectory:
         assert paths.opendrive_path is not None
         assert cache.root in paths.opendrive_path.parents
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "/Game/Carla/Maps/Town10HD_Opt",
+            "Carla/Maps/Town10HD_Opt",
+            "/Game/Carla/Maps/Town10HD_Opt/",
+        ],
+    )
+    def test_a_full_asset_path_names_the_opendrive_by_its_town(
+        self,
+        name: str,
+        local_map: Path,
+        cache: GitMapCache,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        """Joined whole, ``/Game/...`` escaped the cache, ``Carla/...`` nested (#1559)."""
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        plain = resolve_map_paths({"directory": str(local_map), "name": "Town10HD_Opt"})
+        paths = resolve_map_paths({"directory": str(local_map), "name": name})
+
+        assert paths.resolved is not None
+        destination = paths.opendrive_path
+        assert destination == plain.opendrive_path
+        assert destination == paths.resolved.derived / "Town10HD_Opt.xodr"
+        assert cache.root in destination.parents
+
+        # Captured there by a run, it is found again under either spelling.
+        destination.parent.mkdir(parents=True, exist_ok=True)
+        destination.write_text("<OpenDRIVE/>")
+        again = resolve_map_paths({"directory": str(local_map), "name": name})
+        assert again.xodr_path == destination and again.xodr_is_derived
+        assert paths.resolved.cached_derived_xodr(name) == destination
+
+    def test_a_full_asset_path_of_the_directorys_town_is_that_town(
+        self, local_map: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``/Game/Carla/Maps/TownL`` reads the same derived file as ``TownL``."""
+        monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
+        resolved = resolve_directory(local_map, cache=cache)
+        resolved.derived.mkdir(parents=True, exist_ok=True)
+        resolved.derived_xodr().write_text("<OpenDRIVE/>")
+
+        paths = resolve_map_paths(
+            {"directory": str(local_map), "name": "/Game/Carla/Maps/TownL"}
+        )
+        assert paths.xodr_path == resolved.derived / "TownL.xodr"
+        assert paths.xodr_is_derived
+
+    def test_a_full_asset_path_takes_the_installed_opendrive_by_its_town(
+        self,
+        local_map: Path,
+        cache: GitMapCache,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        asset = tmp_path / "Town10HD_Opt.xodr"
+        asset.write_text("<OpenDRIVE/>")
+        monkeypatch.setenv("TOWN10_HD_OPT_PATH", str(asset))
+        resolved = resolve_directory(local_map, cache=cache)
+
+        written = ensure_xodr(
+            resolved, map_name="/Game/Carla/Maps/Town10HD_Opt", allow_server=False
+        )
+
+        assert written == resolved.derived / "Town10HD_Opt.xodr"
+        assert written.read_text() == "<OpenDRIVE/>"
+
     def test_it_wins_over_a_source_and_fetches_nothing(
         self,
         local_map: Path,
@@ -1569,6 +1793,18 @@ class TestResolveDirectory:
         assert overrides["directory"] == str(local_map)
         # Its own map, so the selected group's exclusion list is not inherited.
         assert overrides["no_3d_model_lanelet_ids"] == []
+
+    def test_the_inspector_names_the_map_group_it_runs_with(
+        self, editor: "TestClient", drafts: "DraftStore", local_map: Path
+    ) -> None:
+        """Its own group, not the starter's built-in one (#1422)."""
+        draft_id = _new_draft(editor)
+        body = editor.post(
+            f"/draft/{draft_id}/scenario", data={"map_directory": str(local_map)}
+        ).text
+        scenario_id = _stored(drafts, draft_id).id
+        assert f"<code>map={scenario_id}_map</code>" in body
+        assert "<code>map=nishishinjuku</code>" not in body
 
     def test_a_file_typed_alongside_it_in_the_editor_is_kept(
         self, editor: "TestClient", drafts: "DraftStore", local_map: Path
@@ -1652,6 +1888,27 @@ class TestOpenDrive:
         assert map_asset_env_var("Town01") == "TOWN01_PATH"
         assert map_asset_env_var("Town10HD_Opt") == "TOWN10_HD_OPT_PATH"
 
+    @pytest.mark.parametrize(
+        "name",
+        [
+            "/Game/Carla/Maps/Town10HD_Opt",
+            "Carla/Maps/Town10HD_Opt",
+            "/Game/Carla/Maps/Town10HD_Opt/",
+            "Game\\Carla\\Maps\\Town10HD_Opt",
+        ],
+    )
+    def test_a_full_asset_path_names_its_towns_variable(self, name: str) -> None:
+        """Not ``/GAME/CARLA/MAPS/TOWN10_HD_OPT_PATH`` (#1559)."""
+        assert map_asset_env_var(name) == "TOWN10_HD_OPT_PATH"
+
+    def test_a_full_asset_path_reads_its_towns_variable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        asset = tmp_path / "Town10HD_Opt.xodr"
+        asset.write_text("<OpenDRIVE/>")
+        monkeypatch.setenv("TOWN10_HD_OPT_PATH", str(asset))
+        assert installed_xodr("/Game/Carla/Maps/Town10HD_Opt") == asset
+
     def test_an_unset_variable_names_no_file(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1728,6 +1985,24 @@ class TestOpenDrive:
         with pytest.raises(OpenDriveUnavailable, match=map_asset_env_var("TownA")):
             ensure_xodr(resolved, allow_server=False)
 
+    def test_a_port_nothing_listens_on_is_refused_before_the_carla_client(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The CARLA client is not asked: on arm64 its get_world() on a refused
+        connection can abort the process instead of raising."""
+        carla = pytest.importorskip("typesafe_carla.carla")
+        from autoware_carla_scenario.maps import opendrive
+
+        def no_client(*_args: object) -> None:
+            raise AssertionError("the CARLA client was made for a closed port")
+
+        monkeypatch.setattr(carla, "Client", no_client)
+        with socket.socket() as free:
+            free.bind(("127.0.0.1", 0))
+            port = free.getsockname()[1]
+        with pytest.raises(OpenDriveUnavailable, match="nothing accepts a connection"):
+            opendrive._from_server("TownA", host="127.0.0.1", port=port, timeout=1.0)
+
 
 # ---------------------------------------------------------------------------
 # The editor
@@ -1754,7 +2029,7 @@ def editor(
 
     monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
     map_preview.clear_cache()
-    return TestClient(create_app(draft_dir=drafts.root))
+    return TestClient(create_app(draft_dir=drafts.root), base_url="http://127.0.0.1")
 
 
 def _new_draft(client: "TestClient") -> str:
@@ -1884,6 +2159,163 @@ class TestEditorMapSource:
         assert config["map"]["no_3d_model_lanelet_ids"] == []
 
 
+class TestEditorMapChangeForgetsExcludedLanelets:
+    """``map.no_3d_model_lanelet_ids`` belongs to the map it was set on (#1525).
+
+    They are lanelet ids: on another map they name other lanelets, or none,
+    and the export's own map group would ship them with the new map.  So a
+    change of map drops the list -- unless the same submission typed a new
+    one -- and only a change of map does.
+    """
+
+    @pytest.fixture
+    def service(
+        self, drafts: "DraftStore", monkeypatch: pytest.MonkeyPatch
+    ) -> "EditorService":
+        from autoware_carla_scenario.editor.service import EditorService
+
+        service = EditorService(drafts)
+        # Nothing here is about downloading: use_map's download is a no-op.
+        monkeypatch.setattr(service, "fetch_map", lambda document, **_: "")
+        return service
+
+    @staticmethod
+    def _document() -> Any:
+        from autoware_carla_scenario.authoring.starter import blank_document
+
+        return blank_document(title="Map change")
+
+    def test_choosing_another_library_map_clears_them(
+        self, service: "EditorService"
+    ) -> None:
+        document = self._document()
+        service.use_map(document, _A)
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.use_map(document, _B)
+        assert document.map.no_3d_model_lanelet_ids == []
+
+    def test_choosing_the_same_map_again_keeps_them(
+        self, service: "EditorService"
+    ) -> None:
+        document = self._document()
+        service.use_map(document, _A)
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        # Another spelling of the same source is the same map.
+        service.use_map(document, _A.removeprefix("git+"))
+        service.use_map(document, _A)
+        assert document.map.no_3d_model_lanelet_ids == [11, 12]
+
+    def test_a_malformed_stored_source_is_replaced_without_error(
+        self, service: "EditorService"
+    ) -> None:
+        """``MapSource.parse`` raises a plain ValueError on this one, not a
+        MapSourceError; it counts as another map, not as a server error."""
+        document = self._document()
+        document.map.source = "http://[::1"
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.use_map(document, _A)
+        assert document.map.source == _A
+        assert document.map.no_3d_model_lanelet_ids == []
+
+    def test_another_source_on_the_form_clears_them(
+        self, service: "EditorService"
+    ) -> None:
+        document = self._document()
+        service.use_map(document, _A)
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.update_scenario(
+            document,
+            {"map_source": _B, "map_no_3d_model_lanelet_ids": "11, 12"},
+        )
+        assert document.map.source == _B
+        assert document.map.no_3d_model_lanelet_ids == []
+
+    def test_a_new_directory_clears_them(
+        self, service: "EditorService", local_map: Path
+    ) -> None:
+        document = self._document()
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.update_scenario(
+            document,
+            {
+                "map_directory": str(local_map),
+                "map_no_3d_model_lanelet_ids": "11, 12",
+            },
+        )
+        assert document.map.no_3d_model_lanelet_ids == []
+
+    def test_ones_typed_alongside_a_new_directory_are_kept(
+        self, service: "EditorService", local_map: Path
+    ) -> None:
+        document = self._document()
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.update_scenario(
+            document,
+            {
+                "map_directory": str(local_map),
+                "map_no_3d_model_lanelet_ids": "7",
+            },
+        )
+        assert document.map.no_3d_model_lanelet_ids == [7]
+
+    def test_another_map_group_clears_them(self, service: "EditorService") -> None:
+        document = self._document()
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.update_scenario(
+            document,
+            {"map_group": "town10hd_opt", "map_no_3d_model_lanelet_ids": "11, 12"},
+        )
+        assert document.map.no_3d_model_lanelet_ids == []
+
+    def test_a_form_that_leaves_the_map_alone_keeps_them(
+        self, service: "EditorService", local_map: Path
+    ) -> None:
+        document = self._document()
+        service.update_scenario(document, {"map_directory": str(local_map)})
+        document.map.no_3d_model_lanelet_ids = [11, 12]
+        service.update_scenario(
+            document,
+            {
+                "title": "Renamed",
+                "map_group": document.map.group,
+                "map_name": document.map.name,
+                "map_directory": str(local_map),
+                "map_no_3d_model_lanelet_ids": "11, 12",
+            },
+        )
+        assert document.map.no_3d_model_lanelet_ids == [11, 12]
+
+    def test_the_route_does_not_export_the_old_maps_ids(
+        self, editor: "TestClient", drafts: "DraftStore", origin_repo: Path
+    ) -> None:
+        from autoware_carla_scenario.authoring.hydra_config import (
+            build_map_group_config,
+        )
+
+        draft_id = _new_draft(editor)
+        editor.post(f"/draft/{draft_id}/map/use", data={"uri": _uri(origin_repo)})
+        editor.post(
+            f"/draft/{draft_id}/scenario",
+            data={"map_no_3d_model_lanelet_ids": "11, 12"},
+        )
+        assert _stored(drafts, draft_id).map.no_3d_model_lanelet_ids == [11, 12]
+
+        editor.post(
+            f"/draft/{draft_id}/map/use",
+            data={"uri": _uri(origin_repo, "autoware_maps/TownB")},
+        )
+        document = _stored(drafts, draft_id)
+        assert document.map.name == "TownB"
+        config = build_map_group_config(document)
+        assert config is not None
+        assert config["map"]["no_3d_model_lanelet_ids"] == []
+
+
+#: Two maps of one (never fetched) repository, for the service-level tests.
+_A = "git+https://github.com/example/maps@main#autoware_maps/TownA"
+_B = "git+https://github.com/example/maps@main#autoware_maps/TownB"
+
+
 class TestEditorMapLibrary:
     """Browsing what a repository publishes, from the editor."""
 
@@ -1922,6 +2354,33 @@ class TestEditorMapLibrary:
     def test_offers_the_repositories_it_knows_about(self, editor: "TestClient") -> None:
         assert "carla-ue5-maps" in editor.get("/maps").text
 
+    @pytest.mark.parametrize(
+        "repo",
+        [
+            pytest.param("file:///srv/maps@--foo=bar", id="option-ref"),
+            pytest.param("file:///srv/maps@-x", id="dash-ref"),
+            pytest.param("file:///srv/maps@a..b", id="bad-ref"),
+            pytest.param("-x@host:maps.git", id="dash-repository"),
+        ],
+    )
+    def test_refuses_a_bad_ref_without_running_git(
+        self, editor: "TestClient", monkeypatch: pytest.MonkeyPatch, repo: str
+    ) -> None:
+        """A same-origin GET passes the origin check, so the URI must stop it (#1848)."""
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        ran: list[Any] = []
+
+        def _record(args: Any, **_: Any) -> Any:
+            ran.append(args)
+            raise AssertionError("git must not run for a refused map source")
+
+        monkeypatch.setattr(cache_module.subprocess, "run", _record)
+        response = editor.get("/maps", params={"repo": repo})
+        assert response.status_code == 200
+        assert "begins with" in response.text or "contains" in response.text
+        assert ran == []
+
     def test_reports_a_repository_it_cannot_read(self, editor: "TestClient") -> None:
         response = editor.get("/maps", params={"repo": "file:///nowhere@main"})
         assert response.status_code == 200
@@ -1935,6 +2394,41 @@ class TestEditorMapLibrary:
         )
         draft_id = str(response.headers["location"]).rsplit("/", 1)[-1]
         assert _stored(drafts, draft_id).map.name == "TownA"
+        assert [d.id for d in drafts.list()] == [draft_id]
+        assert drafts.get(draft_id).title == "New scenario on TownA"  # type: ignore[union-attr]
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            pytest.param("", id="empty"),
+            pytest.param("git+file:///nonexistent/repo@main#maps/T", id="unreachable"),
+            pytest.param(None, id="no-map-there"),
+        ],
+    )
+    def test_a_map_that_cannot_be_fetched_creates_no_draft(
+        self,
+        editor: "TestClient",
+        drafts: "DraftStore",
+        origin_repo: Path,
+        uri: str | None,
+    ) -> None:
+        """A failed fetch leaves no orphan blank draft behind (#1429).
+
+        The library is shown again with the reason, as ``/map/use`` shows it
+        inline, rather than the generic not-found page.
+        """
+        if uri is None:
+            uri = _uri(origin_repo, "docs")
+        repo = f"file://{origin_repo}@main"
+        response = editor.post(
+            "/maps/new", data={"uri": uri, "repo": repo}, follow_redirects=False
+        )
+
+        assert response.status_code == 200
+        assert "No scenario was created" in response.text
+        assert "Map library" in response.text
+        assert repo in response.text
+        assert drafts.list() == []
 
 
 class TestEditorWithoutOpenDrive:
@@ -1972,6 +2466,33 @@ class TestEditorWithoutOpenDrive:
         )
         assert response.status_code == 200
         assert "not applied" in response.text
+
+    @pytest.mark.parametrize("port", ["0", "-1", "70000", "67536"])
+    def test_a_port_outside_the_tcp_range_is_refused_before_connecting(
+        self,
+        editor: "TestClient",
+        origin_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        port: str,
+    ) -> None:
+        """67536 would wrap to 2000 in the resolver and reach a server there,
+        -1 and 0 would read as nothing listening (#1781)."""
+        monkeypatch.delenv(map_asset_env_var("TownA"), raising=False)
+        draft_id = _new_draft(editor)
+        editor.post(f"/draft/{draft_id}/map/use", data={"uri": _uri(origin_repo)})
+        connections: list[Any] = []
+        monkeypatch.setattr(
+            socket, "create_connection", lambda *a, **k: connections.append(a)
+        )
+
+        response = editor.post(
+            f"/draft/{draft_id}/map/opendrive",
+            data={"carla_host": "127.0.0.1", "carla_port": port},
+        )
+
+        assert response.status_code == 200
+        assert f"CARLA port must be within 1-65535, got {port}." in response.text
+        assert connections == []
 
 
 class TestCacheEconomy:

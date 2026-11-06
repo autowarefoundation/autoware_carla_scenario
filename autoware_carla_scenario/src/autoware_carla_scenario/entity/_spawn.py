@@ -9,6 +9,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
 from ..coordinate.map_manager import run_carla_map
+from ..seed import check_whole_number
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -28,9 +29,28 @@ class SpawnTransform:
 
 @dataclass(frozen=True)
 class SpawnPointIndex:
-    """Spawn at a map spawn-point by index."""
+    """Spawn at a map spawn-point by index.
+
+    *value* is a whole number, not negative: ``3``, or ``3.0`` (as YAML may
+    read it), kept as the int ``3``.  A boolean, a string, a fraction or a
+    negative index is refused when the index is built, as Python's negative
+    indexing would otherwise spawn ``-1`` at the last spawn point and read
+    ``True`` as 1 (#1491).  Whether the index is below the map's number of
+    spawn points is checked when the vehicle spawns.
+
+    Raises:
+        ValueError: naming the index.
+    """
 
     value: int
+
+    def __post_init__(self) -> None:
+        index = check_whole_number("SpawnPointIndex value", self.value)
+        if index < 0:
+            raise ValueError(
+                f"SpawnPointIndex value must not be negative, got {self.value!r}"
+            )
+        object.__setattr__(self, "value", index)
 
 
 SpawnLocation = Union[SpawnTransform, SpawnPointIndex]
@@ -104,13 +124,17 @@ def spawn_vehicle_actor(
     if isinstance(spawn_location, SpawnPointIndex):
         # The run's map: get_map() builds a whole new one on every call.
         spawn_points = run_carla_map(world).get_spawn_points()
-        if spawn_location.value >= len(spawn_points):
+        index = spawn_location.value
+        # SpawnPointIndex refuses a negative index when it is built; this is
+        # the backstop for the upper bound, which depends on the map, and
+        # keeps a negative index from counting from the end (#1491).
+        if not 0 <= index < len(spawn_points):
             raise ValueError(
-                f"Spawn index {spawn_location.value} is out of range. "
+                f"Spawn index {index} is out of range. "
                 f"The map has {len(spawn_points)} spawn points "
                 f"(valid indices: 0\u2013{len(spawn_points) - 1})."
             )
-        resolved_transform = spawn_points[spawn_location.value]
+        resolved_transform = spawn_points[index]
     else:
         resolved_transform = spawn_location.value
 

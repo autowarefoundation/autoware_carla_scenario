@@ -117,6 +117,9 @@ _SIGHT_TOLERANCE_KMH: float = 0.5
 #: ``global_percentage_difference_from_limit``), and :meth:`prepare` sets it
 #: (``global_percentage_speed_difference``), so it holds whatever the build.
 TM_DEFAULT_SPEED_DIFFERENCE_PCT: float = 0.0
+#: The percentage of red lights and of stop signs an emergency vehicle on a
+#: call runs (:meth:`TrafficManagerBackend.set_emergency`): every one.
+EMERGENCY_IGNORE_PCT: float = 100.0
 
 #: The blueprint a background vehicle gets when none is asked for: one CARLA
 #: 0.9 and 0.10 both ship.
@@ -322,6 +325,8 @@ class TrafficManagerBackend(TrafficBackend):
     _draws: Optional[random.Random]
     _drawn: set[int]
     _entity_overrides: dict[int, VehicleParameters]
+    _emergencies: set[int]
+    _own_ignores: dict[int, tuple[float, float]]
     _autopiloted: dict[int, "carla.Actor"]
     _speed_differences: dict[int, float]
     _exact_kmh: dict[int, float]
@@ -407,6 +412,13 @@ class TrafficManagerBackend(TrafficBackend):
         #: (:meth:`override_entity_parameters`) set, layered in order: its
         #: draws take these over the run's parameters, whenever they are made.
         self._entity_overrides = {}
+        #: The emergency vehicles on a call (:meth:`set_emergency`), by actor
+        #: id: they run red lights and stop signs whatever they drew.
+        self._emergencies = set()
+        #: Actor id -> its own draws of ``ignore_lights`` and
+        #: ``ignore_signs`` (percentages; 0 undrawn), which an emergency
+        #: vehicle goes back to off duty.
+        self._own_ignores = {}
         #: Every vehicle on autopilot but a background one, by actor id.
         self._kept = {}
         #: The speed (m/s) each vehicle was last asked to hold, by actor id.
@@ -653,6 +665,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._drawn = set()
         # Actor ids are reused across runs: none keeps a finished run's.
         self._entity_overrides = {}
+        self._emergencies = set()
+        self._own_ignores = {}
         self._draws = None
         self._kept = {}
         self._desired_mps = {}
@@ -755,16 +769,17 @@ class TrafficManagerBackend(TrafficBackend):
 
     def background_vehicles(
         self, world: "carla.World"
-    ) -> dict[str, tuple[float, float]]:
-        """Every background vehicle still in the world, at its ``(x, y)``."""
-        out: dict[str, tuple[float, float]] = {}
+    ) -> dict[str, tuple[float, float, Optional[float]]]:
+        """Every background vehicle still in the world, at its ``(x, y, z)``."""
+        out: dict[str, tuple[float, float, Optional[float]]] = {}
         for handle, actor in list(self._background.items()):
             try:
                 location = actor.get_location()
             except RuntimeError:
                 self._background.pop(handle)  # Destroyed by something else.
                 continue
-            out[handle] = (location.x, location.y)
+            z: Optional[float] = location.z  # the dict's type, for Codon
+            out[handle] = (location.x, location.y, z)
         return out
 
     def background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
@@ -1405,16 +1420,21 @@ class TrafficManagerBackend(TrafficBackend):
         if lane_changes is not None and not (first and actor_id in self._lane_locked):
             tm.auto_lane_change(vehicle, lane_changes)
         # The TrafficManager's are percentages, the parameters' probabilities.
+        # An emergency vehicle on a call keeps running them (set_emergency):
+        # its draws are kept for when it is off duty again.
+        lights, signs = self._own_ignores.get(actor_id, (0.0, 0.0))
+        on_call = actor_id in self._emergencies
         ignore_lights = parameters.ignore_lights
         if ignore_lights is not None:
-            tm.ignore_lights_percentage(
-                vehicle, _percent(ignore_lights, rng, "ignore_lights")
-            )
+            lights = _percent(ignore_lights, rng, "ignore_lights")
+            if not on_call:
+                tm.ignore_lights_percentage(vehicle, lights)
         ignore_signs = parameters.ignore_signs
         if ignore_signs is not None:
-            tm.ignore_signs_percentage(
-                vehicle, _percent(ignore_signs, rng, "ignore_signs")
-            )
+            signs = _percent(ignore_signs, rng, "ignore_signs")
+            if not on_call:
+                tm.ignore_signs_percentage(vehicle, signs)
+        self._own_ignores[actor_id] = (lights, signs)
         ignore_vehicles = parameters.ignore_vehicles
         if ignore_vehicles is not None:
             tm.ignore_vehicles_percentage(
@@ -1751,6 +1771,58 @@ class TrafficManagerBackend(TrafficBackend):
             self._draw_for(vehicle, overrides)
         else:
             self._given_before_draw(actor_id, overrides)
+
+    # ------------------------------------------------------------------
+    # Emergency vehicles
+    # ------------------------------------------------------------------
+
+    def adopt(self, entity: DrivenEntity) -> None:
+        """Drive an emergency vehicle on a call from its spawn as one
+        (:meth:`set_emergency`); every other entity needs nothing here."""
+        # hasattr: Codon decides it when it compiles (docs/typecheck.md), and
+        # DrivenEntity itself has no in_emergency.
+        if hasattr(entity, "in_emergency"):
+            if entity.in_emergency:
+                self.set_emergency(entity, True)
+
+    def set_emergency(self, entity: DrivenEntity, active: bool) -> None:
+        """Have *entity*'s vehicle run red lights and stop signs while on a
+        call (*active*), and obey them as it drew (``traffic.vehicles``'
+        ``ignore_lights`` / ``ignore_signs``, else never) once off duty.
+
+        It still keeps its distance to the vehicles and pedestrians ahead,
+        and the TrafficManager's other vehicles do not make way for it: they
+        have no notion of a siren.  A call before the vehicle is on autopilot
+        holds: its first draw does not undo it.
+        """
+        actor = _require_actor(entity, "set_emergency")
+        if actor is None:
+            return
+        # A typed local: Codon unwraps the Optional here.
+        emergency: "carla.Actor" = actor
+        actor_id = int(emergency.id)
+        if active:
+            self._emergencies.add(actor_id)
+        elif actor_id in self._emergencies:
+            self._emergencies.remove(actor_id)
+        else:
+            return
+        tm = self._require_tm("set_emergency")
+        if tm is None:
+            return
+        vehicle = _vehicle(emergency)
+        lights, signs = self._own_ignores.get(actor_id, (0.0, 0.0))
+        if active:
+            lights, signs = EMERGENCY_IGNORE_PCT, EMERGENCY_IGNORE_PCT
+        tm.ignore_lights_percentage(vehicle, lights)
+        tm.ignore_signs_percentage(vehicle, signs)
+        logger.info(
+            "TrafficManager: %s %s",
+            _actor_name(emergency),
+            "is on a call: it runs red lights and stop signs"
+            if active
+            else "is off duty: it obeys red lights and stop signs as drawn",
+        )
 
     def _given_before_draw(self, actor_id: int, overrides: VehicleParameters) -> None:
         """*overrides*, given vehicle *actor_id* before its first draw, came

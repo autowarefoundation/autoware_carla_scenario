@@ -25,6 +25,7 @@ from autoware_carla_scenario.autoware_stack.bridge_node import (
 from autoware_carla_scenario.autoware_stack import (
     DEPENDENCY_IMAGE_REPOSITORY,
     STACK_LABEL,
+    AutowareEpisode,
     AutowareLauncher,
     AutowareStackError,
     CommandAutowareLauncher,
@@ -33,6 +34,12 @@ from autoware_carla_scenario.autoware_stack import (
     DockerAutowareLauncher,
     ProcessGroup,
     read_devcontainer,
+)
+
+from autoware_carla_scenario.autoware_stack import docker as docker_module
+from autoware_carla_scenario.autoware_stack.launcher import (
+    episode_log_path,
+    fill_placeholders,
 )
 
 from ._stale_pids import signal_group, signal_unreaped_group
@@ -370,6 +377,77 @@ def test_command_launcher_runs_one_stack_at_a_time() -> None:
     assert launcher.poll() is None
 
 
+def test_command_launcher_keeps_shell_syntax_in_the_name_out_of_the_shell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``{name}`` in a ``bash -c`` script runs nothing the name spells (#1853)."""
+    # The command runs here, so the name can make the marker by a short name.
+    monkeypatch.chdir(tmp_path)
+    marker = tmp_path / "marker"
+    out = tmp_path / "name.txt"
+    name = "x; touch marker $(touch marker) `touch marker` | && > <"
+    launcher = CommandAutowareLauncher(
+        [
+            "bash",
+            "-c",
+            f'echo {{name}} > {out} && printf %s "$AUTOWARE_SCENARIO_NAME" > {out}.raw',
+        ]
+    )
+    launcher.prepare(log_dir=tmp_path)
+    episode = launcher.start(name=name, bridge_address="localhost:1")
+    _wait_for(lambda: launcher.poll() is not None)
+    assert launcher.poll() == 0
+    launcher.stop()
+
+    safe = "".join(
+        c if c.isascii() and (c.isalnum() or c in "._-") else "_" for c in name
+    )
+    assert out.read_text() == safe + "\n"
+    assert not marker.exists()
+    # The name as given, for a script that quotes it.
+    assert Path(f"{out}.raw").read_text() == name
+    # Named as the log is.
+    assert episode_log_path(tmp_path, episode) == tmp_path / f"autoware-000-{safe}.log"
+    assert (tmp_path / f"autoware-000-{safe}.log").exists()
+
+
+def test_fill_placeholders_makes_the_name_shell_safe() -> None:
+    episode = AutowareEpisode(3, "a b;c$(d)'e\"f{g}é/", "localhost:9")
+    assert fill_placeholders("{name}", episode) == "a_b_c__d__e_f_g___"
+    assert fill_placeholders(
+        "{name}", AutowareEpisode(0, "temporary_stop-2.v1", "h:1")
+    ) == ("temporary_stop-2.v1")
+
+
+def test_fill_placeholders_does_not_expand_what_it_put_in() -> None:
+    """A placeholder in a value stays as it is: the text is scanned once (#1853)."""
+    episode = AutowareEpisode(2, "{scenario_bridge}{index}", "{name}")
+    filled = fill_placeholders(
+        "{bridge_address} {name} {scenario_bridge} {index}",
+        episode,
+        {"scenario_bridge": "run {index} {name}"},
+    )
+    assert filled == "{name} _scenario_bridge__index_ run {index} {name} 2"
+
+
+def test_fill_placeholders_keeps_its_own_keys_over_extra() -> None:
+    episode = AutowareEpisode(4, "a;b", "h:1")
+    filled = fill_placeholders(
+        "{name} {index} {bridge_address} {more}",
+        episode,
+        {"name": "x;y", "index": "9", "bridge_address": "z", "more": "m"},
+    )
+    assert filled == "a_b 4 h:1 m"
+
+
+def test_fill_placeholders_leaves_other_braces_alone() -> None:
+    episode = AutowareEpisode(1, "n", "h:1")
+    assert fill_placeholders("${HOME} {x} {{index}} {} {index", episode) == (
+        "${HOME} {x} {1} {} {index"
+    )
+    assert fill_placeholders("{index}{index}{nam{name}", episode) == "11{namn"
+
+
 # ---------------------------------------------------------------------------
 # Docker launcher, against a Docker CLI that only pretends
 # ---------------------------------------------------------------------------
@@ -381,6 +459,13 @@ import json, os, signal, sys, time
 args = sys.argv[1:]
 with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
     log.write(json.dumps(args) + "\\n")
+
+# A daemon that stops answering (#1790): the commands that start with one of
+# FAKE_DOCKER_HANGS (comma-separated) sleep here, in this process, for a
+# bounded time -- subprocess.run() kills this process on its timeout.
+for hang in filter(None, os.environ.get("FAKE_DOCKER_HANGS", "").split(",")):
+    if " ".join(args).startswith(hang):
+        time.sleep(30)
 
 if args[0] == "ps":
     print(os.environ.get("FAKE_DOCKER_PS", ""))
@@ -606,6 +691,112 @@ def test_docker_launcher_starts_and_removes_a_container_per_scenario(
     assert launcher.poll() is None
 
 
+def test_a_docker_rm_that_hangs_does_not_hang_stop(
+    tmp_path: Path,
+    fake_docker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # A stuck daemon: stop()'s `docker rm --force` is given up on with a
+    # warning, and the batch goes on to its next scenario (#1790).
+    docker, calls = fake_docker
+    monkeypatch.setattr(docker_module, "_DOCKER_TIMEOUT_S", 1.0)
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    launcher = _docker_launcher(ws, docker)
+    launcher.start(name="x", bridge_address="localhost:1")
+    try:
+        _wait_for(lambda: len(_stack_runs(calls())) == 1)
+        # Only now: the dependency image's own cleanup removes a container.
+        monkeypatch.setenv("FAKE_DOCKER_HANGS", "rm")
+        began = time.monotonic()
+        launcher.stop()
+        assert time.monotonic() - began < 2.0 + 15.0
+    finally:
+        launcher.close()
+    assert any(c[:2] == ["rm", "--force"] for c in calls())
+    assert "did not finish within 1 s" in caplog.text
+    assert launcher._container_name is None
+
+
+def test_a_docker_ps_that_hangs_warns_instead_of_hanging_prepare(
+    tmp_path: Path,
+    fake_docker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The leftover containers' removal is best effort: a `docker ps` that does
+    # not answer is logged and prepare() goes on (#1790).
+    docker, calls = fake_docker
+    monkeypatch.setattr(docker_module, "_DOCKER_TIMEOUT_S", 1.0)
+    monkeypatch.setenv("FAKE_DOCKER_HANGS", "ps")
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    began = time.monotonic()
+    _docker_launcher(ws, docker).prepare()
+    assert time.monotonic() - began < 15.0
+    assert any(c[0] == "ps" for c in calls())
+    assert "did not finish within 1 s" in caplog.text
+
+
+def test_an_image_inspect_that_hangs_fails_prepare_in_bounded_time(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The base image's id is needed for the dependency image: a call that
+    # does not answer fails prepare() rather than hang it (#1790).
+    docker, calls = fake_docker
+    monkeypatch.setattr(docker_module, "_DOCKER_TIMEOUT_S", 1.0)
+    monkeypatch.setenv("FAKE_DOCKER_HANGS", "image inspect")
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    began = time.monotonic()
+    with pytest.raises(AutowareStackError, match="did not finish within 1 s"):
+        _docker_launcher(ws, docker).prepare()
+    assert time.monotonic() - began < 15.0
+    assert not any(c[0] == "run" for c in calls())
+
+
+def test_a_dependency_image_inspect_that_hangs_is_not_taken_for_a_missing_image(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The base image answers but the dependency image's tag does not: no
+    # answer is not "missing", so nothing is installed or committed (#1797).
+    docker, calls = fake_docker
+    monkeypatch.setattr(docker_module, "_DOCKER_TIMEOUT_S", 1.0)
+    monkeypatch.setenv(
+        "FAKE_DOCKER_HANGS", f"image inspect {DEPENDENCY_IMAGE_REPOSITORY}:"
+    )
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    began = time.monotonic()
+    with pytest.raises(AutowareStackError, match="did not finish within 1 s"):
+        _docker_launcher(ws, docker).prepare()
+    assert time.monotonic() - began < 15.0
+    # The tag was asked about, after the base image answered.
+    assert any(
+        c[:2] == ["image", "inspect"]
+        and c[-1].startswith(f"{DEPENDENCY_IMAGE_REPOSITORY}:")
+        for c in calls()
+    )
+    assert not any(c[0] in ("run", "commit") for c in calls())
+
+
+def test_the_dependency_image_commit_gets_the_longer_timeout(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    launcher = _docker_launcher(_workspace(tmp_path), tmp_path / "docker")
+    timeouts: dict[str, float] = {}
+
+    def run(argv: list[str], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        timeouts[argv[1]] = kwargs["timeout"]  # type: ignore[assignment]
+        code = 1 if argv[1:3] == ["image", "inspect"] and len(argv) == 4 else 0
+        return subprocess.CompletedProcess(argv, code, "sha256:x\n", "")
+
+    monkeypatch.setattr(docker_module.subprocess, "run", run)
+    monkeypatch.setattr(launcher, "_stream", lambda argv, log_name: 0)
+    launcher._container = launcher._resolve_container()
+    launcher._dependency_image("img:1")
+    assert timeouts["commit"] == docker_module._DOCKER_COMMIT_TIMEOUT_S
+    assert timeouts["image"] == timeouts["rm"] == docker_module._DOCKER_TIMEOUT_S
+    assert docker_module._DOCKER_COMMIT_TIMEOUT_S > docker_module._DOCKER_TIMEOUT_S
+
+
 def _stack_runs(calls: list[list[str]]) -> list[list[str]]:
     return [c for c in calls if c[0] == "run" and c[-1].startswith("source")]
 
@@ -639,6 +830,93 @@ def test_docker_config_requires_a_launch() -> None:
 def test_docker_config_rejects_an_unknown_build_policy() -> None:
     with pytest.raises(ValueError, match="build must be"):
         DockerAutowareConfig(workspace=Path("/ws"), launch=("a",), build="sometimes")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("field", ["launch", "colcon_args", "docker_args"])
+@pytest.mark.parametrize("value", ["--shm-size=8g", b"--shm-size=8g"])
+def test_docker_config_refuses_a_string_argument_list(
+    field: str, value: str | bytes
+) -> None:
+    """#1484: a str would be run a character per argument."""
+    options: dict[str, object] = {"launch": ("a",), field: value}
+    with pytest.raises(ValueError, match=rf"^{field} must be a sequence of arguments"):
+        DockerAutowareConfig(workspace=Path("/ws"), **options)  # type: ignore[arg-type]
+
+
+def test_docker_config_takes_argument_lists_as_lists_and_tuples() -> None:
+    config = DockerAutowareConfig(
+        workspace=Path("/ws"),
+        launch=["autoware_launch", "x.launch.xml"],
+        colcon_args=(),
+        docker_args=["--shm-size=8g"],
+    )
+    assert list(config.launch) == ["autoware_launch", "x.launch.xml"]
+    assert list(config.docker_args) == ["--shm-size=8g"]
+
+
+@pytest.mark.parametrize("argv", ["ros2 launch x y", b"ros2 launch x y"])
+def test_command_launcher_refuses_a_string_command(argv: str | bytes) -> None:
+    """#1484: ``"ros2 launch x y"`` may be one argument or four; it is refused."""
+    with pytest.raises(ValueError, match=r"^argv must be a sequence of arguments"):
+        CommandAutowareLauncher(argv)  # type: ignore[arg-type]
+
+
+#: #1450: a NaN never times out (the stack is never escalated), and 0 or less
+#: skips the grace a stack is given to stop.
+_BAD_STOP_TIMEOUTS = [float("nan"), float("inf"), -5.0, 0.0]
+
+
+@pytest.mark.parametrize("stop_timeout_s", _BAD_STOP_TIMEOUTS)
+def test_docker_config_rejects_a_stop_timeout_that_is_not_positive_and_finite(
+    stop_timeout_s: float,
+) -> None:
+    with pytest.raises(ValueError, match="^stop_timeout_s must be positive and finite"):
+        DockerAutowareConfig(
+            workspace=Path("/ws"), launch=("a",), stop_timeout_s=stop_timeout_s
+        )
+
+
+@pytest.mark.parametrize("stop_timeout_s", _BAD_STOP_TIMEOUTS)
+def test_command_launcher_rejects_a_stop_timeout_that_is_not_positive_and_finite(
+    stop_timeout_s: float,
+) -> None:
+    with pytest.raises(ValueError, match="^stop_timeout_s must be positive and finite"):
+        CommandAutowareLauncher(["true"], stop_timeout_s=stop_timeout_s)
+
+
+@pytest.mark.parametrize("stop_timeout_s", _BAD_STOP_TIMEOUTS)
+def test_process_group_rejects_a_stop_timeout_before_it_starts_anything(
+    stop_timeout_s: float, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import autoware_carla_scenario.autoware_stack.launcher as launcher_module
+
+    monkeypatch.setattr(
+        launcher_module,
+        "_start_session",
+        lambda *_a, **_k: pytest.fail("started the command"),
+    )
+    with pytest.raises(ValueError, match="^stop_timeout_s must be positive and finite"):
+        ProcessGroup([sys.executable, "-c", "pass"], stop_timeout_s=stop_timeout_s)
+
+
+@pytest.mark.parametrize("ids", [(-3,), (233,), (7, 999), (True,)])
+def test_docker_config_rejects_a_ros_domain_id_out_of_range(
+    ids: tuple[int, ...],
+) -> None:
+    """#1450: refused here, not by the stack's DDS inside the container."""
+    with pytest.raises(ValueError, match="^ros_domain_ids must be ROS domain ids"):
+        DockerAutowareConfig(workspace=Path("/ws"), launch=("a",), ros_domain_ids=ids)
+
+
+def test_docker_config_takes_the_ros_domain_id_range_and_a_small_timeout() -> None:
+    config = DockerAutowareConfig(
+        workspace=Path("/ws"),
+        launch=("a",),
+        ros_domain_ids=(0, 101, 232),
+        stop_timeout_s=0.1,
+    )
+    assert tuple(config.ros_domain_ids) == (0, 101, 232)
+    assert config.stop_timeout_s == 0.1
 
 
 def test_compose_override_files_merge_environment_and_volumes(tmp_path: Path) -> None:

@@ -214,6 +214,7 @@ __all__ = [
     "redirect_imports",
     "literal_all",
     "mixin_super_inits",
+    "module_constants",
     "plain_classes",
     "relative_module_imports",
     "split_tuple_excepts",
@@ -2869,7 +2870,7 @@ class _Rewriter(ShadowScopes):
             and isinstance(value, ast.Subscript)
             and _dotted(value.value) in _CALLABLE_NAMES
         ):
-            # A Callable alias, `GroundHeight = Callable[[float, float], R]`,
+            # A Callable alias, `GroundHeight = Callable[[float, float, float], R]`,
             # which Codon 0.19 reads as an expression and refuses ("expected
             # type expression"): None, on as many lines.  An annotation must
             # spell the callable out, which the check then reads.
@@ -5657,6 +5658,67 @@ def _import_as(dest: str, asname: str) -> str:
     return f"from {parent} import {_alias(last, asname)}"
 
 
+def _is_constant_name(name: str) -> bool:
+    """Whether *name* is written as a constant: UPPER_CASE, of more than one
+    letter (not a ``T`` TypeVar)."""
+    return len(name) > 1 and name.isupper()
+
+
+def _assigned_constants(tree: ast.Module) -> set[str]:
+    """The constants *tree* binds with a plain assignment at module level
+    (``NAME = ...``, ``NAME: type = ...``, not ``NAME: TypeAlias = ...``)."""
+    out: set[str] = set()
+    for stmt in tree.body:
+        if isinstance(stmt, ast.Assign):
+            if len(stmt.targets) != 1 or not isinstance(stmt.targets[0], ast.Name):
+                continue
+            name = stmt.targets[0].id
+        elif isinstance(stmt, ast.AnnAssign):
+            if stmt.value is None or not isinstance(stmt.target, ast.Name):
+                continue
+            if (_dotted(stmt.annotation) or "").rsplit(".", 1)[-1] == "TypeAlias":
+                continue
+            name = stmt.target.id
+        else:
+            continue
+        if _is_constant_name(name):
+            out.add(name)
+    return out
+
+
+def module_constants(
+    modules: Mapping[str, tuple[ast.Module, bool]],
+) -> dict[str, set[str]]:
+    """The module-level constants of each of *modules* (name: its tree, and
+    whether it is a package), as :func:`redirect_imports` takes them.
+
+    A constant is an UPPER_CASE name (of more than one letter) the module
+    binds with a plain assignment at module level, or imports at module level
+    from another of *modules* that has it as a constant (a re-export, ``from
+    .metrics import CRIME_TTR_S as CRIME_TTR_S``): :func:`redirect_imports`
+    turns that import into an assignment too.
+    """
+    out = {name: _assigned_constants(tree) for name, (tree, _) in modules.items()}
+    changed = True
+    while changed:
+        changed = False
+        for name, (tree, is_package) in modules.items():
+            for stmt in tree.body:
+                if not isinstance(stmt, ast.ImportFrom):
+                    continue
+                source = out.get(_absolute_module(stmt, name, is_package), set())
+                for alias in stmt.names:
+                    bound = alias.asname or alias.name
+                    if (
+                        alias.name in source
+                        and _is_constant_name(bound)
+                        and bound not in out[name]
+                    ):
+                        out[name].add(bound)
+                        changed = True
+    return out
+
+
 def uncalled_nodes(
     tree: ast.Module, uncalled: Collection[str]
 ) -> list[ast.FunctionDef | ast.AsyncFunctionDef]:
@@ -5689,6 +5751,7 @@ def redirect_imports(
     is_module: Callable[[str], bool],
     package: str = "autoware_carla_scenario",
     uncalled: Collection[str] = (),
+    constant: Callable[[str, str], bool] | None = None,
 ) -> tuple[str, list[tuple[int, str]]]:
     """Point every import of *package* in *source* at the module standing in for it.
 
@@ -5702,6 +5765,15 @@ def redirect_imports(
     function *uncalled* names (as :func:`uncalled_nodes` takes them) is left
     as written: Codon compiles no import in a function nothing calls, so a
     module may import one there that has nothing to stand in for it.
+
+    ``constant(name, NAME)`` tells a module-level constant of the framework
+    module *name* (see :func:`module_constants`).  ``from M import NAME`` of
+    one becomes ``import M as _acs_const_<line>; NAME = _acs_const_<line>.NAME``
+    (``NAME`` is the alias of ``from M import X as NAME``), on the same line,
+    and the other names stay in ``from M import ...``: Codon 0.19 can report
+    a constant imported with ``from M import NAME`` and read at module level
+    as not defined, depending on what precedes it in ``M`` (#1693), and reads
+    it through the module as written.
 
     Returns:
         The rewritten source, and (line, message) for each import that could
@@ -5727,6 +5799,13 @@ def redirect_imports(
             "(typecheck/codon/), so a checked module cannot import it"
         )
 
+    aliases_on: dict[int, int] = {}
+
+    def module_alias(line: int) -> str:
+        count = aliases_on.get(line, 0)
+        aliases_on[line] = count + 1
+        return f"_acs_const_{line}" + (f"_{count}" if count else "")
+
     for node in ast.walk(tree):
         if id(node) in skipped:
             continue
@@ -5737,6 +5816,7 @@ def redirect_imports(
             if not inside(name):
                 continue
             plain: list[str] = []
+            constants: list[tuple[str, str]] = []
             for alias in node.names:
                 if alias.name == "*":
                     problems.append(
@@ -5750,15 +5830,24 @@ def redirect_imports(
                         failed = True
                     else:
                         pieces.append(_import_as(dest, alias.asname or alias.name))
+                elif constant is not None and constant(name, alias.name):
+                    constants.append((alias.name, alias.asname or alias.name))
                 else:
                     plain.append(_alias(alias.name, alias.asname))
-            if plain:
+            if plain or constants:
                 dest = target(name)
                 if dest is None:
                     problems.append((node.lineno, missing(name)))
                     failed = True
                 else:
-                    pieces.insert(0, f"from {dest} import {', '.join(plain)}")
+                    if constants:
+                        via = module_alias(node.lineno)
+                        pieces[:0] = [
+                            f"import {dest} as {via}",
+                            *(f"{bound} = {via}.{const}" for const, bound in constants),
+                        ]
+                    if plain:
+                        pieces.insert(0, f"from {dest} import {', '.join(plain)}")
         elif isinstance(node, ast.Import):
             if not any(inside(alias.name) for alias in node.names):
                 continue

@@ -16,10 +16,12 @@ import autoware_carla_scenario.registry as registry
 from autoware_carla_scenario import (
     get_conf_dirs,
     get_scenario_builder,
+    get_scenario_document,
     get_scenario_registry,
     register_conf_dir,
     register_scenario,
     register_scenario_builder,
+    register_scenario_document,
     unregister_conf_dir,
     unregister_scenario,
 )
@@ -71,6 +73,26 @@ class TestScenarioRegistry:
             builder = get_scenario_builder(name)
             assert builder is not None
             assert builder(None, {}, None, None) is sentinel  # type: ignore[arg-type]
+        finally:
+            unregister_scenario(name)
+
+    def test_a_document_belongs_to_the_builder_it_was_registered_with(
+        self,
+    ) -> None:
+        """Loaded on each lookup; dropped with its builder, or by another one
+        registered under the same name (#1424)."""
+        name = "__pkg_test_document__"
+        document = object()
+        try:
+            assert get_scenario_document(name) is None
+            register_scenario_builder(name, lambda *_: None)  # type: ignore[arg-type,return-value]
+            register_scenario_document(name, lambda: document)  # type: ignore[arg-type,return-value]
+            assert get_scenario_document(name) is document
+            register_scenario_builder(name, lambda *_: None)  # type: ignore[arg-type,return-value]
+            assert get_scenario_document(name) is None
+            register_scenario_document(name, lambda: document)  # type: ignore[arg-type,return-value]
+            unregister_scenario(name)
+            assert get_scenario_document(name) is None
         finally:
             unregister_scenario(name)
 

@@ -632,6 +632,68 @@ def test_a_contact_is_logged_when_it_starts_and_when_it_ends() -> None:
     assert records[1].duration == pytest.approx(2.95, abs=0.06)
 
 
+def test_a_contact_still_going_when_the_run_ends_is_ended_with_it() -> None:
+    """#1539: a contact that never goes quiet for REPEAT_S still gets its end
+    record, from finish(), with how long it lasted and its strongest impulse."""
+    a = _actor(2, "vehicle.mini", "npc1")
+    b = _actor(3, "vehicle.mini", "npc2")
+    world = _MonitoredWorld([a, b])
+    monitor = NpcCollisionMonitor()
+    monitor.tick(world, 0.0)  # type: ignore[arg-type]
+    records: list[Any] = []
+    t = 0.05
+    last = t
+    while t < 3.0:  # in contact until the run ends
+        world.sensors[0].listener(
+            SimpleNamespace(
+                frame=int(t * 20),
+                other_actor=b,
+                normal_impulse=SimpleNamespace(x=4.0 if t > 2.0 else 1.0, y=0.0, z=0.0),
+            )
+        )
+        records += monitor.tick(world, t)[0]  # type: ignore[arg-type]
+        last = t
+        t += 0.05
+    assert [r.phase for r in records] == ["start"]
+    ended = monitor.finish(last)
+    monitor.close()
+    assert [r.phase for r in ended] == ["end"]
+    end = ended[0]
+    assert end.frame == records[0].frame  # the contact's, as a normal end's
+    assert end.t == last
+    assert end.duration == pytest.approx(last - records[0].t)
+    assert end.impulse == 4.0
+    assert end.actors == ["npc1", "npc2"] and not end.ego
+    # Only once, and harmless after close.
+    assert monitor.finish(last) == []
+
+
+def test_finish_takes_up_the_events_heard_since_the_last_tick() -> None:
+    a = _actor(2, "vehicle.mini", "npc1")
+    b = _actor(3, "vehicle.mini", "npc2")
+    world = _MonitoredWorld([a, b])
+    monitor = NpcCollisionMonitor()
+    monitor.tick(world, 0.0)  # type: ignore[arg-type]
+    world.sensors[0].listener(
+        SimpleNamespace(
+            frame=4,
+            other_actor=b,
+            normal_impulse=SimpleNamespace(x=2.0, y=0.0, z=0.0),
+        )
+    )
+    records = monitor.finish(0.2)
+    monitor.close()
+    assert [(r.phase, r.duration) for r in records] == [("start", None), ("end", 0.0)]
+
+
+def test_finish_with_no_contact_records_nothing() -> None:
+    world = _MonitoredWorld([_actor(2, "vehicle.mini", "npc1")])
+    monitor = NpcCollisionMonitor()
+    monitor.tick(world, 0.0)  # type: ignore[arg-type]
+    monitor.close()
+    assert monitor.finish(0.05) == []
+
+
 def _register_walker(monkeypatch: pytest.MonkeyPatch, role: str, actor_id: int) -> None:
     """An entity answering to *role* whose walker is *actor_id*, for the run."""
     from autoware_carla_scenario.entity import registry
@@ -953,6 +1015,8 @@ class _SnapshotWorld:
         return _Snapshot(seen(i, x, y, v) for i, (_, x, y, v) in self.actors.items())
 
     def get_actor(self, actor_id: int) -> Any:
+        if actor_id not in self.actors:
+            return None  # as CARLA's world says of one not in it
         type_id = self.actors[actor_id][0]
         extent = (2.0, 1.0) if type_id.startswith("vehicle.") else (0.3, 0.3)
         return SimpleNamespace(
@@ -1341,13 +1405,15 @@ def test_a_spawn_whose_place_is_taken_takes_one_further_on_if_allowed(
     monkeypatch.setattr(
         spawn_module,
         "_taken",
-        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: (
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0, z=0.0: (
             5 if x < taken_until["m"] else -1
         ),
     )
     held: list[float] = []
     monkeypatch.setattr(
-        spawn_module, "_hold", lambda world, actor_id, x, y, yaw, hl, hw: held.append(x)
+        spawn_module,
+        "_hold",
+        lambda world, actor_id, x, y, yaw, hl, hw, z: held.append(x),
     )
 
     def place(shift: float) -> Any:
@@ -1431,7 +1497,14 @@ def test_a_place_clear_condition_holds_while_nothing_stands_there(
     occupant = {"id": 7}
 
     def look(
-        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+        world: Any,
+        x: float,
+        y: float,
+        yaw: float,
+        hl: float,
+        hw: float,
+        m: float,
+        z: Optional[float],
     ) -> int:
         seen.append((x, y, yaw, hl, hw, m))
         return occupant["id"]
@@ -1470,7 +1543,14 @@ def test_a_place_clear_condition_on_a_route_pose(
     seen: list[tuple[float, float, float]] = []
 
     def look(
-        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+        world: Any,
+        x: float,
+        y: float,
+        yaw: float,
+        hl: float,
+        hw: float,
+        m: float,
+        z: Optional[float],
     ) -> int:
         seen.append((x, y, yaw))
         return -1
@@ -1520,7 +1600,14 @@ def test_a_place_with_no_heading_faces_along_its_lane(
     seen: list[float] = []
 
     def look(
-        world: Any, x: float, y: float, yaw: float, hl: float, hw: float, m: float
+        world: Any,
+        x: float,
+        y: float,
+        yaw: float,
+        hl: float,
+        hw: float,
+        m: float,
+        z: Optional[float],
     ) -> int:
         seen.append(yaw)
         return -1
@@ -1564,16 +1651,18 @@ def test_a_spawn_on_a_route_pose_shifts_along_the_lane_it_is_placed_on(
     monkeypatch.setattr(
         spawn_module,
         "_taken",
-        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: 5 if x < 14.0 else -1,
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0, z=0.0: 5
+        if x < 14.0
+        else -1,
     )
-    monkeypatch.setattr(spawn_module, "_hold", lambda *args: None)
+    monkeypatch.setattr(spawn_module, "_hold", lambda *args, **kwargs: None)
     action = SpawnAction("npc1", position=pose, shift_max=30.0)
     assert action._place(None, 1, 2.0, 1.0)[0] == 14.0  # type: ignore[arg-type,index]
     # Its own place, clear, faces along its lane: 90 deg here.
     monkeypatch.setattr(
         spawn_module,
         "_taken",
-        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: -1,
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0, z=0.0: -1,
     )
     assert action._place(None, 1, 2.0, 1.0) == (10.0, 0.0, 0.0, 90.0)  # type: ignore[arg-type]
 
@@ -1727,7 +1816,15 @@ def test_a_spawn_at_speed_needs_room_to_stop_ahead(
     looked: list[tuple[float, float, float]] = []
 
     def overlaps(
-        world: Any, actor_id: int, x: float, y: float, yaw: float, hl: float, hw: float
+        world: Any,
+        actor_id: int,
+        x: float,
+        y: float,
+        yaw: float,
+        hl: float,
+        hw: float,
+        *,
+        z: Optional[float] = None,
     ) -> Any:
         looked.append((round(x, 3), round(hl, 3), round(hw, 3)))
         return None
@@ -1735,7 +1832,7 @@ def test_a_spawn_at_speed_needs_room_to_stop_ahead(
     from autoware_carla_scenario.utils import clearance
 
     monkeypatch.setattr(clearance, "overlaps", overlaps)
-    assert spawn_module._taken(None, 1, 10.0, 0.0, 0.0, 2.3, 1.0, 6.0) == -1  # type: ignore[arg-type]
+    assert spawn_module._taken(None, 1, 10.0, 0.0, 0.0, 2.3, 1.0, 6.0, z=0.0) == -1  # type: ignore[arg-type]
     assert looked == [(13.0, 5.3, 1.0)]
 
 
@@ -2208,11 +2305,11 @@ def test_a_spawn_at_speed_keeps_its_place_behind_one_driving_away(
     monkeypatch.setattr(
         spawn_module,
         "_taken",
-        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0: (
+        lambda world, actor_id, x, y, yaw, hl, hw, ahead=0.0, z=0.0: (
             5 if x <= ahead_x <= x + hl + ahead + 2.3 else -1
         ),
     )
-    monkeypatch.setattr(spawn_module, "_hold", lambda *args: None)
+    monkeypatch.setattr(spawn_module, "_hold", lambda *args, **kwargs: None)
     speed = {"x": 7.6}
     world = SimpleNamespace(
         get_actor=lambda actor_id: SimpleNamespace(

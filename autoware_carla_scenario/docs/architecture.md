@@ -358,6 +358,7 @@ Key features:
   A run that raises never reaches the reset at its end (`run_scenario(reset_world=True)`), so the queue resets the world (`ScenarioRunner.reset_world()`) before the retry runs on it: the weather, frozen traffic lights and light states the failed attempt set do not carry into the retry. The reset is part of the retry's attempt -- one that raises fails that attempt, and the next resets again -- and an attempt that failed before it ran (in its cooldown) is retried on the world as it is, without a reset.
   A `run_all()` that raises (a scenario failing every attempt without `continue_on_error`, or Ctrl-C) leaves the world as it was, as a `run_all()` that ends normally does after its last scenario: the next `run_all()` resets the world before its first scenario.
   With `run_all(continue_on_error=True)`, which batch mode uses, a scenario that fails every attempt is recorded instead as a failed result naming the error (`errored_indices()` tells it from a scenario that ran and failed), the world is reloaded, and the queue goes on with the next one.
+- **Server restart**: A CARLA server that dies mid-batch cannot recover by waiting, so before every attempt -- each case's first, and every retry -- a queue that owns its server checks it (`CarlaServerManager.is_alive()`) and, when it is gone, logs it, stops it and redoes the server part of `start()`: the server is started again (on the same port and arguments, so a SLURM task keeps its port slot), a new `ScenarioRunner` connects to it, and the map is loaded and the `MapManager` built again. The backends and the Autoware launcher are not prepared again: neither talks to the CARLA server. A restart that raises is the failure of the attempt it came before, retried or errored like any other, and the next attempt restarts again. A server the queue was given (`ScenarioQueue(server=...)`), or one its own manager found already running and reused (`CarlaServerManager.reused`), is never restarted, and a server that is alive is never touched. The SLURM worker, which calls `run_all()` once per case on one queue, gets the same restart before each case.
 - **Server ownership**: Accepts an external `CarlaServerManager` or creates and owns one internally.
   A `start()` (or `__enter__`) that fails -- the runner cannot connect, the map name is unknown, the Lanelet2 map does not load -- calls `stop()` before the error propagates, so the server the queue owns is stopped and the Autoware launcher closed even though `__exit__` does not run.
 - **Server lifetime**: A CARLA that `CarlaServerManager` launched does not outlive the process that launched it. `stop()` (or `with`, or `atexit`) stops it on a normal exit; a SIGTERM to `scenario` raises `KeyboardInterrupt`, so the `with` blocks unwind as on Ctrl-C, and it exits 143; and CARLA is launched under a small watchdog that leads its process group and, once that process is gone (killed with SIGKILL, say, as the lanelet sweeper does a job past `sweep.job_timeout_seconds`), sends the group SIGTERM and, 10 s later, SIGKILL; the sweeper then waits until that CARLA has exited before its next attempt. The watchdog polls its parent process rather than using `PR_SET_PDEATHSIG`, which follows the thread that started it. A server that was already running and was reused is never stopped.
@@ -492,7 +493,7 @@ classDiagram
 | **Motion** | `SpeedCondition`, `AccelerationCondition`, `StandstillCondition`, `TemporaryStopCondition` | Speed and acceleration thresholds, standstill detection, stop-and-go |
 | **Traffic** | `TrafficSignalCondition`, `TrafficSignalControllerCondition` | One light's state, or a whole junction's phase |
 | **Composition** | `AndCondition`, `OrCondition`, `NotCondition` | Logical combinators |
-| **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks |
+| **Stateful** | `StickyCondition`, `PersistentCondition` | Latch once satisfied / persist across ticks (a persistent condition counts only passing ticks, so it never fires around a condition that only reports a failure -- the collision, off-road, existence and timeout ones -- and warns when built around one: [Usage](usage.md#output-files)) |
 | **Utility** | `AlwaysTrueCondition` | Unconditional trigger (default for actions) |
 
 > **A collision with map geometry is a collision.** CARLA gives no actor for
@@ -706,6 +707,7 @@ lateral together are its movement (`MOVEMENT`).
 | `SetSpeedAction` | longitudinal |
 | `LaneChangeAction`, `TurnAction` | lateral |
 | `TurnIndicatorAction` | lighting |
+| `EmergencyAction` | lighting |
 | `WalkStraightAction` | longitudinal, lateral |
 | `RoutingAction`, `follow` / `position` | longitudinal, lateral |
 | `RoutingAction`, `driver` | lateral; longitudinal too with a `speed`, a timed waypoint, `stop_at_goal`, or for a pedestrian (which it walks) |
@@ -862,6 +864,13 @@ controller or phase that does not exist — all while the document is being
 edited, because a misspelt phase name is invisible at runtime: the junction
 cycles normally and the scenario just waits forever.
 
+Signal group, controller and phase names are read without surrounding
+whitespace, wherever they are written: a group's `name` and `conflicts_with`, a
+phase state's `group`, a controller's `name` and `reference`, a phase's `name`,
+and an action's or condition's `controller` and `signal_phase`. A hand-written
+`"ns "` is the group `ns`, so a name the validator accepts is the name the
+running controller is found by.
+
 ---
 
 ## Result Viewer
@@ -932,7 +941,7 @@ graph TB
 | **`app.py`** | `ui/app.py` | FastAPI routes, template rendering, SSE streaming |
 | **`scanner.py`** | `ui/scanner.py` | Scan `outputs/` and `multirun/` directories for result JSON files. Build session lists and condition trees. |
 | **`runner.py`** | `ui/runner.py` | Execute `uv run scenario` as subprocesses in a background thread. Track progress with thread-safe global state. |
-| **`sweep_resolver.py`** | `ui/sweep_resolver.py` | Expand a scenario's sweep into concrete per-job override lists without launching CARLA, through the CLI's `sweeper.expand.expand_config` (constraints, route searches, ODD draws); a failure is reported to the Run panel. The jobs run with the Run panel's extra overrides. |
+| **`sweep_resolver.py`** | `ui/sweep_resolver.py` | Expand a scenario's sweep into concrete per-job override lists without launching CARLA, through the CLI's `sweeper.expand.expand_config` (constraints, route searches, ODD draws); a failure, or a scenario whose sweep expands to no case, is reported to the Run panel and nothing runs. The jobs run with the Run panel's extra overrides. |
 | **`models.py`** | `ui/models.py` | Pydantic data models for the viewer UI. |
 | **`cases.py`** | `ui/cases.py` | Which files are each case's: the stem its result, trajectory log, coverage and ODD archive share (a SLURM batch's manifest, or matched against `batch_results.json`). Its `session_dir` is the containment check every route and scanner function builds a session's directory with (resolved, it must stay under `multirun/` or `outputs/`; else 404). |
 | **`results.py`** | `ui/results.py` | A session's cases with their ODD case, coverage and metrics off the trajectory log; the cases in a cell of openodd's coverage view; sessions compared, cases matched by what they ran. |
@@ -951,6 +960,7 @@ classDiagram
         +scenario_name: str
         +passed_count: int
         +total_count: int
+        +pending_count: int
     }
 
     class SessionItem {
@@ -1003,7 +1013,7 @@ The scanner discovers results from two directory layouts:
 base_path/
 ├── outputs/                          # Single and batch runs
 │   └── YYYY-MM-DD/
-│       └── HH-MM-SS/
+│       └── HH-MM-SS/                 # HH-MM-SS-1, -2, ...: a later run in the same second
 │           ├── ScenarioName_result.json
 │           ├── ScenarioName_coverage.json  # Coverage hits (docs/coverage.md)
 │           ├── ScenarioName.trajectory.jsonl  # Actor motion (docs/trajectory_log.md)
@@ -1048,7 +1058,10 @@ sequenceDiagram
     participant SR as ScenarioRunner
     participant C as CARLA Simulator
 
-    B->>A: POST /api/run {scenario, overrides, sweeper}
+    B->>A: POST /api/run {scenario, extra_overrides, sweeper, launcher, slurm}
+    opt The body is not a JSON object, or a field has the wrong type
+        A-->>B: 400 {"status": "error", "message": ...}
+    end
 
     alt With sweeper
         A->>A: sweep_resolver.resolve_sweep()
@@ -1097,8 +1110,9 @@ sequenceDiagram
 
 - **Process isolation**: Each scenario runs in a separate `uv run scenario` subprocess. This prevents CARLA's C++ extension from crashing the web server.
 - **Thread-safe progress**: A global `RunProgress` object protected by `threading.Lock` provides progress state. `start_run()` checks for a run in progress and claims the run under that lock, so two runs never start at once and the stream never replays the previous run's `done`.
+- **Checked run bodies**: `/api/run` and `/api/run/preview` read their body through one parser (`app.parse_run_body`): it must be a JSON object, `scenario` a string, `extra_overrides` a list of strings (null or absent: none), `sweeper` a string or null, `launcher` `local`, `slurm` or null, and `slurm` an object of text or number options. Anything else is answered with 400 before a run starts or a batch is submitted, so a string of overrides is never run one character per argument (#1500). The SLURM `resubmit` action refuses a body that is not an object, or a `failed` that is not a boolean, the same way.
 - **SSE streaming**: The `/api/run/progress` endpoint uses Server-Sent Events for real-time progress updates (polled at 0.5 s intervals).
-- **Multirun grouping**: When running multiple scenarios, jobs share a timestamped `multirun/` directory with numbered subdirectories.
+- **Multirun grouping**: When running multiple scenarios, jobs share a timestamped `multirun/` directory with numbered subdirectories. The directory is the run's alone: one started in the same second as another run or a CLI sweep gets `HH-MM-SS-1`, then `HH-MM-SS-2`, ...
 
 ### Condition Tree Display
 
@@ -1392,14 +1406,14 @@ graph LR
 | Variable | Required | Default | Used by | Description |
 |----------|----------|---------|---------|-------------|
 | **`CARLA_EXECUTABLE`** | No | the launcher `scenario-setup` installed | `CarlaServerManager` | Absolute path to the CARLA UE5 launcher (`CarlaUnreal.sh`). Unset, the one `scenario-setup` installed under `~/.autoware_carla_scenario/bin/carla` is launched. When a server is already running and `reuse_if_running=True`, neither is needed. Also a gate for pytest: tests are skipped when there is no launcher at all. |
-| **`AUTOWARE_CARLA_SCENARIO_HOME`** | No | `~/.autoware_carla_scenario` | `carla_install` | Where `scenario-setup` installs CARLA (`bin/carla`). |
+| **`AUTOWARE_CARLA_SCENARIO_HOME`** | No | `~/.autoware_carla_scenario` | `carla_install_paths` | Where `scenario-setup` installs CARLA (`bin/carla`). |
 | **`NISHISHINJUKU_MAP_PATH`** | Yes (if `map.overwrite_xodr` is on) | — | `ScenarioRunner.load_map_by_overwriting_xodr()` | Path to the internal `.xodr` file inside the CARLA installation for the NishishinjukuMap. Used to overwrite the built-in OpenDRIVE file with a custom version while retaining full CARLA map assets (meshes, textures). The variable name is derived from the map name via CamelCase → `UPPER_SNAKE_CASE_PATH` conversion. |
 | **`NISHISHINJUKU_XODR_PATH`** | No | `data/nishishinjuku_carla.xodr` | Map config YAML (`${oc.env:...}`) | Path to the custom OpenDRIVE file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation in `conf/map/nishishinjuku.yaml`. |
 | **`NISHISHINJUKU_LANELET2_PATH`** | No | `data/nishishinjuku.osm` | Map config YAML (`${oc.env:...}`) | Path to the Lanelet2 `.osm` file for the Nishishinjuku map. Resolved by OmegaConf's `oc.env` interpolation. |
 | **`VIEWER_BASE_PATH`** | No | Current working directory | Viewer (`ui/__init__.py`) | Base directory that the viewer scans for `outputs/` and `multirun/` result directories. `viewer --base-path` wins over it. |
 | **`VIEWER_HOST`** | No | `127.0.0.1` | Viewer (`ui/__init__.py`) | Bind address for the Uvicorn HTTP server. `viewer --host` wins over it; `0.0.0.0` serves every interface, with no authentication. |
 | **`VIEWER_PORT`** | No | `9000` | Viewer (`ui/__init__.py`) | Listen port for the Uvicorn HTTP server. `viewer --port` wins over it. |
-| **`SWEEP_RESUME_FROM`** | No | `0` | Sweeper (`lanelet_constraint_sweeper.py`) | Internal variable set by the `--resume-from N` CLI flag. Passed via environment because Hydra's CLI parser rejects unknown overrides. Tells the sweeper to start at job N (1-indexed). A glob batch reads the flag directly instead. |
+| **`SWEEP_RESUME_FROM`** | No | `0` | Sweeper (`lanelet_constraint_sweeper.py`) | Internal variable set by the `--resume-from N` CLI flag. Passed via environment because Hydra's CLI parser rejects unknown overrides. Tells the sweeper to start at job N (1-indexed); set (to a whole number, `0` or empty for none), it wins over `sweep.resume_from`, and any other value is refused (exit 2). A glob batch reads the flag directly instead. |
 
 #### Dynamic Map Path Variables
 

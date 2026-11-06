@@ -107,16 +107,12 @@ def regulatory_element_stop_lines(
     if hasattr(reg_elem, "stopLine"):
         try:
             stop_line = reg_elem.stopLine
-            if TYPE_CHECKING:
-                # The model declares stopLine only where it is a property.
-                is_line = True
-            else:
-                # A DetectionArea's (or NoStoppingArea's) stopLine is a
-                # method: its bound method is no line (pattern 2 reads it).
-                # The `types` module is not modelled for Codon.
-                from types import BuiltinMethodType, MethodType  # noqa: PLC0415
-
-                is_line = not isinstance(stop_line, (BuiltinMethodType, MethodType))
+            # A DetectionArea's (or NoStoppingArea's) stopLine is a method:
+            # its bound method is no line (pattern 2 reads it).  A line
+            # string (or None) has no __call__; Codon decides the hasattr by
+            # the static type, where the model declares stopLine only as a
+            # property.
+            is_line = not hasattr(stop_line, "__call__")
             if is_line and stop_line is not None and stop_line.id not in seen_ids:
                 seen_ids.add(stop_line.id)
                 results.append(stop_line)
@@ -248,9 +244,11 @@ def get_stop_line_linestrings_with_following(
     Args:
         lanelet_map: The loaded Lanelet2 map to search.
         lanelet_id: The starting Lanelet2 lanelet ID.
-        depth: How many steps of successors to search.  A spawn walked back
-            from a stop line can be more than one lanelet short of it, when
-            the lane before the line is short.
+        depth: How many steps of successors to search, ``0`` or more (``0``
+            searches the lanelet alone).  A spawn walked back from a stop line
+            can be more than one lanelet short of it, when the lane before the
+            line is short.  The search ends early where the successors run
+            out, so a large depth on a dead end costs nothing.
         routing_graph: The routing graph of *lanelet_map* to find the
             successors in.  Left out, one is built (by German traffic rules,
             for a vehicle), which reads the whole map: a caller that asks
@@ -261,8 +259,11 @@ def get_stop_line_linestrings_with_following(
         Empty list if no stop lines are found.
 
     Raises:
-        ValueError: If the lanelet ID is not found in the map.
+        ValueError: If *depth* is negative, or the lanelet ID is not found in
+            the map.
     """
+    if depth < 0:
+        raise ValueError(f"Stop line search depth must not be negative, got {depth}")
     lanelet = _lanelet(lanelet_map, lanelet_id)
 
     seen_ids: set[int] = set()
@@ -294,6 +295,9 @@ def get_stop_line_linestrings_with_following(
                     visited.add(fll.id)
                     following.append(fll)
         frontier = following
+        if not frontier:
+            # A dead end: no step further on has a lanelet to search.
+            break
         all_results: list[tuple[int, ConstLineString3d]] = []
         for fll in frontier:
             fll_results = _collect_stop_lines_from_reg_elems(

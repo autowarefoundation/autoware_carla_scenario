@@ -19,6 +19,7 @@ from ..rerun import TRAJECTORY_SUFFIX
 
 __all__ = [
     "checked_max_distance",
+    "checked_step",
     "indicator_at",
     "is_ego",
     "on_scene",
@@ -31,9 +32,38 @@ def step_frames(step_s: float) -> int:
     """The ticks in one step of *step_s* seconds.
 
     Raises:
-        ValueError: If *step_s* is not a positive multiple of the tick.
+        ValueError: If *step_s* is a bool or not a number
+            (:func:`checked_step`), or not a positive multiple of the tick.
     """
-    return tick_multiple(step_s, "step_s")
+    return tick_multiple(checked_step(step_s), "step_s")
+
+
+def checked_step(step_s: float, key: str = "step_s") -> float:
+    """*step_s* as a float, which must be a number and a positive multiple of
+    the tick (:func:`~autoware_carla_scenario.constants.tick_multiple`).
+
+    A bool is refused: Hydra reads ``step_s=true`` as one, and ``float()``
+    would take it for 1 s, a valid step, so every scene would be written at
+    1 s (#1502).  A string is refused too, rather than parsed, and anything
+    else ``float()`` cannot read (``None``, a list) with an error naming *key*.
+
+    Args:
+        step_s: The step, seconds.
+        key: The setting's name, which the error names (``t4scene.step_s``).
+
+    Raises:
+        ValueError: If *step_s* is a bool or not a number, or not a positive
+            multiple of the tick.
+    """
+    error = ValueError(f"{key} must be a number of seconds, not {step_s!r}")
+    if isinstance(step_s, bool) or isinstance(step_s, str):
+        raise error
+    try:
+        value = float(step_s)
+    except TypeError:
+        raise error
+    tick_multiple(value, key)
+    return value
 
 
 def checked_max_distance(
@@ -47,7 +77,8 @@ def checked_max_distance(
     0, a negative distance or NaN would keep no road user and infinity is
     what ``None`` says, so each is refused before a scene is written rather
     than leaving it silently empty.  A bool is refused too: ``true`` is not
-    a distance, though ``float()`` would read it as 1 m.
+    a distance, though ``float()`` would read it as 1 m, and so is a string
+    or anything else that is not a number, with an error naming *key*.
 
     Args:
         max_distance_m: The distance, metres.
@@ -56,16 +87,23 @@ def checked_max_distance(
             (``null``, ``--all-objects``).
 
     Raises:
-        ValueError: If *max_distance_m* is a bool, or not positive and finite.
+        ValueError: If *max_distance_m* is a bool, not a number, or not
+            positive and finite.
     """
     if max_distance_m is None:
         return None
-    value: float = float(max_distance_m)
-    if isinstance(max_distance_m, bool) or not (math.isfinite(value) and value > 0.0):
-        raise ValueError(
-            f"{key} must be positive and finite ({unlimited} for no limit), "
-            f"not {max_distance_m}"
-        )
+    error = ValueError(
+        f"{key} must be positive and finite ({unlimited} for no limit), "
+        f"not {max_distance_m}"
+    )
+    if isinstance(max_distance_m, bool) or isinstance(max_distance_m, str):
+        raise error
+    try:
+        value: float = float(max_distance_m)
+    except TypeError:
+        raise error
+    if not (math.isfinite(value) and value > 0.0):
+        raise error
     return value
 
 

@@ -74,8 +74,20 @@ from openodd.flaky import FlakyMetrics, FlakySearch, ParameterSpace
 from openodd.sampler import OddDraws, OddKnob, OddSample, knobs_from_mapping
 from openodd.sampler import OddSampler as _OddSampler
 
-from ..seed import DEFAULT_SEED
+from ..config_flags import check_flag
+from ..route.model import _whole_number
+from ..seed import DEFAULT_SEED, check_seed
 from .backend import CARLA_BACKEND, DEFAULT_KNOBS
+from .control_fields import (
+    CONTROL_TARGETS,
+    FLAKY_FIELDS,
+    MAPPING_FIELDS,
+    ODD_CASE_KEY,
+    SAMPLE_FIELDS,
+    TIRE_FRICTION_KEY,
+    VISIBILITY_KEY,
+    sets_any,
+)
 from .model import OddDefinition
 
 __all__ = [
@@ -91,71 +103,27 @@ __all__ = [
     "CONTROL_TARGETS",
     "controls_from_mapping",
     "knobs_from_mapping",
+    "check_sample_settings",
+    "sample_count",
+    "sample_draws",
     "sample_seed",
     "sampler_from_config",
+    "seed_setting",
     "search_from_config",
     "TIRE_FRICTION_KEY",
     "weights_from_config",
     "VISIBILITY_KEY",
+    "whole_number_setting",
     "with_tire_friction",
     "with_visibility",
 ]
 
-#: The config key (an override a sweep adds) that carries a drawn case to its
-#: run, encoded (:func:`encode_case`).
-ODD_CASE_KEY = "odd_case"
-
 #: A case drawn from the ODD and the space it was drawn in: what a run records.
 OddCase = tuple[OddSample, ParameterSpace]
 
-#: What a control's ``target`` may say: ``setting`` (the default), a raw
-#: setting the drawn value is mapped onto by ``scale`` and ``offset``; or
-#: ``measure``, a parameter that takes the measure's value at the start itself,
-#: which the scenario solves its placement for.
-CONTROL_TARGETS = ("setting", "measure")
-#: The fields a ``target: measure`` control refuses: what it writes is the
-#: measure's own value, unchanged.
-_MAPPING_FIELDS = ("scale", "offset", "integer", "values")
-
-#: The fields of ``sweep.odd_sample``: ``tire_friction`` and ``visibility``
-#: (default true) say whether each case draws where its grip
-#: (:func:`with_tire_friction`) and its visibility (:func:`with_visibility`)
-#: are in the ranges its weather leaves; the rest are
-#: :func:`search_from_config`'s.
-SAMPLE_FIELDS = {
-    "count",
-    "seed",
-    "strategy",
-    "odd",
-    "coverage_from",
-    "knobs",
-    "weights",
-    "flaky",
-    "tire_friction",
-    "visibility",
-}
-
-#: The setting a case's grip is drawn into: the quantile of the distribution
-#: of grip its weather leaves (``EnvironmentAction``'s ``tire_friction_quantile``).
-TIRE_FRICTION_KEY = "environment.tire_friction_quantile"
-#: The setting a case's visibility is drawn into: the quantile of the
-#: distribution of visibility its weather leaves (``EnvironmentAction``'s
-#: ``visibility_quantile``).
-VISIBILITY_KEY = "environment.visibility_quantile"
-#: The fields of ``sweep.odd_sample.flaky``: :class:`~openodd.FlakySearch`'s
-#: options, and ``scenario``, the scenario whose earlier runs it learns from
-#: (every scenario's, chosen in the same space, when not given).
-FLAKY_FIELDS = {
-    "explore_fraction",
-    "pool",
-    "coverage_depth",
-    "threshold",
-    "epsilon",
-    "perturbations",
-    "draws",
-    "directions",
-    "scenario",
-}
+#: The fields a ``target: measure`` control refuses
+#: (:data:`.control_fields.MAPPING_FIELDS`).
+_MAPPING_FIELDS = MAPPING_FIELDS
 
 
 class OddSampler(_OddSampler):
@@ -229,7 +197,9 @@ def weights_from_config(
     not name its taxonomy (docs/odd.md, "Sampling by shares of the ODD").
 
     Raises:
-        ValueError: When the file or the mapping is not module -> number.
+        ValueError: When the file cannot be read, is not UTF-8 or not YAML,
+            holds an integer too long to read, or when it or the mapping is
+            not module -> number.
     """
     if raw is None:
         return None
@@ -237,11 +207,18 @@ def weights_from_config(
         path = Path(raw)
         if not path.is_absolute() and base_dir is not None:
             path = base_dir / path
+        # A file that is not there, not UTF-8 (UnicodeDecodeError), not YAML,
+        # or with an integer of more digits than Python turns from text
+        # (PyYAML's int constructor raises a bare ValueError,
+        # sys.get_int_max_str_digits()) is refused with the key, on one line
+        # (a YAML error's text spans several, with a caret diagram), as the
+        # docstring promises (#1703).
         try:
             raw = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except OSError as e:
+        except (OSError, ValueError, yaml.YAMLError) as e:
+            reason = " ".join(str(e).split()) or type(e).__name__
             raise ValueError(
-                f"sweep.odd_sample.weights: cannot read {path}: {e}"
+                f"sweep.odd_sample.weights: cannot read {path}: {reason}"
             ) from e
         if not isinstance(raw, Mapping):
             raise ValueError(
@@ -274,9 +251,13 @@ def sampler_from_config(
     mapping without ``flaky`` (see :func:`search_from_config`).
 
     Raises:
-        ValueError: On an unknown field, or ``flaky``.
+        ValueError: On an unknown field, or a ``flaky`` other than missing,
+            null or false: ``true`` and any mapping, ``{}`` included, are a
+            flaky search, which needs :func:`search_from_config`.
     """
-    if raw.get("flaky"):
+    # ``{}`` is falsy but a flaky search with the defaults, as ``true`` is.
+    flaky = raw.get("flaky")
+    if flaky is not None and flaky is not False:
         raise ValueError("sweep.odd_sample.flaky needs search_from_config()")
     sampler, _, count = search_from_config(
         raw, odd=odd, controls=controls, base_dir=base_dir, drawn=drawn
@@ -284,13 +265,130 @@ def sampler_from_config(
     return sampler, count
 
 
+def seed_setting(key: str, value: Any) -> Optional[int]:
+    """The seed a config sets under *key* (the run's ``seed``,
+    ``sweep.odd_sample.seed``), checked; ``None`` when it is null.
+
+    A seed is a non-negative whole number, as a route search's counts are
+    (docs/logical_scenarios.md): ``2`` or ``2.0``, not ``2.5``, a boolean or
+    a string that is no integer -- ``int()`` alone would run ``1.9`` and
+    ``true`` as seed 1 -- and from 0 to
+    :data:`~autoware_carla_scenario.seed.MAX_SEED` (``2**31 - 1``), the range
+    CARLA's pedestrian seed and SUMO's ``--seed`` both take
+    (:func:`~autoware_carla_scenario.seed.check_seed`).
+
+    Raises:
+        ValueError: naming *key*, when *value* is not such a number.
+    """
+    number = whole_number_setting(key, value)
+    if number is None:
+        return None
+    if number < 0:
+        raise ValueError(f"{key} must not be negative, got {value!r}")
+    return check_seed(key, number)
+
+
+def whole_number_setting(
+    key: str, value: Any, *, minimum: Optional[int] = None
+) -> Optional[int]:
+    """The whole number a config sets under *key*, checked; ``None`` when it
+    is null.
+
+    ``2`` or ``2.0`` (or the string ``"2"``), not ``2.5``, a boolean, a blank
+    or any other string -- ``int()`` alone would read ``1.9`` and ``true`` as
+    1 -- and, with *minimum*, not below it.  What every whole-number setting a
+    run reads goes through: its seeds (:func:`seed_setting`), and the
+    ``background_traffic`` and ``server`` counts.
+
+    Raises:
+        ValueError: naming *key*: ``<key> must be a whole number, got ...``,
+            or ``<key> must be >= <minimum>, got ...``.
+    """
+    if value is None:
+        return None
+    number = _whole_number(key, value)
+    if number is None:  # A blank string, which no whole number is.
+        raise ValueError(f"{key} must be a whole number, got {value!r}")
+    if minimum is not None and number < minimum:
+        raise ValueError(f"{key} must be >= {minimum}, got {value!r}")
+    return number
+
+
 def sample_seed(raw: Mapping[str, Any]) -> int:
     """The seed of a ``sweep.odd_sample`` mapping: its ``seed``, or
     :data:`~autoware_carla_scenario.seed.DEFAULT_SEED` when it is not given or
     null (:func:`~autoware_carla_scenario.sweeper.expand.expand_sweep` fills a
-    null one in with the run's first)."""
-    value = raw.get("seed")
-    return DEFAULT_SEED if value is None else int(value)
+    null one in with the run's first).
+
+    Raises:
+        ValueError: When it is not a non-negative whole number
+            (:func:`seed_setting`).
+    """
+    seed = seed_setting("sweep.odd_sample.seed", raw.get("seed"))
+    return DEFAULT_SEED if seed is None else seed
+
+
+def sample_count(raw: Mapping[str, Any]) -> Optional[int]:
+    """How many cases a ``sweep.odd_sample`` mapping draws: its ``count``, or
+    ``None`` (one per base case) when it is not given or null.
+
+    A whole number, at least 1: ``int()`` alone would draw two cases for
+    ``2.7``, and a count of 0 draws no case, a sweep refused anyway
+    (:data:`~autoware_carla_scenario.sweeper.expand.EMPTY_SWEEP_MESSAGE`) but
+    for a reason it would not name.
+
+    Raises:
+        ValueError: naming ``sweep.odd_sample.count``, when it is not a whole
+            number of at least 1.
+    """
+    value = raw.get("count")
+    if value is None:
+        return None
+    try:
+        count = _whole_number("sweep.odd_sample.count", value)
+    except ValueError:
+        count = None  # Refused below, with the bound.
+    if count is None or count < 1:
+        raise ValueError(
+            f"sweep.odd_sample.count must be a whole number of at least 1, got {value!r}"
+        )
+    return count
+
+
+#: The switches of ``sweep.odd_sample`` that say whether each case draws its
+#: grip (:func:`with_tire_friction`) and its visibility (:func:`with_visibility`).
+SAMPLE_DRAWS = ("tire_friction", "visibility")
+
+
+def sample_draws(raw: Mapping[str, Any], name: str) -> bool:
+    """Whether a ``sweep.odd_sample`` mapping draws *name* for each case, one
+    of :data:`SAMPLE_DRAWS`: true when not given or null, else its value read
+    strictly (:func:`~autoware_carla_scenario.config_flags.check_flag`), so
+    ``"false"``, ``"off"`` and ``0`` turn the draw off.
+
+    Raises:
+        ValueError: naming ``sweep.odd_sample.<name>``, when it is not true
+            or false (``"ture"``, ``2``).
+    """
+    value = raw.get(name)
+    if value is None:
+        return True
+    return check_flag(f"sweep.odd_sample.{name}", value)
+
+
+def check_sample_settings(raw: Mapping[str, Any]) -> None:
+    """Refuse a ``sweep.odd_sample`` mapping's ``seed``, ``count``,
+    ``tire_friction`` and ``visibility`` when drawing from it would
+    (:func:`sample_seed`, :func:`sample_count`, :func:`sample_draws`): read
+    before anything is drawn, built or resolved.
+
+    Raises:
+        ValueError: naming the key of the value refused.
+    """
+    sample_seed(raw)
+    sample_count(raw)
+    for name in SAMPLE_DRAWS:
+        sample_draws(raw, name)
 
 
 def search_from_config(
@@ -320,7 +418,9 @@ def search_from_config(
     from its ODD. The caller records its own cases in it once drawn.
 
     Raises:
-        ValueError: On an unknown field.
+        ValueError: On an unknown field, a ``seed`` or ``count`` that is
+            not a whole number, or a ``tire_friction`` or ``visibility`` that
+            is not true or false (:func:`check_sample_settings`).
     """
     from ..coverage.report import load_and_merge  # noqa: PLC0415
     from .registry import resolve_odd  # noqa: PLC0415
@@ -328,6 +428,10 @@ def search_from_config(
     unknown = set(raw) - SAMPLE_FIELDS
     if unknown:
         raise ValueError(f"sweep.odd_sample: unknown fields {sorted(unknown)}")
+    # Before the ODD is resolved or any coverage read.
+    check_sample_settings(raw)
+    seed = sample_seed(raw)
+    count = sample_count(raw)
     flaky = raw.get("flaky")
     if flaky is True:
         flaky = {}
@@ -347,7 +451,6 @@ def search_from_config(
     ]
     if resolved:
         coverage = load_and_merge(resolved)
-    seed = sample_seed(raw)
     strategy = raw.get("strategy")
     sampler = OddSampler(
         definition,
@@ -366,13 +469,10 @@ def search_from_config(
         search = FlakySearch(sampler, seed=seed, **options)
         if coverage is not None:
             search.observe_report(coverage, None if scenario is None else str(scenario))
-    count = raw.get("count")
-    return sampler, search, None if count is None else int(count)
+    return sampler, search, count
 
 
-def with_tire_friction(
-    samples: Iterable[OddSample], seed: Union[int, str] = 0
-) -> list[OddSample]:
+def with_tire_friction(samples: Iterable[OddSample], seed: int = 0) -> list[OddSample]:
     """*samples*, each with where its grip is in the range its weather leaves.
 
     Each case gets ``environment.tire_friction_quantile=<q>``, *q* uniform in
@@ -389,9 +489,7 @@ def with_tire_friction(
     )
 
 
-def with_visibility(
-    samples: Iterable[OddSample], seed: Union[int, str] = 0
-) -> list[OddSample]:
+def with_visibility(samples: Iterable[OddSample], seed: int = 0) -> list[OddSample]:
     """*samples*, each with where its visibility is in the range its weather leaves.
 
     Each case gets ``environment.visibility_quantile=<q>``, *q* uniform in
@@ -410,7 +508,7 @@ def with_visibility(
 
 def _with_quantile(
     samples: Iterable[OddSample],
-    seed: Union[int, str],
+    seed: int,
     key: str,
     name: str,
     *fixed: str,
@@ -419,9 +517,9 @@ def _with_quantile(
     unless it sets *key* or one of the *fixed* keys already."""
     out: list[OddSample] = []
     prefix = f"{key}="
-    given = tuple(f"{k}=" for k in (key, *fixed))
+    given = (key, *fixed)
     for sample in samples:
-        if any(o.lstrip("+").startswith(given) for o in sample.overrides):
+        if sets_any(sample.overrides, given):
             out.append(sample)
             continue
         rng = random.Random(

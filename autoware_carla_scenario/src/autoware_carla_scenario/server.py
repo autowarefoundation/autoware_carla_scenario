@@ -6,6 +6,7 @@ import atexit
 import logging
 import os
 import signal
+import socket
 import subprocess
 import sys
 import time
@@ -16,7 +17,7 @@ import typesafe_carla.carla as carla
 
 from dotenv import load_dotenv
 
-from .carla_install import installed_executable
+from .carla_install_paths import installed_executable
 
 load_dotenv(override=False)
 
@@ -58,7 +59,7 @@ _WATCHDOG = (
     "    except OSError:\n"
     "        return True\n"
     "    for name in names:\n"
-    "        if not name.isdigit() or int(name) == me:\n"
+    "        if not (name.isascii() and name.isdigit()) or int(name) == me:\n"
     "            continue\n"
     "        try:\n"
     "            with open('/proc/%s/stat' % name) as stat:\n"
@@ -286,28 +287,42 @@ class CarlaServerManager:
         """
         if self._reused or self._process is None:
             return
+        # start_new_session makes the watchdog its group's leader, so the
+        # group's id is its pid.  os.getpgid() cannot stand in for this: once
+        # poll() (is_alive(), _wait_until_ready()) has reaped the watchdog it
+        # raises, though CarlaUnreal.sh's children (UE5) may still run in the
+        # group (#1766).  Linux does not reuse a pid while a group still has
+        # it as its id, so signalling it reaches only what start() launched.
+        pgid = self._process.pid
         try:
-            pgid = os.getpgid(self._process.pid)
             os.killpg(pgid, signal.SIGTERM)
-            try:
-                self._process.wait(timeout=10.0)
-            except subprocess.TimeoutExpired:
-                os.killpg(pgid, signal.SIGKILL)
-                self._process.wait()
-
-            # Wait for all processes in the group (UE5 binary, worker threads,
-            # etc.) to finish.  CarlaUnreal.sh may exit before the UE5 binary
-            # completes its cleanup, so we poll the group explicitly.
-            if not self._wait_for_pgid_exit(pgid, timeout=5.0):
-                try:
-                    os.killpg(pgid, signal.SIGKILL)
-                except ProcessLookupError:
-                    pass
         except ProcessLookupError:
-            # Process already exited; nothing to do.
-            pass
+            pass  # The whole group already exited.
+        try:
+            self._process.wait(timeout=10.0)
+        except subprocess.TimeoutExpired:
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
+            self._process.wait()
+
+        # Wait for all processes in the group (UE5 binary, worker threads,
+        # etc.) to finish.  CarlaUnreal.sh may exit before the UE5 binary
+        # completes its cleanup, so we poll the group explicitly.
+        if not self._wait_for_pgid_exit(pgid, timeout=5.0):
+            try:
+                os.killpg(pgid, signal.SIGKILL)
+            except ProcessLookupError:
+                pass
         self._process = None
         atexit.unregister(self.stop)
+
+    @property
+    def reused(self) -> bool:
+        """Whether :meth:`start` reused a server already running, rather than
+        launching one: a reused server is not this manager's to stop."""
+        return self._reused
 
     def is_alive(self) -> bool:
         """Return True if the server is reachable (regardless of who started it)."""
@@ -350,6 +365,13 @@ class CarlaServerManager:
 
     def _ping(self) -> bool:
         """Try to connect to the CARLA RPC port; return True on success."""
+        # A closed port is answered here, not by the CARLA client: on arm64
+        # its call on a refused connection can abort the process rather than
+        # raise (maps.opendrive._from_server checks the same way).
+        try:
+            socket.create_connection((self.host, self.port), timeout=2.0).close()
+        except OSError:
+            return False
         try:
             client = carla.Client(self.host, self.port)
             client.set_timeout(2.0)

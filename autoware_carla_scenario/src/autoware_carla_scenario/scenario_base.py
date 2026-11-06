@@ -34,72 +34,20 @@ from .coordinate import (
     snap_to_carla_road,
     to_opendrive,
 )
-from .entity._spawn import SpawnLocation, SpawnTransform
+from .entity._spawn import SpawnTransform
+from .entity.ego import EgoConfig
 from .entity.pedestrian_entity import PedestrianEntity
 from .entity.registry import register_entity as _register_entity
 from .entity.registry import register_pedestrian_entity as _register_pedestrian_entity
 from .entity.registry import register_vehicle_entity as _register_vehicle_entity
-from .entity.vehicle_entity import VehicleEntity, VehicleEntityConfig
+from .entity.vehicle_entity import VehicleEntity
 from .failure import FailureCategory
 from .measures import BUILT_IN_MEASURES, Measure, check_measure_key
-from .traffic.base import TrafficBackend, WalkedEntity
+from .seed import check_seed
+from .traffic.base import DrivenEntity, TrafficBackend, WalkedEntity
 from .traffic.driven import BackendDriven
 
 logger = logging.getLogger(__name__)
-
-
-class EgoConfig(VehicleEntityConfig):
-    """Configuration for the ego vehicle.
-
-    Inherits all fields from :class:`VehicleEntityConfig` (``vehicle_type``,
-    ``initial_speed_kmh``, etc.).  The ``role_name`` is automatically set to
-    :data:`~autoware_carla_scenario.constants.EGO_ROLE_NAME`.
-
-    Both ends of the ego's run live here: *spawn_location* is where it starts
-    and *goal_pose* is where it is being sent.  Every scenario needs a goal --
-    an ego that plans its own route will not move without one, and one that is
-    driven for it still had a destination the run was aiming at -- but the
-    config is not always where it comes from: a scenario may derive it in
-    ``setup()`` from what it knows.  ``None`` therefore means "not named yet",
-    and :meth:`BaseScenario.register_route_to_goal` is where an ego that still
-    has none is refused.
-    """
-
-    #: Lanelet2 pose the ego is routed to, or ``None`` until something names it.
-    goal_pose: Optional[Lanelet2Pose]
-
-    #: Lanelet2 poses the route must pass through, in order.  Empty leaves the
-    #: way to the goal to whatever plans the route, which is right when any way
-    #: there will do and wrong when the run *is* a particular drive.
-    waypoint_poses: List[Lanelet2Pose]
-
-    def __init__(
-        self,
-        spawn_location: SpawnLocation,
-        vehicle_type: str = "vehicle.mini.cooper",
-        initial_speed_kmh: float = 0.0,
-        spawn_retry_max_count: int = 0,
-        spawn_retry_t_step: float = 0.1,
-        spawn_retry_z_step: float = 0.5,
-        *,
-        goal_pose: Optional[Lanelet2Pose] = None,
-        waypoint_poses: Optional[Sequence[Lanelet2Pose]] = None,
-    ) -> None:
-        super().__init__(
-            role_name=str(EGO_ROLE_NAME),
-            spawn_location=spawn_location,
-            vehicle_type=vehicle_type,
-            initial_speed_kmh=initial_speed_kmh,
-            spawn_retry_max_count=spawn_retry_max_count,
-            spawn_retry_t_step=spawn_retry_t_step,
-            spawn_retry_z_step=spawn_retry_z_step,
-        )
-        self.goal_pose = goal_pose
-        # Not `list(waypoint_poses or ())`, which has no one type in Codon.
-        poses: List[Lanelet2Pose] = []
-        if waypoint_poses:
-            poses = list(waypoint_poses)
-        self.waypoint_poses = poses
 
 
 class _Registrations:
@@ -223,6 +171,8 @@ class BaseScenario(ABC):
                 of its own.  A fixed seed makes the run's random draws the
                 same every run.  Defaults to :attr:`DEFAULT_RANDOM_SEED`
                 (``0``); ``scenario`` sets it from the config's ``seed``.
+                A whole number from 0 to
+                :data:`~autoware_carla_scenario.seed.MAX_SEED` (``2**31 - 1``).
             ego_type: :class:`EgoVehicle` subclass to instantiate for the ego
                 actor.  Pass
                 :class:`~autoware_carla_scenario.entity.externally_driven.ExternallyDrivenEgo`
@@ -233,6 +183,12 @@ class BaseScenario(ABC):
                 arguments, such as
                 :class:`~autoware_carla_scenario.entity.carla_driver_entity.CarlaDriverEntity`
                 and its driver configuration.  Takes precedence over *ego_type*.
+
+        Raises:
+            ValueError: If *random_seed* is not a whole number from 0 to
+                :data:`~autoware_carla_scenario.seed.MAX_SEED`
+                (:func:`~autoware_carla_scenario.seed.check_seed`), which CARLA
+                and SUMO would refuse once the run had started.
         """
         from .entity.ego import EgoVehicle as _EgoVehicle  # noqa: PLC0415
 
@@ -244,7 +200,7 @@ class BaseScenario(ABC):
         self.ego_entity = ego_entity
         self._spawn_pose = spawn_pose
         self._ground_projection = ground_projection or GroundProjectionConfig()
-        self.random_seed = random_seed
+        self.random_seed = check_seed("random_seed", random_seed)
         self._client = None
         self._tm_port = DEFAULT_TM_PORT
         self._traffic_backend = None
@@ -309,7 +265,12 @@ class BaseScenario(ABC):
         """
         if self.ego_entity is not None:
             return self.ego_entity
-        return self.ego_type()
+        if TYPE_CHECKING:
+            # Codon cannot hold a class as a value (docs/typecheck.md), so the
+            # check has no `ego_type`: it builds a plain EgoVehicle.
+            return EgoVehicle()
+        else:
+            return self.ego_type()
 
     # ------------------------------------------------------------------
     # Client injection
@@ -782,7 +743,11 @@ class BaseScenario(ABC):
         # a run -- no runner, so no backend -- has always meant instead.
         if self._traffic_backend is not None:
             entity.set_traffic_backend(self._traffic_backend)
-            self._traffic_backend.adopt(entity)
+            # Through a local of the type adopt() takes: Codon passes a
+            # subclass to a method a backend overrides only once it is that
+            # type (docs/typecheck.md).
+            adopted: DrivenEntity = entity
+            self._traffic_backend.adopt(adopted)
         elif self._client is not None:
             entity.set_client(self._client, self._tm_port)
 

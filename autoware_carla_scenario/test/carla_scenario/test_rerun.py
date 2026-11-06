@@ -9,7 +9,6 @@ import logging
 import os
 import sys
 import threading
-import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -23,6 +22,7 @@ from autoware_carla_scenario.rerun import (
     RerunConverter,
     RerunUnavailableError,
     convert_outputs,
+    latest,
     main,
     recording_path,
     report,
@@ -33,18 +33,33 @@ from .test_scenario_runner import _make_runner, _Stop
 from .test_trajectory_recorder import _ActorSnapshot, _World
 
 
+# How long a gated ``_FakeConverter.convert`` waits for its gate at most: a
+# regression fails the test instead of hanging it.
+_GATE_TIMEOUT_S = 10.0
+
+
 class _FakeConverter:
     """Stands in for ``autoware_carla_scenario_rerun``: records what it was
     asked, in the order it ran, and fails the logs it is told to."""
 
-    def __init__(self, *, fail: tuple[str, ...] = (), delay: float = 0.0) -> None:
+    def __init__(
+        self,
+        *,
+        fail: tuple[str, ...] = (),
+        gate: threading.Event | None = None,
+    ) -> None:
         self.fail = fail
-        self.delay = delay
+        # ``convert`` waits for the gate (bounded) before it runs; by default
+        # it is open, so a conversion runs at once.
+        if gate is None:
+            gate = threading.Event()
+            gate.set()
+        self.gate = gate
         self.calls: list[tuple[str, str, bool]] = []
         self.threads: list[str] = []
 
     def convert(self, jsonl: str, out_rrd: str, *, strict: bool = False) -> dict:
-        time.sleep(self.delay)
+        self.gate.wait(timeout=_GATE_TIMEOUT_S)
         self.calls.append((jsonl, out_rrd, strict))
         self.threads.append(threading.current_thread().name)
         if Path(jsonl).name in self.fail:
@@ -131,7 +146,7 @@ def test_the_sweeper_refuses_a_sweep_asking_for_recordings_without_the_extra(
     sweeper.launcher = MagicMock()
     with (
         patch(
-            "autoware_carla_scenario.sweeper.lanelet_constraint_sweeper.resolve_map_paths"
+            "autoware_carla_scenario.sweeper.lanelet_constraint_sweeper.load_sweep_map"
         ) as resolve,
         pytest.raises(SystemExit) as exited,
     ):
@@ -157,8 +172,7 @@ def test_the_sweeper_refuses_a_negative_cooldown_max_retries(
     )
     sweeper.launcher = MagicMock()
     with (
-        patch.object(mod, "resolve_map_paths") as resolve,
-        patch.object(mod, "load_map"),
+        patch.object(mod, "load_sweep_map") as resolve,
         patch.object(mod, "expand_sweep", return_value=[("a=1",)]),
         pytest.raises(SystemExit) as exited,
     ):
@@ -214,13 +228,18 @@ def test_the_recording_is_written_beside_the_log() -> None:
 
 
 def test_submit_returns_at_once_and_wait_waits_for_every_log(tmp_path: Path) -> None:
-    fake = _FakeConverter(delay=0.05)
+    # The conversions wait for the gate, so submit() returning before any of
+    # them ran shows it does not wait for one -- no wall clock (#1841).
+    gate = threading.Event()
+    fake = _FakeConverter(gate=gate)
     logs = [tmp_path / f"S-{k}.trajectory.jsonl" for k in range(3)]
     with RerunConverter(converter=fake) as converter:
-        started = time.monotonic()
-        recordings = [converter.submit(log, log.name) for log in logs]
-        # Three conversions of 50 ms each have not run by now.
-        assert time.monotonic() - started < 0.1
+        try:
+            recordings = [converter.submit(log, log.name) for log in logs]
+            assert fake.calls == []
+            assert not any(recording.exists() for recording in recordings)
+        finally:
+            gate.set()
         conversions = converter.wait()
     assert recordings == [recording_path(log) for log in logs]
     assert all(recording.is_file() for recording in recordings)
@@ -298,6 +317,44 @@ def test_the_report_counts_the_recordings_and_names_each_failure(
     assert text.splitlines()[0].startswith("Rerun recordings: 1/2 written")
     assert "rerun <file.rrd>" in text
     assert "[FAILED] B: E: x" in text
+
+
+class _FailsOnce(_FakeConverter):
+    """Fails the first conversion of each log, as a run that is retried."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.seen: set[str] = set()
+
+    def convert(self, jsonl: str, out_rrd: str, *, strict: bool = False) -> dict:
+        if jsonl not in self.seen:
+            self.seen.add(jsonl)
+            raise ValueError(f"cannot read {Path(jsonl).name}")
+        return super().convert(jsonl, out_rrd, strict=strict)
+
+
+def test_a_retried_recording_is_reported_by_its_last_conversion(
+    tmp_path: Path,
+) -> None:
+    # The queue waits for the conversions, removes the failed attempt's
+    # outputs and runs it again, which submits the same log a second time
+    # (#1510).
+    log = tmp_path / "A.trajectory.jsonl"
+    with RerunConverter(converter=_FailsOnce()) as converter:
+        converter.submit(log, "A")
+        assert [c.ok for c in converter.wait()] == [False]
+        converter.submit(log, "A")
+        converter.submit(tmp_path / "B.trajectory.jsonl", "B")
+        conversions = converter.wait()
+    assert [c.ok for c in conversions] == [False, True, False]
+    assert [(c.label, c.ok) for c in latest(conversions)] == [
+        ("A", True),
+        ("B", False),
+    ]
+    text = report(conversions)
+    assert text.splitlines()[0].startswith("Rerun recordings: 1/2 written")
+    assert "[FAILED] A" not in text
+    assert "[FAILED] B: ValueError: cannot read B.trajectory.jsonl" in text
 
 
 # ---------------------------------------------------------------------------
@@ -669,6 +726,27 @@ def test_the_command_line_reports_a_path_that_does_not_exist(
     out = capsys.readouterr().out
     assert "Rerun recordings: 0/1 written" in out
     assert f"[FAILED] {missing}: FileNotFoundError:" in out
+
+
+@pytest.mark.parametrize("jobs", ["-1", "0"])
+def test_the_command_line_refuses_jobs_below_one(
+    tmp_path: Path,
+    no_sdk_cli: _FakeModule,
+    capsys: pytest.CaptureFixture[str],
+    jobs: str,
+) -> None:
+    """#1418: ``--jobs -1`` reached the converter, whose OverflowError ended
+    the run with a traceback before any PATH was converted."""
+    good = tmp_path / "good"
+    good.mkdir()
+    (good / "A.trajectory.jsonl").write_text("{}\n")
+    with pytest.raises(SystemExit) as exited:
+        main(["--jobs", jobs, str(good)])
+    assert exited.value.code == 2
+    err = capsys.readouterr().err
+    assert f"argument --jobs: must be at least 1, got {jobs}" in err
+    assert "Traceback" not in err
+    assert not (good / "A.rrd").exists()
 
 
 def test_a_bad_path_does_not_stop_the_others(

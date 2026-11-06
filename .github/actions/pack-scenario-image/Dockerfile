@@ -170,13 +170,20 @@ RUN set -eu; \
 # ImportError here, not a 15-minute compile), or that slimming broke an
 # extension module.
 #
+# mypy is checked too, by checking a program it has to report: the image runs
+# the scenario check's None check, and a mypy that cannot read its bundled
+# typeshed exits with "perhaps typeshed is broken?", which that check only
+# reports as skipped (#1542).
+#
 # It is built on a tmpfs over the virtualenv the installs left behind: at the
 # path the venv expects, since that is what its scripts and pyvenv.cfg name,
 # but without committing a third copy of it to this stage.
 RUN --mount=type=tmpfs,target=/opt/venv \
     sh /usr/local/bin/venv-layer.sh normalize /export \
     && sh /usr/local/bin/venv-layer.sh stack /export /opt/venv \
-    && TYPESAFE_CARLA_PYCARLA_BUILD=0 /opt/venv/bin/python -c "import typesafe_carla.carla as carla, cv2, lanelet2, numpy, scipy.interpolate, shapely; from importlib.metadata import version; from typesafe_carla import paths; carla.Location(1.0, 2.0, 3.0); print('typesafe-carla ' + version('typesafe-carla') + ' (CARLA ' + paths.native_info()['carla_git_ref'] + '); native extension modules import cleanly')"
+    && TYPESAFE_CARLA_PYCARLA_BUILD=0 /opt/venv/bin/python -c "import typesafe_carla.carla as carla, cv2, lanelet2, numpy, scipy.interpolate, shapely; from importlib.metadata import version; from typesafe_carla import paths; carla.Location(1.0, 2.0, 3.0); print('typesafe-carla ' + version('typesafe-carla') + ' (CARLA ' + paths.native_info()['carla_git_ref'] + '); native extension modules import cleanly')" \
+    && out="$(/opt/venv/bin/python -m mypy --config-file= --no-incremental --cache-dir=/dev/null --show-error-codes -c "$(printf 'from typing import Optional\ndef f(x: Optional[int]) -> int:\n    return x\n')" 2>&1 || true)" \
+    && if printf '%s\n' "${out}" | grep -q '\[return-value\]'; then echo 'mypy reads its typeshed'; else printf '%s\n' "${out}" >&2; exit 1; fi
 
 
 # ---------------------------------------------------------------------------

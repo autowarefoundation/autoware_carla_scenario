@@ -102,7 +102,9 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
         return {}
     try:
         info = yaml.safe_load(info_path.read_text(encoding="utf-8"))
-    except (OSError, yaml.YAMLError):
+    except (OSError, UnicodeDecodeError, yaml.YAMLError):
+        # UnicodeDecodeError is a ValueError, not an OSError: a descriptor
+        # with one legacy Shift-JIS or Latin-1 comment is unreadable too.
         logger.warning("Could not read %s; falling back", info_path, exc_info=True)
         return {}
     if not isinstance(info, dict):
@@ -151,6 +153,11 @@ def read_projector_type(lanelet2_path: Path) -> Optional[str]:
 #: what ``projector_type: Local`` means and what the town's own OpenDRIVE
 #: ``geoReference`` says too (``+lat_0=0 +lon_0=0``).
 NULL_ISLAND = (0.0, 0.0, 0.0)
+
+#: The ellipsoid of a ``geoReference`` whose false origin has to be converted.
+#: The converter writes every ``geoReference`` on WGS84.
+_WGS84_SEMI_MAJOR_AXIS = 6378137.0
+_WGS84_FLATTENING = 1.0 / 298.257223563
 
 
 def read_map_origin(lanelet2_path: Path) -> Optional[tuple[float, float, float]]:
@@ -235,7 +242,80 @@ def _parse_geo_reference(xodr_content: str) -> tuple[float, float, float]:
     alt_match = re.search(r"\+h_0=([-\d.]+)", proj_string)
     alt = float(alt_match.group(1)) if alt_match else 0.0
 
+    # A false origin moves the frame's (0, 0) away from (lat_0, lon_0): the
+    # converter writes `+lat_0=0 +lon_0=141 +x_0=... +y_0=...` for an MGRS map.
+    if "+proj=tmerc" in proj_string:
+        false_easting = _proj_float(proj_string, r"\+x_0=([-\d.]+)", 0.0)
+        false_northing = _proj_float(proj_string, r"\+y_0=([-\d.]+)", 0.0)
+        if false_easting != 0.0 or false_northing != 0.0:
+            scale = _proj_float(proj_string, r"\+k(?:_0)?=([-\d.]+)", 1.0)
+            lat, lon = _tmerc_frame_origin(
+                lat, lon, scale, false_easting, false_northing
+            )
+
     return lat, lon, alt
+
+
+def _proj_float(proj_string: str, pattern: str, default: float) -> float:
+    """Return the number *pattern* captures in a PROJ string, or *default*."""
+    match = re.search(pattern, proj_string)
+    return float(match.group(1)) if match is not None else default
+
+
+def _tmerc_frame_origin(
+    lat_0: float,
+    lon_0: float,
+    scale: float,
+    false_easting: float,
+    false_northing: float,
+) -> tuple[float, float]:
+    """Return the (lat, lon) of (0, 0) in a WGS84 transverse Mercator frame.
+
+    Krüger's series to the third order, accurate to about a millimetre within
+    3000 km of the central meridian.
+    """
+    n = _WGS84_FLATTENING / (2.0 - _WGS84_FLATTENING)
+    rectifying_radius = (
+        _WGS84_SEMI_MAJOR_AXIS / (1.0 + n) * (1.0 + n**2 / 4.0 + n**4 / 64.0)
+    )
+    alpha = (
+        n / 2.0 - 2.0 * n**2 / 3.0 + 5.0 * n**3 / 16.0,
+        13.0 * n**2 / 48.0 - 3.0 * n**3 / 5.0,
+        61.0 * n**3 / 240.0,
+    )
+    beta = (
+        n / 2.0 - 2.0 * n**2 / 3.0 + 37.0 * n**3 / 96.0,
+        n**2 / 48.0 + n**3 / 15.0,
+        17.0 * n**3 / 480.0,
+    )
+    delta = (
+        2.0 * n - 2.0 * n**2 / 3.0 - 2.0 * n**3,
+        7.0 * n**2 / 3.0 - 8.0 * n**3 / 5.0,
+        56.0 * n**3 / 15.0,
+    )
+
+    # The meridian arc from the equator to lat_0, in units of the radius.
+    sin_lat = math.sin(math.radians(lat_0))
+    k = 2.0 * math.sqrt(n) / (1.0 + n)
+    conformal = math.atan(math.sinh(math.atanh(sin_lat) - k * math.atanh(k * sin_lat)))
+    xi_0 = conformal
+    for j in range(1, 4):
+        xi_0 += alpha[j - 1] * math.sin(2.0 * j * conformal)
+
+    xi = xi_0 - false_northing / (scale * rectifying_radius)
+    eta = -false_easting / (scale * rectifying_radius)
+    xi_p = xi
+    eta_p = eta
+    for j in range(1, 4):
+        xi_p -= beta[j - 1] * math.sin(2.0 * j * xi) * math.cosh(2.0 * j * eta)
+        eta_p -= beta[j - 1] * math.cos(2.0 * j * xi) * math.sinh(2.0 * j * eta)
+
+    chi = math.asin(math.sin(xi_p) / math.cosh(eta_p))
+    lat = chi
+    for j in range(1, 4):
+        lat += delta[j - 1] * math.sin(2.0 * j * chi)
+    lon = math.radians(lon_0) + math.atan2(math.sinh(eta_p), math.cos(xi_p))
+    return math.degrees(lat), math.degrees(lon)
 
 
 def map_origin(

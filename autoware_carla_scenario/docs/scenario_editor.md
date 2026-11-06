@@ -28,6 +28,12 @@ There is no editor-only runtime. Every action a document names is built by
 `autoware_carla_scenario.conditions`, and every spawn constraint is evaluated by
 the same `sweeper.constraints` engine a `--multirun` sweep uses.
 
+An entity is of one of four kinds, picked when it is added (**+ Actor**): the
+`ego`, a `vehicle`, a `motorcycle` or a `pedestrian`. A motorcycle is spawned
+as a `MotorcycleEntity`, by default on whichever motorcycle the running CARLA
+has (`vehicle_type: auto`), and its track offers every action a vehicle's
+does; the traffic backends drive it as a motorcycle (docs/traffic_backends.md).
+
 ## Which map: the Map library
 
 A scenario's map is named by a **source URI** pointing at a git repository, and
@@ -39,6 +45,11 @@ whether its revision is pinned.
 See [HD Maps from a Git Repository](maps.md). Two things are worth knowing here:
 a map Autoware's own setup already downloaded is used as it sits, and OpenDRIVE
 is not needed to author a scenario -- lanelets are.
+
+A scenario on a map from the library (or a **Map directory**) is exported with a
+map group of its own, `conf/map/<id>_map.yaml` in the package, and run with
+`map=<id>_map` -- see
+[Running an authored scenario](#running-an-authored-scenario).
 
 ## Where it happens: the places panel
 
@@ -108,6 +119,13 @@ match is **bound** -- through the same `swept_slot` the exported config sweeps
 and the same constraint engine the sweep evaluates -- and the panel says which
 of how many is on screen. The arrows step through the runs a `--multirun` sweep
 would perform, one concrete scenario at a time.
+
+A spawn whose `s` is derived from the map (a `stop_line_offset`, say) is placed
+by that binding, resolved for the bound match by the sweeper's own code: a
+match too short for the offset walks the spawn back onto a predecessor, and the
+pin goes there with the offset the run gets. A match the binding fails on is
+one the sweep drops, so the panel says so rather than drawing a run that never
+happens (#1524).
 
 Everything else keeps the id stored beside it, because that is exactly what a
 run that does not sweep uses: the sweeper enumerates a single target key, so at
@@ -408,7 +426,12 @@ contradict each other: on the nishishinjuku map lanelets 183 and 184 are lanes
 does not exist.
 Compose them with `ALL`, `ANY`, `NOT`, `Sticky` and `Persistent`, which map onto
 `AndCondition`, `OrCondition`, `NotCondition`, `StickyCondition` and
-`PersistentCondition`.
+`PersistentCondition`. The validator warns on a `Persistent` card whose child is
+a Collision, Off the road, Exists or Timeout card: those only ever report
+a failure, and `Persistent` counts only the ticks its child passes, so it would
+never fire. Use a Collision or Timeout on its own: it keeps its failure once
+it has fired, so under a `NOT` it would only fail the run later. Put Off the
+road or Exists, which check again on every tick, under a `NOT` first.
 
 ## Fixed or searched: every lanelet, one question
 
@@ -468,13 +491,27 @@ The id the field shows stays in the document under a search: it is the default a
 run that does not sweep falls back to, and the value the exported config
 declares so that Hydra's struct mode accepts the override at all.
 
+**Excluded lanelet IDs** (Scenario inspector) is what
+`${map.no_3d_model_lanelet_ids}` means for this scenario. Left empty, it
+inherits the map group's own list (`conf/map/nishishinjuku.yaml`'s, for the
+starter), resolved by Hydra at run time. A list typed there replaces the
+group's. On a built-in group the `map` keys a scenario config writes lose to
+the group, composed after the scenario, so the export writes such a list in
+place of every reference instead -- `values: [1, 2]` where the document says
+`${map.no_3d_model_lanelet_ids}` -- and a `map.no_3d_model_lanelet_ids=...`
+override on the command line no longer reaches those constraints. A scenario
+on its own map group (a source or a **Map directory**, below) writes its list,
+empty or not, into that group. The match count below follows the same rule,
+reading the built-in group's list from its file when the field is empty, so it
+counts what the sweep will enumerate.
+
 **One search per run.** The sweeper enumerates a single target key, so a
 document may search for one lanelet; a second search is a validation *warning*
 rather than an error — the scenario still runs, with everything else pinned to
 its default — and names which slot is being driven.
 
 **Preview matches** evaluates that tree against the real Lanelet2 map and
-reports, for example, `133 matched of 979 lanelets`. It is counted when the
+reports, for example, `121 matched of 979 lanelets`. It is counted when the
 picker is opened, not on every render: each lanelet field on the inspector has a
 picker in the page at once, and counting means parsing a city. Loading a map is
 opt-in and cached; if the map files are missing the count is unavailable but the
@@ -563,6 +600,11 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
 
+An entity's spawn offsets, heading, goal `s`, size and initial speed must be
+finite numbers, and its initial speed 0 or more: the validator refuses another
+value on the entity's path (`entities[1].initial_speed_kmh`), where the run
+would refuse it only once CARLA was running.
+
 ## A logical scenario: the route search
 
 A document may describe the ego's drive as a pattern of road instead of
@@ -574,9 +616,21 @@ box removes it; a malformed one is refused with the reason). A *Follow
 Trajectory* card's **Path** then offers *Along the scenario's route*, whose
 **Route vertices** are edited as text, one `kind key=value ...` per line, and
 the **Route progress** condition is offered for triggers, assertions and
-waypoint conditions. A **Spawn** card brings a hidden entity in (or, with no
+waypoint conditions. Progress is clamped to the route, so the validator warns
+about a Route progress card whose target lies before the route's start or past
+its end: it holds from the first tick the entity is on the map, or never. It
+also warns about a strict rule pointing off the route from a target on a bound
+(`<` the start, `>` the end), which never holds
+([logical scenarios](logical_scenarios.md#route_progress-condition)). A
+**Spawn** card brings a hidden entity in (or, with no
 actor, adds a prop by name); trigger its *Set Goal* card on the Spawn card's
 action state.
+
+The **Gate** section below it says when the logical scenario passes over all
+its runs -- minimum runs, success rate, case and cover coverage, trajectory
+consistency -- each threshold a row with a checkbox (judged or not), a bar and
+a number, the shares in percent
+([Gates for Logical Scenarios](gate.md#in-the-scenario-editor)).
 
 ## Ego: who drives, and where to
 
@@ -672,6 +726,12 @@ whatever the control showed instead:
   is a select of *keep the run's* / *On* / *Off*, not a checkbox. The blank
   choice stores `None`, and a post that leaves the field out keeps the stored
   value. Any other `bool` is a checkbox, whose absence from a post means off.
+  Either way the editor stores a real `true`, `false` or (for the select)
+  `null`. A hand-edited document may also spell a `bool` as `1`/`0`,
+  `true`/`false`, `on`/`off` or `yes`/`no` (any case), and leave it blank or
+  `null` for its default -- for a nullable one, the run's. Anything else
+  (`ture`, `enabled`, `2`, `keep`) is a validation error, not a quiet `false`;
+  write "keep the run's" as `null`, not as a word.
 - A `select` field with no value shows a placeholder rather than its first
   option. When the field is `required` the placeholder cannot be picked back,
   and the browser posts nothing for it, so the field stays unset and the
@@ -695,7 +755,10 @@ FieldSpec("speed_threshold", "Counts as stopped below", "number", 0.1,
 A field whose constructor raises for a value needs the matching bound;
 `test_authoring_accepted_builds.py` checks each bound is refused, a value on
 it (or just inside an exclusive one) is accepted and builds, and each default
-lies inside it.
+lies inside it. It also tries every field with no bound on values well outside
+its usual domain (-1, -0.001, 101, 1e12): each one the validator accepts must
+build, so a missing bound shows up there. A spawn or lanelet binding's fields
+are held to the same rule against the sweeper's `parse_binding`.
 
 ### A list of records
 
@@ -777,9 +840,9 @@ a network you trust.
 wheel the scenario needs:
 
 ```
-cut_in-wheelhouse.zip
-`-- cut_in_scenario_wheelhouse/
-    |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
+my_cut_in-wheelhouse.zip
+`-- my_cut_in_scenario_wheelhouse/
+    |-- my_cut_in_scenario-0.1.0-py3-none-any.whl  # the scenario itself
     |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
     |-- typesafe_carla-*.whl                       # the CARLA client, CPython package prebuilt
     |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
@@ -792,10 +855,10 @@ Install it with pip and nothing else -- no `uv`, no `git`, no network, no
 resolution:
 
 ```bash
-unzip cut_in-wheelhouse.zip
+unzip my_cut_in-wheelhouse.zip
 python3 -m venv .venv
-.venv/bin/pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario
-.venv/bin/scenario scenario=cut_in map=nishishinjuku
+.venv/bin/pip install --no-index --find-links my_cut_in_scenario_wheelhouse my-cut-in-scenario
+.venv/bin/scenario scenario=my_cut_in map=nishishinjuku
 ```
 
 The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla),
@@ -822,27 +885,51 @@ beside it.
 
 ### The scenario id names the package
 
-The scenario id is the name `scenario=<id>` selects, and the exported package
-is named after it with `_scenario` added: id `cut_in` becomes the module
-`cut_in_scenario` and the distribution `cut-in-scenario`. The suffix is added
-even to an id that already ends in it, so `new_scenario` is exported as
-`new_scenario_scenario`, never as the package of the id `new`.
+The package is named after the document's **id**, which is lower-case letters,
+digits and `_`, starting with a letter (`^[a-z][a-z0-9_]*$`). The id is the
+name `scenario=<id>` selects, and the exported package is named after it with
+`_scenario` added: `my_cut_in` (the **Cut-in example** starter's id) exports
+the module `my_cut_in_scenario` (distribution `my-cut-in-scenario`, directory
+`my_cut_in_scenario/`), and the id itself stays the scenario's name
+(`scenario=my_cut_in`). The suffix is added even to an id that already ends in
+it, so `new_scenario` is exported as `new_scenario_scenario`, never as the
+package of the id `new`.
+
+The validator (`authoring/package_names.py`) **refuses** an id whose package
+would be the framework's own, `autoware_carla_scenario`: the id
+`autoware_carla`. Such a package depends on itself and replaces the installed
+framework, so it is an `id` error, shown before an export starts, by the same
+rule `scenario-new` refuses that name with.
+
+It also **refuses** an id that names a built-in scenario (`adversity`,
+`cut_in`, `intersection_passing`, `lane_change`, `pedestrian_dart_out`,
+`temporary_stop`, `traffic_light_compliance`: `scaffold/names.py`'s
+`BUILTIN_SCENARIO_NAMES`). The id is the name the package registers its
+builder under, so once installed the package would replace the built-in
+builder while the built-in configs (`scenario=cut_in/left`, ...) still select
+it and hand it the built-in's config keys. It is an `id` error, `The id
+'cut_in' is reserved: it names a built-in scenario ...`, worded as
+`scenario-new`'s refusal of the same `--scenario`.
+
+`export_package` and `names_for_id`, called directly, refuse both too, before
+writing anything. That is why the Cut-in example starts as `my_cut_in`, not
+`cut_in`. A draft saved from the Cut-in example before this change
+has the id `cut_in`: rename it in the Scenario inspector before exporting it.
 
 Package installers compare distribution names with every run of `_`, `-` and
 `.` folded into one `-`, so an id that differs from another only in its
 underscores would be the *same* package -- installing one would silently
-uninstall the other. Export refuses these ids, writing nothing; the validator
-reports them as **warnings** on the `id` field, so the draft -- and a package
-exported with such an id before #1358 -- still compiles and runs:
+uninstall the other. `export_package` refuses these ids, writing nothing; the
+validator reports them as **warnings** on the `id` field, so the draft -- and a
+package exported with such an id before #1358 -- still compiles and runs:
 
 | Id | Would be packaged as | Use instead |
 | --- | --- | --- |
 | `stop__line` (a `__`) | `stop_line_scenario`, the package of `stop_line` | `stop_line` |
 | `stop_line_` (a trailing `_`) | `stop_line_scenario`, the package of `stop_line` | `stop_line` |
-| `autoware_carla` | `autoware_carla_scenario`, the framework itself | any other id |
 
 A draft that already uses such an id still opens and saves; rename it before
-exporting.
+exporting. Every id the export accepts gets a package of its own.
 
 !!! warning "Ids ending in `_scenario` are exported under a new name since #1358"
     Earlier exports did not add the suffix to an id that already ended in
@@ -878,8 +965,10 @@ exporting.
     one package's builder with the other's config, depending on the order the
     entry points happen to load in.
 
-    Every id that does not end in `_scenario` keeps exactly the package name it
-    always had.
+    The id `autoware_carla_scenario`, refused before because it exported as
+    the framework's own package, now exports as `autoware_carla_scenario_scenario`
+    and is accepted. Every id that does not end in `_scenario` keeps exactly the
+    package name it always had.
 
 ### What the wheelhouse is built from
 
@@ -956,11 +1045,11 @@ The manifest records only values that were actually observed:
 
 ```yaml
 format_version: 3
-scenario: {id: cut_in, title: Cut in, document_version: 1, package: cut-in-scenario}
+scenario: {id: my_cut_in, title: Cut in, document_version: 1, package: my-cut-in-scenario}
 runtime: {python: 3.12.10, uv: 0.12.0, requires_python: '>=3.10,<3.15'}
 wheelhouse:
-  directory: cut_in_scenario_wheelhouse
-  install: pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario
+  directory: my_cut_in_scenario_wheelhouse
+  install: pip install --no-index --find-links my_cut_in_scenario_wheelhouse my-cut-in-scenario
   wheels: 104
   python: ['3.10', '3.11', '3.12', '3.13', '3.14']
 autoware_carla_scenario:
@@ -969,10 +1058,14 @@ autoware_carla_scenario:
   commit: 0123456789abcdef0123456789abcdef01234567
   subdirectory: autoware_carla_scenario
 files:
-  document: src/cut_in_scenario/document.yaml
-  hydra_config: src/cut_in_scenario/conf/scenario/cut_in.yaml
+  document: src/my_cut_in_scenario/document.yaml
+  hydra_config: src/my_cut_in_scenario/conf/scenario/my_cut_in.yaml
 notes: []
 ```
+
+A scenario whose map is a source or a directory also lists
+`map_config: src/my_cut_in_scenario/conf/map/my_cut_in_map.yaml`, the map group it
+runs with ([Running an authored scenario](#running-an-authored-scenario)).
 
 Anything that could not be determined is `null` with a note, never a plausible
 guess.
@@ -982,15 +1075,26 @@ guess.
 | Option | Variable | Default | Meaning |
 | --- | --- | --- | --- |
 | `--drafts` | `SCENARIO_EDITOR_DRAFTS` | `./scenario_drafts` | Where drafts are stored |
-| `--export-dir` | `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged, in a directory per draft, until the browser fetches it |
+| `--export-dir` | `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged for download, in a directory per draft; it is kept, so the link can be followed again, until the draft is deleted or exported again |
 | — | `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated; the map cache (`map_root()`: `$AUTOWARE_DATA_DIR/maps`, `~/autoware_data/maps` by default, or `AUTOWARE_CARLA_SCENARIO_MAP_CACHE`) is always added, set or not |
 | `--host` | `SCENARIO_EDITOR_HOST` | `127.0.0.1` | Bind address |
-| `--port` | `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |
+| `--port` | `SCENARIO_EDITOR_PORT` | `9100` | Bind port, 1-65535 (the result viewer uses 9000) |
 | — | `SCENARIO_EDITOR_MAP_VIEWER` | GitHub Pages build | URL of `simple_lanelet2`'s `viewer.js` |
 
 An option defaults to its variable, so a flag on the command line wins over the
 environment (`uv run scenario-editor --host 0.0.0.0 --port 9200`). An unknown
-option is an error (exit 2) and serves nothing.
+option is an error (exit 2) and serves nothing, as is a port (`--port` or
+`SCENARIO_EDITOR_PORT`) that is not an integer within 1-65535: 0, which would
+have the system pick a port the editor does not report, is refused too.
+
+The drafts directory holds every `*.yaml` the editor finds there, drafts or
+not. A file that is not a draft is left out of the list, and so is one the
+editor cannot read (a permission it lacks, a file that is not UTF-8), with a
+warning in the log naming it; opening either by its id is a 404 that says why.
+A drafts directory the editor may not write to -- or a read-only file system --
+turns creating, saving or deleting a draft into a page that names the directory
+(status 500; 507 when its disk is full) instead of a traceback, and the stored
+draft is left as it was.
 
 !!! warning "The editor listens on this machine only by default"
     The editor has no authentication, so it binds `127.0.0.1` unless told
@@ -999,6 +1103,44 @@ option is an error (exit 2) and serves nothing.
     `SCENARIO_EDITOR_HOST=0.0.0.0`) on a network you trust. The editor prints a
     warning when it listens on anything but a loopback address.
 
+    Binding loopback keeps other machines out, not a web page open in your own
+    browser, which can post forms to `127.0.0.1` too. So the editor, like the
+    viewer ([usage](usage.md)), also refuses them:
+
+    * A `POST`, `PUT`, `PATCH` or `DELETE` from another site is refused with
+      403, and changes nothing: one whose `Sec-Fetch-Site` header is
+      `cross-site` or `same-site`, or whose `Origin` header is not the
+      editor's own scheme, host and port (`Origin: null` included). A request
+      with neither header, as curl or a script sends it, is served.
+    * Two `GET` routes do more than read, and are refused the same way:
+      the map library with a repository (`/maps?repo=...`), which runs
+      `git ls-remote` against it and may clone or fetch it, and the map panel
+      (`/draft/<id>/map-view`), which parses the map with `load_map=1` and
+      binds patterns on it. A link from another site to either is answered
+      with 403 and reaches no git server and loads no map. The editor's own
+      links, forms and htmx requests send `Sec-Fetch-Site: same-origin`, and
+      a URL typed in the address bar or opened from a bookmark sends
+      `Sec-Fetch-Site: none`; both are served, and so is a request with
+      neither header. Every other `GET` only reads drafts and files already
+      on disk. This rests on the browser sending `Sec-Fetch-Site`, which
+      current browsers do for `localhost` and loopback addresses but not for
+      plain HTTP on another address (`--host 0.0.0.0`, a LAN address), and
+      which older browsers (Safari before 16.4, Firefox before 90) never
+      send; a link or image from another site then carries neither header
+      and is served.
+    * Against DNS rebinding, a request whose `Host` header is not
+      `localhost`, a loopback address (`127.0.0.1`, `::1`) or the `--host` the
+      editor is bound to, on any port, is refused with 400. Bound to every
+      interface (`0.0.0.0` or `::`), the editor was asked to answer whatever
+      name it is reached under, and checks no `Host`; the `Origin` check still
+      applies.
+      A page served from a rebound name then passes both checks, so a
+      wildcard bind gives up the rebinding protection, even inside a container
+      published only on `127.0.0.1`. Behind a reverse proxy or a remote port
+      forwarder that serves it under another name or over HTTPS, the editor
+      refuses requests unless it is bound to every interface; an SSH `-L`
+      tunnel to a loopback port keeps working.
+
 ## Running an authored scenario
 
 An exported scenario plugs in through the same entry point any scenario package
@@ -1006,12 +1148,72 @@ uses (see [Architecture](architecture.md)) -- installed from its wheelhouse, the
 `scenario` command is on the venv's `PATH`:
 
 ```bash
-.venv/bin/scenario scenario=cut_in map=nishishinjuku
+.venv/bin/scenario scenario=my_cut_in map=nishishinjuku
 
 # Sweep every lanelet the spawn constraints match:
-.venv/bin/scenario --multirun scenario=cut_in map=nishishinjuku \
+.venv/bin/scenario --multirun scenario=my_cut_in map=nishishinjuku \
     hydra/sweeper=lanelet_constraint
 ```
+
+`map=nishishinjuku` is the starter's map, the scenario's **Hydra map group**. A
+scenario whose map is named by a source (picked from the Map library) or a
+**Map directory** is on no built-in group, so its package ships one of its own,
+`src/<package>/conf/map/<id>_map.yaml`, and is run with it -- the export log,
+the package's README and the Scenario inspector all name it:
+
+```bash
+.venv/bin/scenario scenario=my_cut_in map=my_cut_in_map
+```
+
+```yaml
+# @package _global_
+map:
+  name: Town10HD_Opt
+  source: git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@<commit>#autoware_maps/Town10HD_Opt
+  directory: null
+  lanelet2_path: null
+  xodr_path: null
+  projector_type: null
+  overwrite_xodr: false
+  no_3d_model_lanelet_ids: []
+```
+
+It sets every `map` key, the ones the document leaves empty as `null`. A run
+that selects a built-in group instead -- or none, which selects the default,
+`nishishinjuku` -- would put that group's map under the scenario: the framework
+composes the `map` group after the `scenario` one, so the group's name, Lanelet2
+and OpenDRIVE paths and exclusion list win over the `map` keys the scenario's
+own config writes (and a scenario config cannot select another group, as Hydra
+refuses an `override /map` from a group composed before it). So the run refuses
+it before anything starts -- a single run, a batch (naming the case) and a
+lanelet sweep alike -- and names the group to run with. So do the paths that
+search the map without running: a `--multirun` batch and `scenario-expand`
+before their sweep reads any map (`Error: <name>: ...`, exit 1), the viewer's
+**Run** of a sweep, and `scenario-odd route` (the scenario is not planned):
+
+```text
+Error: scenario 'my_cut_in' runs on the map its document names, but map.name is
+'NishishinjukuMap', not the document's 'Town10HD_Opt'.  Run it with
+map=my_cut_in_map, the map group its package ships
+```
+
+The package's `register()` registers its document with its builder
+(`register_scenario_document`), and the run compares the composed `map` with
+it: the CARLA map (`map.name`) must be the document's, and so must where the map
+comes from -- `map.source`, unless a `map.directory` is set, which no built-in
+group sets and so is the run's own local copy of the map. A source other than
+the document's is another map, or another revision whose lanelet ids are not the
+ones the document names: move the pin in the document and export again.
+`map.lanelet2_path` and `map.xodr_path` are not compared, since an explicit file
+is how a run points at its own copy of the same map
+(`map=my_cut_in_map map.xodr_path=/tmp/patched.xodr`).
+
+The group never installs an OpenDRIVE into CARLA (`overwrite_xodr: false`),
+even when the document names its own `.xodr`: that file is what the run reads
+the road geometry from, and replacing the simulator's road network is an
+opt-in only the built-in `nishishinjuku` group makes, for CARLA assets that ship
+without one. A map whose CARLA assets need it installed is run with
+`map.overwrite_xodr=true` on the command line.
 
 The CARLA client needs no separate install: `typesafe-carla` is a dependency of
 the framework, so it is in the lock and in the wheelhouse alongside everything

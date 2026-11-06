@@ -114,8 +114,12 @@ class ResolvedMap:
 
         The one place the derived file's name is decided: if the run and the
         editor disagreed, one would cache a file the other failed to find.
+
+        A full CARLA asset path (``/Game/Carla/Maps/Town10HD_Opt``) is named by
+        its town, as a plain name is: joined whole, its directories would nest
+        under :attr:`derived`, or a leading ``/`` would discard it (#1559).
         """
-        return self.derived / f"{name or self.name}.xodr"
+        return self.derived / f"{_short_map_name(name) or self.name}.xodr"
 
     def cached_derived_xodr(self, name: str = "") -> Optional[Path]:
         """Return the OpenDRIVE already taken from CARLA as *name*, if any.
@@ -125,7 +129,7 @@ class ResolvedMap:
         A scenario whose ``map.name`` differs captures it under that name;
         this is how it is found again.
         """
-        return _derived_file(self.derived, name or self.name)
+        return _derived_file(self.derived, _short_map_name(name) or self.name)
 
     @property
     def local(self) -> bool:
@@ -265,9 +269,23 @@ def _find_xodr(
     return None, False
 
 
+def _short_map_name(name: str) -> str:
+    """Return the bare town name from whatever CARLA calls a map.
+
+    ``/Game/Carla/Maps/Town10HD_Opt``, ``Carla/Maps/Town10HD_Opt`` and
+    ``Town10HD_Opt`` all name ``Town10HD_Opt``.  Wherever a map name becomes a
+    file name or an environment variable it goes through here, so a full asset
+    path never becomes a path of its own (#1559).  A plain name is unchanged.
+    """
+    return name.replace("\\", "/").rstrip("/").rsplit("/", 1)[-1]
+
+
 def _derived_file(derived: Path, name: str) -> Optional[Path]:
-    """Return ``<name>.xodr`` in *derived* if it is a map file there."""
-    candidate = derived / f"{name}.xodr"
+    """Return ``<name>.xodr`` in *derived* if it is a map file there.
+
+    *name* may be a full CARLA asset path; its town names the file.
+    """
+    candidate = derived / f"{_short_map_name(name)}.xodr"
     if _is_map_file(derived, candidate):
         found: Optional[Path] = candidate
         return found

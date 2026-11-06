@@ -26,6 +26,7 @@ from autoware_carla_scenario.visibility import visibility, visibility_range
 from autoware_carla_scenario.weather_rules import (
     DEFAULT_RULES,
     RulesError,
+    check_weather_rules,
     use_weather_rules,
     vehicle_at,
     vehicle_range,
@@ -245,6 +246,58 @@ class TestRulesByVehicle:
         with pytest.raises(RulesError, match="expected a file or"):
             use_weather_rules(42)  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize(
+        "default",
+        [
+            5,
+            True,
+            ["a.yaml"],
+            {"url": "https://example.com/rules.yaml", "sha256": "0" * 64},
+        ],
+    )
+    def test_a_default_not_a_file_is_refused_and_changes_nothing(
+        self, tmp_path, default
+    ) -> None:
+        # #1469: it was read as str() of itself, a path that does not exist.
+        use_weather_rules(
+            {
+                "default": str(_grip_file(tmp_path / "measured.yaml", (0.3, 0.5))),
+                "vehicles": {"ego": str(DEFAULT_RULES)},
+            }
+        )
+        before = CARLA_BACKEND.active_rules
+        with pytest.raises(
+            RulesError, match=r"^environment\.rules\.default: expected a file"
+        ):
+            use_weather_rules({"default": default})
+        assert CARLA_BACKEND.active_rules is before
+        assert vehicle_rules_in_use()
+
+    @pytest.mark.parametrize("vehicles", ["", [], 0, False, "a.yaml"])
+    def test_vehicles_not_a_mapping_is_refused_even_when_empty(self, vehicles) -> None:
+        with pytest.raises(RulesError, match="expected pattern -> file"):
+            use_weather_rules({"vehicles": vehicles})
+
+    @pytest.mark.parametrize("location", [5, None, {"url": "https://x"}])
+    def test_a_vehicles_entry_not_a_file_is_refused_before_any_is_read(
+        self, location
+    ) -> None:
+        with pytest.raises(
+            RulesError, match=r"environment\.rules\.vehicles\.ego: expected a file"
+        ):
+            use_weather_rules(
+                {"vehicles": {"vehicle.*": "missing.yaml", "ego": location}}
+            )
+
+    def test_the_form_is_checked_without_reading_a_file(self) -> None:
+        assert check_weather_rules(None) == (None, [])
+        assert check_weather_rules("missing.yaml") == ("missing.yaml", [])
+        assert check_weather_rules(Path("m.yaml")) == (Path("m.yaml"), [])
+        assert check_weather_rules({"default": None, "vehicles": None}) == (None, [])
+        assert check_weather_rules(
+            {"default": "a.yaml", "vehicles": {"ego": "b.yaml", 7: Path("c.yaml")}}
+        ) == ("a.yaml", [("ego", "b.yaml"), ("7", Path("c.yaml"))])
+
     def test_without_vehicles_every_vehicle_reads_the_default(self) -> None:
         assert not vehicle_rules_in_use()
         assert vehicle_range(
@@ -412,3 +465,125 @@ def test_the_run_config_names_the_rules_and_a_run_without_resets_them(
     assert registered == []
     assert not vehicle_rules_in_use()
     assert CARLA_BACKEND.active_rules is CARLA_BACKEND.rules
+
+
+def _composed(rules: object) -> object:
+    from omegaconf import open_dict
+
+    from autoware_carla_scenario.examples import run
+
+    cfg = run._compose_config("adversity/nade", ["map=town10hd_opt"])
+    with open_dict(cfg):
+        cfg.environment.rules = rules
+    return cfg
+
+
+@pytest.mark.parametrize(
+    ("rules", "match"),
+    [
+        ({"default": 5}, r"environment\.rules\.default: expected a file"),
+        (
+            {"default": {"url": "https://example.com/r.yaml", "sha256": "0" * 64}},
+            r"environment\.rules\.default: expected a file",
+        ),
+        ({"vehicles": []}, r"environment\.rules\.vehicles: expected pattern"),
+        ({"vehicles": {"ego": 5}}, r"environment\.rules\.vehicles\.ego: expected"),
+        ({"vehicle": {}}, r"environment\.rules: unknown fields \['vehicle'\]"),
+        (42, r"environment\.rules: expected a file or"),
+    ],
+)
+def test_a_batch_is_refused_for_malformed_rules_before_it_runs(rules, match) -> None:
+    from autoware_carla_scenario.examples import run
+
+    # #1469: refused by the batch check, naming the case, before any run
+    # reads a rule file.
+    with pytest.raises(run.RunConfigError, match=f"^case: {match}"):
+        run.check_batch_configs([_composed(rules)], ["case"])  # type: ignore[list-item]
+
+
+def test_well_formed_rules_pass_the_batch_check_unread() -> None:
+    from autoware_carla_scenario.examples import run
+
+    for rules in (
+        None,
+        "missing.yaml",
+        {"default": "https://example.com/r.yaml", "vehicles": {"ego": "x.yaml"}},
+    ):
+        run.check_batch_configs([_composed(rules)])  # type: ignore[list-item]
+
+
+@pytest.mark.parametrize(
+    "name", ["EGO_KEY", "QUANTITIES", "WEATHER_INPUTS", "rule_values"]
+)
+def test_weather_rules_re_exports_the_checked_weather_inputs(name: str) -> None:
+    # #1732: the plain part moved to the checked weather_inputs; weather_rules
+    # (and odd.backend through it) still names the same objects.
+    from autoware_carla_scenario import weather_inputs, weather_rules
+
+    assert getattr(weather_rules, name) is getattr(weather_inputs, name)
+    assert name in weather_rules.__all__
+    assert CARLA_BACKEND.rule_inputs is weather_inputs.WEATHER_INPUTS
+
+
+def test_rule_values_adds_water_from_the_wetter_of_wetness_and_deposits() -> None:
+    from autoware_carla_scenario.weather_inputs import rule_values
+
+    assert rule_values({"wetness": 30, "precipitation_deposits": 70}) == {
+        "wetness": 30.0,
+        "precipitation_deposits": 70.0,
+        "water": 70.0,
+    }
+    assert rule_values({"wetness": 20.0, "water": 5.0})["water"] == 5.0
+    assert rule_values({"fog_density": 10.0}) == {"fog_density": 10.0}
+
+
+@pytest.mark.parametrize(
+    ("patterns", "type_id", "role", "expected"),
+    [
+        ([], "vehicle.mini.cooper", "Ego", -1),
+        (["ego"], "vehicle.mini.cooper", "Ego", 0),
+        (["EGO"], "vehicle.mini.cooper", "Ego", 0),
+        (["Ego"], "vehicle.mini.cooper", "ego", -1),
+        # The ego key matches the role only, never the blueprint.
+        (["ego"], "ego", "", -1),
+        (["vehicle.mini.*", "ego"], "vehicle.mini.cooper", "Ego", 0),
+        (["ego", "vehicle.mini.*"], "vehicle.mini.cooper", "Ego", 0),
+        (["ego", "vehicle.mini.*"], "vehicle.mini.cooper", "", 1),
+        (["vehicle.tesla.*", "vehicle.*"], "vehicle.mini.cooper", "", 1),
+        (["vehicle.mini.cooper"], "vehicle.mini.cooper", "", 0),
+        (["vehicle.mini.coope?"], "vehicle.mini.cooper", "", 0),
+        (["vehicle.mini.coope?"], "vehicle.mini.coope", "", -1),
+        (["vehicle.[mt]*"], "vehicle.mini.cooper", "", 0),
+        (["vehicle.[!m]*"], "vehicle.mini.cooper", "", -1),
+        (["vehicle.[!m]*"], "vehicle.tesla.model3", "", 0),
+        (["vehicle.[a-l]*"], "vehicle.mini.cooper", "", -1),
+        (["vehicle.[l-n]*"], "vehicle.mini.cooper", "", 0),
+        # A `[` with no `]` is itself; `[[]` and `[*]` escape.
+        (["vehicle.[mini"], "vehicle.[mini", "", 0),
+        (["vehicle.[[]x"], "vehicle.[x", "", 0),
+        (["vehicle.[*]"], "vehicle.*", "", 0),
+        (["vehicle.[*]"], "vehicle.x", "", -1),
+        # Case-sensitive, and of the whole name.
+        (["Vehicle.*"], "vehicle.mini.cooper", "", -1),
+        (["vehicle.mini"], "vehicle.mini.cooper", "", -1),
+    ],
+)
+def test_vehicle_entry_is_the_first_pattern_the_vehicle_matches(
+    patterns: list[str], type_id: str, role: str, expected: int
+) -> None:
+    import fnmatch
+
+    from autoware_carla_scenario.weather_inputs import EGO_KEY, vehicle_entry
+
+    assert vehicle_entry(patterns, type_id, role) == expected
+    # As the loop weather_rules ran before the move (#1732).
+    before = -1
+    for index, pattern in enumerate(patterns):
+        if pattern.lower() == EGO_KEY:
+            if role == "Ego":
+                before = index
+                break
+        elif fnmatch.fnmatchcase(type_id, pattern):
+            before = index
+            break
+    assert before == expected

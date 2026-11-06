@@ -13,7 +13,8 @@ weighted by it is the naturalistic one.
 As TeraSim's ``NADE`` (``envs/nade.py``, ``envs/nade_with_av.py``):
 
 * **Candidates** are the agents within ``control_radius`` of the ego: the
-  ``max_controlled`` nearest vehicles, and every pedestrian.
+  ``max_controlled`` nearest vehicles, and every pedestrian -- on the ego's
+  level of road, not on a bridge over it or under it (#1596).
 * **Adversity**: each candidate's is the first of the list whose trigger
   fires (:func:`~.triggers.adversity_command`, the location gate
   included), giving ``{normal: 1 - p, adversarial: p}``.
@@ -49,6 +50,9 @@ from .avoidance import (
     AVOID,
     DEFAULT_AVOIDANCE,
     AvoidanceSettings,
+    _check_non_negative,
+    _check_positive,
+    _check_probability,
     accept_command,
     avoid_command,
     avoidable,
@@ -59,7 +63,7 @@ from .collision import DEFAULT_DISTANCE_THRESHOLD
 from .command import AdversarialCommand, predict_command
 from .geometry import AgentFootprint, PredictedState
 from .location import AdversityLocation
-from .observation import Scene
+from .observation import Scene, on_another_level
 from .triggers import (
     DEFAULT_THRESHOLDS,
     AdversityKind,
@@ -99,16 +103,23 @@ class NadeAdversity:
 class NadeSettings:
     """NADE's numbers; TeraSim's by default.
 
+    Each is refused when built outside its bounds (#1458), as a ``q`` above
+    1 would sample the adversity every time and still weight it by ``p / q``.
+
     Attributes:
-        max_controlled: How many of the nearest vehicles are candidates.
-        control_radius: How near the ego (m) a candidate is.
-        horizon: How far ahead futures are predicted (s).
-        resolution: How far apart their states are (s).
-        magnitude: ``M`` of ``q = clip(p * M, 0, max_is_probability)``.
-        max_is_probability: The most ``q`` is.
+        max_controlled: How many of the nearest vehicles are candidates
+            (>= 0).
+        control_radius: How near the ego (m) a candidate is (finite, >= 0).
+        horizon: How far ahead futures are predicted (s; finite, > 0).
+        resolution: How far apart their states are (s; finite, > 0).
+        magnitude: ``M`` of ``q = clip(p * M, 0, max_is_probability)``
+            (finite, >= 0).
+        max_is_probability: The most ``q`` is (in [0, 1]).
         fixed_is_probability: ``q`` for every adversity when above 0, in
-            place of the clip (TeraSim's ``adversity_sampling_probability``).
-        cooldown: How long after a sampled adversity none is (s).
+            place of the clip (TeraSim's ``adversity_sampling_probability``;
+            in [0, 1]).
+        cooldown: How long after a sampled adversity none is (s; finite,
+            >= 0).
         challenge_npcs: Whether an adversity challenges the other candidates
             too, not the ego only (TeraSim's AV-centred check): their victims
             avoid or accept it (:mod:`.avoidance`).
@@ -125,6 +136,19 @@ class NadeSettings:
     cooldown: float = 5.5
     challenge_npcs: bool = False
     avoidance: AvoidanceSettings = DEFAULT_AVOIDANCE
+
+    def __post_init__(self) -> None:
+        if self.max_controlled < 0:
+            raise ValueError(
+                f"max_controlled must not be negative, not {self.max_controlled}"
+            )
+        _check_non_negative("control_radius", self.control_radius)
+        _check_positive("horizon", self.horizon)
+        _check_positive("resolution", self.resolution)
+        _check_non_negative("magnitude", self.magnitude)
+        _check_probability("max_is_probability", self.max_is_probability)
+        _check_probability("fixed_is_probability", self.fixed_is_probability)
+        _check_non_negative("cooldown", self.cooldown)
 
 
 DEFAULT_NADE = NadeSettings()
@@ -161,7 +185,11 @@ def is_probability(
     probability: float, settings: NadeSettings, avoidable: bool = True
 ) -> float:
     """``q`` for an adversity of naturalistic *probability* ``p``; an
-    unavoidable one's magnitude is multiplied (TeraSim's x40)."""
+    unavoidable one's magnitude is multiplied (TeraSim's x40).
+
+    In [0, 1]: :class:`NadeSettings` refuses a ``max_is_probability`` or
+    ``fixed_is_probability`` outside it (#1458).
+    """
     if settings.fixed_is_probability > 0.0:
         return settings.fixed_is_probability
     magnitude = settings.magnitude
@@ -180,7 +208,8 @@ def candidates(
 
     The ``max_controlled`` nearest vehicles within ``control_radius`` of
     *ego*, then every pedestrian there; only those named in
-    *controllable* (what an action can drive), never *ego*.
+    *controllable* (what an action can drive), never *ego*, and none on
+    another level of road than it (:func:`~.observation.on_another_level`).
     """
     me = scene.agents[ego]
     vehicles: list[tuple[float, str]] = []
@@ -189,7 +218,7 @@ def candidates(
         if name == ego or name not in controllable:
             continue
         distance = math.hypot(agent.x - me.x, agent.y - me.y)
-        if distance > settings.control_radius:
+        if distance > settings.control_radius or on_another_level(me, agent):
             continue
         if agent.footprint.is_vehicle:
             vehicles.append((distance, name))
@@ -398,7 +427,11 @@ class _Futures:
         self, name: str, command: AdversarialCommand, ego: str, names: list[str]
     ) -> tuple[list[str], list[PredictedState]]:
         """Whom *name* carrying out *command* challenges -- the ego, and with
-        ``challenge_npcs`` the other candidates' vehicles -- and its future."""
+        ``challenge_npcs`` the other candidates' vehicles -- and its future.
+
+        One on another level of road than *name* is never challenged: their
+        paths may cross in the plane, on a bridge and under it, but they
+        cannot meet (#1596)."""
         agents = self.scene.agents
         agent = agents[name]
         future = self._predict(name, command)
@@ -424,6 +457,8 @@ class _Futures:
                 math.hypot(near.x - agent.x, near.y - agent.y)
                 > DEFAULT_DISTANCE_THRESHOLD
             ):
+                continue
+            if on_another_level(agent, near):
                 continue
             # The ego's was predicted first, from its indicator; the others'
             # as ego_command predicts with none.

@@ -12,6 +12,7 @@ The package provides these CLI commands:
 | `scenario-new` | argparse | Scaffold a standalone scenario package |
 | [`scenario-check`](typecheck.md) | Hydra compose | Compile scenarios with Codon without running them (the static check the runner makes before a run) |
 | [`scenario-slurm`](slurm.md#following-collecting-resubmitting) | argparse | Follow, collect, resubmit or cancel a batch run as SLURM array jobs (`launcher=slurm`) |
+| [`scenario-gate`](gate.md#judging-scenario-gate) | argparse | Judge logical scenarios' gates (runs, success rate, coverage, trajectory consistency) from their runs' gate records, or compare a baseline's runs with a candidate's for regressions |
 | [`scenario-odd`](odd.md#checking-an-odd) | argparse | Check an ODD and show its buckets; `scenario-odd route` checks scenarios' planned routes against it on the Lanelet2 map |
 | [`detect-no-3d-model`](#detect-no-3d-model-3d-model-detection) | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | [`viewer`](#viewer-scenario-result-viewer) | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario test results |
@@ -99,9 +100,36 @@ Python version, and the viewer's Run form reads it the same way.
   configured. A batch whose cases differ in any of them is refused, naming the
   key and the cases (`map.no_3d_model_lanelet_ids` may differ: only a sweep's
   constraints read it)
+- A config value a case would refuse -- an unknown `server.world_reset`, a
+  `scenario.timeout_seconds` that is not positive, a `server.port` out of
+  range, a NaN or negative `server.cooldown_seconds`, a
+  `server.max_tick_rate_hz` or `server.fog_density_scale` that is not a
+  finite number above 0, a `server.cooldown_max_retries` or
+  `server.reload_every` that is not a whole number, a seed or count that is
+  not one ([One Seed for the Whole Run](#one-seed-for-the-whole-run)), an
+  `environment.*` value that is not a number, a `t4scene.step_s` that is not a multiple of the tick, ... -- is
+  refused for every case before any scenario is built or the map is resolved,
+  locally as under `launcher=slurm`: the batch prints
+  `Error: <case>: <key> ...`, naming the case refused, and exits 1, a
+  configuration error as a single run's is (`HYDRA_FULL_ERROR=1` shows the
+  traceback). With `--multirun` each scenario's config is checked before its
+  sweep reads the map, as the lanelet sweeper checks it, and reported as
+  `Error: <scenario>: <key> ...`
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
   (a batch started in the same second as another gets `HH-MM-SS-1`,
-  then `HH-MM-SS-2`, ...: every batch has a directory of its own)
+  then `HH-MM-SS-2`, ...: every batch has a directory of its own). The file
+  is first written once the batch's pre-run checks have passed, just before
+  its first case runs, with every case listed as `"passed": null,
+  "pending": true` (as a SLURM batch's cases without an outcome are), and
+  rewritten as each case ends, the cases not run yet still pending. So a
+  batch that dies at any point from there on -- in its first case too --
+  still lists every case, and
+  [`scenario-gate`](gate.md#cases-that-raised-no-record-so-the-set-is-refused)
+  refuses to judge it from the cases that finished alone; the viewer lists it
+  as a batch with its cases pending. A batch refused before any case runs
+  (a backend or an Autoware workspace that cannot run, CARLA not coming up)
+  writes no summary. The summary written when the batch ends lists no
+  pending case
 - A summary table is printed at the end with per-scenario pass/fail status
 - A case that cannot run at all -- its run raises on every attempt
   (`server.cooldown_max_retries`), e.g. a spawn point with no ground under it --
@@ -112,6 +140,11 @@ Python version, and the viewer's Run form reads it the same way.
   (`server.world_reset`): an attempt that raised never reached the reset at
   the end of its run, so the world is reset before the retry, and the weather
   or frozen traffic lights the failed attempt set do not carry into it
+- A CARLA server the batch started that dies mid-batch is restarted before the
+  next attempt (a retry, or the next case), with the map loaded again, so the
+  cases after the crash run rather than spend their attempts on a server that
+  is gone. A restart that fails is that attempt's failure. A server the batch
+  reused (already running when it started) is never restarted
 - A scenario with a `sweep:` section runs once, as configured; add `--multirun`
   to run every case of it (see [Running every sweep case in a batch](#running-every-sweep-case-in-a-batch))
 
@@ -140,6 +173,18 @@ what the earlier ones left uncovered (see
 A scenario with more than one case is listed as `name#k` in the summary, and
 `batch_results.json` gives each case its `overrides`. `hydra/sweeper=...` may
 be given but is not needed: the batch is the sweeper.
+
+A scenario whose sweep expands to no case (its constraints, route or ODD
+sample match nothing on the map) is refused as the lanelet sweeper refuses
+it: the batch prints `Error: <scenario>: the sweep expands to no case ...` for
+each such scenario of the glob and exits 1 before anything runs, even when the
+other scenarios have cases. A scenario without a `sweep:` is one case, never
+refused. An exported scenario on a map of its own composed on another map
+(`map=<id>_map` left out) is refused the same way, before its sweep reads any
+map:
+`Error: <scenario>: scenario '<id>' runs on the map its document names, but ...`
+([Running an authored scenario](scenario_editor.md#running-an-authored-scenario)).
+`launcher=slurm` expands the batch the same way, so it submits nothing.
 
 On a SLURM cluster, `launcher=slurm` runs a batch's cases as array jobs, several
 at once, each on a CARLA of its own, with the same outputs (off unless
@@ -311,19 +356,64 @@ sweep:
     scenario.spawn_overrides.npc1.lanelet_id: {type: stop_line_approach, offset: 300}
 ```
 
+A constraint sees the pick, not where a walk-back puts the spawn. Use
+`sweep.exclude` to drop a case by the values it ends up with once its bindings
+are applied. Each key lists the values a case may not hold there. For example,
+this keeps a spawn walked back from a junction off the lanelets CARLA does not
+draw:
+
+```yaml
+sweep:
+  exclude:
+    ego.spawn_lanelet_id: ${map.no_3d_model_lanelet_ids}
+```
+
+A `route_through` binding gives the pick and the `depth` lanelets after it.
+Where the graph forks, it follows the lowest id. With `through_junction: true`
+it keeps going while the route's last lanelet is still in a junction, so a turn
+whose junction is several lanelets long ends on the lane it comes out on:
+
+```yaml
+sweep:
+  bindings:
+    scenario.expected_route_lanelet_ids:
+      type: route_through
+      depth: 1
+      through_junction: true
+```
+
 ```bash
 # Run a Hydra multirun over every lanelet whose `ego.spawn_lanelet_id`
 # satisfies the scenario's `sweep.constraints`.
 uv run scenario --multirun scenario=traffic_light_compliance/traffic_light_compliance \
   hydra/sweeper=lanelet_constraint
 
-# Resume a sweep from job number N (1-indexed; 0 disables).
+# Resume a sweep from job number N (1-indexed, at least 1).
 uv run scenario --multirun scenario=traffic_light_compliance/traffic_light_compliance \
   hydra/sweeper=lanelet_constraint --resume-from 10
 ```
 
+The resume point comes from `--resume-from N` on the command line or from
+`sweep.resume_from` in the config. The command line wins: with
+`sweep.resume_from: 5` in the config, `--resume-from 10` resumes at job 10.
+(`--resume-from` reaches the sweeper as the `SWEEP_RESUME_FROM` environment
+variable, which you may also set yourself; it wins over the config the same
+way, so unset a `SWEEP_RESUME_FROM` left over in your shell.) `--resume-from` takes a whole number of at least 1: `0`, a negative
+value or one that is not an integer is a usage error, `Error: --resume-from
+...` and exit 2, before anything runs. `sweep.resume_from` is a whole number
+too; `0` or `null` (or leaving it out) means it is not set, and every job runs
+unless `--resume-from` says otherwise. A `sweep.resume_from` that is a bool, a
+float (`2.7`, or even `3.0`), a string or negative, and a `SWEEP_RESUME_FROM`
+that is not a whole number, is refused with one line, `Error:
+sweep.resume_from must be a whole number of at least 1 ...` (or `Error:
+SWEEP_RESUME_FROM ...`), exit 2, before the map is loaded -- even when
+`--resume-from` overrides it -- rather than truncated, read as 1 or as "run
+every job", or raised as a traceback.
+
 Sweeps write results under `multirun/YYYY-MM-DD/HH-MM-SS/<job-index>/`,
-not `outputs/`. The result viewer scans both directories.
+not `outputs/`. The result viewer scans both directories. A sweep started in
+the same second as another gets `HH-MM-SS-1`, then `HH-MM-SS-2`, ...: every
+sweep has a directory of its own, unless `hydra.sweep.dir=` names one.
 
 A failed, crashed or timed-out case does not stop the sweep: every case runs,
 the sweeper logs `Sweep complete: P/N succeeded, F failed (T timed out).`, and
@@ -336,6 +426,38 @@ its run raised (CARLA went away, a spawn failed), timed out
 FAILED verdict is final and is not retried, as in a batch. The sweeper owns
 these retries: the case's own queue does not retry it as well, so a case runs
 at most `1 + server.cooldown_max_retries` times, as in a batch.
+A retry runs in the case's job directory, and before it starts the sweeper
+removes what the failed attempt wrote there (its result, coverage file,
+trajectory log, recordings ...), as a batch and a SLURM worker do: the retry
+takes the same file stem, so the viewer and the coverage merge read the
+retry's outputs alone. Only the outputs the case's own attempts wrote are
+removed; Hydra's job log and anything already in the directory before the
+case started (one `hydra.sweep.dir=` names again) are kept.
+
+A case given up -- it raised, timed out or crashed on every attempt, or was
+refused -- leaves `case_errored.json` in its job directory (its overrides,
+last exit code, attempts and why): it wrote no result, so no gate record, and
+[`scenario-gate`](gate.md#cases-that-raised-no-record-so-the-set-is-refused)
+refuses the sweep's runs for it. A case of Hydra's basic sweeper (a
+`--multirun` without `hydra/sweeper=lanelet_constraint`) whose run raised
+leaves one too. The marker is also written before each attempt, saying the
+case did not finish, and removed once it ends with a verdict: a case whose
+sweep was killed with it (a segfault, the OOM killer, `SIGKILL`, Ctrl-C)
+leaves it as well. A case whose scenario ran and failed leaves none, nor does
+one a retry passed; one run again in the same directory replaces the marker
+an earlier run left as it starts.
+
+Before it launches the first case, the lanelet sweeper writes the sweep's
+plan, `sweep_plan.json`, into the sweep directory (`hydra.sweep.dir`): each
+case's job directory and overrides. `scenario-gate` counts a planned case
+that left no gate record, no marker and no result as one that never ran, so
+a sweep killed in case 8 of 20 is not judged from cases 1-7 alone. A sweep
+run again into the same directory (with `--resume-from` too) merges its plan
+into the one there, keeping the cases it skips. The viewer lists the job
+directories and ignores the plan. Hydra's basic sweeper creates each job
+directory only as it reaches the case and writes no plan: a basic sweep
+killed mid-run leaves no trace of the cases it never reached
+([Gate](gate.md#cases-that-raised-no-record-so-the-set-is-refused)).
 
 A case that timed out or crashed had no chance to stop the CARLA server it
 launched; that server's watchdog stops it within about a second, giving it
@@ -351,8 +473,10 @@ yourself, which it reused), which no case stops.
 A sweep whose config sets a value its runs would refuse (a `t4scene.step_s`
 that is not a multiple of the tick, a negative `server.cooldown_max_retries`,
 an unknown `server.world_reset` or `traffic.backend`, a
-`scenario.timeout_seconds` that is not positive, ...) exits 2 before the map is
-fetched or any case runs, naming the key, rather than have every case refuse
+`scenario.timeout_seconds` that is not positive, a
+`sweep.job_timeout_seconds` that is not a whole number of seconds, a
+`sweep.resume_from` that is not a whole number, ...) exits
+2 before the map is fetched or any case runs, naming the key, rather than have every case refuse
 it in turn. So does one asking for an extra (`rerun`, `t4`) that is not
 installed. A value only a case's own overrides set (its ODD draw, a
 binding) is refused by that case, which ends the sweep with 2 as a refused
@@ -362,6 +486,30 @@ exit 1.
 A sweep with no case to run exits 1 before anything runs, as a batch with no
 case left does: its constraints, route or ODD sample match nothing on the map
 (`the sweep expands to no case`), or `--resume-from` is past its last case.
+A `--multirun` batch, the viewer and `scenario-expand` refuse such a sweep
+with the same message, naming the scenario. They refuse an invalid sweep (a
+`sweep.case_index` that is not a whole number >= 0 or is past its cases, a constraint that does not parse, a
+Lanelet2 map that is missing, unreadable or cannot be resolved, ...) the same
+way, `Error: <scenario>: <why>`; a batch or `scenario-expand` of a glob
+reports every scenario refused, not just the first, and runs or lists nothing.
+The sweeper (`hydra/sweeper=lanelet_constraint`, a single scenario's
+`--multirun`) refuses an invalid sweep the same way, before any case runs:
+one line on stderr, `Error: <scenario>: <why>`, exit 1, no traceback. These
+are a config with no `sweep` section, `sweep.constraints` naming more than
+one key, what the expansion refuses (a `sweep.case_index` that is not a whole number >= 0 or is past its cases, a
+constraint or binding that does not parse, a `sweep.odd_sample` setting or
+`weights` file it refuses, ...), and a Lanelet2 map it cannot load, whose
+`<why>` is `LaneletConstraintSweeper: <why>`, naming the map: a
+`map.directory` that does not exist, a `map.source` that cannot be fetched, a
+map cache whose root is not a directory (`AUTOWARE_DATA_DIR` naming a file),
+or a `map.lanelet2_path` that is missing or that Lanelet2 cannot read. With
+`HYDRA_FULL_ERROR=1` each is raised instead, traceback and all. Invalid
+`controls` are refused in `scenario-expand`'s format, before the map is
+loaded (so before a `map.source` is cloned): one line on stderr per problem,
+`<scenario>: <path>: <why>` (see [Checking controls](odd.md#checking-controls)),
+exit 1; unlike `scenario-expand`, the sweeper raises them instead with
+`HYDRA_FULL_ERROR=1`. Every other error
+the sweeper meets keeps Hydra's traceback.
 
 Ctrl-C or `SIGTERM` stops the sweep and the case it is running. The case is
 sent `SIGTERM`, so it stops its CARLA server and Autoware stack as on Ctrl-C,
@@ -380,7 +528,16 @@ uv run scenario-expand scenario=traffic_light_compliance/traffic_light_complianc
 ```
 
 A scenario without a `sweep:` section is already concrete, so it expands to a
-single empty case. Only the Lanelet2 map is needed, not a CARLA server.
+single empty case. Only the Lanelet2 map is needed, not a CARLA server. A
+sweep that expands to no case is refused rather than listed as `"cases": []`:
+`Error: <scenario>: the sweep expands to no case ...` on stderr, nothing on
+stdout, exit 1. So is an invalid sweep -- a `sweep.case_index` that is not a whole number >= 0 or is past its cases,
+a constraint or binding that does not parse, constraints for more than one
+key, a Lanelet2 map that is missing, unreadable or cannot be resolved (a
+`map.directory` that does not exist, a `map.source` that cannot be fetched or
+whose map cache root is not a directory), ...: `Error: <scenario>: <why>` (`HYDRA_FULL_ERROR=1` shows its traceback
+instead). As for `scenario`, the last `scenario=` wins when it is
+given more than once.
 
 As with `scenario`, `scenario=` may be a glob. Each scenario it matches is
 expanded with the same overrides and printed as its own JSON object, one per
@@ -395,7 +552,8 @@ uv run scenario-expand 'scenario=intersection_passing/*'
 ```
 
 Every matched scenario is expanded before anything is printed. If one of them
-fails (its `controls:` are invalid, or an override does not compose), each
+fails (its `controls:` are invalid, its sweep is invalid or expands to no
+case, or an override does not compose), each
 failure goes to stderr headed by that scenario's name, nothing goes to stdout,
 and the exit status is non-zero.
 
@@ -409,7 +567,10 @@ itself (`scenario.route.*`); see
 
 When running large batches, you can skip already-completed scenarios.
 `--resume-from N` starts at the *N*th scenario (1-indexed, as for a sweep);
-in a `--multirun` batch it counts the expanded cases:
+in a `--multirun` batch it counts the expanded cases. *N* is a whole number of
+at least 1: `--resume-from 0`, `--resume-from -3` or `--resume-from abc` is a
+usage error, `Error: --resume-from ...` and exit 2, rather than a run of every
+scenario:
 
 ```bash
 # Resume from the 3rd scenario
@@ -439,6 +600,10 @@ uv run scenario scenario=intersection_passing/straight scenario.timeout_seconds=
 uv run scenario scenario=intersection_passing/straight traffic_manager.port=8200
 ```
 
+`server.port` and `traffic_manager.port` (and `traffic.options.port`) must be
+TCP ports, integers within 1-65535; any other value (`0`, `70000`, `true`)
+is refused before anything starts.
+
 ### One Seed for the Whole Run
 
 `seed` (top level, `0` by default) is the one number every random draw of a run
@@ -447,6 +612,31 @@ follows, so the same seed runs the same scenario again:
 ```bash
 uv run scenario scenario=intersection_passing/straight seed=42
 ```
+
+A seed -- `seed`, `sweep.odd_sample.seed`, and each component's own below
+(`background_traffic.seed`, `driver.random_seed`,
+`driver.lidars[].noise_seed`) -- is a whole number from 0 to 2147483647
+(`2**31 - 1`, `autoware_carla_scenario.seed.MAX_SEED`): `42` or `42.0`, not
+`1.9`, a boolean, a string that is no integer, `-1` or `2147483648`, as a
+route search's counts are ([Logical Scenarios](logical_scenarios.md)). The
+upper bound is what the simulators take: CARLA's pedestrian seed is a 32-bit
+unsigned integer and SUMO's `--seed` a 32-bit signed one, so a larger seed
+used to fail every case once CARLA had started (#1560). The background
+traffic source draws from one past `background_traffic.seed`, which wraps to
+0 past 2147483647;
+`sweep.odd_sample.count` is a whole number of at least 1. Any other value is
+refused before anything starts, naming the key, on every path: a single run,
+a batch (local or SLURM), a lanelet sweep and `scenario-expand` (which reads
+only `seed` and `sweep.odd_sample`). The driver's and its LiDARs' seeds are
+refused when their config is built, with an `ego.entity=carla_driver` run's
+other checks; being typed fields, they take no string at all, not even
+`"7"`.
+
+The other whole-number settings a run reads follow the same rule:
+`background_traffic.source.initial_vehicles` and `.max_vehicles` (not
+negative; `max_vehicles` may be null), `server.cooldown_max_retries` and
+`server.reload_every` (not negative). `2.0` is 2, but `2.5` or `true` is
+refused, naming the key, rather than run as 2 or 1.
 
 It is the seed of:
 
@@ -458,6 +648,7 @@ It is the seed of:
 | CARLA's pedestrian navigation (`World.set_pedestrians_seed`) | -- (the scenario's) |
 | Background traffic | `background_traffic.seed` |
 | The adversarial actions, `AdversarialTrafficAction`, `AdversityFeasibleCondition`, `TrafficSourceAction` | their `seed` argument (`Seed` in the editor) |
+| The smart pedestrian's motion generator (`SmartPedestrianControllerAction`) | its `seed` argument |
 | The driver policy's session (`DriveSessionRequest.random_seed`) | `driver.random_seed` |
 | A LiDAR's weather noise | `driver.lidars[].noise_seed` |
 
@@ -545,21 +736,31 @@ Defines the default config group composition:
 |-----------|------|---------|-------------|
 | `server.host` | str | `localhost` | CARLA server hostname |
 | `server.port` | int | `2000` | CARLA server port |
-| `server.cooldown_seconds` | float | `2.0` | Wait time between consecutive scenario runs |
-| `server.cooldown_max_retries` | int | `0` | Maximum retries of a run that raised (not of one that ran and failed) |
+| `server.cooldown_seconds` | float | `2.0` | Wait time (seconds) between consecutive scenario runs; a finite number, `0` or more (`0`: none) |
+| `server.cooldown_max_retries` | int | `0` | Maximum retries of a run that raised (not of one that ran and failed); a whole number, `0` or more (`2.0` is 2; `1.9` or `true` is refused) |
+| `server.max_tick_rate_hz` | float | `null` | Upper bound (Hz) on how fast the run ticks the world, or `null` for as fast as the server allows; a finite number above `0` (`20` is real time at the 0.05 s step, which `ego.entity=ros2` wants: [ROS 2](ros2.md#timing)) |
+| `server.fog_density_scale` | float | `null` | `carla.Weather.FogDensityScale` for a server the run starts and for the LiDARs' fog, or `null` to keep the server's own `0.001`; a finite number above `0` ([Driver Interface](driver_interface.md)) |
 | `server.world_reset` | str | `reload` | How the world is reset between a batch's cases: `reload` or `soft` (see [Resetting the world between cases](#resetting-the-world-between-cases)) |
-| `server.reload_every` | int | `0` | With `world_reset: soft`, load the map on every N-th reset anyway; `0`: only when a soft reset cannot be done |
+| `server.reload_every` | int | `0` | With `world_reset: soft`, load the map on every N-th reset anyway; `0` (or `null`): only when a soft reset cannot be done; a whole number, `0` or more |
 
 #### Ego Vehicle Configuration
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `ego.vehicle_type` | str | `vehicle.mini.cooper` | CARLA blueprint ID for ego vehicle |
-| `ego.initial_speed_kmh` | float | `0.0` | Initial speed of ego vehicle (km/h) |
+| `ego.initial_speed_kmh` | float | `0.0` | Initial speed of ego vehicle (km/h); finite, `0` or more |
 | `ego.spawn_lanelet_id` | int | `242` | Lanelet ID for spawn position |
 | `ego.spawn_s` | float | `25.0` | Longitudinal offset along lanelet centerline (meters) |
 | `ego.spawn_t` | float | `0.0` | Lateral offset from the lanelet centerline, positive to its left (meters) |
 | `ego.spawn_heading` | float | `0.0` | Yaw relative to the lanelet's direction of travel, positive anticlockwise (radians) |
+| `ego.goal_s` | float | `0.0` | Longitudinal offset along the goal lanelet (`ego.goal_lanelet_id`) centerline (meters) |
+
+The speed must be finite and not negative, and the poses (`ego.spawn_s`,
+`ego.spawn_t`, `ego.spawn_heading`, `ego.goal_s`) finite: a negative or NaN
+speed would leave the ego still with no error, an infinite one break its
+physics, and a NaN pose fail far from the key behind it. A run or batch
+refuses such a value before anything starts, naming the key (`Error:
+ego.initial_speed_kmh must be finite and at least 0, got -20`).
 
 #### Entity Configuration
 
@@ -570,8 +771,14 @@ Controls ground projection (ray casting) and spawn retry behavior:
 | `entity.ground_projection_ray_distance_upper` | float | `5.0` | Ray search range above estimated z (meters) |
 | `entity.ground_projection_ray_distance_lower` | float | `10.0` | Ray search range below estimated z (meters) |
 | `entity.spawn_retry_max_count` | int | `10` | Maximum retry attempts for spawn |
-| `entity.spawn_retry_t_step` | float | `0.1` | Lateral offset shift per retry (meters) |
-| `entity.spawn_retry_z_step` | float | `0.5` | Vertical shift per retry (meters) |
+| `entity.spawn_retry_t_step` | float | `0.1` | Lateral offset shift per retry, tried to both sides (meters); finite, `0` or more (`0`: no lateral shift) |
+| `entity.spawn_retry_z_step` | float | `0.5` | Vertical shift per retry, tried up and down (meters); finite, `0` or more (`0`: no vertical shift) |
+
+The two ray distances must be finite and non-negative, and their sum (the
+ray's length) positive. A ray that cannot hit anything would leave every pose
+at its estimate (and a negative range means nothing), so a run or batch refuses such a value before anything starts,
+naming the key (`Error: entity.ground_projection_ray_distance_lower must be
+non-negative and finite, got -1.0`).
 
 #### Traffic Manager Configuration
 
@@ -615,6 +822,7 @@ With `rerun.enabled=true`:
   A run that raised is converted too: its log is what shows what happened.
 - At the end the run waits for the last conversions and prints how they went:
   `Rerun recordings: N/M written`, and a line per failure naming its case. A
+  retried case counts once, by the conversion of its last attempt. A
   failed conversion does not change any verdict or the exit code.
 - Each case's `{ScenarioName}_result.json` names its recording
   (`rerun_recording`), and so does its entry in a batch's
@@ -641,6 +849,31 @@ With `t4scene.enabled=true` each run's trajectory log is also written as a
 T4Scene, `{ScenarioName}.t4scene.pb` with its map, `{ScenarioName}.t4scene.map.pb`,
 the scene tier4/e2e-devkit decodes, scores and draws ([T4 Scene](t4_scene.md));
 `scenario-t4scene <output dir>` does the same after a run.
+
+#### The switches
+
+`rerun.enabled`, `rerun.strict`, `rerun.lidar`, `rerun.cameras`,
+`t4.enabled`, `t4scene.enabled` and `background_traffic.enabled` are each
+`true` or `false`, or one of their spellings as text, in any case and with
+blanks around it (`"false"`, `"no"`, `"off"`, `"0"`, and `"true"`, `"yes"`,
+`"on"`, `"1"`), or the integer `0` or `1`, as the SLURM launcher's flags are
+([Running a Batch on SLURM](slurm.md)). So `"false"`, what
+`${oc.env:RERUN,false}` or a quoted `rerun.enabled='false'` gives, is false.
+Anything else (`ture`, `2`, `0.5`, null) is refused before anything starts,
+in one line naming the key:
+
+```text
+rerun.enabled must be true or false, got 'ture'
+```
+
+A sweep's `sweep.odd_sample.tire_friction` and `sweep.odd_sample.visibility`
+([Tire friction follows the weather](odd.md#tire-friction-follows-the-weather))
+and a route search's `ego_goal` ([Logical Scenarios](logical_scenarios.md))
+are read the same way, except that a missing or null one is true.
+`autoware.launcher.rosdep` ([Autoware](autoware.md)) is read the same way,
+and so is `metrics.heavy` ([Metrics](metrics.md)), except that a null one
+leaves the decision to `$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`; a batch is
+refused for a bad one in any of its cases before the first case runs.
 
 ### Metrics in the recording
 
@@ -720,7 +953,10 @@ The command takes several paths and converts each on its own: a path that does
 not exist, or cannot be converted (a directory it cannot read or write to), is
 reported as `[FAILED] <path>: ...` and the others are still converted. It exits
 0 when every recording was written, 1 when any conversion failed or was
-skipped, and 2 when the converter is not installed.
+skipped, and 2 when the converter is not installed. `--jobs N` converts N logs
+at a time (all cores by default); an N below 1 is refused, with exit status 2,
+before any path is converted -- `--jobs 0` included, which earlier versions
+passed on to the converter.
 
 `video.*` settings (`video.enabled`, `video.width`, `video.height`) are
 accepted for old command lines and configs, and do nothing: a run that sets
@@ -753,6 +989,35 @@ scenario's YAML omits it (the dataclass default in `examples/configs.py`), and
 or — when it ships the default. Every shipped config lists every key of its
 config class, so a `scenario.<key>=` override reaches any of them without `+`.
 
+A run or batch refuses a value out of its key's bounds before anything starts,
+naming the key (`Error: scenario.walk_speed_ms must be finite and positive, not
+0.0`): the config class checks it when it is built (#1815, #1816). Every
+`timeout_seconds`, and the thresholds, distances and durations a check
+compares against -- `min_speed_kmh`, `speed_check_delay_seconds`,
+`turn_indicator_grace_seconds`, `light_switch_delay_seconds`,
+`moving_speed_kmh`, `departure_speed_kmh`, `timeout_after_green_seconds`,
+`standstill_seconds`, `s_margin`, `stop_duration`, `restart_speed_kmh`,
+`trigger_distance_m`, `walk_speed_ms`, `cut_in_after_seconds` and
+`hold_seconds` -- must be finite and positive: at 0 or below the check would
+never fire, or always hold, and the run pass or fail on nothing. Speeds and
+margins that may be 0 -- `npc_initial_speed_kmh`, `npc_speed_kmh`,
+`ego_speed_kmh`, `speed_threshold`, `standstill_speed_mps`,
+`stop_line_tolerance_m`, `pass_beyond_m`, `turn_back_within_m`,
+`turn_back_ttc_s` and `turn_back_distance_m` -- must be finite and not
+negative, and `stop_zone_min_m` must not be past `stop_zone_max_m`. A
+`null` still turns an optional check off.
+
+Each of these numbers must be a number: an int (Hydra reads
+`scenario.timeout_seconds=10` as one) or a float. A boolean, which would pass
+as 1 or 0, a quoted string (`'10'`) or a `null` where no check is optional is
+refused, naming the key (`Error: scenario.timeout_seconds must be a number,
+got None`, #1818); `max_steering_reversals` and `max_turn_indicator_changes`
+must be whole numbers. The scenario's word settings are checked too: `cut_in`'s `side`
+must be `left` or `right`, and `intersection_passing`'s `turn_direction`
+`left`, `right`, `straight` or `null` (straight through, with no turn
+action). The check builds the scenario's config class with the keys it
+defines; a key it does not define is left to the build, which refuses it.
+
 #### Intersection Passing
 
 Tests ego vehicle traversal through an intersection. Verifies that the ego passes through the expected OpenDRIVE road sequence.
@@ -763,7 +1028,7 @@ Tests ego vehicle traversal through an intersection. Verifies that the ego passe
 | `intersection_passing/left_turn` | `left` | `20.0` | — | Left turn at intersection |
 | `intersection_passing/right_turn` | `right` | `20.0` | — | Right turn at intersection |
 | `intersection_passing/right_turn_sweep` | `right` | `60.0` | — | Right turn from a standstill; its sweep takes right turns behind a traffic-light stop line |
-| `intersection_passing/straight_3npc` | — (`null`) | `10.0` | `0.0` | Straight with 3 NPC vehicles, no `TurnAction` |
+| `intersection_passing/straight_3npc` | — (`null`) | `10.0` | — | Straight with 3 NPC vehicles, no `TurnAction` |
 
 **Scenario-specific parameters:**
 
@@ -771,7 +1036,7 @@ Tests ego vehicle traversal through an intersection. Verifies that the ego passe
 |-----------|------|---------|---------|-------------|
 | `scenario.expected_route_lanelet_ids` | list[int] | `[460, 265]` | per config | Lanelet IDs the ego must traverse; a junction's lanelets are judged by the roads before and after it |
 | `scenario.timeout_seconds` | float | `5.0` | per config (above) | Maximum scenario duration |
-| `scenario.min_speed_kmh` | float \| null | null | per config (above) | Minimum ego speed (fail if below). `null` disables check |
+| `scenario.min_speed_kmh` | float \| null | null | per config (above) | Minimum ego speed (fail if below; positive). `null` disables check |
 | `scenario.speed_check_delay_seconds` | float | `0.3` | — | Grace period before speed check starts |
 | `scenario.turn_direction` | str \| null | null | per config (above) | `"left"`, `"right"` or `"straight"` registers a `TurnAction` for that direction; `null` registers none |
 | `scenario.turn_indicator_before_m` | float \| null | null | — | From this many metres before the junction (the stop line at the start of the route's first lanelet) until it is on that lanelet, the ego must show the indicator of `turn_direction` (`left` or `right`); it fails once it has not for `turn_indicator_grace_seconds`. `null` disables the check |
@@ -789,6 +1054,11 @@ npc_vehicles:
     vehicle_type: vehicle.mini.cooper
     initial_speed_kmh: 10.0
 ```
+
+An NPC's `spawn_s` must be finite and its `initial_speed_kmh` finite and not
+negative; a run or batch refuses another value before anything starts
+(`Error: scenario.npc_vehicles[0].initial_speed_kmh must be finite and at
+least 0, got nan`).
 
 **Behavior:**
 - Sets all traffic lights to GREEN
@@ -910,21 +1180,27 @@ uv run scenario-odd route path/to/urban.yaml 'intersection_passing/*' lane_chang
 
 ### Output Files
 
-Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/`:
+Each scenario run generates output in `outputs/YYYY-MM-DD/HH-MM-SS/` (a run
+started in the same second as another run or a batch gets `HH-MM-SS-1`, then
+`HH-MM-SS-2`, ...: every run has a directory of its own, unless
+`hydra.run.dir=` names one):
 
 | File | Description |
 |------|-------------|
 | `{ScenarioName}.log` | CARLA native recording (replay format) |
 | `{ScenarioName}_result.json` | Machine-readable result with condition statuses |
 | `{ScenarioName}_coverage.json` | ODD and scenario coverage hits of the run (merge with `scenario-coverage`, see [Coverage](coverage.md)) |
+| `{ScenarioName}_gate.json` | A logical scenario's gate record: its case, outcome and the ego's drive in the route's frame, which `scenario-gate` judges the scenario's gate from (a document with a gate only, see [Gates](gate.md)) |
 | `{ScenarioName}_odd.tar.gz` | The run's ODD as the files it was read from (an ODD read from OpenODD YAML; openodd's transmission archive, named by its revision; see [Versions of an ODD](odd.md#versions-of-an-odd)) |
 | `{ScenarioName}_requirements.lock` | What the run ran with: every installed distribution pinned, in the requirements format (`pip install -r`), headed by the framework, the scenario's package, Python and the platform. A distribution from git is pinned to its commit; an editable one (a checkout) names its directory, commit and whether it had uncommitted changes |
 | `{ScenarioName}_environment.json` | The same, structured; `_result.json` carries its summary (`environment`: the framework, the scenario's package, key dependencies, and the lock's id -- the SHA-256 of what it pins -- so runs on one environment can be found by it) |
 | `{ScenarioName}.trajectory.jsonl` | The run, tick by tick, and the map, plan, conditions and verdict ([Trajectory Log](trajectory_log.md)); make it a Rerun recording to see the run ([Seeing a run](#seeing-a-run)), or a T4Scene for tier4/e2e-devkit with `scenario-t4scene` ([T4 Scene](t4_scene.md)) |
 | `{ScenarioName}.rrd` | The Rerun recording of the trajectory log, with `rerun.enabled=true` ([Seeing a run](#seeing-a-run)) |
 | `{ScenarioName}.sensors.rrd` | The driver's sensors recorded during the run (`rerun.lidar`, `rerun.cameras`); merged into `{ScenarioName}.rrd` and removed, so only left behind by a run or merge that did not finish ([Sensors in the recording](#sensors-in-the-recording)) |
+| `{ScenarioName}.metrics.rrd` | The run's metrics as scalars, written for a converter that does not draw them and merged into `{ScenarioName}.rrd` and removed, so only left behind by a run killed during the merge ([Metrics in the recording](#metrics-in-the-recording)) |
 | `{ScenarioName}.t4scene.pb`, `{ScenarioName}.t4scene.map.pb` | The trajectory log as a T4Scene and the map it names, with `t4scene.enabled=true` ([T4 Scene](t4_scene.md)) |
 | `{ScenarioName}.t4/` | The run as a T4 dataset (a directory, its version `0` inside), with `t4.enabled=true` ([T4 Dataset](t4_dataset.md)) |
+| `{ScenarioName}.sumo/` | The SUMO backend's log, generated demand and, with `fcd_output`, its floating car data (`fcd.xml`) and clock (`clock.csv`), with `traffic=sumo` ([Traffic Backends](traffic_backends.md)) |
 | `batch_results.json` | Batch summary (glob/batch mode only) |
 
 **Result JSON format:**
@@ -1084,6 +1360,32 @@ its metric's NG time ran out ([Metrics](metrics.md#judging-a-run-on-a-metric)). 
 condition says what it wraps. A combination of conditions (AND, OR, NOT) says
 nothing, and the run's failure is `other`: give it a category.
 
+> **A persistent condition never fires around a failure-only condition.**
+> `PersistentCondition` counts only the ticks its child *passes*, and resets on
+> a failure. `CollisionCondition`, `OffRoadFractionCondition`,
+> `EntityExistenceCondition` and `TimeoutCondition` never pass: they report a
+> failure (`passed=False`) or nothing (their classes set
+> `REPORTS_ONLY_FAILURE`). So `PersistentCondition(OffRoadFractionCondition(...), 0.5)`
+> -- "off the road for 0.5 s" -- never fires, and never fails the run.
+> Building one logs a warning, and the scenario editor's validator warns on
+> the Persistent card. What to write instead depends on the condition:
+>
+> - `CollisionCondition` and `TimeoutCondition` keep their failure once they
+>   have fired (a collision is cached, a timeout stays past its limit), so
+>   there is nothing to wait out: register them on their own.
+>   `PersistentCondition(NotCondition(child), d)` would only fail the run `d`
+>   later, not say that anything held for `d`.
+> - `OffRoadFractionCondition` and `EntityExistenceCondition` check again on
+>   every tick, so a plain `NotCondition(child)` turns their failure into a
+>   pass the persistent condition counts, and it fires once the failure has
+>   held for the duration (a NOT says no category: give it one).
+> - To say a state has *not* held for a while, wrap the condition for that
+>   state in `NotCondition(..., holds_when_pending=True)`, as the
+>   [cut-in example](scenarios/cut_in.md#staying-on-the-lanes-ahead) does.
+>
+> Only a direct child is recognised: a failure-only condition under a sticky,
+> AND or OR condition inside the persistent one draws no warning.
+
 `detail` tells a `progress` failure apart by how the ego ended the run:
 `never_moved` (it never drove 1 m), `stalled` (it had stood
 still for 3 s or more: waiting for something that never cleared) or `moving`
@@ -1097,8 +1399,8 @@ driver ending the run is `driver`, and a case that raised on every attempt is
 | Code | Meaning |
 |------|---------|
 | 0 | All scenarios passed |
-| 1 | One or more scenarios failed or errored, or configuration/runtime error |
-| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`) is not installed, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick |
+| 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <case>: <key> ...` before anything is built) |
+| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`) is not installed, a `--resume-from` that is not a whole number of at least 1, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
 | 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
 
 The same codes hold however the cases run: a single run, a glob batch, a
@@ -1109,7 +1411,9 @@ collects it. A sweep runs every case before it exits, so 1 means at least
 one case failed; the summary names how many. A refusal ends a sweep at once
 with 2, since every case after it would be refused too. A run with no case
 to run (nothing expanded, or `--resume-from` past the last case) exits 1:
-exit 0 always means something ran and passed. The exceptions:
+exit 0 always means something ran and passed. In a lanelet sweep, a case
+whose result JSON is unreadable or has no boolean `passed` (a missing key,
+`"false"`, `1`) has no verdict and counts as failed. The exceptions:
 
 - Under Hydra's own sweeper (`scenario --multirun key=a,b`, no
   `hydra/sweeper=`), a case that raises an exception ends the sweep at once
@@ -1260,10 +1564,10 @@ uv run detect-no-3d-model $CONF/nishishinjuku.yaml -v
 |--------|-------|----------|---------|-------------|
 | `yaml_path` | - | Yes | - | Path to map configuration YAML (map settings at the top level or under `map:`; see below) |
 | `--host` | - | No | `localhost` | CARLA server hostname |
-| `--port` | - | No | `2000` | CARLA server port |
+| `--port` | - | No | `2000` | CARLA server port, 1-65535 |
 | `--ray-upper` | - | No | `5.0` | Ray search range above z estimate (meters); the runner's `entity.ground_projection_ray_distance_upper` |
 | `--ray-lower` | - | No | `10.0` | Ray search range below z estimate (meters); the runner's `entity.ground_projection_ray_distance_lower` |
-| `--timeout` | - | No | `10.0` | CARLA client timeout (seconds) |
+| `--timeout` | - | No | `10.0` | CARLA client timeout (seconds); positive and finite |
 | `--verbose` | `-v` | No | false | Enable DEBUG logging |
 
 The ray defaults are the runner's shipped `entity.*` values, so the tool flags
@@ -1271,6 +1575,13 @@ only lanelets a run's own ground projection would miss. If your runs override
 `entity.ground_projection_ray_distance_upper`/`_lower`, pass the same values
 here, or the tool may flag lanelets those runs project onto (or miss ones they
 cannot).
+
+`--ray-upper` and `--ray-lower` must be finite and non-negative, with a
+positive sum, as the runner's keys must be: a ray of no length hits nothing, so
+every lanelet would be flagged and written to the YAML. The tool refuses such
+values, a `--timeout` that is not positive and finite, and a `--port` outside
+1-65535, with a usage error
+(exit 2) before it connects to CARLA or reads the YAML.
 
 ### Input YAML Requirements
 
@@ -1331,7 +1642,9 @@ Then open `http://localhost:9000` (or the configured host/port) in a browser.
 
 Each option defaults to its environment variable, so a flag on the command line
 wins over the environment. An unknown option is an error (exit 2) and serves
-nothing.
+nothing, as is a port (`--port` or `VIEWER_PORT`) that is not an integer within
+1-65535: 0, which would have the system pick a port the viewer does not report,
+is refused too.
 
 Ctrl-C or `SIGTERM` stops the viewer and the run it started from the Run form.
 An open browser tab keeps the server waiting for it for at most 5 s. The
@@ -1346,6 +1659,45 @@ is recorded as failed, and the jobs after it do not start.
     interface; to serve other machines as before, pass `--host 0.0.0.0` (or set
     `VIEWER_HOST=0.0.0.0`) on a network you trust. The viewer prints a warning
     when it listens on anything but a loopback address.
+
+    Binding loopback keeps other machines out, not a web page open in your own
+    browser, which can send requests to `127.0.0.1` too. So the viewer also
+    refuses them:
+
+    * A `POST`, `PUT`, `PATCH` or `DELETE` from another site is refused with
+      403: one whose `Sec-Fetch-Site` header is `cross-site` or `same-site`,
+      or whose `Origin` header is not the viewer's own scheme, host and port
+      (`Origin: null` included). A request with neither header, as curl or a
+      script sends it, is served.
+    * One `GET` can make something: a case's recording
+      (`/recording/<session>/<index>.rrd`) is converted from its trajectory
+      log, and written, when there is none yet. A request from another site
+      (the same `Sec-Fetch-Site` and `Origin` rules) is then refused with 403
+      and converts nothing. A recording already made is served to any page
+      (a Rerun viewer hosted elsewhere may load its URL); the
+      viewer's pages make it first (`POST /api/recording/...`), and the
+      *Download .rrd* link, a typed URL (`Sec-Fetch-Site: none`) and curl
+      are served as before. Every other `GET` only reads files on disk or
+      queries SLURM. Like the editor's (see the scenario editor's guide),
+      this rests on the browser sending `Sec-Fetch-Site`, which current
+      browsers do for loopback addresses but not for plain HTTP on another
+      address, and older browsers never send.
+    * A JSON route (`/api/run`, `/api/run/preview`,
+      `/api/slurm/.../resubmit`) refuses a body that is not sent as
+      `Content-Type: application/json` with 415, so a `text/plain` body, which
+      a page may send without asking the server first, is never read as JSON.
+    * Against DNS rebinding, a request whose `Host` header is not
+      `localhost`, a loopback address (`127.0.0.1`, `::1`) or the `--host` the
+      viewer is bound to, on any port, is refused with 400. Bound to every
+      interface (`0.0.0.0` or `::`), the viewer was asked to answer whatever
+      name it is reached under, and checks no `Host`; the `Origin` check still
+      applies.
+      A page served from a rebound name then passes both checks, so a
+      wildcard bind gives up the rebinding protection, even inside a container
+      published only on `127.0.0.1`. Behind a reverse proxy or a remote port
+      forwarder that serves it under another name or over HTTPS, the viewer
+      refuses requests unless it is bound to every interface; an SSH `-L`
+      tunnel to a loopback port keeps working.
 
 ### Seeing a run in the viewer
 
@@ -1400,7 +1752,14 @@ buckets it was drawn in and a few metrics of how the ego drove, read off its
 trajectory log: the least gap from its box to another road user's
 (`min gap`), its hardest braking (over half a second), when it first stopped,
 how far it drove, its top and final speed, and the elapsed time. openodd's
-plot of the drawn cases (`openodd.CasePlot`) is shown too.
+plot of the drawn cases (`openodd.CasePlot`) is shown too. A SLURM batch is
+shown before it is collected, from what its tasks have recorded: a case
+without an outcome yet is listed as PENDING, and a task that crashed recorded
+none, so its case stays PENDING until the batch is collected. A case whose
+recorded outcome holds no verdict, or a result that cannot be reported (no
+string `message`, no number `elapsed_seconds`, `condition_statuses` or a
+`failure` that cannot be read), shows as an error, as `scenario-slurm
+collect` reports it.
 
 ### Comparing runs
 
@@ -1411,18 +1770,43 @@ session's page) compares two or more sessions of the same scenarios
 - **Cases** are matched by what they ran -- their sweep overrides (less
   `++odd_case`, which names a case's position), else the ODD values they
   were drawn at -- not by their index, so a case keeps its match when a
-  sweep's order or size changes. Each is marked by how its verdict changed
-  between the first session that ran it and the last: `pass → fail` (a
-  regression, listed first and in red), `fail → pass`, flaky, the same, or
-  run by one session only. Beside it, the change of each metric (bold when
-  more than 5%), each run's verdict linking to its page, and *side by side*:
-  the first and last runs in two Rerun viewers on one page
+  sweep's order or size changes. Cases of one session that share a key (a
+  sweep that draws the same ODD values twice, as one over categorical
+  buckets can) are all kept: each run is listed, and a session with more
+  than one run of a case shows how many of them passed (`1/2 passed`).
+  Each case is marked by how its verdict changed, a session's verdict being
+  `pass` when every one of its runs passed, `fail` when none did (a fail and
+  an error are both not passing), and mixed otherwise:
+  - flaky (amber) when a session's verdict is mixed, whichever session it
+    is, even when that session alone ran the case; or when the first and
+    last sessions that ran it agree but a session between them does not;
+  - else `pass → fail` (a regression, listed first and in red) when every
+    run of the first session that ran it passed and no run of the last did,
+    and `fail → pass` (fixed) the other way;
+  - else the same, or run by one session only (new, or gone).
+
+  Beside it, the change of each metric (the mean of the last session's runs
+  less the first's; bold when more than 5%), each run's verdict linking to
+  its page, and *side by side*: the first run of the first session and the
+  last run of the last in two Rerun viewers on one page
   (`/compare/runs?run=type/date/time/index&run=...`).
 - **ODD cells**: each session's passes and runs in each cell of the two
   attributes picked (the buckets the cases were drawn in), red where the last
   session passes fewer of them, green where more; and openodd's matrix of
-  each session beside the others.
+  each session beside the others. Every run is counted, a repeated case's
+  each run, so a session's cells add up to its pass rate's runs (but for the
+  cases drawn in no bucket of the attributes picked).
 - **Pass rates** of each session.
+
+A SLURM batch can be compared before it is collected, from what its tasks
+have recorded: a case without an outcome yet is PENDING and is left out of
+the comparison, as if that session had not run it (no regression, and not in
+its pass rate), and each session's summary says how many of its cases are
+pending (`1/1 passed · 1 pending (not collected)`). A task that crashed
+recorded no outcome, so its case stays pending until the batch is collected.
+A case whose recorded outcome holds no verdict, or a result that cannot be
+reported, is compared as an error.
+
 ### Running through SLURM
 
 The *Run Scenarios* panel's **Launcher** runs the batch here, case after case
@@ -1437,18 +1821,39 @@ paths](slurm.md#a-submit-host-with-other-paths)); the extra overrides can set
 any other. The
 viewer runs `scenario [--multirun] scenario=... launcher=slurm ... --no-wait`
 (with a sweeper, every case of the sweep) in its base path, and opens the
-batch's page once it is submitted. Where `sbatch` is not on the viewer's
-`PATH` the option is disabled, and says so.
+batch's page once it is submitted. The command is run with no input and in
+a process group of its own; one that has not ended after 30 minutes (it runs
+the batch's checks before `sbatch`) is killed with its whole group, and the
+submission is marked failed (exit status 124) with why, so the next submit is
+taken. Stopped during `sbatch`, it leaves the batch's submission record in
+place, as a timed-out `sbatch` does ([Running a Batch on
+SLURM](slurm.md#how-it-works)): if `squeue --me` lists the job, it runs and the
+batch's page collects it. Where `sbatch` is not on the viewer's `PATH` the option is disabled,
+and says so.
 
 A SLURM batch's page (`outputs/<date>/<time>/` with a `slurm/` directory,
 whoever submitted it) follows it through `squeue` and the records its tasks
 write: each case passed, failed, errored, running, pending or missing (with
 why: its task's state and error), each submission's job and tasks (state,
 host, cases done, peak memory), and the cases as they land, before the batch
-has a summary. Its buttons run `scenario-slurm` on the batch: *Resubmit
-missing* (the cases with no outcome, or that errored), *Resubmit failed too*
+has a summary. A submission with no job id names no job: while its `sbatch`
+is in flight it reads *being submitted* and its cases pending; once that
+`sbatch` timed out it reads *sbatch timed out*, with when, and its cases
+unknown, since the job may exist all the same (check `squeue --me`); a record
+its submitter left behind more than 600 s ago reads *no job*, and its cases
+missing. Its buttons run `scenario-slurm` on the batch: *Resubmit
+missing* (the cases with no outcome, including a result with no boolean
+`passed` or one that cannot be reported -- no string `message`, no number
+`elapsed_seconds`, unreadable `condition_statuses` or `failure` -- which
+shows as failed, or that errored), *Resubmit failed too*
 (`--failed`), with the array parallelism and cases per task to use, *Collect*
-(the summary and `batch_results.json`) and *Cancel jobs*.
+(the summary and `batch_results.json`) and *Cancel jobs*. Each shows the
+command's output, marked failed when the command failed: *Collect* is marked
+done when it collected the batch, even with cases that failed (exit 1 with a
+new `slurm/collected.json`), and failed when it could not collect it (an
+`Error:` such as an unreadable manifest or an unwritable batch directory, a
+traceback, or a `scenario-slurm` that could not be started or did not end in
+five minutes).
 
 `VIEWER_SCENARIO_COMMAND` replaces `uv run scenario` as the command a SLURM
 batch is submitted with (`.venv/bin/scenario`, say, where `uv run` must not

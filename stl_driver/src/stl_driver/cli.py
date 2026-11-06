@@ -13,12 +13,46 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import sys
 from collections.abc import Sequence
 
 from stl_driver import __version__
 
 __all__ = ["main"]
+
+
+def _positive_int(text: str) -> int:
+    """An argparse type for a count that must be at least one."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a positive integer, got {text!r}") from None
+    if value < 1:
+        raise argparse.ArgumentTypeError(f"must be a positive integer, got {value}")
+    return value
+
+
+def _port(text: str) -> int:
+    """An argparse type for a TCP port to listen on, 1 to 65535."""
+    try:
+        value = int(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a port number, got {text!r}") from None
+    if not 1 <= value <= 65535:
+        raise argparse.ArgumentTypeError(f"must be a port between 1 and 65535, got {value}")
+    return value
+
+
+def _positive_float(text: str) -> float:
+    """An argparse type for a finite quantity greater than zero."""
+    try:
+        value = float(text)
+    except ValueError:
+        raise argparse.ArgumentTypeError(f"expected a positive number, got {text!r}") from None
+    if not math.isfinite(value) or value <= 0.0:
+        raise argparse.ArgumentTypeError(f"must be a finite number above zero, got {text!r}")
+    return value
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -36,21 +70,31 @@ def build_parser() -> argparse.ArgumentParser:
 
     serve = subparsers.add_parser("serve", help="run the policy as an egodriver gRPC server")
     serve.add_argument("--host", default="0.0.0.0")
-    serve.add_argument("--port", type=int, default=50051)
-    serve.add_argument("--max-workers", type=int, default=8)
+    serve.add_argument("--port", type=_port, default=50051, help="1 to 65535")
+    serve.add_argument(
+        "--max-workers",
+        type=_positive_int,
+        default=8,
+        help="gRPC worker threads, at least 1",
+    )
     serve.add_argument(
         "--cruise-speed",
-        type=float,
+        type=_positive_float,
         default=None,
-        help="speed to aim for when nothing else binds, m/s",
+        help="speed to aim for when nothing else binds, m/s (above zero)",
     )
     serve.set_defaults(handler=_serve)
 
     demo = subparsers.add_parser(
         "demo", help="close the loop against a fake straight road, without CARLA"
     )
-    demo.add_argument("--steps", type=int, default=120)
-    demo.add_argument("--cruise-speed", type=float, default=None)
+    demo.add_argument("--steps", type=_positive_int, default=120, help="rollout length, at least 1")
+    demo.add_argument(
+        "--cruise-speed",
+        type=_positive_float,
+        default=None,
+        help="speed to aim for when nothing else binds, m/s (above zero)",
+    )
     demo.add_argument("--metrics-json", default=None, help="write rollout metrics here")
     demo.set_defaults(handler=_demo)
 

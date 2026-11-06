@@ -10,12 +10,14 @@ from typing import Any
 import yaml  # type: ignore[import-untyped]
 
 from ..registry import get_conf_dirs, load_scenario_plugins
+from ..run_outputs import RESULT_SUFFIX
 from ..scenario_glob import scenario_names
 from . import cases
-from .case_paths import result_path
+from .case_paths import result_path, session_order
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
-from .runner import RAW_OUTPUT_LOG
+from .runner import _RAW_LOG_MAX_BYTES as _RAW_LOG_MAX_BYTES
+from .runner import _read_raw_log as _read_raw_log
 
 logger = logging.getLogger(__name__)
 
@@ -122,7 +124,11 @@ def _seconds(value: Any) -> float | None:
     """A duration: *value* when it is a number (not a boolean), else ``None``."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    try:
+        return float(value)
+    except OverflowError:
+        # An integer too long for a float (#1726).
+        return None
 
 
 def _text(value: Any) -> str:
@@ -133,13 +139,19 @@ def _text(value: Any) -> str:
 
 
 def _read_overrides(job_dir: Path) -> list[str]:
-    """Read ``.hydra/overrides.yaml`` from a job directory."""
+    """Read ``.hydra/overrides.yaml`` from a job directory.
+
+    Empty when the file cannot be read or is no YAML list: a file that is not
+    UTF-8 (a ``UnicodeDecodeError``, a ``ValueError``) must not break the
+    session and case pages (#1631). Each item is a string, as
+    ``results._hydra_overrides`` reads it.
+    """
     try:
         raw = (job_dir / ".hydra" / "overrides.yaml").read_text(encoding="utf-8")
         data = yaml.safe_load(raw)
-        return data if isinstance(data, list) else []
-    except (yaml.YAMLError, OSError):
+    except (yaml.YAMLError, OSError, ValueError):
         return []
+    return [str(o) for o in data] if isinstance(data, list) else []
 
 
 def _extract_scenario_name(result: dict[str, Any] | None, job_dir: Path) -> str:
@@ -151,7 +163,7 @@ def _extract_scenario_name(result: dict[str, Any] | None, job_dir: Path) -> str:
     # Derive from the *_result.json filename
     path = result_path(job_dir)
     if path is not None:
-        return path.name[: -len("_result.json")]
+        return path.name[: -len(RESULT_SUFFIX)]
     return "unknown"
 
 
@@ -161,7 +173,11 @@ def _scan_multirun_session(
     """Scan a single multirun session directory."""
     # Multirun directories contain numbered subdirectories (0, 1, 2, ...)
     job_dirs = sorted(
-        (d for d in session_dir.iterdir() if d.is_dir() and d.name.isdigit()),
+        (
+            d
+            for d in session_dir.iterdir()
+            if d.is_dir() and d.name.isascii() and d.name.isdigit()
+        ),
         key=lambda d: int(d.name),
     )
     if not job_dirs:
@@ -203,6 +219,7 @@ def _scan_outputs_session(
         if not entries:
             return None
         passed_count = sum(1 for item in entries if _passed(item.get("passed")))
+        pending_count = sum(1 for item in entries if item.get("pending") is True)
         scenario_names = {_name(item.get("scenario"), "unknown") for item in entries}
         return SessionSummary(
             date=date,
@@ -211,6 +228,7 @@ def _scan_outputs_session(
             scenario_name=", ".join(sorted(scenario_names)),
             passed_count=passed_count,
             total_count=len(entries),
+            pending_count=pending_count,
         )
 
     # Single run: look for *_result.json
@@ -277,8 +295,8 @@ def scan_sessions(base_path: Path) -> list[SessionSummary]:
                 if summary:
                     sessions.append(summary)
 
-    # Sort by date+time descending
-    sessions.sort(key=lambda s: (s.date, s.time), reverse=True)
+    # Sort by date+time descending; ``-10`` after ``-9`` (#1845).
+    sessions.sort(key=lambda s: (s.date, *session_order(s.time)), reverse=True)
 
     _cache[cache_key] = sessions
     return sessions
@@ -310,7 +328,9 @@ def load_session(
         if not directory.is_dir():
             return items
         indices = sorted(
-            int(d.name) for d in directory.iterdir() if d.is_dir() and d.name.isdigit()
+            int(d.name)
+            for d in directory.iterdir()
+            if d.is_dir() and d.name.isascii() and d.name.isdigit()
         )
         for index in indices:
             job = cases.job_dir(base_path, date, time, index)
@@ -398,33 +418,6 @@ def load_session(
     if session_type != "batch" or final:
         _cache[cache_key] = (stamp, items)
     return items
-
-
-_RAW_LOG_MAX_BYTES = 256 * 1024  # 256 KB cap per log
-
-
-def _read_raw_log(job_dir: Path) -> str:
-    """Read raw terminal log from a job directory.
-
-    Tries ``raw_output.log`` first (subprocess stdout/stderr captured by
-    the runner), then falls back to ``run.log`` (Python logging output).
-    Returns an empty string when neither file exists.  Large files are
-    truncated to the last ``_RAW_LOG_MAX_BYTES`` bytes.
-    """
-    for name in (RAW_OUTPUT_LOG, "run.log"):
-        try:
-            log_path = job_dir / name
-            size = log_path.stat().st_size
-            if size <= _RAW_LOG_MAX_BYTES:
-                return log_path.read_text(encoding="utf-8", errors="replace")
-            with log_path.open(encoding="utf-8", errors="replace") as f:
-                f.seek(size - _RAW_LOG_MAX_BYTES)
-                f.readline()  # discard partial first line
-                tail = f.read()
-            return f"... (truncated, showing last {len(tail)} chars) ...\n{tail}"
-        except OSError:
-            continue
-    return ""
 
 
 def _build_condition_tree(details: dict[str, Any]) -> list[ConditionNode]:

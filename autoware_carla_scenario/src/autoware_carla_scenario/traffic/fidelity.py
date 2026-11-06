@@ -20,9 +20,29 @@ import math
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
+from ..config_flags import check_flag
+from ..value_text import shown
 from .base import SimulationFidelity
 
 __all__ = ["FidelityCandidate", "MesoscopicConfig", "plan_fidelity"]
+
+
+def _number(key: str, value: float, requirement: str) -> float:
+    """*value* as a float, or the keyed ``ValueError`` saying *requirement*.
+
+    A traffic option's check compares the value and calls ``math.isfinite``
+    on it, so whatever is not a number has to be refused first: a bool would
+    pass as ``0`` or ``1`` (``period_s: true``, a 1 s period), and a string
+    or null in a required field would raise a ``TypeError`` naming no key
+    (#1663).  An int is taken as the float it is, unless it is too big for
+    one (``10**400``), which is refused as not finite (#1652).
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{key} must be {requirement} (got {shown(value)})")
+    try:
+        return float(value)
+    except OverflowError:
+        raise ValueError(f"{key} must be {requirement} (got {shown(value)})") from None
 
 
 @dataclass
@@ -75,7 +95,31 @@ class MesoscopicConfig:
         # radius is ``enabled=False`` said another way, an infinite interval
         # freezes every level after the first decision, and an infinite
         # headway or spacing stops the queue model -- and ``enabled`` already
-        # says "off".
+        # says "off".  Each is a number first: a bool, a string or null is
+        # refused by its key, and an int is kept as its float (#1663).
+        # The switches are read strictly (config_flags.check_flag): "false"
+        # is false and a typo is refused, named under ``mesoscopic.`` since
+        # a bare ``scenario_vehicles`` is the SUMO option of that name (#1757).
+        self.enabled = check_flag("mesoscopic.enabled", self.enabled)
+        self.scenario_vehicles = check_flag(
+            "mesoscopic.scenario_vehicles", self.scenario_vehicles
+        )
+        self.junction_control = check_flag(
+            "mesoscopic.junction_control", self.junction_control
+        )
+        self.micro_radius_m = _number(
+            "micro_radius_m", self.micro_radius_m, "positive and finite"
+        )
+        if self.meso_radius_m is not None:
+            self.meso_radius_m = _number(
+                "meso_radius_m", self.meso_radius_m, "finite or null"
+            )
+        self.update_interval_s = _number(
+            "update_interval_s", self.update_interval_s, "finite and not negative"
+        )
+        both = "positive and finite"
+        self.headway_s = _number("headway_s", self.headway_s, both)
+        self.jam_spacing_m = _number("jam_spacing_m", self.jam_spacing_m, both)
         if not (math.isfinite(self.micro_radius_m) and self.micro_radius_m > 0.0):
             raise ValueError(
                 "micro_radius_m must be positive and finite "

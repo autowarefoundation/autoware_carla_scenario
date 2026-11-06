@@ -95,6 +95,9 @@ class MapPose:
             the direction of the trajectory at this vertex instead.
         z: Absolute elevation in metres.  ``None`` places the entity on the road
             surface under it, which is what a 2-D recording needs.
+
+    Raises:
+        ValueError: A field is not finite (``nan``, ``inf``).
     """
 
     x: float
@@ -102,10 +105,22 @@ class MapPose:
     yaw: Optional[float] = None
     z: Optional[float] = None
 
+    def __post_init__(self) -> None:
+        _finite("MapPose", "x", self.x)
+        _finite("MapPose", "y", self.y)
+        _finite_or_none("MapPose", "yaw", self.yaw)
+        _finite_or_none("MapPose", "z", self.z)
+
 
 def _finite(owner: str, name: str, value: float) -> None:
     if not math.isfinite(float(value)):
         raise ValueError(f"{owner}.{name} must be finite")
+
+
+def _finite_or_none(owner: str, name: str, value: Optional[float]) -> None:
+    """:func:`_finite` for a field that ``None`` leaves unset."""
+    if value is not None:
+        _finite(owner, name, value)
 
 
 def _role_name(role: Union["EntityRole", str, None]) -> Optional[str]:
@@ -189,6 +204,7 @@ class RelativeLanePose:
         object.__setattr__(self, "d_lane", int(self.d_lane))
         _finite("RelativeLanePose", "ds", self.ds)
         _finite("RelativeLanePose", "offset", self.offset)
+        _finite_or_none("RelativeLanePose", "yaw", self.yaw)
 
 
 def _one_of(owner: str, name: str, value: str, allowed: Sequence[str]) -> None:
@@ -251,6 +267,7 @@ class RouteLanePose:
     def __post_init__(self) -> None:
         _finite("RouteLanePose", "ds", self.ds)
         _finite("RouteLanePose", "offset", self.offset)
+        _finite_or_none("RouteLanePose", "yaw", self.yaw)
         object.__setattr__(
             self, "d_lane", _whole("RouteLanePose", "d_lane", self.d_lane)
         )
@@ -285,6 +302,7 @@ class RouteOppositePose:
     def __post_init__(self) -> None:
         _finite("RouteOppositePose", "ds", self.ds)
         _finite("RouteOppositePose", "offset", self.offset)
+        _finite_or_none("RouteOppositePose", "yaw", self.yaw)
         lane = _whole("RouteOppositePose", "lane", self.lane)
         if lane < 1:
             raise ValueError("RouteOppositePose.lane counts from 1")
@@ -337,6 +355,7 @@ class RouteCrossingPose:
 
         _finite("RouteCrossingPose", "distance", self.distance)
         _finite("RouteCrossingPose", "offset", self.offset)
+        _finite_or_none("RouteCrossingPose", "yaw", self.yaw)
         junction = _whole("RouteCrossingPose", "junction", self.junction)
         if junction < 0:
             raise ValueError("RouteCrossingPose.junction counts from 0")
@@ -389,6 +408,7 @@ class RouteCrosswalkPose:
         from ..route.model import CROSSWALK_LEGS, SIDES  # noqa: PLC0415
 
         _finite("RouteCrosswalkPose", "along", self.along)
+        _finite_or_none("RouteCrosswalkPose", "yaw", self.yaw)
         junction = _whole("RouteCrosswalkPose", "junction", self.junction)
         if junction < 0:
             raise ValueError("RouteCrosswalkPose.junction counts from 0")
@@ -426,6 +446,7 @@ class RouteRoadsidePose:
 
         _finite("RouteRoadsidePose", "ds", self.ds)
         _finite("RouteRoadsidePose", "kerb_distance", self.kerb_distance)
+        _finite_or_none("RouteRoadsidePose", "yaw", self.yaw)
         _one_of("RouteRoadsidePose", "side", self.side, SIDES)
         _check_anchor("RouteRoadsidePose", self.anchor)
 
@@ -891,6 +912,14 @@ class TrajectorySample:
         return math.hypot(self.vx, self.vy)
 
 
+def _finite_column(name: str, values: Sequence[float]) -> None:
+    for index, value in enumerate(values):
+        if not math.isfinite(value):
+            raise ValueError(
+                f"ResolvedTrajectory.{name}[{index}] must be finite, got {value}"
+            )
+
+
 @dataclass
 class ResolvedTrajectory:
     """A trajectory whose vertices are CARLA world points.
@@ -905,6 +934,11 @@ class ResolvedTrajectory:
             heading is taken from the path.
         times: Vertex times, or ``None`` for an untimed trajectory.
         closed: Whether the last vertex joins back to the first.
+
+    Raises:
+        ValueError: The columns differ in length, there are fewer than two
+            vertices, or a value (a position, a given yaw, a time) is not
+            finite.
     """
 
     xs: Sequence[float]
@@ -929,6 +963,22 @@ class ResolvedTrajectory:
         self.zs = [float(value) for value in self.zs]
         if self.times is not None:
             self.times = [float(value) for value in self.times]
+        # One NaN vertex would make the length, and so every sample, NaN --
+        # the stretches between finite vertices too.  The poses refuse
+        # non-finite fields where they are written; this catches whatever a
+        # resolution or a computed path lets through.
+        _finite_column("xs", self.xs)
+        _finite_column("ys", self.ys)
+        _finite_column("zs", self.zs)
+        for index, yaw in enumerate(self.yaws):
+            if yaw is not None:
+                if not math.isfinite(float(yaw)):
+                    raise ValueError(
+                        f"ResolvedTrajectory.yaws[{index}] must be finite, got {yaw}"
+                    )
+        times = self.times
+        if times is not None:
+            _finite_column("times", times)
         if self.closed:
             # The closing segment is an ordinary one, so the distance queries
             # need no special case for it.

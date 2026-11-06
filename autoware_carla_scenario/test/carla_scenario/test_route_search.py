@@ -9,6 +9,8 @@ pattern is found on a real one.
 
 from __future__ import annotations
 
+import math
+from fractions import Fraction
 from pathlib import Path
 from typing import Any
 
@@ -82,6 +84,35 @@ class TestParsing:
         assert junction.traffic_light == "yes"
         assert junction.crosswalk_exit == "no"
         assert (spec.ego_spawn_s, spec.ego_goal_margin, spec.seed) == (5.0, 2.0, 7)
+
+    # ego_goal is read strictly, not by truthiness: "false" hands over no
+    # goal, as the docs say, and a typo is refused, named (#1756).
+    @pytest.mark.parametrize(
+        ("value", "goal"),
+        [
+            (False, False),
+            ("false", False),
+            ("off", False),
+            (0, False),
+            (True, True),
+            ("yes", True),
+            (1, True),
+            (None, True),
+        ],
+    )
+    def test_ego_goal_is_read_strictly(self, value: Any, goal: bool) -> None:
+        spec = parse_route_search({"segments": [_lane()], "ego_goal": value})
+        assert spec.ego_goal is goal
+
+    def test_ego_goal_defaults_to_true(self) -> None:
+        assert parse_route_search({"segments": [_lane()]}).ego_goal is True
+
+    @pytest.mark.parametrize(("value", "shown"), [("ture", "'ture'"), (2, "2")])
+    def test_a_bad_ego_goal_is_refused_naming_it(self, value: Any, shown: str) -> None:
+        with pytest.raises(
+            ValueError, match=f"^ego_goal must be true or false, got {shown}$"
+        ):
+            parse_route_search({"segments": [_lane()], "ego_goal": value})
 
     @pytest.mark.parametrize(
         ("search", "message"),
@@ -186,6 +217,27 @@ class TestParsing:
                 Range.parse("segments[0].lanes_left", float("inf"), whole=whole)
             with pytest.raises(ValueError, match=r"^segments\[0\]\.length: a range"):
                 Range.parse("segments[0].length", float("-inf"), whole=whole)
+
+    def test_a_whole_number_too_big_for_a_float_is_refused_with_its_name(
+        self,
+    ) -> None:
+        """#1652: ``float()`` raises OverflowError on ``10**400``."""
+        for value in (10**400, {"min": 10**400}, {"max": -(10**400)}):
+            with pytest.raises(
+                ValueError,
+                match=r"^segments\[0\]\.length: a range bound must be finite",
+            ):
+                Range.parse("segments[0].length", value)
+        for field in ("ego_spawn_s", "ego_goal_margin"):
+            with pytest.raises(
+                ValueError, match=rf"^{field} must be finite, got 1000+$"
+            ):
+                parse_route_search({"segments": [_lane()], field: 10**400})
+        # A number no int whose float() overflows (an int is taken as it is).
+        with pytest.raises(ValueError, match=r"^match_index must be a whole number"):
+            parse_route_search(
+                {"segments": [_lane()], "match_index": Fraction(10**400)}
+            )
 
     def test_anchors(self) -> None:
         assert parse_anchor("start") == ("start", -1, "")
@@ -484,6 +536,65 @@ class TestTheMatchAsConfig:
                 }
             )
 
+    @staticmethod
+    def _config(**overrides: Any) -> dict[str, Any]:
+        config: dict[str, Any] = {
+            "lanelet_ids": [1, 2],
+            "segment_kinds": ["lane"],
+            "segment_ends": [10.0],
+            "segment_lanelet_counts": [2],
+            "junction_turns": [],
+            "start_s": 1.0,
+            "end_s": 9.0,
+        }
+        config.update(overrides)
+        return config
+
+    @pytest.mark.parametrize(
+        ("key", "value", "message"),
+        [
+            ("lanelet_ids", ["abc", 2], "'abc' is not a whole number"),
+            ("lanelet_ids", [1.0, math.inf], "inf is not a whole number"),
+            ("segment_lanelet_counts", ["two"], "'two' is not a whole number"),
+            ("segment_ends", ["far"], "'far' is not a number"),
+            ("segment_ends", [10**400], "1000+ is not finite"),
+            (
+                "segment_ends",
+                [-(10**5000)],
+                "an integer of about -10\\*\\*\\d+ is not finite",
+            ),
+            ("start_s", "abc", "'abc' is not a number"),
+            ("start_s", 10**400, "1000+ is not finite"),
+            ("end_s", [1.0], "\\[1\\.0\\] is not a number"),
+            ("end_s", -(10**400), "-1000+ is not finite"),
+            ("index", "first", "'first' is not a whole number"),
+        ],
+    )
+    def test_a_value_float_or_int_cannot_read_is_refused_by_its_key(
+        self, key: str, value: Any, message: str
+    ) -> None:
+        """#1660: refused naming the key, not with an unkeyed ``ValueError``,
+        ``TypeError`` or ``OverflowError``."""
+        with pytest.raises(ValueError, match=rf"^scenario\.route\.{key}: {message}$"):
+            RouteMatch.from_config(self._config(**{key: value}))
+
+    def test_what_float_and_int_read_is_read_as_before(self) -> None:
+        match = RouteMatch.from_config(
+            self._config(
+                lanelet_ids=["1", 2.0],
+                segment_kinds=["lane", "lane"],
+                segment_ends=["5", 10],
+                segment_lanelet_counts=[True, 1],
+                start_s="1.5",
+                end_s=True,
+                index="3",
+            )
+        )
+        assert match is not None
+        assert match.lanelet_ids == (1, 2)
+        assert [(m.start, m.end) for m in match.segments] == [(0.0, 5.0), (5.0, 10.0)]
+        assert (match.start_s, match.end_s, match.index) == (1.5, 1.0, 3)
+
     def test_an_anchor_the_route_lacks(self) -> None:
         match = RouteMatch(
             (1,), 0.0, 10.0, (RouteSegmentMatch("lane", 0.0, 10.0, (1,)),)
@@ -524,6 +635,9 @@ class TestExpansion:
         )
         assert "scenario.route.segment_kinds=[lane,junction,lane]" in first
         assert "scenario.route.junction_turns=[left]" in first
+        # Every case says how many there are: a gate's case coverage
+        # (docs/gate.md) is counted against it.
+        assert all("scenario.route.case_count=4" in case for case in cases)
         assert first[-1] == "extra=1"
 
     def test_no_goal_when_the_search_says_so(self, road: tuple[Any, Any]) -> None:

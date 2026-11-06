@@ -132,8 +132,7 @@ from autoware_carla_scenario.sweeper import isolation
 # _POLITE_GRACE_SECONDS: room for a stalled case to unwind.
 isolation._STOP_GRACE_SECONDS = 60.0
 lcs.check_constraint_keys = lambda sweep: None
-lcs.resolve_map_paths = lambda cfg: None
-lcs.load_map = lambda paths: object()
+lcs.load_sweep_map = lambda map_cfg, **_: object()
 lcs.scenario_controls = lambda cfg: None
 lcs.expand_sweep = lambda sweep, lanelet_map, arguments, **_: [
     ["+case=1", *arguments],

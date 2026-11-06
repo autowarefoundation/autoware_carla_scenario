@@ -10,6 +10,7 @@ finishes after three ticks.
 from __future__ import annotations
 
 import logging
+import math
 from types import SimpleNamespace
 from typing import Any
 
@@ -27,6 +28,8 @@ from autoware_carla_scenario.control_domain import (
     ControlConflictError,
     ControlDomain,
 )
+from autoware_carla_scenario.entity import registry
+from autoware_carla_scenario.seed import run_seed
 from autoware_carla_scenario.trajectory.model import MapPose
 from autoware_carla_scenario.utils.turn_indicator import TurnIndicatorState
 
@@ -90,6 +93,10 @@ class _Execution:
 @pytest.fixture(autouse=True)
 def stand_ins(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     made.clear()
+    # No entity is registered here: the real execution then finds none to
+    # move, whatever an earlier test left in the registry (#1592).
+    monkeypatch.setattr(registry, "_VEHICLES", {})
+    monkeypatch.setattr(registry, "_PEDESTRIANS", {})
     ego_lights = {"state": TurnIndicatorState.OFF}
     monkeypatch.setattr(executions, "AdversarialExecution", _Execution)
     monkeypatch.setattr(
@@ -165,6 +172,20 @@ def test_reset_closes_the_executions_under_way() -> None:
     action.reset()
     assert run.closed
     assert action._executions == []
+
+
+@pytest.mark.parametrize("value", [2.5, math.nan, math.inf, True, -1, "2"])
+def test_a_seed_must_be_a_whole_number_not_negative(value: Any) -> None:
+    # #1495: int() read 2.5 as 2 and True as 1, and a negative seed passed.
+    with pytest.raises(ValueError, match="seed"):
+        AdversarialTrafficAction([BRAKE], seed=value)
+
+
+def test_a_whole_float_seed_is_read_as_an_int_and_none_is_the_runs() -> None:
+    two: Any = 2.0
+    action = AdversarialTrafficAction([BRAKE], seed=two)
+    assert action._seed == 2 and type(action._seed) is int  # noqa: SLF001
+    assert AdversarialTrafficAction([BRAKE])._seed == run_seed()  # noqa: SLF001
 
 
 def test_only_a_registered_entity_is_driven() -> None:

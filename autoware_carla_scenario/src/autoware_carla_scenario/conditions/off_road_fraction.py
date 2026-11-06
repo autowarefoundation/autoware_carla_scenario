@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import logging
 import math
-from typing import Any, Optional, Union
+from typing import Any, ClassVar, Optional, Union
 
 import typesafe_carla.carla as carla
 
@@ -62,6 +62,11 @@ class OffRoadFractionCondition(BaseCondition):
     Raises:
         ValueError: If *fraction* is not in ``(0, 1]``.
     """
+
+    #: It only ever reports a failure (``passed=False``): a
+    #: :class:`PersistentCondition` around it never fires
+    #: (:func:`~autoware_carla_scenario.conditions.base.reports_only_failure`).
+    REPORTS_ONLY_FAILURE: ClassVar[bool] = True
 
     # Declared for the static check (docs/typecheck.md).
     _fraction: float

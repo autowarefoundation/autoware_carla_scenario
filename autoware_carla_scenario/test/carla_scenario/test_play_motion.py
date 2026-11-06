@@ -181,6 +181,29 @@ class TestLoad:
         )
         np.testing.assert_allclose(absolute.directions, relative.directions, atol=1e-9)
 
+    @pytest.mark.parametrize("malformed", [False, True])
+    def test_an_absolute_pose_ignores_a_joint_orient(
+        self, tmp_path: Path, malformed: bool
+    ) -> None:
+        names = [name for name, _ in SOMA_JOINTS]
+        orient = (
+            np.zeros((2, 3))
+            if malformed
+            else np.stack([np.eye(3)] + [_t_pose_orient(n) for n in names])
+        )
+        plain = load_soma_motion(
+            _write_motion(tmp_path / "p.npz", [{}, RAISED], absolute=True)
+        )
+        carrying = load_soma_motion(
+            _write_motion(
+                tmp_path / "o.npz",
+                [{}, RAISED],
+                absolute=True,
+                extra={"joint_orient": orient},
+            )
+        )
+        np.testing.assert_allclose(carrying.directions, plain.directions, atol=1e-12)
+
     def test_the_motion_faces_the_way_its_first_frame_does(
         self, tmp_path: Path
     ) -> None:

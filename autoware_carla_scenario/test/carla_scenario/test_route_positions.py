@@ -603,3 +603,21 @@ def test_a_windowed_projection_answers_as_a_scan_of_every_segment(
         x = rng.uniform(min(frame._xs) - 20.0, max(frame._xs) + 20.0)
         y = rng.uniform(min(frame._ys) - 20.0, max(frame._ys) + 20.0)
         assert frame._nearest(x, y, near) == scanned(x, y, near), near
+
+
+class TestReference:
+    """RouteFrame.reference: the reference line's point, without the lanelets."""
+
+    def test_it_agrees_with_point(self, frame: RouteFrame) -> None:
+        for s in (0.0, 3.3, frame.length / 2, frame.length):
+            x, y, heading = frame.reference(s)
+            px, py, pheading = frame.point(s)
+            assert (x, y) == pytest.approx((px, py), abs=1e-6)
+            assert math.cos(heading - pheading) == pytest.approx(1.0, abs=1e-6)
+
+    def test_it_follows_a_turn(self, road: tuple[Any, Any]) -> None:
+        turning = _one_way(road)
+        for s in (1.0, turning.length / 2, turning.length - 1.0):
+            x, y, _ = turning.reference(s)
+            px, py, _ = turning.point(s)
+            assert math.hypot(x - px, y - py) < 0.05

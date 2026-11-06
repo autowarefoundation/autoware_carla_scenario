@@ -81,12 +81,45 @@ def _case_labels(cases: list[BatchCase]) -> list[str]:
     return labels
 
 
+#: The exit status of a bad ``--resume-from``: a usage error, refused before
+#: anything runs (docs/usage.md, "Exit Codes").
+_USAGE_EXIT_CODE = 2
+
+
+def _resume_from_value(text: str) -> int:
+    """The case *text*, the value of ``--resume-from``, names: a whole number
+    of at least 1, or exit 2 after an ``Error:`` line.
+
+    ``--resume-from N`` starts at case *N*, counted from 1, so 0 and negative
+    values are refused rather than silently running every case (#1784).
+    """
+    value = 0
+    try:
+        value = int(text)
+    except ValueError:
+        print(  # noqa: T201
+            f"Error: --resume-from requires an integer, got '{text}'", file=sys.stderr
+        )
+        sys.exit(_USAGE_EXIT_CODE)
+    if value < 1:
+        print(  # noqa: T201
+            "Error: --resume-from must be at least 1 (the 1-indexed case to "
+            f"start at), got '{text}'",
+            file=sys.stderr,
+        )
+        sys.exit(_USAGE_EXIT_CODE)
+    return value
+
+
 def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
     """Extract ``--resume-from N`` from *argv* and return the value and cleaned argv.
 
+    A value that is not an integer, or is below 1, is a usage error: an
+    ``Error:`` line and exit 2 (:func:`_resume_from_value`).
+
     Returns:
         A 2-tuple of ``(resume_from, remaining_argv)``.
-        *resume_from* is 0 when the flag is absent.
+        *resume_from* is 0 when the flag is absent, at least 1 otherwise.
     """
     resume_from = 0
     remaining: list[str] = []
@@ -97,25 +130,13 @@ def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
             continue
         if arg == "--resume-from":
             if i + 1 < len(argv):
-                try:
-                    resume_from = int(argv[i + 1])
-                except ValueError:
-                    print(  # noqa: T201
-                        f"Error: --resume-from requires an integer, got '{argv[i + 1]}'"
-                    )
-                    sys.exit(1)
+                resume_from = _resume_from_value(argv[i + 1])
                 skip_next = True
             else:
-                print("Error: --resume-from requires a value")  # noqa: T201
-                sys.exit(1)
+                print("Error: --resume-from requires a value", file=sys.stderr)  # noqa: T201
+                sys.exit(_USAGE_EXIT_CODE)
         elif arg.startswith("--resume-from="):
-            try:
-                resume_from = int(arg.split("=", 1)[1])
-            except ValueError:
-                print(  # noqa: T201
-                    f"Error: --resume-from requires an integer, got '{arg.split('=', 1)[1]}'"
-                )
-                sys.exit(1)
+            resume_from = _resume_from_value(arg.split("=", 1)[1])
         else:
             remaining.append(arg)
     return resume_from, remaining

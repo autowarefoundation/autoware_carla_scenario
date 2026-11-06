@@ -108,7 +108,8 @@ class _Actor:
 
     def get_transform(self) -> Any:
         return SimpleNamespace(
-            location=self._at, rotation=SimpleNamespace(yaw=self._yaw)
+            location=self._at,
+            rotation=SimpleNamespace(roll=0.0, pitch=0.0, yaw=self._yaw),
         )
 
 
@@ -408,9 +409,11 @@ def test_a_road_user_parked_under_the_map_is_out_of_the_scene() -> None:
 
     assert set(_collisions(_world(parked, walker)).values()) == {0.0}
     assert _read(MIN_DISTANCE_TO_OBSTACLE_M, _world(parked, walker)) is None
-    # Above the line it is a road user again.
+    # Above the line it is a road user again: 50 m below the ego, on another
+    # level of road (#1580), its box 48.4 m under the ego's.
     parked._at.z = -50.0
-    assert _read(COLLISION_ANY, _world(parked)) == 1.0
+    assert _read(COLLISION_ANY, _world(parked)) == 0.0
+    assert _read(MIN_DISTANCE_TO_OBSTACLE_M, _world(parked)) == pytest.approx(48.4)
 
 
 def test_props_are_not_road_users() -> None:
@@ -418,6 +421,141 @@ def test_props_are_not_road_users() -> None:
 
     assert _read(COLLISION_ANY, _world(prop)) == 0.0
     assert _read(MIN_DISTANCE_TO_OBSTACLE_M, _world(prop)) is None
+
+
+# ---------------------------------------------------------------------------
+# Levels of road: a bridge over the ego, an underpass beneath it (#1580)
+# ---------------------------------------------------------------------------
+
+
+def _raised(actor: _Actor, z: float) -> _Actor:
+    actor._at.z = z  # noqa: SLF001
+    return actor
+
+
+def test_a_road_user_on_a_bridge_over_the_ego_is_no_collision() -> None:
+    """The issue's case, replayed from recorded frames: a car right over the
+    ego, 8 m up.  Their boxes, 1.6 m tall, are 6.4 m apart in height."""
+    from autoware_carla_scenario.metric_batch import ActorFrame, Frame
+
+    def car(actor_id: int, role: str, z: float) -> ActorFrame:
+        return ActorFrame(
+            id=actor_id,
+            type_id="vehicle.test",
+            role=role,
+            base_type="car",
+            x=0.0,
+            y=0.0,
+            z=z,
+            roll=0.0,
+            pitch=0.0,
+            yaw=0.0,
+            vx=10.0,
+            vy=0.0,
+            vz=0.0,
+            extent=(2.4, 1.0, 0.8),
+            centre=(0.0, 0.0, 0.8),
+        )
+
+    frames = [
+        Frame(
+            frame=k,
+            t=0.05 * k,
+            weight=None,
+            actors=(car(1, "Ego", 0.0), car(2, "npc", 8.0)),
+        )
+        for k in range(3)
+    ]
+    series = evaluate_metrics(
+        frames,
+        SimpleNamespace(),
+        [COLLISION_ANY, COLLISION_AT_FAULT, MIN_DISTANCE_TO_OBSTACLE_M],
+    )
+
+    assert series[COLLISION_ANY].values == [0.0, 0.0, 0.0]
+    assert series[COLLISION_AT_FAULT].values == [0.0, 0.0, 0.0]
+    assert series[MIN_DISTANCE_TO_OBSTACLE_M].values == pytest.approx([6.4] * 3)
+
+
+@pytest.mark.parametrize("z", [8.0, -8.0])
+def test_another_level_is_as_far_as_the_height_between(z: float) -> None:
+    # Overlapping the ego on the ground, over it or under it.
+    world = _world(_raised(_car(2, (3.0, 0.0)), z))
+
+    assert set(_collisions(world).values()) == {0.0}
+    assert _read(OFFROAD_OR_COLLISION, world) == 0.0
+    assert _read(MIN_DISTANCE_TO_OBSTACLE_M, world) == pytest.approx(6.4)
+
+
+def test_the_height_between_adds_to_the_distance_on_the_ground() -> None:
+    # 3 m apart on the ground, 4 m in height: 5 m.
+    world = _world(_raised(_car(2, (4.6 + 3.0, 0.0)), 1.6 + 4.0))
+
+    assert _read(MIN_DISTANCE_TO_OBSTACLE_M, world) == pytest.approx(5.0)
+
+
+@pytest.mark.parametrize("z", [0.3, -0.3, 1.6 + 0.9, -1.6 - 0.9])
+def test_a_road_user_up_or_down_a_slope_still_collides(z: float) -> None:
+    # Within a metre of the ego's box in height: on its level of road.
+    world = _world(_raised(_car(2, (4.5, 0.0)), z))
+
+    assert _read(COLLISION_FRONT, world) == 1.0
+    assert _read(COLLISION_AT_FAULT, world) == 1.0
+    assert _read(MIN_DISTANCE_TO_OBSTACLE_M, world) == 0.0
+
+
+def test_just_beyond_the_margin_is_another_level() -> None:
+    world = _world(_raised(_car(2, (4.5, 0.0)), 1.6 + 1.1))
+
+    assert _read(COLLISION_ANY, world) == 0.0
+    assert _read(MIN_DISTANCE_TO_OBSTACLE_M, world) == pytest.approx(1.1)
+
+
+def test_the_nearest_on_another_level_may_be_beyond_one_on_the_ego_s() -> None:
+    # Right over the ego, 6.4 m up; 3 m away beside it on its level.
+    world = _world(_raised(_car(2, (0.0, 0.0)), 8.0), _car(3, (0.0, 5.0)))
+
+    assert _read(MIN_DISTANCE_TO_OBSTACLE_M, world) == pytest.approx(3.0)
+    assert _read(COLLISION_ANY, world) == 0.0
+
+
+class _HeightRecordingRoad(_Road):
+    """A road that notes the height every point is asked at."""
+
+    def __init__(self, lanes: list[_Lane]) -> None:
+        super().__init__(lanes)
+        self.asked_z: list[float] = []
+
+    def get_waypoint(
+        self, location: Any, project_to_road: bool = True, lane_type: int = 2
+    ) -> Optional[_Waypoint]:
+        self.asked_z.append(location.z)
+        return super().get_waypoint(location, project_to_road, lane_type)
+
+
+@pytest.mark.parametrize("key", [OFFROAD, WRONG_LANE, MIN_DISTANCE_TO_LANE_BOUNDARY_M])
+def test_the_lanes_are_asked_for_at_the_ego_s_height(key: str) -> None:
+    road = _HeightRecordingRoad(_TWO_WAY.lanes)
+    world = _world(road=road)
+    _raised(world._actors[0], 7.5)  # noqa: SLF001
+
+    assert _read(key, world) is not None
+    assert road.asked_z and set(road.asked_z) == {7.5}
+
+
+def test_the_drift_is_read_at_the_ego_s_height() -> None:
+    road = _HeightRecordingRoad(_TWO_WAY.lanes)
+    reset_ego_motion()
+    world = _world(road=road)
+    ego = _raised(world._actors[0], 7.5)  # noqa: SLF001
+    ego.velocity = _v(10.0, 1.0)
+    for i in range(3):
+        world.frame = next(_FRAMES)
+        track_ego_motion(world, i * 0.1)  # type: ignore[arg-type]
+
+    assert road.asked_z and set(road.asked_z) == {7.5}
+    assert metrics._MOTION[0].lateral == pytest.approx(0.2)  # noqa: SLF001
+    reset_ego_motion()
 
 
 # ---------------------------------------------------------------------------
@@ -892,6 +1030,85 @@ def test_ng_after_ng_for_exactly_the_limit_fails_no_earlier_than_its_frame() -> 
     result = condition.judge(times, values)
     assert result is not None
     assert result.elapsed_seconds == times[150]
+
+
+def _coarse_ttr_series() -> tuple[list[float], list[Optional[float]], float]:
+    # 2 s of 0.05 s ticks, with crime_ttr_s sampled at its own, coarser
+    # period: NG from 1 s on (#1581).
+    from autoware_carla_scenario.commonroad import commonroad_settings
+    from autoware_carla_scenario.metric_batch import Frame, sampled
+
+    frames: list[Frame] = []
+    t = 0.0
+    for k in range(40):
+        frames.append(Frame(frame=k, t=t, weight=None, actors=()))
+        t += 0.05
+    picked = sampled(frames, commonroad_settings().period_for("crime_ttr_s"))
+    times = [f.t for f in picked]
+    values: list[Optional[float]] = [2.0 if at < 1.0 - 1e-9 else 0.5 for at in times]
+    return times, values, frames[-1].t
+
+
+def test_a_coarse_metric_counts_its_last_ng_sample_to_the_run_end() -> None:
+    times, values, end = _coarse_ttr_series()
+    assert times == pytest.approx([0.0, 0.5, 1.0, 1.5])
+    condition = MetricCondition(
+        "crime_ttr_s", ComparisonRule.LESS_THAN, 1.0, max_ng_seconds=0.6, label="ttr"
+    )
+    result = condition.judge(times, values, end=end)
+    # NG from 1 s to the run's end at 1.95 s: 0.95 s, more than 0.6 s, which
+    # are up 0.1 s into the last sample.
+    assert result is not None
+    assert result.elapsed_seconds == pytest.approx(1.6)
+    assert condition.get_details()["ng_seconds"] == pytest.approx(0.95)
+    # Positionally too.
+    assert condition.judge(times, values, end) is not None
+    # Without the run's end the last sample counts nothing, as before.
+    assert condition.judge(times, values) is None
+    assert condition.get_details()["ng_seconds"] == pytest.approx(0.5)
+    # An end before the last sample counts nothing either.
+    assert condition.judge(times, values, end=1.0) is None
+    assert condition.get_details()["ng_seconds"] == pytest.approx(0.5)
+
+
+def test_an_every_tick_metric_is_judged_the_same_with_the_run_end() -> None:
+    condition = MetricCondition(
+        MIN_DISTANCE_TO_OBSTACLE_M,
+        ComparisonRule.LESS_THAN,
+        1.0,
+        max_ng_seconds=0.25,
+        label="near",
+    )
+    times = [0.0, 0.1, 0.2, 0.3, 0.4, 0.5, 0.6]
+    values: list[Optional[float]] = [0.5, 0.4, 2.0, 0.8, 0.3, 0.9, 0.2]
+    without = condition.judge(times, values)
+    details = condition.get_details()
+    with_end = condition.judge(times, values, end=times[-1])
+    assert without is not None and with_end is not None
+    assert with_end.elapsed_seconds == without.elapsed_seconds
+    assert condition.get_details() == details
+
+
+def test_the_runner_judges_to_the_last_recorded_frame() -> None:
+    from autoware_carla_scenario.conditions import ScenarioResult
+
+    ends: list[Optional[float]] = []
+
+    class _Spy(MetricCondition):
+        def judge(
+            self,
+            times: list[float],
+            values: list[Optional[float]],
+            end: Optional[float] = None,
+        ) -> Optional[ScenarioResult]:
+            ends.append(end)
+            return super().judge(times, values, end)
+
+    passed = ScenarioResult(passed=True, message="done", elapsed_seconds=3.0)
+    _judged_run(
+        _Spy(COLLISION_AT_FAULT, label="hit"), result=passed, worlds=_hit_at_two()
+    )
+    assert ends == [3.0]
 
 
 def test_nothing_read_is_not_ng() -> None:

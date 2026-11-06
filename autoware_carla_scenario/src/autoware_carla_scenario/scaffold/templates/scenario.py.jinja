@@ -57,9 +57,17 @@ class {{ scenario_class }}(BaseScenario):
         # world.
         if len(cfg.goal_lanelet_ids) == 0:
             raise ValueError("goal_lanelet_ids must name at least one lanelet")
+
+        # 1. Every scenario says where its ego is going, and this one already
+        #    has: the last road it asserts the ego reaches is the destination.
+        #    A goal given in the config wins.
+        self.derive_goal_from_route(cfg.goal_lanelet_ids)
+
+        # 2. Snap the Lanelet2 spawn pose to the CARLA road surface, which is
+        #    also where the goal is handed to an ego that plans its own route.
         self._setup_ego_spawn()
 
-        # Pass condition: the ego reaches each goal lanelet (latched via Sticky).
+        # 3. Pass condition: the ego reaches each goal lanelet (latched via Sticky).
         # Appended one by one and chosen by if/else below: Codon gives
         # neither a list comprehension nor a conditional expression the
         # base class's type.
@@ -88,7 +96,7 @@ class {{ scenario_class }}(BaseScenario):
             reach_goals = AndCondition(stickies)
         self.register_pass_condition(reach_goals)
 
-        # Fail-safe timeout.
+        # 4. Fail-safe timeout.
         self.register_fail_condition(
             TimeoutCondition(cfg.timeout_seconds, label="scenario_timeout")
         )

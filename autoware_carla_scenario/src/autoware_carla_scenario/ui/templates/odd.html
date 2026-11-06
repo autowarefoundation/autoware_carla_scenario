@@ -13,8 +13,9 @@
 </nav>
 {% endblock %}
 
-{% macro outcome_badge(outcome) %}
-  {% if outcome == "pass" %}<span class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">PASS</span>
+{% macro outcome_badge(outcome, pending=false) %}
+  {% if pending %}<span class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-blue-50 text-blue-700">PENDING</span>
+  {% elif outcome == "pass" %}<span class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-green-100 text-green-800">PASS</span>
   {% elif outcome == "fail" %}<span class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-red-100 text-red-800">FAIL</span>
   {% elif outcome == "error" %}<span class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-orange-100 text-orange-800">ERROR</span>
   {% else %}<span class="inline-flex px-2 py-0.5 rounded-full text-xs font-medium bg-gray-100 text-gray-600">N/A</span>{% endif %}
@@ -74,7 +75,7 @@
         <tr class="hover:bg-gray-50 {% if r.outcome == 'fail' %}bg-red-50{% endif %}" data-outcome="{{ r.outcome }}">
           <td class="px-4 py-2 font-mono"><a class="text-blue-600 hover:text-blue-800" href="/session/{{ ref }}/{{ r.index }}#recording">{{ r.index }}</a></td>
           <td class="px-4 py-2 whitespace-nowrap">{{ r.label }}</td>
-          <td class="px-4 py-2">{{ outcome_badge(r.outcome) }}</td>
+          <td class="px-4 py-2">{{ outcome_badge(r.outcome, r.pending) }}</td>
           <td class="px-4 py-2 text-xs text-gray-600">
             {% for name, bucket in r.buckets.items() if name in varying %}<span class="inline-block bg-gray-100 rounded px-1 mr-1 mb-0.5 font-mono" title="{{ name }}">{{ name.split('.')[-1] }} {{ bucket }}</span>{% endfor %}
           </td>

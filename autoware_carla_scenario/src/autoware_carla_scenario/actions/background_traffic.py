@@ -36,7 +36,7 @@ import random
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Union
 
 from ..conditions import BaseCondition, ScenarioResult
-from ..seed import resolve_seed
+from ..seed import check_seed, check_whole_number, resolve_seed
 from ..traffic.base import check_background_speed
 from ..utils.clearance import _HIDDEN_BELOW_M
 from .base import BaseAction, TickTiming
@@ -59,6 +59,13 @@ __all__ = [
 _END_MARGIN_M = 3.0
 #: How many places a source tries for one vehicle before giving up this tick.
 _SPAWN_ATTEMPTS = 8
+#: How far (m) a vehicle's origin may be above or below a spawn point and
+#: still stand on its level of road (#1599): one on a deck over or under it
+#: takes no room there, however near in plan.  Origins, not boxes, so more
+#: than ``utils.clearance._SAME_LEVEL_MARGIN_M``: a vehicle's origin sits a
+#: little off the road surface the spawn point is on, and a slope rises
+#: within ``min_gap_m``; an overpass is 4.5 m or more over the road below.
+_OTHER_LEVEL_M = 2.0
 
 ConstraintSpec = Union[Mapping[str, Any], Any]
 
@@ -142,12 +149,22 @@ class LaneletRegion:
             logger.info("Background traffic region: %d lanelet(s)", len(self._ids))
         return self._ids
 
-    def contains(self, x: float, y: float) -> bool:
-        """Whether the CARLA position ``(x, y)`` lies on one of the lanelets."""
+    def contains(self, x: float, y: float, z: Optional[float] = None) -> bool:
+        """Whether the CARLA position ``(x, y, z)`` lies on one of the lanelets.
+
+        By its elevation *z* too, as
+        :func:`~autoware_carla_scenario.coordinate.on_lanelet` reads it: a
+        point on a road under a region's overpass is not on the region.
+        Without *z* (``None``), by ``(x, y)`` alone.
+        """
         from ..coordinate import CarlaWorldPose, on_lanelet  # noqa: PLC0415
 
-        pose = CarlaWorldPose(x=x, y=y, z=0.0, yaw=0.0)
-        return any(on_lanelet(pose, lanelet_id) for lanelet_id in self.lanelet_ids)
+        by_height = z is not None
+        pose = CarlaWorldPose(x=x, y=y, z=z if z is not None else 0.0, yaw=0.0)
+        return any(
+            on_lanelet(pose, lanelet_id, by_height=by_height)
+            for lanelet_id in self.lanelet_ids
+        )
 
 
 class _Never(BaseCondition):
@@ -239,9 +256,12 @@ class TrafficSourceAction(_BackendAction):
             by default: each tick of its run is a tick it may add a vehicle on.
 
     Raises:
-        ValueError: If a count or rate is negative, *vehicles_per_minute* or
-            *min_gap_m* is negative or not finite, or *speed_kmh* is below
-            1 km/h or not finite.
+        ValueError: If *initial_vehicles*, *max_vehicles* (when given) or
+            *seed* (when given) is not a whole number (``2`` or ``2.0``, read
+            as 2; not ``2.5``, NaN, infinity or a boolean) or is negative,
+            *vehicles_per_minute* or *min_gap_m* is negative or not finite,
+            or *speed_kmh* is below 1 km/h or not finite.  The error names
+            the parameter.
     """
 
     _region: LaneletRegion
@@ -276,8 +296,9 @@ class TrafficSourceAction(_BackendAction):
         until: Optional[BaseCondition] = None,
         reissue: Optional[bool] = None,
     ) -> None:
-        if initial_vehicles < 0:
-            raise ValueError("vehicle counts and rates must not be negative")
+        # Whole numbers, read as ints: 2.5, NaN or True passed `< 0` and
+        # reached range() mid-run, after the world was up (#1492).
+        initial_vehicles = _vehicle_count("initial_vehicles", initial_vehicles)
         # NaN passes `< 0`, and NaN or infinity would fail int() on a later
         # tick, mid-run (#1321).
         if not math.isfinite(vehicles_per_minute) or vehicles_per_minute < 0:
@@ -285,8 +306,12 @@ class TrafficSourceAction(_BackendAction):
                 f"vehicles_per_minute must be finite and not negative, "
                 f"not {vehicles_per_minute!r}"
             )
-        if max_vehicles is not None and max_vehicles < 0:
-            raise ValueError("max_vehicles must not be negative")
+        if max_vehicles is not None:
+            max_vehicles = _vehicle_count("max_vehicles", max_vehicles)
+        # Checked as the config's background_traffic.seed is: int() alone
+        # would read 2.5 or True as a seed.
+        if seed is not None:
+            seed = check_seed("seed", seed)
         speed_kmh = check_background_speed(speed_kmh)
         # A NaN gap would let every spot through: no distance is below it.
         if not math.isfinite(min_gap_m) or min_gap_m < 0:
@@ -353,7 +378,13 @@ class TrafficSourceAction(_BackendAction):
         live = backend.background_vehicles(world)
         if self._max is not None:
             due = min(due, max(self._max - len(live), 0))
-        occupied = list(live.values()) + _vehicle_positions(world)
+        # With each vehicle's height where it is known (None where not: one
+        # SUMO's queue model holds), so a vehicle on another level of road
+        # does not block a spawn (#1599).
+        occupied: list[tuple[float, float, Optional[float]]] = []
+        for position in live.values():
+            occupied.append((position[0], position[1], position[2]))
+        occupied += _vehicle_positions(world)
         added = 0
         for _ in range(due):
             handle = self._spawn_one(world, backend, occupied)
@@ -368,7 +399,7 @@ class TrafficSourceAction(_BackendAction):
         self,
         world: "carla.World",
         backend: "TrafficBackend",
-        occupied: list[tuple[float, float]],
+        occupied: list[tuple[float, float, Optional[float]]],
     ) -> Optional[str]:
         from ..coordinate import Lanelet2Pose, lanelet_length, to_carla_world  # noqa: PLC0415
 
@@ -383,10 +414,7 @@ class TrafficSourceAction(_BackendAction):
             else:
                 s = length / 2
             pose = to_carla_world(Lanelet2Pose(lanelet_id=lanelet_id, s=s))
-            if any(
-                math.hypot(pose.x - px, pose.y - py) < self._min_gap
-                for px, py in occupied
-            ):
+            if _too_near(pose.x, pose.y, pose.z, occupied, self._min_gap):
                 continue
             handle: Optional[str] = None
             if TYPE_CHECKING:
@@ -408,7 +436,8 @@ class TrafficSourceAction(_BackendAction):
                     blueprint=self._blueprint,
                 )
             if handle is not None:
-                occupied.append((pose.x, pose.y))
+                placed_z: Optional[float] = pose.z  # the list's type, for Codon
+                occupied.append((pose.x, pose.y, placed_z))
                 return handle
         return None
 
@@ -465,10 +494,23 @@ class TrafficSinkAction(_BackendAction):
         backend = self._require_backend()
         if backend is None:
             return
-        for handle, (x, y) in backend.background_vehicles(world).items():
-            if self._region.contains(x, y):
+        for handle, (x, y, z) in backend.background_vehicles(world).items():
+            if self._region.contains(x, y, z):
                 backend.remove_background(world, handle)
                 self.removed += 1
+
+
+def _vehicle_count(key: str, value: int) -> int:
+    """*value*, a source's vehicle count, as an ``int``: a whole number
+    (:func:`~autoware_carla_scenario.seed.check_whole_number`), not negative.
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    count = check_whole_number(key, value)
+    if count < 0:
+        raise ValueError(f"{key} must not be negative, got {value!r}")
+    return count
 
 
 def _simulated_seconds(world: "carla.World") -> Optional[float]:
@@ -478,12 +520,34 @@ def _simulated_seconds(world: "carla.World") -> Optional[float]:
         return None
 
 
-def _vehicle_positions(world: "carla.World") -> list[tuple[float, float]]:
+def _too_near(
+    x: float,
+    y: float,
+    z: float,
+    occupied: list[tuple[float, float, Optional[float]]],
+    gap: float,
+) -> bool:
+    """Whether a vehicle of *occupied* stands within *gap* (m, in plan) of the
+    CARLA point ``(x, y, z)`` on the same level of road: one more than
+    :data:`_OTHER_LEVEL_M` above or below it is on a deck over or under it
+    (#1599).  One whose height is unknown (``None``) is placed in plan alone."""
+    for px, py, pz in occupied:
+        if math.hypot(x - px, y - py) >= gap:
+            continue
+        if pz is not None and abs(pz - z) > _OTHER_LEVEL_M:
+            continue
+        return True
+    return False
+
+
+def _vehicle_positions(
+    world: "carla.World",
+) -> list[tuple[float, float, Optional[float]]]:
     try:
         actors = world.get_actors().filter("vehicle.*")
     except Exception:  # noqa: BLE001
         return []
-    out: list[tuple[float, float]] = []
+    out: list[tuple[float, float, Optional[float]]] = []
     for actor in actors:
         try:
             location = actor.get_location()
@@ -492,5 +556,6 @@ def _vehicle_positions(world: "carla.World") -> list[tuple[float, float]]:
         # One parked under the map until its spawn takes no room (#853).
         if location.z < _HIDDEN_BELOW_M:
             continue
-        out.append((location.x, location.y))
+        z: Optional[float] = location.z  # the list's type, for Codon
+        out.append((location.x, location.y, z))
     return out

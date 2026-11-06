@@ -38,6 +38,7 @@ _LAUNCH_NAMES = {
     "build_command",
     "partitions",
     "run_cli",
+    "run_collect",
     "scenario_command",
     "start_submit",
     "submission",
@@ -201,7 +202,12 @@ _REQUESTS: dict[str, Any] = {
     "time-bad-tail": {"time": "01:00:00x"},
     "partition-bad": {"partition": "main; rm -rf"},
     "mem-bad": {"mem": "12 G"},
-    "gres-bad": {"gres": "gpu:1,shard"},
+    "gres-list": {"gres": "gpu:1,shard"},
+    "gres-bad": {"gres": "gpu:1,"},
+    "partition-list": {"partition": "gpu,cpu"},
+    "mem-list": {"mem": "12G,4G"},
+    "time-hours": {"time": "168:00:00"},
+    "time-unlimited": {"time": "unlimited"},
     "gres-unicode": {"gres": "ä"},
     "env-mapping": {"env": {"A": "1", " B ": "x y", "C": 5, "D": None}},
     "env-text": {"env": "A=1\n  B = 2 \n\nC==3"},
@@ -436,6 +442,133 @@ def test_check_at_least_takes_a_finite_number_from_the_minimum() -> None:
     check_at_least("cases_per_task", 1, 1)
     with pytest.raises(ValueError, match="at least 1"):
         check_at_least("cases_per_task", 0, 1)
+
+
+# ── sbatch's forms the run panel takes (#1554) ─────────────────────────────
+
+
+@pytest.mark.parametrize(
+    "time",
+    [
+        "90",  # minutes
+        "0",
+        "120:00",  # minutes:seconds
+        "100:00:00",  # hours:minutes:seconds, three-digit hours
+        "168:00:00",
+        "01:30:00",
+        "1-0",  # days-hours
+        "2-00",
+        "1-12:30",  # days-hours:minutes
+        "1-2:03:04",  # days-hours:minutes:seconds
+        "14-00:00:00",
+        "UNLIMITED",
+        "unlimited",
+        "Infinite",
+        "INFINITE",
+    ],
+)
+def test_check_time_takes_every_sbatch_time_format(time: str) -> None:
+    from autoware_carla_scenario.ui.slurm_options import check_time
+
+    check_time(time)
+    assert SlurmOptions.from_request({"time": time}).time == time
+
+
+@pytest.mark.parametrize(
+    "time",
+    [
+        "",
+        "abc",
+        "tomorrow",
+        "1:2:3:4",
+        "1:00:00:00",
+        "1-",
+        "-5",
+        "1-2-3",
+        "1-100",
+        "1:2",
+        "01:00:00x",
+        "1:",
+        ":30",
+        "1.5",
+        "unlimitedx",
+        "INF",
+        "5\n",
+    ],
+)
+def test_check_time_refuses_what_is_no_sbatch_time(time: str) -> None:
+    from autoware_carla_scenario.ui.slurm_options import check_time
+
+    with pytest.raises(ValueError, match="sbatch's --time"):
+        check_time(time)
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("partition", "gpu,cpu"),
+        ("partition", "a,b,c"),
+        ("gres", "gpu:1,shard:2"),
+        ("gres", "gpu:a100:1"),
+        ("mem", "12G"),
+    ],
+)
+def test_check_sbatch_value_takes_comma_lists_for_partition_and_gres(
+    key: str, value: str
+) -> None:
+    from autoware_carla_scenario.ui.slurm_options import check_sbatch_value
+
+    check_sbatch_value(key, value)
+    assert getattr(SlurmOptions.from_request({key: value}), key) == value
+
+
+@pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("partition", "gpu,"),
+        ("partition", ",gpu"),
+        ("partition", "gpu,,cpu"),
+        ("partition", "gpu, cpu"),
+        ("partition", "main; rm -rf"),
+        ("gres", "gpu:1,"),
+        ("gres", "gpu:1 shard:2"),
+        ("mem", "12G,4G"),
+        ("mem", "12 G"),
+        ("mem", "12G\n"),
+    ],
+)
+def test_check_sbatch_value_refuses_what_sbatch_does_not_take(
+    key: str, value: str
+) -> None:
+    from autoware_carla_scenario.ui.slurm_options import check_sbatch_value
+
+    with pytest.raises(ValueError, match="characters sbatch does not take"):
+        check_sbatch_value(key, value)
+
+
+def test_comma_lists_reach_hydra_as_one_string_not_a_sweep() -> None:
+    from hydra.core.override_parser.overrides_parser import OverridesParser
+
+    options = SlurmOptions.from_request(
+        {
+            "partition": "gpu,cpu",
+            "gres": "gpu:1,shard:2",
+            "time": "168:00:00",
+        }
+    )
+    written = [o for o in options.overrides() if o.startswith("launcher.") and "=" in o]
+    assert "launcher.partition='gpu,cpu'" in written
+    assert "launcher.gres='gpu:1,shard:2'" in written
+    parsed = {
+        o.key_or_group: o for o in OverridesParser.create().parse_overrides(written)
+    }
+    for key, value in [
+        ("launcher.partition", "gpu,cpu"),
+        ("launcher.gres", "gpu:1,shard:2"),
+        ("launcher.time", "168:00:00"),
+    ]:
+        assert not parsed[key].is_sweep_override(), key
+        assert parsed[key].value() == value, key
 
 
 if __name__ == "__main__":

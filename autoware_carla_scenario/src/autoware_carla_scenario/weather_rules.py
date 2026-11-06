@@ -37,13 +37,18 @@ vehicle's (:func:`vehicle_range`); how far drivers see is the default rules'.
 
 from __future__ import annotations
 
-import fnmatch
 import logging
 from collections.abc import Mapping
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional, Union
 
 from openodd import Rules, RulesError
+
+from .weather_inputs import EGO_KEY as EGO_KEY
+from .weather_inputs import QUANTITIES as QUANTITIES
+from .weather_inputs import WEATHER_INPUTS as WEATHER_INPUTS
+from .weather_inputs import rule_values as rule_values
+from .weather_inputs import vehicle_entry
 
 if TYPE_CHECKING:
     from .odd.backend import CarlaBackend
@@ -56,6 +61,7 @@ __all__ = [
     "QUANTITIES",
     "WEATHER_INPUTS",
     "RulesError",
+    "check_weather_rules",
     "default_rules",
     "rule_values",
     "use_weather_rules",
@@ -69,29 +75,6 @@ __all__ = [
 
 #: The rules a run follows unless it names others.
 DEFAULT_RULES: Path = Path(__file__).resolve().parent / "weather_rules.yaml"
-
-#: The quantities the framework reads.
-QUANTITIES: tuple[str, ...] = ("tire_friction", "visibility", "sight_speed")
-
-#: The weather's fields a part may read, as CARLA's ``WeatherParameters``
-#: name them, and ``water``: the larger of ``wetness`` and
-#: ``precipitation_deposits``, which the road's grip follows.
-WEATHER_INPUTS: tuple[str, ...] = (
-    "cloudiness",
-    "precipitation",
-    "precipitation_deposits",
-    "wetness",
-    "wind_intensity",
-    "fog_density",
-    "fog_distance",
-    "sun_altitude_angle",
-    "sun_azimuth_angle",
-    "water",
-)
-
-#: The ``vehicles`` key naming the ego (``role_name`` ``Ego``).
-EGO_KEY = "ego"
-_EGO_ROLE = "Ego"
 
 #: The packaged rules, read once.
 _DEFAULT: Optional[Rules] = None
@@ -107,23 +90,55 @@ def default_rules() -> Rules:
     return _DEFAULT
 
 
-def rule_values(values: Mapping[str, float]) -> dict[str, float]:
-    """What the rules read of the weather *values*: those, and ``water``
-    from ``wetness`` and ``precipitation_deposits`` when not given."""
-    out = {str(k): float(v) for k, v in values.items()}
-    if "water" not in out and ("wetness" in out or "precipitation_deposits" in out):
-        out["water"] = max(
-            out.get("wetness", 0.0), out.get("precipitation_deposits", 0.0)
-        )
-    return out
-
-
 def _backend() -> "CarlaBackend":
     # Inside a function: odd.backend imports the probes, which import the
     # environment action, which imports this module.
     from .odd.backend import CARLA_BACKEND  # noqa: PLC0415
 
     return CARLA_BACKEND
+
+
+def check_weather_rules(
+    spec: Any,
+) -> tuple[Union[str, Path, None], list[tuple[str, Union[str, Path]]]]:
+    """*spec*'s rule files, its form checked but no file read: the default
+    rules' (``None``: the packaged ones alone) and every ``vehicles`` entry's
+    ``(pattern, file)``, in order.  What :func:`use_weather_rules` reads, and
+    what the runner refuses a batch for before it runs.
+
+    *spec* is ``None``, a file (a ``str`` path or ``https://`` URL, or a
+    :class:`~pathlib.Path`), or a mapping of ``default`` (``None`` or a
+    file) and ``vehicles`` (``None`` or a mapping of pattern to file).
+
+    Raises:
+        RulesError: When *spec*, its ``default`` or a ``vehicles`` entry is
+            not of that form, or it names a field other than those two.
+    """
+    if spec is None or isinstance(spec, (str, Path)):
+        return spec, []
+    if not isinstance(spec, Mapping):
+        raise RulesError(
+            f"environment.rules: expected a file or {{default, vehicles}}, got {spec!r}"
+        )
+    unknown = sorted(set(map(str, spec)) - {"default", "vehicles"})
+    if unknown:
+        raise RulesError(f"environment.rules: unknown fields {unknown}")
+    default = spec.get("default")
+    if default is not None and not isinstance(default, (str, Path)):
+        # Not str() of it: a number, or a pinned {url, sha256} (which only
+        # ``extends`` takes), would be read as a path that does not exist.
+        raise RulesError(f"environment.rules.default: expected a file, got {default!r}")
+    vehicles = spec.get("vehicles")
+    if vehicles is None:
+        vehicles = {}
+    elif not isinstance(vehicles, Mapping):
+        raise RulesError("environment.rules.vehicles: expected pattern -> file")
+    entries: list[tuple[str, Union[str, Path]]] = []
+    for pattern, location in vehicles.items():
+        if not isinstance(location, (str, Path)):
+            raise RulesError(f"environment.rules.vehicles.{pattern}: expected a file")
+        entries.append((str(pattern), location))
+    return default, entries
 
 
 def use_weather_rules(spec: Union[str, Path, Mapping[str, Any], None] = None) -> None:
@@ -134,34 +149,19 @@ def use_weather_rules(spec: Union[str, Path, Mapping[str, Any], None] = None) ->
 
     Raises:
         RulesError: When a file cannot be read, its rules are not well formed,
-            or *spec* is neither a file nor ``{default, vehicles}``.
+            or *spec* is neither a file nor ``{default, vehicles}`` of files
+            (:func:`check_weather_rules`).
     """
     backend = _backend()
-    default: Union[str, Path, None]
-    vehicles: Mapping[Any, Any]
-    if spec is None or isinstance(spec, (str, Path)):
-        default, vehicles = spec, {}
-    elif isinstance(spec, Mapping):
-        unknown = sorted(set(map(str, spec)) - {"default", "vehicles"})
-        if unknown:
-            raise RulesError(f"environment.rules: unknown fields {unknown}")
-        default = spec.get("default")
-        vehicles = spec.get("vehicles") or {}
-        if not isinstance(vehicles, Mapping):
-            raise RulesError("environment.rules.vehicles: expected pattern -> file")
-    else:
-        raise RulesError(
-            f"environment.rules: expected a file or {{default, vehicles}}, got {spec!r}"
-        )
+    # Its form first, so a malformed spec changes nothing.
+    default, vehicles = check_weather_rules(spec)
     _VEHICLE_RULES.clear()
     followed = backend.use_rules(None if default is None else str(default))
     base = followed if followed is not None else default_rules()
-    for pattern, location in vehicles.items():
-        if not isinstance(location, (str, Path)):
-            raise RulesError(f"environment.rules.vehicles.{pattern}: expected a file")
+    for pattern, location in vehicles:
         rules = base.read_over(str(location))
         rules.check_inputs(WEATHER_INPUTS)
-        _VEHICLE_RULES.append((str(pattern), rules))
+        _VEHICLE_RULES.append((pattern, rules))
     if default is not None or _VEHICLE_RULES:
         logger.info(
             "Following the weather rules of %s",
@@ -202,13 +202,9 @@ def weather_at(quantity: str, inputs: dict[str, float], quantile: float) -> floa
 
 
 def _rules_for(type_id: str, role: str) -> Optional[Rules]:
-    for pattern, rules in _VEHICLE_RULES:
-        if pattern.lower() == EGO_KEY:
-            if role == _EGO_ROLE:
-                return rules
-        elif fnmatch.fnmatchcase(type_id, pattern):
-            return rules
-    return None
+    # Which entry is the checked weather_inputs's (vehicle_entry()).
+    index = vehicle_entry([pattern for pattern, _ in _VEHICLE_RULES], type_id, role)
+    return None if index < 0 else _VEHICLE_RULES[index][1]
 
 
 def vehicle_range(

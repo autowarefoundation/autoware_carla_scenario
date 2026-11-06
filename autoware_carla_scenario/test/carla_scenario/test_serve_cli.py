@@ -7,6 +7,7 @@ Both used to ignore their arguments: ``viewer --help`` or
 
 from __future__ import annotations
 
+import argparse
 import os
 import socket
 import subprocess
@@ -17,7 +18,12 @@ from typing import Any, Callable
 import pytest
 
 from autoware_carla_scenario import editor, ui
-from autoware_carla_scenario.serve_cli import is_loopback, warn_if_exposed
+from autoware_carla_scenario.serve_cli import (
+    check_port,
+    is_loopback,
+    port,
+    warn_if_exposed,
+)
 
 _ENV = (
     "VIEWER_HOST",
@@ -62,6 +68,14 @@ def base_path(monkeypatch: pytest.MonkeyPatch) -> None:
     from autoware_carla_scenario.ui import app as app_module
 
     monkeypatch.setattr(app_module, "BASE_PATH", app_module.BASE_PATH)
+
+
+@pytest.fixture(autouse=True)
+def viewer_hosts(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Restore the Host names the viewer answers to, which ``--host`` sets."""
+    from autoware_carla_scenario.ui import app as app_module
+
+    monkeypatch.setattr(app_module.HOSTS, "bound_host", app_module.HOSTS.bound_host)
 
 
 @pytest.mark.parametrize("prog", sorted(_MAINS))
@@ -139,6 +153,56 @@ class TestBothCommands:
         assert exc.value.code == 2
         assert served == []
 
+    @pytest.mark.parametrize("bad", ["0", "-1", "70000", "abc"])
+    def test_an_out_of_range_port_flag_is_a_usage_error(
+        self,
+        prog: str,
+        bad: str,
+        served: list[dict[str, Any]],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Out of range used to reach uvicorn, whose asyncio bind raised an
+        # OverflowError traceback (#1774).
+        with pytest.raises(SystemExit) as exc:
+            _MAINS[prog](["--port", bad])
+        assert exc.value.code == 2
+        assert served == []
+        err = capsys.readouterr().err
+        assert f"usage: {prog}" in err
+        assert "argument --port" in err
+
+    @pytest.mark.parametrize("bad", ["0", "-1", "70000", "abc"])
+    def test_an_out_of_range_port_variable_is_a_usage_error(
+        self,
+        prog: str,
+        bad: str,
+        served: list[dict[str, Any]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv(f"{_PREFIX[prog]}_PORT", bad)
+        with pytest.raises(SystemExit) as exc:
+            _MAINS[prog]([])
+        assert exc.value.code == 2
+        assert served == []
+        err = capsys.readouterr().err
+        assert f"usage: {prog}" in err
+        assert "argument --port" in err
+
+    @pytest.mark.parametrize("edge", [1, 65535])
+    def test_the_ends_of_the_port_range_are_served(
+        self,
+        prog: str,
+        edge: int,
+        served: list[dict[str, Any]],
+        base_path: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _MAINS[prog](["--port", str(edge)])
+        monkeypatch.setenv(f"{_PREFIX[prog]}_PORT", str(edge))
+        _MAINS[prog]([])
+        assert [call["port"] for call in served] == [edge, edge]
+
     def test_every_interface_is_served_with_a_warning(
         self,
         prog: str,
@@ -169,6 +233,17 @@ class TestViewer:
 
         ui.main(["--base-path", str(tmp_path)])
         assert app_module.BASE_PATH == tmp_path.resolve()
+
+    def test_the_bound_host_reaches_the_app(
+        self, served: list[dict[str, Any]], base_path: None
+    ) -> None:
+        """The viewer answers the Host it is bound to (web_guard, #1844)."""
+        from autoware_carla_scenario.ui import app as app_module
+
+        ui.main(["--host", "box.lan"])
+        assert app_module.HOSTS.bound_host == "box.lan"
+        assert app_module.HOSTS.allows("box.lan")
+        assert not app_module.HOSTS.allows("evil.example")
 
     def test_fetch_rerun_web_viewer_still_fetches_instead_of_serving(
         self, served: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
@@ -216,8 +291,28 @@ class TestEditor:
         monkeypatch.setenv("SCENARIO_EDITOR_EXPORT_DIR", str(tmp_path / "env"))
         editor.main(["--drafts", str(tmp_path / "drafts")])
         assert made == [
-            {"draft_dir": tmp_path / "drafts", "export_dir": tmp_path / "env"}
+            {
+                "draft_dir": tmp_path / "drafts",
+                "export_dir": tmp_path / "env",
+                "host": "127.0.0.1",
+            }
         ]
+
+    def test_the_bound_host_reaches_the_app(
+        self, served: list[dict[str, Any]], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The editor answers the Host it is bound to (web_guard, #1844)."""
+        from autoware_carla_scenario.editor import app as app_module
+
+        made: list[dict[str, Any]] = []
+
+        def create_app(**kwargs: Any) -> object:
+            made.append(kwargs)
+            return object()
+
+        monkeypatch.setattr(app_module, "create_app", create_app)
+        editor.main(["--host", "box.lan"])
+        assert made[0]["host"] == "box.lan"
 
 
 @pytest.mark.parametrize(
@@ -248,6 +343,36 @@ def test_the_warning_brackets_an_ipv6_address(
 ) -> None:
     warn_if_exposed("viewer", "::", 9000, "do things")
     assert "listening on [::]:9000" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("0", "must be within 1-65535, got 0"),
+        ("-1", "must be within 1-65535, got -1"),
+        ("65536", "must be within 1-65535, got 65536"),
+        ("abc", "expected an integer, got 'abc'"),
+        ("2000.7", "expected an integer, got '2000.7'"),
+    ],
+)
+def test_port_refuses_what_is_not_a_tcp_port(text: str, message: str) -> None:
+    with pytest.raises(argparse.ArgumentTypeError, match=message):
+        port(text)
+
+
+def test_port_accepts_the_tcp_range() -> None:
+    assert [port(text) for text in ("1", "2000", "65535")] == [1, 2000, 65535]
+
+
+@pytest.mark.parametrize("number", [0, -1, 65536, 67536])
+def test_check_port_refuses_a_number_outside_the_tcp_range(number: int) -> None:
+    # The range check on its own, for a port no argparse option reads (#1781).
+    with pytest.raises(ValueError, match=f"must be within 1-65535, got {number}"):
+        check_port(number)
+
+
+def test_check_port_returns_a_number_in_the_tcp_range() -> None:
+    assert [check_port(n) for n in (1, 2000, 65535)] == [1, 2000, 65535]
 
 
 def _free_port() -> int:

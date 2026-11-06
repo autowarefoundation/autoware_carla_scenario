@@ -393,6 +393,19 @@ class TurnIndicatorAction(BaseAction):
         super().__init__(label, condition, timing, once=once)
 
 
+class EmergencyAction(BaseAction):
+    def __init__(self, label):
+        compile_error("EmergencyAction(): no constructor takes these arguments "
+                      "(required: entity_name)")
+
+    def __init__(self, entity_name, active: bool = True, condition = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "emergency", once: bool = True, overrides: bool = False):
+        _keyword_only(_kw, "EmergencyAction(): label, once and overrides")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
+
 @tuple
 class RoutingMode:
     value: str
@@ -770,7 +783,7 @@ class SmartPedestrianControllerAction(BaseAction):
                  prompts: List[TimedPrompt] = List[TimedPrompt](),
                  waypoints: List[WalkWaypoint] = List[WalkWaypoint](),
                  speed_ms: float = 1.3, keyframes: Optional[str] = None,
-                 duration_s: Optional[float] = None, seed: int = 0,
+                 duration_s: Optional[float] = None, seed: Optional[int] = None,
                  overrides: bool = False):
         _keyword_only(_kw, "SmartPedestrianControllerAction(): label, once, prompts, "
                       "waypoints, speed_ms, keyframes, duration_s, seed and overrides")

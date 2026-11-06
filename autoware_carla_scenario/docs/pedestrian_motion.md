@@ -62,7 +62,7 @@ python -m tools.convert_amass_to_soma --input wave_amass.npz \
 |---|---|
 | `poses` | Each joint's rotation relative to its parent: `(N, J, 3)` axis-angle or `(N, J, 3, 3)` matrices |
 | `joint_names` | The joints' names, in the order of `poses` (the SOMA rig's order if absent) |
-| `absolute_pose`, `joint_orient` | Poses relative to the T-pose need its `joint_orient`; absolute poses need nothing more |
+| `absolute_pose`, `joint_orient` | Poses relative to the T-pose need its `joint_orient`; absolute poses need nothing more, and a `joint_orient` beside them is ignored |
 | `fps` | The frame rate, if the file stores one (`save_soma_npz` does not; give `fps=`, or 30 is assumed) |
 
 `transl`, the identity coefficients and the units are not read: the walker
@@ -213,7 +213,8 @@ When the action fires:
    generated from the motion shown so far.
 
 CARLA runs synchronously, so the simulation waits for each answer, and the same
-`seed` replays the same motion.
+`seed` replays the same motion. Without a `seed` the action takes the run's, so
+a sweep over the run's seed varies the motion too.
 
 The action takes the pedestrian's **movement and animation**
 [control domains](architecture.md) for as long as it moves the walker. It runs
@@ -244,11 +245,13 @@ A keyframes file lists full-body poses:
 ```
 
 - `time_s` is the time into the motion: finite and not negative.
-- `x`, `y` and `yaw_deg` place the pose in CARLA's world. Without them, the pose
-  is placed where the motion began and faces the way it did then.
+- `x`, `y` and `yaw_deg` place the pose in CARLA's world; each is finite.
+  Without them, the pose is placed where the motion began and faces the way it
+  did then.
 - `joints` gives each joint the generator places (the `joint_names` it answers
   with; ARDY's SOMA model has 30) in metres. The axes are forward, left and up
-  from the root's ground point, as the body faces.
+  from the root's ground point, as the body faces. Every component is finite.
+  JSON's `NaN` and `Infinity` are refused when the action is built.
 
 ### Parameters
 
@@ -257,11 +260,11 @@ A keyframes file lists full-body poses:
 | `entity_name` | | The pedestrian |
 | `prompt` | `""` | What it does, in words, from the start |
 | `prompts` | `()` | `TimedPrompt(time_s, text)`: texts that take over later (`time_s` finite and not negative) |
-| `waypoints` | `()` | `WalkWaypoint(x, y)`: CARLA world points it passes |
+| `waypoints` | `()` | `WalkWaypoint(x, y)`: CARLA world points it passes (`x` and `y` finite) |
 | `speed_ms` | `1.3` | Walking speed along the waypoints, m/s; finite and positive |
 | `keyframes` | `None` | A keyframes file (relative paths are taken from the working directory) |
 | `duration_s` | `None` | Stop after this long (finite and positive); `None`: at the last waypoint or keyframe, whichever is later, or, with neither, at the scenario's end |
-| `seed` | `0` | The generator's draws |
+| `seed` | `None` | The generator's draws; `None` follows the run's seed (`autoware_carla_scenario.seed`), a number keeps its own: a whole number from 0 to 2147483647, `2**31 - 1` (`2.5`, `true`, `-1` or `2**31` is refused) |
 | `overrides` | `False` | Take over a domain another action holds, stopping it |
 
 The backend's own settings, including its image, GPU memory and Hugging Face

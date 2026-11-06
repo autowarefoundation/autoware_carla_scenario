@@ -182,9 +182,15 @@ adds to these totals):
   15.0.0).
 - **The `slim` pass** (on by default, `slim: "false"` to disable) drops
   byte-code caches, vendored test suites, C headers, Cython sources and type
-  stubs (29 MB), then runs `strip --strip-unneeded` over every bundled shared
-  object (64 MB) — the manylinux wheels for scipy, numpy and OpenCV ship
-  unstripped. Stripping leaves the dynamic symbol table intact.
+  stubs (about 26 MB), then runs `strip --strip-unneeded` over every bundled
+  shared object (64 MB) — the manylinux wheels for scipy, numpy and OpenCV
+  ship unstripped. Stripping leaves the dynamic symbol table intact. The
+  stubs of mypy's bundled typeshed (`mypy/typeshed/`, about 3 MB) are kept:
+  the image runs mypy for the scenario check's None check, and without the
+  standard library's stubs mypy stops with *"Failed to find builtin module
+  'typing', perhaps typeshed is broken?"*, which the check reports only as
+  skipped. The build checks a small program with mypy and fails if mypy does
+  not report its error.
 
     GNU binutils up to 2.40 — the version in Debian bookworm — rewrites some
     objects into a layout the kernel's ELF loader rejects with *"ELF load
@@ -360,8 +366,27 @@ docker run --rm \
   --env NISHISHINJUKU_XODR_PATH=/maps/nishishinjuku_carla.xodr \
   --env NISHISHINJUKU_LANELET2_PATH=/maps/nishishinjuku.osm \
   my-scenario:latest \
-  scenario=my_scenario/default map=nishishinjuku
+  scenario=my_scenario/default map=nishishinjuku map.overwrite_xodr=false
 ```
+
+`map=nishishinjuku` turns `map.overwrite_xodr` on: before loading the map it
+copies `map.xodr_path` over the `.xodr` inside the server's CARLA installation,
+the file `NISHISHINJUKU_MAP_PATH` names. The container cannot see that
+installation, so the example turns the overwrite off and the server keeps the
+road network its map already has; the mounted files are still what the scenario
+reads. The map turns the overwrite on because NishishinjukuMap's assets ship
+without a matching OpenDRIVE; to install it from a container on the server's
+host, mount the server's file read-write and name it, in place of
+`map.overwrite_xodr=false` (`$SERVER_XODR` is the path `NISHISHINJUKU_MAP_PATH`
+would hold on the host):
+
+```bash
+  --volume "$SERVER_XODR:/carla/NishishinjukuMap.xodr" \
+  --env NISHISHINJUKU_MAP_PATH=/carla/NishishinjukuMap.xodr \
+```
+
+The copy keeps the source's timestamps, which only the file's owner may set, so
+the container's user (UID 1000, or `--user`) must own that file.
 
 Without `--network host`, pass the server address explicitly with
 `server.host=<address> server.port=2000`. Hydra writes under the working

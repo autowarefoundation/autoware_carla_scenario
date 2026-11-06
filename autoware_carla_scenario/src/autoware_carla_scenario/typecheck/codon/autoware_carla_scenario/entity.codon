@@ -1,7 +1,7 @@
 # Model of autoware_carla_scenario.entity (docs/typecheck.md).
 #
-# EgoConfig lives in scenario_base in Python; it is defined here, next to the
-# EgoVehicle.spawn() that takes it, and scenario_base re-exports it. The spawn
+# EgoConfig is defined here, next to the EgoVehicle.spawn() that takes it, as
+# in Python's entity.ego, and scenario_base re-exports it. The spawn
 # locations and the NPC vehicle are in _vehicle_entity.codon.
 
 import typesafe_carla.carla as carla
@@ -12,7 +12,9 @@ from .debug_markers import DebugMarkers
 from .coordinate import (Lanelet2Pose, OpenDrivePose, CarlaWorldPose, GroundProjectionConfig,
                          _expect_lanelet2_poses, _expect_optional_ground_projection)
 from .traffic import LaneChangeDirection, SimulationFidelity, TurnDirection
-from ._vehicle_entity import (SpawnLocation, SpawnPointIndex, SpawnTransform, VehicleEntity,
+from ._vehicle_entity import (ANY_EMERGENCY_VEHICLE, ANY_MOTORCYCLE, EmergencyVehicleEntity,
+                              EmergencyVehicleEntityConfig, MotorcycleEntity, MotorcycleEntityConfig, SpawnLocation,
+                              SpawnPointIndex, SpawnTransform, VehicleEntity,
                               VehicleEntityConfig)
 from .entity_role import _expect_role, _expect_role_name
 
@@ -187,6 +189,8 @@ class EgoVehicle:
             _acs_expect_return(r, bool, "EgoVehicle.finish_at() returns bool")
         elif name == "release_from_traffic":
             _acs_expect_return(r, NoneType, "EgoVehicle.release_from_traffic() returns None")
+        elif name == "set_emergency":
+            _acs_expect_return(r, NoneType, "EgoVehicle.set_emergency() returns None")
         elif name == "resume_traffic":
             _acs_expect_return(r, NoneType, "EgoVehicle.resume_traffic() returns None")
         elif name == "require_microscopic":
@@ -267,6 +271,11 @@ class EgoVehicle:
         raise NotImplementedError()
 
     def release_from_traffic(self, world: carla.World) -> None:
+        raise NotImplementedError()
+
+    # traffic.driven.BackendDriven's: only an EmergencyVehicleEntity can be
+    # put on a call (EmergencyAction).
+    def set_emergency(self, active: bool) -> None:
         raise NotImplementedError()
 
     def resume_traffic(self, world: carla.World) -> None:

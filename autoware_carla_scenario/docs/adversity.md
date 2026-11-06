@@ -129,6 +129,24 @@ map. A crosswalk without one has no red light to run.
    for 3 s, or else accept it and hold their speed for 2 s. That response
    carries its own weight. An ego victim is never driven.
 
+`NadeSettings` refuses, when it is built, a value outside its bounds, naming
+the field and the value (#1458): `max_controlled` below 0; a negative or
+non-finite `control_radius`, `magnitude` or `cooldown`; a `horizon` or
+`resolution` that is not finite and positive; and a `max_is_probability` or
+`fixed_is_probability` outside [0, 1]. A `q` above 1 would sample the adversity on
+every draw yet still weight the run by `p / q`, under-weighting it in
+silence. The editor's Adversarial Traffic card declares the same bounds, so
+it reports such a value while the document is edited.
+
+`AvoidanceSettings` (the `avoidance` of `NadeSettings`) refuses its own in
+the same way (#1463): an `avoid_probability`, `avoid_is_probability` or
+`unavoidable_factor` outside [0, 1]; a negative or non-finite `buffer` or
+`unavoidable_magnitude`; and an `avoid_duration` or `accept_duration` that
+is not finite and positive. An `avoid_is_probability` above 1 would have
+every victim avoid yet still weight the run by `p / q`. Neither the editor
+nor a scenario's `scenario.*` keys set these: they stay TeraSim's unless
+built in code.
+
 ```python
 from autoware_carla_scenario import (
     AdversarialTrafficAction,
@@ -147,6 +165,11 @@ self.register_pre_tick(
     )
 )
 ```
+
+`seed` (as the adversarial actions' and `AdversityFeasibleCondition`'s) is a
+whole number from 0 to 2147483647 (`2**31 - 1`); `None`, the default, follows the run's seed. A
+seed of `2.5`, `True` or `-1` is refused when the action is built, naming
+`seed`, rather than read as 2 or 1.
 
 It drives the NPCs and pedestrians a scenario registers, and with
 `drive_background` (the default) the traffic backend's background vehicles in
@@ -293,6 +316,13 @@ and 0.8 in the buffer. With `use_dynamic_spacing` and `speed_limit_mph`,
 MUTCD's spacings apply instead. A taper can be `linear` or `curved` (an
 s-curve). The zone closes in from `side`, `"right"` by default; TeraSim instead
 picked the side from the SUMO lane's index.
+
+`start_s` and `end_s` must be finite, with `end_s` after `start_s`.
+`ConstructionSettings` refuses a number that is not finite, a spacing
+(`spacing`, `warning_zone_spacing`) that is not positive, and a negative
+length, `speed_limit_mph` or `merge_signs`; a length of 0 means no such
+zone. A zone whose spacing would lay out more than `MAX_ZONE_OBJECTS`
+(100,000) objects is refused when it is placed (#1479).
 
 From `start_time` to `end_time` (`None`: never removed) the objects stand in
 the world as CARLA props, each added by a `SpawnAction` and named

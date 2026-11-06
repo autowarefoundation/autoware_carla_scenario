@@ -2,16 +2,23 @@
 
 from __future__ import annotations
 
+import errno
+import fcntl
 import io
 import json
 import os
+import shutil
+import signal
+import subprocess
+import sys
 import tarfile
 import threading
+import time
 from collections.abc import Iterator
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Optional
+from typing import IO, Optional
 import urllib.error
 
 import pytest
@@ -535,3 +542,379 @@ def test_a_permanent_http_error_is_not_retried(home: Path, origin: _Origin) -> N
         install(origin.url)
     assert len(origin.ranges) == 2
     assert not install_dir().with_name("carla.partial").exists()
+
+
+def test_an_interrupted_swap_never_passes_for_a_current_install(
+    home: Path,
+    origin: _Origin,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """Ctrl-C while the old tree is deleted: the next run ends complete (#1567)."""
+    install(origin.url)
+    real_rmtree = shutil.rmtree
+
+    def interrupted(path: Path, ignore_errors: bool = False) -> None:
+        tree = Path(path)
+        if (tree / "noise").is_file():  # an install, old or new, being deleted
+            (tree / "noise").unlink()  # part way through: launcher and stamp remain
+            raise KeyboardInterrupt
+        real_rmtree(tree, ignore_errors)
+
+    monkeypatch.setattr(shutil, "rmtree", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        install(origin.url, force=True)  # a reinstall, Ctrl-C mid-swap
+    monkeypatch.setattr(shutil, "rmtree", real_rmtree)
+    capsys.readouterr()
+
+    install(origin.url)  # the next run
+    assert installed_executable() is not None
+    assert len((install_dir() / "noise").read_bytes()) == 256 * 1024
+    assert (install_dir() / ".download.json").is_file()
+    assert sorted(p.name for p in install_dir().parent.iterdir()) == [
+        "carla",
+        "carla.lock",
+    ]
+
+
+def test_an_interrupt_between_the_renames_leaves_no_install_to_trust(
+    home: Path, origin: _Origin, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    install(origin.url)
+    real_rename = Path.rename
+
+    def interrupted(self: Path, target: Path) -> Path:
+        if self.name == "carla.partial":
+            raise KeyboardInterrupt
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", interrupted)
+    with pytest.raises(KeyboardInterrupt):
+        install(origin.url, force=True)
+    monkeypatch.setattr(Path, "rename", real_rename)
+    assert installed_executable() is None  # moved aside, not half there
+
+    install(origin.url)
+    assert len((install_dir() / "noise").read_bytes()) == 256 * 1024
+    assert sorted(p.name for p in install_dir().parent.iterdir()) == [
+        "carla",
+        "carla.lock",
+    ]
+
+
+def test_a_failed_swap_puts_the_previous_install_back(
+    home: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    archive = tmp_path / "carla.tar.gz"
+    install(_carla(archive))
+    real_rename = Path.rename
+
+    def failing(self: Path, target: Path) -> Path:
+        if self.name == "carla.partial":
+            raise OSError("rename failed")
+        return real_rename(self, target)
+
+    monkeypatch.setattr(Path, "rename", failing)
+    _carla(archive, b"a later night" * 10)
+    with pytest.raises(OSError, match="rename failed"):
+        install(archive.as_uri())
+    assert (install_dir() / "VERSION").read_bytes() == b"nightly"
+    assert (install_dir() / ".download.json").is_file()
+
+
+def test_concurrent_installs_wait_for_each_other(
+    home: Path,
+    origin: _Origin,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A second run waits for the first instead of deleting its download (#1570)."""
+    downloading = threading.Event()  # the first run is mid-download
+    waiting = threading.Event()  # the second run blocks on the lock
+    real_flock = fcntl.flock
+    real_read = carla_install._ResumingStream.read
+    staged: list[bool] = []
+
+    def flock(fd: int, operation: int) -> None:
+        if operation == fcntl.LOCK_EX:  # the blocking wait, after LOCK_NB failed
+            waiting.set()
+        real_flock(fd, operation)
+
+    def read(stream: carla_install._ResumingStream, amount: int = -1) -> bytes:
+        if not downloading.is_set():
+            downloading.set()
+            assert waiting.wait(10), "the second run never waited"
+            time.sleep(0.2)  # time for it to be blocked in flock, not just about to be
+        staged.append(install_dir().with_name("carla.partial").is_dir())
+        return real_read(stream, amount)
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+    monkeypatch.setattr(carla_install._ResumingStream, "read", read)
+    errors: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            install(origin.url)
+        except BaseException as exc:  # noqa: BLE001 -- reported by the test
+            errors.append(exc)
+
+    first = threading.Thread(target=run)
+    first.start()
+    assert downloading.wait(10)
+    second = threading.Thread(target=run)
+    second.start()
+    first.join(30)
+    second.join(30)
+    assert not first.is_alive() and not second.is_alive()
+    assert errors == []
+    assert all(staged), "the first run's download was deleted under it"
+    out = capsys.readouterr().out
+    assert "Waiting for another scenario-setup" in out
+    assert "up to date" in out  # the second found the first one's install
+    assert origin.ranges == [None, None]  # one download, one check
+    assert len((install_dir() / "noise").read_bytes()) == 256 * 1024
+    assert sorted(p.name for p in install_dir().parent.iterdir()) == [
+        "carla",
+        "carla.lock",
+    ]
+
+
+def test_ctrl_c_while_waiting_for_the_lock_stops_the_run(
+    home: Path, tmp_path: Path
+) -> None:
+    url = _carla(tmp_path / "carla.tar.gz")
+    lock = install_dir().with_name("carla.lock")
+    lock.parent.mkdir(parents=True)
+
+    def interrupt(signum: int, frame: object) -> None:
+        raise KeyboardInterrupt
+
+    previous = signal.signal(signal.SIGALRM, interrupt)
+    try:
+        with open(lock, "a") as held:
+            fcntl.flock(held.fileno(), fcntl.LOCK_EX)  # another run's install
+            signal.setitimer(signal.ITIMER_REAL, 0.3)
+            with pytest.raises(KeyboardInterrupt):
+                install(url)
+    finally:
+        signal.setitimer(signal.ITIMER_REAL, 0)
+        signal.signal(signal.SIGALRM, previous)
+    assert installed_executable() is None
+    assert install(url) == install_dir() / LAUNCHER  # the lock is free again
+
+
+@pytest.mark.skipif(os.geteuid() == 0, reason="root ignores file permissions")
+def test_a_read_only_install_is_still_checked(
+    home: Path, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    url = _carla(tmp_path / "carla.tar.gz")
+    install(url)
+    parent = install_dir().parent
+    parent.chmod(0o555)
+    try:
+        for lock_left in (True, False):
+            if not lock_left:
+                parent.chmod(0o755)
+                install_dir().with_name("carla.lock").unlink()
+                parent.chmod(0o555)
+            capsys.readouterr()
+            assert install(url) == install_dir() / LAUNCHER
+            assert "up to date" in capsys.readouterr().out
+    finally:
+        parent.chmod(0o755)
+
+
+@pytest.mark.parametrize("lock_left", [True, False])
+def test_an_unwritable_lock_file_does_not_stop_a_check(
+    lock_left: bool,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """As the test above, for root too: opening the lock for writing is refused."""
+    url = _carla(tmp_path / "carla.tar.gz")
+    install(url)
+    lock = install_dir().with_name("carla.lock")
+    if not lock_left:
+        lock.unlink()
+    opened: list[str] = []
+
+    def read_only_open(file: Path, mode: str = "r") -> IO[str]:
+        opened.append(mode)
+        if mode != "r":
+            raise PermissionError(errno.EACCES, "Permission denied", str(file))
+        return open(file, mode)  # noqa: SIM115
+
+    monkeypatch.setattr(carla_install, "open", read_only_open, raising=False)
+    capsys.readouterr()
+    assert install(url) == install_dir() / LAUNCHER
+    captured = capsys.readouterr()
+    assert "up to date" in captured.out
+    assert opened == ["a", "r"]
+    assert ("going ahead unlocked" in captured.err) is not lock_left
+    assert lock.exists() is lock_left
+
+
+def _read_only(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The lock file can be opened read-only only, as in another user's install."""
+
+    def read_only_open(file: Path, mode: str = "r") -> IO[str]:
+        if mode != "r":
+            raise PermissionError(errno.EACCES, "Permission denied", str(file))
+        return open(file, mode)  # noqa: SIM115
+
+    monkeypatch.setattr(carla_install, "open", read_only_open, raising=False)
+
+
+def _nfs_flock(monkeypatch: pytest.MonkeyPatch) -> None:
+    """``flock`` as an NFS client has it: byte-range locks (``lockf``), whose
+    exclusive lock needs a descriptor open for writing (``EBADF`` otherwise)."""
+    monkeypatch.setattr(fcntl, "flock", fcntl.lockf)
+
+
+def test_a_read_only_check_on_nfs_takes_a_shared_lock(
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1577: an exclusive lock on the read-only lock file failed with EBADF."""
+    url = _carla(tmp_path / "carla.tar.gz")
+    install(url)
+    _read_only(monkeypatch)
+    _nfs_flock(monkeypatch)
+    capsys.readouterr()
+    assert carla_install.main(["--url", url]) == 0
+    captured = capsys.readouterr()
+    assert "up to date" in captured.out
+    assert captured.err == ""  # locked, not "going ahead unlocked"
+
+
+def test_a_read_only_lock_without_byte_range_locks_goes_ahead_unlocked(
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    url = _carla(tmp_path / "carla.tar.gz")
+    install(url)
+    _read_only(monkeypatch)
+
+    def flock(fd: int, operation: int) -> None:
+        raise OSError(errno.EBADF, "Bad file descriptor")
+
+    monkeypatch.setattr(fcntl, "flock", flock)
+    capsys.readouterr()
+    assert carla_install.main(["--url", url]) == 0
+    captured = capsys.readouterr()
+    assert "up to date" in captured.out
+    assert "installing unlocked" in captured.err
+
+
+@pytest.mark.parametrize("nfs", [False, True], ids=["flock", "nfs"])
+def test_a_read_only_check_waits_for_a_writer(
+    nfs: bool,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    url = _carla(tmp_path / "carla.tar.gz")
+    install(url)
+    lock = install_dir().with_name("carla.lock")
+    # Another process: byte-range locks do not conflict within one.
+    writer = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import fcntl, sys\n"
+            f"f = open(sys.argv[1], 'a'); fcntl.{'lockf' if nfs else 'flock'}"
+            "(f.fileno(), fcntl.LOCK_EX); print('locked', flush=True)\n"
+            "sys.stdin.read()",
+            str(lock),
+        ],
+        stdin=subprocess.PIPE,
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert writer.stdin is not None and writer.stdout is not None
+    try:
+        assert writer.stdout.readline() == "locked\n"
+        _read_only(monkeypatch)
+        if nfs:
+            _nfs_flock(monkeypatch)
+        real_flock = fcntl.flock
+        waiting = threading.Event()
+        events: list[str] = []
+
+        def flock(fd: int, operation: int) -> None:
+            if operation == fcntl.LOCK_SH:  # the blocking wait, after LOCK_NB failed
+                waiting.set()
+            real_flock(fd, operation)
+            events.append(f"locked {operation}")
+
+        monkeypatch.setattr(fcntl, "flock", flock)
+
+        def release() -> None:
+            # Released even if the check never waited, so a regression fails
+            # (on the events) rather than hanging the test on the writer's lock.
+            if waiting.wait(10):
+                time.sleep(
+                    0.2
+                )  # time for the check to be blocked, not just about to be
+            events.append("released")
+            assert writer.stdin is not None
+            writer.stdin.close()
+
+        releaser = threading.Thread(target=release)
+        releaser.start()
+        capsys.readouterr()
+        assert carla_install.main(["--url", url]) == 0
+        releaser.join(10)
+        assert events == ["released", f"locked {fcntl.LOCK_SH}"]
+        out = capsys.readouterr().out
+        assert "Waiting for another scenario-setup" in out
+        assert "up to date" in out
+    finally:
+        if writer.stdin is not None and not writer.stdin.closed:
+            writer.stdin.close()
+        writer.wait(10)
+
+
+@pytest.mark.parametrize("state", ["out of date", "not installed", "forced"])
+def test_a_read_only_run_does_not_install(
+    state: str,
+    home: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    url = _carla(tmp_path / "carla.tar.gz")
+    install(url)
+    if state == "out of date":
+        url = _carla(tmp_path / "new.tar.gz", b"newer")
+    elif state == "not installed":
+        shutil.rmtree(install_dir())
+    _read_only(monkeypatch)
+    _nfs_flock(monkeypatch)
+
+    def no_download(*args: object, **kwargs: object) -> None:
+        raise AssertionError("a read-only run downloaded")
+
+    monkeypatch.setattr(carla_install, "_unpack", no_download)
+    capsys.readouterr()
+    argv = ["--url", url] + (["--force"] if state == "forced" else [])
+    assert carla_install.main(argv) == 1
+    err = capsys.readouterr().err
+    expected = "not installed" if state == "not installed" else "out of date"
+    assert f"is {expected}, and this run cannot write there" in err
+    if state != "not installed":
+        assert (install_dir() / "VERSION").read_bytes() == b"nightly"
+
+
+def test_a_content_range_of_non_ascii_digits_is_unknown() -> None:
+    """#1612: ``"²".isdigit()`` is true but ``int("²")`` raises."""
+    assert carla_install._content_range("bytes 5-9/10") == (5, 10)
+    assert carla_install._content_range("bytes ²-9/10") == (None, None)
+    assert carla_install._content_range("bytes 5-9/²") == (None, None)

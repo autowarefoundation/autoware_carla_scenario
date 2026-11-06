@@ -37,6 +37,10 @@ from ..action_state import ActionState
 # Free to import for the same reason: metrics reads CARLA only when a metric
 # is read, so the Metric card's options are the metrics themselves.
 from ..metrics import BUILT_IN_METRICS
+
+# Free to import: `seed` imports nothing but the standard library.  Every
+# seed field is bounded by MAX_SEED, as its constructor's check_seed is.
+from ..seed import MAX_SEED
 from dataclasses import dataclass
 from collections.abc import Iterator
 from typing import Any, Literal, Optional
@@ -67,6 +71,8 @@ __all__ = [
     "rule_symbol",
     "TRAFFIC_LIGHT_STATES",
     "TRUTHY_VALUES",
+    "FALSY_VALUES",
+    "read_bool",
     "action_specs",
     "binding_specs",
     "condition_specs",
@@ -159,6 +165,37 @@ SEARCHABLE_LANELET_KINDS: frozenset[str] = frozenset({"lanelet"})
 #: document may spell a ``bool`` field with.  One set, so form parsing and
 #: document coercion cannot drift on what counts as true.
 TRUTHY_VALUES = frozenset({"1", "true", "on", "yes"})
+
+#: The strings that spell false, the counterpart of :data:`TRUTHY_VALUES`.
+#: A ``bool`` field holds a real bool or one of these two sets' spellings and
+#: nothing else: anything outside both (``"ture"``, ``"enabled"``, ``"2"``) is
+#: a validation error, never a quiet ``False`` (#1459).
+FALSY_VALUES = frozenset({"0", "false", "off", "no"})
+
+
+def read_bool(value: Any) -> Optional[bool]:
+    """Return the bool *value* spells, or ``None`` when it spells neither.
+
+    A real bool is itself; a string or an int is read by its stripped,
+    lower-cased text against :data:`TRUTHY_VALUES` and :data:`FALSY_VALUES`.
+    Anything else -- a float, a list, a mapping, an unknown word -- spells
+    neither.  Blank values are the caller's to handle first: for a nullable
+    bool they mean "unset", which this cannot say.
+
+    The validator, the compiler and the editor's form parser all read a
+    ``bool`` field through this, so what one accepts the others do too.
+    """
+    if isinstance(value, bool):
+        return value
+    if not isinstance(value, (str, int)):
+        return None
+    text = str(value).strip().lower()
+    if text in TRUTHY_VALUES:
+        return True
+    if text in FALSY_VALUES:
+        return False
+    return None
+
 
 #: An OmegaConf interpolation such as ``${map.no_3d_model_lanelet_ids}``.  A
 #: field whose kind ends in ``_or_ref`` keeps one of these verbatim so the
@@ -935,6 +972,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="Leave empty to keep what the world already has.",
             ),
             FieldSpec(
@@ -944,6 +983,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="Rain intensity.",
             ),
             FieldSpec(
@@ -953,6 +994,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="Water left on the road surface.",
             ),
             FieldSpec(
@@ -962,6 +1005,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="How wet surfaces look.",
             ),
             FieldSpec(
@@ -971,6 +1016,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="Wind strength.",
             ),
             FieldSpec(
@@ -980,6 +1027,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="%",
+                minimum=0.0,
+                maximum=100.0,
                 help="Thickness of the fog.",
             ),
             FieldSpec(
@@ -1064,6 +1113,35 @@ register_action_spec(
         description=(
             "Light the vehicle's turn indicators (or hazard lights, or neither); "
             "they stay so until set again."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="emergency",
+        title="Emergency",
+        category="Vehicle / Lights",
+        builder="build_emergency_action",
+        target="..actions:EmergencyAction",
+        actor_kinds=("vehicle",),
+        visual_kind="instant",
+        fields=(
+            FieldSpec(
+                name="active",
+                label="On a call",
+                kind="bool",
+                default=True,
+                help=(
+                    "Checked: the emergency vehicle goes on a call -- siren "
+                    "lights on, through red lights, other traffic making way "
+                    "under SUMO.  Unchecked: it goes off duty again."
+                ),
+            ),
+        ),
+        description=(
+            "Put an emergency vehicle (police car, ambulance, fire engine) on "
+            "a call or off duty; it stays so until set again."
         ),
     )
 )
@@ -1231,11 +1309,14 @@ register_action_spec(
                 kind="number",
                 default=15.0,
                 unit="m",
+                minimum=0.0,
             ),
             FieldSpec(
                 name="seed",
                 label="Seed",
                 kind="int",
+                minimum=0,
+                maximum=MAX_SEED,
                 default=None,
                 required=False,
                 help="Leave empty to follow the run's seed.",
@@ -1511,8 +1592,12 @@ register_action_spec(
                 name="seed",
                 label="Seed",
                 kind="int",
-                default=0,
-                help="The motion generator's draws.",
+                minimum=0,
+                maximum=MAX_SEED,
+                default=None,
+                required=False,
+                help="The motion generator's draws. Leave empty to follow the "
+                "run's seed.",
             ),
         ),
         description=(
@@ -2143,6 +2228,7 @@ register_action_spec(
                 name="taper_length_in",
                 label="Entry taper",
                 kind="number",
+                minimum=0.0,
                 default=60.0,
                 required=False,
                 unit="m",
@@ -2151,6 +2237,7 @@ register_action_spec(
                 name="taper_length_out",
                 label="Exit taper",
                 kind="number",
+                minimum=0.0,
                 default=30.0,
                 required=False,
                 unit="m",
@@ -2170,6 +2257,7 @@ register_action_spec(
                 name="warning_zone_length",
                 label="Warning zone",
                 kind="number",
+                minimum=0.0,
                 default=100.0,
                 required=False,
                 unit="m",
@@ -2178,6 +2266,7 @@ register_action_spec(
                 name="buffer_zone_length",
                 label="Buffer zone",
                 kind="number",
+                minimum=0.0,
                 default=10.0,
                 required=False,
                 unit="m",
@@ -2186,6 +2275,7 @@ register_action_spec(
                 name="termination_zone_length",
                 label="Termination zone",
                 kind="number",
+                minimum=0.0,
                 default=30.0,
                 required=False,
                 unit="m",
@@ -2323,6 +2413,7 @@ register_action_spec(
                 name="warning_zone_length",
                 label="Warning zone",
                 kind="number",
+                minimum=0.0,
                 default=200.0,
                 required=False,
                 unit="m",
@@ -2332,6 +2423,7 @@ register_action_spec(
                 name="merge_distance",
                 label="Merge taper",
                 kind="number",
+                minimum=0.0,
                 default=150.0,
                 required=False,
                 unit="m",
@@ -2341,6 +2433,7 @@ register_action_spec(
                 name="merge_signs",
                 label="Merge signs",
                 kind="int",
+                minimum=0,
                 default=2,
                 required=False,
                 help="Before the merge taper, 50 m apart.",
@@ -2425,6 +2518,8 @@ register_action_spec(
                 name="seed",
                 label="Seed",
                 kind="int",
+                minimum=0,
+                maximum=MAX_SEED,
                 default=None,
                 required=False,
                 help="Leave empty to follow the run's seed.",
@@ -2435,6 +2530,7 @@ register_action_spec(
                 kind="int",
                 default=5,
                 help="The nearest this many vehicles around the ego.",
+                minimum=0,
             ),
             FieldSpec(
                 name="control_radius",
@@ -2442,6 +2538,7 @@ register_action_spec(
                 kind="number",
                 default=50.0,
                 unit="m",
+                minimum=0.0,
             ),
             FieldSpec(
                 name="magnitude",
@@ -2449,12 +2546,15 @@ register_action_spec(
                 kind="number",
                 default=20.0,
                 help="q = clip(p x magnitude, 0, the most q).",
+                minimum=0.0,
             ),
             FieldSpec(
                 name="max_is_probability",
                 label="Most q",
                 kind="number",
                 default=0.05,
+                minimum=0.0,
+                maximum=1.0,
             ),
             FieldSpec(
                 name="fixed_is_probability",
@@ -2462,6 +2562,8 @@ register_action_spec(
                 kind="number",
                 default=0.0,
                 help="Above 0, every adversity's q, in place of the clip.",
+                minimum=0.0,
+                maximum=1.0,
             ),
             FieldSpec(
                 name="cooldown",
@@ -2470,6 +2572,7 @@ register_action_spec(
                 default=5.5,
                 unit="s",
                 help="After an adversity, how long before the next.",
+                minimum=0.0,
             ),
             FieldSpec(
                 name="challenge_npcs",
@@ -3149,6 +3252,7 @@ register_action_spec(
                 kind="int",
                 default=0,
                 required=False,
+                minimum=0,
                 help=(
                     "With Target 'A route junction's path': which junction of the "
                     "route, from 0."
@@ -3944,7 +4048,11 @@ register_condition_spec(
                 kind="number",
                 default=0.0,
                 unit="m",
-                help="Past the anchor along the route; negative is before it.",
+                help=(
+                    "Past the anchor along the route; negative is before it. "
+                    "Progress is clamped to the route, so keep the target "
+                    "between its start and its end."
+                ),
             ),
             FieldSpec(
                 name="anchor",
@@ -4733,6 +4841,7 @@ register_condition_spec(
                 label="Max NG seconds",
                 kind="number",
                 default=0.0,
+                minimum=0.0,
                 help=(
                     "How long, in total, the metric may meet the rule before "
                     "the run fails; 0 fails it at the first frame that does."
@@ -4822,6 +4931,7 @@ register_condition_spec(
                 label="Minimum impulse",
                 kind="number",
                 default=0.0,
+                minimum=0.0,
                 unit="N s",
                 required=False,
             ),
@@ -5083,8 +5193,9 @@ register_condition_spec(
                 name="depth",
                 label="Steps on",
                 kind="int",
+                minimum=0,
                 default=1,
-                help="How many steps of following lanelets to search.",
+                help="How many steps of following lanelets to search; 0: the lanelet alone.",
             ),
             *_temporary_stop_fields("a stop line"),
         ),
@@ -5366,8 +5477,17 @@ register_binding_spec(
                 label="Steps on",
                 kind="int",
                 default=1,
+                minimum=1,
                 help="1 is the lanelet after the pick; where the road forks, "
                 "the lowest id.",
+            ),
+            FieldSpec(
+                name="through_junction",
+                label="Out of the junction",
+                kind="bool",
+                default=False,
+                help="Go on past the steps while still in a junction, to the "
+                "first lanelet out of it.",
             ),
         ),
         # A lanelet slot takes one id: the route's last lanelet.

@@ -8,7 +8,9 @@ from pathlib import Path
 from ._tc import _keyword_only as _acs_keyword_only
 
 # The trajectory log's suffix (`{stem}.trajectory.jsonl`), which the checked
-# t4_scene.grid reads.
+# t4_scene.grid reads. Python's is the checked run_outputs's (#1678); a model
+# cannot import a checked module (the scenario check compiles only the
+# model), so it is declared here, with Python's value.
 TRAJECTORY_SUFFIX: str = ".trajectory.jsonl"
 
 
@@ -33,4 +35,10 @@ class RerunConverter:
         raise NotImplementedError()
 
     def submit(self, trajectory: Path, label: str) -> Path:
+        raise NotImplementedError()
+
+    # Python returns the RerunConversion records, which are not modelled
+    # (their `stats` is a dict of mixed values): the checked scenario_queue
+    # drops them.
+    def wait(self) -> None:
         raise NotImplementedError()

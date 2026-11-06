@@ -17,7 +17,7 @@ from typing import Any
 
 import pytest
 
-from autoware_carla_scenario.slurm import scripts, submit
+from autoware_carla_scenario.slurm import queue, scripts, submit
 from autoware_carla_scenario.slurm.manifest import BatchLayout
 from autoware_carla_scenario.slurm.settings import SlurmSettings
 
@@ -258,7 +258,8 @@ def _squeue(
         assert command[:5] == ["squeue", "-h", "-r", "-j", "7"]
         return subprocess.CompletedProcess(command, returncode, stdout, stderr)
 
-    monkeypatch.setattr(submit.subprocess, "run", run)
+    # squeue is run in slurm.queue (#1634), whose squeue_states submit re-exports.
+    monkeypatch.setattr(queue.subprocess, "run", run)
     return submit.squeue_states("7")
 
 

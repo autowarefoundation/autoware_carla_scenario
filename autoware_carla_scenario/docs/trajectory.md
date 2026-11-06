@@ -94,6 +94,12 @@ Positions are converted to CARLA world coordinates when the action first runs,
 through the loaded map. Vertices of different kinds may be mixed in one
 trajectory.
 
+Every number of a `MapPose`, a `RelativeLanePose` or a route pose must be
+finite: `nan` and `inf` are refused when the pose is built, a `yaw` or `z`
+given as `None` excepted. Whatever the frame, a vertex that resolves to a
+non-finite position, heading or time is refused when the trajectory is
+resolved, rather than making the whole path `nan`.
+
 ### Lane-relative vertices
 
 A `RelativeLanePose` writes the shape of a manoeuvre -- pull out, overtake, cut
@@ -384,7 +390,8 @@ which starts a controller of its own with its own targets), when the route's
 end of the run (`PedestrianEntity.stop_walk`).
 A vehicle driven by the framework's own controller (`follow` mode, a final
 approach), which the TrafficManager does not drive, brakes for a walker in its
-way within its stopping distance (`utils.clearance`). A walker that falls over all the same is taken out of the
+way within its stopping distance (`utils.clearance`), but not for one on another
+level of road, such as a footbridge overhead. A walker that falls over all the same is taken out of the
 world once it has lain there 5 s (`npc_collisions.FALLEN_DESPAWN_S`, the
 monitor's `despawn_fallen_after_s`; never the ego), with a `despawn` record
 of reason `fallen`. That is any walker, an entity's or not: one no entity

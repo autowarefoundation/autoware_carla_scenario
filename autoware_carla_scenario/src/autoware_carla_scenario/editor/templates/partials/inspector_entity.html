@@ -7,7 +7,7 @@
 
 <form hx-post="/draft/{{ draft.id }}/entity/{{ target.id }}"
       hx-trigger="change delay:200ms" hx-target="#editor-body" hx-swap="innerHTML">
-  <p class="ed-kicker">{{ 'Ego vehicle' if target.kind == 'ego' else 'Vehicle' }}</p>
+  <p class="ed-kicker">{{ {'ego': 'Ego vehicle', 'motorcycle': 'Motorcycle', 'pedestrian': 'Pedestrian'}.get(target.kind, 'Vehicle') }}</p>
   <h3 class="ed-heading">{{ target.display_name }}</h3>
 
   <div class="ed-field">
@@ -24,7 +24,7 @@
   {% if target.kind != 'pedestrian' or target.initial_speed_kmh %}
   <div class="ed-field">
     <label class="ed-label">Initial speed <span class="unit">(km/h)</span></label>
-    <input type="number" step="any" name="initial_speed_kmh" class="ed-input"
+    <input type="number" step="any" min="0" name="initial_speed_kmh" class="ed-input"
            value="{{ target.initial_speed_kmh }}">
   </div>
   {% endif %}
@@ -173,7 +173,7 @@
         <input type="hidden" name="spawn_hidden_shown" value="1">
         <label class="ed-check">
           <input type="checkbox" name="spawn_hidden" value="on" {% if target.spawn.hidden %}checked{% endif %}>
-          <span>Spawn out of the world<span class="ed-help">Under the map with physics off, until a Set Goal card brings it in. For a road user a recording picks up late.</span></span>
+          <span>Spawn out of the world<span class="ed-help">Under the map with physics off, until a Spawn card brings it in. For a road user a recording picks up late.</span></span>
         </label>
       </div>
     {% endif %}

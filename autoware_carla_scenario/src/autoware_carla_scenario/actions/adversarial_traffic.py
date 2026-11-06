@@ -44,7 +44,7 @@ from ..adversity.snapshot import scene_at
 from ..adversity.triggers import DEFAULT_THRESHOLDS, AdversityKind, TriggerThresholds
 from ..conditions.base import BaseCondition, find_actor_by_role_name
 from ..constants import EGO_ROLE_NAME
-from ..seed import resolve_seed
+from ..seed import check_seed, resolve_seed
 from ..traffic.base import TrafficBackend
 from ..trajectory.model import TrajectoryFollowingMode
 from ..utils.turn_indicator import TurnIndicatorState, is_vehicle, turn_indicators_of
@@ -89,6 +89,12 @@ class AdversarialTrafficAction(BaseAction):
         drive_background: Whether the traffic backend's background vehicles
             may carry out adversities (and respond to them) too, beside the
             registered entities.
+
+    Raises:
+        ValueError: If an adversity's probability is outside [0, 1], or
+            *seed* (when given) is not a whole number (``2`` or ``2.0``, read
+            as 2; not ``2.5``, NaN, infinity or a boolean) or is negative.
+            The error names the parameter.
     """
 
     REISSUES_BY_DEFAULT = True
@@ -136,6 +142,10 @@ class AdversarialTrafficAction(BaseAction):
             once=True,
             until=forever,
         )
+        # Checked as TrafficSourceAction's seed is: int() alone would read
+        # 2.5 or True as a seed, and take a negative one (#1495).
+        if seed is not None:
+            seed = check_seed("seed", seed)
         self._adversities = list(adversities)
         self._seed = resolve_seed(seed)
         self._settings = settings

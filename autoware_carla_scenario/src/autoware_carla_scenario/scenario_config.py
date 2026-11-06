@@ -26,6 +26,7 @@ it is cheap and safe from any environment.
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
@@ -273,8 +274,28 @@ class NpcVehicleConfig:
     #: CARLA vehicle blueprint ID.
     vehicle_type: str = "vehicle.mini.cooper"
 
-    #: Initial speed in km/h applied after warm-up.
+    #: Initial speed in km/h applied after warm-up: finite, 0 or more.
     initial_speed_kmh: float = 0.0
+
+    def __post_init__(self) -> None:
+        """Refuse a NaN or infinite ``spawn_s``, and an ``initial_speed_kmh``
+        that is not finite or is below zero (#1809): a NaN pose fails far from
+        the key behind it, a negative or NaN speed leaves the NPC still with no
+        error and an infinite one breaks its physics.
+
+        Raises:
+            ValueError: naming the field.
+        """
+        if not math.isfinite(self.spawn_s):
+            raise ValueError(f"spawn_s must be finite, got {self.spawn_s}")
+        # NaN fails `>= 0.0` as well.
+        if not (
+            math.isfinite(self.initial_speed_kmh) and self.initial_speed_kmh >= 0.0
+        ):
+            raise ValueError(
+                "initial_speed_kmh must be finite and at least 0, "
+                f"got {self.initial_speed_kmh}"
+            )
 
 
 # ---------------------------------------------------------------------------
@@ -594,19 +615,32 @@ class SweepConfig:
     list of constraint dicts; it holds one key, the parameter swept (a
     second is refused when the sweep is expanded).  ``bindings`` maps a target key
     (e.g. ``ego.spawn_s``) to a binding dict that auto-derives the value.
-    ``odd_sample`` draws the settings of each case from the ODD.
+    ``odd_sample`` draws the settings of each case from the ODD.  ``exclude``
+    maps a key to the values a case may not end with on it, once its bindings
+    are applied.
     """
 
     constraints: dict[str, Any] = field(default_factory=dict)
     bindings: dict[str, Any] = field(default_factory=dict)
+    #: Key -> values a case is dropped for holding there after its bindings:
+    #: ``ego.spawn_lanelet_id: ${map.no_3d_model_lanelet_ids}`` keeps the
+    #: lanelet a ``stop_line_offset`` walks the spawn back onto off a lanelet
+    #: CARLA does not draw, which a constraint on the pick cannot see.
+    exclude: dict[str, Any] = field(default_factory=dict)
 
     #: Hard timeout (seconds) per job.  If a single scenario run exceeds
     #: this duration (e.g. CARLA hangs), it is forcefully interrupted and
-    #: the sweep continues with the next lanelet.  0 disables the timeout.
+    #: the sweep continues with the next lanelet.  0 disables the timeout;
+    #: ``null`` means the default (120).  Whole seconds, at most 2**31 - 1: a
+    #: fraction, a negative value, NaN, infinity or a larger value is refused
+    #: (exit 2) before any case runs.
     job_timeout_seconds: int = 120
 
     #: 1-indexed job number to resume from.  Jobs before this index are
-    #: skipped.  0 (default) means execute all jobs from the beginning.
+    #: skipped.  0 (default) or ``null`` means execute all jobs from the
+    #: beginning.  A whole number: a bool, a float, a string or a negative
+    #: value is refused (exit 2) before any case runs.  ``--resume-from N``
+    #: (``SWEEP_RESUME_FROM``) wins over it.
     resume_from: int = 0
 
     #: Concrete cases drawn from the ODD (``docs/odd.md``, "Sampling
@@ -618,5 +652,6 @@ class SweepConfig:
 
     #: Keep only the case at this (0-based) index of the expansion; ``None``
     #: keeps them all.  ``++sweep.case_index=0`` on a batch runs each scenario
-    #: on its first case.
+    #: on its first case.  A whole number >= 0 (``3`` or ``"3"``): a bool, a
+    #: fraction such as ``1.9`` or another string is refused, naming the key.
     case_index: int | None = None

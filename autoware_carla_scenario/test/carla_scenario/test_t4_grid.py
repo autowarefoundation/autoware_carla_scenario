@@ -20,6 +20,7 @@ from autoware_carla_scenario.t4_scene.convert import (
 )
 from autoware_carla_scenario.t4_scene.grid import (
     checked_max_distance,
+    checked_step,
     indicator_at,
     is_ego,
     on_scene,
@@ -116,8 +117,14 @@ def test_step_frames_matches_the_original(step_s: float) -> None:
 
 
 @pytest.mark.parametrize("step_s", [math.nan, math.inf, -math.inf])
-def test_step_frames_raises_as_the_original_on_non_finite(step_s: float) -> None:
-    assert _outcome(step_frames, step_s) == _outcome(_original_step_frames, step_s)
+def test_step_frames_refuses_a_non_finite_step(step_s: float) -> None:
+    # The original raised OverflowError for an infinite step (from ``round``);
+    # the shared tick check refuses every non-finite step with its message (#1384).
+    with pytest.raises(
+        ValueError,
+        match=rf"^step_s={step_s} is not a positive multiple of the 0\.05 s tick$",
+    ):
+        step_frames(step_s)
 
 
 def test_step_frames_returns_an_int() -> None:
@@ -238,6 +245,28 @@ def test_checked_max_distance_refuses_a_bool(flag: bool) -> None:
     # float(True) is 1.0: a bool would otherwise pass as a 1 m distance.
     with pytest.raises(ValueError, match="max_distance_m must be positive"):
         checked_max_distance(flag)
+
+
+@pytest.mark.parametrize("distance", ["5", "far", [5]])
+def test_checked_max_distance_refuses_what_is_not_a_number(distance: object) -> None:
+    with pytest.raises(ValueError, match="^t4scene.max_distance_m must be positive"):
+        checked_max_distance(distance, "t4scene.max_distance_m", "null")  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("step_s", [True, False, "0.1", None, [0.1]])
+def test_checked_step_refuses_what_is_not_a_number(step_s: object) -> None:
+    # float(True) is 1.0, a valid step: a bool would pass as 1 s (#1502).
+    with pytest.raises(ValueError, match=r"^t4scene\.step_s must be a number"):
+        checked_step(step_s, "t4scene.step_s")  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=r"^step_s must be a number"):
+        step_frames(step_s)  # type: ignore[arg-type]
+
+
+def test_checked_step_keeps_a_multiple_of_the_tick_as_a_float() -> None:
+    assert checked_step(0.1) == 0.1
+    assert type(checked_step(1)) is float
+    with pytest.raises(ValueError, match=r"^step_s=0\.07 is not a positive multiple"):
+        checked_step(0.07)
 
 
 def test_checked_max_distance_keeps_a_positive_distance_and_none() -> None:

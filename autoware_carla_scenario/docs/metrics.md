@@ -58,6 +58,21 @@ are not road users. `collision_*` reads the boxes, not CARLA's collision
 sensor (`CollisionCondition`): it sees a collision as AlpaSim does, and tells
 the front from the rear.
 
+The boxes are compared on the ground, as AlpaSim's are, on the ego's level of
+road. A road user whose box is more than 1 m above or below the ego's (each
+box from its centre's height, the actor's origin plus the box's offset, less
+and plus its half height) is on a bridge over the ego or in an underpass
+beneath it: it is in no collision with the ego, and
+`min_distance_to_obstacle_m` measures to it across the height between the
+boxes too -- a car on a bridge 8 m over the ego, their boxes 1.6 m tall, is
+6.4 m from it, not `0`. The CommonRoad metrics leave it out. The metre lets a
+road user just up or down a slope from the ego, whose box is level here,
+still meet it. The lanes -- `offroad`, `wrong_lane`,
+`min_distance_to_lane_boundary_m` and the [weaving](#weaving) drift -- are
+asked for at the height of the ego, as `OffRoadFractionCondition` asks at the
+entity's, so that where roads cross at different heights the lane is the one
+the ego drives on, not the road under or over it.
+
 ### Weaving
 
 Three metrics read how the ego weaves from side to side, and a fourth how
@@ -122,7 +137,11 @@ reachable set (`COMMONROAD_METRICS`). Each is read on the ego against the road
 users around it, every one going on as it goes -- its velocity and
 acceleration held, a braking one stopping -- over a 3 s horizon; the CriMe
 measures against other road users are the most critical over them, as CriMe
-folds them.
+folds them. CommonRoad's scenario is planar, so the road users on another
+level of road than the ego's -- more than 1 m above or below its box, and
+higher or lower than a 10 % grade climbs over the distance between them, so a
+lead on the same road up a slope stays in -- are left out of it, as they are
+of the collisions.
 
 | Key | Unit | Reads | Folds with |
 |---|---|---|---|
@@ -185,8 +204,8 @@ manoeuvres: about 2 s a frame with a collision ahead.
 A slow metric is evaluated less often than every `period_s` (0.1 s): at its
 own period, `metric_periods_s`, by default 0.5 s for `crime_ttr_s`
 (`DEFAULT_METRIC_PERIODS_S`). A frame is asked only the metrics due on it, and
-a metric condition counts each NG sample until the next, so `max_ng_seconds`
-is still simulated time. Set the periods of any CommonRoad metric; the
+a metric condition counts each NG sample until the next (the last until the
+run's end), so `max_ng_seconds` is still simulated time. Set the periods of any CommonRoad metric; the
 dictionary given replaces the one set, so start from it to keep the others':
 
 ```python
@@ -218,7 +237,11 @@ The `scenario` command (a single run, a batch, a sweep, and the SLURM tasks
 alike) decides in this order:
 
 1. `metrics.heavy` when a config sets it to `true` or `false` (the first
-   case's of a batch that does): it overrides the environment variable;
+   case's of a batch that does): it overrides the environment variable.
+   Besides `true` and `false`, it takes their spellings as
+   [the run's switches](usage.md#the-switches) do (`"false"`, `"off"`,
+   `"no"`, `0` are false); anything else (`ture`, `2`) is refused, naming
+   `metrics.heavy`, in any case of a batch before the first one runs;
 2. otherwise `$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`: off when it is `0`,
    `false`, `off` or `no`;
 3. otherwise on.
@@ -275,8 +298,11 @@ run fails when its NG frames add up to more than `max_ng_seconds` of
 simulated time -- with the default `0`, at its first NG frame -- at the time
 they do. "More than" means by over `1e-9` s, the tolerance the other time
 conditions use: the clock is a running sum of ticks, so a metric NG for
-exactly `max_ng_seconds` can add up to a hair over it, and that holds. Each NG frame counts until the next frame evaluated (the last, the
-run's end, counts nothing); a frame the metric reads nothing in is not NG.
+exactly `max_ng_seconds` can add up to a hair over it, and that holds. Each NG frame counts until the next frame evaluated, and the last until the
+run's end, its last recorded frame: a metric evaluated every tick reads its
+last sample then, so that one counts nothing, while one sampled at a coarser
+period (`crime_ttr_s`, the CommonRoad metrics) counts its last sample for the
+time left to the end. A frame the metric reads nothing in is not NG.
 
 ```python
 from autoware_carla_scenario import ComparisonRule, MetricCondition

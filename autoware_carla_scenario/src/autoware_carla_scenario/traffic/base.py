@@ -610,6 +610,28 @@ class TrafficBackend:
             "%s: cannot change a vehicle's parameters during a run", self.name
         )
 
+    def set_emergency(self, entity: DrivenEntity, active: bool) -> None:
+        """Have *entity*'s vehicle drive as an emergency vehicle on a call
+        (*active*: its siren on) or as one off duty, from now on.
+
+        On a call it goes through red lights and past stop signs, and a
+        backend whose own traffic can make way for it (SUMO's rescue lane)
+        has that traffic make way; off duty it drives as the run's other
+        vehicles do.  The entity switches the lights itself
+        (:class:`~autoware_carla_scenario.entity.EmergencyVehicleEntity`);
+        this is the driving.  May be called before the run starts, for a
+        vehicle on a call from its spawn.
+
+        Nothing by default, with a warning: a backend that cannot leaves the
+        vehicle driving as it did.
+        """
+        if active:
+            logger.warning(
+                "%s: cannot drive %s as an emergency vehicle; it drives as before",
+                self.name,
+                _entity_name(entity),
+            )
+
     def override_pedestrian_parameters(
         self, world: "carla.World", overrides: PedestrianParameters
     ) -> None:
@@ -1010,8 +1032,13 @@ class TrafficBackend:
 
     def background_vehicles(
         self, world: "carla.World"
-    ) -> dict[str, tuple[float, float]]:
-        """Every live background vehicle, by handle, at its CARLA ``(x, y)``."""
+    ) -> dict[str, tuple[float, float, Optional[float]]]:
+        """Every live background vehicle, by handle, at its CARLA
+        ``(x, y, z)``: the elevation tells the road under an overpass from
+        the one over it (:func:`~autoware_carla_scenario.coordinate.on_lanelet`).
+        ``z`` is ``None`` where the backend does not know it -- a vehicle the
+        SUMO backend's queue model holds, on a lane's 2D shape -- and the
+        vehicle is then placed in plan view alone."""
         return {}
 
     def remove_background(self, world: "carla.World", handle: str) -> None:

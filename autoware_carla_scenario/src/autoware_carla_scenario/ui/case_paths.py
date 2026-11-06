@@ -6,12 +6,14 @@ through :func:`contained`, which refuses a path that resolves outside the
 viewer's base; the files one case leaves (:class:`CaseFiles`), and the stems
 of the cases in a directory, in the order a runner hands them out
 (:func:`stem_order`), and the one case of a directory that holds one run
-(whose result :func:`result_path` finds).
+(whose result :func:`result_path` finds); what a batch's caches are kept by
+(:func:`batch_stamp`) and whether its summary is current; and the job indices
+of a session and the ``scenario=`` override among a case's overrides.
 
-Split out of ``ui.cases``, which re-exports every name here and keeps what
-reads the JSON documents of any type (``Any``) a batch leaves, so that the
-library check compiles it (``docs/typecheck.md``, "Checking the framework
-itself").
+Split out of ``ui.cases`` and ``ui.results``, which re-export every name
+moved here and keep what reads the JSON documents of any type (``Any``) a
+batch leaves, so that the library check compiles it (``docs/typecheck.md``,
+"Checking the framework itself").
 """
 
 from __future__ import annotations
@@ -21,14 +23,29 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Optional
 
+# A case's trajectory log and its recording are named by the checked
+# run_outputs's rule (#1678), as rerun and ui.web_viewer_paths name them; its
+# result and coverage file by run_outputs's suffixes too (#1704), and its
+# environment (#1713) and ODD archive (#1748).
+from ..run_outputs import (
+    COVERAGE_SUFFIX,
+    ENVIRONMENT_SUFFIX,
+    ODD_ARCHIVE_SUFFIX,
+    RECORDING_SUFFIX,
+    RESULT_SUFFIX,
+    TRAJECTORY_SUFFIX,
+)
+
 __all__ = [
     "SESSION_TYPES",
     "CaseFiles",
+    "batch_stamp",
     "contained",
     "job_dir",
     "last_result_path",
     "result_path",
     "session_dir",
+    "session_order",
     "stem_order",
 ]
 
@@ -40,9 +57,13 @@ SESSION_TYPES = ("multirun", "batch", "single")
 #: fails as "not found" rather than with ENAMETOOLONG.
 _COMPONENT = re.compile(r"^[A-Za-z0-9_.:+-]{1,255}$")
 
-_TRAJECTORY = ".trajectory.jsonl"
-_RESULT = "_result.json"
+_TRAJECTORY = TRAJECTORY_SUFFIX
+_RESULT = RESULT_SUFFIX
+_COVERAGE = COVERAGE_SUFFIX
 _STEM_NUMBER = re.compile(r"^(?P<base>.*?)-(?P<n>\d+)$")
+#: A session's time directory that ``run_dirs.reserve_timestamped_dir``
+#: numbered: ``{HH-MM-SS}-{n}``, a run started in the same second as another.
+_SESSION_NUMBER = re.compile(r"^(?P<base>[^-]+-[^-]+-[^-]+)-(?P<n>\d+)$")
 
 
 @dataclass(frozen=True)
@@ -65,21 +86,21 @@ class CaseFiles:
 
     @property
     def coverage(self) -> Path:
-        return self.path("_coverage.json")
+        return self.path(_COVERAGE)
 
     @property
     def odd_archive(self) -> Path:
-        return self.path("_odd.tar.gz")
+        return self.path(ODD_ARCHIVE_SUFFIX)
 
     @property
     def environment(self) -> Path:
-        return self.path("_environment.json")
+        return self.path(ENVIRONMENT_SUFFIX)
 
     @property
     def recording(self) -> Path:
         """The Rerun recording made of the trajectory log (``X.rrd`` beside
         ``X.trajectory.jsonl``, where the converter writes it)."""
-        return self.path(".rrd")
+        return self.path(RECORDING_SUFFIX)
 
 
 def _safe(component: str) -> bool:
@@ -127,6 +148,18 @@ def stem_order(stem: str) -> tuple[str, int]:
     match = _STEM_NUMBER.match(stem)
     if match is None:
         return stem, 0
+    return match["base"], int(match["n"])
+
+
+def session_order(time: str) -> tuple[str, int]:
+    """Where a session's *time* directory comes among those of its date:
+    ``HH-MM-SS``, then ``HH-MM-SS-1``, ``HH-MM-SS-2``, ... ``HH-MM-SS-10``
+    (by number, not by text), the order ``run_dirs.reserve_timestamped_dir``
+    hands them out in (#1845).  Only a number after the three fields of the
+    time is one: ``12-00-01`` is not ``12-00`` numbered 1."""
+    match = _SESSION_NUMBER.match(time)
+    if match is None:
+        return time, 0
     return match["base"], int(match["n"])
 
 
@@ -186,3 +219,79 @@ def _mtime(path: Path) -> float:
         return path.stat().st_mtime
     except OSError:
         return 0.0
+
+
+def _stat(path: Path) -> tuple[int, int]:
+    """*path*'s modification time (ns) and size, ``(0, -1)`` when missing."""
+    try:
+        info = path.stat()
+    except OSError:
+        return (0, -1)
+    return (info.st_mtime_ns, info.st_size)
+
+
+def batch_stamp(directory: Path) -> tuple[tuple[int, int], ...]:
+    """What a batch's entries and case files are read from, cheaply: the
+    modification time and size of its ``batch_results.json``, of a SLURM
+    batch's manifest and ``collected.json``, and of the directories its
+    submissions and case outcomes are written to, and of *directory* itself.
+
+    A few ``stat`` calls, whatever the size of the batch: the launcher writes
+    every record by renaming a new file over it (``slurm.manifest.write_json``)
+    and a task removes a case's old outcome before it runs it again, so a
+    record added, replaced or removed changes its directory's time.  The
+    viewer's caches of a batch (``ui.cases.batch_case_files``, and the session and
+    case pages' in ``ui.scanner``) are kept while this stays the same.
+    """
+    slurm = directory / "slurm"
+    # tuple() of a list: the library check reads a variable-length tuple
+    # returned as a list, which a tuple display is not.
+    return tuple(
+        [
+            _stat(directory / "batch_results.json"),
+            _stat(slurm / "manifest.json"),
+            _stat(slurm / "collected.json"),
+            _stat(slurm / "submissions"),
+            _stat(slurm / "results"),
+            _stat(directory),
+        ]
+    )
+
+
+def _summary_is_current(directory: Path) -> bool:
+    """Whether a batch's ``batch_results.json`` is its latest summary: not
+    older than a SLURM batch's last submission or case outcome.
+
+    A resubmission (``scenario-slurm resubmit``, the viewer's "Resubmit")
+    leaves the summary of the earlier collect in place until its own collect
+    rewrites it; until then the summary is stale, and the cases are read from
+    what the tasks record (``slurm/results``).  A local batch has no
+    ``slurm/``, so its summary is always current.
+    """
+    slurm = directory / "slurm"
+    summary = _stat(directory / "batch_results.json")[0]
+    collected = _stat(slurm / "collected.json")
+    if collected[1] >= 0:
+        # A collect writes the summary, then collected.json.
+        summary = min(summary, collected[0])
+    latest = max(_stat(slurm / "submissions")[0], _stat(slurm / "results")[0])
+    return latest <= summary
+
+
+def _job_indices(directory: Path, session_type: str) -> list[int]:
+    """The case indices of a multirun or single session in *directory*."""
+    if session_type != "multirun":
+        return [0]
+    indices: list[int] = []
+    for p in directory.iterdir():
+        if p.is_dir() and p.name.isascii() and p.name.isdigit():
+            indices.append(int(p.name))
+    return sorted(indices)
+
+
+def _override_label(overrides: list[str]) -> str | None:
+    """The ``scenario=`` override among *overrides*, if any."""
+    for o in overrides:
+        if o.startswith("scenario="):
+            return o.split("=", 1)[1]
+    return None

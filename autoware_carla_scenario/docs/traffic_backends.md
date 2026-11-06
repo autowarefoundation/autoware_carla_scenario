@@ -102,6 +102,9 @@ uv run scenario traffic.options.port=8101
 `traffic_manager.port` — where the port lived before this group existed, and what
 exported scenario packages still set — keeps deciding the port when
 `traffic.options.port` is left unset.
+Either must be a TCP port, an integer within 1-65535: `0`, `70000` or
+`true` is refused, naming the key, before CARLA is started (a batch's and a
+sweep's cases before any runs), as the SUMO backend's `tm_port` is.
 
 ## Traffic parameters
 
@@ -145,6 +148,22 @@ uv run scenario traffic=sumo traffic.pedestrians.walking_speed_mps.mean=1.0
 
 An ODD can draw both the mean and the std of each, per case
 ([Traffic parameters from the ODD](odd.md#traffic-parameters-from-the-odd)).
+
+A numeric field takes a number, never a bool: `ignore_lights: true` or
+`{mean: true}` is an error naming the field
+(`traffic.vehicles.ignore_lights must be a number, not a bool`), not a
+probability of 1. The two bool fields, `lane_changes` and
+`follow_visibility`, take `true` or `false`, or one of the spellings
+`1`/`true`/`on`/`yes` and `0`/`false`/`off`/`no` (any case, surrounding
+spaces ignored), which is what Hydra leaves an override such as
+`traffic.vehicles.lane_changes=no` as. Each is stored as a real bool, so every
+backend reads the same value; anything else (`enabled`, `2`, `0.5`) is an
+error naming `traffic.vehicles.<field>` before the run starts, from the config,
+a `TrafficParametersAction` and the scenario editor alike.
+
+```bash
+uv run scenario traffic.vehicles.lane_changes=no traffic.vehicles.follow_visibility=off
+```
 
 `traffic.vehicles`:
 
@@ -192,7 +211,7 @@ vehicle parameters are a driver's and never reach a bicycle:
 
 SUMO's default bicycle type (`DEFAULT_BIKETYPE`) is redefined as a
 distribution of 100 types, each its own draw of them
-(`<output>/sumo/bicycle_type.add.xml`, loaded before the demand), which
+(`<output>/{stem}.sumo/bicycle_type.add.xml`, loaded before the demand), which
 SUMO's own bicycles (`traffic.options.bicycles`), a `route_path` demand's of
 that type and the scenario's bicycles are all of.
 
@@ -320,7 +339,7 @@ defaults.
 
 SUMO's default pedestrian type is redefined as a distribution of 100 types,
 each its own draw of them (`vTypeDistribution`, in
-`<output>/sumo/pedestrian_type.add.xml` loaded before the demand); SUMO gives
+`<output>/{stem}.sumo/pedestrian_type.add.xml` loaded before the demand); SUMO gives
 each person one of them as it is added, so each walks as its own draw says.
 They apply to SUMO's own pedestrians (`traffic.options.pedestrians`) and to a
 `route_path` demand's that names no type of its own. On types, not on each
@@ -691,6 +710,18 @@ log says why, once each time the entity becomes mesoscopic. The parts that are t
   (`MesoLink`), moves a vehicle in when it becomes mesoscopic and reads where
   it is to decide when to bring it back.
 
+**Only the `sumo` backend simulates far traffic mesoscopically**
+(`traffic.options.mesoscopic`, [below](#the-sumo-backend)). Under
+`traffic_manager` every vehicle is microscopic, an actor in CARLA wherever it
+is on the map, and `traffic.options.mesoscopic` is an unknown option there
+(an error, like any other). This is by choice, not an omission: the
+TrafficManager exposes neither the route it plans for a vehicle nor a road
+graph, so taking its vehicles out of CARLA and bringing them back would mean
+rebuilding both from the map and guessing where each vehicle was heading. A
+run whose traffic far from the ego matters takes `traffic=sumo` with
+`mesoscopic.enabled=true`; the measurements on Town10HD_Opt
+([below](#measured-on-town10hd_opt)) show what that saves.
+
 ## Using a backend from Python
 
 A scenario run built in code takes the backend the same way it takes the ego:
@@ -771,7 +802,11 @@ self.register_pre_tick(
   `until` fires. Registered with `register_init`, a source places its
   `initial_vehicles` once, during initialization, and never again.
 - **Who drives them** is the backend: `spawn_background`, `background_vehicles`
-  and `remove_background` on `TrafficBackend`. Under `traffic=sumo` they are
+  and `remove_background` on `TrafficBackend`; `background_vehicles` gives each
+  one's CARLA `(x, y, z)`, so a sink or a construction zone tells a road from
+  the overpass above it (`on_lanelet` reads the height); `z` is `None` for a
+  vehicle SUMO's queue model holds (on a lane's 2D shape), which is then
+  placed in plan view alone. Under `traffic=sumo` they are
   SUMO vehicles that wander the network (a random way out at each junction) and
   are mirrored into CARLA like the rest of SUMO's traffic; ones placed during
   initialization have SUMO's warm-up to spread out. Under
@@ -796,6 +831,17 @@ self.register_pre_tick(
   vehicle to any other) must be finite and not negative; NaN or infinity is
   refused by `TrafficSourceAction` and by `background_traffic.source.*`, naming
   the key, rather than crashing the run or being dropped without a word.
+- **`initial_vehicles`**, **`max_vehicles`** and `background_traffic.seed` are
+  whole numbers, not negative (`20` or `20.0`; `max_vehicles` and `seed` may
+  be null), `seed` at most 2147483647 (`2**31 - 1`, what SUMO's `--seed`
+  takes): `2.9`, `true`, `-5` or `2147483648` is refused, naming the key, rather than run
+  as 2, 1 or a negative seed. The run refuses all of these before anything
+  starts, whenever `background_traffic.enabled` is true (`true` or `false`, or
+  a spelling of either such as `"false"`; anything else is refused:
+  [The switches](usage.md#the-switches)). `TrafficSourceAction`
+  applies the same rule to its `initial_vehicles`, `max_vehicles` and `seed`
+  (the last two when given), naming the parameter, so a count of `2.5` or NaN
+  is refused when the action is built rather than mid-run.
 
 The examples take all of this from the config, for any scenario:
 
@@ -922,8 +968,31 @@ uv run scenario scenario=lane_change/left map=town10hd_opt traffic=sumo
 uv run scenario ... traffic=sumo traffic.options.ambient.vehicles_per_hour=1800
 uv run scenario ... traffic=sumo traffic.options.scenario_vehicles=sumo
 uv run scenario ... traffic=sumo traffic.options.scenario_pedestrians=sumo
-uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/sumo/fcd.xml
+uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/{stem}.sumo/fcd.xml
 ```
+
+**Its switches** -- `publish_walkers`, `pedestrian_crossings`,
+`cycle_on_sidewalks`, `use_libsumo`, `fcd_output`, `ambient.enabled`,
+`ambient.use_safe_weights`, `pedestrians.enabled`, `bicycles.enabled` and
+`mesoscopic.enabled`, `mesoscopic.scenario_vehicles` and
+`mesoscopic.junction_control` under `traffic.options` -- are each `true` or
+`false`, or a spelling of either (`"false"`, `"no"`, `"off"`, `"0"`, `0`,
+and `"true"`, `"yes"`, `"on"`, `"1"`, `1`), read as the run's own switches
+are ([The switches](usage.md#the-switches)): so a quoted
+`traffic.options.fcd_output='false'` is false. Anything else (`maybe`, `2`,
+null) is refused before the run, naming the option as
+`ambient.enabled must be true or false, got 'maybe'`.
+
+**Its outputs** are the run's own: everything the backend writes -- SUMO's
+log (`sumo.log`), the demand it generates (`ambient.rou.xml`,
+`pedestrians.rou.xml`, `bicycles.rou.xml`), the type files below and, with
+`fcd_output`, the floating car data (`fcd.xml`) and the SUMO time of each CARLA
+tick (`clock.csv`) -- goes in `<output>/{stem}.sumo/`, named by the run's file
+stem like its `_result.json` (`CutInScenario.sumo/`, then
+`CutInScenario-1.sumo/` ...). A batch shares one output directory, so each run
+keeps its own; the directory counts as one of the run's outputs, so a later
+run never takes its stem and a retried run clears it first
+(`run_outputs.RUN_DIR_SUFFIXES`).
 
 **The network** is the world's own road network. The backend takes the
 OpenDRIVE the world runs (the file the run installed, or
@@ -955,6 +1024,8 @@ mirrored. `traffic.options.net_path` runs on an existing `.net.xml` instead.
 | SUMO's pedestrians (`randomTrips.py --pedestrians`, `pedestrians.enabled`) | SUMO | native; mirrored into CARLA as walkers near the ego |
 | Scenario bicycles (a vehicle whose blueprint's `base_type` is `bicycle`) | as the scenario's other vehicles | published or driven, as a SUMO `bicycle` |
 | SUMO's bicycles (`randomTrips.py --vclass bicycle`, `bicycles.enabled`) | SUMO | native; mirrored into CARLA as bicycles near the ego |
+| Scenario motorcycles (`MotorcycleEntity`, or any vehicle whose blueprint's `base_type` is `motorcycle`) | as the scenario's other vehicles | published or driven, as a SUMO `motorcycle` |
+| Scenario emergency vehicles (`EmergencyVehicleEntity`, or any vehicle whose blueprint's `special_type` is `emergency`) | as the scenario's other vehicles | published or driven, as a SUMO `emergency` vehicle with a bluelight device |
 
 A published vehicle has SUMO's speed and lane-change control switched off, so
 SUMO traffic sees it where CARLA has it and reacts to it. With the default the
@@ -1044,8 +1115,9 @@ apart from one built without, and a network given as `net_path` is used as it
 is.
 
 **SUMO's own bicycles** (`bicycles`, off by default) ride from and to edges a
-bicycle may use (`randomTrips.py --vclass bicycle`, unweighted, from
-`min_distance_m` to `max_distance_m` each) and are mirrored into CARLA as
+bicycle may use (`randomTrips.py --vclass bicycle`, unweighted, each
+at least `min_distance_m` and under `max_distance_m` long, so `min_distance_m`
+must be less than `max_distance_m`) and are mirrored into CARLA as
 bicycles, each one of `blueprints` (those the world lacks are left out; with
 none left, bicycles ride in SUMO only, where its traffic still sees them), with
 the role name `sumo:<id>`. They count against limits of their own:
@@ -1070,6 +1142,96 @@ drives (`scenario_vehicles=sumo`) only where bicycles may go.
 uv run scenario ... traffic=sumo traffic.options.cycle_on_sidewalks=true \
     traffic.options.bicycles.enabled=true traffic.options.bicycles.max_bicycles=20 \
     traffic.bicycles.max_speed_mps.mean=4.0 traffic.bicycles.max_speed_mps.std=0.8
+```
+
+**Motorcycles**: a scenario's motorcycle -- a `MotorcycleEntity`, or any
+vehicle whose blueprint's `base_type` is `motorcycle` -- joins SUMO as a
+vehicle of the class `motorcycle`, of the type `acs_motorcycle` that every run
+declares (SUMO has no default one; it has SUMO's defaults for the class), with
+its CARLA bounding box as its length and width. It rides the carriageway, is
+published or driven like the scenario's other vehicles, takes the drivers'
+parameters (`traffic.vehicles`) as a car does, and may leave for the
+mesoscopic model like them. Under the TrafficManager backend a motorcycle is a
+vehicle like any other: put on autopilot at the start of the run and given its
+manoeuvres (speed, lane changes, turns, routes) as every NPC is.
+
+```python
+from autoware_carla_scenario import (
+    MotorcycleEntity,
+    MotorcycleEntityConfig,
+    SpawnPointIndex,
+)
+
+# Whichever motorcycle the CARLA server has (`vehicle_type` names none) ...
+rider = MotorcycleEntity(MotorcycleEntityConfig("rider", SpawnPointIndex(6)))
+# ... or one by name, refused at spawn if it is not a motorcycle's blueprint.
+named = MotorcycleEntity(
+    MotorcycleEntityConfig("rider2", SpawnPointIndex(7), vehicle_type="vehicle.yamaha.yzf")
+)
+rider.spawn(world)
+self.register_entity(rider)
+```
+
+**Emergency vehicles**: a scenario's emergency vehicle -- an
+`EmergencyVehicleEntity`, or any vehicle whose blueprint's `special_type` is
+`emergency` (CARLA's police cars, ambulances and fire engines) -- joins SUMO as
+a vehicle of the class `emergency`, of the type `acs_emergency` that every run
+declares, with SUMO's bluelight device (`has.bluelight.device`).
+It joins off duty: the device silent (`reactiondist` 0) and SUMO's own speed
+mode (31), not the 7 the device gives it, so it stops at red lights as any car
+does. `EmergencyVehicleEntity.set_emergency(True)` puts it on a call:
+
+| | TrafficManager | SUMO |
+|---|---|---|
+| Siren lights (`VehicleLightState.Special1`) | on | on |
+| Red lights, stop signs | runs them (`ignore_lights_percentage` / `ignore_signs_percentage` 100) | one SUMO drives runs red lights (speed mode 15: no red-light braking, still giving way at the junction) |
+| Other traffic | does not make way | SUMO's vehicles within `reactiondist` (25 m) make way: a rescue lane |
+
+`set_emergency(False)` puts it off duty again: lights off, and under the
+TrafficManager back to its own draw of `traffic.vehicles.ignore_lights` /
+`ignore_signs` (else 0). A call before the run starts (the config's
+`emergency=True`, or `set_emergency` in `setup()`) holds: the vehicle joins the
+run on it. A backend that has no notion of an emergency vehicle (`none`) warns
+and drives it as before; the lights are switched all the same.
+
+```python
+from autoware_carla_scenario import (
+    EmergencyVehicleEntity,
+    EmergencyVehicleEntityConfig,
+    SpawnPointIndex,
+)
+
+# Whichever emergency vehicle the CARLA server has, off duty ...
+ambulance = EmergencyVehicleEntity(
+    EmergencyVehicleEntityConfig("ambulance", SpawnPointIndex(8))
+)
+# ... or one by name, on a call from its spawn.
+police = EmergencyVehicleEntity(
+    EmergencyVehicleEntityConfig(
+        "police", SpawnPointIndex(9), vehicle_type="vehicle.dodge.charger_police",
+        emergency=True,
+    )
+)
+ambulance.spawn(world)
+self.register_entity(ambulance)
+
+# Later, when the scenario's emergency begins (on_tick, ...):
+ambulance.set_emergency(True)
+```
+
+`EmergencyAction` does the same from a trigger, and is what the scenario
+editor offers (*Vehicle / Lights* > *Emergency*):
+
+```python
+from autoware_carla_scenario import EmergencyAction, ElapsedTimeCondition
+
+# On a call 3 s in, off duty again 20 s in.
+self.register_pre_tick(
+    EmergencyAction("ambulance", True, ElapsedTimeCondition(3.0, label="siren_on"))
+)
+self.register_pre_tick(
+    EmergencyAction("ambulance", False, ElapsedTimeCondition(20.0, label="siren_off"))
+)
 ```
 
 **Stepping**: one SUMO step per CARLA tick, with the step length set to the
@@ -1189,7 +1351,9 @@ vehicle CARLA drives (the ego, and the scenario's vehicles under
 on the best lane for its route, and into CARLA -- when it is within
 `micro_radius_m` of one again. SUMO then steps only the traffic near what CARLA
 drives, and CARLA holds an actor only for that, so a large demand costs what
-the traffic around the ego costs.
+the traffic around the ego costs. This is a `sumo` option only: the
+TrafficManager backend keeps every vehicle in CARLA
+([why](#simulating-far-traffic-mesoscopically)).
 
 ```bash
 uv run scenario ... traffic=sumo traffic.options.mesoscopic.enabled=true \

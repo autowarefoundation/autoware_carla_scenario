@@ -19,6 +19,7 @@ it is taken (:mod:`.lidar_weather`).
 from __future__ import annotations
 
 import logging
+import math
 import queue
 import time
 from dataclasses import dataclass
@@ -27,7 +28,7 @@ from typing import TYPE_CHECKING, Optional, Tuple, Union
 import numpy as np
 
 from ..constants import FIXED_DELTA_SECONDS, tick_multiple
-from ..seed import resolve_seed
+from ..seed import check_seed, check_whole_number, resolve_seed
 from .base import sensor_tick_s
 from .lidar_weather import CARLA_FOG_DENSITY_SCALE, LidarWeather, apply_weather
 
@@ -68,7 +69,8 @@ class CarlaLidarSensorConfig:
     upper_fov_deg: float = 15.0
     lower_fov_deg: float = -25.0
     #: CARLA drops this fraction of points at random by default (0.45); a policy
-    #: expecting a real sensor's density wants none of that.
+    #: expecting a real sensor's density wants none of that.  A fraction, from 0
+    #: to 1.
     dropoff_general_rate: float = 0.0
     #: How much of the world's rain and fog the sweeps carry
     #: (:mod:`~autoware_carla_scenario.sensor.lidar_weather`): 0 none, as CARLA
@@ -89,16 +91,68 @@ class CarlaLidarSensorConfig:
     yaw: float = 0.0
 
     def __post_init__(self) -> None:
+        # The mapping is not coerced, so an int field may hold a float (a NaN
+        # too), a bool or a string, and YAML reads 1.2e6 as a float.  A whole
+        # number is kept as an int, so CARLA is handed "1200000", not
+        # "1200000.0"; 64.5 is refused (#1472).
+        object.__setattr__(
+            self, "channels", check_whole_number("LiDAR channels", self.channels)
+        )
+        object.__setattr__(
+            self,
+            "points_per_second",
+            check_whole_number("LiDAR points_per_second", self.points_per_second),
+        )
+        # Hydra reads ``=nan`` as a float, and a NaN fails every comparison
+        # below, so the numbers are refused unless finite first (#1391); a
+        # bool would be taken as 1.0 (range_m=true as 1 m) and a string
+        # would fail with a TypeError naming no key, so neither is a number
+        # (#1506).
+        for key, value in (
+            ("range_m", self.range_m),
+            ("upper_fov_deg", self.upper_fov_deg),
+            ("lower_fov_deg", self.lower_fov_deg),
+            ("dropoff_general_rate", self.dropoff_general_rate),
+            ("weather_noise", self.weather_noise),
+            ("fog_density_scale", self.fog_density_scale),
+            ("position_x", self.position_x),
+            ("position_y", self.position_y),
+            ("position_z", self.position_z),
+            ("roll", self.roll),
+            ("pitch", self.pitch),
+            ("yaw", self.yaw),
+        ):
+            if isinstance(value, bool) or isinstance(value, str):
+                raise ValueError(f"LiDAR {key} must be a number, got {value!r}")
+            try:
+                number = float(value)
+            except TypeError:
+                raise ValueError(f"LiDAR {key} must be a number, got {value!r}")
+            if not math.isfinite(number):
+                raise ValueError(f"LiDAR {key} must be finite, got {value}")
+        seed = self.noise_seed
+        if seed is not None:
+            # A whole number, not negative: not 1.9 or True, which int()
+            # would seed as 1.  Kept as an int, as the counts above are.
+            object.__setattr__(self, "noise_seed", check_seed("LiDAR noise_seed", seed))
         if self.channels < 1:
             raise ValueError("LiDAR channels must be positive")
         if self.range_m <= 0.0 or self.points_per_second <= 0:
             raise ValueError("LiDAR range_m and points_per_second must be positive")
         if self.lower_fov_deg >= self.upper_fov_deg:
             raise ValueError("LiDAR lower_fov_deg must be below upper_fov_deg")
-        if self.weather_noise < 0.0 or (
-            self.noise_seed is not None and self.noise_seed < 0
-        ):
-            raise ValueError("LiDAR weather_noise and noise_seed must not be negative")
+        # CARLA takes the rate as the fraction of points it drops, and clamps
+        # nothing: 45 empties every sweep and a negative rate drops none, both
+        # without a word (#1767).
+        if not 0.0 <= self.dropoff_general_rate <= 1.0:
+            raise ValueError(
+                "LiDAR dropoff_general_rate must be in [0, 1], "
+                f"got {self.dropoff_general_rate}"
+            )
+        if self.weather_noise < 0.0:
+            raise ValueError(
+                f"LiDAR weather_noise must not be negative, got {self.weather_noise}"
+            )
         if self.fog_density_scale <= 0.0:
             raise ValueError("LiDAR fog_density_scale must be positive")
 

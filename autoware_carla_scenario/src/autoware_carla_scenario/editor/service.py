@@ -23,10 +23,12 @@ import uuid
 import weakref
 import zipfile
 from contextlib import contextmanager
+from dataclasses import dataclass
 from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
+    BinaryIO,
     Callable,
     ClassVar,
     Mapping,
@@ -80,12 +82,20 @@ from ..maps import (
     resolve_map,
 )
 from ..authoring.validator import ValidationReport, validate_document
-from .forms import field_present, parse_params
+from ..serve_cli import check_port
+from .forms import field_present, parse_int_list, parse_params
+from .gate_fields import (
+    GATE_CONSISTENCY_FIELDS,
+    GATE_FIELDS,
+    GATE_ITEM_FIELD,
+    GateField,
+)
+from .naming import unused_name as _unused_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
 
-    from ..authoring.models import RouteSearch
+    from ..authoring.models import GateSpec, RouteSearch
     from ..maps import MapEntry
 
 logger = logging.getLogger(__name__)
@@ -93,6 +103,11 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "EditorError",
     "EditorService",
+    "EditorStorageError",
+    "StagedArchive",
+    "GATE_CONSISTENCY_FIELDS",
+    "GATE_FIELDS",
+    "GATE_ITEM_FIELD",
     "as_int",
     "SLOT_FAIL",
     "SLOT_PASS",
@@ -106,6 +121,45 @@ SLOT_FAIL = "fail"
 
 class EditorError(Exception):
     """Raised when a request asks for something the document cannot do."""
+
+
+class EditorStorageError(Exception):
+    """Raised when a draft cannot be written to the drafts directory.
+
+    Not an :class:`EditorError`: that one is the request's problem, shown as
+    "not found" or as a notice beside the form, while this one is the
+    server's -- a drafts directory it may not write to, a read-only file
+    system, a full disk -- and no edit of the request fixes it (#1747).
+
+    Attributes:
+        directory: The drafts directory the write went to.
+        errno: The failed write's ``errno``, if it had one.
+    """
+
+    def __init__(self, message: str, directory: Path, errno: int | None) -> None:
+        super().__init__(message)
+        self.directory = directory
+        self.errno = errno
+
+
+@contextmanager
+def _storage_errors(store: DraftStore, action: str = "written to") -> "Iterator[None]":
+    """Turn a failed write to *store* into an :class:`EditorStorageError`.
+
+    *action* says what was refused, as in "the draft could not be
+    *action* the drafts directory".
+    """
+    try:
+        yield
+    except OSError as exc:
+        raise EditorStorageError(
+            f"The draft could not be {action} the drafts directory "
+            f"{store.root}: {exc.strerror or exc}. Check that the directory "
+            "exists, that the editor may write to it, and that there is space "
+            "left on its disk (it is set by --drafts or SCENARIO_EDITOR_DRAFTS).",
+            directory=store.root,
+            errno=exc.errno,
+        ) from exc
 
 
 def _zip_directory(source: Path, archive: Path) -> None:
@@ -148,6 +202,28 @@ def _map_errors(prefix: str = "") -> "Iterator[None]":
 #: Suffix of a staged wheelhouse archive; the stem is the scenario's id.
 _ARCHIVE_SUFFIX = "-wheelhouse.zip"
 
+
+@dataclass(frozen=True)
+class StagedArchive:
+    """A staged wheelhouse, opened for a download.
+
+    Opened under the lock that staging and deleting the archive hold, so the
+    handle is to the file that was staged at that moment.  It stays readable
+    after the archive is unlinked -- a re-export under a new scenario id, or the
+    draft deleted -- so a download already under way finishes.  The caller
+    closes :attr:`file`.
+
+    Attributes:
+        file: The archive, open for binary reading.
+        name: The archive's file name, which the download is called.
+        size: The archive's size in bytes, from the open handle.
+    """
+
+    file: BinaryIO
+    name: str
+    size: int
+
+
 #: The :class:`MapRef` fields that say *which* map a scenario is on.  A map
 #: operation computes its result from them, so one that changed while the
 #: operation ran makes that result stale -- see
@@ -173,7 +249,9 @@ class EditorService:
         Args:
             store: Where drafts are read and written.
             export_dir: Where a finished export's wheelhouse ``.zip`` is staged
-                until the browser has fetched it.  The editor hands packages to
+                for download, and kept until the draft is deleted or exported
+                again, so its link can be followed more than once.  The editor
+                hands packages to
                 whoever is using it rather than leaving them on the machine it
                 happens to run on -- over a LAN those are not the same machine
                 -- so this is a holding area, not a destination anyone browses.
@@ -225,10 +303,14 @@ class EditorService:
         """Return the directory holding *draft_id*'s staged archive.
 
         Keyed by the draft, not the document: every draft made from one starter
-        shares a document id (``cut_in``, ``new_scenario``), and an archive
+        shares a document id (``my_cut_in``, ``new_scenario``), and an archive
         keyed by that was served by every one of them.
         """
         return self.export_dir / draft_id
+
+    def _archive_lock(self, draft_id: str) -> threading.Lock:
+        """Return the lock that staging and removing *draft_id*'s archive hold."""
+        return self._lock(f"{draft_id}/archive")
 
     def archive_path(self, draft: Draft) -> Path:
         """Return where an export of *draft* stages its wheelhouse now.
@@ -259,6 +341,33 @@ class EditorService:
                 staged.append((status.st_mtime_ns, path))
         return max(staged)[1] if staged else None
 
+    def open_staged_archive(self, draft: Draft) -> Optional[StagedArchive]:
+        """Open the wheelhouse the last export of *draft* staged, if any.
+
+        Looked up and opened under the archive lock, so neither a re-export
+        under a new scenario id nor :meth:`delete_draft` can remove it in
+        between: what a path from :meth:`staged_archive` alone could not
+        promise by the time a response came to open it (#1719).
+
+        Returns:
+            The opened archive, or ``None`` if nothing is staged.  The caller
+            closes its file.
+        """
+        with self._archive_lock(draft.id):
+            archive = self.staged_archive(draft)
+            if archive is None:
+                return None
+            try:
+                handle = archive.open("rb")
+            except FileNotFoundError:
+                return None
+        try:
+            size = os.fstat(handle.fileno()).st_size
+        except BaseException:
+            handle.close()
+            raise
+        return StagedArchive(file=handle, name=archive.name, size=size)
+
     def _stage_archive(self, source: Path, draft: Draft) -> Path:
         """Zip *source* and move it into place as *draft*'s archive.
 
@@ -266,13 +375,21 @@ class EditorService:
         a half-written archive, and two exports running at once each write
         their own file: whichever renames last is staged, whole.  An archive
         staged under an earlier scenario id is removed in the same step.
+
+        A draft deleted while its export ran gets nothing staged: the rename
+        is made under the lock :meth:`delete_draft` removes the archive under,
+        and only if the draft is still stored, so a late export cannot leave
+        behind an archive no route can reach any more.
         """
         archive = self.archive_path(draft)
         archive.parent.mkdir(parents=True, exist_ok=True)
         partial = archive.parent / f".{uuid.uuid4().hex}.zip.partial"
         try:
             _zip_directory(source, partial)
-            with self._lock(f"{draft.id}/archive"):
+            with self._archive_lock(draft.id):
+                if not self.store.path_for(draft.id).is_file():
+                    shutil.rmtree(archive.parent, ignore_errors=True)
+                    return archive
                 os.replace(partial, archive)
                 for stale in archive.parent.glob(f"*{_ARCHIVE_SUFFIX}"):
                     if stale != archive:
@@ -344,13 +461,17 @@ class EditorService:
             kind: ``"cut_in"`` for the worked example, anything else for the
                 minimal document.
             title: Optional title override.
+
+        Raises:
+            EditorStorageError: If the drafts directory refused the write.
         """
         document = (
             new_document() if kind == "cut_in" else blank_document(title=title or "")
         )
         if title:
             document.title = title
-        return self.store.create(document, title=document.title)
+        with _storage_errors(self.store):
+            return self.store.create(document, title=document.title)
 
     def require_draft(self, draft_id: str) -> Draft:
         """Return the draft, or raise.
@@ -367,20 +488,39 @@ class EditorService:
         return draft
 
     def save(self, draft: Draft) -> Draft:
-        """Normalise the layout and persist *draft*."""
+        """Normalise the layout and persist *draft*.
+
+        Raises:
+            EditorStorageError: If the drafts directory refused the write.  The
+                stored draft is untouched.
+        """
         draft.document.sync_layout()
-        return self.store.save(draft)
+        with _storage_errors(self.store):
+            return self.store.save(draft)
 
     def delete_draft(self, draft_id: str) -> bool:
-        """Delete a draft.  Returns whether anything was removed.
+        """Delete a draft and its staged wheelhouse.  Returns whether anything
+        was removed.
+
+        The archive is a few hundred MB, and once the draft is gone no route
+        can reach it, so it goes with the draft.  Both are removed under the
+        lock staging holds, so an export finishing meanwhile either staged
+        before this (and is removed) or sees the draft gone (and stages
+        nothing).
 
         Raises:
             EditorError: If *draft_id* is not a valid draft id, or names a
                 file that is not a draft.
+            EditorStorageError: If the drafts directory refused the removal.
         """
         with self.editing(draft_id):
             try:
-                return self.store.delete(draft_id)
+                with self._archive_lock(draft_id):
+                    with _storage_errors(self.store, "removed from"):
+                        deleted = self.store.delete(draft_id)
+                    if deleted:
+                        shutil.rmtree(self._archive_dir(draft_id), ignore_errors=True)
+                    return deleted
             except ValueError as exc:
                 raise EditorError(str(exc)) from exc
 
@@ -466,6 +606,8 @@ class EditorService:
             )
         if "route_yaml" in form:
             document.route = parse_route_yaml(str(form["route_yaml"]))
+        if "gate_form" in form:
+            document.gate = parse_gate_form(form)
         before = document.map.model_copy()
         # ``group`` and ``name`` are required strings: a blank one is refused,
         # not filled in.  A fallback would be some other map's name or group
@@ -495,12 +637,20 @@ class EditorService:
             # and two spellings of one map are one string.
             document.map.source = self._canonical_source(document.map.source)
         if "map_no_3d_model_lanelet_ids" in form:
-            from .forms import parse_int_list  # noqa: PLC0415
-
-            parsed = parse_int_list(form["map_no_3d_model_lanelet_ids"])
+            parsed = _as_int_list(
+                form["map_no_3d_model_lanelet_ids"], "Excluded lanelet IDs"
+            )
             document.map.no_3d_model_lanelet_ids = (
                 parsed if isinstance(parsed, list) else []
             )
+        if (
+            not self._same_map(document.map, before)
+            and document.map.no_3d_model_lanelet_ids == before.no_3d_model_lanelet_ids
+        ):
+            # Lanelet ids of the map just left mean nothing on the new one, so
+            # the list the form sent back unchanged goes with it, as the file
+            # paths do in _adopt_directory; one typed in alongside stays.
+            document.map.no_3d_model_lanelet_ids = []
 
     # ------------------------------------------------------------------
     # Traffic signals
@@ -548,12 +698,15 @@ class EditorService:
         """Apply one signal group's form.
 
         A rename carries: every phase state naming the old name is rewritten,
-        as is every ``conflicts_with`` entry pointing at it.  Leaving them to
-        the validator would turn a rename into a screenful of errors about
-        edits nobody made.
+        as is every ``conflicts_with`` entry pointing at it -- the renamed
+        group's own included, so a self-reference stays one for the validator
+        to report.  Leaving them to the validator would turn a rename into a
+        screenful of errors about edits nobody made.  While another group is
+        still called the old name, the references still resolve to it, so they
+        are left alone: the editor never makes two groups share a name, but a
+        document written by hand may, and renaming one of them must not carry
+        off what the other was driving.
         """
-        from .forms import parse_int_list  # noqa: PLC0415
-
         group = self._signal_group(document, index)
         if "name" in form:
             new_name = str(form["name"]).strip()
@@ -561,10 +714,17 @@ class EditorService:
                 _refuse_taken_name(
                     "signal group", new_name, document.map.signal_groups, group
                 )
-                self._rename_signal_group(document, group.name, new_name)
+                old_name = group.name
+                if not any(
+                    other is not group and other.name == old_name
+                    for other in document.map.signal_groups
+                ):
+                    self._rename_signal_group(document, old_name, new_name)
                 group.name = new_name
         if "lanelet2_regulatory_element_ids" in form:
-            parsed = parse_int_list(form["lanelet2_regulatory_element_ids"])
+            parsed = _as_int_list(
+                form["lanelet2_regulatory_element_ids"], "Regulatory element IDs"
+            )
             group.lanelet2_regulatory_element_ids = (
                 parsed if isinstance(parsed, list) else []
             )
@@ -575,6 +735,33 @@ class EditorService:
             group.conflicts_with = [
                 str(value) for value in values if str(value) in names
             ]
+            self._drop_unticked_conflicts(document, group)
+
+    @staticmethod
+    def _drop_unticked_conflicts(document: ScenarioDocument, group: Any) -> None:
+        """Take *group* out of the conflicts of every group its form left unticked.
+
+        The form ticks a box when either side lists the other, so a box left
+        unticked means "these two do not cross" -- which only holds once the
+        other side stops listing this group too.  Otherwise the untick would
+        be ignored: the box comes back ticked and the validator still reads
+        the two as crossing.  While another group shares this group's name (a
+        hand-written duplicate), an entry naming it may mean that other group,
+        so the references are left alone, as a rename or a delete leaves them.
+        """
+        if any(
+            other is not group and other.name == group.name
+            for other in document.map.signal_groups
+        ):
+            return
+        ticked = set(group.conflicts_with)
+        for other in document.map.signal_groups:
+            if other is group or other.name in ticked:
+                continue
+            if group.name in other.conflicts_with:
+                other.conflicts_with = [
+                    name for name in other.conflicts_with if name != group.name
+                ]
 
     @staticmethod
     def _rename_signal_group(document: ScenarioDocument, old: str, new: str) -> None:
@@ -594,11 +781,16 @@ class EditorService:
 
         The states go with it because a state whose group is gone sets nothing:
         leaving them behind would be a phase that reads as driving a movement
-        this map no longer has.
+        this map no longer has.  While another group is still called the same
+        thing, the name still resolves, so its states and conflicts are kept:
+        as with a controller, a hand-written duplicate is the validator's to
+        report, not this delete's to guess which of the two they meant.
         """
         group = self._signal_group(document, index)
         name = group.name
         document.map.signal_groups.pop(index)
+        if any(other.name == name for other in document.map.signal_groups):
+            return
         for other in document.map.signal_groups:
             other.conflicts_with = [n for n in other.conflicts_with if n != name]
         for controller in document.map.traffic_signal_controllers:
@@ -627,7 +819,17 @@ class EditorService:
     def update_signal_controller(
         self, document: ScenarioDocument, index: int, form: Mapping[str, Any]
     ) -> None:
-        """Apply one controller's own form -- its name and its offset."""
+        """Apply one controller's own form -- its name and its offset.
+
+        A rename carries: every ``reference`` offsetting from the old name is
+        rewritten, as is every card naming it -- the renamed controller's own
+        reference included, so a self-reference stays one for the validator to
+        report.  While another controller is still called the
+        old name, the references still resolve to it, so they are left alone:
+        the editor never makes two controllers share a name, but a document
+        written by hand may, and renaming one of them must not carry off the
+        cards and offsets that meant the other.
+        """
         controller = self._signal_controller(document, index)
         if "name" in form:
             new_name = str(form["name"]).strip()
@@ -639,12 +841,16 @@ class EditorService:
                     controller,
                 )
                 old = controller.name
-                for other in document.map.traffic_signal_controllers:
-                    if other.reference == old:
-                        other.reference = new_name
-                for path, node in _signal_controller_uses(document):
-                    if str(node.params.get("controller") or "") == old:
-                        node.params["controller"] = new_name
+                if not any(
+                    other is not controller and other.name == old
+                    for other in document.map.traffic_signal_controllers
+                ):
+                    for other in document.map.traffic_signal_controllers:
+                        if other.reference == old:
+                            other.reference = new_name
+                    for path, node in _signal_controller_uses(document):
+                        if str(node.params.get("controller") or "") == old:
+                            node.params["controller"] = new_name
                 controller.name = new_name
         if "reference" in form:
             reference = str(form["reference"]).strip()
@@ -712,6 +918,13 @@ class EditorService:
         they are the escape hatch for a junction the groups cannot describe,
         they are written by hand, and a form that does not show them must not
         be able to delete them either.
+
+        A rename carries into every card naming this controller and the old
+        phase name.  A card names a phase by the pair, so while another phase
+        still answers to it -- a sibling in this cycle, or a phase of a
+        same-named controller -- the cards still resolve to that one and are
+        left alone: the editor never makes two phases of a cycle share a name,
+        but a document written by hand may.
         """
         from ..authoring.models import SignalStateRef  # noqa: PLC0415
 
@@ -725,12 +938,18 @@ class EditorService:
                     f"phase of {controller.name!r}", new_name, controller.phases, phase
                 )
                 old = phase.name
-                for path, node in _signal_controller_uses(document):
-                    if (
-                        str(node.params.get("controller") or "") == controller.name
-                        and str(node.params.get("signal_phase") or "") == old
-                    ):
-                        node.params["signal_phase"] = new_name
+                if not any(
+                    other is not phase and other.name == old
+                    for cycle in document.map.traffic_signal_controllers
+                    if cycle.name == controller.name
+                    for other in cycle.phases
+                ):
+                    for path, node in _signal_controller_uses(document):
+                        if (
+                            str(node.params.get("controller") or "") == controller.name
+                            and str(node.params.get("signal_phase") or "") == old
+                        ):
+                            node.params["signal_phase"] = new_name
                 phase.name = new_name
         if "duration_seconds" in form:
             phase.duration_seconds = _as_float(
@@ -753,11 +972,25 @@ class EditorService:
     def delete_signal_phase(
         self, document: ScenarioDocument, index: int, phase_index: int
     ) -> None:
-        """Remove one step of a cycle, and any card that named it."""
+        """Remove one step of a cycle, and any card that named it.
+
+        A card names a phase by its controller's name and the phase's, so while
+        another phase still answers to that pair -- a sibling in this cycle, or
+        a phase of a same-named controller -- the cards still resolve to it and
+        are kept, as a rename leaves them: a hand-written duplicate is the
+        validator's to report, not this delete's to guess which one they meant.
+        """
         controller = self._signal_controller(document, index)
         phase = self._signal_phase(document, index, phase_index)
         name = phase.name
         controller.phases.pop(phase_index)
+        if any(
+            other is not phase and other.name == name
+            for cycle in document.map.traffic_signal_controllers
+            if cycle.name == controller.name
+            for other in cycle.phases
+        ):
+            return
         for path, node in _signal_controller_uses(document):
             if (
                 str(node.params.get("controller") or "") == controller.name
@@ -801,6 +1034,38 @@ class EditorService:
         return KNOWN_REPOSITORIES
 
     @staticmethod
+    def _same_map(after: MapRef, before: MapRef) -> bool:
+        """Whether *after* still names the map *before* did.
+
+        What decides it is what the map resolves from: a local directory,
+        which wins over a source, else a source -- two spellings of one source
+        being the same map -- else the built-in group.  An explicit Lanelet2
+        file overrides any of them, so it counts too.  The excluded lanelet
+        ids belong to that map: they are lanelet ids, and another map numbers
+        its lanelets its own way.
+        """
+
+        def source(ref: MapRef) -> object:
+            if not ref.source:
+                return None
+            try:
+                return MapSource.parse(ref.source)
+            except ValueError:
+                # MapSourceError, or a plain ValueError from urlsplit (an
+                # unclosed IPv6 bracket).  Unparsable, it is compared as text:
+                # the same map only as the very same string.
+                return ref.source
+
+        def origin(ref: MapRef) -> tuple[object, ...]:
+            if ref.directory:
+                return ("directory", ref.directory, ref.lanelet2_path)
+            if ref.source:
+                return ("source", source(ref), ref.lanelet2_path)
+            return ("group", ref.group, ref.lanelet2_path)
+
+        return origin(after) == origin(before)
+
+    @staticmethod
     def _adopt_directory(document: ScenarioDocument, before: MapRef) -> None:
         """Make a newly named map directory the map *document* resolves to.
 
@@ -833,6 +1098,7 @@ class EditorService:
         Raises:
             EditorError: If the map could not be fetched.
         """
+        before = document.map.model_copy()
         document.map.source = self._canonical_source(uri)
         # A source supersedes whatever map the document named before it --
         # files or a local directory, which would otherwise win over it --
@@ -840,6 +1106,11 @@ class EditorService:
         document.map.directory = None
         document.map.lanelet2_path = None
         document.map.xodr_path = None
+        # So do the lanelets excluded from 3D models: they are the old map's
+        # lanelet ids, and the export's own map group would ship them with
+        # this one.  Choosing the same map again keeps them.
+        if not self._same_map(document.map, before):
+            document.map.no_3d_model_lanelet_ids = []
         self.fetch_map(document)
 
     def fetch_map(self, document: ScenarioDocument, *, refresh: bool = False) -> str:
@@ -951,15 +1222,23 @@ class EditorService:
     def create_draft_for_map(self, uri: str, title: str = "") -> Draft:
         """Create a draft whose map is the one *uri* names.
 
+        The map is fetched before anything is stored, so a URI that names no
+        map, or a repository that cannot be reached, leaves no blank draft
+        behind (#1429).
+
         Raises:
-            EditorError: If the map could not be fetched.
+            EditorError: If the map could not be fetched.  No draft is created.
+            EditorStorageError: If the drafts directory refused the write.
         """
-        draft = self.create_draft(kind="blank", title=title)
-        self.use_map(draft.document, uri)
+        document = blank_document(title=title)
+        if title:
+            document.title = title
+        self.use_map(document, uri)
         if not title:
-            draft.document.title = f"New scenario on {draft.document.map.name}"
-        draft.title = draft.document.title
-        return self.save(draft)
+            document.title = f"New scenario on {document.map.name}"
+        document.sync_layout()
+        with _storage_errors(self.store):
+            return self.store.create(document, title=document.title)
 
     # ------------------------------------------------------------------
     # Entities
@@ -971,6 +1250,7 @@ class EditorService:
     _ID_PREFIXES: ClassVar[dict[str, str]] = {
         "ego": "ego",
         "vehicle": "npc",
+        "motorcycle": "moto",
         "pedestrian": "walker",
     }
 
@@ -1586,20 +1866,6 @@ def _refuse_taken_name(what: str, name: str, rows: "Sequence[Any]", row: Any) ->
         raise EditorError(f"There is already a {what} called {name!r}.")
 
 
-def _unused_name(stem: str, taken: "Sequence[str]") -> str:
-    """Return ``stem_1``, ``stem_2``... -- the first one not already in use.
-
-    A new row needs a name it can be referred to by before anyone has typed
-    one, and two rows sharing a name is a validation error the author did not
-    make.
-    """
-    existing = set(taken)
-    index = 1
-    while f"{stem}_{index}" in existing:
-        index += 1
-    return f"{stem}_{index}"
-
-
 def _fill_phase_states(document: ScenarioDocument, phase: Any) -> None:
     """Give *phase* one state per declared group, all red.
 
@@ -1673,6 +1939,33 @@ def as_int(raw: Any, label: str, fallback: int) -> int:
         raise EditorError(f"{label} must be a whole number, got {raw!r}.") from exc
 
 
+def as_port(raw: Any, label: str, fallback: int) -> int:
+    """Return *raw* as a TCP port number (1-65535), or raise a user-facing error.
+
+    Checked here, before anything connects: out of range, the system resolver
+    wraps the port or refuses it with a message that names neither (#1781).
+    """
+    number = as_int(raw, label, fallback)
+    try:
+        return check_port(number)
+    except ValueError as exc:
+        raise EditorError(f"{label} {exc}.") from exc
+
+
+def _as_int_list(raw: Any, label: str) -> Any:
+    """Return *raw* as a list of ints (or an interpolation), or raise a
+    user-facing error naming *label*.
+
+    The form parser (:func:`_parse`) turns the same ``ValueError`` into an
+    :class:`EditorError`; a handler that reads an id list itself goes through
+    here, so a typo is shown beside the form instead of escaping as a 500.
+    """
+    try:
+        return parse_int_list(raw)
+    except ValueError as exc:
+        raise EditorError(f"{label}: {exc}.") from exc
+
+
 def _unique_entity_id(document: ScenarioDocument, stem: str) -> str:
     """Return an entity id based on *stem* that nothing else uses.
 
@@ -1720,6 +2013,67 @@ def parse_route_yaml(text: str) -> Optional["RouteSearch"]:
         return RouteSearch.model_validate(raw)
     except Exception as exc:  # pydantic validation
         raise EditorError(f"Route search: {exc}") from exc
+
+
+def _gate_number(
+    form: Mapping[str, Any], field: GateField, key: str = "", label: str = ""
+) -> Any:
+    """*field*'s value in *form* (``gate_<name>``, or *key*), in the unit
+    stored; its default when blank."""
+    label = f"Gate: {label or field.label}"
+    text = str(form.get(key or f"gate_{field.name}", "")).strip()
+    if field.unit == "":
+        return as_int(text, label, int(field.default))
+    value = _as_float(text, label, field.default)
+    return value / 100.0 if field.percent else value
+
+
+def parse_gate_form(form: Mapping[str, Any]) -> Optional["GateSpec"]:
+    """The gate the inspector's Gate form states; ``None`` when it is off.
+
+    Each optional threshold is judged while its checkbox (``gate_on_<name>``)
+    is ticked, at its number (``gate_<name>``; a share in percent), or at its
+    default when it has none -- a threshold just ticked on.  A cover item is
+    a row (``gate_item_name_<i>``, ``gate_item_min_<i>`` in percent) kept
+    while its checkbox (``gate_item_on_<i>``) is ticked; ``gate_item_new``
+    adds one at 100 %.
+
+    Raises:
+        EditorError: If a value is not a number, or the gate refuses it.
+    """
+    from ..authoring.models import GateSpec  # noqa: PLC0415
+
+    if not form.get("gate_enabled"):
+        return None
+    raw: dict[str, Any] = {}
+    for field in GATE_FIELDS + GATE_CONSISTENCY_FIELDS:
+        if field.optional and not form.get(f"gate_on_{field.name}"):
+            continue
+        if not field.optional and f"gate_{field.name}" not in form:
+            continue  # not on the form yet: the model's default
+        raw[field.name] = _gate_number(form, field)
+    items: list[dict[str, Any]] = []
+    index = 0
+    while f"gate_item_name_{index}" in form:
+        name = str(form[f"gate_item_name_{index}"]).strip()
+        if name and form.get(f"gate_item_on_{index}"):
+            grade = _gate_number(
+                form, GATE_ITEM_FIELD, f"gate_item_min_{index}", f"coverage of {name}"
+            )
+            items.append({"item": name, "min": grade})
+        index += 1
+    added = str(form.get("gate_item_new", "")).strip()
+    if added:
+        if " " in added:
+            raise EditorError(
+                f"Gate: a cover item's name has no spaces, got {added!r}."
+            )
+        items.append({"item": added, "min": GATE_ITEM_FIELD.default / 100.0})
+    raw["coverage_items"] = items
+    try:
+        return GateSpec.model_validate(raw)
+    except Exception as exc:  # pydantic validation
+        raise EditorError(f"Gate: {exc}") from exc
 
 
 def condition_actions(node: ConditionNode) -> list[str]:
