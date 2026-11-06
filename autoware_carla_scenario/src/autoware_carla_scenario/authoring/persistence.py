@@ -8,6 +8,7 @@ so a draft file and an exported ``scenario/document.yaml`` hold the same shape.
 
 from __future__ import annotations
 
+import logging
 import os
 import re
 import uuid
@@ -26,6 +27,8 @@ except ImportError:  # pragma: no cover -- depends on the installed PyYAML
     from yaml import SafeLoader as _SafeLoader  # type: ignore[assignment]
 
 from .models import ScenarioDocument, new_object_id
+
+logger = logging.getLogger(__name__)
 
 __all__ = [
     "Draft",
@@ -170,7 +173,8 @@ class DraftStore:
         save to another file, or fail it.
 
         Raises:
-            ValueError: If the file is not YAML, or not a mapping with a
+            ValueError: If the file cannot be read (no permission, not UTF-8,
+                an I/O error), is not YAML, or is not a mapping with a
                 ``document`` mapping (what :meth:`save` writes), so is not a
                 draft (the drafts directory may hold other YAML; :meth:`list`
                 skips such files).
@@ -179,7 +183,14 @@ class DraftStore:
         if not path.is_file():
             return None
         try:
-            raw = yaml.load(path.read_text(encoding="utf-8"), Loader=_SafeLoader) or {}
+            text = path.read_text(encoding="utf-8")
+        except (OSError, UnicodeDecodeError) as exc:
+            # A ValueError for the same reason as below: one unreadable file
+            # (a permission the server lacks, a binary file) is that file's
+            # problem, not a 500 for the request that named it (#1747).
+            raise ValueError(f"{path}: cannot be read ({exc})") from exc
+        try:
+            raw = yaml.load(text, Loader=_SafeLoader) or {}
         except yaml.YAMLError as exc:
             # A ValueError like the rest, so the editor answers a draft id
             # naming a broken file with "not found" rather than a 500.
@@ -192,14 +203,28 @@ class DraftStore:
         return Draft.from_dict(raw)
 
     def list(self) -> list[Draft]:
-        """Return every stored draft, most recently updated first."""
+        """Return every stored draft, most recently updated first.
+
+        A file that is not a draft is skipped, and so is one that cannot be
+        read -- with a warning, since that one may well be a draft the server
+        lacks the permission to open -- so one bad file never hides the rest
+        (#1747).
+        """
         if not self.root.is_dir():
             return []
         drafts: list[Draft] = []
         for path in sorted(self.root.glob("*.yaml")):
             try:
                 draft = self.get(path.stem)
-            except (ValueError, yaml.YAMLError):
+            except (OSError, UnicodeDecodeError) as exc:
+                # get() turns a failed read into a ValueError; is_file() and
+                # anything below it can still raise for a file that vanishes
+                # or turns unreadable mid-listing.
+                logger.warning("Skipping %s: cannot be read (%s)", path, exc)
+                continue
+            except (ValueError, yaml.YAMLError) as exc:
+                if isinstance(exc.__cause__, (OSError, UnicodeDecodeError)):
+                    logger.warning("Skipping %s", exc)
                 continue
             if draft is not None:
                 drafts.append(draft)
@@ -247,6 +272,12 @@ class DraftStore:
         while another saves it -- the editor serves both at once -- never
         parses half a file.  The temporary name does not end in ``.yaml``, so
         :meth:`list` never mistakes it for a draft.
+
+        Raises:
+            OSError: If the drafts directory cannot be created or written to
+                (no permission, a read-only file system, a full disk).  The
+                stored draft, if any, is untouched, and the temporary file is
+                removed as far as the directory allows.
         """
         self.root.mkdir(parents=True, exist_ok=True)
         path = self.path_for(draft.id)
@@ -256,4 +287,9 @@ class DraftStore:
                 stream.write(dump_yaml(draft.to_dict()))
             os.replace(partial, path)
         finally:
-            partial.unlink(missing_ok=True)
+            try:
+                partial.unlink(missing_ok=True)
+            except OSError:
+                # Best effort: a directory that refused the write may refuse
+                # this too, and the error worth raising is the write's.
+                logger.warning("Could not remove %s", partial)

@@ -102,6 +102,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "EditorError",
     "EditorService",
+    "EditorStorageError",
     "StagedArchive",
     "GATE_CONSISTENCY_FIELDS",
     "GATE_FIELDS",
@@ -119,6 +120,45 @@ SLOT_FAIL = "fail"
 
 class EditorError(Exception):
     """Raised when a request asks for something the document cannot do."""
+
+
+class EditorStorageError(Exception):
+    """Raised when a draft cannot be written to the drafts directory.
+
+    Not an :class:`EditorError`: that one is the request's problem, shown as
+    "not found" or as a notice beside the form, while this one is the
+    server's -- a drafts directory it may not write to, a read-only file
+    system, a full disk -- and no edit of the request fixes it (#1747).
+
+    Attributes:
+        directory: The drafts directory the write went to.
+        errno: The failed write's ``errno``, if it had one.
+    """
+
+    def __init__(self, message: str, directory: Path, errno: int | None) -> None:
+        super().__init__(message)
+        self.directory = directory
+        self.errno = errno
+
+
+@contextmanager
+def _storage_errors(store: DraftStore, action: str = "written to") -> "Iterator[None]":
+    """Turn a failed write to *store* into an :class:`EditorStorageError`.
+
+    *action* says what was refused, as in "the draft could not be
+    *action* the drafts directory".
+    """
+    try:
+        yield
+    except OSError as exc:
+        raise EditorStorageError(
+            f"The draft could not be {action} the drafts directory "
+            f"{store.root}: {exc.strerror or exc}. Check that the directory "
+            "exists, that the editor may write to it, and that there is space "
+            "left on its disk (it is set by --drafts or SCENARIO_EDITOR_DRAFTS).",
+            directory=store.root,
+            errno=exc.errno,
+        ) from exc
 
 
 def _zip_directory(source: Path, archive: Path) -> None:
@@ -420,13 +460,17 @@ class EditorService:
             kind: ``"cut_in"`` for the worked example, anything else for the
                 minimal document.
             title: Optional title override.
+
+        Raises:
+            EditorStorageError: If the drafts directory refused the write.
         """
         document = (
             new_document() if kind == "cut_in" else blank_document(title=title or "")
         )
         if title:
             document.title = title
-        return self.store.create(document, title=document.title)
+        with _storage_errors(self.store):
+            return self.store.create(document, title=document.title)
 
     def require_draft(self, draft_id: str) -> Draft:
         """Return the draft, or raise.
@@ -443,9 +487,15 @@ class EditorService:
         return draft
 
     def save(self, draft: Draft) -> Draft:
-        """Normalise the layout and persist *draft*."""
+        """Normalise the layout and persist *draft*.
+
+        Raises:
+            EditorStorageError: If the drafts directory refused the write.  The
+                stored draft is untouched.
+        """
         draft.document.sync_layout()
-        return self.store.save(draft)
+        with _storage_errors(self.store):
+            return self.store.save(draft)
 
     def delete_draft(self, draft_id: str) -> bool:
         """Delete a draft and its staged wheelhouse.  Returns whether anything
@@ -460,11 +510,13 @@ class EditorService:
         Raises:
             EditorError: If *draft_id* is not a valid draft id, or names a
                 file that is not a draft.
+            EditorStorageError: If the drafts directory refused the removal.
         """
         with self.editing(draft_id):
             try:
                 with self._archive_lock(draft_id):
-                    deleted = self.store.delete(draft_id)
+                    with _storage_errors(self.store, "removed from"):
+                        deleted = self.store.delete(draft_id)
                     if deleted:
                         shutil.rmtree(self._archive_dir(draft_id), ignore_errors=True)
                     return deleted
@@ -1175,6 +1227,7 @@ class EditorService:
 
         Raises:
             EditorError: If the map could not be fetched.  No draft is created.
+            EditorStorageError: If the drafts directory refused the write.
         """
         document = blank_document(title=title)
         if title:
@@ -1183,7 +1236,8 @@ class EditorService:
         if not title:
             document.title = f"New scenario on {document.map.name}"
         document.sync_layout()
-        return self.store.create(document, title=document.title)
+        with _storage_errors(self.store):
+            return self.store.create(document, title=document.title)
 
     # ------------------------------------------------------------------
     # Entities
