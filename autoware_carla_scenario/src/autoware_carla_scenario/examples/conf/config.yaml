@@ -160,6 +160,12 @@ map:
   directory: null
   xodr_path: null
   lanelet2_path: null
+  # The projection the Lanelet2 map is read with, e.g. map.projector_type=utm;
+  # null takes it from the map's map_projector_info.yaml (docs/maps.md).
+  projector_type: null
+  # Install xodr_path into the CARLA map's assets before loading it
+  # (map=nishishinjuku turns it on; docs/architecture.md).
+  overwrite_xodr: false
   no_3d_model_lanelet_ids: []
 
 # Autoware as the ego (ego.entity=autoware; docs/autoware.md).
