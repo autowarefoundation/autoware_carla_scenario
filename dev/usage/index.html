@@ -3870,7 +3870,15 @@ Python version, and the viewer's Run form reads it the same way.</p>
   <code>Error: &lt;scenario&gt;: &lt;key&gt; ...</code></li>
 <li>Results are written to <code>outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json</code>
   (a batch started in the same second as another gets <code>HH-MM-SS-1</code>,
-  then <code>HH-MM-SS-2</code>, ...: every batch has a directory of its own)</li>
+  then <code>HH-MM-SS-2</code>, ...: every batch has a directory of its own). The file
+  is rewritten as each case ends, the cases not run yet listed as
+  <code>"passed": null, "pending": true</code> (as a SLURM batch's cases without an
+  outcome are), so a batch that dies after its first case ends still lists
+  every case, and
+  <a href="../gate/#cases-that-raised-no-record-so-the-set-is-refused"><code>scenario-gate</code></a>
+  refuses to judge it from the cases that finished alone. A batch that dies
+  during its first case writes no summary at all. The summary written when
+  the batch ends lists no pending case</li>
 <li>A summary table is printed at the end with per-scenario pass/fail status</li>
 <li>A case that cannot run at all -- its run raises on every attempt
   (<code>server.cooldown_max_retries</code>), e.g. a spawn point with no ground under it --
@@ -4145,6 +4153,15 @@ takes the same file stem, so the viewer and the coverage merge read the
 retry's outputs alone. Only the outputs the case's own attempts wrote are
 removed; Hydra's job log and anything already in the directory before the
 case started (one <code>hydra.sweep.dir=</code> names again) are kept.</p>
+<p>A case given up -- it raised, timed out or crashed on every attempt, or was
+refused -- leaves <code>case_errored.json</code> in its job directory (its overrides,
+last exit code, attempts and why): it wrote no result, so no gate record, and
+<a href="../gate/#cases-that-raised-no-record-so-the-set-is-refused"><code>scenario-gate</code></a>
+refuses the sweep's runs for it. A case of Hydra's basic sweeper (a
+<code>--multirun</code> without <code>hydra/sweeper=lanelet_constraint</code>) whose run raised
+leaves one too. A case whose scenario ran and failed leaves none, nor does one
+a retry passed; one run again in the same directory removes the marker an
+earlier run left before it starts.</p>
 <p>A case that timed out or crashed had no chance to stop the CARLA server it
 launched; that server's watchdog stops it within about a second, giving it
 10 s before <code>SIGKILL</code>. So before the next attempt -- a retry or the next case
@@ -6536,7 +6553,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 10:50:21 UTC"><span class="timeago" datetime="2026-11-06T10:50:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 10:50:21 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 11:44:23 UTC"><span class="timeago" datetime="2026-11-06T11:44:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 11:44:23 UTC">2026-11-06</span>
   </span>
 
     
