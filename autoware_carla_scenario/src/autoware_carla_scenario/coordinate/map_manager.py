@@ -469,13 +469,11 @@ class MapManager:
         if not offsets:
             return None
 
+        # The lower median: an offset of the list itself, so at least that one
+        # is within reach of it -- a mean of two levels' values could fall
+        # between them, leaving none to average.
         ordered = sorted(offsets)
-        middle = len(ordered) // 2
-        median = (
-            ordered[middle]
-            if len(ordered) % 2 == 1
-            else 0.5 * (ordered[middle - 1] + ordered[middle])
-        )
+        median = ordered[(len(ordered) - 1) // 2]
         same_level = [
             offset
             for offset in offsets

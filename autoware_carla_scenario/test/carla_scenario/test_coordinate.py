@@ -1197,6 +1197,20 @@ class TestZOffsetFromSpawnPoints:
             0.5, abs=0.1
         )
 
+    def test_spawn_points_split_evenly_between_levels_give_a_finite_offset(
+        self, map_manager
+    ):
+        # Half the spawn points 7 m under their lanelet: the median of an even
+        # count must not fall between the levels and leave nothing to average.
+        world = self._world(map_manager, road_below_lanelet2=0.5, spawn_above_road=0.5)
+        spawns = world.get_map().get_spawn_points()
+        for sp in spawns[::2]:
+            sp.location.z -= 7.0
+        offset = map_manager._z_offset_from_spawn_points(world)
+        assert offset is not None
+        assert math.isfinite(offset)
+        assert offset in (pytest.approx(0.5, abs=0.1), pytest.approx(7.5, abs=0.1))
+
     def test_without_a_road_the_spawn_point_is_used(self, map_manager):
         world = self._world(map_manager, road_below_lanelet2=0.0, spawn_above_road=0.0)
         world.get_map().__class__.get_waypoint = lambda self, *a, **k: None
