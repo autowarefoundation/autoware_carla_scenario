@@ -33,6 +33,7 @@ from typing import Any
 # The path guard, the case stems and a batch's stamp, compiled by the library check; every
 # name stays importable from here.
 from .case_paths import _COMPONENT as _COMPONENT
+from .case_paths import _COVERAGE as _COVERAGE
 from .case_paths import _mtime as _mtime
 from .case_paths import _only_case as _only_case
 from .case_paths import _RESULT as _RESULT
@@ -118,7 +119,7 @@ def match_batch_stems(
                 if stem in used or not _same_result(entry, results.get(stem)):
                     continue
                 if stem not in coverages:
-                    coverages[stem] = _read_json(directory / f"{stem}_coverage.json")
+                    coverages[stem] = _read_json(directory / f"{stem}{_COVERAGE}")
                 if _same_case(entry, coverages[stem]):
                     chosen = stem
                     break

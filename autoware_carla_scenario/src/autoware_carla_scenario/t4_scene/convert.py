@@ -42,6 +42,7 @@ import orjson
 
 from ..constants import FIXED_DELTA_SECONDS
 from ..rerun import TRAJECTORY_SUFFIX
+from ..run_outputs import T4SCENE_MAP_SUFFIX, T4SCENE_SUFFIX
 from ..utils.clearance import _HIDDEN_BELOW_M
 from ..utils.light_lanes import LightLanes, elements_ahead, light_lanes
 from ._proto import t4_scene_pb2 as pb
@@ -77,10 +78,11 @@ logger = logging.getLogger(__name__)
 
 #: The suffix of a trajectory log; the run's stem is the file name without it.
 LOG_SUFFIX = TRAJECTORY_SUFFIX
-#: The T4Scene written for ``{stem}.trajectory.jsonl``: ``{stem}.t4scene.pb``.
-SCENE_SUFFIX = ".t4scene.pb"
+#: The T4Scene written for ``{stem}.trajectory.jsonl``: ``{stem}.t4scene.pb``
+#: (the checked run_outputs's suffix, #1713).
+SCENE_SUFFIX = T4SCENE_SUFFIX
 #: Its map, the ``MapResource`` the scene's ``MapReference`` names.
-MAP_SUFFIX = ".t4scene.map.pb"
+MAP_SUFFIX = T4SCENE_MAP_SUFFIX
 
 #: The contract's object categories this module writes (``Annotations.labels``).
 _VEHICLE = 1

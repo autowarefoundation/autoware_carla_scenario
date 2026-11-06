@@ -19,7 +19,10 @@ whole list, and all read it from here:
 The modules that write each output keep their own name for its suffix
 (``rerun.RECORDING_SUFFIX``, ``t4_settings.DATASET_SUFFIX``,
 ``traffic.sumo.backend.OUTPUT_SUFFIX`` ...);
-``test_run_outputs.py`` keeps them equal to the ones here.  The path rule of
+``test_run_outputs.py`` keeps them equal to the ones here.  Those of a run's
+environment and lock and of its T4Scene and map are defined here, and
+``environment`` and ``t4_scene.convert`` re-export them under the names they
+had (#1713).  The path rule of
 a trajectory log and its recordings lives here too (:func:`trajectory_stem`,
 :func:`recording_path`, :func:`sensors_recording_path`), so that the checked
 ``ui.web_viewer_paths`` shares it with ``rerun`` and ``rerun_lidar``, which
@@ -39,12 +42,16 @@ from .gate.record import GATE_RECORD_SUFFIX
 
 __all__ = [
     "COVERAGE_SUFFIX",
+    "ENVIRONMENT_SUFFIX",
+    "LOCK_SUFFIX",
     "RECORDING_SUFFIX",
     "RESULT_SUFFIX",
     "RUN_DIR_SUFFIXES",
     "RUN_FILE_SUFFIXES",
     "RUN_SUFFIXES",
     "SENSORS_SUFFIX",
+    "T4SCENE_MAP_SUFFIX",
+    "T4SCENE_SUFFIX",
     "TRAJECTORY_SUFFIX",
     "recording_path",
     "run_output_paths",
@@ -65,6 +72,14 @@ TRAJECTORY_SUFFIX = ".trajectory.jsonl"
 RECORDING_SUFFIX = ".rrd"
 #: The sensors recorded during the run: ``{stem}.sensors.rrd``.
 SENSORS_SUFFIX = ".sensors.rrd"
+#: The run's environment: ``{stem}_environment.json``.
+ENVIRONMENT_SUFFIX = "_environment.json"
+#: The lock of that environment: ``{stem}_requirements.lock``.
+LOCK_SUFFIX = "_requirements.lock"
+#: The T4Scene of the trajectory log: ``{stem}.t4scene.pb``.
+T4SCENE_SUFFIX = ".t4scene.pb"
+#: The map of that T4Scene: ``{stem}.t4scene.map.pb``.
+T4SCENE_MAP_SUFFIX = ".t4scene.map.pb"
 
 #: The files a run writes as ``{stem}{suffix}``.
 RUN_FILE_SUFFIXES: tuple[str, ...] = (
@@ -74,8 +89,8 @@ RUN_FILE_SUFFIXES: tuple[str, ...] = (
     # A logical scenario's gate record (docs/gate.md).
     GATE_RECORD_SUFFIX,
     "_odd.tar.gz",
-    "_environment.json",
-    "_requirements.lock",
+    ENVIRONMENT_SUFFIX,
+    LOCK_SUFFIX,
     # CARLA's own recorder (its replay log).
     ".log",
     # The Rerun recording of the trajectory log (rerun.enabled).
@@ -84,8 +99,8 @@ RUN_FILE_SUFFIXES: tuple[str, ...] = (
     # removed when it is written; left behind by a run that did not finish.
     SENSORS_SUFFIX,
     # The T4Scene of the trajectory log and its map (t4scene.enabled).
-    ".t4scene.pb",
-    ".t4scene.map.pb",
+    T4SCENE_SUFFIX,
+    T4SCENE_MAP_SUFFIX,
 )
 
 #: The directories a run writes as ``{stem}{suffix}``.
