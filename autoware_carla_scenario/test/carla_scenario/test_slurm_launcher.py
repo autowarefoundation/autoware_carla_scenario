@@ -1737,6 +1737,45 @@ def test_worker_points_the_config_at_its_ports() -> None:
 
 
 @pytest.mark.parametrize(
+    ("bridge", "address"),
+    [
+        ("{ready_timeout_ticks:600}", "localhost:20005"),
+        ("{}", "localhost:20005"),
+        ("{address:'0.0.0.0:50052'}", "0.0.0.0:20005"),
+    ],
+)
+def test_the_driver_bridge_is_moved_to_the_task_s_port(
+    bridge: str, address: str
+) -> None:
+    """A bridge that names no address listens on AutowareBridgeConfig's
+    default, so it is moved too: every task on a node would share it (#1883)."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    cfg = run._compose_config(
+        _CONCRETE, ["ego.entity=carla_driver", f"driver.bridge={bridge}"]
+    )
+    changes = worker_overrides(cfg, PortSlot(index=0, base=20000))
+    assert changes["driver.bridge.address"] == address
+    assert cfg.driver.bridge.address == address
+    assert cfg.driver.bridge.get("ready_timeout_ticks") == (
+        600 if "ready" in bridge else None
+    )
+
+
+def test_no_driver_bridge_is_left_without_one() -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    cfg = run._compose_config(_CONCRETE, ["ego.entity=carla_driver"])
+    changes = worker_overrides(cfg, PortSlot(index=0, base=20000))
+    assert "driver.bridge.address" not in changes
+    assert cfg.driver.bridge is None
+
+
+@pytest.mark.parametrize(
     ("overrides", "key"),
     [
         (
