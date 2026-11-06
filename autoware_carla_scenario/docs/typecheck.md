@@ -2418,8 +2418,10 @@ parameters' probes: `odd.traffic_ranges`, #1680; not the probes themselves,
 `__init__`, its per-run record and probe,
 and the typed criteria its evaluator judges (`gate.criteria`: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
-baseline; not the evaluator itself, which reads the gate's pydantic model and
-openodd's merged coverage), the HILS bridge's wire format (a command's values included)
+baseline; and `gate.report`, #1738: a verdict's and a comparison's Markdown,
+the criteria and the cases compared from a baseline's runs to a candidate's,
+and the records grouped by scenario; not the evaluator itself, which reads the
+gate's pydantic model and openodd's merged coverage), the HILS bridge's wire format (a command's values included)
 and its configuration's sensor spec and the check of a field's signal name
 (not the YAML reading around it), how an error shows an integer too long for
 `repr()` (`value_text.huge_integer()`, which `hils.config` re-exports, #1704), the
