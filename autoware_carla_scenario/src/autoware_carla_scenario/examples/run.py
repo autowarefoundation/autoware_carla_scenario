@@ -76,6 +76,10 @@ from autoware_carla_scenario.canvas import use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.config_flags import check_flag
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
+from autoware_carla_scenario.gate.errored import (
+    remove_case_errored,
+    write_case_errored,
+)
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import (
@@ -2554,7 +2558,10 @@ def run_batch(
 
     # The cases run so far, for batch_results.json: rewritten as each case
     # ends, so that the viewer lists a batch still running, or cut short
-    # (Ctrl-C, a SIGTERM), as the batch it is, with the cases it ran (#1566).
+    # (Ctrl-C, a SIGTERM), as the batch it is, with the cases it ran (#1566),
+    # and the cases it has not run yet as pending, so that a batch that dies
+    # mid-run (a segfault, the OOM killer, SIGKILL) lists them too, and
+    # scenario-gate does not judge the cases that survived alone (#1831).
     # The summary below writes it once more, whole, when the batch ends.
     done: list[ScenarioResult] = []
 
@@ -2566,6 +2573,7 @@ def run_batch(
                 output_dir,
                 case_overrides if expand else None,
                 errored=queue.errored_indices(),
+                pending=True,
             )
         except Exception:
             # The batch goes on: its summary is written again at the end.
@@ -3324,12 +3332,14 @@ def _hydra_main(cfg: DictConfig) -> None:
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
+    marker_dir = _case_errored_dir()
     try:
         result = run_scenario(cfg)
     except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
         # A refusal ends a --multirun too, with the same 2: the next case
         # would be refused for the same reason.  Hydra lets SystemExit through
         # its basic sweeper, and the lanelet sweeper stops on a case's 2.
+        _mark_case_errored(marker_dir, exc, exit_code=2)
         print(exc, file=sys.stderr)  # noqa: T201
         sys.exit(2)
     except RunConfigError as exc:
@@ -3343,9 +3353,13 @@ def _hydra_main(cfg: DictConfig) -> None:
         )
 
         if not os.environ.get(SWEEPER_OWNS_RETRIES_ENV):
+            _mark_case_errored(marker_dir, exc, exit_code=1)
             raise
         print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
         sys.exit(2)
+    except Exception as exc:
+        _mark_case_errored(marker_dir, exc, exit_code=1)
+        raise
     # Only exit for single-run mode. In --multirun, Hydra calls this
     # function repeatedly; sys.exit() would kill the entire sweep.  Hydra
     # discards what a job returns, so the verdict is recorded for main().
@@ -3355,6 +3369,55 @@ def _hydra_main(cfg: DictConfig) -> None:
     _multirun_ran.append(case)
     if not result.passed:
         _multirun_failed.append(case)
+
+
+def _case_errored_dir() -> Path | None:
+    """The job directory a ``--multirun`` case of Hydra's basic sweeper
+    leaves its marker in if it raises (``case_errored.json``,
+    :mod:`~autoware_carla_scenario.gate.errored`), with any marker an earlier
+    run of it left there removed; ``None`` outside such a case.
+
+    A case the lanelet sweeper forked (``SWEEPER_OWNS_RETRIES_ENV``) leaves
+    it alone: the sweeper owns its retries, and so its marker.
+    """
+    from ..sweeper.isolation import (  # noqa: PLC0415
+        SWEEPER_OWNS_RETRIES_ENV,
+    )
+
+    if not _is_multirun() or os.environ.get(SWEEPER_OWNS_RETRIES_ENV):
+        return None
+    try:
+        directory = Path(HydraConfig.get().runtime.output_dir)
+        remove_case_errored(directory)
+    except Exception:  # noqa: BLE001 - the case runs anyway
+        logger.warning("Cannot clear the case's error marker", exc_info=True)
+        return None
+    return directory
+
+
+def _mark_case_errored(
+    directory: Path | None, exc: BaseException, *, exit_code: int
+) -> None:
+    """Leave the marker of a ``--multirun`` case that raised (*exc*) in
+    *directory* (:func:`_case_errored_dir`), so that ``scenario-gate`` does
+    not judge the cases that survived alone (#1830).  Nothing when
+    *directory* is ``None``; never raises."""
+    if directory is None:
+        return
+    try:
+        overrides = [str(o) for o in HydraConfig.get().overrides.task]
+    except Exception:  # noqa: BLE001 - the marker says the case raised anyway
+        overrides = []
+    try:
+        write_case_errored(
+            directory,
+            overrides=overrides,
+            exit_code=exit_code,
+            attempts=1,
+            reason=f"raised {type(exc).__name__}: {exc}",
+        )
+    except Exception:  # noqa: BLE001 - what the case raised is what is reported
+        logger.warning("Cannot write the case's error marker", exc_info=True)
 
 
 def _exit_if_multirun_failed() -> None:

@@ -107,7 +107,9 @@ def match_batch_stems(
     Each entry takes the first unused stem, in :func:`stem_order`, whose
     ``_result.json`` is the entry's result and whose coverage case is among
     the entry's overrides; ``None`` when none is (an errored case, which wrote
-    no result).
+    no result), and for a pending one (a case the batch has not run, #1831),
+    which takes no stem: one its run is still writing belongs to no entry
+    yet.
     """
     stems = _stems_in(directory)
     results = {stem: _read_json(directory / f"{stem}{_RESULT}") for stem in stems}
@@ -116,7 +118,11 @@ def match_batch_stems(
     out: list[str | None] = []
     for entry in entries:
         chosen: str | None = None
-        if isinstance(entry, dict) and not entry.get("error"):
+        if (
+            isinstance(entry, dict)
+            and not entry.get("error")
+            and not entry.get("pending")
+        ):
             for stem in stems:
                 if stem in used or not _same_result(entry, results.get(stem)):
                     continue

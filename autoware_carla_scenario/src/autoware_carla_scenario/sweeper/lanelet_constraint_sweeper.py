@@ -24,7 +24,12 @@ last case) raises :class:`SweepFailedError` too, before anything runs.
 Each case runs in a forked child of its own process group.  A case whose
 scenario ran and failed exits :data:`_FAILED_VERDICT_EXIT_CODE` and is final;
 only a case that raised, timed out or crashed is retried
-(``server.cooldown_max_retries``).  Ctrl-C or ``SIGTERM`` stops the running
+(``server.cooldown_max_retries``).  A case given up for any reason but a
+failed verdict leaves ``case_errored.json`` in its job directory
+(:mod:`..gate.errored`), which ``scenario-gate`` refuses a set of runs for: it
+wrote no gate record.  Any such marker is removed before the case's first
+attempt, and none is written for a case a retry passed.
+Ctrl-C or ``SIGTERM`` stops the running
 case (``SIGTERM``, then ``SIGKILL`` after
 :data:`.isolation._STOP_GRACE_SECONDS`) and ends the sweep with 130 or 143.
 
@@ -63,6 +68,7 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
+from ..gate.errored import remove_case_errored, write_case_errored
 from ..rerun import RerunUnavailableError
 from ..run_outputs import RUN_SUFFIXES as _RUN_SUFFIXES  # noqa: F401
 from ..run_outputs import remove_run_outputs
@@ -518,7 +524,8 @@ class LaneletConstraintSweeper(Sweeper):
         (``hydra.sweep.dir``/``hydra.sweep.subdir`` of its config, with
         ``hydra.job.num`` = *idx*), computed as ``BasicLauncher.launch`` and
         ``run_job`` compute it.  ``None``, logged, when it cannot be: the
-        retry then runs beside what the failed attempt left.
+        retry then runs beside what the failed attempt left, and a job given
+        up leaves no error marker (``case_errored.json``).
         """
         assert self.config is not None
         try:
@@ -755,13 +762,18 @@ class LaneletConstraintSweeper(Sweeper):
             # The job's directory and the stems already in it before its
             # first attempt (none, unless hydra.sweep.dir names a directory
             # an earlier sweep wrote in): a retry removes only what the
-            # failed attempts of this job left (#1373).
-            job_dir = self._job_output_dir(batch, idx) if max_attempts > 1 else None
+            # failed attempts of this job left (#1373).  The directory is
+            # also where a job given up leaves its marker (#1830).
+            job_dir = self._job_output_dir(batch, idx)
             stems_before = (
                 _run_output_stems(job_dir[0], job_dir[1])
-                if job_dir is not None
+                if job_dir is not None and max_attempts > 1
                 else set()
             )
+            if job_dir is not None:
+                # A marker an earlier sweep left in the same directory: this
+                # run of the job decides afresh.
+                _remove_marker(job_dir[0])
             for attempt in range(max_attempts):
                 # Cooldown in the parent process (no CARLA state, SIGSEGV-safe).
                 # Skip cooldown before the very first job of this run.
@@ -773,7 +785,7 @@ class LaneletConstraintSweeper(Sweeper):
                         else "CARLA cooldown (retry)",
                     )
 
-                if attempt > 0 and job_dir is not None:
+                if attempt > 0 and job_dir is not None and max_attempts > 1:
                     # As the queue and the SLURM worker do before a retry:
                     # what the failed attempt wrote (a result, a coverage
                     # file, a trajectory log ...) makes way for the retry's,
@@ -831,6 +843,7 @@ class LaneletConstraintSweeper(Sweeper):
                         idx_offset + len(batches),
                         batch,
                     )
+                    _write_marker(job_dir, batch, exit_code, attempt + 1)
                     sys.exit(_REFUSED_EXIT_CODE)
 
                 # Log based on exit code.
@@ -877,6 +890,12 @@ class LaneletConstraintSweeper(Sweeper):
                 if exit_code is None:
                     timed_out_count += 1
                 failed_count += 1
+                if exit_code != _FAILED_VERDICT_EXIT_CODE:
+                    # Raised, timed out or crashed on every attempt: no
+                    # result, so no gate record; the marker says so to
+                    # scenario-gate (#1830).  A failed verdict wrote its
+                    # record, and is judged.
+                    _write_marker(job_dir, batch, exit_code, attempt + 1, job_timeout)
                 logger.error(
                     "[%d/%d] Job FAILED after %d attempt(s) for overrides %s "
                     "— continuing.",
@@ -900,6 +919,63 @@ class LaneletConstraintSweeper(Sweeper):
                 f"({timed_out_count} timed out)."
             )
         return all_returns
+
+
+def _marker_reason(exit_code: int | None, timeout: int | None = None) -> str:
+    """Why a job was given up, in words, from its last exit status."""
+    if exit_code is None:
+        return "timed out" if not timeout else f"timed out after {timeout}s"
+    if exit_code < 0:
+        try:
+            name = signal.Signals(-exit_code).name
+        except ValueError:
+            name = f"signal {-exit_code}"
+        return f"crashed ({name})"
+    if exit_code == _REFUSED_EXIT_CODE:
+        return f"refused (exit code {exit_code})"
+    return f"exit code {exit_code}"
+
+
+def _remove_marker(directory: Path) -> None:
+    """Remove the marker (``case_errored.json``) an earlier run of a job left
+    in *directory*; logged, never raised, when it cannot be."""
+    try:
+        if remove_case_errored(directory):
+            logger.info("Removed the stale error marker in %s.", directory)
+    except OSError as exc:
+        logger.warning(
+            "Cannot remove the stale error marker in %s (%s).", directory, exc
+        )
+
+
+def _write_marker(
+    job_dir: tuple[Path, str | None] | None,
+    batch: tuple[str, ...],
+    exit_code: int | None,
+    attempts: int,
+    timeout: int | None = None,
+) -> None:
+    """Leave the marker of a job given up (``case_errored.json``,
+    :mod:`..gate.errored`) in its directory; logged, never raised, when it
+    cannot be, or the directory is not known."""
+    if job_dir is None:
+        logger.warning(
+            "Cannot tell the output directory of the job given up for "
+            "overrides %s; it leaves no error marker, and scenario-gate will "
+            "not see it.",
+            batch,
+        )
+        return
+    try:
+        write_case_errored(
+            job_dir[0],
+            overrides=list(batch),
+            exit_code=exit_code,
+            attempts=attempts,
+            reason=_marker_reason(exit_code, timeout),
+        )
+    except OSError as exc:
+        logger.warning("Cannot write the error marker in %s (%s).", job_dir[0], exc)
 
 
 def _wait_with_progress(seconds: float, *, desc: str = "Waiting") -> None:

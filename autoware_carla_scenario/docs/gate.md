@@ -192,21 +192,52 @@ judge as 3 of 3.
 
 So before judging, `scenario-gate` looks for the batches in each set of runs
 (every directory under it that holds a `batch_results.json` or a SLURM
-batch's `slurm/manifest.json`) and **refuses the set**, with exit code `2`
-and one line per batch on stderr, when one lists cases that left no record:
+batch's `slurm/manifest.json`) and the `--multirun` jobs given up (every
+`case_errored.json` under it), and **refuses the set**, with exit code `2`
+and one line per batch or sweep on stderr, when one lists cases that left no
+record:
 
 ```text
 scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no outcome, and left no gate record (left_turn-3, left_turn-4, left_turn-5, left_turn-6, left_turn-7, and 2 more); the gate would be judged over the runs that survived. Run them again, or pass --allow-unrecorded to judge the records there are
 ```
 
 - A **local batch** is read from its `batch_results.json`: each entry with
-  `"error": true` raised on every attempt, and wrote no record.
+  `"error": true` raised on every attempt, and each with `"pending": true`
+  was never finished -- the batch rewrites the file as each case ends,
+  listing the cases it has not run yet as pending, so a batch that died
+  mid-run (a segfault, the OOM killer, `SIGKILL`, a node reboot) still lists
+  the case it was running and the ones after it. Both count. The entries name
+  no stem, so an errored case is counted even in the rare event that its run
+  did write a record (its last attempt raised only once the run had ended,
+  resetting the world): the refusal errs on the side of the runs that
+  survived.
 - A **SLURM batch** is read from its tasks' outcomes (`slurm/results/`),
   collected or not: a case that errored, has no outcome (its task was killed,
   or is still running) or one with no verdict counts, unless a gate record is
   at its stem -- its run wrote one before the task failed, and that record is
   judged.
-- A summary or manifest that cannot be read refuses the set too.
+- A **`--multirun` sweep** has no summary, so each job given up -- the
+  lanelet sweeper's, once it raised, timed out or crashed on every attempt
+  (`server.cooldown_max_retries`), and Hydra's basic sweeper's, once its run
+  raised -- leaves `case_errored.json` in its job directory, with its
+  overrides, last exit code, attempts and why. Each counts, unless the job's
+  directory holds a gate record (its run wrote one before the job failed).
+  A job that ran and failed leaves no marker (its record is judged), nor does
+  one a retry passed; a job run again in the same directory removes its old
+  marker before it starts.
+
+  ```text
+  scenario-gate: multirun/2026-11-06/12-00-00: 7 job(s) of the sweep raised, timed out or crashed, and left no gate record (3 (timed out after 900s), 4 (crashed (SIGSEGV)), 5 (exit code 1), 6 (exit code 1), 7 (exit code 1), and 2 more); the gate would be judged over the runs that survived. Run them again, or pass --allow-unrecorded to judge the records there are
+  ```
+
+- A summary or manifest that cannot be read refuses the set too, and
+  `--allow-unrecorded` does not change that: what it left without a record
+  cannot be told. Its line says so:
+
+  ```text
+  scenario-gate: outputs/2026-11-06/12-00-00/batch_results.json: the batch summary cannot be read (...); the cases it left without a record cannot be told, so the runs are not judged (--allow-unrecorded does not apply). Repair the file, or run the batch again
+  ```
+
 - A gate record named on its own (not a directory) is judged as it is.
 
 The refusal does not tell the cases apart by logical scenario (a case that
@@ -305,7 +336,7 @@ Newly failing cases:
 |-----------|---------|
 | `0` | Every gate judged passed (two sets: on the candidate; with `--fail-on-regression`, and nothing regressed) |
 | `1` | A gate failed, or (two sets, `--fail-on-regression`) something regressed |
-| `2` | Nothing to judge, a batch among the runs lists cases that raised or have no outcome and left no record (unless `--allow-unrecorded`; above), a batch summary or SLURM manifest could not be read, a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, `--document` has no gate, or the `--markdown` or `--json` file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged) |
+| `2` | Nothing to judge, a batch among the runs lists cases that raised, were never finished or have no outcome, or a `--multirun` job among them was given up, and left no record (unless `--allow-unrecorded`; above), a batch summary or SLURM manifest could not be read (even with `--allow-unrecorded`), a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, `--document` has no gate, or the `--markdown` or `--json` file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged) |
 
 The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 `passed`, `runs`, `passed_runs`, the `gate` judged, each criterion (`name`,

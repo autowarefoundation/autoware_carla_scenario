@@ -34,6 +34,7 @@ from autoware_carla_scenario.gate.evaluate import (
     load_gate_records,
     main,
     station_values,
+    batch_read_errors,
     unrecorded_cases,
 )
 from autoware_carla_scenario.gate.probe import signed_lateral
@@ -1170,12 +1171,47 @@ class TestUnrecordedCases:
         _batch_summary(baseline, [True] * 3 + [False], errored=[3])
         assert main([str(baseline), str(candidate)]) == EXIT_ERROR
 
-    def test_an_unreadable_summary_is_refused(self, tmp_path: Path) -> None:
+    def test_an_unreadable_summary_is_refused(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
         self._three_passed(tmp_path)
         (tmp_path / "batch_results.json").write_text("{not json")
-        (line,) = unrecorded_cases(tmp_path)
+        assert unrecorded_cases(tmp_path) == []
+        (line,) = batch_read_errors(tmp_path)
         assert "cannot be read" in line
         assert main([str(tmp_path)]) == EXIT_ERROR
+        (err,) = capsys.readouterr().err.strip().splitlines()
+        assert "--allow-unrecorded does not apply" in err
+        assert "Run them again" not in err
+
+    def test_an_unreadable_summary_is_refused_with_allow_unrecorded(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        # What it left without a record cannot be told: not a warning (#1830).
+        self._three_passed(tmp_path)
+        (tmp_path / "batch_results.json").write_text("{not json")
+        assert main([str(tmp_path), "--allow-unrecorded"]) == EXIT_ERROR
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        (err,) = captured.err.strip().splitlines()
+        assert "batch summary cannot be read" in err
+        assert "warning" not in err
+
+    def test_a_summary_with_pending_cases_is_refused(self, tmp_path: Path) -> None:
+        # A batch that died on its 4th case: the 3 it passed, and the 7 it
+        # never finished, pending (#1831).
+        from autoware_carla_scenario.batch_report import write_batch_result_json
+        from autoware_carla_scenario.conditions import ScenarioResult
+
+        self._three_passed(tmp_path)
+        names = [f"left_turn-{i}" for i in range(10)]
+        done = [ScenarioResult(passed=True, message="", elapsed_seconds=1.0)] * 3
+        write_batch_result_json(names, done, tmp_path, pending=True)
+        (line,) = unrecorded_cases(tmp_path)
+        assert "7 of 10 case(s)" in line
+        assert "left_turn-3, left_turn-4" in line
+        assert main([str(tmp_path)]) == EXIT_ERROR
+        assert main([str(tmp_path), "--allow-unrecorded"]) == EXIT_PASSED
 
     def test_a_slurm_batch_counts_errored_and_missing_cases(
         self, tmp_path: Path
@@ -1218,5 +1254,77 @@ class TestUnrecordedCases:
         self._three_passed(tmp_path)
         (tmp_path / "slurm").mkdir()
         (tmp_path / "slurm" / "manifest.json").write_text(json.dumps({"version": 99}))
-        (line,) = unrecorded_cases(tmp_path)
+        assert unrecorded_cases(tmp_path) == []
+        (line,) = batch_read_errors(tmp_path)
         assert "SLURM manifest cannot be read" in line
+        assert main([str(tmp_path), "--allow-unrecorded"]) == EXIT_ERROR
+
+
+class TestErroredJobs:
+    """A ``--multirun`` sweep of 10 jobs, 7 given up: they leave a marker each
+    (``case_errored.json``), and no summary (#1830)."""
+
+    def _sweep(self, root: Path, given_up: int = 7) -> None:
+        from autoware_carla_scenario.gate.errored import write_case_errored
+
+        for i in range(3):
+            job = root / str(i)
+            job.mkdir(parents=True)
+            _write(job, "App", _record(gate={"min_success_rate": 0.95}))
+        for i in range(3, 3 + given_up):
+            write_case_errored(
+                root / str(i),
+                overrides=[f"+case={i}"],
+                exit_code=None if i == 3 else 1,
+                attempts=1,
+                reason="timed out after 900s" if i == 3 else "exit code 1",
+            )
+
+    def test_a_sweep_with_a_marker_is_refused(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        sweep = tmp_path / "multirun" / "2026-11-06" / "12-00-00"
+        self._sweep(sweep)
+        assert main([str(tmp_path)]) == EXIT_ERROR
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        (line,) = captured.err.strip().splitlines()
+        assert line.startswith(f"scenario-gate: {sweep}: 7 job(s) of the sweep")
+        assert "3 (timed out after 900s), 4 (exit code 1)" in line
+        assert "and 2 more" in line
+        assert "--allow-unrecorded" in line
+
+    def test_allow_unrecorded_judges_the_sweep_with_a_warning(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        self._sweep(tmp_path)
+        assert main([str(tmp_path), "--allow-unrecorded"]) == EXIT_PASSED
+        (line,) = capsys.readouterr().err.strip().splitlines()
+        assert line.startswith("scenario-gate: warning: ")
+
+    def test_a_marker_beside_a_gate_record_is_not_counted(self, tmp_path: Path) -> None:
+        from autoware_carla_scenario.gate.errored import write_case_errored
+
+        self._sweep(tmp_path, given_up=0)
+        # Its run wrote a record, and then the job failed: the record is judged.
+        write_case_errored(
+            tmp_path / "2", overrides=[], exit_code=1, attempts=1, reason="x"
+        )
+        assert unrecorded_cases(tmp_path) == []
+        assert main([str(tmp_path)]) == EXIT_PASSED
+
+    def test_an_unreadable_marker_still_counts(self, tmp_path: Path) -> None:
+        self._sweep(tmp_path, given_up=0)
+        (tmp_path / "3").mkdir()
+        (tmp_path / "3" / "case_errored.json").write_text("{not json")
+        (line,) = unrecorded_cases(tmp_path)
+        assert "1 job(s) of the sweep" in line and "(3)" in line
+        assert batch_read_errors(tmp_path) == []
+
+    def test_a_sweep_without_markers_is_judged_as_before(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        self._sweep(tmp_path, given_up=0)
+        assert unrecorded_cases(tmp_path) == []
+        assert main([str(tmp_path)]) == EXIT_PASSED
+        assert capsys.readouterr().err == ""

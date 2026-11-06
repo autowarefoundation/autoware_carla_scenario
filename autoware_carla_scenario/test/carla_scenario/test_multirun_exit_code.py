@@ -29,7 +29,8 @@ import pytest
 #: ``ScenarioRunner`` does, names its outputs after the first stem none has
 #: taken (``App``, ``App-1`` ...); the first time it runs it writes a passing
 #: result and raises after it (as a teardown that raises does), and the retry
-#: fails.
+#: fails.  With ``+hang=true`` every case sleeps past any job timeout, and with
+#: ``+die=true`` every case kills itself with ``SIGKILL``.
 _SWEEPER_APP = """
 import json
 import os
@@ -89,6 +90,12 @@ def task(cfg: DictConfig) -> None:
         return
     if cfg.get("raise_value", False):
         raise ValueError("some distinctive text")
+    if cfg.get("hang", False):
+        import time
+        time.sleep(120)
+    if cfg.get("die", False):
+        import signal
+        os.kill(os.getpid(), signal.SIGKILL)
     if cfg.get("refuse", False):
         # What examples/run.py:_hydra_main does for a refused scenario.
         raise SystemExit(2)
@@ -112,6 +119,9 @@ from autoware_carla_scenario.examples import run
 
 
 def fake_run_scenario(cfg, **_):
+    if str(cfg.verdict) == "raise":
+        print("case verdict=raise", flush=True)
+        raise RuntimeError("CARLA went away")
     if str(cfg.verdict) == "refuse":
         print("case verdict=refuse", flush=True)
         raise run.ScenarioTypeError("does not type-check")
@@ -1078,3 +1088,139 @@ def test_a_case_forked_by_the_sweeper_runs_its_queue_without_retries(
         monkeypatch.delenv(SWEEPER_OWNS_RETRIES_ENV, raising=False)
     cfg = OmegaConf.create({"server": {"cooldown_max_retries": 2}})
     assert run._queue_retries(cfg) == retries
+
+
+# ---------------------------------------------------------------------------
+# The marker of a job given up: case_errored.json (#1830)
+# ---------------------------------------------------------------------------
+
+
+def _markers(root: Path) -> dict[str, dict[str, Any]]:
+    """Every ``case_errored.json`` under *root*, by its job directory's name."""
+    import json
+
+    return {
+        p.parent.name: json.loads(p.read_text(encoding="utf-8"))
+        for p in sorted(root.rglob("case_errored.json"))
+    }
+
+
+@pytest.mark.parametrize(
+    ("args", "exit_code", "reason"),
+    [
+        (("+raise_value=true",), 1, "exit code 1"),
+        (("+die=true",), -9, "crashed (SIGKILL)"),
+        (
+            ("+hang=true", "+sweep.job_timeout_seconds=1"),
+            None,
+            "timed out after 1s",
+        ),
+    ],
+)
+def test_lanelet_sweeper_marks_a_job_given_up(
+    tmp_path: Path, args: tuple[str, ...], exit_code: int | None, reason: str
+) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+server.cooldown_max_retries=1",
+        *args,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    markers = _markers(tmp_path / "multirun")
+    assert sorted(markers) == ["0", "1"], output
+    for job, marker in markers.items():
+        assert marker["schema"] == "autoware_carla_scenario.case_errored/1"
+        assert marker["exit_code"] == exit_code
+        assert marker["attempts"] == 2
+        assert marker["reason"] == reason
+        assert f"+case={int(job) + 1}" in marker["overrides"]
+
+
+def test_lanelet_sweeper_marks_no_job_that_failed_or_a_retry_passed(
+    tmp_path: Path,
+) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+fail=true",
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    # A failed verdict wrote its record: it is judged, not marked.
+    assert _markers(tmp_path / "multirun") == {}
+
+    retried = tmp_path / "retried"
+    retried.mkdir()
+    proc = _run(
+        _SWEEPER_APP,
+        retried,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+server.cooldown_max_retries=1",
+        "+raise_once=true",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _markers(retried / "multirun") == {}
+
+
+def test_lanelet_sweeper_removes_a_stale_marker_before_a_job(tmp_path: Path) -> None:
+    """A sweep run again in the same directory decides each job afresh."""
+    session = tmp_path / "multirun"
+    for job in ("0", "1"):
+        (session / job).mkdir(parents=True)
+        (session / job / "case_errored.json").write_text("{}")
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        sweep_dir=session,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _markers(session) == {}
+
+
+def test_a_refused_job_is_marked(tmp_path: Path) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+refuse=true",
+    )
+    assert proc.returncode == 2, proc.stdout + proc.stderr
+    markers = _markers(tmp_path / "multirun")
+    assert list(markers) == ["0"]
+    assert markers["0"]["exit_code"] == 2
+
+
+def test_basic_sweeper_marks_a_case_that_raised(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    proc = _run(_BASIC_APP, tmp_path, "+verdict=pass,raise")
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 1, output
+    markers = _markers(tmp_path / "multirun")
+    assert list(markers) == ["1"], output
+    assert markers["1"]["reason"] == "raised RuntimeError: CARLA went away"
+    assert markers["1"]["exit_code"] == 1
+    assert "+verdict=raise" in markers["1"]["overrides"]
+
+
+def test_basic_sweeper_marks_no_case_that_ran(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    session = tmp_path / "multirun"
+    # A marker an earlier run of the case left is removed as it starts.
+    (session / "0").mkdir(parents=True)
+    (session / "0" / "case_errored.json").write_text("{}")
+    proc = _run(_BASIC_APP, tmp_path, "+verdict=pass,fail")
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert _markers(session) == {}
