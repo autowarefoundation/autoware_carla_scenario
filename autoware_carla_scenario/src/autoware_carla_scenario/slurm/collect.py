@@ -138,9 +138,12 @@ def _wait_command(layout: BatchLayout, index: int, target: str) -> str:
     return f"scenario-slurm wait --submission {index} {target}"
 
 
-def _missing_message(layout: BatchLayout, case: int, target: str) -> tuple[str, str]:
-    """The message of *case*, which has no outcome, and which advice it gives
-    (``_RUNNING``, ``_IN_FLIGHT``, ``_TIMED_OUT`` or ``_RESUBMIT``).
+def _missing_message(
+    layout: BatchLayout, case: int, target: str
+) -> tuple[str, str, int | None]:
+    """The message of *case*, which has no outcome, which advice it gives
+    (``_RUNNING``, ``_IN_FLIGHT``, ``_TIMED_OUT`` or ``_RESUBMIT``), and the
+    submission that advice is about (None for ``_RESUBMIT``).
 
     The advice is chosen from what the batch's records say, asking SLURM
     nothing, as ``wait`` words it (#1801): a resubmit is advised only where
@@ -148,6 +151,7 @@ def _missing_message(layout: BatchLayout, case: int, target: str) -> tuple[str, 
     where = _last_submission_of(layout, case)
     resubmit = f"Run it again with: scenario-slurm resubmit {target}"
     advice = _RESUBMIT
+    about: int | None = None
     if where is None:
         detail = "it was never submitted"
         then = resubmit
@@ -168,7 +172,7 @@ def _missing_message(layout: BatchLayout, case: int, target: str) -> tuple[str, 
         if job and (status is None or state in _UNFINISHED_TASK_STATES):
             # Queued (no status yet) or running -- or killed before its status
             # said so: only squeue can tell, and resubmit refuses while it is.
-            advice = _RUNNING
+            advice, about = _RUNNING, index
             then = (
                 "If `squeue --me` still lists the task, it is still queued or "
                 f"running: wait for it with: {_wait_command(layout, index, target)}; "
@@ -176,14 +180,14 @@ def _missing_message(layout: BatchLayout, case: int, target: str) -> tuple[str, 
                 f"scenario-slurm resubmit {target}"
             )
         elif not job and sbatch_timed_out(submission) and sbatch_in_flight(submission):
-            advice = _TIMED_OUT
+            advice, about = _TIMED_OUT, index
             then = (
                 "If `squeue --me` lists the job, collect the batch once it "
                 f"ends: scenario-slurm collect {target}; if not, run the case "
                 f"again with: scenario-slurm resubmit {target} ({_REFUSED_UNTIL})"
             )
         elif not job and sbatch_in_flight(submission):
-            advice = _IN_FLIGHT
+            advice, about = _IN_FLIGHT, index
             then = (
                 "Its submission is being submitted; try again once sbatch "
                 f"returns: {_wait_command(layout, index, target)}"
@@ -193,24 +197,30 @@ def _missing_message(layout: BatchLayout, case: int, target: str) -> tuple[str, 
     return (
         f"No result: the case did not finish under SLURM ({detail}). {then}",
         advice,
+        about,
     )
 
 
-def _missing_hint(target: str, advice: set[str]) -> str:
+def _missing_hint(layout: BatchLayout, target: str, advice: dict[str, set[int]]) -> str:
     """What the hint on the cases with no outcome advises, from the advice
-    their messages give: a resubmit refuses the whole batch while any of
-    them is busy (``cli._busy``), so the first of _ADVICE_ORDER wins."""
+    their messages give and the submissions it is about: a resubmit refuses
+    the whole batch while any of them is busy (``cli._busy``), so the first
+    of _ADVICE_ORDER wins.  ``wait`` follows the latest submission unless
+    told which, so it is told which of the others it is about."""
     first = next(kind for kind in _ADVICE_ORDER if kind in advice)
+    waits = " and ".join(
+        _wait_command(layout, index, target) for index in sorted(advice[first])
+    )
     if first == _RUNNING:
         return (
             "Some may still be queued or running: if `squeue --me` lists their "
-            f"tasks, wait for them with: scenario-slurm wait {target}; once "
+            f"tasks, wait for them with: {waits}; once "
             f"they have ended, run them again with: scenario-slurm resubmit {target}"
         )
     if first == _IN_FLIGHT:
         return (
             "A submission of this batch is being submitted; try again once "
-            f"sbatch returns: scenario-slurm wait {target}"
+            f"sbatch returns: {waits}"
         )
     if first == _TIMED_OUT:
         return (
@@ -291,8 +301,9 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
     results: list[RecordedResult] = []
     errored: list[int] = []
     missing: list[int] = []
-    # What the missing cases' messages advise (#1803).
-    advice: set[str] = set()
+    # What the missing cases' messages advise, and the submissions it is
+    # about (#1803).
+    advice: dict[str, set[int]] = {}
     # The cases whose outcome holds no verdict or cannot be reported (#1718,
     # #1726): ERROR, as if missing.
     unreadable: list[int] = []
@@ -304,8 +315,10 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         record = layout.read_result(index)
         if record is None:
             missing.append(position)
-            message, kind = _missing_message(layout, index, target)
-            advice.add(kind)
+            message, kind, about = _missing_message(layout, index, target)
+            about_kind = advice.setdefault(kind, set())
+            if about is not None:
+                about_kind.add(about)
             results.append(_error_result(message))
             continue
         # Reported whatever the result holds: the task recorded why (#1726).
@@ -342,7 +355,7 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
             f"{len(missing)} case(s) have no result: "
             + ", ".join(labels[i] for i in missing)
             + "\n"
-            + _missing_hint(target, advice)
+            + _missing_hint(layout, target, advice)
         )
     # Written last: the summary and the hints are printed even when the batch
     # directory cannot be written (#1740).

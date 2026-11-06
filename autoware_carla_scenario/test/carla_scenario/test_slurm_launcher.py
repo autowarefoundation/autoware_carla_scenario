@@ -2744,6 +2744,37 @@ def test_collect_hint_puts_a_running_task_before_a_resubmit(
     assert f"wait for them with: scenario-slurm wait {target}" in hint
 
 
+def test_collect_names_an_older_submission_still_running_to_wait_for(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#1803: ``wait`` follows the latest submission unless told which, so
+    where an older one may still be running and the latest has ended, the
+    message and the hint name it (``--submission 0``)."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = _batch_on_disk(tmp_path)
+    write_json(layout.task(0, 0), {"task": 0, "state": "running"})
+    write_json(
+        layout.submission(1),
+        {"index": 1, "job_id": "78", "chunks": [[2]]},
+    )
+    write_json(layout.task(1, 0), {"task": 0, "state": "failed"})
+    target = str(layout.batch_dir)
+    assert cli.main(["collect", target]) == 1
+    out = capsys.readouterr().out
+    results = json.loads((layout.batch_dir / "batch_results.json").read_text())
+    older = f"scenario-slurm wait --submission 0 {target}"
+    for entry in results[:2]:
+        assert f"wait for it with: {older};" in entry["message"]
+    assert results[2]["message"].endswith(
+        f"Run it again with: scenario-slurm resubmit {target}"
+    )
+    hint = out[out.index("3 case(s) have no result") :]
+    assert f"wait for them with: {older};" in hint
+    assert f"scenario-slurm wait {target}" not in hint
+
+
 @pytest.mark.parametrize("command", ["status", "collect", "wait", "resubmit"])
 def test_an_unreadable_manifest_is_one_error_line(
     tmp_path: Path,
