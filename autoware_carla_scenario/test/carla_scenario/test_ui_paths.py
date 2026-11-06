@@ -48,7 +48,7 @@ def base(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app_module.app)
+    return TestClient(app_module.app, base_url="http://127.0.0.1")
 
 
 _TRAVERSAL = [

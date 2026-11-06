@@ -274,7 +274,7 @@ def test_the_pages_of_a_run_with_overrides_not_utf8_are_served(
     monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
     monkeypatch.setenv("VIEWER_CACHE_DIR", str(tmp_path / "cache"))
     _multirun_job(tmp_path, b"- a=\xff\n")
-    client = TestClient(app_module.app)
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
 
     session = client.get(f"/session/multirun/{DATE}/{GOOD}")
     case = client.get(f"/session/multirun/{DATE}/{GOOD}/0")

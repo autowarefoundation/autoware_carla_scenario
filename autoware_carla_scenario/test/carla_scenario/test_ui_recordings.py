@@ -410,7 +410,7 @@ def test_a_fetched_copy_is_served_by_the_app(
     assert target == _cache / "rerun-web-viewer" / "0.38.1"
     viewer = recordings.web_viewer()
     assert (viewer.source, viewer.base_url) == ("local", "/rerun-web-viewer/0.38.1")
-    client = TestClient(app_module.app)
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
     wasm = client.get("/rerun-web-viewer/0.38.1/re_viewer_bg.wasm")
     assert wasm.status_code == 200
     assert wasm.headers["content-type"] == "application/wasm"
@@ -560,7 +560,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     _batch(tmp_path)
     monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
     scanner.clear_cache()
-    return TestClient(app_module.app)
+    return TestClient(app_module.app, base_url="http://127.0.0.1")
 
 
 SESSION = "batch/2026-10-18/16-09-52"

@@ -1057,6 +1057,22 @@ draft is left as it was.
     `SCENARIO_EDITOR_HOST=0.0.0.0`) on a network you trust. The editor prints a
     warning when it listens on anything but a loopback address.
 
+    Binding loopback keeps other machines out, not a web page open in your own
+    browser, which can post forms to `127.0.0.1` too. So the editor, like the
+    viewer ([usage](usage.md)), also refuses them:
+
+    * A `POST`, `PUT`, `PATCH` or `DELETE` from another site is refused with
+      403, and changes nothing: one whose `Sec-Fetch-Site` header is
+      `cross-site` or `same-site`, or whose `Origin` header is not the
+      editor's own scheme, host and port (`Origin: null` included). A request
+      with neither header, as curl or a script sends it, is served.
+    * Against DNS rebinding, a request whose `Host` header is not
+      `localhost`, a loopback address (`127.0.0.1`, `::1`) or the `--host` the
+      editor is bound to, on any port, is refused with 400. Bound to every
+      interface (`0.0.0.0` or `::`), the editor was asked to answer whatever
+      name it is reached under, and checks no `Host`; the `Origin` check still
+      applies.
+
 ## Running an authored scenario
 
 An exported scenario plugs in through the same entry point any scenario package

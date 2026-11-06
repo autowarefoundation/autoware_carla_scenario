@@ -234,7 +234,7 @@ def test_the_api_answers_409_to_a_refused_run(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
-    client = TestClient(app_module.app)
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
 
     first = client.post("/api/run", json={"scenario": "a"})
     assert first.status_code == 200
@@ -487,7 +487,9 @@ def test_the_progress_stream_ends_when_the_server_shuts_down(
 
     monkeypatch.setattr(app_module, "_shutting_down", False)
     monkeypatch.setattr(runner, "get_progress", get_progress)
-    response = TestClient(app_module.app).get("/api/run/progress")
+    response = TestClient(app_module.app, base_url="http://127.0.0.1").get(
+        "/api/run/progress"
+    )
     events = [line for line in response.text.splitlines() if line.startswith("data:")]
     # The run is not done, but the stream ends with the server.
     assert len(events) == 2
@@ -497,7 +499,7 @@ def test_the_apps_shutdown_stops_the_run(monkeypatch: pytest.MonkeyPatch) -> Non
     stopped: list[bool] = []
     monkeypatch.setattr(runner, "stop_run", lambda: stopped.append(True))
     monkeypatch.setattr(app_module, "_shutting_down", False)
-    with TestClient(app_module.app):
+    with TestClient(app_module.app, base_url="http://127.0.0.1"):
         assert not app_module._shutting_down
         assert stopped == []
     # Cleared once the shutdown is over: the app, served again, streams.
@@ -522,9 +524,9 @@ def test_the_progress_streams_after_a_served_app_shut_down(
         return [line for line in text.splitlines() if line.startswith("data:")]
 
     for _ in range(2):
-        with TestClient(app_module.app) as client:
+        with TestClient(app_module.app, base_url="http://127.0.0.1") as client:
             assert len(events(client)) == 1
-    assert len(events(TestClient(app_module.app))) == 1
+    assert len(events(TestClient(app_module.app, base_url="http://127.0.0.1"))) == 1
 
 
 def test_the_flag_is_set_while_the_app_shuts_down(
@@ -535,7 +537,7 @@ def test_the_flag_is_set_while_the_app_shuts_down(
         runner, "stop_run", lambda: during.append(app_module._shutting_down)
     )
     monkeypatch.setattr(app_module, "_shutting_down", False)
-    with TestClient(app_module.app):
+    with TestClient(app_module.app, base_url="http://127.0.0.1"):
         pass
     assert during == [True]
 

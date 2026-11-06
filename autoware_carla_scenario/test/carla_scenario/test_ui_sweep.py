@@ -50,7 +50,7 @@ def started(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 
 @pytest.fixture
 def client() -> TestClient:
-    return TestClient(app_module.app)
+    return TestClient(app_module.app, base_url="http://127.0.0.1")
 
 
 def _command(job: list[str], extra: list[str]) -> list[str]:
@@ -307,7 +307,7 @@ def test_a_slow_sweep_resolution_leaves_other_requests_served(
         return [[f"scenario={name}"]]
 
     monkeypatch.setattr(sweep_resolver, "resolve_sweep", slow)
-    with TestClient(app_module.app) as client:
+    with TestClient(app_module.app, base_url="http://127.0.0.1") as client:
         results: list[Any] = []
         poster = threading.Thread(
             target=lambda: results.append(

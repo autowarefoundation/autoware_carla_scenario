@@ -67,7 +67,11 @@ def probe_package(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
 def test_api_scenarios_lists_package_and_builtin_scenarios(
     probe_package: Path,
 ) -> None:
-    names = TestClient(app_module.app).get("/api/scenarios").json()
+    names = (
+        TestClient(app_module.app, base_url="http://127.0.0.1")
+        .get("/api/scenarios")
+        .json()
+    )
     assert "probe_pkg/left" in names
     assert "lane_change/left" in names
     assert len(names) == len(set(names))
@@ -113,6 +117,10 @@ def test_broken_package_leaves_builtin_scenarios(
         raise ImportError("probe_pkg is broken")
 
     monkeypatch.setattr(importlib.metadata.EntryPoint, "load", lambda self: broken)
-    names = TestClient(app_module.app).get("/api/scenarios").json()
+    names = (
+        TestClient(app_module.app, base_url="http://127.0.0.1")
+        .get("/api/scenarios")
+        .json()
+    )
     assert "lane_change/left" in names
     assert "probe_pkg/left" not in names

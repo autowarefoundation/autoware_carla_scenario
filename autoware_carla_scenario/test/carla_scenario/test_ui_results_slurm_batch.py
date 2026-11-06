@@ -270,7 +270,7 @@ def test_the_compare_page_counts_a_session_s_pending_cases(
     _record(batch, 0, True, "ok", T0 + 10)
     found = results.load_results(tmp_path, "batch", DATE, "14-00-00")
     assert results.pending_count(found) == 1
-    page = TestClient(app_module.app).get(
+    page = TestClient(app_module.app, base_url="http://127.0.0.1").get(
         f"/compare?s=batch/{DATE}/{LOCAL}&s=batch/{DATE}/14-00-00"
     )
     assert page.status_code == 200
@@ -291,7 +291,9 @@ def test_the_odd_page_labels_a_pending_case(
     monkeypatch.setenv("VIEWER_CACHE_DIR", str(tmp_path / "cache"))
     batch = _slurm_batch(tmp_path)
     _record(batch, 0, True, "ok", T0 + 10)
-    page = TestClient(app_module.app).get(f"/session/batch/{DATE}/{TIME}/odd")
+    page = TestClient(app_module.app, base_url="http://127.0.0.1").get(
+        f"/session/batch/{DATE}/{TIME}/odd"
+    )
     assert page.status_code == 200
     assert 'data-outcome="pass"' in page.text
     assert 'data-outcome="none"' in page.text

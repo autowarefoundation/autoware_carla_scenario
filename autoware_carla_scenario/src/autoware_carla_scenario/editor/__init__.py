@@ -86,7 +86,9 @@ def main(argv: list[str] | None = None) -> None:
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )
 
-    application = create_app(draft_dir=args.drafts, export_dir=args.export_dir)
+    application = create_app(
+        draft_dir=args.drafts, export_dir=args.export_dir, host=args.host
+    )
 
     warn_if_exposed(
         "scenario-editor",

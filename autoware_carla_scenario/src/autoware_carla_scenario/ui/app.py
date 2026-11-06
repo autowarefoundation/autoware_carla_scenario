@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
+from ..web_guard import HostAllowlist, RequestGuard
 from . import cases, recordings, results, runner, scanner, slurm_launch
 from .models import RunProgress, SessionSummary
 
@@ -60,7 +61,14 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
         _shutting_down = False
 
 
+#: The ``Host`` names the viewer answers to: the loopback ones and the host it
+#: is bound to, which ``ui.main`` sets from ``--host`` (:mod:`..web_guard`).
+HOSTS = HostAllowlist()
+
 app = FastAPI(title="Scenario Result Viewer", lifespan=_lifespan)
+# Refuses cross-site state changes and foreign Host names (DNS rebinding):
+# binding loopback keeps other machines out, not other sites' pages (#1844).
+app.add_middleware(RequestGuard, hosts=HOSTS)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
 
@@ -124,15 +132,37 @@ def _is_number(value: object) -> bool:
     return isinstance(value, (int, float)) and not isinstance(value, bool)
 
 
+def _is_json_type(content_type: str) -> bool:
+    """Whether a ``Content-Type`` names JSON (``application/json``, with or
+    without parameters such as ``; charset=utf-8``)."""
+    return content_type.split(";", 1)[0].strip().lower() == "application/json"
+
+
 async def _json_object(request: Request) -> dict[str, Any]:
     """The request's JSON body as an object; ``{}`` when there is none.
 
-    A body that is not JSON keeps the defaults, as before; one that is JSON
+    The body must be sent as ``application/json``: any other type -- the
+    ``text/plain`` a page on another site can send without a CORS preflight
+    above all (#1844) -- is refused with 415, as is a body sent with no type.
+    An empty body with no type is no body, and keeps the defaults.  A JSON
+    body that does not parse keeps the defaults, as before; one that is JSON
     but not an object (``[1]``, ``"x"``, ``null``) is refused.
 
     Raises:
+        HTTPException: 415, the body is not sent as ``application/json``.
         BodyError: The body is JSON but not an object.
     """
+    content_type = request.headers.get("content-type")
+    if content_type is None:
+        if await request.body():
+            raise HTTPException(
+                status_code=415, detail="the request body must be application/json"
+            )
+        return {}
+    if not _is_json_type(content_type):
+        raise HTTPException(
+            status_code=415, detail="the request body must be application/json"
+        )
     try:
         body = await request.json()
     except Exception:  # noqa: BLE001 -- no body (or not JSON): the defaults

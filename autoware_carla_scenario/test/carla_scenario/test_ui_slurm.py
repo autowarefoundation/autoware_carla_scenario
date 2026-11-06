@@ -402,7 +402,7 @@ def client(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> TestClient:
     monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
     monkeypatch.setenv("VIEWER_CACHE_DIR", str(tmp_path / "cache"))
     scanner.clear_cache()
-    return TestClient(app_module.app)
+    return TestClient(app_module.app, base_url="http://127.0.0.1")
 
 
 def test_without_sbatch_slurm_is_offered_disabled_with_why(

@@ -171,7 +171,8 @@ def client(tmp_path: Path, at_repo_root: Path) -> TestClient:
     # A new draft names the fixture map relative to the repository root, and
     # the editor resolves it (and its map roots) against the working directory.
     return TestClient(
-        create_app(draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages")
+        create_app(draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages"),
+        base_url="http://127.0.0.1",
     )
 
 
@@ -1616,7 +1617,9 @@ class TestSpawnConstraints:
 
         monkeypatch.setenv(MAP_VIEWER_ENV, "/vendor/viewer.js")
         map_preview.clear_cache()
-        client = TestClient(create_app(draft_dir=tmp_path / "drafts"))
+        client = TestClient(
+            create_app(draft_dir=tmp_path / "drafts"), base_url="http://127.0.0.1"
+        )
         draft_id = (
             client.post("/new", data={"kind": "cut_in"}, follow_redirects=False)
             .headers["location"]
@@ -3938,7 +3941,7 @@ class TestDraftsDoNotShareAnExport:
         archive.parent.mkdir(parents=True, exist_ok=True)
         archive.write_bytes(b"PK-wheelhouse-of-draft-A")
 
-        client = TestClient(app)
+        client = TestClient(app, base_url="http://127.0.0.1")
         other = client.get(f"/draft/{b.id}/wheelhouse.zip")
         assert other.status_code == 404
         assert "No exported wheelhouse" in other.text
@@ -4157,7 +4160,9 @@ class TestTheDownloadOpensTheArchiveUnderItsLock:
 
     def test_a_download_serves_the_bytes_length_and_name(self, tmp_path: Path) -> None:
         app, _, draft, _ = self._staged(tmp_path)
-        download = TestClient(app).get(f"/draft/{draft.id}/wheelhouse.zip")
+        download = TestClient(app, base_url="http://127.0.0.1").get(
+            f"/draft/{draft.id}/wheelhouse.zip"
+        )
         assert download.status_code == 200
         assert download.content == self._PAYLOAD
         assert download.headers["content-length"] == str(len(self._PAYLOAD))
@@ -4181,7 +4186,9 @@ class TestTheDownloadOpensTheArchiveUnderItsLock:
 
         monkeypatch.setattr(service, "staged_archive", _lookup_then_lose)
         # raise_server_exceptions stays on: a 500 would raise here.
-        download = TestClient(app).get(f"/draft/{draft.id}/wheelhouse.zip")
+        download = TestClient(app, base_url="http://127.0.0.1").get(
+            f"/draft/{draft.id}/wheelhouse.zip"
+        )
         assert download.status_code == 404
         assert "No exported wheelhouse" in download.text
 
@@ -4201,7 +4208,9 @@ class TestTheDownloadOpensTheArchiveUnderItsLock:
             return result
 
         monkeypatch.setattr(service, "open_staged_archive", _open_then_delete)
-        download = TestClient(app).get(f"/draft/{draft.id}/wheelhouse.zip")
+        download = TestClient(app, base_url="http://127.0.0.1").get(
+            f"/draft/{draft.id}/wheelhouse.zip"
+        )
         assert download.status_code == 200
         assert download.content == self._PAYLOAD
         assert not (tmp_path / "packages" / draft.id).exists()
@@ -4382,7 +4391,7 @@ class TestLaneletPreviewOffTheLoop:
         app = create_app(
             draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages"
         )
-        with TestClient(app) as client:
+        with TestClient(app, base_url="http://127.0.0.1") as client:
             draft_id = (
                 client.post("/new", data={"kind": "cut_in"}, follow_redirects=False)
                 .headers["location"]

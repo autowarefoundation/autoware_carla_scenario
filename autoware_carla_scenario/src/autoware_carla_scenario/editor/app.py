@@ -27,6 +27,7 @@ from ..authoring._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
 from ..authoring.hydra_config import run_map_group
 from ..authoring.models import SIGNAL_STATE_NAMES, actor_kind
 from ..authoring.persistence import DraftStore, default_draft_dir
+from ..serve_cli import DEFAULT_HOST
 from ..trajectory.authoring import (
     format_relative_vertices,
     format_route_vertices,
@@ -35,6 +36,7 @@ from ..trajectory.authoring import (
     route_trajectory_summary,
     trajectory_summary,
 )
+from ..web_guard import HostAllowlist, RequestGuard
 from .forms import bool_choice, is_nullable_bool
 from .service import (
     GATE_CONSISTENCY_FIELDS,
@@ -156,18 +158,28 @@ def build_service(
 
 
 def create_app(
-    draft_dir: str | Path | None = None, export_dir: str | Path | None = None
+    draft_dir: str | Path | None = None,
+    export_dir: str | Path | None = None,
+    *,
+    host: str = DEFAULT_HOST,
 ) -> FastAPI:
     """Create the editor application.
 
     Args:
         draft_dir: Where drafts are stored.  Defaults to ``./scenario_drafts``.
         export_dir: Where exported archives are staged for download.
+        host: The address it is served on (``--host``): the ``Host`` name it
+            answers to besides the loopback ones, or any name when it is an
+            address of every interface (``0.0.0.0``, ``::``).
 
     Returns:
         A configured :class:`FastAPI` application.
     """
     application = FastAPI(title="Scenario Editor")
+    # Refuses cross-site state changes and foreign Host names (DNS
+    # rebinding): binding loopback keeps other machines out, not other
+    # sites' pages (#1844, web_guard).
+    application.add_middleware(RequestGuard, hosts=HostAllowlist(host))
     application.mount(
         "/static", _RevalidatedStatics(directory=str(_STATIC_DIR)), name="static"
     )
