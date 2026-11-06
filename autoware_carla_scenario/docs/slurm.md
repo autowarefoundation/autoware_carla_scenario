@@ -93,6 +93,21 @@ scenario-slurm resubmit outputs/2026-10-18/12-00-00   # the cases with no result
 scenario-slurm cancel   outputs/2026-10-18/12-00-00   # scancel the batch's jobs
 ```
 
+`status`, `collect` and `cancel` take nothing but the batch directory. The
+options of the others (`scenario-slurm <command> --help` says the same):
+
+| Command | Option | |
+|---|---|---|
+| `wait` | `--submission K` | the submission to follow, by its index (`slurm/submissions/<K>.json`; `0` is the first); default: the latest |
+| `wait` | `--poll-seconds S` | seconds between two polls of `squeue`; default: the batch's `launcher.poll_seconds`. Below 0.1 is taken as 0.1, a negative number is refused |
+| `resubmit` | `--failed` | also the cases that ran and failed |
+| `resubmit` | `--cases a,b` | these cases instead, by label or index; a case named twice runs once |
+| `resubmit` | `--array-parallelism K` | at most this many tasks at once (at least 1); default: the batch's `launcher.array_parallelism` |
+| `resubmit` | `--cases-per-task N` | cases a task runs (at least 1); default: the batch's `launcher.cases_per_task` |
+| `resubmit` | `--wait`, `--no-wait` | follow the new submission until it ends and collect, or submit and exit; default: the batch's `launcher.wait`. With `--wait` and nothing to resubmit, it collects at once |
+| `resubmit` | `--force` | submit even while a job of the batch is queued or running, `squeue` cannot tell whether one is, or another submission of the batch is in flight |
+| `resubmit` | `--dry-run` | print the cases it would resubmit and exit 0, submitting nothing (a busy batch still refuses, unless with `--force`) |
+
 A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message
 saying so, and `collect` lists them. So is a case whose recorded outcome holds

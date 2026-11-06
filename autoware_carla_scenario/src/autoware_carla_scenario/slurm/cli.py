@@ -296,35 +296,49 @@ def _cancel(args: argparse.Namespace) -> int:
     return 0 if cancel_jobs(jobs) else 1
 
 
-def main(argv: list[str] | None = None) -> int:
-    """The ``scenario-slurm`` command."""
+def _parser() -> argparse.ArgumentParser:
+    """The ``scenario-slurm`` argument parser; every option is in docs/slurm.md."""
     parser = argparse.ArgumentParser(
         prog="scenario-slurm",
         description="Follow, collect, resubmit or cancel a batch submitted with "
         "launcher=slurm (docs/slurm.md).",
     )
     commands = parser.add_subparsers(dest="command", required=True)
+    batch_help = "the batch's output directory (outputs/<date>/<time>)"
 
     status = commands.add_parser("status", help="the batch's cases, jobs and tasks")
-    status.add_argument("batch_dir")
+    status.add_argument("batch_dir", help=batch_help)
 
     wait = commands.add_parser(
         "wait", help="follow a submission until it ends, then collect"
     )
-    wait.add_argument("batch_dir")
-    wait.add_argument("--submission", type=int, default=None)
-    wait.add_argument("--poll-seconds", type=float, default=None)
+    wait.add_argument("batch_dir", help=batch_help)
+    wait.add_argument(
+        "--submission",
+        type=int,
+        default=None,
+        help="the submission to follow, by its index k "
+        "(slurm/submissions/<k>.json; 0 is the first); default: the latest",
+    )
+    wait.add_argument(
+        "--poll-seconds",
+        type=float,
+        default=None,
+        help="seconds between two polls of squeue (below 0.1 is taken as 0.1, "
+        "a negative number is refused); default: the batch's "
+        "launcher.poll_seconds",
+    )
 
     collect_cmd = commands.add_parser(
         "collect", help="print the summary and write batch_results.json"
     )
-    collect_cmd.add_argument("batch_dir")
+    collect_cmd.add_argument("batch_dir", help=batch_help)
 
     resubmit = commands.add_parser(
         "resubmit",
         help="run again the cases with no result, or that errored",
     )
-    resubmit.add_argument("batch_dir")
+    resubmit.add_argument("batch_dir", help=batch_help)
     resubmit.add_argument(
         "--failed",
         action="store_true",
@@ -333,19 +347,56 @@ def main(argv: list[str] | None = None) -> int:
     resubmit.add_argument(
         "--cases", default=None, help="these cases instead (labels or indices, a,b)"
     )
-    resubmit.add_argument("--array-parallelism", type=int, default=None)
-    resubmit.add_argument("--cases-per-task", type=int, default=None)
-    group = resubmit.add_mutually_exclusive_group()
-    group.add_argument("--wait", dest="wait", action="store_true", default=None)
-    group.add_argument("--no-wait", dest="wait", action="store_false")
     resubmit.add_argument(
-        "--force", action="store_true", help="even while a job of the batch runs"
+        "--array-parallelism",
+        type=int,
+        default=None,
+        help="at most this many tasks at once (at least 1); "
+        "default: the batch's launcher.array_parallelism",
     )
-    resubmit.add_argument("--dry-run", action="store_true")
+    resubmit.add_argument(
+        "--cases-per-task",
+        type=int,
+        default=None,
+        help="cases a task runs (at least 1); "
+        "default: the batch's launcher.cases_per_task",
+    )
+    group = resubmit.add_mutually_exclusive_group()
+    group.add_argument(
+        "--wait",
+        dest="wait",
+        action="store_true",
+        default=None,
+        help="follow the new submission until it ends, then collect "
+        "(collect at once when there is nothing to resubmit); "
+        "default: the batch's launcher.wait",
+    )
+    group.add_argument(
+        "--no-wait",
+        dest="wait",
+        action="store_false",
+        help="submit and exit; default: the batch's launcher.wait",
+    )
+    resubmit.add_argument(
+        "--force",
+        action="store_true",
+        help="submit even while a job of the batch is queued or running, "
+        "squeue cannot tell, or another submission of it is in flight",
+    )
+    resubmit.add_argument(
+        "--dry-run",
+        action="store_true",
+        help="print the cases it would resubmit and exit 0, submitting nothing",
+    )
 
     cancel = commands.add_parser("cancel", help="scancel the batch's jobs")
-    cancel.add_argument("batch_dir")
+    cancel.add_argument("batch_dir", help=batch_help)
+    return parser
 
+
+def main(argv: list[str] | None = None) -> int:
+    """The ``scenario-slurm`` command."""
+    parser = _parser()
     args = parser.parse_args(argv)
     try:
         if args.command == "status":
