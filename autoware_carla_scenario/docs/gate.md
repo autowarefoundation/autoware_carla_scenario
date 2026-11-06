@@ -100,9 +100,10 @@ differently apart (two lane segments over three lanelets, split after the
 first or after the second), so the gate does too: they are two cases. The case
 coverage is the number of distinct cases that ran over the sum of the counts,
 over every map the runs were on. A record written before the split was
-recorded (no `segment_lanelets`) is told apart by its map and lanelets alone. A run that was not expanded counts the
-matches it searched itself (those the ego cannot be placed on included, which
-an expansion skips). A record with no count (a run told nothing) makes the
+recorded (no `segment_lanelets`) is told apart by its map and lanelets alone,
+and is the same case as a record of those lanelets with a split. A run that
+was not expanded counts the matches it searched itself (those the ego cannot
+be placed on included, which an expansion skips). A record with no count (a run told nothing) makes the
 criterion fail: the share cannot be known.
 
 ## What a run records
@@ -223,6 +224,10 @@ and a candidate run of failed is **newly failing**, one a baseline run of
 failed and every candidate run of passed is **fixed**. Two cases over the same
 lanelets are labelled with their split, a `|` where one segment ends and the
 next begins (`Nishishinjuku [101|102,602]` and `Nishishinjuku [101,102|602]`).
+When either side has a record without a split (a baseline recorded before it
+was), the cases of those lanelets are compared by map and lanelets alone: each
+side's runs of every split of them are summed into one case, labelled without
+a split.
 
 The candidate **regressed** when a criterion regressed, a case is newly
 failing, or it did not run the scenario at all. The report always says so,

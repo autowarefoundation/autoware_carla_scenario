@@ -216,8 +216,20 @@ def _case_coverage(records: Sequence[GateRecord]) -> tuple[Optional[float], str]
     unknown = sorted(name or "?" for name, count in counts.items() if count <= 0)
     if unknown:
         return None, f"the case count on {', '.join(unknown)} is not known"
+    # A record without a split (written before it was recorded) is the same
+    # case as one of its lanelets with a split: counted once.
+    split_ids: set[tuple[str, tuple[int, ...]]] = set()
+    for keys in run.values():
+        for key in keys:
+            if key[2]:
+                split_ids.add((key[0], key[1]))
+    distinct: dict[str, int] = {}
+    for name, keys in run.items():
+        distinct[name] = sum(
+            1 for key in keys if key[2] or (key[0], key[1]) not in split_ids
+        )
     total = sum(counts.values())
-    covered = sum(min(len(run[name]), counts[name]) for name in counts)
+    covered = sum(min(distinct[name], counts[name]) for name in counts)
     maps = len(counts)
     # Typed: Codon types a returned tuple by its values, not the annotation.
     share: Optional[float] = covered / total

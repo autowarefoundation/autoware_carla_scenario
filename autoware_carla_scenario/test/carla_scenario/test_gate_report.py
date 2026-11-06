@@ -230,6 +230,43 @@ class TestComparisonMarkdown:
 
 
 class TestCompare:
+    def test_an_old_baseline_matches_a_new_candidate_by_its_lanelets(
+        self,
+    ) -> None:
+        # The baseline was recorded before the split was: no segment_lanelets.
+        baseline = [
+            _rec(lanelets=(1, 2, 3)),
+            _rec(lanelets=(1, 2, 3)),
+            _rec(lanelets=(4, 5), passed=False),
+            _rec(lanelets=(6,)),
+        ]
+        candidate = [
+            _rec(lanelets=(1, 2, 3), split=(1, 2)),
+            _rec(lanelets=(1, 2, 3), split=(2, 1), passed=False),
+            _rec(lanelets=(4, 5), split=(1, 1)),
+        ]
+        result = compare(baseline, candidate)
+        assert result.newly_failing == [
+            CaseChange("Town", (1, 2, 3), (2, 2), (1, 2)),
+        ]
+        assert result.newly_failing[0].label() == "Town [1,2,3]"
+        assert result.fixed == [CaseChange("Town", (4, 5), (0, 1), (1, 1))]
+        assert result.warnings == ["1 case(s) the baseline ran did not run"]
+
+    def test_a_new_baseline_matches_an_old_candidate_by_its_lanelets(
+        self,
+    ) -> None:
+        baseline = [
+            _rec(lanelets=(1, 2, 3), split=(1, 2)),
+            _rec(lanelets=(1, 2, 3), split=(2, 1)),
+        ]
+        candidate = [_rec(lanelets=(1, 2, 3), passed=False)]
+        result = compare(baseline, candidate)
+        assert result.newly_failing == [
+            CaseChange("Town", (1, 2, 3), (2, 2), (0, 1)),
+        ]
+        assert not result.warnings
+
     def test_cases_split_differently_over_the_same_lanelets_stay_apart(
         self,
     ) -> None:
