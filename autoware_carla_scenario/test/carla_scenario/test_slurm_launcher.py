@@ -1724,6 +1724,20 @@ def test_the_job_script_refuses_to_export_a_name_no_shell_takes() -> None:
         _exports({"A-B": "1"})
 
 
+@pytest.mark.parametrize("line", ["module load a \\", "x \\\\\\"])
+def test_a_setup_line_ending_in_a_backslash_is_refused(line: str) -> None:
+    """It would run on into the job script's next line (#1893)."""
+    with pytest.raises(ValueError, match="ends in a backslash"):
+        SlurmSettings.from_mapping({"type": "slurm", "setup": [line]})
+
+
+def test_a_setup_line_ending_in_an_escaped_backslash_is_kept() -> None:
+    line = "echo a\\\\"
+    assert SlurmSettings.from_mapping({"type": "slurm", "setup": [line]}).setup == (
+        line,
+    )
+
+
 def test_queue_names_a_case_by_the_stem_it_is_given(tmp_path: Path) -> None:
     from unittest.mock import MagicMock
 

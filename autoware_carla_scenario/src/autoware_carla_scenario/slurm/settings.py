@@ -396,6 +396,15 @@ class SlurmSettings:
                     options[key] = None  # the mode's default, below
                     continue
                 options[key] = _str_list(value, key)
+        for line in options.get("setup", ()):
+            # The job script holds each line as written: one ending in an
+            # unescaped backslash would run on into the script's next line
+            # (`set -u` with remote_cwd), as the run panel refuses (#1893).
+            if (len(line) - len(line.rstrip("\\"))) % 2:
+                raise ValueError(
+                    f"launcher.setup line {line!r} ends in a backslash: write "
+                    "each command on a line of its own"
+                )
         if "env" in data:
             env = data["env"] or {}
             if not isinstance(env, Mapping):
