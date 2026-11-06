@@ -272,7 +272,9 @@ class CommonRoadWorker:
         of its input; one that has not after :data:`_CLOSE_TIMEOUT_S` is
         killed with its whole process group (a ``uv run`` and the Python
         worker under it, #1780).  It returns while another thread is blocked
-        in :meth:`request`, which then raises.  Closing a worker that has
+        in :meth:`request`, which then raises: once the worker is dead it
+        waits at most :data:`_PIPE_RELEASE_S` per pipe that request holds,
+        to close it.  Closing a worker that has
         exited, or closing it twice, does nothing more.
         """
         process = self._process
