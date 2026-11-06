@@ -77,7 +77,12 @@ from .world_reset import (
 from .traffic.config import TrafficManagerBackendConfig
 from .traffic.traffic_manager import TrafficManagerBackend
 from .rerun import RerunConverter, recording_path
-from .run_outputs import COVERAGE_SUFFIX, RESULT_SUFFIX, run_outputs_exist
+from .run_outputs import (
+    COVERAGE_SUFFIX,
+    RESULT_SUFFIX,
+    TRAJECTORY_SUFFIX,
+    run_outputs_exist,
+)
 from .t4 import T4Recorder, T4Recording
 from .t4_scene import T4SceneExporter
 from .visibility import forget_visibility
@@ -1602,7 +1607,7 @@ class ScenarioRunner:
         recording_start_frame = 0
         warmup_ticks = 0
         trajectory = TrajectoryRecorder(
-            self.output_dir / f"{file_stem}.trajectory.jsonl",
+            self.output_dir / f"{file_stem}{TRAJECTORY_SUFFIX}",
             self.map_source,
             self.lanelet2_path,
             self._xodr_path,
