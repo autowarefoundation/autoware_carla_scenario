@@ -4104,10 +4104,26 @@ whose junction is several lanelets long ends on the lane it comes out on:</p>
 <a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>traffic_light_compliance/traffic_light_compliance<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a><span class="w">  </span>hydra/sweeper<span class="o">=</span>lanelet_constraint
 <a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
-<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="c1"># Resume a sweep from job number N (1-indexed; 0 disables).</span>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="c1"># Resume a sweep from job number N (1-indexed, at least 1).</span>
 <a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>traffic_light_compliance/traffic_light_compliance<span class="w"> </span><span class="se">\</span>
 <a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a><span class="w">  </span>hydra/sweeper<span class="o">=</span>lanelet_constraint<span class="w"> </span>--resume-from<span class="w"> </span><span class="m">10</span>
 </code></pre></div>
+<p>The resume point comes from <code>--resume-from N</code> on the command line or from
+<code>sweep.resume_from</code> in the config. The command line wins: with
+<code>sweep.resume_from: 5</code> in the config, <code>--resume-from 10</code> resumes at job 10.
+(<code>--resume-from</code> reaches the sweeper as the <code>SWEEP_RESUME_FROM</code> environment
+variable, which you may also set yourself; it wins over the config the same
+way, so unset a <code>SWEEP_RESUME_FROM</code> left over in your shell.) <code>--resume-from</code> takes a whole number of at least 1: <code>0</code>, a negative
+value or one that is not an integer is a usage error, <code>Error: --resume-from
+...</code> and exit 2, before anything runs. <code>sweep.resume_from</code> is a whole number
+too; <code>0</code> or <code>null</code> (or leaving it out) means it is not set, and every job runs
+unless <code>--resume-from</code> says otherwise. A <code>sweep.resume_from</code> that is a bool, a
+float (<code>2.7</code>, or even <code>3.0</code>), a string or negative, and a <code>SWEEP_RESUME_FROM</code>
+that is not a whole number, is refused with one line, <code>Error:
+sweep.resume_from must be a whole number of at least 1 ...</code> (or <code>Error:
+SWEEP_RESUME_FROM ...</code>), exit 2, before the map is loaded -- even when
+<code>--resume-from</code> overrides it -- rather than truncated, read as 1 or as "run
+every job", or raised as a traceback.</p>
 <p>Sweeps write results under <code>multirun/YYYY-MM-DD/HH-MM-SS/&lt;job-index&gt;/</code>,
 not <code>outputs/</code>. The result viewer scans both directories. A sweep started in
 the same second as another gets <code>HH-MM-SS-1</code>, then <code>HH-MM-SS-2</code>, ...: every
@@ -4143,7 +4159,8 @@ yourself, which it reused), which no case stops.</p>
 that is not a multiple of the tick, a negative <code>server.cooldown_max_retries</code>,
 an unknown <code>server.world_reset</code> or <code>traffic.backend</code>, a
 <code>scenario.timeout_seconds</code> that is not positive, a
-<code>sweep.job_timeout_seconds</code> that is not a whole number of seconds, ...) exits
+<code>sweep.job_timeout_seconds</code> that is not a whole number of seconds, a
+<code>sweep.resume_from</code> that is not a whole number, ...) exits
 2 before the map is fetched or any case runs, naming the key, rather than have every case refuse
 it in turn. So does one asking for an extra (<code>rerun</code>, <code>t4</code>) that is not
 installed. A value only a case's own overrides set (its ODD draw, a
@@ -4222,7 +4239,10 @@ itself (<code>scenario.route.*</code>); see
 <h3 id="resume-from-a-specific-scenario">Resume from a Specific Scenario<a class="headerlink" href="#resume-from-a-specific-scenario" title="Permanent link">&para;</a></h3>
 <p>When running large batches, you can skip already-completed scenarios.
 <code>--resume-from N</code> starts at the <em>N</em>th scenario (1-indexed, as for a sweep);
-in a <code>--multirun</code> batch it counts the expanded cases:</p>
+in a <code>--multirun</code> batch it counts the expanded cases. <em>N</em> is a whole number of
+at least 1: <code>--resume-from 0</code>, <code>--resume-from -3</code> or <code>--resume-from abc</code> is a
+usage error, <code>Error: --resume-from ...</code> and exit 2, rather than a run of every
+scenario:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-12-1" name="__codelineno-12-1" href="#__codelineno-12-1"></a><span class="c1"># Resume from the 3rd scenario</span>
 <a id="__codelineno-12-2" name="__codelineno-12-2" href="#__codelineno-12-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span><span class="s1">'intersection_passing/*'</span><span class="w"> </span>--resume-from<span class="w"> </span><span class="m">3</span>
 </code></pre></div>
@@ -5613,7 +5633,7 @@ driver ending the run is <code>driver</code>, and a case that raised on every at
 </tr>
 <tr>
 <td>2</td>
-<td>Refused before anything ran: the scenario does not type-check, an extra it asks for (<code>rerun</code>, <code>t4</code>) is not installed, or (in a lanelet sweep) a config value its runs would refuse, such as a <code>t4scene.step_s</code> that is not a multiple of the tick</td>
+<td>Refused before anything ran: the scenario does not type-check, an extra it asks for (<code>rerun</code>, <code>t4</code>) is not installed, a <code>--resume-from</code> that is not a whole number of at least 1, or (in a lanelet sweep) a config value its runs would refuse, such as a <code>t4scene.step_s</code> that is not a multiple of the tick or a <code>sweep.resume_from</code> that is not a whole number</td>
 </tr>
 <tr>
 <td>130, 143</td>
@@ -6447,7 +6467,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 05:22:08 UTC"><span class="timeago" datetime="2026-11-06T05:22:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 05:22:08 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 06:15:41 UTC"><span class="timeago" datetime="2026-11-06T06:15:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 06:15:41 UTC">2026-11-06</span>
   </span>
 
     
