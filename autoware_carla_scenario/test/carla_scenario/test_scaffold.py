@@ -229,6 +229,7 @@ class TestBuiltinScenarioNames:
             capture_output=True,
             text=True,
             check=True,
+            timeout=300,
         )
         registered = json.loads(result.stdout.strip().splitlines()[-1])
         assert registered == sorted(BUILTIN_SCENARIO_NAMES)
@@ -283,6 +284,7 @@ class TestBuiltinScenarioNames:
             capture_output=True,
             text=True,
             check=True,
+            timeout=300,
         )
         assert result.stdout.strip().splitlines()[-1] == "[]"
 

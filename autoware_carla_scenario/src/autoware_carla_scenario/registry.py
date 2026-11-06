@@ -295,14 +295,14 @@ def load_scenario_plugins() -> None:
     _plugins_loaded = True
 
     load_entry_point_plugins(
-        SCENARIO_ENTRY_POINT_GROUP, "scenario", registered=_SCENARIO_REGISTRY
+        SCENARIO_ENTRY_POINT_GROUP, "scenario", snapshot=_scenario_snapshot
     )
 
 
 def load_entry_point_plugins(
     group: str,
     what: str,
-    registered: Mapping[str, object] | None = None,
+    snapshot: Callable[[], Mapping[str, object]] | None = None,
 ) -> None:
     """Import every distribution advertising *group* and call what it names.
 
@@ -319,19 +319,20 @@ def load_entry_point_plugins(
     Args:
         group: The entry-point group to walk.
         what: What the plugins are, for the log lines (e.g. ``"scenario"``).
-        registered: The registry the plugins add to, if the caller wants to
-            hear about replacements: a plugin that registers a name already
-            in it (a built-in scenario, or another plugin's) silently took
-            that name over, so a warning names the entry point and every name
-            it replaced (#1802).  Only replaced entries count, compared by
-            identity; a plugin that adds new names or removes one is quiet.
+        snapshot: Returns what the registry the plugins add to holds, by
+            name, if the caller wants to hear about replacements: a plugin
+            that registers a name already in it (a built-in scenario, or
+            another plugin's) silently took that name over, so a warning
+            names the entry point and every name it replaced (#1802).  Only
+            entries whose value changed (``!=``) count; a plugin that adds new
+            names, removes one or registers the same thing again is quiet.
     """
     import importlib.metadata as importlib_metadata  # noqa: PLC0415
 
     # The selectable ``group=`` API exists on all supported interpreters
     # (requires-python >= 3.10).
     for entry_point in importlib_metadata.entry_points(group=group):
-        before = dict(registered) if registered is not None else {}
+        before = dict(snapshot()) if snapshot is not None else {}
         try:
             entry_point.load()()
             logger.info(
@@ -344,8 +345,25 @@ def load_entry_point_plugins(
             logger.exception(
                 "Failed to load %s plugin %r; skipping.", what, entry_point.name
             )
-        if registered is not None:
-            _warn_about_replacements(entry_point, what, before, registered)
+        if snapshot is not None:
+            _warn_about_replacements(entry_point, what, before, snapshot())
+
+
+def _scenario_snapshot() -> dict[str, object]:
+    """Return what each registered scenario name stands for, to compare.
+
+    The ``(scenario_cls, config_cls)`` pair for a scenario
+    :func:`register_scenario` registered, the builder itself for one
+    :func:`register_scenario_builder` did.  Not the builder in both cases:
+    :func:`register_scenario` makes a new closure on every call, so a package
+    whose ``register()`` ran explicitly before its entry point did (the
+    tutorial's "No entry point?" tip), or a distribution on the path twice,
+    re-registers the same pair, which replaces nothing.
+    """
+    return {
+        name: _SCENARIO_CLASSES.get(name, builder)
+        for name, builder in _SCENARIO_REGISTRY.items()
+    }
 
 
 def _warn_about_replacements(
@@ -360,9 +378,7 @@ def _warn_about_replacements(
     failure stays registered.
     """
     replaced = sorted(
-        name
-        for name, entry in before.items()
-        if name in after and after[name] is not entry
+        name for name, entry in before.items() if name in after and after[name] != entry
     )
     if replaced:
         logger.warning(

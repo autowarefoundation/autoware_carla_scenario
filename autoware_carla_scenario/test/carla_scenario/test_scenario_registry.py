@@ -248,8 +248,11 @@ class TestPluginReplacement:
         self._keep(monkeypatch, name)
         register_scenario(name, _DummyScenario, _DummyConfig)
 
+        class _OtherScenario(_DummyScenario):
+            pass
+
         def register() -> None:
-            register_scenario(name, _DummyScenario, _DummyConfig)
+            register_scenario(name, _OtherScenario, _DummyConfig)
             raise RuntimeError("boom")
 
         with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
@@ -258,6 +261,77 @@ class TestPluginReplacement:
         assert len(warnings) == 1
         assert f"'{name}'" in warnings[0].getMessage()
         assert "'broken_pkg'" in warnings[0].getMessage()
+
+    def test_registering_the_same_pair_again_is_quiet(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A ``register()`` called explicitly, then by its entry point.
+
+        The tutorial's "No entry point? Register explicitly." tip, with the
+        package installed: the same pair is registered twice, which replaces
+        nothing, although each call makes a new builder.
+        """
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        name = "__test_plugin_same_pair__"
+        self._keep(monkeypatch, name)
+
+        def register() -> None:
+            register_scenario(name, _DummyScenario, _DummyConfig)
+
+        register()
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(monkeypatch, register)
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_a_distribution_seen_twice_is_quiet(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """An editable install and a wheel of the same package on the path."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        name = "__test_plugin_twice__"
+        self._keep(monkeypatch, name)
+
+        def register() -> None:
+            register_scenario(name, _DummyScenario, _DummyConfig)
+
+        entry_points = []
+        for _ in range(2):
+            entry_point = MagicMock()
+            entry_point.name = "my_pkg"
+            entry_point.value = "my_pkg:register"
+            entry_point.load.return_value = register
+            entry_points.append(entry_point)
+        monkeypatch.setattr(
+            "importlib.metadata.entry_points", lambda *, group: entry_points
+        )
+        monkeypatch.setattr(registry, "_plugins_loaded", False)
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            registry.load_scenario_plugins()
+        assert not [r for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_a_different_config_class_is_a_replacement(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoware_carla_scenario import register_scenario  # noqa: PLC0415
+
+        name = "__test_plugin_other_config__"
+        self._keep(monkeypatch, name)
+        register_scenario(name, _DummyScenario, _DummyConfig)
+
+        class _OtherConfig(_DummyConfig):
+            pass
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                lambda: register_scenario(name, _DummyScenario, _OtherConfig),
+            )
+        warnings = [r for r in caplog.records if r.levelname == "WARNING"]
+        assert len(warnings) == 1
+        assert f"'{name}'" in warnings[0].getMessage()
 
 
 # ---------------------------------------------------------------------------
