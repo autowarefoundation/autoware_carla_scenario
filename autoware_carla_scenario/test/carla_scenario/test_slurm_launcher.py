@@ -2408,6 +2408,23 @@ _NO_VERDICT = pytest.mark.parametrize(
         {"submission": 0, "errored": False, "result": "passed"},
         {"submission": 0, "errored": False, "result": None},
         {"submission": 0, "errored": False, "result": [True]},
+        # #1726: a verdict in a result that cannot be reported.
+        {"submission": 0, "errored": False, "result": {"passed": True}},
+        _recorded(True, message=None),
+        _recorded(True, message=3),
+        _recorded(True, elapsed_seconds="soon"),
+        _recorded(True, elapsed_seconds=None),
+        _recorded(True, elapsed_seconds=True),
+        _recorded(True, elapsed_seconds=10**400),
+        _recorded(True, condition_statuses="none"),
+        _recorded(True, condition_statuses=["ok"]),
+        _recorded(True, condition_statuses=[{"label": "a", "satisfied": True}]),
+        _recorded(
+            True,
+            condition_statuses=[{"label": "a", "satisfied": "no", "message": ""}],
+        ),
+        _recorded(False, failure="collided"),
+        _recorded(False, failure={"at": "later"}),
     ],
     ids=[
         "str-false",
@@ -2418,6 +2435,19 @@ _NO_VERDICT = pytest.mark.parametrize(
         "str-result",
         "null-result",
         "list-result",
+        "passed-only",
+        "null-message",
+        "int-message",
+        "str-elapsed",
+        "null-elapsed",
+        "bool-elapsed",
+        "overflowing-elapsed",
+        "str-statuses",
+        "str-status",
+        "status-without-message",
+        "str-satisfied",
+        "str-failure",
+        "str-failure-at",
     ],
 )
 
@@ -2445,6 +2475,54 @@ def test_recorded_verdict_is_a_boolean_passed_or_none() -> None:
         assert recorded_verdict(_recorded(value)) is None
     assert recorded_verdict({"result": "x"}) is None
     assert recorded_verdict({}) is None
+
+
+def test_what_the_worker_records_is_readable() -> None:
+    """#1726: every result ``ScenarioResult.to_dict()`` writes keeps its
+    verdict -- with or without its optional fields, a whole number of seconds
+    included."""
+    from autoware_carla_scenario.conditions.base import (
+        ConditionStatus,
+        ScenarioResult,
+    )
+    from autoware_carla_scenario.failure import Failure, FailureCategory
+    from autoware_carla_scenario.slurm.collect import recorded_verdict
+    from autoware_carla_scenario.slurm.manifest import readable_result
+
+    status = ConditionStatus("pass[0](t)", True, "ok", "TimeoutCondition", "pass")
+    failure = Failure("fail[0](c)", FailureCategory.OTHER, 3.0, "collided")
+    for result in (
+        ScenarioResult(True, "", 0.0),
+        ScenarioResult(True, "ok", 12.5, [status], rerun_recording="r.rrd"),
+        ScenarioResult(False, "collided", 3.0, [status], failure=failure),
+    ):
+        data = json.loads(json.dumps(result.to_dict()))
+        assert readable_result(data)
+        record = {"submission": 0, "errored": False, "result": data}
+        assert recorded_verdict(record) is result.passed
+    assert recorded_verdict(_recorded(True, elapsed_seconds=4)) is True
+    assert recorded_verdict(_recorded(True, condition_statuses=None)) is True
+    without = _recorded(False)
+    del without["result"]["condition_statuses"]
+    assert recorded_verdict(without) is False
+
+
+def test_a_result_with_no_verdict_keeps_its_rerun_error(tmp_path: Path) -> None:
+    """#1726: the Rerun recording a task failed to make is reported, in
+    ``batch_results.json``, for a case whose result cannot be, too."""
+    from autoware_carla_scenario.slurm.collect import collect
+
+    record: dict[str, Any] = {
+        "submission": 0,
+        "errored": False,
+        "result": {"passed": True},
+        "rerun_error": "rerun died",
+    }
+    layout = _with_case_1(tmp_path, record)
+    assert collect(layout, quiet_hint=True) == 1
+    summary = json.loads((layout.batch_dir / "batch_results.json").read_text())
+    assert summary[1].get("error") is True
+    assert summary[1]["rerun_error"] == "rerun died"
 
 
 @_NO_VERDICT

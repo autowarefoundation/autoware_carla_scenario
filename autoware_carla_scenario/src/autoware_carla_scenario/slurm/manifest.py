@@ -30,6 +30,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from ..failure import Failure
 from ..run_outputs import RUN_FILE_SUFFIXES
 from .scripts import BatchPaths, file_sha256
 from .stems import config_key, sequential_stems
@@ -46,6 +47,7 @@ __all__ = [
     "resubmit_target",
     "read_json",
     "read_submission_record",
+    "readable_result",
     "recorded_verdict",
     "sbatch_in_flight",
     "sequential_stems",
@@ -236,19 +238,80 @@ def _create_exclusive(path: Path, data: Any) -> bool:
         Path(tmp).unlink(missing_ok=True)
 
 
+def _real_number(value: Any) -> bool:
+    # ``True`` is an int, but no number of seconds; nor is an integer
+    # literal too long for a float (``float()`` overflows on it).
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        float(value)
+    except OverflowError:
+        return False
+    return True
+
+
+def _readable_status(status: Any) -> bool:
+    return (
+        isinstance(status, dict)
+        and isinstance(status.get("label"), str)
+        and isinstance(status.get("satisfied"), bool)
+        and isinstance(status.get("message"), str)
+    )
+
+
+def readable_result(result: Any) -> bool:
+    """Whether *result*, a recorded ``result`` (``ScenarioResult.to_dict()``),
+    can be reported (#1726): an object whose ``message`` is a string, whose
+    ``elapsed_seconds`` is a number (not a boolean), whose
+    ``condition_statuses``, if any, is a list of objects each with a string
+    ``label`` and ``message`` and a boolean ``satisfied``, and whose
+    ``failure``, if any, is an object.  What ``to_dict()`` leaves out
+    (``rerun_recording``, ``failure``) may be missing; ``passed`` is
+    :func:`recorded_verdict`'s to check."""
+    if not isinstance(result, dict):
+        return False
+    if not isinstance(result.get("message"), str):
+        return False
+    if not _real_number(result.get("elapsed_seconds")):
+        return False
+    statuses = result.get("condition_statuses")
+    if statuses is not None and not (
+        isinstance(statuses, list) and all(_readable_status(s) for s in statuses)
+    ):
+        return False
+    failure = result.get("failure")
+    if failure is None:
+        return True
+    if not isinstance(failure, dict):
+        return False
+    try:
+        Failure.from_dict(failure)
+    except (TypeError, ValueError, AttributeError, OverflowError):
+        return False
+    return True
+
+
 def recorded_verdict(record: dict[str, Any] | None) -> bool | None:
     """Whether the outcome a task recorded for a case (``results/<i>.json``,
     read by :meth:`BatchLayout.read_result`) passed: its ``result``'s
     ``passed`` when ``result`` is an object and ``passed`` a boolean, else
     ``None`` -- a record that holds no verdict, which every reader takes as
-    not passed (#1718), never ``"false"`` or ``1`` as a pass."""
+    not passed (#1718), never ``"false"`` or ``1`` as a pass.
+
+    A ``result`` that cannot be reported (:func:`readable_result`: its
+    ``message``, ``elapsed_seconds``, ``condition_statuses`` or ``failure``
+    missing or of the wrong type) holds no verdict either (#1726), so that the counts of
+    ``scenario-slurm status`` and ``wait``, the viewer, ``collect`` and
+    ``resubmit`` all agree that it did not pass."""
     if not isinstance(record, dict):
         return None
     result = record.get("result")
     if not isinstance(result, dict):
         return None
     passed = result.get("passed")
-    return passed if isinstance(passed, bool) else None
+    if not isinstance(passed, bool):
+        return None
+    return passed if readable_result(result) else None
 
 
 @dataclass(frozen=True)

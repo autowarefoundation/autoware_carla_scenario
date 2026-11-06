@@ -15,6 +15,7 @@ from typing import Any
 
 import pytest
 
+from autoware_carla_scenario.slurm.manifest import readable_result
 from autoware_carla_scenario.slurm.submit import ACTIVE_STATES
 from autoware_carla_scenario.ui import slurm_launch
 from autoware_carla_scenario.ui.slurm_case_state import case_state
@@ -45,14 +46,19 @@ def _original_case_states(
         }
         if record is not None:
             # A result that is no object reads as an empty one, and only a
-            # boolean ``true`` as a pass (#1718).
+            # boolean ``true`` as a pass (#1718), in a result that can be
+            # reported (#1726).
             result = record.get("result")
             if not isinstance(result, dict):
                 result = {}
             entry.update(
                 state="errored"
                 if record.get("errored")
-                else ("passed" if result.get("passed") is True else "failed"),
+                else (
+                    "passed"
+                    if result.get("passed") is True and readable_result(result)
+                    else "failed"
+                ),
                 message=result.get("message", ""),
                 elapsed_seconds=result.get("elapsed_seconds"),
                 host=record.get("host"),
@@ -138,6 +144,16 @@ def _record(rng: random.Random) -> dict[str, Any]:
             result["message"] = rng.choice(["", "ok", "collided", None, 3])
         if rng.random() < 0.7:
             result["elapsed_seconds"] = rng.choice([0.0, 12.5, None])
+        if rng.random() < 0.3:
+            result["condition_statuses"] = rng.choice(
+                [
+                    [],
+                    None,
+                    "x",
+                    [{"label": "a", "satisfied": True, "message": "ok"}],
+                    [{"label": "a", "satisfied": "yes", "message": "ok"}],
+                ]
+            )
         record["result"] = result
     if rng.random() < 0.7:
         record["host"] = rng.choice(["node1", None])
@@ -255,6 +271,14 @@ def test_a_task_file_holding_no_object_fails_where_it_did(
         [True],
         None,
         "missing",
+        {"passed": True},
+        {"passed": True, "message": "ok", "elapsed_seconds": "soon"},
+        {
+            "passed": True,
+            "message": "ok",
+            "elapsed_seconds": 1.0,
+            "condition_statuses": [3],
+        },
     ],
     ids=[
         "str-false",
@@ -266,11 +290,15 @@ def test_a_task_file_holding_no_object_fails_where_it_did(
         "list-result",
         "null-result",
         "no-result",
+        "passed-only",
+        "str-elapsed",
+        "int-status",
     ],
 )
 def test_a_result_with_no_verdict_is_failed_not_passed(result: Any) -> None:
-    """#1718: only a boolean ``passed`` in a ``result`` object is a verdict;
-    any other record is a case that failed, and none raises."""
+    """#1718: only a boolean ``passed`` in a ``result`` object is a verdict,
+    and only in one that can be reported (#1726); any other record is a case
+    that failed, and none raises."""
     record: dict[str, Any] = {"errored": False, "host": "node1"}
     if result != "missing":
         record["result"] = result
@@ -279,7 +307,10 @@ def test_a_result_with_no_verdict_is_failed_not_passed(result: Any) -> None:
     (entry,) = slurm_launch._case_states(layout, manifest, {0: {}})  # type: ignore[arg-type]
     assert entry["state"] == "failed"
     assert entry["host"] == "node1"
-    passed = {"errored": False, "result": {"passed": True}}
+    passed = {
+        "errored": False,
+        "result": {"passed": True, "message": "", "elapsed_seconds": 1.0},
+    }
     layout = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {0: passed}, {})
     (entry,) = slurm_launch._case_states(layout, manifest, {0: {}})  # type: ignore[arg-type]
     assert entry["state"] == "passed"

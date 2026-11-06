@@ -143,6 +143,48 @@ def test_an_uncollected_batch_shows_what_its_tasks_recorded(tmp_path: Path) -> N
     assert [r.files.stem if r.files else None for r in found] == ["Case0", "Case1"]
 
 
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"passed": True},
+        {"passed": "true", "message": "ok", "elapsed_seconds": 1.0},
+        {**_result(True, "ok"), "elapsed_seconds": "soon"},
+        {**_result(True, "ok"), "condition_statuses": [3]},
+        {**_result(True, "ok"), "elapsed_seconds": 10**400},
+    ],
+    ids=["passed-only", "str-passed", "str-elapsed", "int-status", "huge-elapsed"],
+)
+def test_an_unreadable_recorded_result_is_an_error(
+    tmp_path: Path, result: dict[str, Any]
+) -> None:
+    """#1726: a recorded result with no verdict, or one that cannot be
+    reported, is no pass on the results pages: an error, as collect has it."""
+    batch = _slurm_batch(tmp_path)
+    _record(batch, 0, True, "ok", T0 + 10)
+    _write(
+        batch / "slurm" / "results" / "1.json",
+        {"index": 1, "stem": "Case1", "result": result},
+        T0 + 10,
+    )
+    found = results.load_results(tmp_path, "batch", DATE, TIME, metrics=False)
+    assert [(r.passed, r.outcome, r.pending) for r in found] == [
+        (True, "pass", False),
+        (False, "error", False),
+    ]
+    assert "1.json" in found[1].message
+    items = scanner.load_session(tmp_path, "batch", DATE, TIME)
+    assert [it.passed for it in items] == [True, False]
+
+
+def test_a_duration_too_long_for_a_float_is_none() -> None:
+    """#1726: ``_seconds`` reads an integer that ``float()`` overflows on as
+    no duration, in the results and the session pages alike."""
+    for module in (results, scanner):
+        assert module._seconds(10**400) is None
+        assert module._seconds(3) == 3.0
+        assert module._seconds(True) is None
+
+
 def test_a_resubmitted_batch_shows_the_newer_outcomes(tmp_path: Path) -> None:
     batch = _slurm_batch(tmp_path)
     _record(batch, 0, False, "collision", T0 + 10)
