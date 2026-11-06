@@ -95,6 +95,17 @@ _INTERFACE_PACKAGE = "autoware_carla_interface"
 #: container: the directory put on ``PYTHONPATH``.
 _BRIDGE_PYTHON_ROOT = "/opt/autoware_carla_scenario/python"
 
+#: How long a captured docker call (``ps``, ``image inspect``, ``rm``) may
+#: take before it is given up on: a daemon that stops answering fails the
+#: call rather than hang the batch between scenarios (#1790).
+_DOCKER_TIMEOUT_S = 60.0
+
+#: How long ``docker commit`` of the dependency image may take: it writes the
+#: container's whole layer (apt packages and, with ``rosdep``, the workspace's
+#: dependencies, gigabytes of them), once per digest.  The workspace's build
+#: and the dependencies' install stream their output and are not bounded.
+_DOCKER_COMMIT_TIMEOUT_S = 1800.0
+
 
 def _label_value() -> str:
     """The value of :data:`STACK_LABEL` on this user's containers."""
@@ -544,6 +555,7 @@ class DockerAutowareLauncher:
                 name,
                 tag,
                 check=True,
+                timeout_s=_DOCKER_COMMIT_TIMEOUT_S,
             )
         finally:
             self._docker("rm", "--force", name, check=False)
@@ -685,21 +697,48 @@ class DockerAutowareLauncher:
             argv.append(self._container.image)
         return argv
 
-    def _docker(self, *args: str, check: bool) -> subprocess.CompletedProcess[str]:
-        return self._run_docker(list(args), check=check)
+    def _docker(
+        self, *args: str, check: bool, timeout_s: Optional[float] = None
+    ) -> subprocess.CompletedProcess[str]:
+        return self._run_docker(list(args), check=check, timeout_s=timeout_s)
 
     def _run_docker(
-        self, args: list[str], *, check: bool
+        self, args: list[str], *, check: bool, timeout_s: Optional[float] = None
     ) -> subprocess.CompletedProcess[str]:
-        """The Docker CLI run with *args*, its output captured."""
+        """The Docker CLI run with *args*, its output captured, within
+        *timeout_s* seconds (:data:`_DOCKER_TIMEOUT_S` when None).
+
+        A call that fails to run or to finish raises
+        :class:`AutowareStackError` with *check*; without, it is logged and
+        answers as a failed one (exit status 1).
+        """
+        # Read here, not as a default: a default is bound once, at definition.
+        timeout = _DOCKER_TIMEOUT_S
+        if timeout_s is not None:
+            timeout = timeout_s
         try:
             completed = subprocess.run(  # noqa: S603 - argv comes from the user's own config
                 [self._config.docker] + args,
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
+                timeout=timeout,
                 check=False,
             )
+        except subprocess.TimeoutExpired:
+            # subprocess.run() has killed the docker CLI by now.
+            if check:
+                raise AutowareStackError(
+                    f"{self._config.docker} {' '.join(args)} did not finish "
+                    f"within {timeout:.0f} s"
+                ) from None
+            logger.warning(
+                "%s %s did not finish within %.0f s; going on without it",
+                self._config.docker,
+                " ".join(args),
+                timeout,
+            )
+            return subprocess.CompletedProcess([self._config.docker] + args, 1, "", "")
         except OSError as exc:
             if check:
                 raise AutowareStackError(

@@ -105,6 +105,12 @@ What happens:
       Another user's are left alone, but two of your own batches on one host
       are not supported -- the shared host network (CARLA's ports, the
       bridge's, the ROS graph) would not allow them anyway.
+    - Every docker call the launcher makes for its answer (`docker ps`,
+      `docker image inspect`, `docker rm`) is given 60 s, `docker commit` of
+      the dependency image 30 minutes: a daemon that stops answering fails
+      the batch here (a call it needs) or is logged and gone on without (the
+      leftover containers' removal), rather than hang it. The dependencies'
+      install and the build stream their output and are not bounded.
 2. **For each scenario**, once the ego is spawned and the mission served:
     `docker run --rm --network host` of the dev container image, the workspace
     mounted where it was built, `source install/setup.bash`, then the
@@ -121,8 +127,10 @@ What happens:
     `autoware.ready_timeout_ticks`, as before.
 4. **When the scenario ends**, however it ends, the stack is stopped (`SIGINT`
     to `ros2 launch`, through `docker run --init`) and its container removed
-    once it has stopped or `stop_timeout_s` has passed, before the next
-    scenario starts. A scenario that is retried (`server.cooldown_max_retries`)
+    with `docker rm --force` once it has stopped or `stop_timeout_s` has
+    passed, before the next scenario starts. That removal is given 60 s: a
+    daemon that does not answer in that time is logged as a warning and the
+    batch goes on, the container left for the next batch's start to remove. A scenario that is retried (`server.cooldown_max_retries`)
     starts another fresh stack, with nothing of the failed attempt's carried
     over.
 
