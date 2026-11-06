@@ -616,7 +616,10 @@ class SweepConfig:
     job_timeout_seconds: int = 120
 
     #: 1-indexed job number to resume from.  Jobs before this index are
-    #: skipped.  0 (default) means execute all jobs from the beginning.
+    #: skipped.  0 (default) or ``null`` means execute all jobs from the
+    #: beginning.  A whole number: a bool, a float, a string or a negative
+    #: value is refused (exit 2) before any case runs.  ``--resume-from N``
+    #: (``SWEEP_RESUME_FROM``) wins over it.
     resume_from: int = 0
 
     #: Concrete cases drawn from the ODD (``docs/odd.md``, "Sampling

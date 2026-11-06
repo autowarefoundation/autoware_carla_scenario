@@ -44,7 +44,6 @@ def test_argv_exports_exactly_the_moved_names() -> None:
         (["scenario", "--resume-from", "1", "--resume-from=2"], (2, ["scenario"])),
         (["scenario", "--resume-from=2", "--resume-from", "5"], (5, ["scenario"])),
         # int() takes a sign, surrounding blanks and underscores.
-        (["scenario", "--resume-from", "-2"], (-2, ["scenario"])),
         (["scenario", "--resume-from", "+3"], (3, ["scenario"])),
         (["scenario", "--resume-from", " 7 "], (7, ["scenario"])),
         (["scenario", "--resume-from", "1_0"], (10, ["scenario"])),
@@ -83,14 +82,47 @@ def test_extract_resume_from(given: list[str], expected: tuple[int, list[str]]) 
             ["scenario", "--resume-from", "--resume-from", "3"],
             "Error: --resume-from requires an integer, got '--resume-from'",
         ),
+        (
+            ["scenario", "--resume-from", "2.5"],
+            "Error: --resume-from requires an integer, got '2.5'",
+        ),
+        # Below 1: it starts at case N, counted from 1, so these would run
+        # every case without a word (#1784).
+        (
+            ["scenario", "--resume-from", "0"],
+            "Error: --resume-from must be at least 1 (the 1-indexed case to "
+            "start at), got '0'",
+        ),
+        (
+            ["scenario", "--resume-from", "-3"],
+            "Error: --resume-from must be at least 1 (the 1-indexed case to "
+            "start at), got '-3'",
+        ),
+        (
+            ["scenario", "--resume-from=-1"],
+            "Error: --resume-from must be at least 1 (the 1-indexed case to "
+            "start at), got '-1'",
+        ),
+        (
+            ["scenario", "--resume-from=0"],
+            "Error: --resume-from must be at least 1 (the 1-indexed case to "
+            "start at), got '0'",
+        ),
+        # A valid one first does not excuse a bad one after it.
+        (
+            ["scenario", "--resume-from", "3", "--resume-from", "0"],
+            "Error: --resume-from must be at least 1 (the 1-indexed case to "
+            "start at), got '0'",
+        ),
     ],
 )
-def test_extract_resume_from_refuses_a_missing_or_non_integer_value(
+def test_extract_resume_from_refuses_a_missing_non_integer_or_below_1_value(
     given: list[str], message: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
+    """A usage error: exit 2, before anything runs (#1784)."""
     with pytest.raises(SystemExit) as exc:
         argv._extract_resume_from(given)
-    assert exc.value.code == 1
+    assert exc.value.code == 2
     assert capsys.readouterr().out == message + "\n"
 
 
