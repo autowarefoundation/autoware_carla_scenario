@@ -54,7 +54,9 @@ On the machine you run `scenario` on (a SLURM submit host):
    such a submission as `no job id: sbatch timed out at <time>; the job may
    exist all the same: check squeue --me`, its cases `unknown` in the viewer
    (not `missing`), and `wait` says it has no job id to follow and where to
-   look for the job.
+   look for the job (and, within those 600 s, that a `resubmit` is refused);
+   `collect` reports each of its cases as `task <n> of submission <i> never
+   started` with the same note, never `job None`.
 4. By default `scenario` follows the array (`squeue`, and the outcome each task
    records) until it ends, then prints the summary and writes
    `batch_results.json`, as a local batch does, and exits 0 when every case
@@ -129,7 +131,7 @@ options of the others (`scenario-slurm <command> --help` says the same):
 | `resubmit` | `--array-parallelism K` | at most this many tasks at once (at least 1); default: the batch's `launcher.array_parallelism` |
 | `resubmit` | `--cases-per-task N` | cases a task runs (at least 1); default: the batch's `launcher.cases_per_task` |
 | `resubmit` | `--wait`, `--no-wait` | follow the new submission until it ends and collect, or submit and exit; default: the batch's `launcher.wait`. With nothing to resubmit, it collects at once, but only with an explicit `--wait` (and not with `--dry-run`) |
-| `resubmit` | `--force` | submit even while a job of the batch is queued or running, `squeue` cannot tell whether one is, or another submission of the batch is in flight |
+| `resubmit` | `--force` | submit even while a job of the batch is queued or running, `squeue` cannot tell whether one is, or another submission of the batch is in flight or its sbatch timed out less than 600 s after its record was made |
 | `resubmit` | `--dry-run` | print the cases it would resubmit, submitting and collecting nothing, even with `--wait`, and exit 0; it still exits 1 where a resubmit would refuse: a busy batch without `--force`, an unknown `--cases` entry or an out-of-range option, and on an error reading the batch |
 
 A case that has no outcome -- its task was cancelled, ran out of time, was
