@@ -2767,6 +2767,14 @@ the seconds and metres (<code>timeout_s</code>, <code>policy_timestep_s</code>, 
 <code>t4_scene_wheel_base_m</code>), for every number of a camera, its lens and a LiDAR,
 and for <code>image_quality</code>, a whole number (see below) in 1-100: <code>90</code>, or <code>90.0</code>
 kept as <code>90</code>.</p>
+<p>The switches <code>send_ground_truth</code>, <code>send_renderer_data</code>,
+<code>send_actor_ground_truth</code> and <code>t4_scene</code> are each <code>true</code> or <code>false</code>, or one of
+their spellings as text in any case (<code>"false"</code>, <code>"no"</code>, <code>"off"</code>, <code>"0"</code>, and
+<code>"true"</code>, <code>"yes"</code>, <code>"on"</code>, <code>"1"</code>), or the integer <code>0</code> or <code>1</code>, as the run's
+other switches are (<a href="../usage/#the-switches">The switches</a>). So a quoted
+<code>driver.t4_scene='false'</code> is false, not true; anything else (<code>ture</code>, <code>2</code>,
+null) is refused as the config is read, naming the key
+(<code>driver.send_ground_truth must be true or false, got 'ture'</code>).</p>
 <p>The same holds for <code>driver.control</code> (and <code>ros2.control</code>): each gain and limit
 is a finite int or float (an int is read as a float), each <code>enable_*</code> switch a
 boolean and <code>velocity_smoothing_window</code> a whole number, and a <code>*_deg</code> angle
@@ -3410,7 +3418,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 19:36:20 UTC"><span class="timeago" datetime="2026-11-05T19:36:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 19:36:20 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 04:27:17 UTC"><span class="timeago" datetime="2026-11-06T04:27:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 04:27:17 UTC">2026-11-06</span>
   </span>
 
     
