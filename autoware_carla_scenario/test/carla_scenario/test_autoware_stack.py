@@ -677,6 +677,30 @@ def test_an_image_inspect_that_hangs_fails_prepare_in_bounded_time(
     assert not any(c[0] == "run" for c in calls())
 
 
+def test_a_dependency_image_inspect_that_hangs_is_not_taken_for_a_missing_image(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The base image answers but the dependency image's tag does not: no
+    # answer is not "missing", so nothing is installed or committed (#1797).
+    docker, calls = fake_docker
+    monkeypatch.setattr(docker_module, "_DOCKER_TIMEOUT_S", 1.0)
+    monkeypatch.setenv(
+        "FAKE_DOCKER_HANGS", f"image inspect {DEPENDENCY_IMAGE_REPOSITORY}:"
+    )
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    began = time.monotonic()
+    with pytest.raises(AutowareStackError, match="did not finish within 1 s"):
+        _docker_launcher(ws, docker).prepare()
+    assert time.monotonic() - began < 15.0
+    # The tag was asked about, after the base image answered.
+    assert any(
+        c[:2] == ["image", "inspect"]
+        and c[-1].startswith(f"{DEPENDENCY_IMAGE_REPOSITORY}:")
+        for c in calls()
+    )
+    assert not any(c[0] in ("run", "commit") for c in calls())
+
+
 def test_the_dependency_image_commit_gets_the_longer_timeout(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
