@@ -1741,13 +1741,20 @@ def test_worker_points_the_config_at_its_ports() -> None:
     [
         (
             [
+                "ego.entity=autoware",
                 "autoware.launcher.type=docker",
                 "autoware.launcher.ros_domain_ids=[10,11]",
             ],
             "autoware.launcher.ros_domain_ids",
         ),
-        (["autoware.launcher.type=docker"], "autoware.launcher.ros_domain_ids"),
-        (["autoware.launcher.type=command"], "autoware.launcher.env"),
+        (
+            ["ego.entity=autoware", "autoware.launcher.type=docker"],
+            "autoware.launcher.ros_domain_ids",
+        ),
+        (
+            ["ego.entity=autoware", "autoware.launcher.type=command"],
+            "autoware.launcher.env",
+        ),
         (["ego.entity=ros2", "ros2.domain_id=5"], "ros2.domain_id"),
     ],
 )
@@ -1805,6 +1812,30 @@ def _select(cfg: Any, key: str) -> Any:
 
     value = OmegaConf.select(cfg, key)
     return OmegaConf.to_container(value) if OmegaConf.is_config(value) else value
+
+
+def test_a_launcher_without_an_autoware_ego_takes_no_domain(tmp_path: Path) -> None:
+    """A local run builds the launcher only for an Autoware ego: neither is
+    a domain taken for it nor its settings checked otherwise (#1862)."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot, RosDomains
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    domains = RosDomains(tmp_path)
+    try:
+        cfg = run._compose_config(
+            _CONCRETE,
+            [
+                "ego.entity=autopilot",
+                "autoware.launcher.type=docker",
+                "autoware.launcher.ros_domain_ids=[10,11]",
+            ],
+        )
+        changes = worker_overrides(cfg, PortSlot(index=0, base=20000), domains)
+        assert "autoware.launcher.ros_domain_ids" not in changes
+        assert domains.mapping == {}
+    finally:
+        domains.release()
 
 
 def test_worker_leaves_the_ros_domains_alone_without_a_holder() -> None:
@@ -1895,7 +1926,9 @@ def test_the_command_launcher_domain_follows_the_jobs_environment(
         monkeypatch.setenv("ROS_DOMAIN_ID", environ)
     domains = RosDomains(tmp_path)
     try:
-        cfg = run._compose_config(_CONCRETE, ["autoware.launcher.type=command"])
+        cfg = run._compose_config(
+            _CONCRETE, ["ego.entity=autoware", "autoware.launcher.type=command"]
+        )
         changes = worker_overrides(cfg, PortSlot(0, 20000), domains)
         assert changes["autoware.launcher.env"]["ROS_DOMAIN_ID"] == str(expected)
         # The launcher's own env wins over the job's.
@@ -1903,6 +1936,7 @@ def test_the_command_launcher_domain_follows_the_jobs_environment(
         cfg = run._compose_config(
             _CONCRETE,
             [
+                "ego.entity=autoware",
                 "autoware.launcher.type=command",
                 "+autoware.launcher.env.ROS_DOMAIN_ID=3",
             ],
@@ -1920,11 +1954,16 @@ def test_the_command_launcher_domain_follows_the_jobs_environment(
         (["ego.entity=ros2", "ros2.domain_id=2.5"], "ros2.domain_id must be"),
         (["ego.entity=ros2", "ros2.domain_id=233"], "ros2.domain_id must be .* 232"),
         (
-            ["autoware.launcher.type=docker", "autoware.launcher.ros_domain_ids=7"],
+            [
+                "ego.entity=autoware",
+                "autoware.launcher.type=docker",
+                "autoware.launcher.ros_domain_ids=7",
+            ],
             "autoware.launcher.ros_domain_ids must be a list",
         ),
         (
             [
+                "ego.entity=autoware",
                 "autoware.launcher.type=docker",
                 "autoware.launcher.ros_domain_ids=[1,true]",
             ],
@@ -1932,6 +1971,7 @@ def test_the_command_launcher_domain_follows_the_jobs_environment(
         ),
         (
             [
+                "ego.entity=autoware",
                 "autoware.launcher.type=docker",
                 "autoware.launcher.ros_domain_ids=[1,300]",
             ],
@@ -1939,6 +1979,7 @@ def test_the_command_launcher_domain_follows_the_jobs_environment(
         ),
         (
             [
+                "ego.entity=autoware",
                 "autoware.launcher.type=command",
                 "+autoware.launcher.env.ROS_DOMAIN_ID=seven",
             ],

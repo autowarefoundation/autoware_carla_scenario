@@ -241,6 +241,10 @@ def _domain_overrides(cfg: "DictConfig", domains: RosDomains) -> dict[str, Any]:
                 domain,
             )
         changes[key] = domain
+    # The launcher is built (and validated) only for an Autoware ego, as a
+    # local run does: any other ego takes no domain for it.
+    if ego is None or str(ego.get("entity", "autopilot")) != "autoware":
+        return changes
     autoware = cfg.get("autoware")
     launcher = None if autoware is None else autoware.get("launcher")
     if launcher is None:
