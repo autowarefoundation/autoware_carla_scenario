@@ -371,10 +371,27 @@ sweep:
 uv run scenario --multirun scenario=traffic_light_compliance/traffic_light_compliance \
   hydra/sweeper=lanelet_constraint
 
-# Resume a sweep from job number N (1-indexed; 0 disables).
+# Resume a sweep from job number N (1-indexed, at least 1).
 uv run scenario --multirun scenario=traffic_light_compliance/traffic_light_compliance \
   hydra/sweeper=lanelet_constraint --resume-from 10
 ```
+
+The resume point comes from `--resume-from N` on the command line or from
+`sweep.resume_from` in the config. The command line wins: with
+`sweep.resume_from: 5` in the config, `--resume-from 10` resumes at job 10.
+(`--resume-from` reaches the sweeper as the `SWEEP_RESUME_FROM` environment
+variable, which you may also set yourself; it wins over the config the same
+way, so unset a `SWEEP_RESUME_FROM` left over in your shell.) `--resume-from` takes a whole number of at least 1: `0`, a negative
+value or one that is not an integer is a usage error, `Error: --resume-from
+...` and exit 2, before anything runs. `sweep.resume_from` is a whole number
+too; `0` or `null` (or leaving it out) means it is not set, and every job runs
+unless `--resume-from` says otherwise. A `sweep.resume_from` that is a bool, a
+float (`2.7`, or even `3.0`), a string or negative, and a `SWEEP_RESUME_FROM`
+that is not a whole number, is refused with one line, `Error:
+sweep.resume_from must be a whole number of at least 1 ...` (or `Error:
+SWEEP_RESUME_FROM ...`), exit 2, before the map is loaded -- even when
+`--resume-from` overrides it -- rather than truncated, read as 1 or as "run
+every job", or raised as a traceback.
 
 Sweeps write results under `multirun/YYYY-MM-DD/HH-MM-SS/<job-index>/`,
 not `outputs/`. The result viewer scans both directories. A sweep started in
@@ -415,7 +432,8 @@ A sweep whose config sets a value its runs would refuse (a `t4scene.step_s`
 that is not a multiple of the tick, a negative `server.cooldown_max_retries`,
 an unknown `server.world_reset` or `traffic.backend`, a
 `scenario.timeout_seconds` that is not positive, a
-`sweep.job_timeout_seconds` that is not a whole number of seconds, ...) exits
+`sweep.job_timeout_seconds` that is not a whole number of seconds, a
+`sweep.resume_from` that is not a whole number, ...) exits
 2 before the map is fetched or any case runs, naming the key, rather than have every case refuse
 it in turn. So does one asking for an extra (`rerun`, `t4`) that is not
 installed. A value only a case's own overrides set (its ODD draw, a
@@ -507,7 +525,10 @@ itself (`scenario.route.*`); see
 
 When running large batches, you can skip already-completed scenarios.
 `--resume-from N` starts at the *N*th scenario (1-indexed, as for a sweep);
-in a `--multirun` batch it counts the expanded cases:
+in a `--multirun` batch it counts the expanded cases. *N* is a whole number of
+at least 1: `--resume-from 0`, `--resume-from -3` or `--resume-from abc` is a
+usage error, `Error: --resume-from ...` and exit 2, rather than a run of every
+scenario:
 
 ```bash
 # Resume from the 3rd scenario
@@ -1294,7 +1315,7 @@ driver ending the run is `driver`, and a case that raised on every attempt is
 |------|---------|
 | 0 | All scenarios passed |
 | 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <case>: <key> ...` before anything is built) |
-| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`) is not installed, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick |
+| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`) is not installed, a `--resume-from` that is not a whole number of at least 1, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
 | 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
 
 The same codes hold however the cases run: a single run, a glob batch, a

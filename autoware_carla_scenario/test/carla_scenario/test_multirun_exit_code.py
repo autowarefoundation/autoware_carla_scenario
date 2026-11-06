@@ -130,7 +130,7 @@ def _run(
     app: str,
     tmp_path: Path,
     *args: str,
-    resume_from: int | None = None,
+    resume_from: int | str | None = None,
     mode: str = "--multirun",
     sweep_dir: Path | None = None,
 ) -> subprocess.CompletedProcess[str]:
@@ -452,6 +452,142 @@ def test_lanelet_sweeper_resumes_at_its_last_case(tmp_path: Path) -> None:
     assert proc.returncode == 0, output
     assert "case 1" not in output, output
     assert "case 2" in output, output
+
+
+@pytest.mark.parametrize(
+    ("config", "env", "first_case"),
+    [
+        # --resume-from (the variable) wins over sweep.resume_from (#1784).
+        ("1", 2, "case 2"),
+        ("2", 1, "case 1"),
+        # The config alone.
+        ("2", None, "case 2"),
+        # 0 and null in the config: not set.
+        ("0", None, "case 1"),
+        ("null", None, "case 1"),
+        # A variable of 0 or empty is not set either: the config stands.
+        ("2", "0", "case 2"),
+        ("2", "", "case 2"),
+    ],
+)
+def test_lanelet_sweeper_resume_point_precedence(
+    tmp_path: Path, config: str, env: int | str | None, first_case: str
+) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        f"+sweep.resume_from={config}",
+        resume_from=env,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    assert first_case in output, output
+    if first_case == "case 2":
+        assert "case 1" not in output, output
+
+
+@pytest.mark.parametrize(
+    ("config", "env", "message"),
+    [
+        ("true", None, "Error: sweep.resume_from must be a whole number of at least 1"),
+        ("2.7", None, "Error: sweep.resume_from must be a whole number of at least 1"),
+        ("3.0", None, "Error: sweep.resume_from must be a whole number of at least 1"),
+        ("abc", None, "Error: sweep.resume_from must be a whole number of at least 1"),
+        ("-3", None, "Error: sweep.resume_from must be a whole number of at least 1"),
+        # Refused even when --resume-from overrides it.
+        ("abc", 2, "Error: sweep.resume_from must be a whole number of at least 1"),
+        # The variable is checked as strictly.
+        (
+            "null",
+            "abc",
+            "Error: SWEEP_RESUME_FROM must be a whole number of at least 1",
+        ),
+        ("null", "-1", "Error: SWEEP_RESUME_FROM must be a whole number of at least 1"),
+        (
+            "null",
+            "2.5",
+            "Error: SWEEP_RESUME_FROM must be a whole number of at least 1",
+        ),
+    ],
+)
+def test_lanelet_sweeper_refuses_a_bad_resume_point_before_any_case(
+    tmp_path: Path, config: str, env: int | str | None, message: str
+) -> None:
+    """#1784: one line and exit 2, not a truncation, a run of every case or
+    int()'s traceback."""
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        f"+sweep.resume_from={config}",
+        resume_from=env,
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 2, output
+    assert message in output, output
+    assert "Traceback" not in output, output
+    assert "case 1" not in output, output
+    assert "case 2" not in output, output
+
+
+@pytest.mark.parametrize(
+    ("config", "env", "expected"),
+    [
+        (None, None, 0),
+        (0, None, 0),
+        (3, None, 3),
+        (None, "4", 4),
+        (None, " 4 ", 4),
+        (None, "", 0),
+        (None, "0", 0),
+        (5, "10", 10),
+        (10, "5", 5),
+        (5, "0", 5),
+        (5, "", 5),
+    ],
+)
+def test_resume_from_reads_the_variable_over_the_config(
+    config: Any, env: str | None, expected: int
+) -> None:
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        _resume_from,
+    )
+
+    assert _resume_from(config, env) == expected
+
+
+@pytest.mark.parametrize(
+    ("config", "env", "match"),
+    [
+        (True, None, "sweep.resume_from must be a whole number"),
+        (False, None, "sweep.resume_from must be a whole number"),
+        (2.7, None, "sweep.resume_from must be a whole number"),
+        (3.0, None, "sweep.resume_from must be a whole number"),
+        ("3", None, "sweep.resume_from must be a whole number"),
+        ("abc", None, "sweep.resume_from must be a whole number"),
+        (-3, None, "sweep.resume_from must be a whole number"),
+        ([1], None, "sweep.resume_from must be a whole number"),
+        # A bad config value is refused even when the variable wins.
+        (-3, "2", "sweep.resume_from must be a whole number"),
+        (None, "abc", "SWEEP_RESUME_FROM must be a whole number"),
+        (None, "-1", "SWEEP_RESUME_FROM must be a whole number"),
+        (None, "+1", "SWEEP_RESUME_FROM must be a whole number"),
+        (None, "2.5", "SWEEP_RESUME_FROM must be a whole number"),
+        (None, "\u00b2", "SWEEP_RESUME_FROM must be a whole number"),
+    ],
+)
+def test_resume_from_refuses_what_is_not_a_whole_number(
+    config: Any, env: str | None, match: str
+) -> None:
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        _resume_from,
+    )
+
+    with pytest.raises(ValueError, match=match):
+        _resume_from(config, env)
 
 
 @pytest.mark.parametrize(

@@ -150,6 +150,56 @@ def _job_timeout_seconds(value: Any) -> int:
     return whole
 
 
+#: The environment variable ``scenario --resume-from N`` passes the sweeper
+#: *N* in (``examples.run.RESUME_FROM_ENV``): Hydra's parser would reject the
+#: flag.
+_RESUME_FROM_ENV = "SWEEP_RESUME_FROM"
+
+
+def _resume_from(config_value: Any, env_value: str | None) -> int:
+    """The 1-based case the sweep starts at, 0 to run every case.
+
+    *env_value* is :data:`_RESUME_FROM_ENV` (``--resume-from N``, or the
+    variable set by hand), *config_value* ``sweep.resume_from``.  Each is a
+    whole number of at least 1, or unset: ``None`` (``null``, absent) or 0 in
+    the config, an empty or unset variable or ``0``.  The variable, when set,
+    wins over the config: ``--resume-from 10`` resumes at case 10 whatever
+    ``sweep.resume_from`` says.  Both are checked, so a bad config value is
+    refused even when the command line overrides it (#1784).
+
+    A bool, a float (``2.7`` or ``3.0``), a string or a negative number in the
+    config is refused rather than truncated, cast or read as "run every case";
+    so is a variable that is not a whole number of at least 0.
+
+    Raises:
+        ValueError: Naming the key or variable, when either is invalid.
+    """
+    expected = (
+        "a whole number of at least 1 (the 1-indexed case to start at; "
+        "0 or unset for none)"
+    )
+    if config_value is None:
+        from_config = 0
+    elif (
+        isinstance(config_value, int)
+        and not isinstance(config_value, bool)
+        and config_value >= 0
+    ):
+        from_config = config_value
+    else:
+        raise ValueError(
+            f"sweep.resume_from must be {expected}, got {shown(config_value)}"
+        )
+    text = (env_value or "").strip()
+    if not text:
+        return from_config
+    if not (text.isascii() and text.isdigit()):
+        # No sign, fraction, exponent or non-ASCII digit.
+        raise ValueError(f"{_RESUME_FROM_ENV} must be {expected}, got {text!r}")
+    from_env = int(text)
+    return from_env if from_env >= 1 else from_config
+
+
 def _read_verdict(output_dir: Path) -> bool | None:
     """The verdict of the scenario result JSON the case just launched wrote in
     its job's output directory: the last run's
@@ -524,8 +574,10 @@ class LaneletConstraintSweeper(Sweeper):
                 case to run (none expanded, or ``--resume-from`` past the
                 last).
             SystemExit: With status 2, at once, when the sweep sets a config
-                value its runs refuse or asks for Rerun recordings or T4
-                datasets without the extra, or when a case is refused;
+                value its runs refuse, a ``sweep.job_timeout_seconds`` or
+                ``sweep.resume_from`` (or ``SWEEP_RESUME_FROM``) it refuses,
+                or asks for Rerun recordings or T4 datasets without the
+                extra, or when a case is refused;
                 with status 130 (``SIGINT``) or 143 (``SIGTERM``) when the
                 sweep is interrupted.
             SystemExit: With status 1, at once, before any case runs, when
@@ -595,6 +647,12 @@ class LaneletConstraintSweeper(Sweeper):
         # as step 0 refuses a config value: exit 2, naming the key.
         try:
             job_timeout = _job_timeout_seconds(sweep_dict.get("job_timeout_seconds"))
+            # `--resume-from` (the variable) wins over `sweep.resume_from`;
+            # a bad value of either is refused here, not truncated or
+            # raised from int() mid-sweep (#1784).
+            resume_from = _resume_from(
+                sweep_dict.get("resume_from"), os.environ.get(_RESUME_FROM_ENV)
+            )
         except ValueError as exc:
             print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
             sys.exit(_REFUSED_EXIT_CODE)
@@ -646,8 +704,8 @@ class LaneletConstraintSweeper(Sweeper):
             [b[0] if b else "" for b in batches],
         )
 
-        # -- 7. Resolve cooldown, retry count, and resume ---
-        # (job_timeout: read and checked at step 1.)
+        # -- 7. Resolve cooldown and retry count ---
+        # (job_timeout and resume_from: read and checked at step 1.)
         cooldown: float = float(
             OmegaConf.select(cfg, "server.cooldown_seconds", default=0.0)
         )
@@ -660,9 +718,6 @@ class LaneletConstraintSweeper(Sweeper):
         except ValueError as exc:
             raise ValueError(f"LaneletConstraintSweeper: {exc}.") from None
         max_attempts = 1 + max_retries
-        resume_from: int = int(
-            sweep_dict.get("resume_from", 0) or os.environ.get("SWEEP_RESUME_FROM", "0")
-        )
 
         # -- 8. Apply resume: skip jobs before the resume point (1-indexed) --
         if resume_from > len(batches):
