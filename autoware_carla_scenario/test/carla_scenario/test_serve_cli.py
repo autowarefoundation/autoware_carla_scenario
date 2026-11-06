@@ -18,7 +18,12 @@ from typing import Any, Callable
 import pytest
 
 from autoware_carla_scenario import editor, ui
-from autoware_carla_scenario.serve_cli import is_loopback, port, warn_if_exposed
+from autoware_carla_scenario.serve_cli import (
+    check_port,
+    is_loopback,
+    port,
+    warn_if_exposed,
+)
 
 _ENV = (
     "VIEWER_HOST",
@@ -318,6 +323,17 @@ def test_port_refuses_what_is_not_a_tcp_port(text: str, message: str) -> None:
 
 def test_port_accepts_the_tcp_range() -> None:
     assert [port(text) for text in ("1", "2000", "65535")] == [1, 2000, 65535]
+
+
+@pytest.mark.parametrize("number", [0, -1, 65536, 67536])
+def test_check_port_refuses_a_number_outside_the_tcp_range(number: int) -> None:
+    # The range check on its own, for a port no argparse option reads (#1781).
+    with pytest.raises(ValueError, match=f"must be within 1-65535, got {number}"):
+        check_port(number)
+
+
+def test_check_port_returns_a_number_in_the_tcp_range() -> None:
+    assert [check_port(n) for n in (1, 2000, 65535)] == [1, 2000, 65535]
 
 
 def _free_port() -> int:

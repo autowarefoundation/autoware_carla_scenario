@@ -225,7 +225,9 @@ editor's preview and a constraint sweep work with no OpenDRIVE and no CARLA
 anywhere. A *run* needs it, and a run has CARLA: `ScenarioQueue` writes the
 loaded world's OpenDRIVE into the cache the first time a scenario runs on it.
 
-To fetch it ahead of time, use **Fetch OpenDRIVE** in the Scenario inspector, or:
+To fetch it ahead of time, use **Fetch OpenDRIVE** in the Scenario inspector
+(a CARLA port outside 1-65535 is refused beside the form, before anything
+connects), or:
 
 ```python
 from autoware_carla_scenario.maps import ensure_xodr, resolve_map
