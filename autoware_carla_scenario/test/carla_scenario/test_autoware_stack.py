@@ -25,6 +25,7 @@ from autoware_carla_scenario.autoware_stack.bridge_node import (
 from autoware_carla_scenario.autoware_stack import (
     DEPENDENCY_IMAGE_REPOSITORY,
     STACK_LABEL,
+    AutowareEpisode,
     AutowareLauncher,
     AutowareStackError,
     CommandAutowareLauncher,
@@ -36,6 +37,10 @@ from autoware_carla_scenario.autoware_stack import (
 )
 
 from autoware_carla_scenario.autoware_stack import docker as docker_module
+from autoware_carla_scenario.autoware_stack.launcher import (
+    episode_log_path,
+    fill_placeholders,
+)
 
 from ._stale_pids import signal_group, signal_unreaped_group
 
@@ -370,6 +375,67 @@ def test_command_launcher_runs_one_stack_at_a_time() -> None:
     finally:
         launcher.close()
     assert launcher.poll() is None
+
+
+def test_command_launcher_keeps_shell_syntax_in_the_name_out_of_the_shell(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """``{name}`` in a ``bash -c`` script runs nothing the name spells (#1853)."""
+    # The command runs here, so the name can make the marker by a short name.
+    monkeypatch.chdir(tmp_path)
+    marker = tmp_path / "marker"
+    out = tmp_path / "name.txt"
+    name = "x; touch marker $(touch marker) `touch marker` | && > <"
+    launcher = CommandAutowareLauncher(
+        [
+            "bash",
+            "-c",
+            f'echo {{name}} > {out} && printf %s "$AUTOWARE_SCENARIO_NAME" > {out}.raw',
+        ]
+    )
+    launcher.prepare(log_dir=tmp_path)
+    episode = launcher.start(name=name, bridge_address="localhost:1")
+    _wait_for(lambda: launcher.poll() is not None)
+    assert launcher.poll() == 0
+    launcher.stop()
+
+    safe = "".join(
+        c if c.isascii() and (c.isalnum() or c in "._-") else "_" for c in name
+    )
+    assert out.read_text() == safe + "\n"
+    assert not marker.exists()
+    # The name as given, for a script that quotes it.
+    assert Path(f"{out}.raw").read_text() == name
+    # Named as the log is.
+    assert episode_log_path(tmp_path, episode) == tmp_path / f"autoware-000-{safe}.log"
+    assert (tmp_path / f"autoware-000-{safe}.log").exists()
+
+
+def test_fill_placeholders_makes_the_name_shell_safe() -> None:
+    episode = AutowareEpisode(3, "a b;c$(d)'e\"f{g}é/", "localhost:9")
+    assert fill_placeholders("{name}", episode) == "a_b_c__d__e_f_g___"
+    assert fill_placeholders(
+        "{name}", AutowareEpisode(0, "temporary_stop-2.v1", "h:1")
+    ) == ("temporary_stop-2.v1")
+
+
+def test_fill_placeholders_does_not_expand_what_it_put_in() -> None:
+    """A placeholder in a value stays as it is: the text is scanned once (#1853)."""
+    episode = AutowareEpisode(2, "{scenario_bridge}{index}", "{name}")
+    filled = fill_placeholders(
+        "{bridge_address} {name} {scenario_bridge} {index}",
+        episode,
+        {"scenario_bridge": "run {index} {name}"},
+    )
+    assert filled == "{name} _scenario_bridge__index_ run {index} {name} 2"
+
+
+def test_fill_placeholders_leaves_other_braces_alone() -> None:
+    episode = AutowareEpisode(1, "n", "h:1")
+    assert fill_placeholders("${HOME} {x} {{index}} {} {index", episode) == (
+        "${HOME} {x} {1} {} {index"
+    )
+    assert fill_placeholders("{index}{index}{nam{name}", episode) == "11{namn"
 
 
 # ---------------------------------------------------------------------------

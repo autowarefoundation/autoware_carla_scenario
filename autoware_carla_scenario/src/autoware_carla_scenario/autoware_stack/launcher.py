@@ -404,8 +404,13 @@ class CommandAutowareLauncher:
         )
 
     ``{bridge_address}``, ``{index}`` and ``{name}`` in any argument are
-    replaced with the episode's (see :class:`AutowareEpisode`); the address is
-    in the environment as ``AUTOWARE_BRIDGE_ADDRESS`` too.  ``{scenario_bridge}``
+    replaced with the episode's (see :class:`AutowareEpisode`), in one pass
+    (:func:`fill_placeholders`); the address is in the environment as
+    ``AUTOWARE_BRIDGE_ADDRESS`` too.  ``{name}`` is the name with every
+    character but ``A-Z a-z 0-9 . _ -`` replaced by ``_``, as in the log's file
+    name, so it is safe in a shell script; the name as given is in the
+    environment as ``AUTOWARE_SCENARIO_NAME``, for a script to quote
+    (``"$AUTOWARE_SCENARIO_NAME"``).  ``{scenario_bridge}``
     is a shell command running the ``scenario_bridge`` node
     (:mod:`.bridge_node`) with that address and *bridge_parameters*: the command
     runs it in Autoware's ROS 2 environment, beside the launch.
@@ -473,6 +478,9 @@ class CommandAutowareLauncher:
         env = os.environ.copy()
         env.update(self.env)
         env["AUTOWARE_BRIDGE_ADDRESS"] = episode.bridge_address
+        # The name as given, for a script that quotes it: `{name}` is only
+        # its shell-safe form.
+        env["AUTOWARE_SCENARIO_NAME"] = episode.name
         logger.info("Starting the Autoware stack for %s: %s", episode.name, argv)
         self._process = ProcessGroup(
             argv,
@@ -496,14 +504,32 @@ class CommandAutowareLauncher:
         self.stop()
 
 
+#: What a scenario's name keeps in a file name or a command line: everything
+#: else becomes ``_`` (:func:`_safe_name`).
+_SAFE_NAME_CHARACTERS = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789._-"
+)
+
+
+def _safe_name(name: str) -> str:
+    """*name* with every character but ``A-Z a-z 0-9 . _ -`` replaced by ``_``.
+
+    Safe as a file name component and as a word of a shell script: none of
+    the characters it keeps means anything to a shell, nor is a brace.
+    """
+    return "".join(c if c in _SAFE_NAME_CHARACTERS else "_" for c in name)
+
+
 def episode_log_path(
     log_dir: Optional[Path], episode: AutowareEpisode
 ) -> Optional[Path]:
-    """``<log_dir>/autoware-<index>-<name>.log``, or ``None`` without a directory."""
+    """``<log_dir>/autoware-<index>-<name>.log``, or ``None`` without a directory.
+
+    The name is :func:`_safe_name`'s, as ``{name}`` in a command is.
+    """
     if log_dir is None:
         return None
-    safe_name = "".join(c if c.isalnum() or c in "-_." else "_" for c in episode.name)
-    return log_dir / f"autoware-{episode.index:03d}-{safe_name}.log"
+    return log_dir / f"autoware-{episode.index:03d}-{_safe_name(episode.name)}.log"
 
 
 def fill_placeholders(
@@ -512,15 +538,37 @@ def fill_placeholders(
     """Replace ``{bridge_address}``, ``{index}``, ``{name}`` and *extra*'s keys in *text*.
 
     Only those: every other brace is the command's own -- a shell's
-    ``${VAR}``, a Python one-liner's dict -- and stays as written.
+    ``${VAR}``, a Python one-liner's dict -- and stays as written.  The text
+    is scanned once, so what a placeholder is replaced with is never scanned
+    again: a ``{scenario_bridge}`` in a scenario's name stays as it is.
+    ``{name}`` is :func:`_safe_name`'s form of the name, which a shell script
+    can hold unquoted; the name as given is the launcher's to pass (the
+    command launcher's ``AUTOWARE_SCENARIO_NAME``).
     """
-    replacements = [
-        ("bridge_address", episode.bridge_address),
-        ("index", str(episode.index)),
-        ("name", episode.name),
-    ]
+    values: dict[str, str] = {
+        "bridge_address": episode.bridge_address,
+        "index": str(episode.index),
+        "name": _safe_name(episode.name),
+    }
     if extra is not None:
-        replacements.extend(extra.items())
-    for key, value in replacements:
-        text = text.replace("{" + key + "}", value)
-    return text
+        for key, value in extra.items():
+            values[key] = value
+    # A hand-written scan rather than re.sub() with a callback, which Codon
+    # does not compile (typecheck/library.py checks this module).
+    parts: list[str] = []
+    done = 0
+    opening = text.find("{")
+    while opening >= 0:
+        closing = text.find("}", opening + 1)
+        if closing < 0:
+            break
+        key = text[opening + 1 : closing]
+        if key in values:
+            parts.append(text[done:opening])
+            parts.append(values[key])
+            done = closing + 1
+            opening = text.find("{", done)
+        else:
+            opening = text.find("{", opening + 1)
+    parts.append(text[done:])
+    return "".join(parts)

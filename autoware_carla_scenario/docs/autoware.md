@@ -259,7 +259,14 @@ background (every SLURM task, a `scenario ... &` in a script) does, so the
 `SIGINT` still shuts `ros2 launch` down cleanly rather than leaving it to the
 `SIGTERM` after `stop_timeout_s`; the Docker launcher's `docker run` starts
 the same way. `{bridge_address}`, `{index}` and `{name}`
-are filled in, and the address is in `AUTOWARE_BRIDGE_ADDRESS` too.
+are filled in, in one pass (what a placeholder is replaced with is never
+filled in again), and the address is in `AUTOWARE_BRIDGE_ADDRESS` too.
+`{name}` is the scenario's name with every character but `A-Z`, `a-z`, `0-9`,
+`.`, `_` and `-` replaced by `_` -- the name the stack's log file carries --
+so it can stand unquoted in a shell script. The name as given is in
+`AUTOWARE_SCENARIO_NAME`; a script that needs it exactly reads
+`"$AUTOWARE_SCENARIO_NAME"`, quoted, and never pastes the name into the script
+text itself, since a scenario's name comes from its config.
 `{scenario_bridge}` is a shell command that runs the `scenario_bridge` node with
 that address and `autoware.launcher.bridge_parameters`, for the command to run
 beside the launch in Autoware's ROS 2 environment:
