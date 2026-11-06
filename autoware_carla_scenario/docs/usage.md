@@ -964,6 +964,17 @@ margins that may be 0 -- `npc_initial_speed_kmh`, `npc_speed_kmh`,
 negative, and `stop_zone_min_m` must not be past `stop_zone_max_m`. A
 `null` still turns an optional check off.
 
+Each of these numbers must be a number: an int (Hydra reads
+`scenario.timeout_seconds=10` as one) or a float. A boolean, which would pass
+as 1 or 0, a quoted string (`'10'`) or a `null` where no check is optional is
+refused, naming the key (`Error: scenario.timeout_seconds must be a number,
+got None`, #1818); `max_steering_reversals` and `max_turn_indicator_changes`
+must be whole numbers. The scenario's word settings are checked too: `cut_in`'s `side`
+must be `left` or `right`, and `intersection_passing`'s `turn_direction`
+`left`, `right`, `straight` or `null` (straight through, with no turn
+action). The check builds the scenario's config class with the keys it
+defines; a key it does not define is left to the build, which refuses it.
+
 #### Intersection Passing
 
 Tests ego vehicle traversal through an intersection. Verifies that the ego passes through the expected OpenDRIVE road sequence.

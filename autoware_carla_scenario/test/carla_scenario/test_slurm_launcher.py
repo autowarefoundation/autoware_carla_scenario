@@ -772,14 +772,28 @@ def test_slurm_refuses_what_a_local_batch_refuses_before_submitting(
     assert not (fake_slurm.state / "sbatch.log").exists()
 
 
-def test_a_null_timeout_gets_past_the_check(fake_slurm: SimpleNamespace) -> None:
+def test_a_null_timeout_is_refused_by_the_config_not_the_run_timeout(
+    fake_slurm: SimpleNamespace,
+) -> None:
     """#1188: ``scenario.timeout_seconds=null`` (how a declarative scenario falls
     back to its document's timeout) is the default run timeout, not a
-    TypeError that refuses the batch."""
+    TypeError.  A scenario whose config needs a number refuses it, naming the
+    key, before the batch is submitted (#1818): every case would otherwise
+    die in its builder with an error naming no key."""
+    from autoware_carla_scenario.run_timeout import (
+        DEFAULT_RUN_TIMEOUT_SECONDS,
+        run_timeout_seconds,
+    )
+
     run = fake_slurm.run
     cfg = run._compose_config(_CONCRETE, ["scenario.timeout_seconds=null"])
     assert cfg.scenario.timeout_seconds is None
-    run.check_batch_configs([cfg])
+    assert run_timeout_seconds(cfg) == DEFAULT_RUN_TIMEOUT_SECONDS
+    with pytest.raises(
+        run.RunConfigError,
+        match=r"^scenario\.timeout_seconds must be a number, got None$",
+    ):
+        run.check_batch_configs([cfg])
 
 
 def test_the_check_reads_the_t4scene_settings_as_the_batch_does(

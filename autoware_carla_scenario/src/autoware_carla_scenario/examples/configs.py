@@ -53,21 +53,75 @@ ADVERSITY_KINDS = (
 )
 
 
+#: Every ``CutInConfig.side``: the side of the ego the NPC comes from.  The
+#: config refuses another side when it is built, and the scenario's setup
+#: again, as a backstop.
+CUT_IN_SIDES = ("left", "right")
+
+#: Every ``IntersectionPassingConfig.turn_direction`` but ``None`` (straight
+#: through, with no turn action): the ones the scenario's setup turns into a
+#: ``TurnAction``.  The config refuses another when it is built, and the
+#: setup again, as a backstop.
+TURN_DIRECTIONS = ("left", "right", "straight")
+
+
+def _require_number(key: str, value: float) -> float:
+    """*value* of ``scenario.<key>``, a number, as a ``float``.
+
+    A config dataclass is not coerced, so a field typed ``float`` holds
+    whatever its mapping did (#1818): Hydra reads ``=true`` as a bool, which
+    would pass as 1, ``=null`` as None and a quoted ``='10'`` as a string,
+    which ``math.isfinite()`` refuses with a ``TypeError`` naming no key.  An
+    int (Hydra reads ``=10`` as one) or a float is a number; a bool, a string
+    or anything ``float()`` refuses is not.
+
+    Raises:
+        ValueError: naming ``scenario.<key>``.
+    """
+    if isinstance(value, bool) or isinstance(value, str):
+        raise ValueError(f"scenario.{key} must be a number, got {value!r}")
+    try:
+        number = float(value)
+    except TypeError:
+        raise ValueError(f"scenario.{key} must be a number, got {value!r}") from None
+    return number
+
+
+def _require_finite(key: str, value: float) -> None:
+    """Refuse *value* of ``scenario.<key>`` unless it is a finite number."""
+    number = _require_number(key, value)
+    if not math.isfinite(number):
+        raise ValueError(f"scenario.{key} must be finite, not {value}")
+
+
 def _require_positive(key: str, value: float) -> None:
-    """Refuse *value* of ``scenario.<key>`` unless it is finite and above 0.
+    """Refuse *value* of ``scenario.<key>`` unless it is a number, finite and
+    above 0.
 
     A threshold, distance or duration at 0 or below makes the check that
     reads it vacuous (#1815), or is refused only once CARLA is up (#1816);
     NaN fails every comparison, and so the ``<=`` too.
     """
-    if not math.isfinite(value) or value <= 0.0:
+    number = _require_number(key, value)
+    if not math.isfinite(number) or number <= 0.0:
         raise ValueError(f"scenario.{key} must be finite and positive, not {value}")
 
 
 def _require_not_negative(key: str, value: float) -> None:
-    """Refuse *value* of ``scenario.<key>`` unless it is finite and at least 0."""
-    if not math.isfinite(value) or value < 0.0:
+    """Refuse *value* of ``scenario.<key>`` unless it is a number, finite and
+    at least 0."""
+    number = _require_number(key, value)
+    if not math.isfinite(number) or number < 0.0:
         raise ValueError(f"scenario.{key} must be finite and not negative, not {value}")
+
+
+def _require_count(key: str, value: int) -> None:
+    """Refuse *value* of ``scenario.<key>`` unless it is a whole number (an
+    int, not a bool, which would pass as 1 or 0) of at least 1."""
+    if isinstance(value, bool) or not isinstance(value, int):
+        raise ValueError(f"scenario.{key} must be a whole number, got {value!r}")
+    if value < 1:
+        raise ValueError(f"scenario.{key} must be at least 1, not {value}")
 
 
 # ---------------------------------------------------------------------------
@@ -156,6 +210,16 @@ class IntersectionPassingConfig:
             _require_positive("min_speed_kmh", min_speed_kmh)
         # ElapsedTimeCondition's bound, whether or not min_speed_kmh is set.
         _require_positive("speed_check_delay_seconds", self.speed_check_delay_seconds)
+        turn_direction = self.turn_direction
+        if turn_direction is not None and turn_direction not in TURN_DIRECTIONS:
+            # The setup's TurnAction knows no other (a bare KeyError, #1818).
+            raise ValueError(
+                f"scenario.turn_direction must be one of "
+                f"{', '.join(TURN_DIRECTIONS)} or null, not {turn_direction!r}"
+            )
+        turn_indicator_before_m = self.turn_indicator_before_m
+        if turn_indicator_before_m is not None:
+            _require_finite("turn_indicator_before_m", turn_indicator_before_m)
         if self.turn_indicator_before_m is not None and self.turn_direction not in (
             "left",
             "right",
@@ -171,8 +235,8 @@ class IntersectionPassingConfig:
             ("max_steering_reversals", self.max_steering_reversals),
             ("max_turn_indicator_changes", self.max_turn_indicator_changes),
         ):
-            if limit is not None and limit < 1:
-                raise ValueError(f"scenario.{name} must be at least 1, not {limit}")
+            if limit is not None:
+                _require_count(name, limit)
         if (
             self.turn_indicator_before_m is not None
             and self.max_turn_indicator_changes is not None
@@ -286,8 +350,7 @@ class TrafficLightComplianceConfig:
             ("stop_zone_min_m", self.stop_zone_min_m),
             ("stop_zone_max_m", self.stop_zone_max_m),
         ):
-            if not math.isfinite(value):
-                raise ValueError(f"scenario.{key} must be finite, not {value}")
+            _require_finite(key, value)
         if self.stop_zone_min_m > self.stop_zone_max_m:
             raise ValueError(
                 f"scenario.stop_zone_min_m ({self.stop_zone_min_m}) is past "
@@ -462,7 +525,12 @@ class CutInConfig:
 
     def __post_init__(self) -> None:
         """Refuse a value the scenario would refuse once CARLA is up, naming
-        its key (#1816)."""
+        its key (#1816, #1818)."""
+        if self.side not in CUT_IN_SIDES:
+            raise ValueError(
+                f"scenario.side must be one of {', '.join(CUT_IN_SIDES)}, "
+                f"not {self.side!r}"
+            )
         # VehicleEntityConfig's and SetSpeedAction's.
         _require_not_negative("npc_initial_speed_kmh", self.npc_initial_speed_kmh)
         # The cut-in's ElapsedTimeCondition, and the PersistentCondition held.
@@ -604,7 +672,7 @@ class AdversityConfig:
             ("nade_probability", self.nade_probability),
             ("nade_is_probability", self.nade_is_probability),
         ):
-            if not (0.0 <= value <= 1.0):  # NaN fails it too
+            if not (0.0 <= _require_number(key, value) <= 1.0):  # NaN fails it too
                 raise ValueError(f"scenario.{key} must be in [0, 1], not {value}")
         _require_not_negative("nade_cooldown", self.nade_cooldown)
         _require_positive("nade_seconds", self.nade_seconds)
