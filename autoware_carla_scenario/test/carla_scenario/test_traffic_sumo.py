@@ -75,6 +75,70 @@ def test_sumo_is_a_built_in_backend_that_builds_without_sumo_loaded() -> None:
     assert backend.describe()["vehicle_control"] == "physics"
 
 
+_SUMO_SWITCHES = (
+    (("publish_walkers",), True),
+    (("pedestrian_crossings",), True),
+    (("cycle_on_sidewalks",), False),
+    (("use_libsumo",), True),
+    (("fcd_output",), False),
+    (("ambient", "enabled"), False),
+    (("ambient", "use_safe_weights"), True),
+    (("pedestrians", "enabled"), False),
+    (("bicycles", "enabled"), False),
+)
+
+
+def _nested(path: tuple[str, ...], value: Any) -> dict[str, Any]:
+    """The options mapping that sets *path* to *value*."""
+    mapping: dict[str, Any] = {path[-1]: value}
+    for key in reversed(path[:-1]):
+        mapping = {key: mapping}
+    return mapping
+
+
+def _read(config: Any, path: tuple[str, ...]) -> Any:
+    for key in path:
+        config = getattr(config, key)
+    return config
+
+
+@pytest.mark.parametrize(("path", "default"), _SUMO_SWITCHES)
+def test_a_sumo_switch_is_read_strictly_by_its_key(
+    path: tuple[str, ...], default: bool
+) -> None:
+    # Read by truthiness, "false" (a quoted override, an ${oc.env:...}) was
+    # true and a typo true as well (#1757).
+    assert _read(SumoBackendConfig(), path) is default
+    assert _read(SumoBackendConfig.from_mapping({}), path) is default
+    for value, expected in (
+        ("false", False),
+        (" OFF ", False),
+        ("0", False),
+        (0, False),
+        ("true", True),
+        ("yes", True),
+        ("1", True),
+        (1, True),
+        (False, False),
+    ):
+        config = SumoBackendConfig.from_mapping(_nested(path, value))
+        assert _read(config, path) is expected
+    key = ".".join(path)
+    for bad in ("maybe", 2, 0.5, None, ["true"]):
+        with pytest.raises(
+            ValueError, match=rf"^{re.escape(key)} must be true or false, got "
+        ):
+            SumoBackendConfig.from_mapping(_nested(path, bad))
+
+
+def test_a_nested_sumo_config_reads_its_switch_when_built_directly() -> None:
+    assert AmbientTrafficConfig(enabled="no").enabled is False  # type: ignore[arg-type]
+    assert PedestrianConfig(enabled="1").enabled is True  # type: ignore[arg-type]
+    assert BicycleConfig(enabled=0).enabled is False  # type: ignore[arg-type]
+    with pytest.raises(ValueError, match=r"^bicycles\.enabled must be true or false"):
+        BicycleConfig(enabled="maybe")  # type: ignore[arg-type]
+
+
 def test_the_config_refuses_unknown_keys_and_light_modes() -> None:
     with pytest.raises(ValueError, match="Unknown SumoBackendConfig"):
         SumoBackendConfig.from_mapping({"warmup": 1})

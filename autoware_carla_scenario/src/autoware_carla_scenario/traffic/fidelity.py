@@ -20,6 +20,7 @@ import math
 from dataclasses import dataclass
 from typing import Any, Mapping, Optional, Sequence
 
+from ..config_flags import check_flag
 from ..value_text import shown
 from .base import SimulationFidelity
 
@@ -96,6 +97,16 @@ class MesoscopicConfig:
         # headway or spacing stops the queue model -- and ``enabled`` already
         # says "off".  Each is a number first: a bool, a string or null is
         # refused by its key, and an int is kept as its float (#1663).
+        # The switches are read strictly (config_flags.check_flag): "false"
+        # is false and a typo is refused, named under ``mesoscopic.`` since
+        # a bare ``scenario_vehicles`` is the SUMO option of that name (#1757).
+        self.enabled = check_flag("mesoscopic.enabled", self.enabled)
+        self.scenario_vehicles = check_flag(
+            "mesoscopic.scenario_vehicles", self.scenario_vehicles
+        )
+        self.junction_control = check_flag(
+            "mesoscopic.junction_control", self.junction_control
+        )
         self.micro_radius_m = _number(
             "micro_radius_m", self.micro_radius_m, "positive and finite"
         )

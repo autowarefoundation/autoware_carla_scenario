@@ -164,6 +164,43 @@ def test_a_mesoscopic_number_refuses_what_is_no_number_by_its_key(
         MesoscopicConfig.from_mapping({key: 10**5000})
 
 
+_MESOSCOPIC_SWITCHES = (
+    ("enabled", False),
+    ("scenario_vehicles", False),
+    ("junction_control", True),
+)
+
+
+@pytest.mark.parametrize(("key", "default"), _MESOSCOPIC_SWITCHES)
+def test_a_mesoscopic_switch_is_read_strictly_by_its_key(
+    key: str, default: bool
+) -> None:
+    # Read by truthiness, "false" (a quoted override) was true and a typo
+    # true as well (#1757).
+    assert getattr(MesoscopicConfig(), key) is default
+    assert getattr(MesoscopicConfig.from_mapping({}), key) is default
+    for value, expected in (
+        ("false", False),
+        (" No ", False),
+        ("0", False),
+        (0, False),
+        ("true", True),
+        ("on", True),
+        (1, True),
+        (True, True),
+    ):
+        config = MesoscopicConfig.from_mapping({key: value})
+        assert getattr(config, key) is expected
+        sumo = SumoBackendConfig.from_mapping({"mesoscopic": {key: value}})
+        assert getattr(sumo.mesoscopic, key) is expected
+    for bad in ("maybe", 2, 0.0, None, [True]):
+        message = rf"^mesoscopic\.{key} must be true or false, got "
+        with pytest.raises(ValueError, match=message):
+            MesoscopicConfig.from_mapping({key: bad})
+        with pytest.raises(ValueError, match=message):
+            SumoBackendConfig.from_mapping({"mesoscopic": {key: bad}})
+
+
 def test_a_mesoscopic_whole_number_is_kept_as_its_float() -> None:
     config = MesoscopicConfig.from_mapping(
         {
