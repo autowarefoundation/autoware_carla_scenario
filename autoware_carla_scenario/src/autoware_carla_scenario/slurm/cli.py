@@ -357,7 +357,10 @@ def main(argv: list[str] | None = None) -> int:
         if args.command == "resubmit":
             return _resubmit(args)
         return _cancel(args)
-    except (FileNotFoundError, ValueError, RuntimeError) as exc:
+    # OSError covers FileNotFoundError, and an unreadable manifest or an
+    # unwritable batch directory (shared storage, a read-only mount): one
+    # line, not a traceback (#1740).
+    except (OSError, ValueError, RuntimeError) as exc:
         print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
         return 1
 

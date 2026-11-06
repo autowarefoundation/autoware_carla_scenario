@@ -167,7 +167,13 @@ def unfinished_cases(layout: BatchLayout, *, failed: bool = False) -> list[int]:
 
 def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
     """Print the batch's summary and write ``batch_results.json``, as a local
-    batch does; 0 when every case passed, 1 otherwise."""
+    batch does; 0 when every case passed, 1 otherwise.
+
+    Raises:
+        OSError: ``batch_results.json`` or ``collected.json`` cannot be
+            written (an unwritable batch directory); the summary is printed
+            first.
+    """
     manifest = layout.read_manifest()
     target = resubmit_target(layout, manifest)
     labels: list[str] = []
@@ -210,15 +216,6 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         errored=sorted({*errored, *missing, *unreadable}),
         rerun_errors=rerun_errors,
     )
-    write_json(
-        layout.root / "collected.json",
-        {
-            "cases": len(labels),
-            "passed": sum(1 for r in results if r.passed),
-            "errored": [labels[i] for i in sorted({*errored, *unreadable})],
-            "missing": [labels[i] for i in missing],
-        },
-    )
     if unreadable and not quiet_hint:
         print(  # noqa: T201
             f"{len(unreadable)} case(s) have a result with no verdict: "
@@ -231,4 +228,15 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
             + ", ".join(labels[i] for i in missing)
             + f"\nRun them again with: scenario-slurm resubmit {target}"
         )
+    # Written last: the summary and the hints are printed even when the batch
+    # directory cannot be written (#1740).
+    write_json(
+        layout.root / "collected.json",
+        {
+            "cases": len(labels),
+            "passed": sum(1 for r in results if r.passed),
+            "errored": [labels[i] for i in sorted({*errored, *unreadable})],
+            "missing": [labels[i] for i in missing],
+        },
+    )
     return 0 if all_passed else 1
