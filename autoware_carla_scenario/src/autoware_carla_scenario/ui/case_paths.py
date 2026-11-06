@@ -25,9 +25,11 @@ from typing import Optional
 
 # A case's trajectory log and its recording are named by the checked
 # run_outputs's rule (#1678), as rerun and ui.web_viewer_paths name them; its
-# result and coverage file by run_outputs's suffixes too (#1704).
+# result and coverage file by run_outputs's suffixes too (#1704), and its
+# environment (#1713).
 from ..run_outputs import (
     COVERAGE_SUFFIX,
+    ENVIRONMENT_SUFFIX,
     RECORDING_SUFFIX,
     RESULT_SUFFIX,
     TRAJECTORY_SUFFIX,
@@ -87,7 +89,7 @@ class CaseFiles:
 
     @property
     def environment(self) -> Path:
-        return self.path("_environment.json")
+        return self.path(ENVIRONMENT_SUFFIX)
 
     @property
     def recording(self) -> Path:

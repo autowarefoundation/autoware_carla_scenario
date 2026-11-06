@@ -62,6 +62,15 @@ def test_the_suffixes_are_the_writers_own() -> None:
     assert not set(RUN_FILE_SUFFIXES) & set(RUN_DIR_SUFFIXES)
 
 
+def test_environment_and_t4scene_suffixes_are_run_outputs_s() -> None:
+    # Defined in the checked run_outputs, re-exported under the names they
+    # had (#1713).
+    assert environment.ENVIRONMENT_SUFFIX is run_outputs.ENVIRONMENT_SUFFIX
+    assert environment.LOCK_SUFFIX is run_outputs.LOCK_SUFFIX
+    assert convert.SCENE_SUFFIX is run_outputs.T4SCENE_SUFFIX
+    assert convert.MAP_SUFFIX is run_outputs.T4SCENE_MAP_SUFFIX
+
+
 def test_the_log_and_recording_path_rule_is_run_outputs_s() -> None:
     # One rule for every module that names a log's recordings (#1678); the
     # names they had stay importable from them.
