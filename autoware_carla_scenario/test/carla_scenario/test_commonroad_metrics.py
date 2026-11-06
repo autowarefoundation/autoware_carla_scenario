@@ -1209,3 +1209,72 @@ def test_a_worker_answering_out_of_protocol_is_not_reused(
         evaluate_metrics(_recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S])
     assert cr_session._POOL.workers == []
     assert not worker.running()
+
+
+@pytest.mark.parametrize(
+    ("value", "heavy"),
+    [
+        ("false", False),
+        (" Off ", False),
+        ("no", False),
+        (0, False),
+        ("0", False),
+        ("true", True),
+        ("YES", True),
+        (1, True),
+        ("1", True),
+    ],
+)
+def test_metrics_heavy_is_read_strictly(
+    monkeypatch: pytest.MonkeyPatch, value: Any, heavy: bool
+) -> None:
+    """#1761: ``bool("false")`` turned them on; the spelling is read."""
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    # The environment says the opposite: the config decides.
+    monkeypatch.setenv(cr_session.HEAVY_METRICS_ENV, "0" if heavy else "1")
+    assert apply_metrics(OmegaConf.create({"metrics": {"heavy": value}})) is heavy
+    assert cr_session.commonroad_settings().heavy_metrics is heavy
+    # What the SLURM tasks and the runs' processes read.
+    assert os.environ[cr_session.HEAVY_METRICS_DECIDED_ENV] == ("1" if heavy else "0")
+    assert heavy_metrics._heavy_metrics_default() is heavy
+
+
+@pytest.mark.parametrize("value", ["ture", "", 2, -1, 0.0, 1.5, [True]])
+def test_a_metrics_heavy_that_is_no_switch_is_refused(
+    monkeypatch: pytest.MonkeyPatch, value: Any
+) -> None:
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import apply_metrics
+
+    monkeypatch.delenv(cr_session.HEAVY_METRICS_DECIDED_ENV, raising=False)
+    with pytest.raises(ValueError, match=r"^metrics\.heavy must be true or false"):
+        apply_metrics(OmegaConf.create({"metrics": {"heavy": value}}))
+    # Nothing was decided.
+    assert cr_session.HEAVY_METRICS_DECIDED_ENV not in os.environ
+
+
+@pytest.mark.parametrize("value", ["ture", "2"])
+def test_the_batch_check_refuses_a_bad_metrics_heavy_in_any_case(
+    value: str,
+) -> None:
+    """#1761: refused before the first case runs, though apply_metrics reads
+    only the first case that sets it."""
+    from autoware_carla_scenario.examples import run
+
+    good = run._compose_config("intersection_passing/straight", [])
+    run.check_batch_configs([good])
+    falsy = run._compose_config(
+        "intersection_passing/straight", ["metrics.heavy=false"]
+    )
+    run.check_batch_configs([falsy])
+    bad = run._compose_config(
+        "intersection_passing/straight", [f"metrics.heavy={value}"]
+    )
+    with pytest.raises(
+        run.RunConfigError, match=r"^b: metrics\.heavy must be true or false"
+    ):
+        run.check_batch_configs([falsy, bad], ["a", "b"])

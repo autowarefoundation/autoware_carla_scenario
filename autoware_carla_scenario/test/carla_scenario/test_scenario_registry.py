@@ -349,6 +349,84 @@ class TestBuildAutowareLauncher:
         assert entity is not None
         assert entity.launcher is launcher  # type: ignore[attr-defined]
 
+    @pytest.mark.parametrize(
+        ("value", "rosdep"),
+        [
+            ("false", False),
+            (" Off ", False),
+            (0, False),
+            ("0", False),
+            (False, False),
+            ("true", True),
+            ("yes", True),
+            (1, True),
+            (True, True),
+        ],
+    )
+    def test_rosdep_is_read_strictly(
+        self, tmp_path: Path, value: object, rosdep: bool
+    ) -> None:
+        """#1761: the launcher reads it by truthiness, so "false" ran rosdep."""
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launcher = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace=str(tmp_path),
+                launch=["autoware_launch", "x.launch.xml"],
+                rosdep=value,
+            )
+        )
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.rosdep is rosdep
+
+    def test_rosdep_defaults_to_on(self, tmp_path: Path) -> None:
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launcher = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace=str(tmp_path),
+                launch=["autoware_launch", "x.launch.xml"],
+            )
+        )
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.rosdep is True
+
+    @pytest.mark.parametrize("value", ["ture", "", 2, 0.0, None, [True]])
+    def test_a_rosdep_that_is_no_switch_is_refused(
+        self, tmp_path: Path, value: object
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._cfg(
+            type="docker",
+            workspace=str(tmp_path),
+            launch=["autoware_launch", "x.launch.xml"],
+            rosdep=value,
+        )
+        match = r"^autoware\.launcher\.rosdep must be true or false"
+        with pytest.raises(ValueError, match=match):
+            run.build_autoware_launcher(cfg)
+        # Before anything starts, as the launcher's other settings are.
+        with pytest.raises(ValueError, match=match):
+            run._check_batch_queue_settings(cfg)
+
+    @pytest.mark.parametrize("value", ["false", 0, None])
+    def test_the_config_refuses_a_rosdep_that_is_no_bool(
+        self, tmp_path: Path, value: object
+    ) -> None:
+        from autoware_carla_scenario.autoware_stack import DockerAutowareConfig
+
+        with pytest.raises(ValueError, match=r"^rosdep must be true or false"):
+            DockerAutowareConfig(
+                workspace=tmp_path,
+                launch=("autoware_launch", "x.launch.xml"),
+                rosdep=value,  # type: ignore[arg-type]
+            )
+
     def test_command(self) -> None:
         from autoware_carla_scenario.autoware_stack import CommandAutowareLauncher
         from autoware_carla_scenario.examples.run import build_autoware_launcher

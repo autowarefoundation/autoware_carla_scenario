@@ -798,6 +798,10 @@ A sweep's `sweep.odd_sample.tire_friction` and `sweep.odd_sample.visibility`
 ([Tire friction follows the weather](odd.md#tire-friction-follows-the-weather))
 and a route search's `ego_goal` ([Logical Scenarios](logical_scenarios.md))
 are read the same way, except that a missing or null one is true.
+`autoware.launcher.rosdep` ([Autoware](autoware.md)) is read the same way,
+and so is `metrics.heavy` ([Metrics](metrics.md)), except that a null one
+leaves the decision to `$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`; a batch is
+refused for a bad one in any of its cases before the first case runs.
 
 ### Metrics in the recording
 

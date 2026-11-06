@@ -542,6 +542,13 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
         for name in ("mounts", "env"):
             if name in options:
                 options[name] = _launcher_str_mapping(name, options[name])
+        # Read by truthiness by the launcher (it runs rosdep and feeds the
+        # image's hash): strictly here, so "false" is off and a typo refused
+        # (#1761).
+        if "rosdep" in options:
+            options["rosdep"] = check_flag(
+                "autoware.launcher.rosdep", options["rosdep"]
+            )
         options["ros_domain_ids"] = _launcher_ros_domain_ids(settings)
         options["stop_timeout_s"] = stop_timeout_s
         if "bridge_parameters" in options:
@@ -1386,6 +1393,22 @@ def apply_canvas(*cfgs: DictConfig) -> Path | None:
     return use_canvas(canvas_config(*cfgs))
 
 
+def metrics_heavy(cfg: DictConfig) -> bool | None:
+    """*cfg*'s ``metrics.heavy``, read strictly
+    (:func:`~autoware_carla_scenario.config_flags.check_flag`: ``"false"`` is
+    off, a typo refused, #1761); ``None`` when it is unset or null, which
+    leaves the decision to ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS``.
+
+    Raises:
+        ValueError: naming ``metrics.heavy``, for a value that is not a
+            switch.
+    """
+    value = (cfg.get("metrics") or {}).get("heavy")
+    if value is None:
+        return None
+    return check_flag("metrics.heavy", value)
+
+
 def apply_metrics(*cfgs: DictConfig) -> bool:
     """Turn the heavy CommonRoad metrics on or off as the first of *cfgs*
     that sets ``metrics.heavy`` (to ``true`` or ``false``) says; when none
@@ -1407,9 +1430,8 @@ def apply_metrics(*cfgs: DictConfig) -> bool:
 
     heavy: bool | None = None
     for cfg in cfgs:
-        value = (cfg.get("metrics") or {}).get("heavy")
-        if value is not None:
-            heavy = bool(value)
+        heavy = metrics_heavy(cfg)
+        if heavy is not None:
             break
     if heavy is None:
         heavy = _heavy_metrics_from_user()
@@ -2113,7 +2135,8 @@ def check_batch_configs(
     settings of an ``ego.entity=ros2`` case (:func:`_check_ros2_settings`), the
     ``backends`` settings of the backends this package ships
     (:func:`_check_backend_settings`), the ``scenario`` settings its config
-    class refuses (:func:`_check_scenario_config`) and ``odd_case``; and the server, traffic and Autoware launcher settings its
+    class refuses (:func:`_check_scenario_config`), ``odd_case`` and
+    ``metrics.heavy`` (:func:`metrics_heavy`); and the server, traffic and Autoware launcher settings its
     queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
     each distinct set of them.  A batch is refused for these before any
     scenario is built or the map is resolved (#1430): a local one would refuse
@@ -2156,6 +2179,8 @@ def check_batch_configs(
             _check_scenario_config(cfg)
             _odd_case(cfg)
             build_ground_projection(cfg)
+            # Every case's, though apply_metrics reads only the first set.
+            metrics_heavy(cfg)
             # Once a distinct setting: a sweep's cases mostly share them.  The
             # ego's entity too: build_autoware_launcher reads the launcher only
             # for an ``ego.entity=autoware`` case.

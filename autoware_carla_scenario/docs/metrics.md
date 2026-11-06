@@ -237,7 +237,11 @@ The `scenario` command (a single run, a batch, a sweep, and the SLURM tasks
 alike) decides in this order:
 
 1. `metrics.heavy` when a config sets it to `true` or `false` (the first
-   case's of a batch that does): it overrides the environment variable;
+   case's of a batch that does): it overrides the environment variable.
+   Besides `true` and `false`, it takes their spellings as
+   [the run's switches](usage.md#the-switches) do (`"false"`, `"off"`,
+   `"no"`, `0` are false); anything else (`ture`, `2`) is refused, naming
+   `metrics.heavy`, in any case of a batch before the first one runs;
 2. otherwise `$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`: off when it is `0`,
    `false`, `off` or `no`;
 3. otherwise on.
