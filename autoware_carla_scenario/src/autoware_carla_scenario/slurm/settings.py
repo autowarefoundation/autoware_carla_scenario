@@ -15,6 +15,7 @@ import dataclasses
 import fnmatch
 import math
 import os
+import re
 import shutil
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
@@ -155,6 +156,16 @@ def require_sbatch() -> str:
     return path
 
 
+#: A name a job script can ``export``: what the shell takes as a variable name
+#: (#1891).  The run panel checks the same (``ui.slurm_options``).
+_ENV_NAME_PATTERN = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+
+
+def _is_env_name(name: str) -> bool:
+    """Whether *name* is one a job script can ``export``."""
+    return _ENV_NAME_PATTERN.fullmatch(name) is not None
+
+
 def snapshot_environment(
     patterns: Iterable[str],
     environ: Mapping[str, str] | None = None,
@@ -165,6 +176,8 @@ def snapshot_environment(
 
     A name :data:`SENSITIVE_NAME_PATTERNS` matches is left out, unless one of
     *patterns* is that very name or it is in *explicit* (``launcher.env``).
+    So is one no shell takes as a variable name (``BASH_FUNC_f%%``, which a
+    pattern can match), which the job script could not set again.
     """
     env = os.environ if environ is None else environ
     patterns = tuple(patterns)
@@ -173,6 +186,7 @@ def snapshot_environment(
         name: value
         for name, value in sorted(env.items())
         if any(fnmatch.fnmatchcase(name, pattern) for pattern in patterns)
+        and _is_env_name(name)
         and (name in named or not _sensitive(name))
     }
 
@@ -387,6 +401,13 @@ class SlurmSettings:
             if not isinstance(env, Mapping):
                 raise ValueError(f"launcher.env must be a mapping, got {env!r}")
             options["env"] = {str(k): str(v) for k, v in env.items()}
+            for name in options["env"]:
+                # Written into the job script as `export NAME=...`: a name no
+                # shell takes is an error there, or a command (#1891).
+                if not _is_env_name(name):
+                    raise ValueError(
+                        f"launcher.env: {name!r} is not an environment variable name"
+                    )
         remote = options.get("remote_cwd") is not None
         if remote:
             _check_remote_path(options["remote_cwd"], "remote_cwd")

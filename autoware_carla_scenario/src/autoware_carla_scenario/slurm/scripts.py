@@ -26,7 +26,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import NamedTuple, Optional
 
-from .settings import SlurmSettings
+from .settings import SlurmSettings, _is_env_name
 
 __all__ = [
     "CLI_MODULE",
@@ -229,10 +229,17 @@ def _setup_lines(settings: SlurmSettings) -> list[str]:
 
 
 def _exports(values: Mapping[str, str]) -> list[str]:
-    """``export`` lines setting *values*, by name."""
-    return [
-        f"export {name}={shlex.quote(value)}" for name, value in sorted(values.items())
-    ]
+    """``export`` lines setting *values*, by name.
+
+    A name is written as it is, so one no shell takes as a variable name is
+    refused: it would be an error in the script, or a command (#1891).
+    """
+    lines: list[str] = []
+    for name, value in sorted(values.items()):
+        if not _is_env_name(name):
+            raise ValueError(f"{name!r} is not an environment variable name")
+        lines.append(f"export {name}={shlex.quote(value)}")
+    return lines
 
 
 def _passthrough_lines(manifest: ScriptInputs) -> list[str]:
