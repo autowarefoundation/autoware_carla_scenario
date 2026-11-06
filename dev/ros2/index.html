@@ -2554,6 +2554,10 @@ command has arrived, the ego is held on its brakes.</p>
 an acceleration, a jerk, or a trajectory's poses, speeds or accelerations) is
 refused, with a warning: the active source's last good command of that kind drives
 on, and with none, the ego is held on its brakes.</p>
+<p>A <code>control</code> command's jerk is signed in Autoware (negative while the deceleration
+grows), while CARLA's Ackermann jerk is a limit: a negative one is handed over as its
+magnitude, logged once a session. A <code>control</code> command that leaves its jerk undefined,
+and every <code>steer_accel</code> command, takes the source's <code>jerk_mps3</code>.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="nt">ros2</span><span class="p">:</span>
 <a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="w">  </span><span class="nt">domain_id</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">0</span>
 <a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="w">  </span><span class="nt">on_stale</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">hold</span>
@@ -2580,6 +2584,13 @@ and joined the domain:</p>
 <li><code>stale_s</code>, <code>pair_window_s</code>, <code>steering_sign</code>, <code>speed_horizon_s</code>, <code>jerk_mps3</code>,
   <code>rear_axle_offset_m</code> and a camera's numeric fields are numbers, an int or a float
   (not a bool or a quoted string), and finite, within the bounds above.</li>
+<li>A source's <code>speed_horizon_s</code> is positive: zero would pin a <code>steer_accel</code> target
+  speed to the current speed, and a negative horizon would turn a request to
+  accelerate into braking.</li>
+<li>A source's <code>jerk_mps3</code> is not negative. <code>0</code> is allowed: it is the jerk
+  <code>carla.VehicleAckermannControl</code> takes by default.</li>
+<li>A source's <code>steering_sign</code> is not zero, which would pin the steering straight. Its
+  magnitude scales the steering and a negative value flips it, so both are kept.</li>
 </ul>
 <h2 id="the-open-ad-kit-safety-island-demo">The Open AD Kit safety-island demo<a class="headerlink" href="#the-open-ad-kit-safety-island-demo" title="Permanent link">&para;</a></h2>
 <p><code>ros2=visionpilot_safety_island</code> is the bench side of the Open AD Kit CES 2027 demo
@@ -2673,7 +2684,7 @@ installed. They are written in XCDR1, the representation <code>rmw_cyclonedds_cp
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 00:32:15 UTC"><span class="timeago" datetime="2026-11-05T00:32:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 00:32:15 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 07:53:27 UTC"><span class="timeago" datetime="2026-11-06T07:53:27+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 07:53:27 UTC">2026-11-06</span>
   </span>
 
     
