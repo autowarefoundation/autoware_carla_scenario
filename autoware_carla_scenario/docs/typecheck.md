@@ -156,9 +156,40 @@ builds of a machine record what they hold in one directory
 (`$TMPDIR/acs-codon-gate-<uid>`), and one is started when what the running
 builds hold plus its own estimate fits the machine's memory (or its cgroup's
 limit) less 1.5 GB, or when none is running: a build too large for the machine
-still runs, alone. The holds of a process that died are forgotten. Set
-`AUTOWARE_CARLA_SCENARIO_CODON_GATE` to another directory to share it
-differently, or to `0` to start every build at once.
+still runs, alone. The holds of a process that died are forgotten, and so
+are those whose pid now names another process (a hold records its process's
+start time, from `/proc/<pid>/stat`; without `/proc`, only the pid is
+checked). Files in the directory that are not holds are ignored. The
+directory is per user; set `AUTOWARE_CARLA_SCENARIO_CODON_GATE` to another
+directory of yours to use that one instead, or to `0` to start every build at
+once.
+
+The directory's name is predictable and sits in a world-writable one, so the
+gate trusts it only if it is private: it is created with mode `0o700`, opened
+without following a symlink, and used only if it is a real directory owned by
+you that neither its group nor others can write to. Every later use goes
+through that open directory, so it cannot be swapped once checked;
+`gate.lock` and the holds are opened without following symlinks, a hold is
+created only if it does not exist, a file that is not a regular one (a FIFO)
+is ignored, a hold another user owns is removed and never counted, and a
+`gate.lock` another user owns starts the build ungated. The lock is made
+`0o600`, and a build tries for it for at most two minutes
+(`LOCK_TIMEOUT_S`; the gate's own builds hold it for milliseconds) before it
+warns and starts ungated, so no one holding it can stall the checks.
+
+A directory set with `AUTOWARE_CARLA_SCENARIO_CODON_GATE` must be private in
+the same way (yours, mode `0o700` or at least not group- or other-writable),
+or it is skipped; the gate never changes it. Only the gate's own directories
+are repaired: one of them that its group or others can use at all (as an older
+gate left it, `0o755`, or `0o775` under a umask of `002`) is made `0o700` and
+cleared of what other users own, if it holds nothing but `gate.lock` and
+holds, and is used only if nothing of another user's remains. When the
+directory fails these rules (or there is no temporary directory), the gate
+warns and falls back to `$XDG_RUNTIME_DIR/acs-codon-gate`, then to
+`~/.cache/autoware_carla_scenario/codon-gate`; when none is usable, or the
+gate's own files or the memory budget fail (a lock refused on NFS, a full
+disk), it warns and starts the build ungated. The gate never holds up or fails
+a check on its own account, and never hides what a build raised.
 
 ### Installing Codon and typesafe_carla
 
