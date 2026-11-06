@@ -2344,7 +2344,9 @@ table at the end. A case's outputs do not depend on which task ran it or when.</
    such a submission as <code>no job id: sbatch timed out at &lt;time&gt;; the job may
    exist all the same: check squeue --me</code>, its cases <code>unknown</code> in the viewer
    (not <code>missing</code>), and <code>wait</code> says it has no job id to follow and where to
-   look for the job.</li>
+   look for the job (and, within those 600 s, that a <code>resubmit</code> is refused);
+   <code>collect</code> reports each of its cases as <code>task &lt;n&gt; of submission &lt;i&gt; never
+   started</code> with the same note, never <code>job None</code>.</li>
 <li>By default <code>scenario</code> follows the array (<code>squeue</code>, and the outcome each task
    records) until it ends, then prints the summary and writes
    <code>batch_results.json</code>, as a local batch does, and exits 0 when every case
@@ -2451,7 +2453,7 @@ options of the others (<code>scenario-slurm &lt;command&gt; --help</code> says t
 <tr>
 <td><code>resubmit</code></td>
 <td><code>--force</code></td>
-<td>submit even while a job of the batch is queued or running, <code>squeue</code> cannot tell whether one is, or another submission of the batch is in flight</td>
+<td>submit even while a job of the batch is queued or running, <code>squeue</code> cannot tell whether one is, or another submission of the batch is in flight or its sbatch timed out less than 600 s after its record was made</td>
 </tr>
 <tr>
 <td><code>resubmit</code></td>
@@ -2905,7 +2907,7 @@ dialled by every task, as a TCP one is.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 06:55:44 UTC"><span class="timeago" datetime="2026-11-06T06:55:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 06:55:44 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 07:14:50 UTC"><span class="timeago" datetime="2026-11-06T07:14:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 07:14:50 UTC">2026-11-06</span>
   </span>
 
     
