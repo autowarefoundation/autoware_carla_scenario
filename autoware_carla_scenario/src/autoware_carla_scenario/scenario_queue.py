@@ -664,6 +664,10 @@ class ScenarioQueue:
             # better refused before anything else starts.
             self._autoware_launcher.prepare(log_dir=self._output_dir)
         self._start_world()
+        # Here, not in _start_world(): a restart mid-run_all() is followed by
+        # a run that leaves its world as it was, which the next run_all()
+        # resets first.
+        self._world_left_as_is = False
 
     def _start_world(self) -> None:
         """Start the server, connect a new runner to it and load the map.
@@ -677,7 +681,6 @@ class ScenarioQueue:
         same port, on the new server.
         """
         self._server.start()
-        self._world_left_as_is = False
         self._runner = ScenarioRunner(
             self._server,
             host=self._host,

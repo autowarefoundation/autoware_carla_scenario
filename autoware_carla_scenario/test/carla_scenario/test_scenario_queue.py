@@ -1314,3 +1314,25 @@ def test_a_run_on_a_live_server_restarts_nothing(
     assert events.count("is_alive") == 3
     assert len(runners) == 1
     assert server.started == 1
+
+
+def test_a_run_all_after_a_restart_still_resets_the_world_the_last_case_left(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """Three single-case run_all()s (the SLURM worker's pattern), the server
+    dying in the first: the second restarts it, and its case still leaves its
+    world as it was, so the third resets that world before it runs."""
+    queue, server, events, _ = _crashing_queue(
+        monkeypatch, tmp_path, crash_after=0, cases=1
+    )
+    queue.run_all(release=True, continue_on_error=True)
+    queue.add(_NullScenario(_make_ego_config()))
+    queue.run_all(release=True, continue_on_error=True)
+    assert "start" in events
+    queue.add(_NullScenario(_make_ego_config()))
+    events.clear()
+
+    (third,) = queue.run_all(release=True, continue_on_error=True)
+
+    assert third.passed
+    assert events == ["is_alive", "reset", "is_alive", "run 2"]
