@@ -109,7 +109,9 @@ What happens:
       `docker image inspect`, `docker rm`) is given 60 s, `docker commit` of
       the dependency image 30 minutes: a daemon that stops answering fails
       the batch here (a call it needs) or is logged and gone on without (the
-      leftover containers' removal), rather than hang it. The dependencies'
+      leftover containers' removal), rather than hang it. A dependency image
+      whose `docker image inspect` does not answer fails the batch too: it is
+      not taken for a missing one, installed and committed again. The dependencies'
       install and the build stream their output and are not bounded.
 2. **For each scenario**, once the ego is spawned and the mission served:
     `docker run --rm --network host` of the dev container image, the workspace

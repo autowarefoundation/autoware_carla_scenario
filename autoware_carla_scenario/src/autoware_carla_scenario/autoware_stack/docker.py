@@ -505,7 +505,13 @@ class DockerAutowareLauncher:
         the workspace's dependencies.
         """
         tag = f"{DEPENDENCY_IMAGE_REPOSITORY}:{self._dependency_digest(base_image)}"
-        if self._docker("image", "inspect", tag, check=False).returncode == 0:
+        # A non-zero exit is "no such image"; no answer at all is not, and
+        # read as one it would reinstall and recommit an image that may well
+        # exist, through an install that is not bounded (#1797).
+        inspected = self._docker(
+            "image", "inspect", tag, check=False, timeout_is_error=True
+        )
+        if inspected.returncode == 0:
             logger.info("Workspace dependencies: %s", tag)
             return tag
         name = f"{self._config.container_prefix}-{os.getpid()}-deps"
@@ -698,19 +704,36 @@ class DockerAutowareLauncher:
         return argv
 
     def _docker(
-        self, *args: str, check: bool, timeout_s: Optional[float] = None
+        self,
+        *args: str,
+        check: bool,
+        timeout_s: Optional[float] = None,
+        timeout_is_error: bool = False,
     ) -> subprocess.CompletedProcess[str]:
-        return self._run_docker(list(args), check=check, timeout_s=timeout_s)
+        return self._run_docker(
+            list(args),
+            check=check,
+            timeout_s=timeout_s,
+            timeout_is_error=timeout_is_error,
+        )
 
     def _run_docker(
-        self, args: list[str], *, check: bool, timeout_s: Optional[float] = None
+        self,
+        args: list[str],
+        *,
+        check: bool,
+        timeout_s: Optional[float] = None,
+        timeout_is_error: bool = False,
     ) -> subprocess.CompletedProcess[str]:
         """The Docker CLI run with *args*, its output captured, within
         *timeout_s* seconds (:data:`_DOCKER_TIMEOUT_S` when None).
 
         A call that fails to run or to finish raises
         :class:`AutowareStackError` with *check*; without, it is logged and
-        answers as a failed one (exit status 1).
+        answers as a failed one (exit status 1).  *timeout_is_error* raises
+        on a call that does not finish even without *check*: for a caller
+        that reads a non-zero exit as an answer ("no such image"), which no
+        answer at all must not pass for.
         """
         # Read here, not as a default: a default is bound once, at definition.
         timeout = _DOCKER_TIMEOUT_S
@@ -727,7 +750,7 @@ class DockerAutowareLauncher:
             )
         except subprocess.TimeoutExpired:
             # subprocess.run() has killed the docker CLI by now.
-            if check:
+            if check or timeout_is_error:
                 raise AutowareStackError(
                     f"{self._config.docker} {' '.join(args)} did not finish "
                     f"within {timeout:.0f} s"
