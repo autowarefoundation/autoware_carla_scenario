@@ -597,7 +597,10 @@ def test_an_all_pending_batch_is_not_listed_as_failed(
     row = compare.text[compare.text.index("2026-10-19 13-00-00") :]
     row = row[: row.index("</tr>")]
     assert "0/3" in row and "3 pending" in row
-    assert "text-red-700" not in row and "text-gray-700" in row
+    assert (
+        "text-red-700" not in row
+        and "text-right whitespace-nowrap text-gray-700" in row
+    )
 
 
 def test_an_ended_batch_names_its_missing_cases(
