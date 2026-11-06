@@ -5814,7 +5814,7 @@ one YAML file:</p>
 <td>-</td>
 <td>No</td>
 <td><code>2000</code></td>
-<td>CARLA server port</td>
+<td>CARLA server port, 1-65535</td>
 </tr>
 <tr>
 <td><code>--ray-upper</code></td>
@@ -5854,7 +5854,8 @@ cannot).</p>
 <p><code>--ray-upper</code> and <code>--ray-lower</code> must be finite and non-negative, with a
 positive sum, as the runner's keys must be: a ray of no length hits nothing, so
 every lanelet would be flagged and written to the YAML. The tool refuses such
-values, and a <code>--timeout</code> that is not positive and finite, with a usage error
+values, a <code>--timeout</code> that is not positive and finite, and a <code>--port</code> outside
+1-65535, with a usage error
 (exit 2) before it connects to CARLA or reads the YAML.</p>
 <h3 id="input-yaml-requirements">Input YAML Requirements<a class="headerlink" href="#input-yaml-requirements" title="Permanent link">&para;</a></h3>
 <p>The map settings are resolved exactly as the scenario runner resolves the <code>map</code> config group: <code>lanelet2_path</code> and <code>xodr_path</code> (<code>~</code> and <code>${oc.env:...}</code> work; a relative path is taken from the working directory), <code>directory</code>, <code>source</code>, <code>projector_type</code> and <code>overwrite_xodr</code> (see <a href="#map-configuration">Map Configuration</a>). A map given by files needs at minimum:</p>
@@ -5923,7 +5924,9 @@ values, and a <code>--timeout</code> that is not positive and finite, with a usa
 </table>
 <p>Each option defaults to its environment variable, so a flag on the command line
 wins over the environment. An unknown option is an error (exit 2) and serves
-nothing.</p>
+nothing, as is a port (<code>--port</code> or <code>VIEWER_PORT</code>) that is not an integer within
+1-65535: 0, which would have the system pick a port the viewer does not report,
+is refused too.</p>
 <p>Ctrl-C or <code>SIGTERM</code> stops the viewer and the run it started from the Run form.
 An open browser tab keeps the server waiting for it for at most 5 s. The
 running <code>uv run scenario</code> job, which runs in a process group of its own, then
@@ -6444,7 +6447,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 04:31:33 UTC"><span class="timeago" datetime="2026-11-06T04:31:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 04:31:33 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 05:22:08 UTC"><span class="timeago" datetime="2026-11-06T05:22:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 05:22:08 UTC">2026-11-06</span>
   </span>
 
     
