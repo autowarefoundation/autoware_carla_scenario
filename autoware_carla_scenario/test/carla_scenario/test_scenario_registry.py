@@ -1149,7 +1149,10 @@ class TestEgoNumbersMustBeFinite:
         cfg.scenario.npc_vehicles[1].initial_speed_kmh = math.nan
         with pytest.raises(
             run.RunConfigError,
-            match=r"^npc_vehicles\[1\]\.initial_speed_kmh must be finite and at least 0",
+            match=(
+                r"^scenario\.npc_vehicles\[1\]\.initial_speed_kmh "
+                "must be finite and at least 0"
+            ),
         ):
             run.check_run_config(cfg)
 
@@ -1186,7 +1189,8 @@ class TestEntityConfigNumbersMustBeFinite:
         from autoware_carla_scenario.examples.configs import IntersectionPassingConfig
 
         with pytest.raises(
-            ValueError, match=r"^npc_vehicles\[0\]\.initial_speed_kmh must be"
+            ValueError,
+            match=r"^scenario\.npc_vehicles\[0\]\.initial_speed_kmh must be",
         ):
             IntersectionPassingConfig(
                 npc_vehicles=[{"spawn_lanelet_id": 1, "initial_speed_kmh": -5.0}]  # type: ignore[list-item]

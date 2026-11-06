@@ -59,10 +59,16 @@ def test_a_known_outcome_is_accepted(expect: str) -> None:
 @pytest.mark.parametrize(
     ("config", "message"),
     [
-        ({"expect": "fial"}, r"expect must be 'success' or 'fail', not 'fial'"),
-        ({"expect": "Fail"}, r"expect must be 'success' or 'fail'"),
-        ({"expect": ""}, r"expect must be 'success' or 'fail'"),
-        ({"direction": "up"}, r"direction must be 'left' or 'right', not 'up'"),
+        (
+            {"expect": "fial"},
+            r"^scenario\.expect must be 'success' or 'fail', not 'fial'",
+        ),
+        ({"expect": "Fail"}, r"^scenario\.expect must be 'success' or 'fail'"),
+        ({"expect": ""}, r"^scenario\.expect must be 'success' or 'fail'"),
+        (
+            {"direction": "up"},
+            r"^scenario\.direction must be 'left' or 'right', not 'up'",
+        ),
     ],
 )
 def test_an_unknown_value_is_refused(config: dict[str, Any], message: str) -> None:

@@ -16,7 +16,11 @@ from autoware_carla_scenario.examples.adversity import (
     VEHICLE_KINDS,
     AdversityScenario,
 )
-from autoware_carla_scenario.examples.configs import AdversityConfig
+from autoware_carla_scenario.examples.configs import (
+    ADVERSITY_KINDS,
+    ADVERSITY_VEHICLE_KINDS,
+    AdversityConfig,
+)
 
 
 def test_there_is_a_case_for_each_phase_1_kind_and_for_nade() -> None:
@@ -63,11 +67,37 @@ def test_the_shipped_adversity_cases_pass_the_batch_check() -> None:
         run.check_batch_configs([run._compose_config(case, ["map=town10hd_opt"])])
 
 
+def test_an_unknown_kind_is_refused_when_the_config_is_built() -> None:
+    """#1816: when the config is built, so a batch refuses it before anything
+    starts, naming its key."""
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^scenario\.kind must be one of brake_check, ignore_leader, cut_in, "
+            r"traffic_rule, jaywalking, nade, not 'drift'$"
+        ),
+    ):
+        AdversityConfig(kind="drift")
+
+
+@pytest.mark.parametrize("kind", ADVERSITY_KINDS)
+def test_every_kind_is_accepted(kind: str) -> None:
+    assert AdversityConfig(kind=kind).kind == kind
+
+
+def test_the_vehicle_kinds_are_the_shared_ones() -> None:
+    assert VEHICLE_KINDS == ADVERSITY_VEHICLE_KINDS
+    assert set(ADVERSITY_KINDS) == {*VEHICLE_KINDS, "jaywalking", "nade"}
+
+
 def test_an_unknown_kind_is_refused_before_anything_is_spawned() -> None:
+    """The setup's backstop, for a config changed after it was built."""
+    config = AdversityConfig()
+    config.kind = "drift"
     scenario = AdversityScenario(
         EgoConfig(spawn_location=SpawnTransform(carla.Transform())),
         Lanelet2Pose(lanelet_id=324, s=5.0),
-        AdversityConfig(kind="drift"),
+        config,
     )
-    with pytest.raises(ValueError, match="adversity kind must be one of"):
+    with pytest.raises(ValueError, match=r"^scenario\.kind must be one of"):
         scenario.setup()

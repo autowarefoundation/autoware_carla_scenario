@@ -375,25 +375,33 @@ def test_the_route_is_asserted_by_the_roads_outside_the_junction(
     [
         (
             {"turn_indicator_before_m": 30.0},
-            "turn_direction left or right",
+            r"^scenario\.turn_indicator_before_m needs scenario\.turn_direction "
+            "left or right",
         ),
         (
             {"turn_direction": "straight", "turn_indicator_before_m": 30.0},
-            "turn_direction left or right",
+            r"^scenario\.turn_indicator_before_m needs scenario\.turn_direction "
+            "left or right",
         ),
         (
             {"turn_direction": "left", "turn_indicator_grace_seconds": 0.0},
-            "grace",
+            r"^scenario\.turn_indicator_grace_seconds must be finite and positive",
         ),
-        ({"max_steering_reversals": 0}, "at least 1"),
-        ({"max_turn_indicator_changes": 0}, "at least 1"),
+        (
+            {"max_steering_reversals": 0},
+            r"^scenario\.max_steering_reversals must be at least 1, not 0",
+        ),
+        (
+            {"max_turn_indicator_changes": 0},
+            r"^scenario\.max_turn_indicator_changes must be at least 1, not 0",
+        ),
         (
             {
                 "turn_direction": "left",
                 "turn_indicator_before_m": 30.0,
                 "max_turn_indicator_changes": 2,
             },
-            "at least 3",
+            r"^scenario\.max_turn_indicator_changes must be at least 3",
         ),
     ],
 )

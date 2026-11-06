@@ -58,10 +58,10 @@ happened by `timeout_seconds`.
 | `scenario.npc_lanelet_id` | 324 | The NPC's lanelet, or the pedestrian's kerb |
 | `scenario.npc_ahead_m` | 15.0 | How far ahead of the ego's spawn `s` it starts (negative: behind) |
 | `scenario.npc_offset_m` | -3.0 | The pedestrian's offset from its lanelet's centreline (negative: right) |
-| `scenario.npc_speed_kmh` | 30.0 | The NPC's speed until the adversity takes it over |
-| `scenario.ego_speed_kmh` | `null` | The ego's speed, held for the run; `null`: the TrafficManager's |
+| `scenario.npc_speed_kmh` | 30.0 | The NPC's speed until the adversity takes it over (not negative) |
+| `scenario.ego_speed_kmh` | `null` | The ego's speed, held for the run (not negative); `null`: the TrafficManager's |
 | `scenario.red_light` | `false` | Every light red |
-| `scenario.timeout_seconds` | 30.0 | Fails when not carried out by then |
+| `scenario.timeout_seconds` | 30.0 | Fails when not carried out by then (positive) |
 | `scenario.nade_seconds` | 45.0 | NADE: the run's length (s; positive) |
 | `scenario.nade_probability` | 0.05 | NADE: each kind's naturalistic probability a tick, in [0, 1] |
 | `scenario.nade_is_probability` | 0.5 | NADE: the importance-sampling probability, in [0, 1] |
@@ -70,7 +70,11 @@ happened by `timeout_seconds`.
 | `scenario.nade_seed` | 7 | NADE: the sampler's seed |
 
 A run refuses a `scenario.nade_*` value outside its bounds before anything
-starts, naming the key (#1458).
+starts, naming the key (#1458), and so an unknown `scenario.kind` (`Error:
+scenario.kind must be one of brake_check, ignore_leader, cut_in, traffic_rule,
+jaywalking, nade, not 'brake_chek'`), a negative or non-finite speed and a
+timeout that is not positive (#1816): a sweep is refused before it is
+submitted, not on its nodes once CARLA is up.
 
 ## Result
 

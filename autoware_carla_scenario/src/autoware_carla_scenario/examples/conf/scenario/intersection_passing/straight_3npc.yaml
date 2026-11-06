@@ -4,7 +4,9 @@ scenario:
   expected_route_lanelet_ids: [462, 266]
   pass_on_last_lanelet: false
   timeout_seconds: 10.0
-  min_speed_kmh: 0.0
+  # No minimum speed: 0.0 never fired (the ego is never slower than 0), and
+  # is refused now (#1815).
+  min_speed_kmh: null
   speed_check_delay_seconds: 0.3
   npc_vehicles:
     - spawn_lanelet_id: 263
