@@ -778,6 +778,22 @@ T4Scene, `{ScenarioName}.t4scene.pb` with its map, `{ScenarioName}.t4scene.map.p
 the scene tier4/e2e-devkit decodes, scores and draws ([T4 Scene](t4_scene.md));
 `scenario-t4scene <output dir>` does the same after a run.
 
+#### The switches
+
+`rerun.enabled`, `rerun.strict`, `rerun.lidar`, `rerun.cameras`,
+`t4.enabled`, `t4scene.enabled` and `background_traffic.enabled` are each
+`true` or `false`, or one of their spellings as text, in any case and with
+blanks around it (`"false"`, `"no"`, `"off"`, `"0"`, and `"true"`, `"yes"`,
+`"on"`, `"1"`), or the integer `0` or `1`, as the SLURM launcher's flags are
+([Running a Batch on SLURM](slurm.md)). So `"false"`, what
+`${oc.env:RERUN,false}` or a quoted `rerun.enabled='false'` gives, is false.
+Anything else (`ture`, `2`, `0.5`, null) is refused before anything starts,
+in one line naming the key:
+
+```text
+rerun.enabled must be true or false, got 'ture'
+```
+
 ### Metrics in the recording
 
 A run judged on a `MetricCondition` writes the metrics it computed once it was

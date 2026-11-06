@@ -4,6 +4,7 @@ its timelines, only while a run records, and merged into it."""
 
 from __future__ import annotations
 
+import re
 import sys
 from pathlib import Path
 from typing import Any
@@ -231,6 +232,59 @@ def test_a_bad_rerun_lidar_max_points_is_refused_before_anything_runs(
     # null keeps every point, as 0 does.
     build_rerun_converter(cfg(enabled=True, lidar=True, lidar_max_points=None))
     assert built == [{"strict": False}, {"strict": False, "lidar_max_points": 0}]
+
+
+def test_rerun_switches_given_as_text_are_read_as_what_they_spell(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """``${oc.env:VAR,false}`` and a quoted override give text: ``"false"`` is
+    off, not on as ``bool("false")`` read it (#1753)."""
+    built: list[dict[str, Any]] = []
+    monkeypatch.setattr(
+        "autoware_carla_scenario.examples.run.RerunConverter",
+        lambda **kwargs: built.append(kwargs),
+    )
+
+    def cfg(**rerun: Any) -> Any:
+        return OmegaConf.create({"rerun": rerun})
+
+    assert build_rerun_converter(cfg(enabled="false", lidar="true")) is None
+    assert build_rerun_converter(cfg(enabled=0, cameras="yes")) is None
+    build_rerun_converter(
+        cfg(enabled="true", strict="false", lidar="no", cameras="off")
+    )
+    build_rerun_converter(cfg(enabled="yes", strict="1", lidar="on", cameras=1))
+    assert built == [
+        {"strict": False},
+        {"strict": True, "lidar_max_points": 0, "cameras": True},
+    ]
+
+
+@pytest.mark.parametrize("key", ["enabled", "strict", "lidar", "cameras"])
+@pytest.mark.parametrize("bad", ["ture", "", 2, 0.5, [True]])
+def test_a_rerun_switch_that_spells_neither_is_refused_before_anything_runs(
+    monkeypatch: pytest.MonkeyPatch, key: str, bad: Any
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    monkeypatch.setattr(
+        "autoware_carla_scenario.examples.run.RerunConverter",
+        lambda **kwargs: pytest.fail("built"),
+    )
+    rerun = {"enabled": True, key: bad}
+    good = OmegaConf.create({"rerun": {"enabled": False}})
+    bad_case = OmegaConf.create({"rerun": rerun})
+    message = rf"^rerun\.{key} must be true or false, got {re.escape(repr(bad))}$"
+    with pytest.raises(ValueError, match=message):
+        build_rerun_converter(good, bad_case)
+    # check_batch_configs refuses it in one keyed line, whichever case sets
+    # it, before a run starts (no queue, no Rerun SDK).
+    monkeypatch.setattr(run, "check_batch_map", lambda *args, **kwargs: None)
+    monkeypatch.setattr(run, "check_scenario_maps", lambda *args, **kwargs: None)
+    with pytest.raises(ValueError, match=message):
+        run._check_batch_writer_settings([good, bad_case])
+    with pytest.raises(run.RunConfigError, match=message):
+        run.check_batch_configs([good, bad_case], ["first", "second"])
 
 
 @pytest.mark.parametrize(
