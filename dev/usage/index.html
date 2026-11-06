@@ -4922,6 +4922,16 @@ margins that may be 0 -- <code>npc_initial_speed_kmh</code>, <code>npc_speed_kmh
 <code>turn_back_ttc_s</code> and <code>turn_back_distance_m</code> -- must be finite and not
 negative, and <code>stop_zone_min_m</code> must not be past <code>stop_zone_max_m</code>. A
 <code>null</code> still turns an optional check off.</p>
+<p>Each of these numbers must be a number: an int (Hydra reads
+<code>scenario.timeout_seconds=10</code> as one) or a float. A boolean, which would pass
+as 1 or 0, a quoted string (<code>'10'</code>) or a <code>null</code> where no check is optional is
+refused, naming the key (<code>Error: scenario.timeout_seconds must be a number,
+got None</code>, #1818); <code>max_steering_reversals</code> and <code>max_turn_indicator_changes</code>
+must be whole numbers. The scenario's word settings are checked too: <code>cut_in</code>'s <code>side</code>
+must be <code>left</code> or <code>right</code>, and <code>intersection_passing</code>'s <code>turn_direction</code>
+<code>left</code>, <code>right</code>, <code>straight</code> or <code>null</code> (straight through, with no turn
+action). The check builds the scenario's config class with the keys it
+defines; a key it does not define is left to the build, which refuses it.</p>
 <h4 id="intersection-passing">Intersection Passing<a class="headerlink" href="#intersection-passing" title="Permanent link">&para;</a></h4>
 <p>Tests ego vehicle traversal through an intersection. Verifies that the ego passes through the expected OpenDRIVE road sequence.</p>
 <table>
@@ -6512,7 +6522,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 10:06:40 UTC"><span class="timeago" datetime="2026-11-06T10:06:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 10:06:40 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 10:17:16 UTC"><span class="timeago" datetime="2026-11-06T10:17:16+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 10:17:16 UTC">2026-11-06</span>
   </span>
 
     
