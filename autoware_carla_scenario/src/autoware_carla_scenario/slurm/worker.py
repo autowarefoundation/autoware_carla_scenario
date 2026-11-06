@@ -166,14 +166,23 @@ def worker_overrides(
         changes["autoware.address"] = _with_port(autoware.address, slot.autoware_bridge)
     driver = cfg.get("driver")
     bridge = None if driver is None else driver.get("bridge")
-    if bridge is not None and bridge.get("address"):
-        changes["driver.bridge.address"] = _with_port(
-            bridge.address, slot.driver_bridge
+    if bridge is not None:
+        # A bridge that names no address of its own listens on
+        # AutowareBridgeConfig's default, which every task on the node would
+        # then share (#1883).
+        from autoware_carla_scenario.autoware_bridge.base import (  # noqa: PLC0415
+            AutowareBridgeConfig,
         )
+
+        address = bridge.get("address") or AutowareBridgeConfig.address
+        changes["driver.bridge.address"] = _with_port(address, slot.driver_bridge)
     if domains is not None:
         changes.update(_domain_overrides(cfg, domains))
     for key, value in changes.items():
-        OmegaConf.update(cfg, key, value, merge=False)
+        # force_add for the bridge: its mapping need not hold the address key.
+        OmegaConf.update(
+            cfg, key, value, merge=False, force_add=key == "driver.bridge.address"
+        )
     tm_key = _backend_tm_port_key(cfg, slot.traffic_manager)
     if tm_key is not None:
         changes[tm_key] = slot.traffic_manager
