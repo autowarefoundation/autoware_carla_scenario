@@ -395,3 +395,27 @@ def test_the_background_source_seed_wraps_at_the_largest() -> None:
         if isinstance(action, TrafficSourceAction)
     ]
     assert [action._seed for action in source] == [0]  # noqa: SLF001
+
+
+def test_check_whole_number_refuses_a_numpy_bool() -> None:
+    """float() takes numpy's bool_ as 0 or 1, so it is refused as a bool
+    is (#1900)."""
+    import numpy as np
+
+    from autoware_carla_scenario.seed import check_whole_number
+
+    for value in (np.True_, np.False_, np.array(True)):
+        with pytest.raises(ValueError, match=r"^x\.n must be a whole number"):
+            check_whole_number("x.n", value)  # type: ignore[arg-type]
+    assert check_whole_number("x.n", np.array(5)) == 5  # type: ignore[arg-type]
+
+
+def test_commonroad_workers_refuse_a_numpy_bool() -> None:
+    """The numpy on Python 3.10 takes bool_ as an index (#1900)."""
+    import numpy as np
+
+    from autoware_carla_scenario.commonroad.session import _check_workers
+
+    with pytest.raises(ValueError, match="workers must be an integer"):
+        _check_workers(np.True_)
+    assert _check_workers(np.int64(3)) == 3
