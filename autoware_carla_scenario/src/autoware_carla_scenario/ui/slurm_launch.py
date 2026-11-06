@@ -39,6 +39,7 @@ from ..slurm.manifest import (
 )
 from ..slurm.queue import ACTIVE_STATES, squeue_states
 from . import slurm_options as _options
+from .case_paths import session_order
 from .slurm_case_state import case_state, no_job_case_state
 
 # SLURM's command-line tools are run in the checked slurm.queue (#1634):
@@ -224,7 +225,13 @@ def submission() -> Submission | None:
 
 
 def _new_manifests(base: Path, before: set[Path]) -> list[Path]:
-    return sorted(set((base / "outputs").glob("*/*/slurm/manifest.json")) - before)
+    """The batch manifests written since *before*, oldest session first
+    (``outputs/{date}/{time}/slurm/manifest.json``; ``-10`` after ``-9``,
+    #1845)."""
+    return sorted(
+        set((base / "outputs").glob("*/*/slurm/manifest.json")) - before,
+        key=lambda p: (p.parents[2].name, *session_order(p.parents[1].name)),
+    )
 
 
 #: How long the ``scenario ... --no-wait`` a submit runs may take (#1786).

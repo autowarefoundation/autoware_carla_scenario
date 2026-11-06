@@ -45,6 +45,7 @@ __all__ = [
     "last_result_path",
     "result_path",
     "session_dir",
+    "session_order",
     "stem_order",
 ]
 
@@ -60,6 +61,9 @@ _TRAJECTORY = TRAJECTORY_SUFFIX
 _RESULT = RESULT_SUFFIX
 _COVERAGE = COVERAGE_SUFFIX
 _STEM_NUMBER = re.compile(r"^(?P<base>.*?)-(?P<n>\d+)$")
+#: A session's time directory that ``run_dirs.reserve_timestamped_dir``
+#: numbered: ``{HH-MM-SS}-{n}``, a run started in the same second as another.
+_SESSION_NUMBER = re.compile(r"^(?P<base>[^-]+-[^-]+-[^-]+)-(?P<n>\d+)$")
 
 
 @dataclass(frozen=True)
@@ -144,6 +148,18 @@ def stem_order(stem: str) -> tuple[str, int]:
     match = _STEM_NUMBER.match(stem)
     if match is None:
         return stem, 0
+    return match["base"], int(match["n"])
+
+
+def session_order(time: str) -> tuple[str, int]:
+    """Where a session's *time* directory comes among those of its date:
+    ``HH-MM-SS``, then ``HH-MM-SS-1``, ``HH-MM-SS-2``, ... ``HH-MM-SS-10``
+    (by number, not by text), the order ``run_dirs.reserve_timestamped_dir``
+    hands them out in (#1845).  Only a number after the three fields of the
+    time is one: ``12-00-01`` is not ``12-00`` numbered 1."""
+    match = _SESSION_NUMBER.match(time)
+    if match is None:
+        return time, 0
     return match["base"], int(match["n"])
 
 

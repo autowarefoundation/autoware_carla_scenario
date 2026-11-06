@@ -1106,3 +1106,18 @@ def test_a_resubmit_body_of_the_wrong_type_is_refused(
     )
     assert accepted.status_code == 200 and accepted.json()["ok"]
     assert ran[-1][-3:] == ["--array-parallelism", "2", "--no-wait"]
+
+
+def test_new_manifests_are_ordered_by_session_number(tmp_path: Path) -> None:
+    """#1845: a submit that finds no batch in its output takes the last new
+    manifest, and ``-10`` comes after ``-9`` (a text sort reverses them)."""
+    for time_dir in ("12-00-00-10", "12-00-00-9", "12-00-00"):
+        manifest = tmp_path / "outputs" / "2026-11-01" / time_dir / "slurm"
+        manifest.mkdir(parents=True)
+        (manifest / "manifest.json").write_text("{}")
+    found = slurm_launch._new_manifests(tmp_path, set())
+    assert [p.parents[1].name for p in found] == [
+        "12-00-00",
+        "12-00-00-9",
+        "12-00-00-10",
+    ]

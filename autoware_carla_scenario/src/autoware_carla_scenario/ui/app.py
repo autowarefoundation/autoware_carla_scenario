@@ -24,6 +24,7 @@ from fastapi.templating import Jinja2Templates
 
 from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
 from . import cases, recordings, results, runner, scanner, slurm_launch
+from .case_paths import session_order
 from .models import RunProgress, SessionSummary
 
 logger = logging.getLogger(__name__)
@@ -777,7 +778,7 @@ async def compare_sessions(request: Request) -> HTMLResponse:
     pass rate of each ODD cell. ``?s=type/date/time`` per session (two or
     more; ordered oldest first, the first being the baseline)."""
     refs = [r for r in (_parse_ref(v) for v in request.query_params.getlist("s")) if r]
-    refs = sorted(dict.fromkeys(refs), key=lambda r: (r[1], r[2]))
+    refs = sorted(dict.fromkeys(refs), key=lambda r: (r[1], *session_order(r[2])))
     loaded = [
         (
             _session_ref(*ref),

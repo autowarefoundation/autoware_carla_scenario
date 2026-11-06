@@ -260,3 +260,30 @@ def test_override_label_is_the_first_scenario_override() -> None:
     assert label(["a=1", "scenario=x=y", "scenario=z"]) == "x=y"
     assert label(["+scenario=x", "a=1"]) is None
     assert label([]) is None
+
+
+def test_session_order_numbers_sessions_of_the_same_second() -> None:
+    """#1845: ``reserve_timestamped_dir``'s ``{time}-{n}`` sort by n, after
+    the bare time and before the next second."""
+    times = [
+        "12-00-01",
+        "12-00-00-10",
+        "12-00-00-2",
+        "12-00-00",
+        "12-00-00-9",
+        "12-00-00-1",
+        "11-59-59-3",
+    ]
+    assert sorted(times, key=case_paths.session_order) == [
+        "11-59-59-3",
+        "12-00-00",
+        "12-00-00-1",
+        "12-00-00-2",
+        "12-00-00-9",
+        "12-00-00-10",
+        "12-00-01",
+    ]
+    assert case_paths.session_order("12-00-00-10") == ("12-00-00", 10)
+    # The time's own fields are no number: 12-00-01 is not 12-00 numbered 1.
+    assert case_paths.session_order("12-00-01") == ("12-00-01", 0)
+    assert case_paths.session_order("custom") == ("custom", 0)
