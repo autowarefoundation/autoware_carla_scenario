@@ -20,6 +20,7 @@ from typing import Any, Optional
 
 from ..measures import BUILT_IN_MEASURES
 from .control_diagnostics import ControlDiagnostic, format_diagnostics
+from .control_fields import CONTROL_FIELDS, CONTROL_TARGETS, MAPPING_FIELDS
 
 __all__ = [
     "ControlDiagnostic",
@@ -29,9 +30,9 @@ __all__ = [
     "validate_controls",
 ]
 
-_FIELDS = ("key", "target", "values", "scale", "offset", "integer", "range", "limits")
-_CONTROL_TARGETS = ("setting", "measure")
-_MAPPING_FIELDS = ("scale", "offset", "integer", "values")
+_FIELDS = CONTROL_FIELDS
+_CONTROL_TARGETS = CONTROL_TARGETS
+_MAPPING_FIELDS = MAPPING_FIELDS
 _MISSING = object()
 
 
