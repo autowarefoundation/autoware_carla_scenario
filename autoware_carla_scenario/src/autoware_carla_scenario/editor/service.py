@@ -28,6 +28,7 @@ from pathlib import Path
 from typing import (
     TYPE_CHECKING,
     Any,
+    BinaryIO,
     Callable,
     ClassVar,
     Mapping,
@@ -94,6 +95,7 @@ logger = logging.getLogger(__name__)
 __all__ = [
     "EditorError",
     "EditorService",
+    "StagedArchive",
     "GATE_CONSISTENCY_FIELDS",
     "GATE_FIELDS",
     "GATE_ITEM_FIELD",
@@ -151,6 +153,28 @@ def _map_errors(prefix: str = "") -> "Iterator[None]":
 
 #: Suffix of a staged wheelhouse archive; the stem is the scenario's id.
 _ARCHIVE_SUFFIX = "-wheelhouse.zip"
+
+
+@dataclass(frozen=True)
+class StagedArchive:
+    """A staged wheelhouse, opened for a download.
+
+    Opened under the lock that staging and deleting the archive hold, so the
+    handle is to the file that was staged at that moment.  It stays readable
+    after the archive is unlinked -- a re-export under a new scenario id, or the
+    draft deleted -- so a download already under way finishes.  The caller
+    closes :attr:`file`.
+
+    Attributes:
+        file: The archive, open for binary reading.
+        name: The archive's file name, which the download is called.
+        size: The archive's size in bytes, from the open handle.
+    """
+
+    file: BinaryIO
+    name: str
+    size: int
+
 
 #: The :class:`MapRef` fields that say *which* map a scenario is on.  A map
 #: operation computes its result from them, so one that changed while the
@@ -268,6 +292,33 @@ class EditorService:
             if stat.S_ISREG(status.st_mode):
                 staged.append((status.st_mtime_ns, path))
         return max(staged)[1] if staged else None
+
+    def open_staged_archive(self, draft: Draft) -> Optional[StagedArchive]:
+        """Open the wheelhouse the last export of *draft* staged, if any.
+
+        Looked up and opened under the archive lock, so neither a re-export
+        under a new scenario id nor :meth:`delete_draft` can remove it in
+        between: what a path from :meth:`staged_archive` alone could not
+        promise by the time a response came to open it (#1719).
+
+        Returns:
+            The opened archive, or ``None`` if nothing is staged.  The caller
+            closes its file.
+        """
+        with self._archive_lock(draft.id):
+            archive = self.staged_archive(draft)
+            if archive is None:
+                return None
+            try:
+                handle = archive.open("rb")
+            except FileNotFoundError:
+                return None
+        try:
+            size = os.fstat(handle.fileno()).st_size
+        except BaseException:
+            handle.close()
+            raise
+        return StagedArchive(file=handle, name=archive.name, size=size)
 
     def _stage_archive(self, source: Path, draft: Draft) -> Path:
         """Zip *source* and move it into place as *draft*'s archive.
