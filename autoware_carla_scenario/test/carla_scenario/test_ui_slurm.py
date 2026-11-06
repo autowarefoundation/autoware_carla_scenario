@@ -537,6 +537,46 @@ def test_a_batch_whose_manifest_is_not_an_object_is_not_a_slurm_batch(
     assert response.status_code == 404
 
 
+@pytest.mark.parametrize(
+    "result",
+    [{"passed": "true"}, {"passed": 1}, "passed", [True], None, "missing"],
+    ids=["str-true", "int", "str-result", "list-result", "null-result", "no-result"],
+)
+def test_a_result_with_no_verdict_is_shown_failed_and_collected_as_an_error(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    result: Any,
+) -> None:
+    """#1718: case 0's record holds no boolean verdict: the batch status is
+    no 500 and shows it failed, and collect reports it as an error naming its
+    file."""
+    batch = _manifest_batch(tmp_path)
+    path = batch / "slurm" / "results" / "0.json"
+    record = json.loads(path.read_text())
+    if result == "missing":
+        del record["result"]
+    else:
+        record["result"] = result
+    path.write_text(json.dumps(record))
+    _fake_squeue(tmp_path, monkeypatch, "")
+    response = client.get("/api/slurm/2026-10-19/12-00-00/status")
+    assert response.status_code == 200
+    status = response.json()
+    assert [c["state"] for c in status["cases"]] == [
+        "failed",
+        "failed",
+        "errored",
+        "missing",
+    ]
+    collected = client.post("/api/slurm/2026-10-19/12-00-00/collect").json()
+    assert collected["ok"] and collected["code"] == 1
+    assert str(path) in collected["output"]
+    summary = json.loads((batch / "batch_results.json").read_text())
+    assert [e["passed"] for e in summary] == [False, False, False, False]
+    assert summary[0].get("error") is True
+
+
 def test_collect_writes_the_summary(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

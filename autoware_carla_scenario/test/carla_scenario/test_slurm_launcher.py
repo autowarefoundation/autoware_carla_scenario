@@ -2382,6 +2382,131 @@ def test_a_result_or_task_status_that_is_not_an_object_is_none(
     ] * 3
 
 
+def _recorded(passed: Any = True, **result: Any) -> dict[str, Any]:
+    """A case's outcome as a task records it, from submission 0."""
+    return {
+        "submission": 0,
+        "errored": False,
+        "result": {
+            "passed": passed,
+            "message": "",
+            "elapsed_seconds": 1.0,
+            "condition_statuses": [],
+            **result,
+        },
+    }
+
+
+_NO_VERDICT = pytest.mark.parametrize(
+    "record",
+    [
+        _recorded("false"),
+        _recorded("true"),
+        _recorded(1),
+        _recorded(None),
+        {"submission": 0, "errored": False},
+        {"submission": 0, "errored": False, "result": "passed"},
+        {"submission": 0, "errored": False, "result": None},
+        {"submission": 0, "errored": False, "result": [True]},
+    ],
+    ids=[
+        "str-false",
+        "str-true",
+        "int",
+        "null",
+        "no-result",
+        "str-result",
+        "null-result",
+        "list-result",
+    ],
+)
+
+
+def _with_case_1(tmp_path: Path, record: dict[str, Any]) -> BatchLayout:
+    """A batch whose cases 0 and 2 passed and whose case 1 recorded *record*."""
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = _batch_on_disk(tmp_path)
+    layout.result(0).parent.mkdir(parents=True, exist_ok=True)
+    write_json(layout.result(0), _recorded(True))
+    write_json(layout.result(1), record)
+    write_json(layout.result(2), _recorded(True))
+    return layout
+
+
+def test_recorded_verdict_is_a_boolean_passed_or_none() -> None:
+    """#1718: the one reader of a recorded verdict."""
+    from autoware_carla_scenario.slurm.collect import recorded_verdict
+
+    assert recorded_verdict(_recorded(True)) is True
+    assert recorded_verdict(_recorded(False)) is False
+    assert recorded_verdict(None) is None
+    for value in ("false", "true", 1, 0, None, 1.0):
+        assert recorded_verdict(_recorded(value)) is None
+    assert recorded_verdict({"result": "x"}) is None
+    assert recorded_verdict({}) is None
+
+
+@_NO_VERDICT
+def test_a_result_with_no_verdict_is_an_error_not_a_pass(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], record: dict[str, Any]
+) -> None:
+    """#1718: a recorded result whose ``passed`` is no boolean, or that has
+    no ``result`` object, did not pass: collect reports it as ``ERROR`` naming
+    its file and exits 1, resubmit picks it, status counts it as no pass;
+    none of them raises."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm.collect import collect
+
+    layout = _with_case_1(tmp_path, record)
+    assert missing_cases(layout) == []
+    assert unfinished_cases(layout) == [1]
+    assert unfinished_cases(layout, failed=True) == [1]
+    assert collect(layout) == 1
+    out = capsys.readouterr().out
+    assert "[ERROR] s#2" in out
+    assert str(layout.result(1)) in out
+    assert "1 case(s) have a result with no verdict: s#2" in out
+    summary = json.loads((layout.batch_dir / "batch_results.json").read_text())
+    assert [e["passed"] for e in summary] == [True, False, True]
+    assert summary[1].get("error") is True
+    assert str(layout.result(1)) in summary[1]["message"]
+    collected = json.loads((layout.root / "collected.json").read_text())
+    assert collected["passed"] == 2
+    assert collected["errored"] == ["s#2"]
+    assert cli.main(["status", str(layout.batch_dir)]) == 0
+    assert "3 with a result (2 passed, 0 errored)" in capsys.readouterr().out
+
+
+def test_a_failed_result_is_picked_only_with_failed(tmp_path: Path) -> None:
+    """#1718: a boolean ``false`` is a verdict: a failure, not an error."""
+    from autoware_carla_scenario.slurm.collect import collect
+
+    layout = _with_case_1(tmp_path, _recorded(False))
+    assert unfinished_cases(layout) == []
+    assert unfinished_cases(layout, failed=True) == [1]
+    assert collect(layout, quiet_hint=True) == 1
+    summary = json.loads((layout.batch_dir / "batch_results.json").read_text())
+    assert [e["passed"] for e in summary] == [True, False, True]
+    assert "error" not in summary[1]
+
+
+@_NO_VERDICT
+def test_follow_counts_a_result_with_no_verdict_as_no_pass(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    record: dict[str, Any],
+) -> None:
+    """#1718: follow's progress line counts only a boolean ``true``."""
+    from autoware_carla_scenario.slurm import submit
+
+    layout = _with_case_1(tmp_path, record)
+    monkeypatch.setattr(submit, "squeue_states", lambda _job: {})
+    assert submit.follow(layout, 0, SlurmSettings(poll_seconds=0.1)) == 1
+    assert "3/3 case(s) done (2 passed)" in capsys.readouterr().out
+
+
 def test_sbatch_that_prints_no_job_id_is_a_runtime_error(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

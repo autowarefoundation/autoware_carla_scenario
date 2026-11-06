@@ -29,7 +29,7 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..slurm.manifest import BatchLayout
+from ..slurm.manifest import BatchLayout, recorded_verdict
 from ..slurm.queue import ACTIVE_STATES, squeue_states
 from . import slurm_options as _options
 from .slurm_case_state import case_state
@@ -298,9 +298,12 @@ def _case_states(
         result: dict[str, Any] = {}
         errored = passed = False
         if record is not None:
-            result = record.get("result") or {}
+            # A result that is no object reads as an empty one, and only a
+            # boolean ``passed`` as a verdict (#1718).
+            recorded = record.get("result")
+            result = recorded if isinstance(recorded, dict) else {}
             errored = bool(record.get("errored"))
-            passed = not errored and bool(result.get("passed"))
+            passed = not errored and recorded_verdict(record) is True
         queued: str | None = None
         squeue_known = at_case = False
         task, job_id, task_state, task_error = 0, "", "", None

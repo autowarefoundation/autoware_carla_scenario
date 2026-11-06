@@ -22,7 +22,12 @@ from collections.abc import Callable
 from pathlib import Path
 
 from .collect import collect, unfinished_cases
-from .manifest import SBATCH_IN_FLIGHT_SECONDS, BatchLayout, sbatch_in_flight
+from .manifest import (
+    SBATCH_IN_FLIGHT_SECONDS,
+    BatchLayout,
+    recorded_verdict,
+    sbatch_in_flight,
+)
 from .settings import SlurmSettings
 from .submit import (
     ACTIVE_STATES,
@@ -158,7 +163,7 @@ def _status(layout: BatchLayout) -> int:
         if record is None:
             continue
         done += 1
-        passed += bool(record["result"]["passed"])
+        passed += recorded_verdict(record) is True
         errored += bool(record.get("errored"))
     print(f"Batch {layout.batch_dir}: {len(cases)} case(s)")  # noqa: T201
     print(  # noqa: T201
@@ -230,7 +235,7 @@ def _resubmit(args: argparse.Namespace) -> int:
     else:
         chosen = unfinished_cases(layout, failed=args.failed)
     if not chosen:
-        print("Nothing to resubmit: every case has a result.")  # noqa: T201
+        print("Nothing to resubmit: every case has a verdict.")  # noqa: T201
         return collect(layout) if args.wait else 0
     settings = SlurmSettings.from_mapping(manifest["launcher"]).replace(
         array_parallelism=args.array_parallelism,

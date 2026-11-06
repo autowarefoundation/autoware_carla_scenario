@@ -95,8 +95,12 @@ scenario-slurm cancel   outputs/2026-10-18/12-00-00   # scancel the batch's jobs
 
 A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message
-saying so, and `collect` lists them. `resubmit` submits again the cases with no
-outcome and those that raised on every attempt (`ERROR`); `--failed` adds the
+saying so, and `collect` lists them. So is a case whose recorded outcome holds
+no verdict -- no `result` object, or a `passed` that is not `true` or `false`
+(`"false"` and `1` are none): it did not pass, and `collect` names its file;
+`status` and the viewer count it as not passed. `resubmit` submits again the
+cases with no outcome or no verdict and those that raised on every attempt
+(`ERROR`); `--failed` adds the
 ones that ran and failed, `--cases a,b` names them (labels or indices; a case
 named twice runs once), and `--array-parallelism`/`--cases-per-task` change
 how they are spread. A case run again replaces its earlier files: before it
