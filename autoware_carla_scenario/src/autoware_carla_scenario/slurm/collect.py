@@ -19,7 +19,13 @@ from typing import Any
 
 from ..batch_report import print_summary
 from ..failure import Failure, FailureCategory
-from .manifest import BatchLayout, recorded_verdict, resubmit_target, write_json
+from .manifest import (
+    BatchLayout,
+    no_job_note,
+    recorded_verdict,
+    resubmit_target,
+    write_json,
+)
 
 __all__ = [
     "RecordedResult",
@@ -102,7 +108,14 @@ def _missing_message(layout: BatchLayout, case: int, target: str) -> str:
         index, task, submission = where
         status = layout.read_task(index, task)
         state = "never started" if status is None else status.get("state", "?")
-        detail = f"task {task} of job {submission.get('job_id')} {state}"
+        job = submission.get("job_id")
+        if job:
+            detail = f"task {task} of job {job} {state}"
+        else:
+            # Never "job None" (#1796): say why the submission has no job id.
+            detail = (
+                f"task {task} of submission {index} {state}; {no_job_note(submission)}"
+            )
         if status is not None and status.get("error"):
             detail += f": {status['error']}"
     return (

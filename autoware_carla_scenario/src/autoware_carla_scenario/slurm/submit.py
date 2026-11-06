@@ -503,6 +503,14 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
     if not submission.get("job_id"):
         if sbatch_timed_out(submission):
             at = submission.get("sbatch_timed_out_at")
+            # Only while the record still counts as in flight is a resubmit
+            # refused (#1796); after that a plain resubmit is taken.
+            refused = (
+                f" (refused until {SBATCH_IN_FLIGHT_SECONDS:.0f} s after the "
+                "record was made, unless with --force)"
+                if sbatch_in_flight(submission)
+                else ""
+            )
             print(  # noqa: T201
                 f"Error: submission {index} of this batch has no job id to "
                 "follow: its sbatch timed out"
@@ -510,9 +518,7 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
                 + ", and SLURM may have taken the job all the same. If "
                 "`squeue --me` lists it, collect the batch once it ends: "
                 f"scenario-slurm collect {layout.batch_dir}; if not, run its "
-                f"cases again: scenario-slurm resubmit {layout.batch_dir} "
-                f"(refused until {SBATCH_IN_FLIGHT_SECONDS:.0f} s after the "
-                "record was made, unless with --force)",
+                f"cases again: scenario-slurm resubmit {layout.batch_dir}" + refused,
                 file=sys.stderr,
             )
         elif sbatch_in_flight(submission):

@@ -2856,6 +2856,8 @@ def test_wait_neither_follows_nor_collects_a_submission_with_no_job(
             assert "sbatch timed out at 2026-11-06T12:00:00+09:00" in err
             assert "squeue --me" in err and "scenario-slurm collect" in err
             assert "try again once it has" not in err and "stale" not in err
+            # #1796: resubmit is refused only while the record is in flight.
+            assert ("refused until" in err) is not stale
         elif stale:
             assert "submission 1 of this batch has no job" in err
             assert "stale" in err
@@ -2916,6 +2918,84 @@ def test_status_names_no_job_for_a_submission_with_no_job_id(
         assert "stale" in line
     # The submission with a job reads as before.
     assert "  submission 0: job 77, 1 task(s), 0 case(s); in the queue: ended" in out
+
+
+@pytest.mark.parametrize("kind", ["in-flight", "timed-out", "stale"])
+def test_collect_names_no_job_for_a_submission_with_no_job_id(
+    tmp_path: Path, kind: str
+) -> None:
+    """#1796: a case last given to a submission with no job id is reported
+    with why it has none (no_job_note), never as "job None"."""
+    from autoware_carla_scenario.slurm.collect import collect
+    from autoware_carla_scenario.slurm.manifest import (
+        SBATCH_IN_FLIGHT_SECONDS,
+        no_job_note,
+        write_json,
+    )
+
+    layout = _batch_on_disk(tmp_path)
+    record: dict[str, Any] = {
+        "index": 1,
+        "job_id": None,
+        "submitted_at": time.time()
+        - (SBATCH_IN_FLIGHT_SECONDS + 1 if kind == "stale" else 0),
+        "chunks": [[0, 1, 2]],
+    }
+    if kind == "timed-out":
+        record["sbatch_timed_out"] = True
+        record["sbatch_timed_out_at"] = "2026-11-06T12:00:00+09:00"
+    write_json(layout.submission(1), record)
+    assert collect(layout, quiet_hint=True) == 1
+    summary = json.loads((layout.batch_dir / "batch_results.json").read_text())
+    assert len(summary) == 3
+    for entry in summary:
+        message = entry["message"]
+        assert "job None" not in message
+        assert "task 0 of submission 1 never started; no job id" in message
+        assert no_job_note(record) in message
+        if kind == "in-flight":
+            assert "sbatch in flight" in message
+        elif kind == "timed-out":
+            assert "sbatch timed out at 2026-11-06T12:00:00+09:00" in message
+        else:
+            assert "stale" in message
+
+
+@pytest.mark.parametrize("old", [False, True], ids=["young", "old"])
+def test_follow_says_resubmit_is_refused_only_while_a_timed_out_record_is_young(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], old: bool
+) -> None:
+    """#1796: past SBATCH_IN_FLIGHT_SECONDS a plain resubmit is taken, so
+    follow no longer says it is refused."""
+    from autoware_carla_scenario.slurm import submit
+    from autoware_carla_scenario.slurm.manifest import (
+        SBATCH_IN_FLIGHT_SECONDS,
+        sbatch_in_flight,
+        write_json,
+    )
+
+    layout = _batch_on_disk(tmp_path)
+    record: dict[str, Any] = {
+        "index": 1,
+        "job_id": None,
+        "submitted_at": time.time() - (SBATCH_IN_FLIGHT_SECONDS + 60 if old else 1),
+        "chunks": [[0]],
+        "sbatch_timed_out": True,
+        "sbatch_timed_out_at": "2026-11-06T12:00:00+09:00",
+    }
+    write_json(layout.submission(1), record)
+    assert sbatch_in_flight(record) is not old
+    assert submit.follow(layout, 1, SlurmSettings()) == 1
+    err = capsys.readouterr().err
+    assert "its sbatch timed out at 2026-11-06T12:00:00+09:00" in err
+    assert f"scenario-slurm resubmit {layout.batch_dir}" in err
+    if old:
+        assert "refused until" not in err and "--force" not in err
+    else:
+        assert (
+            f"refused until {SBATCH_IN_FLIGHT_SECONDS:.0f} s after the record "
+            "was made, unless with --force" in err
+        )
 
 
 def test_of_two_resubmits_at_once_the_later_index_refuses(
