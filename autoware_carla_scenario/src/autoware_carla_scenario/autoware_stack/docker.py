@@ -83,8 +83,19 @@ STACK_LABEL: str = "autoware_carla_scenario.stack"
 
 #: And this one, ``<host>:<pid>`` of the process that started it: a leftover
 #: is one whose process is gone, not a live stack of another run of the same
-#: user on the host (a SLURM task beside this one, #1862).
+#: user on the host (a SLURM task beside this one, #1862).  A host and pid
+#: name one process only while the launchers on a host share its pid
+#: namespace, which is assumed: a launcher run in a container of its own
+#: (a pid namespace of its own) that keeps the host's name would look the
+#: others' pids up in the wrong namespace and could take a live owner for
+#: a dead one.  One with a host name of its own is another host's to the
+#: rest, whose running stacks are left alone (remove_leftover_containers()).
 OWNER_LABEL: str = "autoware_carla_scenario.owner"
+
+#: The states of a container that runs nothing, which one whose owner cannot
+#: be told alive or dead is removed in (not ``running``, ``paused`` or
+#: ``restarting``: those may be another run's live stack).
+_STOPPED_STATES: tuple[str, ...] = ("exited", "created", "dead")
 
 #: When the workspace is built: ``auto`` when it has never been built
 #: (``install/setup.bash`` is missing), ``always`` before every batch, ``never``
@@ -117,7 +128,9 @@ _DOCKER_COMMIT_TIMEOUT_S = 1800.0
 #: the workspace's build are run under: one run on the host (or on any host
 #: the workspace is shared with, where the file system locks across hosts)
 #: at a time, so SLURM tasks sharing a workspace do not ``colcon build`` it
-#: together (#1862).
+#: together (#1862).  In the workspace, not in a per-user cache directory:
+#: the runs to keep apart are those on one workspace, on whichever node.
+#: Taken only when there is something to make or build.
 _BUILD_LOCK_NAME = ".autoware_carla_scenario-build.lock"
 
 #: How long a run waits for another's build of the workspace before failing.
@@ -335,19 +348,26 @@ class DockerAutowareLauncher:
             self._config.build == "auto" and not self._is_built()
         )
         if build or self._is_built():
-            lock = self._lock_workspace()
-            try:
-                self._container = replace(
-                    self._container,
-                    image=self._dependency_image(self._container.image),
-                )
-                # Another run may have built it while this one waited.
-                if build and self._config.build == "auto" and self._is_built():
-                    build = False
-                if build:
-                    self._build()
-            finally:
-                self._unlock_workspace(lock)
+            base = self._container.image
+            tag = self._dependency_tag(base)
+            if not build and self._has_image(tag):
+                # Nothing to make: no lock to wait for.
+                logger.info("Workspace dependencies: %s", tag)
+                self._container = replace(self._container, image=tag)
+            else:
+                lock = self._lock_workspace()
+                try:
+                    # Asked again: another run may have made it meanwhile.
+                    self._container = replace(
+                        self._container, image=self._dependency_image(base, tag)
+                    )
+                    # Or built the workspace, while this one waited.
+                    if build and self._config.build == "auto" and self._is_built():
+                        build = False
+                    if build:
+                        self._build()
+                finally:
+                    self._unlock_workspace(lock)
         if not self._is_built():
             raise AutowareStackError(
                 f"{self._workspace} has not been built ({self._setup_script()} is "
@@ -494,8 +514,10 @@ class DockerAutowareLauncher:
         user's (a SLURM task beside this one) is left alone too: only those
         whose process no longer runs on this host are removed.  One without
         an owner (started by a version before the label, or by another host
-        whose processes cannot be seen from here) is removed when it no
-        longer runs, and only named in a warning while it does.
+        whose processes cannot be seen from here) is removed only once it
+        runs nothing (``exited``, ``created``, ``dead``), and only named in a
+        warning otherwise.  The owner is looked up in this process's pid
+        namespace (see :data:`OWNER_LABEL`).
         """
         listed = self._docker(
             "ps",
@@ -521,15 +543,15 @@ class DockerAutowareLauncher:
                 owner = fields[2].strip()
             alive = _owner_alive(owner)
             if alive is None:
-                if state == "running":
-                    unknown.append(container)
-                else:
+                if state in _STOPPED_STATES:
                     ids.append(container)
+                else:
+                    unknown.append(container)
             elif not alive:
                 ids.append(container)
         if unknown:
             logger.warning(
-                "Leaving %d running Autoware container(s) whose process cannot be "
+                "Leaving %d Autoware container(s) still up whose process cannot be "
                 "told alive or not (no %s label, or another host's): %s. Remove "
                 "them with `docker rm --force` if no run of yours uses them.",
                 len(unknown),
@@ -578,7 +600,9 @@ class DockerAutowareLauncher:
 
             path = self._workspace / _BUILD_LOCK_NAME
             try:
-                fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
+                # Read-only is enough for flock, and lets an existing file
+                # on a read-only mount lock too.
+                fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
             except OSError as exc:
                 logger.warning(
                     "Building %s without a lock (%s): another run may build it "
@@ -656,20 +680,30 @@ class DockerAutowareLauncher:
             digest.update(b"\0")
         return digest.hexdigest()[:16]
 
-    def _dependency_image(self, base_image: str) -> str:
-        """The image with what the stack needs installed, made if missing.
+    def _dependency_tag(self, base_image: str) -> str:
+        """The tag of the dependency image made from *base_image*."""
+        return f"{DEPENDENCY_IMAGE_REPOSITORY}:{self._dependency_digest(base_image)}"
 
-        That is the ``scenario_bridge`` node's packages and, with ``rosdep``,
-        the workspace's dependencies.
-        """
-        tag = f"{DEPENDENCY_IMAGE_REPOSITORY}:{self._dependency_digest(base_image)}"
+    def _has_image(self, tag: str) -> bool:
+        """Whether Docker has the image *tag*."""
         # A non-zero exit is "no such image"; no answer at all is not, and
         # read as one it would reinstall and recommit an image that may well
         # exist, through an install that is not bounded (#1797).
         inspected = self._docker(
             "image", "inspect", tag, check=False, timeout_is_error=True
         )
-        if inspected.returncode == 0:
+        return inspected.returncode == 0
+
+    def _dependency_image(self, base_image: str, tag: Optional[str] = None) -> str:
+        """The image with what the stack needs installed, made if missing.
+
+        That is the ``scenario_bridge`` node's packages and, with ``rosdep``,
+        the workspace's dependencies.  *tag* is :meth:`_dependency_tag`'s,
+        when the caller has it.
+        """
+        if tag is None:
+            tag = self._dependency_tag(base_image)
+        if self._has_image(tag):
             logger.info("Workspace dependencies: %s", tag)
             return tag
         name = f"{self._config.container_prefix}-{os.getpid()}-deps"

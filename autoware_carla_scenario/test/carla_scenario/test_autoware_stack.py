@@ -652,6 +652,11 @@ def test_docker_launcher_removes_leftover_containers(
             "legacy1\texited\t",
             "legacy2\trunning\t",
             "legacy3\tcreated",
+            "legacy4\tdead\t",
+            # Up, if not running: may be another run's live stack.
+            "legacy5\tpaused\t",
+            "legacy6\trestarting\t",
+            f"other3\tpaused\tsome-other-host-{os.getpid()}:{live.pid}",
         ]
         monkeypatch.setenv("FAKE_DOCKER_PS", "\n".join(lines))
 
@@ -669,8 +674,10 @@ def test_docker_launcher_removes_leftover_containers(
         '{{.ID}}\t{{.State}}\t{{.Label "' + OWNER_LABEL + '"}}',
     ] in calls()
     removed = [c for c in calls() if c[:2] == ["rm", "--force"] and len(c) > 3]
-    assert removed == [["rm", "--force", "dead01", "other2", "legacy1", "legacy3"]]
-    assert "other1 legacy2" in caplog.text
+    assert removed == [
+        ["rm", "--force", "dead01", "other2", "legacy1", "legacy3", "legacy4"]
+    ]
+    assert "other1 legacy2 legacy5 legacy6 other3" in caplog.text
 
 
 def test_docker_launcher_labels_its_containers_with_their_owner(
@@ -731,6 +738,96 @@ def test_docker_launcher_waits_for_another_runs_build(
     # The lock is let go: another run takes it at once.
     with lock.open("w") as stream:
         fcntl.flock(stream, fcntl.LOCK_EX | fcntl.LOCK_NB)
+
+
+def _hold_lock(path: Path) -> subprocess.Popen[str]:
+    """A process holding an exclusive flock on *path* (opened read-only)."""
+    holder = subprocess.Popen(
+        [
+            sys.executable,
+            "-c",
+            "import fcntl, sys, time\n"
+            "f = open(sys.argv[1], 'rb')\n"
+            "fcntl.flock(f, fcntl.LOCK_EX)\n"
+            "print('locked', flush=True)\n"
+            "time.sleep(float(sys.argv[2]))\n",
+            str(path),
+            "1.0",
+        ],
+        stdout=subprocess.PIPE,
+        text=True,
+    )
+    assert holder.stdout is not None
+    assert holder.stdout.readline().strip() == "locked"
+    return holder
+
+
+def test_docker_launcher_takes_no_build_lock_with_nothing_to_make(
+    tmp_path: Path,
+    fake_docker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # Built, and its dependency image made: another run's build lock is not
+    # waited for, and nothing warns.
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    launcher = _docker_launcher(ws, docker)
+    launcher._container = launcher._resolve_container()
+    tag = launcher._dependency_tag(launcher._container.image)
+    launcher._container = None
+    monkeypatch.setenv("FAKE_DOCKER_IMAGES", tag)
+    lock = ws / ".autoware_carla_scenario-build.lock"
+    lock.touch()
+    holder = _hold_lock(lock)
+    try:
+        began = time.monotonic()
+        launcher.prepare()
+        assert time.monotonic() - began < 0.9
+    finally:
+        holder.kill()
+        holder.wait()
+    assert launcher._container is not None
+    assert launcher._container.image == tag
+    assert not any(c[0] in ("run", "commit") for c in calls())
+    assert "without a lock" not in caplog.text
+    assert "Waiting for another run" not in caplog.text
+
+
+def test_docker_launcher_locks_a_read_only_build_lock_file(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # flock needs no write access: the lock file is opened read-only, so an
+    # existing one on a read-only mount (or of mode 0444) still locks.
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path)
+    monkeypatch.setenv("FAKE_DOCKER_WS", str(ws))
+    monkeypatch.setenv("FAKE_DOCKER_SCENARIO", "1")
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.05)
+    lock = ws / ".autoware_carla_scenario-build.lock"
+    lock.touch()
+    lock.chmod(0o444)
+    flags: list[int] = []
+    real_open = os.open
+
+    def recording_open(path, flag, *args, **kwargs):  # type: ignore[no-untyped-def]
+        if Path(path) == lock:
+            flags.append(flag)
+        return real_open(path, flag, *args, **kwargs)
+
+    monkeypatch.setattr(docker_module.os, "open", recording_open)
+    holder = _hold_lock(lock)
+    try:
+        began = time.monotonic()
+        _docker_launcher(ws, docker, build="always").prepare()
+        waited = time.monotonic() - began
+    finally:
+        holder.kill()
+        holder.wait()
+    assert waited >= 0.5
+    assert flags
+    assert all(f & (os.O_WRONLY | os.O_RDWR) == 0 for f in flags)
+    assert any(c[0] == "run" and "colcon build" in c[-1] for c in calls())
 
 
 def test_docker_launcher_gives_up_on_a_build_lock_held_too_long(

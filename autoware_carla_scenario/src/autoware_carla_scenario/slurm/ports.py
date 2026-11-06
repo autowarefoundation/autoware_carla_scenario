@@ -198,6 +198,11 @@ class RosDomains:
         self._mapped: dict[int, int] = {}
         self._held: dict[int, IO[bytes]] = {}
 
+    @property
+    def mapping(self) -> dict[int, int]:
+        """Each configured id taken so far, and the domain it maps to."""
+        return dict(self._mapped)
+
     def take(self, wanted: int) -> int:
         """The domain this task uses for the configured id *wanted*.
 

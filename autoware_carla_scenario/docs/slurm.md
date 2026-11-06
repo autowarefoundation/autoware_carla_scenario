@@ -415,6 +415,15 @@ SLURM gives each job a private one (`job_container/tmpfs`): it is
 `launcher.port_lock_dir`. The default range, 20000-29999, is below Linux's
 ephemeral ports.
 
+`driver.address` is not changed: a policy the run serves itself
+(`driver.policy`) listens on a port the OS picks, and one it does not is a
+server someone else runs, which every task dials. `driver.transport` is not
+changed either: with `direct` a task calls the policy it serves without a
+socket, and with `unix` it serves it on a socket in a directory of its own
+(under `$TMPDIR`, which SLURM does not set by default, so usually `/tmp`), so neither needs a port of the slot and tasks
+sharing a node never meet; a `unix:` `driver.address` someone else serves is
+dialled by every task, as a TCP one is.
+
 ### ROS domains
 
 The ROS 2 nodes of tasks on one node would share a DDS domain: they all start
@@ -426,14 +435,24 @@ keeps it for all its cases:
 |---|---|
 | `ego.entity=ros2` | `ros2.domain_id` |
 | `autoware.launcher.type=docker` | each `autoware.launcher.ros_domain_ids` entry; with none, one taken from `autoware.launcher.env.ROS_DOMAIN_ID`, else 0 |
-| `autoware.launcher.type=command` | `ROS_DOMAIN_ID` in `autoware.launcher.env` (from its own value, else 0) |
+| `autoware.launcher.type=command` | `ROS_DOMAIN_ID` in `autoware.launcher.env` (from its own value, else the job's exported `ROS_DOMAIN_ID`, else 0) |
 
 An id maps to the first domain from it on (up to 232, then from 0) whose lock,
 `<lock dir>/autoware_carla_scenario-ros-domain-<id>.lock` beside the port
 slots', no other task holds; the lock goes when the task's process does. The
 first task on a node gets the ids it asked for, the next ones the ids after:
 with `ros_domain_ids=[10,11]`, one task runs on 10 and 11 and the next on 12
-and 13. The domains are not part of the port slot: a slot's index runs to
+and 13. The ids are checked as a local run checks them (whole numbers from 0 to 232;
+a string `ros_domain_ids` is refused), naming the key.
+
+A task whose domain is not the one configured logs a warning naming both and
+records the mapping in its progress file (`slurm/tasks/<submission>-<task>.json`,
+`ros_domains`, configured id to domain, beside `ports`). With
+`ego.entity=ros2` that matters: ROS 2 nodes started outside the framework
+must join the task's domain (`ROS_DOMAIN_ID=<domain>`), not the configured
+one, so read it there, or give each such task a node to itself.
+
+The domains are not part of the port slot: a slot's index runs to
 `port_slots` (1000 by default), and ROS 2 has 233 domains. Keep
 `array_parallelism` times the domains a task uses well below that, and below
 102 on Linux (0 to 101 is what the ROS 2 documentation calls safe). The locks
@@ -449,15 +468,6 @@ another task on the node is left alone ([autoware.md](autoware.md)). Tasks
 that build one workspace (`build: always`, or `auto` while it is unbuilt) do
 so one at a time, under a lock in the workspace: a task that waits for
 another's `auto` build uses it rather than build again.
-
-`driver.address` is not changed: a policy the run serves itself
-(`driver.policy`) listens on a port the OS picks, and one it does not is a
-server someone else runs, which every task dials. `driver.transport` is not
-changed either: with `direct` a task calls the policy it serves without a
-socket, and with `unix` it serves it on a socket in a directory of its own
-(under `$TMPDIR`, which SLURM does not set by default, so usually `/tmp`), so neither needs a port of the slot and tasks
-sharing a node never meet; a `unix:` `driver.address` someone else serves is
-dialled by every task, as a TCP one is.
 
 ## Limits
 

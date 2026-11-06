@@ -1818,6 +1818,168 @@ def test_worker_leaves_the_ros_domains_alone_without_a_holder() -> None:
     assert cfg.ros2.domain_id == 5
 
 
+def test_a_remapped_ros2_domain_warns_once(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    """ROS 2 nodes started outside the framework must follow a ros2 ego moved
+    to another domain: the task says so, naming both (#1862)."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot, RosDomains
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    overrides = ["ego.entity=ros2", "ros2.domain_id=5"]
+    first, second = RosDomains(tmp_path), RosDomains(tmp_path)
+    try:
+        worker_overrides(
+            run._compose_config(_CONCRETE, overrides), PortSlot(0, 20000), first
+        )
+        assert "ros2.domain_id" not in caplog.text
+        for _ in range(2):
+            changes = worker_overrides(
+                run._compose_config(_CONCRETE, overrides), PortSlot(1, 20010), second
+            )
+        assert changes["ros2.domain_id"] == 6
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING" and "ros2." in r.getMessage()
+        ]
+        assert len(warnings) == 1
+        assert "ros2.domain_id 5" in warnings[0].getMessage()
+        assert "ROS_DOMAIN_ID=6" in warnings[0].getMessage()
+        assert second.mapping == {5: 6}
+    finally:
+        first.release()
+        second.release()
+
+
+def test_the_task_records_its_ros_domains(tmp_path: Path) -> None:
+    from autoware_carla_scenario.slurm.ports import RosDomains
+    from autoware_carla_scenario.slurm.worker import _record_domains
+
+    class _Recorder:
+        def __init__(self) -> None:
+            self.status: dict[str, Any] = {}
+
+        def update(self, **changes: Any) -> None:
+            self.status.update(changes)
+
+    task = _Recorder()
+    domains = RosDomains(tmp_path)
+    try:
+        _record_domains(task, domains)
+        assert "ros_domains" not in task.status
+        domains.take(7)
+        _record_domains(task, domains)
+        assert task.status["ros_domains"] == {"7": 7}
+    finally:
+        domains.release()
+
+
+@pytest.mark.parametrize(("environ", "expected"), [(None, 0), ("9", 9), (" 12 ", 12)])
+def test_the_command_launcher_domain_follows_the_jobs_environment(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    environ: str | None,
+    expected: int,
+) -> None:
+    """With no autoware.launcher.env.ROS_DOMAIN_ID, the job's exported one is
+    the domain the command would have joined: it is the one mapped."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot, RosDomains
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    if environ is None:
+        monkeypatch.delenv("ROS_DOMAIN_ID", raising=False)
+    else:
+        monkeypatch.setenv("ROS_DOMAIN_ID", environ)
+    domains = RosDomains(tmp_path)
+    try:
+        cfg = run._compose_config(_CONCRETE, ["autoware.launcher.type=command"])
+        changes = worker_overrides(cfg, PortSlot(0, 20000), domains)
+        assert changes["autoware.launcher.env"]["ROS_DOMAIN_ID"] == str(expected)
+        # The launcher's own env wins over the job's.
+        monkeypatch.setenv("ROS_DOMAIN_ID", "30")
+        cfg = run._compose_config(
+            _CONCRETE,
+            [
+                "autoware.launcher.type=command",
+                "+autoware.launcher.env.ROS_DOMAIN_ID=3",
+            ],
+        )
+        changes = worker_overrides(cfg, PortSlot(0, 20000), domains)
+        assert changes["autoware.launcher.env"]["ROS_DOMAIN_ID"] == "3"
+    finally:
+        domains.release()
+
+
+@pytest.mark.parametrize(
+    ("overrides", "message"),
+    [
+        (["ego.entity=ros2", "ros2.domain_id=true"], "ros2.domain_id must be"),
+        (["ego.entity=ros2", "ros2.domain_id=2.5"], "ros2.domain_id must be"),
+        (["ego.entity=ros2", "ros2.domain_id=233"], "ros2.domain_id must be .* 232"),
+        (
+            ["autoware.launcher.type=docker", "autoware.launcher.ros_domain_ids=7"],
+            "autoware.launcher.ros_domain_ids must be a list",
+        ),
+        (
+            [
+                "autoware.launcher.type=docker",
+                "autoware.launcher.ros_domain_ids=[1,true]",
+            ],
+            "autoware.launcher.ros_domain_ids must be a list",
+        ),
+        (
+            [
+                "autoware.launcher.type=docker",
+                "autoware.launcher.ros_domain_ids=[1,300]",
+            ],
+            "autoware.launcher.ros_domain_ids must be a ROS domain id.* 232, got 300",
+        ),
+        (
+            [
+                "autoware.launcher.type=command",
+                "+autoware.launcher.env.ROS_DOMAIN_ID=seven",
+            ],
+            "autoware.launcher.env.ROS_DOMAIN_ID must be",
+        ),
+    ],
+)
+def test_the_worker_refuses_bad_ros_domain_ids_naming_the_key(
+    tmp_path: Path, overrides: list[str], message: str
+) -> None:
+    """As a local run refuses them, and before any domain is taken."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot, RosDomains
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    domains = RosDomains(tmp_path)
+    try:
+        cfg = run._compose_config(_CONCRETE, overrides)
+        with pytest.raises(ValueError, match=message):
+            worker_overrides(cfg, PortSlot(0, 20000), domains)
+    finally:
+        domains.release()
+
+
+def test_the_worker_takes_a_whole_float_ros2_domain_as_a_local_run_does(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.ros2 import Ros2EgoConfig
+    from autoware_carla_scenario.slurm.ports import PortSlot, RosDomains
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    assert Ros2EgoConfig(domain_id=7.0).domain_id == 7  # type: ignore[arg-type]
+    domains = RosDomains(tmp_path)
+    try:
+        cfg = run._compose_config(_CONCRETE, ["ego.entity=ros2", "ros2.domain_id=7.0"])
+        assert worker_overrides(cfg, PortSlot(0, 20000), domains)["ros2.domain_id"] == 7
+    finally:
+        domains.release()
+
+
 def test_ros_domains_refuse_an_id_out_of_range_and_run_out(tmp_path: Path) -> None:
     from autoware_carla_scenario.slurm.ports import RosDomains
 

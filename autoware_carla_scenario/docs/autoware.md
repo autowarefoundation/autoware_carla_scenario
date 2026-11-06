@@ -96,10 +96,14 @@ What happens:
       `autoware.launcher.build` says so: `auto` builds it only when
       `install/setup.bash` is missing, `always` before every batch, `never`
       leaves building to you. The output goes to `autoware-build.log`.
-      The dependency image and the build are made under a lock,
-      `.autoware_carla_scenario-build.lock` in the workspace: a second run
-      waits for the first's (up to 4 hours, then fails saying so), and with
-      `auto` uses its build rather than build again.
+      When there is a dependency image to make or a build to run, it is done
+      under a lock, `.autoware_carla_scenario-build.lock` at the root of the
+      workspace (kept there, not in a cache directory of yours, so runs on
+      every node that shares the workspace see it): a second run waits for
+      the first's (up to 4 hours, then fails saying so), and with `auto`
+      uses its build rather than build again. A run with nothing to make
+      takes no lock. The file stays; git shows it as untracked unless you
+      add it to the workspace's `.git/info/exclude`.
     - A workspace whose `autoware_carla_interface` launch takes no
       `scenario_mode` -- one built from a branch without scenario support --
       is refused here, not after the first scenario has timed out waiting for
@@ -111,8 +115,13 @@ What happens:
       started it, so the live stack of another run of yours on the host (a
       SLURM task beside this one) is left alone too: only those whose process
       no longer runs on this host are removed. One without an owner label (from
-      a version before it) or another host's is removed once it has stopped,
-      and only named in a warning while it runs. Two of your own runs on one
+      a version before it) or another host's is removed only once it runs
+      nothing (`exited`, `created` or `dead`), and only named in a warning
+      otherwise (`running`, `paused`, `restarting`). The owner is looked up
+      in the launcher's pid namespace, so the runs on a host are assumed to
+      share it: a run inside a container of its own (a pid namespace of its
+      own) that keeps the host's name could take another run's live stack
+      for a leftover. Two of your own runs on one
       host each need ports and ROS domains of their own, which SLURM tasks are
       given ([slurm.md](slurm.md#ros-domains)) and two local batches are not.
     - Every docker call the launcher makes for its answer (`docker ps`,
