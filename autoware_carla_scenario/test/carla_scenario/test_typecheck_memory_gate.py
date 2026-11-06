@@ -35,6 +35,12 @@ def _budget(n: int):  # type: ignore[no-untyped-def]
     return lambda: n * GB
 
 
+@pytest.fixture(autouse=True)
+def _no_earlier_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each test starts as a process whose builds never timed out on a lock."""
+    monkeypatch.setattr(memory_gate, "_LOCK_TIMED_OUT", threading.Event())
+
+
 def test_the_need_grows_with_the_source() -> None:
     # As measured: next to nothing, ~1.8 GB; the whole library, ~9.3 GB.
     assert 1.8 * GB <= codon_bytes(3_000) <= 2.0 * GB
@@ -634,3 +640,131 @@ def test_no_temporary_directory_fails_nothing(
     assert gate_dir() == fallbacks
     with admitted(2 * GB, budget=_budget(14)):
         assert len(list(fallbacks.glob("*.hold"))) == 1
+
+
+def test_a_failed_repair_keeps_falling_back(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The first run makes the directory 0o700 and then cannot remove another
+    # user's non-empty gate.lock; the second must not trust it for its mode.
+    default_gate.mkdir()
+    lock = default_gate / "gate.lock"
+    lock.mkdir()
+    (lock / "inside").write_text("")
+    default_gate.chmod(0o777)
+    _foreign(monkeypatch, lock)
+    for _ in range(2):
+        with admitted(2 * GB, budget=_budget(14), sleep=_never):
+            assert len(list(fallbacks.glob("*.hold"))) == 1
+        assert (default_gate.stat().st_mode & 0o777) == 0o700
+    assert (lock / "inside").exists()
+    assert not list(default_gate.glob("*.hold"))
+
+
+def test_an_older_gate_s_lock_held_through_an_old_descriptor_is_replaced(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(memory_gate, "_REPLACE_WAIT_S", 0.05)
+    lock = tmp_path / "gate.lock"
+    lock.write_text("")
+    lock.chmod(0o644)
+    old = lock.stat().st_ino
+    fd = _hold_lock(lock)  # someone opened it while it was 0o644, and kept it
+    try:
+        began = time.monotonic()
+        with admitted(2 * GB, directory=tmp_path, budget=_budget(14), sleep=_never):
+            assert len(list(tmp_path.glob("*.hold"))) == 1  # gated
+        assert time.monotonic() - began < 0.5
+        assert lock.stat().st_ino != old
+        assert (lock.stat().st_mode & 0o777) == 0o600
+        assert lock.stat().st_nlink == 1
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["gate.lock"]
+        with admitted(2 * GB, directory=tmp_path, budget=_budget(14), sleep=_never):
+            assert len(list(tmp_path.glob("*.hold"))) == 1  # and again
+    finally:
+        os.close(fd)
+
+
+def test_a_lock_that_timed_out_is_not_waited_for_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 0.3)
+    fd = _hold_lock(tmp_path / "gate.lock")  # 0o600: not replaced
+    try:
+        began = time.monotonic()
+        _ungated(tmp_path)
+        assert time.monotonic() - began >= 0.3
+        with caplog.at_level(logging.WARNING, logger=memory_gate.__name__):
+            for _ in range(3):
+                began = time.monotonic()
+                _ungated(tmp_path)
+                assert time.monotonic() - began < 0.15
+        assert caplog.text.count("an earlier build timed out") <= 1
+    finally:
+        os.close(fd)
+    # Released: the next build is gated again.
+    with admitted(2 * GB, directory=tmp_path, budget=_budget(14), sleep=_never):
+        assert len(list(tmp_path.glob("*.hold"))) == 1
+
+
+@pytest.mark.parametrize("mode", [0o700, 0o755])
+def test_a_hard_linked_lock_is_not_touched_and_the_gate_falls_back(
+    tmp_path: Path, default_gate: Path, fallbacks: Path, mode: int
+) -> None:
+    precious = tmp_path / "precious"
+    precious.write_text("mine, elsewhere")
+    precious.chmod(0o644)
+    default_gate.mkdir()
+    os.link(precious, default_gate / "gate.lock")
+    default_gate.chmod(mode)
+    with admitted(2 * GB, budget=_budget(14), sleep=_never):
+        assert len(list(fallbacks.glob("*.hold"))) == 1
+    assert (precious.stat().st_mode & 0o777) == 0o644
+    assert precious.stat().st_nlink == 2
+    assert precious.read_text() == "mine, elsewhere"
+
+
+def test_a_hard_linked_lock_in_a_configured_directory_runs_ungated(
+    tmp_path: Path,
+) -> None:
+    precious = tmp_path / "precious"
+    precious.write_text("mine, elsewhere")
+    precious.chmod(0o644)
+    gate = tmp_path / "gate"
+    gate.mkdir(mode=0o700)
+    os.link(precious, gate / "gate.lock")
+    _ungated(gate)
+    assert (precious.stat().st_mode & 0o777) == 0o644
+    assert precious.stat().st_nlink == 2
+
+
+def _linked_hold(directory: Path, elsewhere: Path) -> Path:
+    """A hold of this live process, hard-linked from *elsewhere*."""
+    start = memory_gate._start_time(os.getpid())
+    elsewhere.write_text(f"{1000 * GB} {start}")
+    hold = directory / f"{os.getpid()}-1-1.hold"
+    os.link(elsewhere, hold)
+    return hold
+
+
+def test_a_hard_linked_hold_is_not_counted(tmp_path: Path) -> None:
+    gate = tmp_path / "gate"
+    gate.mkdir(mode=0o700)
+    hold = _linked_hold(gate, tmp_path / "elsewhere")
+    with admitted(9 * GB, directory=gate, budget=_budget(14), sleep=_never):
+        assert len(list(gate.glob("*.hold"))) == 2
+    assert hold.exists()  # a configured directory's: left alone
+
+
+def test_a_hard_linked_hold_is_removed_from_the_gate_s_own_directory(
+    tmp_path: Path, default_gate: Path, fallbacks: Path
+) -> None:
+    default_gate.mkdir(mode=0o700)
+    elsewhere = tmp_path / "elsewhere"
+    hold = _linked_hold(default_gate, elsewhere)
+    with admitted(9 * GB, budget=_budget(14), sleep=_never):
+        assert len(list(default_gate.glob("*.hold"))) == 1  # ours
+    assert not hold.exists()
+    assert elsewhere.exists()
+    assert not fallbacks.exists()
