@@ -551,6 +551,58 @@ def test_a_running_batch_s_cases_and_tasks(
     assert [i.passed for i in items] == [True, None, False, None]
 
 
+def _pending_batch(base: Path, time_: str = "13-00-00") -> Path:
+    """A SLURM batch of three cases submitted, none of them collected yet."""
+    batch = base / "outputs" / "2026-10-19" / time_
+    root = batch / "slurm"
+    (root / "results").mkdir(parents=True)
+    manifest = {
+        "version": 1,
+        "batch_dir": str(batch),
+        "scenario_names": ["s"],
+        "launcher": {"type": "slurm"},
+        "cases": [
+            {"index": i, "label": f"s#{i + 1}", "scenario": "s", "stem": f"C-{i}"}
+            for i in range(3)
+        ],
+    }
+    (root / "manifest.json").write_text(json.dumps(manifest))
+    return batch
+
+
+def test_a_batch_s_pending_cases_are_counted_apart(tmp_path: Path) -> None:
+    """Cases without a result yet are pending (#1820): all of a batch none of
+    whose cases was collected, and the one case of a batch that never ran."""
+    _pending_batch(tmp_path)
+    _manifest_batch(tmp_path)
+    sessions = scanner.scan_sessions(tmp_path)
+    assert [
+        (s.time, s.passed_count, s.pending_count, s.total_count) for s in sessions
+    ] == [("13-00-00", 0, 3, 3), ("12-00-00", 1, 1, 4)]
+
+
+def test_an_all_pending_batch_is_not_listed_as_failed(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """``/`` and the ``/compare`` picker show an all-pending batch's cases as
+    pending, in a neutral colour, not as failures (#1820)."""
+    _pending_batch(tmp_path)
+    index = client.get("/")
+    assert index.status_code == 200
+    assert "3 pending" in index.text
+    assert "0/3 passed" in index.text
+    assert "bg-red-100" not in index.text
+    compare = client.get("/compare")
+    assert compare.status_code == 200
+    row = compare.text[compare.text.index("2026-10-19 13-00-00") :]
+    row = row[: row.index("</tr>")]
+    assert "0/3" in row and "3 pending" in row
+    assert (
+        "text-red-700" not in row
+        and "text-right whitespace-nowrap text-gray-700" in row
+    )
+
+
 def test_an_ended_batch_names_its_missing_cases(
     client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
