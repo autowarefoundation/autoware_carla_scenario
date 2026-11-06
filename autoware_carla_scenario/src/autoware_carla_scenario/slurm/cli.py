@@ -235,7 +235,7 @@ def _resubmit(args: argparse.Namespace) -> int:
     else:
         chosen = unfinished_cases(layout, failed=args.failed)
     if not chosen:
-        print("Nothing to resubmit: every case has a result.")  # noqa: T201
+        print("Nothing to resubmit: every case has a verdict.")  # noqa: T201
         return collect(layout) if args.wait else 0
     settings = SlurmSettings.from_mapping(manifest["launcher"]).replace(
         array_parallelism=args.array_parallelism,

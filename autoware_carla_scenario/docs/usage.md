@@ -1635,7 +1635,8 @@ write: each case passed, failed, errored, running, pending or missing (with
 why: its task's state and error), each submission's job and tasks (state,
 host, cases done, peak memory), and the cases as they land, before the batch
 has a summary. Its buttons run `scenario-slurm` on the batch: *Resubmit
-missing* (the cases with no outcome, or that errored), *Resubmit failed too*
+missing* (the cases with no outcome, including a result with no boolean
+`passed`, which shows as failed, or that errored), *Resubmit failed too*
 (`--failed`), with the array parallelism and cases per task to use, *Collect*
 (the summary and `batch_results.json`) and *Cancel jobs*.
 
