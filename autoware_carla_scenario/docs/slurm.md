@@ -122,8 +122,9 @@ A batch directory that `scenario-slurm` cannot read or write -- a manifest it
 may not read, or shared storage mounted read-only -- is one `Error: ...` line
 naming the file, and the command exits 1, as for a directory that holds no
 batch. `collect` (and `wait`, and `resubmit --wait`, which end in it) prints
-the summary and its hints first and writes `batch_results.json` and
-`slurm/collected.json` last, so the verdict is not lost (#1740).
+the summary's verdict even when `batch_results.json` cannot be written, and
+writes `slurm/collected.json` after its hints, so the verdict is not lost
+(#1740).
 
 Two resubmits of one batch may run at once -- from two viewer tabs, or from
 the viewer and `scenario-slurm resubmit`. Each submission's record,
