@@ -971,6 +971,18 @@ uv run scenario ... traffic=sumo traffic.options.scenario_pedestrians=sumo
 uv run scenario ... traffic=sumo traffic.options.fcd_output=true   # <output>/{stem}.sumo/fcd.xml
 ```
 
+**Its switches** -- `publish_walkers`, `pedestrian_crossings`,
+`cycle_on_sidewalks`, `use_libsumo`, `fcd_output`, `ambient.enabled`,
+`ambient.use_safe_weights`, `pedestrians.enabled`, `bicycles.enabled` and
+`mesoscopic.enabled`, `mesoscopic.scenario_vehicles` and
+`mesoscopic.junction_control` under `traffic.options` -- are each `true` or
+`false`, or a spelling of either (`"false"`, `"no"`, `"off"`, `"0"`, `0`,
+and `"true"`, `"yes"`, `"on"`, `"1"`, `1`), read as the run's own switches
+are ([The switches](usage.md#the-switches)): so a quoted
+`traffic.options.fcd_output='false'` is false. Anything else (`maybe`, `2`,
+null) is refused before the run, naming the option as
+`ambient.enabled must be true or false, got 'maybe'`.
+
 **Its outputs** are the run's own: everything the backend writes -- SUMO's
 log (`sumo.log`), the demand it generates (`ambient.rou.xml`,
 `pedestrians.rou.xml`, `bicycles.rou.xml`), the type files below and, with

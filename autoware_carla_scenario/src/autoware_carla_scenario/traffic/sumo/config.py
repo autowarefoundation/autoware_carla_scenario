@@ -12,6 +12,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from ...config_flags import check_flag
 from ...constants import DEFAULT_TM_PORT
 from ..fidelity import MesoscopicConfig, _number
 from ..parameters import BICYCLE_PARAMETER_BACKENDS
@@ -138,6 +139,12 @@ class AmbientTrafficConfig:
     use_safe_weights: bool = True
 
     def __post_init__(self) -> None:
+        # A switch read strictly: "false" (a quoted override, an
+        # ${oc.env:...}) is false, a typo is refused (#1757).
+        self.enabled = check_flag("ambient.enabled", self.enabled)
+        self.use_safe_weights = check_flag(
+            "ambient.use_safe_weights", self.use_safe_weights
+        )
         self.vehicles_per_hour, self.period_s, self.end_s = _check_demand(
             "ambient",
             "vehicles_per_hour",
@@ -199,6 +206,7 @@ class PedestrianConfig:
     blueprint: str = "walker.pedestrian.0015"
 
     def __post_init__(self) -> None:
+        self.enabled = check_flag("pedestrians.enabled", self.enabled)
         self.persons_per_hour, self.period_s, self.end_s = _check_demand(
             "pedestrians",
             "persons_per_hour",
@@ -279,6 +287,7 @@ class BicycleConfig:
     vehicle_control: str = "teleport"
 
     def __post_init__(self) -> None:
+        self.enabled = check_flag("bicycles.enabled", self.enabled)
         if self.vehicle_control not in _VEHICLE_CONTROLS:
             raise ValueError(
                 "bicycles.vehicle_control must be one of "
@@ -517,6 +526,16 @@ class SumoBackendConfig:
     sumo_args: list[str] = field(default_factory=list)
 
     def __post_init__(self) -> None:
+        # The switches, read strictly as the nested configs' are (#1757).
+        self.publish_walkers = check_flag("publish_walkers", self.publish_walkers)
+        self.pedestrian_crossings = check_flag(
+            "pedestrian_crossings", self.pedestrian_crossings
+        )
+        self.cycle_on_sidewalks = check_flag(
+            "cycle_on_sidewalks", self.cycle_on_sidewalks
+        )
+        self.use_libsumo = check_flag("use_libsumo", self.use_libsumo)
+        self.fcd_output = check_flag("fcd_output", self.fcd_output)
         if self.traffic_light_authority not in _LIGHT_AUTHORITIES:
             raise ValueError(
                 "traffic_light_authority must be one of "
