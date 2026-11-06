@@ -2418,23 +2418,51 @@ without following a symlink, and used only if it is a real directory owned by
 you that neither its group nor others can write to. Every later use goes
 through that open directory, so it cannot be swapped once checked;
 <code>gate.lock</code> and the holds are opened without following symlinks, a hold is
-created only if it does not exist, a file that is not a regular one (a FIFO)
-is ignored, a hold another user owns is removed and never counted, and a
-<code>gate.lock</code> another user owns starts the build ungated. The lock is made
-<code>0o600</code>, and a build tries for it for at most two minutes
-(<code>LOCK_TIMEOUT_S</code>; the gate's own builds hold it for milliseconds) before it
-warns and starts ungated, so no one holding it can stall the checks.</p>
+created only if it does not exist, and a file that is not a regular one (a
+FIFO) is ignored. A hold is counted only if it is a regular file of yours with
+a single link (a hard link could make it one of your files elsewhere): one
+another user owns is removed. <code>gate.lock</code> is trusted only if it is a regular
+file of yours with a single link that no one else may open (an older gate made
+it <code>0o644</code>, and someone may have kept a descriptor of it). A build tries for
+it for at most two minutes (<code>LOCK_TIMEOUT_S</code>; the gate's own builds hold it
+for milliseconds), so no one holding it can stall the checks, and a lock found
+replaced while it is checked or waited for is let go and the one in place
+tried instead.</p>
+<p>Only the gate's own directories (the default and the fallbacks; a configured
+path that is one of them counts as one) are ever changed, and every removal
+of a lock or of another user's file from one is made under an exclusive lock on the directory itself, after
+checking again what it removes, so no two builds change it at once. The
+gate's builds hold that lock for microseconds. No one else can open the
+directory once it is <code>0o700</code>, but a descriptor someone opened while it was
+open to others survives; if the lock cannot be taken within a second, the
+process gives that directory up for good and falls back to the next one, so
+its builds stay gated. One that its group or others can use at all (as an
+older gate left it, <code>0o755</code>, or <code>0o775</code> under a umask of <code>002</code>) is made
+<code>0o700</code>, if it holds nothing but <code>gate.lock</code> and holds. On every use, the
+gate's files another user owns are removed from it, and it is used only if
+nothing of another user's remains and its <code>gate.lock</code>, if any, is a regular
+file of yours, so a repair that failed once keeps falling back. A <code>gate.lock</code>
+there that is not trusted (<code>0o644</code>, or a hard link, whose other file stays as
+it is) is removed and made afresh by the next build, so a descriptor kept on
+the old one no longer contends; the gate first tries for it for a second, so
+that a build of its own inside it finishes first. So is, once per build, a
+lock still held after two minutes (a descriptor opened before an earlier gate
+made it <code>0o600</code> in place). A build that finds the lock replaced while it
+waits waits afresh for the new one, at most twice, so no build waits more
+than about six minutes in all. A build of an older gate, or one stalled
+inside the old lock for over that second, may then decide while the next
+build does in the fresh one: once per machine.</p>
 <p>A directory set with <code>AUTOWARE_CARLA_SCENARIO_CODON_GATE</code> must be private in
 the same way (yours, mode <code>0o700</code> or at least not group- or other-writable),
-or it is skipped; the gate never changes it. Only the gate's own directories
-are repaired: one of them that its group or others can use at all (as an older
-gate left it, <code>0o755</code>, or <code>0o775</code> under a umask of <code>002</code>) is made <code>0o700</code> and
-cleared of what other users own, if it holds nothing but <code>gate.lock</code> and
-holds, and is used only if nothing of another user's remains. When the
-directory fails these rules (or there is no temporary directory), the gate
-warns and falls back to <code>$XDG_RUNTIME_DIR/acs-codon-gate</code>, then to
-<code>~/.cache/autoware_carla_scenario/codon-gate</code>; when none is usable, or the
-gate's own files or the memory budget fail (a lock refused on NFS, a full
+or it is skipped. The gate never changes it, but for <code>gate.lock</code> and the holds
+it creates there and the holds it removes (of builds that died, of other
+users): a <code>gate.lock</code> there that is not trusted starts the build ungated, and
+so does one held for two minutes, after which the process's later builds try
+for it for only a second (enough for the gate's own builds) until one takes it
+again. When the directory fails these rules (or there is no temporary
+directory), the gate warns and falls back to <code>$XDG_RUNTIME_DIR/acs-codon-gate</code>,
+then to <code>~/.cache/autoware_carla_scenario/codon-gate</code>; when none is usable, or
+the gate's own files or the memory budget fail (a lock refused on NFS, a full
 disk), it warns and starts the build ungated. The gate never holds up or fails
 a check on its own account, and never hides what a build raised.</p>
 <h3 id="installing-codon-and-typesafe_carla">Installing Codon and typesafe_carla<a class="headerlink" href="#installing-codon-and-typesafe_carla" title="Permanent link">&para;</a></h3>
@@ -8365,7 +8393,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 15:48:17 UTC"><span class="timeago" datetime="2026-11-06T15:48:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 15:48:17 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 17:30:32 UTC"><span class="timeago" datetime="2026-11-06T17:30:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 17:30:32 UTC">2026-11-06</span>
   </span>
 
     
