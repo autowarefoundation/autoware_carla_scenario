@@ -9,7 +9,9 @@ built-in default.
 ``port`` is the ``type=`` of every TCP port option in the package (these two,
 ``scenario-hils`` and ``detect-no-3d-model``): a port outside 1-65535, or one
 that is not an integer, is a usage error (exit 2) rather than a traceback from
-whatever opens the socket (#1774).
+whatever opens the socket (#1774).  ``check_port`` is the range check on its
+own, for a port that does not come from the command line (the editor's
+"fetch OpenDRIVE" form, #1781).
 """
 
 from __future__ import annotations
@@ -22,6 +24,7 @@ import sys
 __all__ = [
     "DEFAULT_HOST",
     "add_bind_arguments",
+    "check_port",
     "is_loopback",
     "port",
     "warn_if_exposed",
@@ -30,6 +33,18 @@ __all__ = [
 #: The address both applications bind unless ``--host`` or the environment
 #: names another: reachable from this machine only.
 DEFAULT_HOST = "127.0.0.1"
+
+
+def check_port(number: int) -> int:
+    """Return *number* if it is a TCP port number, within 1-65535.
+
+    Raises:
+        ValueError: If it is not, worded to follow the option or field's
+            name ("must be within 1-65535, got 70000").
+    """
+    if not 1 <= number <= 65535:
+        raise ValueError(f"must be within 1-65535, got {number}")
+    return number
 
 
 def port(text: str) -> int:
@@ -44,9 +59,10 @@ def port(text: str) -> int:
         number = int(text)
     except ValueError:
         raise argparse.ArgumentTypeError(f"expected an integer, got {text!r}") from None
-    if not 1 <= number <= 65535:
-        raise argparse.ArgumentTypeError(f"must be within 1-65535, got {number}")
-    return number
+    try:
+        return check_port(number)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError(str(exc)) from None
 
 
 def add_bind_arguments(

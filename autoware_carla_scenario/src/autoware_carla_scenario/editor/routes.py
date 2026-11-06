@@ -37,7 +37,7 @@ from .service import (
     EditorError,
     EditorService,
     StagedArchive,
-    as_int,
+    as_port,
     find_constraint,
 )
 
@@ -381,7 +381,7 @@ async def fetch_opendrive(request: Request, draft_id: str) -> HTMLResponse:
         # Parsed here rather than above, so a bad port is refused the way every
         # other bad field on this panel is -- inline, on the re-rendered body.
         host = str(form.get("carla_host", "") or opendrive.DEFAULT_HOST).strip()
-        port = as_int(form.get("carla_port", ""), "CARLA port", opendrive.DEFAULT_PORT)
+        port = as_port(form.get("carla_port", ""), "CARLA port", opendrive.DEFAULT_PORT)
         return service.fetch_opendrive(document, host=host, port=port)
 
     return await _map_action(request, draft_id, _act)

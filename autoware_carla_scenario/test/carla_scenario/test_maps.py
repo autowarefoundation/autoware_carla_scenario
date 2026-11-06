@@ -2285,6 +2285,33 @@ class TestEditorWithoutOpenDrive:
         assert response.status_code == 200
         assert "not applied" in response.text
 
+    @pytest.mark.parametrize("port", ["0", "-1", "70000", "67536"])
+    def test_a_port_outside_the_tcp_range_is_refused_before_connecting(
+        self,
+        editor: "TestClient",
+        origin_repo: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        port: str,
+    ) -> None:
+        """67536 would wrap to 2000 in the resolver and reach a server there,
+        -1 and 0 would read as nothing listening (#1781)."""
+        monkeypatch.delenv(map_asset_env_var("TownA"), raising=False)
+        draft_id = _new_draft(editor)
+        editor.post(f"/draft/{draft_id}/map/use", data={"uri": _uri(origin_repo)})
+        connections: list[Any] = []
+        monkeypatch.setattr(
+            socket, "create_connection", lambda *a, **k: connections.append(a)
+        )
+
+        response = editor.post(
+            f"/draft/{draft_id}/map/opendrive",
+            data={"carla_host": "127.0.0.1", "carla_port": port},
+        )
+
+        assert response.status_code == 200
+        assert f"CARLA port must be within 1-65535, got {port}." in response.text
+        assert connections == []
+
 
 class TestCacheEconomy:
     """What the cache is for: not doing the work again."""

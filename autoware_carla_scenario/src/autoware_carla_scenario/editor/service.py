@@ -82,6 +82,7 @@ from ..maps import (
     resolve_map,
 )
 from ..authoring.validator import ValidationReport, validate_document
+from ..serve_cli import check_port
 from .forms import field_present, parse_int_list, parse_params
 from .gate_fields import (
     GATE_CONSISTENCY_FIELDS,
@@ -1936,6 +1937,19 @@ def as_int(raw: Any, label: str, fallback: int) -> int:
         return int(text)
     except ValueError as exc:
         raise EditorError(f"{label} must be a whole number, got {raw!r}.") from exc
+
+
+def as_port(raw: Any, label: str, fallback: int) -> int:
+    """Return *raw* as a TCP port number (1-65535), or raise a user-facing error.
+
+    Checked here, before anything connects: out of range, the system resolver
+    wraps the port or refuses it with a message that names neither (#1781).
+    """
+    number = as_int(raw, label, fallback)
+    try:
+        return check_port(number)
+    except ValueError as exc:
+        raise EditorError(f"{label} {exc}.") from exc
 
 
 def _as_int_list(raw: Any, label: str) -> Any:

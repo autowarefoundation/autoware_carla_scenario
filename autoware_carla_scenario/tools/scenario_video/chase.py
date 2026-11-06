@@ -19,6 +19,7 @@ from pathlib import Path
 
 import typesafe_carla.carla as carla
 
+from autoware_carla_scenario.serve_cli import port
 from autoware_carla_scenario.utils.traffic_light import traffic_light_state_name
 
 PERIOD_S = 0.1
@@ -28,7 +29,9 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("out", type=Path)
     parser.add_argument("--host", default="localhost")
-    parser.add_argument("--port", type=int, default=2000)
+    # Range-checked: out of 1-65535 is a usage error (exit 2), not a
+    # RuntimeError traceback from carla.Client (#1781).
+    parser.add_argument("--port", type=port, default=2000)
     parser.add_argument("--wait-s", type=float, default=900.0)
     args = parser.parse_args()
     args.out.mkdir(parents=True, exist_ok=True)
