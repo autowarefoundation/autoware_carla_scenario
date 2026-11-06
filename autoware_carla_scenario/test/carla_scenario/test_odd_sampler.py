@@ -1651,6 +1651,22 @@ def test_an_unknown_flaky_field_is_refused() -> None:
         sampler_from_config({"flaky": True}, odd=_weather_odd())
 
 
+@pytest.mark.parametrize("flaky", [True, {}, {"scenario": "cut_in/left"}, "false"])
+def test_sampler_from_config_refuses_any_flaky_search(flaky: Any) -> None:
+    # ``{}`` is falsy, but search_from_config reads it as ``true``: the defaults.
+    with pytest.raises(ValueError, match="needs search_from_config"):
+        sampler_from_config({"count": 1, "flaky": flaky}, odd=_weather_odd())
+
+
+@pytest.mark.parametrize(
+    "raw", [{"count": 1}, {"count": 1, "flaky": None}, {"count": 1, "flaky": False}]
+)
+def test_sampler_from_config_takes_no_flaky_search(raw: dict[str, Any]) -> None:
+    sampler, count = sampler_from_config(raw, odd=_weather_odd())
+    assert count == 1
+    assert sampler is not None
+
+
 def test_a_run_reads_its_case_back_from_the_override() -> None:
     from autoware_carla_scenario.examples.run import _compose_config, _odd_case
 
