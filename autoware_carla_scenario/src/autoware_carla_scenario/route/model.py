@@ -570,6 +570,12 @@ def _whole_number(name: str, value: Any) -> Optional[int]:
         raise ValueError(f"{name} must be a whole number, got {value!r}")
     if isinstance(value, int):
         return value
+    if TYPE_CHECKING:
+        pass
+    elif getattr(getattr(value, "dtype", None), "kind", None) == "b":
+        # numpy's bool_ (or a 0-d bool array): float() takes it as 0 or 1
+        # (#1902).
+        raise ValueError(f"{name} must be a whole number, got {value!r}")
     if isinstance(value, str):
         try:
             return int(value.strip())

@@ -108,6 +108,13 @@ def check_whole_number(key: str, value: int) -> int:
         number = float(value)
     except TypeError:
         raise ValueError(f"{key} must be a whole number, got {value!r}")
+    except OverflowError:
+        # A number too big for a float, but no int (Fraction(10**400)), as
+        # route.model's whole numbers refuse it (#1902).
+        # Its repr may hold more digits than str() writes, so it is not shown.
+        raise ValueError(
+            f"{key} must be a whole number, got one too big for a float"
+        ) from None
     if not math.isfinite(number):
         raise ValueError(f"{key} must be finite, got {value!r}")
     if math.floor(number) != number:
