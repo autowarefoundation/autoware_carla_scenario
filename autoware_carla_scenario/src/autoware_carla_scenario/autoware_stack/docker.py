@@ -121,7 +121,9 @@ class DockerAutowareConfig:
         launch: The ``ros2 launch`` arguments (package, file, ``name:=value``
             arguments), with ``scenario_mode:=true``.  ``{bridge_address}``,
             ``{index}`` and ``{name}`` are replaced with the episode's (see
-            :class:`~autoware_carla_scenario.autoware_stack.AutowareEpisode`).
+            :class:`~autoware_carla_scenario.autoware_stack.AutowareEpisode`;
+            ``{name}`` with only ``A-Z a-z 0-9 . _ -``, as in the log's file
+            name).
         devcontainer: The dev container variant under ``.devcontainer/`` whose
             image and workspace mount are used.
         image: The image to use instead of the dev container's; its mount and
