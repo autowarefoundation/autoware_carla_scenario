@@ -2253,21 +2253,33 @@ def test_a_bridge_error_or_silence_ends_the_run() -> None:
 def test_a_stale_command_brakes_or_holds(on_stale: str) -> None:
     command = {"type": "command", "mode": "control", "throttle": 0.6, "gear": 3}
     bridge = _ScriptedBridge([{"type": "ready"}, command])
-    entity = _entity(bridge.port, stale_s=0.1, on_stale=on_stale)
+    # A long stale_s keeps the command fresh however slow the machine is; it
+    # goes stale only when the test ages it (#1841).
+    stale_s = 60.0
+    entity = _entity(bridge.port, stale_s=stale_s, on_stale=on_stale)
     ego = entity.actor
     assert _ticked(entity, lambda: entity.command is not None)
     assert entity.is_initialized
     entity.on_tick(None, 0.0)
     assert ego.controls[-1].throttle == pytest.approx(0.6)
+    assert ego.controls[-1].brake == 0.0
     assert ego.controls[-1].gear == 3
-    time.sleep(0.15)
+    assert not entity._stale
+    # Age the command past stale_s without waiting for the wall clock.
+    entity._command_at -= stale_s + 1.0
     entity.on_tick(None, 0.0)
+    assert entity._stale
     if on_stale == "brake":
         assert ego.controls[-1].brake == 1.0
+        assert ego.controls[-1].throttle == 0.0
     else:
         assert ego.controls[-1].throttle == pytest.approx(0.6)
+        assert ego.controls[-1].brake == 0.0
     bridge.send(command)
-    assert _ticked(entity, lambda: ego.controls[-1].throttle == pytest.approx(0.6))
+    assert _ticked(
+        entity,
+        lambda: not entity._stale and ego.controls[-1].throttle == pytest.approx(0.6),
+    )
     entity.on_scenario_end(None)
     assert [m["type"] for m in bridge.received] == ["start", "end"]
     assert bridge.received[0]["ego_id"] == 1
