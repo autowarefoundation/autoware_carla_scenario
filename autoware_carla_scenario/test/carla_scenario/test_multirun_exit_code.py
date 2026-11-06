@@ -277,6 +277,36 @@ def test_a_retried_case_keeps_none_of_the_failed_attempts_outputs(
     assert (loaded[0].passed, loaded[0].message) == (False, "App"), loaded
 
 
+@pytest.mark.parametrize(
+    ("content", "verdict"),
+    [
+        ('{"passed": true}', True),
+        ('{"passed": false}', False),
+        ("{}", None),
+        ('{"passed": "false"}', None),
+        ('{"passed": 1}', None),
+        ('{"passed": null}', None),
+        ("[true]", None),
+        ("1", None),
+        ("not json", None),
+    ],
+)
+def test_read_verdict_takes_only_a_boolean_passed(
+    tmp_path: Path, content: str, verdict: bool | None
+) -> None:
+    """A result without a boolean ``passed`` is no verdict, so the case fails.
+
+    ``"passed": "false"`` is truthy and a missing key used to read as a pass
+    (#1711); the viewer and the gate read both as not passed.
+    """
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        _read_verdict,
+    )
+
+    (tmp_path / "App_result.json").write_text(content, encoding="utf-8")
+    assert _read_verdict(tmp_path) is verdict
+
+
 def test_the_stems_a_retry_removes_are_those_of_run_outputs(tmp_path: Path) -> None:
     from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
         _run_output_stems,
