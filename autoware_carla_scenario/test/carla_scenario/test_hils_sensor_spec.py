@@ -5,6 +5,7 @@ parts of ``hils.config`` and ``hils.protocol`` the library check compiles
 from __future__ import annotations
 
 import math
+import re
 from pathlib import Path
 
 import pytest
@@ -89,6 +90,30 @@ def test_lidar_attributes_are_taken() -> None:
     sensor_spec._lidar_attributes(
         {"horizontal_fov": "360", "rotation_frequency": "10", "sensor_tick": "0"}, "x"
     )
+
+
+@pytest.mark.parametrize("key", ["dropoff_general_rate", "dropoff_zero_intensity"])
+@pytest.mark.parametrize("value", ["45", "-0.1", "1.01"])
+def test_a_dropoff_proportion_outside_0_to_1_is_refused(key: str, value: str) -> None:
+    message = rf"^x\.{key}: must be in \[0, 1\] .*got '{re.escape(value)}'$"
+    with pytest.raises(sensor_spec.HilsConfigError, match=message):
+        sensor_spec._lidar_attributes({key: value}, "x")
+
+
+@pytest.mark.parametrize("key", ["dropoff_general_rate", "dropoff_zero_intensity"])
+def test_a_dropoff_proportion_that_is_no_number_is_refused(key: str) -> None:
+    with pytest.raises(sensor_spec.HilsConfigError, match=rf"x\.{key}: expected"):
+        sensor_spec._lidar_attributes({key: "most"}, "x")
+
+
+@pytest.mark.parametrize("key", ["dropoff_general_rate", "dropoff_zero_intensity"])
+@pytest.mark.parametrize("value", ["0", "0.45", "1", "0.0", "1.0"])
+def test_a_dropoff_proportion_from_0_to_1_is_taken(key: str, value: str) -> None:
+    sensor_spec._lidar_attributes({key: value}, "x")
+
+
+def test_the_dropoff_intensity_limit_is_no_proportion() -> None:
+    sensor_spec._lidar_attributes({"dropoff_intensity_limit": "1.5"}, "x")
 
 
 def test_relative_file(tmp_path: Path) -> None:

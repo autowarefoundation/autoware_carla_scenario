@@ -121,6 +121,9 @@ def _lidar(attributes: dict[str, Any]) -> dict[str, Any]:
         {"horizontal_fov": 90.5, "sensor_tick": 0.0},
         {"rotation_frequency": 10, "horizontal_fov": 360},
         {"rotation_frequency": "20.0"},
+        {"dropoff_general_rate": 0, "dropoff_zero_intensity": 1},
+        {"dropoff_general_rate": 0.45, "dropoff_zero_intensity": "0.4"},
+        {"dropoff_general_rate": "1", "dropoff_intensity_limit": 0.8},
     ],
 )
 def test_a_lidar_sweeping_its_field_of_view_every_tick_is_read(
@@ -290,6 +293,21 @@ def test_fields_are_constants_signals_or_scaled_signals() -> None:
         (_lidar({"rotation_frequency": math.nan}), "rotation_frequency: .*finite"),
         (_lidar({"rotation_frequency": math.inf}), "rotation_frequency: .*finite"),
         (_lidar({"rotation_frequency": "abc"}), "rotation_frequency: .*finite"),
+        # CARLA's drop-off proportions are from 0 to 1, unclamped (#1770).
+        (
+            _lidar({"dropoff_general_rate": 45}),
+            r"dropoff_general_rate: must be in \[0, 1\]",
+        ),
+        (
+            _lidar({"dropoff_general_rate": -0.1}),
+            r"dropoff_general_rate: must be in \[",
+        ),
+        (_lidar({"dropoff_general_rate": "1.01"}), r"dropoff_general_rate: must be in"),
+        (
+            _lidar({"dropoff_zero_intensity": 1.5}),
+            r"dropoff_zero_intensity: must be in",
+        ),
+        (_lidar({"dropoff_general_rate": "all"}), "dropoff_general_rate: .*finite"),
         # An attribute is text, a number or a bool, not "None" or "[1, 2]".
         (_lidar({"rotation_frequency": None}), "rotation_frequency: expected text"),
         (_lidar({"channels": [16, 32]}), "attributes.channels: expected text"),
