@@ -170,24 +170,53 @@ without following a symlink, and used only if it is a real directory owned by
 you that neither its group nor others can write to. Every later use goes
 through that open directory, so it cannot be swapped once checked;
 `gate.lock` and the holds are opened without following symlinks, a hold is
-created only if it does not exist, a file that is not a regular one (a FIFO)
-is ignored, a hold another user owns is removed and never counted, and a
-`gate.lock` another user owns starts the build ungated. The lock is made
-`0o600`, and a build tries for it for at most two minutes
-(`LOCK_TIMEOUT_S`; the gate's own builds hold it for milliseconds) before it
-warns and starts ungated, so no one holding it can stall the checks.
+created only if it does not exist, and a file that is not a regular one (a
+FIFO) is ignored. A hold is counted only if it is a regular file of yours with
+a single link (a hard link could make it one of your files elsewhere): one
+another user owns is removed. `gate.lock` is trusted only if it is a regular
+file of yours with a single link that no one else may open (an older gate made
+it `0o644`, and someone may have kept a descriptor of it). A build tries for
+it for at most two minutes (`LOCK_TIMEOUT_S`; the gate's own builds hold it
+for milliseconds), so no one holding it can stall the checks, and a lock found
+replaced while it is checked or waited for is let go and the one in place
+tried instead.
+
+Only the gate's own directories (the default and the fallbacks; a configured
+path that is one of them counts as one) are ever changed, and every removal
+of a lock or of another user's file from one is made under an exclusive lock on the directory itself, after
+checking again what it removes, so no two builds change it at once. The
+gate's builds hold that lock for microseconds. No one else can open the
+directory once it is `0o700`, but a descriptor someone opened while it was
+open to others survives; if the lock cannot be taken within a second, the
+process gives that directory up for good and falls back to the next one, so
+its builds stay gated. One that its group or others can use at all (as an
+older gate left it, `0o755`, or `0o775` under a umask of `002`) is made
+`0o700`, if it holds nothing but `gate.lock` and holds. On every use, the
+gate's files another user owns are removed from it, and it is used only if
+nothing of another user's remains and its `gate.lock`, if any, is a regular
+file of yours, so a repair that failed once keeps falling back. A `gate.lock`
+there that is not trusted (`0o644`, or a hard link, whose other file stays as
+it is) is removed and made afresh by the next build, so a descriptor kept on
+the old one no longer contends; the gate first tries for it for a second, so
+that a build of its own inside it finishes first. So is, once per build, a
+lock still held after two minutes (a descriptor opened before an earlier gate
+made it `0o600` in place). A build that finds the lock replaced while it
+waits waits afresh for the new one, at most twice, so no build waits more
+than about six minutes in all. A build of an older gate, or one stalled
+inside the old lock for over that second, may then decide while the next
+build does in the fresh one: once per machine.
 
 A directory set with `AUTOWARE_CARLA_SCENARIO_CODON_GATE` must be private in
 the same way (yours, mode `0o700` or at least not group- or other-writable),
-or it is skipped; the gate never changes it. Only the gate's own directories
-are repaired: one of them that its group or others can use at all (as an older
-gate left it, `0o755`, or `0o775` under a umask of `002`) is made `0o700` and
-cleared of what other users own, if it holds nothing but `gate.lock` and
-holds, and is used only if nothing of another user's remains. When the
-directory fails these rules (or there is no temporary directory), the gate
-warns and falls back to `$XDG_RUNTIME_DIR/acs-codon-gate`, then to
-`~/.cache/autoware_carla_scenario/codon-gate`; when none is usable, or the
-gate's own files or the memory budget fail (a lock refused on NFS, a full
+or it is skipped. The gate never changes it, but for `gate.lock` and the holds
+it creates there and the holds it removes (of builds that died, of other
+users): a `gate.lock` there that is not trusted starts the build ungated, and
+so does one held for two minutes, after which the process's later builds try
+for it for only a second (enough for the gate's own builds) until one takes it
+again. When the directory fails these rules (or there is no temporary
+directory), the gate warns and falls back to `$XDG_RUNTIME_DIR/acs-codon-gate`,
+then to `~/.cache/autoware_carla_scenario/codon-gate`; when none is usable, or
+the gate's own files or the memory budget fail (a lock refused on NFS, a full
 disk), it warns and starts the build ungated. The gate never holds up or fails
 a check on its own account, and never hides what a build raised.
 

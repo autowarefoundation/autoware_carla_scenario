@@ -13,8 +13,11 @@ import fcntl
 import logging
 import multiprocessing
 import os
+import stat
 import threading
 import time
+from collections.abc import Callable
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -33,6 +36,13 @@ GB = 1 << 30
 
 def _budget(n: int):  # type: ignore[no-untyped-def]
     return lambda: n * GB
+
+
+@pytest.fixture(autouse=True)
+def _no_earlier_timeout(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Each test starts as a process whose builds never timed out on a lock."""
+    monkeypatch.setattr(memory_gate, "_LOCK_TIMED_OUT", threading.Event())
+    monkeypatch.setattr(memory_gate, "_FORSAKEN", set())
 
 
 def test_the_need_grows_with_the_source() -> None:
@@ -573,13 +583,35 @@ def test_a_configured_directory_others_can_only_read_is_used_as_it_is(
     assert (gate.stat().st_mode & 0o7777) == 0o755
 
 
-def test_an_older_gate_s_lock_is_made_private(tmp_path: Path) -> None:
+def test_an_older_gate_s_lock_in_a_configured_directory_runs_ungated(
+    tmp_path: Path,
+) -> None:
     lock = tmp_path / "gate.lock"
     lock.write_text("")
     lock.chmod(0o644)
-    with admitted(2 * GB, directory=tmp_path, budget=_budget(14)):
-        pass
+    inode = lock.stat().st_ino
+    _ungated(tmp_path)
+    assert (lock.stat().st_mode & 0o777) == 0o644  # never changed
+    assert lock.stat().st_ino == inode
+
+
+def test_an_older_gate_s_lock_in_the_gate_s_own_directory_is_made_afresh(
+    default_gate: Path, fallbacks: Path
+) -> None:
+    default_gate.mkdir(mode=0o700)
+    lock = default_gate / "gate.lock"
+    lock.write_text("")
+    lock.chmod(0o644)
+    old = os.open(lock, os.O_RDONLY)  # someone's, kept (and its inode with it)
+    try:
+        with admitted(2 * GB, budget=_budget(14), sleep=_never):
+            assert len(list(default_gate.glob("*.hold"))) == 1
+        assert os.fstat(old).st_nlink == 0  # removed
+        assert lock.stat().st_ino != os.fstat(old).st_ino
+    finally:
+        os.close(old)
     assert (lock.stat().st_mode & 0o777) == 0o600
+    assert not fallbacks.exists()
 
 
 def _hold_lock(path: Path) -> int:
@@ -634,3 +666,607 @@ def test_no_temporary_directory_fails_nothing(
     assert gate_dir() == fallbacks
     with admitted(2 * GB, budget=_budget(14)):
         assert len(list(fallbacks.glob("*.hold"))) == 1
+
+
+def test_a_failed_repair_keeps_falling_back(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The first run makes the directory 0o700 and then cannot remove another
+    # user's non-empty gate.lock; the second must not trust it for its mode.
+    default_gate.mkdir()
+    lock = default_gate / "gate.lock"
+    lock.mkdir()
+    (lock / "inside").write_text("")
+    default_gate.chmod(0o777)
+    _foreign(monkeypatch, lock)
+    for _ in range(2):
+        with admitted(2 * GB, budget=_budget(14), sleep=_never):
+            assert len(list(fallbacks.glob("*.hold"))) == 1
+        assert (default_gate.stat().st_mode & 0o777) == 0o700
+    assert (lock / "inside").exists()
+    assert not list(default_gate.glob("*.hold"))
+
+
+def test_an_older_gate_s_lock_held_through_an_old_descriptor_is_replaced(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 5.0)
+    monkeypatch.setattr(memory_gate, "_REPLACE_WAIT_S", 0.05)
+    default_gate.mkdir(mode=0o700)
+    tmp_path = default_gate
+    lock = tmp_path / "gate.lock"
+    lock.write_text("")
+    lock.chmod(0o644)
+    old = lock.stat().st_ino
+    fd = _hold_lock(lock)  # someone opened it while it was 0o644, and kept it
+    try:
+        began = time.monotonic()
+        with admitted(2 * GB, budget=_budget(14), sleep=_never):
+            assert len(list(tmp_path.glob("*.hold"))) == 1  # gated
+        assert time.monotonic() - began < 2.5  # replaced, not waited out
+        assert lock.stat().st_ino != old
+        assert (lock.stat().st_mode & 0o777) == 0o600
+        assert lock.stat().st_nlink == 1
+        assert sorted(p.name for p in tmp_path.iterdir()) == ["gate.lock"]
+        with admitted(2 * GB, budget=_budget(14), sleep=_never):
+            assert len(list(tmp_path.glob("*.hold"))) == 1  # and again
+    finally:
+        os.close(fd)
+    assert not fallbacks.exists()
+
+
+def test_a_lock_that_timed_out_is_not_waited_for_again(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 1.0)
+    monkeypatch.setattr(memory_gate, "_REPLACE_WAIT_S", 0.05)
+    lock = tmp_path / "gate.lock"
+    fd = _hold_lock(lock)  # 0o600: not replaced
+    inode = lock.stat().st_ino
+    try:
+        began = time.monotonic()
+        _ungated(tmp_path)
+        assert time.monotonic() - began >= 1.0
+        with caplog.at_level(logging.WARNING, logger=memory_gate.__name__):
+            for _ in range(3):
+                began = time.monotonic()
+                _ungated(tmp_path)
+                assert time.monotonic() - began < 0.6  # not LOCK_TIMEOUT_S
+        assert caplog.text.count("an earlier build timed out") <= 1
+        assert memory_gate._LOCK_TIMED_OUT.is_set()
+    finally:
+        os.close(fd)
+    assert lock.stat().st_ino == inode  # a configured directory's: kept
+    # Released: the next build is gated again, and the process forgets.
+    with admitted(2 * GB, directory=tmp_path, budget=_budget(14), sleep=_never):
+        assert len(list(tmp_path.glob("*.hold"))) == 1
+    assert not memory_gate._LOCK_TIMED_OUT.is_set()
+
+
+def test_after_a_timeout_builds_contending_with_each_other_are_still_gated(
+    tmp_path: Path,
+) -> None:
+    # Only this process's own builds take the lock, each for milliseconds:
+    # none may run ungated because an earlier build once timed out.
+    memory_gate._LOCK_TIMED_OUT.set()
+    count = 24
+    barrier = threading.Barrier(count)
+    gated: list[bool] = []
+
+    def build() -> None:
+        barrier.wait(10)
+        with admitted(GB // 64, directory=tmp_path, budget=_budget(1000)):
+            mine = f"{os.getpid()}-{threading.get_ident()}-*.hold"
+            gated.append(len(list(tmp_path.glob(mine))) == 1)
+            time.sleep(0.05)
+
+    threads = [threading.Thread(target=build) for _ in range(count)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join(30)
+    assert gated == [True] * count
+    assert not memory_gate._LOCK_TIMED_OUT.is_set()
+
+
+def test_the_gate_s_own_lock_held_too_long_is_replaced(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Made 0o600 in place by an earlier gate while someone held it open.
+    monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 1.0)
+    default_gate.mkdir(mode=0o700)
+    lock = default_gate / "gate.lock"
+    fd = _hold_lock(lock)
+    inode = lock.stat().st_ino
+    try:
+        began = time.monotonic()
+        with admitted(2 * GB, budget=_budget(14), sleep=_never):
+            assert len(list(default_gate.glob("*.hold"))) == 1  # gated
+        assert time.monotonic() - began >= 1.0
+        assert lock.stat().st_ino != inode
+        assert (lock.stat().st_mode & 0o777) == 0o600
+        assert not memory_gate._LOCK_TIMED_OUT.is_set()
+        began = time.monotonic()
+        with admitted(2 * GB, budget=_budget(14), sleep=_never):
+            assert len(list(default_gate.glob("*.hold"))) == 1
+        assert time.monotonic() - began < 0.6  # once per machine
+        assert sorted(p.name for p in default_gate.iterdir()) == ["gate.lock"]
+    finally:
+        os.close(fd)
+    assert not fallbacks.exists()
+
+
+def test_the_lock_is_tried_for_no_longer_than_its_timeout_in_all(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Replaced after every try, as other builds might: still bounded.
+    monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 0.3)
+    monkeypatch.setattr(memory_gate, "_names_lock", lambda dir_fd, info: False)
+    began = time.monotonic()
+    _ungated(tmp_path)
+    assert 0.3 <= time.monotonic() - began < 5
+
+
+@pytest.mark.parametrize("mode", [0o700, 0o755])
+def test_a_hard_linked_lock_of_the_gate_s_own_is_unlinked_and_made_afresh(
+    tmp_path: Path, default_gate: Path, fallbacks: Path, mode: int
+) -> None:
+    precious = tmp_path / "precious"
+    precious.write_text("mine, elsewhere")
+    precious.chmod(0o644)
+    default_gate.mkdir()
+    os.link(precious, default_gate / "gate.lock")
+    default_gate.chmod(mode)
+    with admitted(2 * GB, budget=_budget(14), sleep=_never):
+        assert len(list(default_gate.glob("*.hold"))) == 1
+    assert not fallbacks.exists()
+    assert (precious.stat().st_mode & 0o777) == 0o644
+    assert precious.stat().st_nlink == 1
+    assert precious.read_text() == "mine, elsewhere"
+    lock = (default_gate / "gate.lock").stat()
+    assert lock.st_ino != precious.stat().st_ino and lock.st_nlink == 1
+
+
+def test_a_hard_linked_lock_in_a_configured_directory_runs_ungated(
+    tmp_path: Path,
+) -> None:
+    precious = tmp_path / "precious"
+    precious.write_text("mine, elsewhere")
+    precious.chmod(0o644)
+    gate = tmp_path / "gate"
+    gate.mkdir(mode=0o700)
+    os.link(precious, gate / "gate.lock")
+    _ungated(gate)
+    assert (precious.stat().st_mode & 0o777) == 0o644
+    assert precious.stat().st_nlink == 2
+
+
+def _linked_hold(directory: Path, elsewhere: Path) -> Path:
+    """A hold of this live process, hard-linked from *elsewhere*."""
+    start = memory_gate._start_time(os.getpid())
+    elsewhere.write_text(f"{1000 * GB} {start}")
+    hold = directory / f"{os.getpid()}-1-1.hold"
+    os.link(elsewhere, hold)
+    return hold
+
+
+def test_a_hard_linked_hold_is_not_counted(tmp_path: Path) -> None:
+    gate = tmp_path / "gate"
+    gate.mkdir(mode=0o700)
+    hold = _linked_hold(gate, tmp_path / "elsewhere")
+    with admitted(9 * GB, directory=gate, budget=_budget(14), sleep=_never):
+        assert len(list(gate.glob("*.hold"))) == 2
+    assert hold.exists()  # a configured directory's: left alone
+
+
+def test_a_hard_linked_hold_is_removed_from_the_gate_s_own_directory(
+    tmp_path: Path, default_gate: Path, fallbacks: Path
+) -> None:
+    default_gate.mkdir(mode=0o700)
+    elsewhere = tmp_path / "elsewhere"
+    hold = _linked_hold(default_gate, elsewhere)
+    with admitted(9 * GB, budget=_budget(14), sleep=_never):
+        assert len(list(default_gate.glob("*.hold"))) == 1  # ours
+    assert not hold.exists()
+    assert elsewhere.exists()
+    assert not fallbacks.exists()
+
+
+def test_builds_in_the_gate_s_own_directory_side_by_side_never_fall_back(
+    default_gate: Path, fallbacks: Path
+) -> None:
+    # Holds and fresh locks come and go while each build checks the directory.
+    threads, rounds = 8, 12
+    barrier = threading.Barrier(threads)
+    gated: list[bool] = []
+
+    def builds() -> None:
+        barrier.wait(10)
+        for _ in range(rounds):
+            with admitted(GB // 64, budget=_budget(1000)):
+                mine = f"{os.getpid()}-{threading.get_ident()}-*.hold"
+                gated.append(len(list(default_gate.glob(mine))) == 1)
+
+    workers = [threading.Thread(target=builds) for _ in range(threads)]
+    for worker in workers:
+        worker.start()
+    for worker in workers:
+        worker.join(60)
+    assert gated == [True] * (threads * rounds)
+    assert not fallbacks.exists()
+
+
+def test_a_directory_entry_that_vanishes_while_it_is_checked_is_skipped(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A hold another build removes between the listing and its stat.
+    default_gate.mkdir(mode=0o700)
+    gone = f"{os.getpid()}-9-9.hold"
+    real_listdir = os.listdir
+
+    def listdir(path: object = ".") -> list[str]:
+        return [*real_listdir(path), gone]  # type: ignore[call-overload]
+
+    monkeypatch.setattr(os, "listdir", listdir)
+    with admitted(2 * GB, budget=_budget(14), sleep=_never):
+        assert len(list(default_gate.glob("*.hold"))) == 1
+    assert not fallbacks.exists()
+
+
+def test_a_hold_with_garbage_is_not_counted(tmp_path: Path) -> None:
+    (tmp_path / f"{os.getpid()}-1-1.hold").write_bytes(b"\xff\xfe 12")
+    with admitted(9 * GB, directory=tmp_path, budget=_budget(14), sleep=_never):
+        assert len(list(tmp_path.glob("*.hold"))) == 2
+
+
+def test_a_build_waiting_on_a_replaced_lock_takes_the_new_one(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 30.0)
+    monkeypatch.setattr(memory_gate, "_NAMES_CHECK_S", 0.05)
+    lock = tmp_path / "gate.lock"
+    fd = _hold_lock(lock)
+    gated: list[bool] = []
+
+    def build() -> None:
+        with admitted(2 * GB, directory=tmp_path, budget=_budget(14), sleep=_never):
+            gated.append(len(list(tmp_path.glob("*.hold"))) == 1)
+
+    try:
+        began = time.monotonic()
+        waiter = threading.Thread(target=build)
+        waiter.start()
+        time.sleep(0.2)
+        fresh = tmp_path / "fresh"
+        fresh.write_text("")
+        fresh.chmod(0o600)
+        fresh.rename(lock)  # as another build's swap does
+        waiter.join(20)
+        assert gated == [True]
+        assert time.monotonic() - began < 15  # not LOCK_TIMEOUT_S
+    finally:
+        os.close(fd)
+
+
+def _swap_in_fresh_lock(gate: Path) -> int:
+    """Rename a fresh 0o600 file over *gate*'s ``gate.lock``, as another
+    build's swap does: its inode."""
+    fresh = gate / "gate.lock.swap"
+    fresh.write_text("")
+    fresh.chmod(0o600)
+    inode = fresh.stat().st_ino
+    fresh.rename(gate / "gate.lock")
+    return inode
+
+
+def test_a_lock_swapped_between_its_open_and_its_check_is_retried(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default_gate.mkdir(mode=0o700)
+    (default_gate / "gate.lock").write_text("")
+    (default_gate / "gate.lock").chmod(0o600)
+    real_fstat = os.fstat
+    swapped: list[int] = []
+
+    def fstat(fd: int) -> os.stat_result:
+        if not swapped and os.readlink(f"/proc/self/fd/{fd}").endswith("/gate.lock"):
+            swapped.append(_swap_in_fresh_lock(default_gate))  # old: 0 links now
+        return real_fstat(fd)
+
+    monkeypatch.setattr(os, "fstat", fstat)
+    with admitted(2 * GB, budget=_budget(14), sleep=_never):
+        assert len(list(default_gate.glob("*.hold"))) == 1  # gated
+    assert swapped
+    assert (default_gate / "gate.lock").stat().st_ino == swapped[0]  # kept
+    assert not fallbacks.exists()
+
+
+def test_a_lock_seen_with_no_links_mid_swap_is_not_judged_or_removed(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default_gate.mkdir(mode=0o700)
+    (default_gate / "gate.lock").write_text("")
+    (default_gate / "gate.lock").chmod(0o600)
+    real_stat = os.stat
+    swapped: list[int] = []
+
+    def stat(*args: object, **kwargs: object) -> os.stat_result:
+        result = real_stat(*args, **kwargs)  # type: ignore[arg-type]
+        if not swapped and args and args[0] == "gate.lock" and "dir_fd" in kwargs:
+            swapped.append(_swap_in_fresh_lock(default_gate))
+            fields = list(result)
+            fields[3] = 0  # st_nlink of the old file, now replaced
+            return os.stat_result(fields)
+        return result
+
+    monkeypatch.setattr(os, "stat", stat)
+    with admitted(2 * GB, budget=_budget(14), sleep=_never):
+        assert len(list(default_gate.glob("*.hold"))) == 1  # gated
+    assert swapped
+    assert (default_gate / "gate.lock").stat().st_ino == swapped[0]  # not removed
+    assert not fallbacks.exists()
+
+
+def test_builds_stay_exclusive_while_the_lock_is_swapped_under_them(
+    default_gate: Path, fallbacks: Path
+) -> None:
+    # A swapper keeps making our own lock 0o644 again, so builds keep
+    # replacing it while others hold or wait for it: still one decision at a
+    # time, every build gated, and no fallback.
+    threads = 8
+    stop = threading.Event()
+    guard = threading.Lock()
+    active = 0
+    most = 0
+    gated: list[bool] = []
+
+    def budget() -> int:  # called with the gate's lock held
+        nonlocal active, most
+        with guard:
+            active += 1
+            most = max(most, active)
+        time.sleep(0.001)
+        with guard:
+            active -= 1
+        return 1000 * GB
+
+    def builds() -> None:
+        while not stop.is_set():
+            with admitted(GB // 64, budget=budget):
+                mine = f"{os.getpid()}-{threading.get_ident()}-*.hold"
+                gated.append(len(list(default_gate.glob(mine))) == 1)
+
+    def swapper() -> None:
+        while not stop.is_set():
+            with suppress(OSError):
+                (default_gate / "gate.lock").chmod(0o644)
+            time.sleep(0.001)
+
+    with admitted(GB // 64, budget=_budget(1000)):
+        pass  # the directory and its lock exist
+    workers = [threading.Thread(target=builds) for _ in range(threads)]
+    workers.append(threading.Thread(target=swapper))
+    for worker in workers:
+        worker.start()
+    time.sleep(1.2)
+    stop.set()
+    for worker in workers:
+        worker.join(30)
+    assert gated and all(gated)
+    assert most == 1
+    assert not fallbacks.exists()
+    assert sorted(p.name for p in default_gate.iterdir()) == ["gate.lock"]
+
+
+class _Crowd:
+    """Builds run side by side in threads, each recording whether it was
+    gated (its hold in *gate*), and how many were ever inside the gate's
+    lock at once (counted by the budget, which is read under it)."""
+
+    def __init__(self, gate: Path, inside_s: float = 0.0005) -> None:
+        self.gate = gate
+        self.inside_s = inside_s
+        self.gated: list[bool] = []
+        self.most = 0
+        self._inside = 0
+        self._guard = threading.Lock()
+
+    def budget(self) -> int:
+        with self._guard:
+            self._inside += 1
+            self.most = max(self.most, self._inside)
+        time.sleep(self.inside_s)
+        with self._guard:
+            self._inside -= 1
+        return 1000 * GB
+
+    def build(self, directory: Path | None = None) -> None:
+        with admitted(GB // 64, directory=directory, budget=self.budget):
+            mine = f"{os.getpid()}-{threading.get_ident()}-*.hold"
+            self.gated.append(len(list(self.gate.glob(mine))) == 1)
+
+    def run(self, threads: int, build: Callable[[], None]) -> None:
+        barrier = threading.Barrier(threads)
+
+        def go() -> None:
+            barrier.wait(10)
+            build()
+
+        workers = [threading.Thread(target=go) for _ in range(threads)]
+        for worker in workers:
+            worker.start()
+        for worker in workers:
+            worker.join(30)
+
+
+def test_builds_removing_another_user_s_lock_together_stay_exclusive(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(memory_gate, "_LOCK_POLL_S", 0.002)
+    # Each trial plants another user's gate.lock in the gate's own directory
+    # and lets 8 builds find it at once: one removes it, none removes the
+    # fresh lock another holds.
+    default_gate.mkdir(mode=0o700)
+    foreign: set[tuple[int, int]] = set()
+    real_fstat, real_stat = os.fstat, os.stat
+
+    def disguise(result: os.stat_result) -> os.stat_result:
+        if (result.st_ino, result.st_ctime_ns) not in foreign:
+            return result
+        fields = list(result)
+        fields[4] = os.getuid() + 1
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(os, "fstat", lambda fd: disguise(real_fstat(fd)))
+    monkeypatch.setattr(
+        os, "stat", lambda *args, **kwargs: disguise(real_stat(*args, **kwargs))
+    )
+    real_unlink = os.unlink
+
+    def unlink(path: object, *args: object, **kwargs: object) -> None:
+        if path == "gate.lock":
+            time.sleep(0.003)  # widen the time from its check to its removal
+        real_unlink(path, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(os, "unlink", unlink)
+    crowd = _Crowd(default_gate)
+    for _ in range(20):
+        lock = default_gate / "gate.lock"
+        with suppress(FileNotFoundError):
+            lock.unlink()
+        lock.write_text("")
+        info = lock.lstat()
+        foreign.add((info.st_ino, info.st_ctime_ns))
+        crowd.run(8, crowd.build)
+    assert crowd.gated == [True] * (20 * 8)
+    assert crowd.most == 1
+    assert not fallbacks.exists()
+
+
+def test_builds_replacing_a_hard_linked_lock_together_stay_exclusive(
+    tmp_path: Path,
+    default_gate: Path,
+    fallbacks: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(memory_gate, "_LOCK_POLL_S", 0.002)
+    default_gate.mkdir(mode=0o700)
+    crowd = _Crowd(default_gate)
+    for trial in range(20):
+        precious = tmp_path / f"precious-{trial}"
+        precious.write_text("mine, elsewhere")
+        lock = default_gate / "gate.lock"
+        with suppress(FileNotFoundError):
+            lock.unlink()
+        os.link(precious, lock)
+        crowd.run(8, crowd.build)
+        assert precious.stat().st_nlink == 1
+        assert precious.read_text() == "mine, elsewhere"
+    assert crowd.gated == [True] * (20 * 8)
+    assert crowd.most == 1
+    assert not fallbacks.exists()
+
+
+def test_after_a_timeout_builds_in_the_gate_s_own_directory_are_all_gated(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The remembered timeout is a configured directory's: in the gate's own,
+    # contention among its builds never runs one ungated, however often other
+    # builds of the process time out elsewhere (set here over and over) and
+    # however short the wait it makes them try for.
+    monkeypatch.setattr(memory_gate, "_REPLACE_WAIT_S", 0.02)
+    crowd = _Crowd(default_gate, inside_s=0.005)  # the lock is rarely free
+    stop = time.monotonic() + 0.8
+
+    def builds() -> None:
+        while time.monotonic() < stop:
+            crowd.build()
+
+    def timeouts_elsewhere() -> None:
+        while time.monotonic() < stop:
+            memory_gate._LOCK_TIMED_OUT.set()
+            time.sleep(0.002)
+
+    setter = threading.Thread(target=timeouts_elsewhere)
+    setter.start()
+    crowd.run(16, builds)
+    setter.join(10)
+    assert crowd.gated and all(crowd.gated)
+    assert crowd.most == 1
+    assert not fallbacks.exists()
+
+
+def test_builds_waiting_out_a_stuck_lock_together_all_take_the_fresh_one(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Made 0o600 in place by an earlier gate while someone held it open: the
+    # build that removes it, and every other one that waited as long, are
+    # gated with the fresh lock -- one at a time.
+    monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 0.5)
+    monkeypatch.setattr(memory_gate, "_NAMES_CHECK_S", 0.05)
+    default_gate.mkdir(mode=0o700)
+    fd = _hold_lock(default_gate / "gate.lock")
+    try:
+        crowd = _Crowd(default_gate, inside_s=0.005)
+        began = time.monotonic()
+        crowd.run(6, crowd.build)
+        assert time.monotonic() - began < 0.5 * (1 + memory_gate._DEADLINE_RESETS)
+    finally:
+        os.close(fd)
+    assert crowd.gated == [True] * 6
+    assert crowd.most == 1
+    assert not fallbacks.exists()
+
+
+def test_the_gate_s_own_directory_whose_lock_is_held_elsewhere_is_given_up(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Someone kept a descriptor of the directory from before it was private,
+    # and locks it: the builds fall back -- once after a short wait, then at
+    # once -- rather than run ungated.
+    monkeypatch.setattr(memory_gate, "_REPLACE_WAIT_S", 0.2)
+    default_gate.mkdir(mode=0o700)
+    lock = default_gate / "gate.lock"
+    lock.write_text("")
+    lock.chmod(0o644)  # to be removed, under the directory's lock
+    held = os.open(default_gate, os.O_RDONLY | os.O_DIRECTORY)
+    fcntl.flock(held, fcntl.LOCK_EX)
+    try:
+        crowd = _Crowd(fallbacks)
+        began = time.monotonic()
+        crowd.build()
+        assert time.monotonic() - began < 2.0
+        began = time.monotonic()
+        crowd.build()
+        assert time.monotonic() - began < 0.15  # given up on: not tried again
+        crowd.run(6, crowd.build)
+    finally:
+        os.close(held)
+    assert crowd.gated == [True] * 8  # gated, in the fallback
+    assert crowd.most == 1
+    assert (lock.stat().st_mode & 0o777) == 0o644  # left as it was
+    assert not list(default_gate.glob("*.hold"))
+
+
+def test_the_gate_s_own_directory_that_cannot_be_locked_is_given_up(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # NFS refuses an exclusive flock on a read-only descriptor (EBADF): the
+    # directory is given up on and the build falls back, gated.
+    default_gate.mkdir(mode=0o700)
+    lock = default_gate / "gate.lock"
+    lock.write_text("")
+    lock.chmod(0o644)  # to be removed, under the directory's lock
+    real = memory_gate._try_lock
+
+    def refuse(fcntl_module, fd, deadline, *rest, **kwargs):  # type: ignore[no-untyped-def]
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(errno.EBADF, "Bad file descriptor")
+        return real(fcntl_module, fd, deadline, *rest, **kwargs)
+
+    monkeypatch.setattr(memory_gate, "_try_lock", refuse)
+    crowd = _Crowd(fallbacks)
+    crowd.build()
+    crowd.build()
+    assert crowd.gated == [True, True]
+    assert crowd.most == 1
