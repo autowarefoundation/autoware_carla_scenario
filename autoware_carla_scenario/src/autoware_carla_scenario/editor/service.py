@@ -83,6 +83,13 @@ from ..maps import (
 )
 from ..authoring.validator import ValidationReport, validate_document
 from .forms import field_present, parse_int_list, parse_params
+from .gate_fields import (
+    GATE_CONSISTENCY_FIELDS,
+    GATE_FIELDS,
+    GATE_ITEM_FIELD,
+    GateField,
+)
+from .naming import unused_name as _unused_name
 
 if TYPE_CHECKING:
     from collections.abc import Iterator
@@ -1804,20 +1811,6 @@ def _refuse_taken_name(what: str, name: str, rows: "Sequence[Any]", row: Any) ->
         raise EditorError(f"There is already a {what} called {name!r}.")
 
 
-def _unused_name(stem: str, taken: "Sequence[str]") -> str:
-    """Return ``stem_1``, ``stem_2``... -- the first one not already in use.
-
-    A new row needs a name it can be referred to by before anyone has typed
-    one, and two rows sharing a name is a validation error the author did not
-    make.
-    """
-    existing = set(taken)
-    index = 1
-    while f"{stem}_{index}" in existing:
-        index += 1
-    return f"{stem}_{index}"
-
-
 def _fill_phase_states(document: ScenarioDocument, phase: Any) -> None:
     """Give *phase* one state per declared group, all red.
 
@@ -1952,70 +1945,6 @@ def parse_route_yaml(text: str) -> Optional["RouteSearch"]:
         return RouteSearch.model_validate(raw)
     except Exception as exc:  # pydantic validation
         raise EditorError(f"Route search: {exc}") from exc
-
-
-@dataclass(frozen=True)
-class GateField:
-    """One threshold of the gate as the inspector edits it: a checkbox that
-    says whether it is judged, a bar and a number.
-
-    Attributes:
-        name: The :class:`~autoware_carla_scenario.authoring.models.GateSpec`
-            field.
-        label: What the inspector calls it.
-        unit: ``%`` for a share (edited as 0-100, stored as 0-1), ``m``,
-            ``m/s``, or ``""`` for a count.
-        default: The value a threshold gets when its checkbox is ticked with
-            no value of its own, in the unit edited.
-        bar_max: Where the bar ends, in the unit edited (the number may go
-            past it).
-        step: The bar's and the number's step.
-        optional: Whether it has a checkbox at all: a count the gate always
-            reads has none.
-    """
-
-    name: str
-    label: str
-    unit: str
-    default: float
-    bar_max: float
-    step: float
-    optional: bool = True
-
-    @property
-    def percent(self) -> bool:
-        return self.unit == "%"
-
-    def shown(self, stored: Optional[float]) -> str:
-        """*stored* as the number edited (a share as a percentage), its
-        default when unset."""
-        if stored is None:
-            return f"{self.default:g}"
-        return f"{round(stored * 100.0, 6) if self.percent else stored:g}"
-
-
-#: The gate's thresholds the inspector edits, in the order it lists them.
-GATE_FIELDS: tuple[GateField, ...] = (
-    GateField("min_runs", "Minimum runs", "", 1, 100, 1, optional=False),
-    GateField("min_success_rate", "Minimum success rate", "%", 90, 100, 1),
-    GateField("min_case_coverage", "Minimum case coverage", "%", 80, 100, 1),
-    GateField("min_scenario_coverage", "Minimum scenario coverage", "%", 80, 100, 1),
-    GateField("min_odd_coverage", "Minimum ODD coverage", "%", 50, 100, 1),
-    GateField("max_lateral_spread_m", "Maximum lateral spread", "m", 0.5, 2.0, 0.05),
-    GateField("max_speed_spread_mps", "Maximum speed spread", "m/s", 1.0, 5.0, 0.1),
-)
-
-#: How the trajectory spreads are measured: counts, edited only while a spread
-#: is judged.
-GATE_CONSISTENCY_FIELDS: tuple[GateField, ...] = (
-    GateField(
-        "consistency_stations", "Stations per segment", "", 20, 200, 1, optional=False
-    ),
-    GateField("consistency_min_runs", "Runs per station", "", 2, 20, 1, optional=False),
-)
-
-#: A cover item's grade, as each row of them edits it: added at 100 %.
-GATE_ITEM_FIELD = GateField("item", "Coverage", "%", 100, 100, 1)
 
 
 def _gate_number(
