@@ -1303,7 +1303,7 @@ def test_a_worker_exiting_at_the_end_of_its_input_closes_at_once(
         _kill(process)
 
 
-def test_a_worker_answering_close_closes_at_once_and_twice(
+def test_a_worker_exiting_on_close_closes_at_once_and_twice(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     worker, process = _started_worker(
