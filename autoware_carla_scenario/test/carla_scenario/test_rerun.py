@@ -9,7 +9,6 @@ import logging
 import os
 import sys
 import threading
-import time
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock, patch
@@ -34,18 +33,33 @@ from .test_scenario_runner import _make_runner, _Stop
 from .test_trajectory_recorder import _ActorSnapshot, _World
 
 
+# How long a gated ``_FakeConverter.convert`` waits for its gate at most: a
+# regression fails the test instead of hanging it.
+_GATE_TIMEOUT_S = 10.0
+
+
 class _FakeConverter:
     """Stands in for ``autoware_carla_scenario_rerun``: records what it was
     asked, in the order it ran, and fails the logs it is told to."""
 
-    def __init__(self, *, fail: tuple[str, ...] = (), delay: float = 0.0) -> None:
+    def __init__(
+        self,
+        *,
+        fail: tuple[str, ...] = (),
+        gate: threading.Event | None = None,
+    ) -> None:
         self.fail = fail
-        self.delay = delay
+        # ``convert`` waits for the gate (bounded) before it runs; by default
+        # it is open, so a conversion runs at once.
+        if gate is None:
+            gate = threading.Event()
+            gate.set()
+        self.gate = gate
         self.calls: list[tuple[str, str, bool]] = []
         self.threads: list[str] = []
 
     def convert(self, jsonl: str, out_rrd: str, *, strict: bool = False) -> dict:
-        time.sleep(self.delay)
+        self.gate.wait(timeout=_GATE_TIMEOUT_S)
         self.calls.append((jsonl, out_rrd, strict))
         self.threads.append(threading.current_thread().name)
         if Path(jsonl).name in self.fail:
@@ -214,13 +228,18 @@ def test_the_recording_is_written_beside_the_log() -> None:
 
 
 def test_submit_returns_at_once_and_wait_waits_for_every_log(tmp_path: Path) -> None:
-    fake = _FakeConverter(delay=0.05)
+    # The conversions wait for the gate, so submit() returning before any of
+    # them ran shows it does not wait for one -- no wall clock (#1841).
+    gate = threading.Event()
+    fake = _FakeConverter(gate=gate)
     logs = [tmp_path / f"S-{k}.trajectory.jsonl" for k in range(3)]
     with RerunConverter(converter=fake) as converter:
-        started = time.monotonic()
-        recordings = [converter.submit(log, log.name) for log in logs]
-        # Three conversions of 50 ms each have not run by now.
-        assert time.monotonic() - started < 0.1
+        try:
+            recordings = [converter.submit(log, log.name) for log in logs]
+            assert fake.calls == []
+            assert not any(recording.exists() for recording in recordings)
+        finally:
+            gate.set()
         conversions = converter.wait()
     assert recordings == [recording_path(log) for log in logs]
     assert all(recording.is_file() for recording in recordings)
