@@ -110,6 +110,7 @@ def test_the_generator_re_exports_the_moved_names() -> None:
         "_to_hyphen",
         "_normalise_distribution",
         "_validate_identifier",
+        "_validate_scenario_name",
         "_default_scenario_name",
     ):
         assert getattr(generator, name) is getattr(names, name), name
@@ -123,3 +124,44 @@ def test_kind_stays_keyword_only() -> None:
     with pytest.raises(ValueError, match="is empty after normalisation"):
         names._validate_identifier("", kind="package name")
     assert names._validate_identifier("match", kind="scenario name") == "match"
+
+
+#: Names on either side of :data:`names.SCENARIO_NAME_PATTERN` (#1858).
+_SCENARIO_NAME_CASES = [
+    "a",
+    "reach_goal",
+    "cut_in_v2",
+    "a1_",
+    "",
+    "_a",
+    "1a",
+    "Abc",
+    "a-b",
+    "a b",
+    "café",
+    "ａ",
+    "a\n",
+    "\na",
+    "ä",
+]
+
+
+@pytest.mark.parametrize("name", _SCENARIO_NAME_CASES)
+def test_is_scenario_name_is_the_pattern(name: str) -> None:
+    # fullmatch: ``$`` alone would accept a trailing newline.
+    assert names._is_scenario_name(name) is bool(
+        re.fullmatch(names.SCENARIO_NAME_PATTERN, name)
+    )
+
+
+def test_the_editor_ids_share_the_pattern() -> None:
+    from autoware_carla_scenario.authoring import models  # noqa: PLC0415
+
+    assert models._ID_PATTERN.pattern == names.SCENARIO_NAME_PATTERN
+
+
+def test_validate_scenario_name_names_the_hydra_grammar() -> None:
+    assert names._validate_scenario_name("reach_goal") == "reach_goal"
+    with pytest.raises(ValueError, match="Hydra's override grammar") as info:
+        names._validate_scenario_name("café")
+    assert "'café'" in str(info.value)

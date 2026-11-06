@@ -886,7 +886,10 @@ beside it.
 ### The scenario id names the package
 
 The package is named after the document's **id**, which is lower-case letters,
-digits and `_`, starting with a letter (`^[a-z][a-z0-9_]*$`). The id is the
+digits and `_`, starting with a letter (`^[a-z][a-z0-9_]*$`, ASCII only:
+`scaffold/names.py`'s `SCENARIO_NAME_PATTERN`, the rule `scenario-new` holds a
+`--scenario` to, so both paths make names Hydra's override grammar can
+select). The id is the
 name `scenario=<id>` selects, and the exported package is named after it with
 `_scenario` added: `my_cut_in` (the **Cut-in example** starter's id) exports
 the module `my_cut_in_scenario` (distribution `my-cut-in-scenario`, directory

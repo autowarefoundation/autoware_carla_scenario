@@ -7,7 +7,9 @@ describe the framework pin.  Kept apart from the exporter, which imports
 pydantic, yaml and jinja2, so the static check compiles these rules (#1695);
 the exporter re-exports them.
 
-The id itself is restricted by the document model to ``^[a-z][a-z0-9_]*$``.
+The id itself is restricted by the document model to ``^[a-z][a-z0-9_]*$``
+(:data:`scaffold.names.SCENARIO_NAME_PATTERN`, the rule ``scenario-new`` holds
+a scenario name to, #1858).
 On top of that:
 
 an id whose package would be the framework's own (``autoware_carla_scenario``:
