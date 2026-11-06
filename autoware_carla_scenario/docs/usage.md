@@ -118,14 +118,18 @@ Python version, and the viewer's Run form reads it the same way.
 - Results are written to `outputs/YYYY-MM-DD/HH-MM-SS/batch_results.json`
   (a batch started in the same second as another gets `HH-MM-SS-1`,
   then `HH-MM-SS-2`, ...: every batch has a directory of its own). The file
-  is rewritten as each case ends, the cases not run yet listed as
-  `"passed": null, "pending": true` (as a SLURM batch's cases without an
-  outcome are), so a batch that dies after its first case ends still lists
-  every case, and
+  is first written once the batch's pre-run checks have passed, just before
+  its first case runs, with every case listed as `"passed": null,
+  "pending": true` (as a SLURM batch's cases without an outcome are), and
+  rewritten as each case ends, the cases not run yet still pending. So a
+  batch that dies at any point from there on -- in its first case too --
+  still lists every case, and
   [`scenario-gate`](gate.md#cases-that-raised-no-record-so-the-set-is-refused)
-  refuses to judge it from the cases that finished alone. A batch that dies
-  during its first case writes no summary at all. The summary written when
-  the batch ends lists no pending case
+  refuses to judge it from the cases that finished alone; the viewer lists it
+  as a batch with its cases pending. A batch refused before any case runs
+  (a backend or an Autoware workspace that cannot run, CARLA not coming up)
+  writes no summary. The summary written when the batch ends lists no
+  pending case
 - A summary table is printed at the end with per-scenario pass/fail status
 - A case that cannot run at all -- its run raises on every attempt
   (`server.cooldown_max_retries`), e.g. a spawn point with no ground under it --
@@ -431,9 +435,24 @@ last exit code, attempts and why): it wrote no result, so no gate record, and
 [`scenario-gate`](gate.md#cases-that-raised-no-record-so-the-set-is-refused)
 refuses the sweep's runs for it. A case of Hydra's basic sweeper (a
 `--multirun` without `hydra/sweeper=lanelet_constraint`) whose run raised
-leaves one too. A case whose scenario ran and failed leaves none, nor does one
-a retry passed; one run again in the same directory removes the marker an
-earlier run left before it starts.
+leaves one too. The marker is also written before each attempt, saying the
+case did not finish, and removed once it ends with a verdict: a case whose
+sweep was killed with it (a segfault, the OOM killer, `SIGKILL`, Ctrl-C)
+leaves it as well. A case whose scenario ran and failed leaves none, nor does
+one a retry passed; one run again in the same directory replaces the marker
+an earlier run left as it starts.
+
+Before it launches the first case, the lanelet sweeper writes the sweep's
+plan, `sweep_plan.json`, into the sweep directory (`hydra.sweep.dir`): each
+case's job directory and overrides. `scenario-gate` counts a planned case
+that left no gate record, no marker and no result as one that never ran, so
+a sweep killed in case 8 of 20 is not judged from cases 1-7 alone. A sweep
+run again into the same directory (with `--resume-from` too) merges its plan
+into the one there, keeping the cases it skips. The viewer lists the job
+directories and ignores the plan. Hydra's basic sweeper creates each job
+directory only as it reaches the case and writes no plan: a basic sweep
+killed mid-run leaves no trace of the cases it never reached
+([Gate](gate.md#cases-that-raised-no-record-so-the-set-is-refused)).
 
 A case that timed out or crashed had no chance to stop the CARLA server it
 launched; that server's watchdog stops it within about a second, giving it

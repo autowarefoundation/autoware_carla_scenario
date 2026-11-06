@@ -35,10 +35,16 @@ def _fresh_cache() -> Iterator[None]:
 
 
 def _run_batch_cut_short(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, cases_run: list[bool]
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    cases_run: list[bool],
+    *,
+    start_refused: bool = False,
 ) -> Path:
     """Run a three-case batch whose queue runs *cases_run* (passed or not),
-    then is interrupted; return its output directory."""
+    then is interrupted; return its output directory.  With
+    *start_refused*, the queue's start (its pre-run checks) raises
+    ``RuntimeError`` instead, before any case runs."""
     from autoware_carla_scenario.examples import run
 
     monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
@@ -53,6 +59,8 @@ def _run_batch_cut_short(
             pass
 
         def __enter__(self) -> FakeQueue:
+            if start_refused:
+                raise RuntimeError("the Autoware workspace cannot run")
             return self
 
         def __exit__(self, *_: object) -> None:
@@ -96,7 +104,7 @@ def _run_batch_cut_short(
     monkeypatch.setattr(run, "_make_batch_output_dir", lambda: output_dir)
     monkeypatch.setattr(run, "_print_summary", no_summary)
 
-    with pytest.raises(KeyboardInterrupt):
+    with pytest.raises(RuntimeError if start_refused else KeyboardInterrupt):
         run.run_batch([_CONCRETE], ["+sweep.odd_sample.count=3"], expand=True)
     return output_dir
 
@@ -128,10 +136,52 @@ def test_an_interrupted_batch_leaves_the_cases_it_ran(
     assert [i.passed for i in items] == [True, False, None]
 
 
-def test_a_batch_interrupted_before_any_case_ended_writes_nothing(
+def test_a_batch_interrupted_before_any_case_ended_lists_every_case_pending(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path
 ) -> None:
+    """The summary is written once before the first case runs (#1833).
+
+    This replaces #1574's test that such a batch writes nothing: then an
+    empty summary would have read as a batch of no case, but since #1831 a
+    pending entry reads as a case without an outcome.  A batch killed in its
+    first case (CARLA segfaulting, the OOM killer, SIGKILL) left no summary,
+    and scenario-gate, which finds batches by it, skipped the batch and
+    judged the others.
+    """
+    from autoware_carla_scenario.gate.evaluate import main, unrecorded_cases
+
     output_dir = _run_batch_cut_short(monkeypatch, tmp_path, [])
+
+    entries = json.loads((output_dir / "batch_results.json").read_text())
+    assert [(e["scenario"], e["passed"], e.get("pending")) for e in entries] == [
+        (f"{_CONCRETE}#1", None, True),
+        (f"{_CONCRETE}#2", None, True),
+        (f"{_CONCRETE}#3", None, True),
+    ]
+    assert all(e["overrides"] for e in entries)
+    assert [p.name for p in output_dir.iterdir()] == ["batch_results.json"]
+
+    # The gate refuses it, rather than skip it.
+    (line,) = unrecorded_cases(output_dir)
+    assert "3 of 3 case(s)" in line
+    assert main([str(tmp_path)]) == 2
+
+    # The viewer lists it as the batch it is, every case pending, not as a
+    # single run (nor not at all).
+    (session,) = scanner.scan_sessions(tmp_path)
+    assert session.session_type == "batch"
+    assert (session.passed_count, session.total_count) == (0, 3)
+    assert session.pending_count == 3
+    items = scanner.load_session(tmp_path, "batch", DATE, TIME)
+    assert [i.passed for i in items] == [None, None, None]
+
+
+def test_a_batch_refused_before_it_runs_writes_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    """The queue's pre-run checks refuse it before CARLA starts: no case
+    was going to run, and no summary says otherwise (#1833)."""
+    output_dir = _run_batch_cut_short(monkeypatch, tmp_path, [], start_refused=True)
 
     assert list(output_dir.iterdir()) == []
 

@@ -27,8 +27,14 @@ only a case that raised, timed out or crashed is retried
 (``server.cooldown_max_retries``).  A case given up for any reason but a
 failed verdict leaves ``case_errored.json`` in its job directory
 (:mod:`..gate.errored`), which ``scenario-gate`` refuses a set of runs for: it
-wrote no gate record.  Any such marker is removed before the case's first
-attempt, and none is written for a case a retry passed.
+wrote no gate record.  The marker is written before each attempt too, saying
+the case did not finish, and removed once the case ends with a verdict, so a
+case whose sweep was killed with it (a segfault, the OOM killer, ``SIGKILL``)
+leaves it as well; none is left for a case that passed, a retry included, or
+failed.  Before the first case is launched, the sweep writes its plan
+(``sweep_plan.json``, :mod:`..gate.sweep_plan`) into its sweep directory: the
+directory and overrides of every case it is about to run, so that
+``scenario-gate`` also sees the cases a killed sweep never started (#1833).
 Ctrl-C or ``SIGTERM`` stops the running
 case (``SIGTERM``, then ``SIGKILL`` after
 :data:`.isolation._STOP_GRACE_SECONDS`) and ends the sweep with 130 or 143.
@@ -68,7 +74,12 @@ from omegaconf import DictConfig, OmegaConf, open_dict
 from tqdm import tqdm
 
 from .. import hydra_compat  # noqa: F401  (Python 3.14 argparse)
-from ..gate.errored import remove_case_errored, write_case_errored
+from ..gate.errored import (
+    remove_case_errored,
+    write_case_errored,
+    write_case_unfinished,
+)
+from ..gate.sweep_plan import write_sweep_plan
 from ..rerun import RerunUnavailableError
 from ..run_outputs import RUN_SUFFIXES as _RUN_SUFFIXES  # noqa: F401
 from ..run_outputs import remove_run_outputs
@@ -527,6 +538,14 @@ class LaneletConstraintSweeper(Sweeper):
         retry then runs beside what the failed attempt left, and a job given
         up leaves no error marker (``case_errored.json``).
         """
+        paths = self._job_paths(batch, idx)
+        return None if paths is None else (paths[1], paths[2])
+
+    def _job_paths(
+        self, batch: tuple[str, ...], idx: int
+    ) -> tuple[Path, Path, str | None] | None:
+        """:meth:`_job_output_dir`, with the sweep directory
+        (``hydra.sweep.dir``, absolute) first: where the sweep's plan goes."""
         assert self.config is not None
         try:
             if self.hydra_context is None:
@@ -543,6 +562,7 @@ class LaneletConstraintSweeper(Sweeper):
             hydra_config.set_config(sweep_config)
             try:
                 directory = str(OmegaConf.select(sweep_config, "hydra.sweep.dir"))
+                sweep_dir = directory
                 subdir = OmegaConf.select(sweep_config, "hydra.sweep.subdir")
                 if subdir is not None:
                     directory = os.path.join(directory, str(subdir))
@@ -559,7 +579,54 @@ class LaneletConstraintSweeper(Sweeper):
             )
             return None
         job_log = f"{job_name}.log" if job_name is not None else None
-        return Path(os.path.abspath(directory)), job_log
+        return (
+            Path(os.path.abspath(sweep_dir)),
+            Path(os.path.abspath(directory)),
+            job_log,
+        )
+
+    def _plan_jobs(
+        self, batches: list[tuple[str, ...]], idx_offset: int
+    ) -> list[tuple[Path, str | None] | None]:
+        """The directory and job log of each of *batches* (job
+        ``idx_offset + i``), as :meth:`_job_output_dir` gives them, after
+        writing the sweep's plan of them (``sweep_plan.json``,
+        :mod:`..gate.sweep_plan`) into its sweep directory, merged into any
+        plan an earlier sweep left there (a ``--resume-from`` rerun into the
+        same ``hydra.sweep.dir`` keeps the jobs it skips).
+
+        A job whose directory cannot be told is left out of the plan; a plan
+        that cannot be written is logged, and the sweep runs anyway.
+        """
+        found = [
+            self._job_paths(batch, local_idx + idx_offset)
+            for local_idx, batch in enumerate(batches)
+        ]
+        plans: dict[Path, list[tuple[Path, list[str]]]] = {}
+        for batch, paths in zip(batches, found):
+            if paths is not None:
+                plans.setdefault(paths[0], []).append((paths[1], list(batch)))
+        unplanned = sum(1 for paths in found if paths is None)
+        if unplanned:
+            logger.warning(
+                "%d job(s) of the sweep are left out of its plan: their "
+                "output directory cannot be told; scenario-gate will not see "
+                "them if they never run.",
+                unplanned,
+            )
+        for sweep_dir, jobs in plans.items():
+            try:
+                path = write_sweep_plan(sweep_dir, jobs)
+            except OSError as exc:
+                logger.warning(
+                    "Cannot write the sweep's plan in %s (%s); scenario-gate "
+                    "will not see the jobs it never runs.",
+                    sweep_dir,
+                    exc,
+                )
+            else:
+                logger.info("Planned %d job(s) in %s.", len(jobs), path)
+        return [None if paths is None else (paths[1], paths[2]) for paths in found]
 
     def sweep(self, arguments: list[str]) -> Any:
         """Execute the constraint-based sweep.
@@ -747,7 +814,12 @@ class LaneletConstraintSweeper(Sweeper):
         else:
             idx_offset = 0
 
-        # -- 9. Launch batches one-by-one via fork isolation --
+        # -- 9. Plan the jobs, so that scenario-gate sees those a sweep killed
+        # before it reached them never ran (#1833).  After every refusal
+        # above: a sweep refused before it runs leaves no plan.
+        job_dirs = self._plan_jobs(batches, idx_offset)
+
+        # -- 10. Launch batches one-by-one via fork isolation --
         all_returns: list[Any] = []
         failed_count = 0
         timed_out_count = 0
@@ -764,16 +836,12 @@ class LaneletConstraintSweeper(Sweeper):
             # an earlier sweep wrote in): a retry removes only what the
             # failed attempts of this job left (#1373).  The directory is
             # also where a job given up leaves its marker (#1830).
-            job_dir = self._job_output_dir(batch, idx)
+            job_dir = job_dirs[local_idx]
             stems_before = (
                 _run_output_stems(job_dir[0], job_dir[1])
                 if job_dir is not None and max_attempts > 1
                 else set()
             )
-            if job_dir is not None:
-                # A marker an earlier sweep left in the same directory: this
-                # run of the job decides afresh.
-                _remove_marker(job_dir[0])
             for attempt in range(max_attempts):
                 # Cooldown in the parent process (no CARLA state, SIGSEGV-safe).
                 # Skip cooldown before the very first job of this run.
@@ -807,6 +875,12 @@ class LaneletConstraintSweeper(Sweeper):
                         )
                         remove_run_outputs(directory, stem)
 
+                # The job did not finish, until it ends with a verdict: a
+                # sweep killed with it (a segfault, the OOM killer, SIGKILL)
+                # leaves this marker, which scenario-gate refuses the sweep
+                # for (#1833).  It replaces any an earlier sweep left in the
+                # same directory, so this run of the job decides afresh.
+                _write_unfinished_marker(job_dir, batch, attempt + 1)
                 logger.info(
                     "[%d/%d] Launching (attempt %d/%d): %s",
                     idx + 1,
@@ -885,6 +959,12 @@ class LaneletConstraintSweeper(Sweeper):
             # Result JSON is written to disk by the child; parent only
             # tracks success/failure.
             all_returns.append(None)
+            if (succeeded or exit_code == _FAILED_VERDICT_EXIT_CODE) and (
+                job_dir is not None
+            ):
+                # Ended with a verdict, passed or failed: its run wrote its
+                # result (and gate record), and is judged.
+                _remove_marker(job_dir[0])
             if not succeeded:
                 # Distinguish timeouts from other failures for the summary.
                 if exit_code is None:
@@ -937,14 +1017,29 @@ def _marker_reason(exit_code: int | None, timeout: int | None = None) -> str:
 
 
 def _remove_marker(directory: Path) -> None:
-    """Remove the marker (``case_errored.json``) an earlier run of a job left
-    in *directory*; logged, never raised, when it cannot be."""
+    """Remove the marker (``case_errored.json``) of a job that ended with a
+    verdict from *directory*; logged, never raised, when it cannot be."""
     try:
-        if remove_case_errored(directory):
-            logger.info("Removed the stale error marker in %s.", directory)
+        remove_case_errored(directory)
+    except OSError as exc:
+        logger.warning("Cannot remove the error marker in %s (%s).", directory, exc)
+
+
+def _write_unfinished_marker(
+    job_dir: tuple[Path, str | None] | None, batch: tuple[str, ...], attempt: int
+) -> None:
+    """Give a job the marker saying it did not finish
+    (:func:`..gate.errored.write_case_unfinished`) before its attempt
+    *attempt* (from 1); logged, never raised, when it cannot be.  Nothing
+    when its directory is not known (:meth:`LaneletConstraintSweeper._job_output_dir`
+    logged why)."""
+    if job_dir is None:
+        return
+    try:
+        write_case_unfinished(job_dir[0], overrides=list(batch), attempt=attempt)
     except OSError as exc:
         logger.warning(
-            "Cannot remove the stale error marker in %s (%s).", directory, exc
+            "Cannot write the unfinished-job marker in %s (%s).", job_dir[0], exc
         )
 
 

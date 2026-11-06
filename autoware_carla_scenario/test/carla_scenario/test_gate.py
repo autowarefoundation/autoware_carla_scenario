@@ -1328,3 +1328,111 @@ class TestErroredJobs:
         assert unrecorded_cases(tmp_path) == []
         assert main([str(tmp_path)]) == EXIT_PASSED
         assert capsys.readouterr().err == ""
+
+
+class TestSweepPlan:
+    """A lanelet sweep of 5 jobs, killed in job 3: its plan
+    (``sweep_plan.json``) lists every job, jobs 1-2 wrote a record, job 3
+    left its unfinished marker, and jobs 4-5 never started (#1833)."""
+
+    def _sweep(self, root: Path, ran: int = 2, killed: bool = True) -> None:
+        from autoware_carla_scenario.gate.errored import write_case_unfinished
+        from autoware_carla_scenario.gate.sweep_plan import write_sweep_plan
+
+        write_sweep_plan(root, [(root / str(i), [f"+case={i}"]) for i in range(5)])
+        for i in range(ran):
+            job = root / str(i)
+            job.mkdir(parents=True)
+            _write(job, "App", _record(gate={"min_success_rate": 0.5}))
+        if killed:
+            write_case_unfinished(root / str(ran), overrides=[], attempt=1)
+
+    def test_planned_jobs_that_never_ran_are_refused(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        self._sweep(tmp_path)
+        lines = unrecorded_cases(tmp_path)
+        assert len(lines) == 2
+        assert "1 job(s) of the sweep" in lines[0]
+        assert "2 (did not finish" in lines[0]
+        assert lines[1] == (
+            f"{tmp_path}: 2 of 5 planned job(s) of the sweep never ran, and "
+            "left no gate record (3, 4); the gate would be judged over the "
+            "runs that survived"
+        )
+        assert batch_read_errors(tmp_path) == []
+        assert main([str(tmp_path)]) == EXIT_ERROR
+        assert "never ran" in capsys.readouterr().err
+
+    def test_allow_unrecorded_judges_the_records_there_are(
+        self, tmp_path: Path
+    ) -> None:
+        self._sweep(tmp_path)
+        assert main([str(tmp_path), "--allow-unrecorded"]) == EXIT_PASSED
+
+    def test_a_complete_sweep_is_judged_as_before(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        self._sweep(tmp_path, ran=5, killed=False)
+        assert unrecorded_cases(tmp_path) == []
+        assert main([str(tmp_path)]) == EXIT_PASSED
+        assert capsys.readouterr().err == ""
+
+    def test_a_job_with_a_result_and_no_record_ran(self, tmp_path: Path) -> None:
+        """A scenario without a gate writes a result and no record: its job
+        ran, and is no concern of the gate."""
+        from autoware_carla_scenario.gate.sweep_plan import write_sweep_plan
+
+        write_sweep_plan(tmp_path, [(tmp_path / "0", ["+case=0"])])
+        (tmp_path / "0").mkdir()
+        (tmp_path / "0" / "App_result.json").write_text('{"passed": true}')
+        assert unrecorded_cases(tmp_path) == []
+
+    def test_an_unreadable_plan_is_refused_either_way(self, tmp_path: Path) -> None:
+        self._sweep(tmp_path, ran=5, killed=False)
+        (tmp_path / "sweep_plan.json").write_text("{not json")
+        assert unrecorded_cases(tmp_path) == []
+        (line,) = batch_read_errors(tmp_path)
+        assert "the sweep plan cannot be read" in line
+        assert main([str(tmp_path), "--allow-unrecorded"]) == EXIT_ERROR
+
+    def test_planning_again_keeps_the_jobs_it_does_not_run(
+        self, tmp_path: Path
+    ) -> None:
+        """A ``--resume-from 3`` rerun into the same directory plans jobs
+        2-4 again, and keeps jobs 0-1, which it skips."""
+        import json as json_module
+
+        from autoware_carla_scenario.gate.sweep_plan import (
+            read_sweep_plan,
+            write_sweep_plan,
+        )
+
+        self._sweep(tmp_path)
+        write_sweep_plan(
+            tmp_path, [(tmp_path / str(i), [f"+case={i}", "+new"]) for i in (2, 3, 4)]
+        )
+        jobs = read_sweep_plan(tmp_path / "sweep_plan.json")
+        assert [(j.name, o) for j, o in jobs] == [
+            ("0", ["+case=0"]),
+            ("1", ["+case=1"]),
+            ("2", ["+case=2", "+new"]),
+            ("3", ["+case=3", "+new"]),
+            ("4", ["+case=4", "+new"]),
+        ]
+        # Relative to the plan: a sweep directory moved whole keeps its plan.
+        data = json_module.loads((tmp_path / "sweep_plan.json").read_text())
+        assert [j["dir"] for j in data["jobs"]] == ["0", "1", "2", "3", "4"]
+
+    def test_a_job_outside_the_sweep_directory_is_written_absolute(
+        self, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario.gate.sweep_plan import (
+            read_sweep_plan,
+            write_sweep_plan,
+        )
+
+        elsewhere = tmp_path / "elsewhere" / "0"
+        write_sweep_plan(tmp_path / "sweep", [(elsewhere, [])])
+        ((job, _),) = read_sweep_plan(tmp_path / "sweep" / "sweep_plan.json")
+        assert job == elsewhere
