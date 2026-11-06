@@ -183,7 +183,7 @@ tried instead.
 
 Only the gate's own directories (the default and the fallbacks; a configured
 path that is one of them counts as one) are ever changed, and every removal
-from one is made under an exclusive lock on the directory itself, after
+of a lock or of another user's file from one is made under an exclusive lock on the directory itself, after
 checking again what it removes, so no two builds change it at once. The
 gate's builds hold that lock for microseconds. No one else can open the
 directory once it is `0o700`, but a descriptor someone opened while it was

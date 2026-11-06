@@ -13,6 +13,7 @@ import fcntl
 import logging
 import multiprocessing
 import os
+import stat
 import threading
 import time
 from collections.abc import Callable
@@ -1245,3 +1246,27 @@ def test_the_gate_s_own_directory_whose_lock_is_held_elsewhere_is_given_up(
     assert crowd.most == 1
     assert (lock.stat().st_mode & 0o777) == 0o644  # left as it was
     assert not list(default_gate.glob("*.hold"))
+
+
+def test_the_gate_s_own_directory_that_cannot_be_locked_is_given_up(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # NFS refuses an exclusive flock on a read-only descriptor (EBADF): the
+    # directory is given up on and the build falls back, gated.
+    default_gate.mkdir(mode=0o700)
+    lock = default_gate / "gate.lock"
+    lock.write_text("")
+    lock.chmod(0o644)  # to be removed, under the directory's lock
+    real = memory_gate._try_lock
+
+    def refuse(fcntl_module, fd, deadline, *rest, **kwargs):  # type: ignore[no-untyped-def]
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            raise OSError(errno.EBADF, "Bad file descriptor")
+        return real(fcntl_module, fd, deadline, *rest, **kwargs)
+
+    monkeypatch.setattr(memory_gate, "_try_lock", refuse)
+    crowd = _Crowd(fallbacks)
+    crowd.build()
+    crowd.build()
+    assert crowd.gated == [True, True]
+    assert crowd.most == 1

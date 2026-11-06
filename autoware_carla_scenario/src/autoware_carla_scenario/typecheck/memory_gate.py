@@ -444,7 +444,16 @@ def _dir_locked(fcntl: ModuleType, dir_fd: int) -> Iterator[None]:
     :class:`_DirectoryHeld` if it is not taken within :data:`_REPLACE_WAIT_S`
     -- held through a descriptor of the directory someone opened while it was
     open to others, so the directory is given up on (:func:`_forsake`)."""
-    if not _try_lock(fcntl, dir_fd, time.monotonic() + _REPLACE_WAIT_S):
+    try:
+        taken = _try_lock(fcntl, dir_fd, time.monotonic() + _REPLACE_WAIT_S)
+    except OSError as error:
+        # A directory whose lock cannot be taken at all (NFS refuses an
+        # exclusive flock on a read-only descriptor: EBADF) is given up on
+        # like one held elsewhere, so the build falls back, gated.
+        raise _DirectoryHeld(
+            error.errno or errno.EIO, f"its lock cannot be taken ({error})"
+        ) from error
+    if not taken:
         raise _DirectoryHeld(
             errno.ETIMEDOUT,
             f"its lock held elsewhere for over {_REPLACE_WAIT_S:g} s",
