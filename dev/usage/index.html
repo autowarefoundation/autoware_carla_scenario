@@ -4137,11 +4137,20 @@ with the same message, naming the scenario. They refuse an invalid sweep (a
 Lanelet2 map that is missing, unreadable or cannot be resolved, ...) the same
 way, <code>Error: &lt;scenario&gt;: &lt;why&gt;</code>; a batch or <code>scenario-expand</code> of a glob
 reports every scenario refused, not just the first, and runs or lists nothing.
-The sweeper refuses such a map too, before anything runs, exit 1:
-<code>LaneletConstraintSweeper: &lt;why&gt;</code>, naming the map -- a <code>map.directory</code> that
-does not exist, a <code>map.source</code> that cannot be fetched, a map cache whose root
-is not a directory (<code>AUTOWARE_DATA_DIR</code> naming a file), a
-<code>map.lanelet2_path</code> that is missing or that Lanelet2 cannot read.</p>
+The sweeper (<code>hydra/sweeper=lanelet_constraint</code>, a single scenario's
+<code>--multirun</code>) refuses an invalid sweep the same way, before any case runs:
+one line on stderr, <code>Error: &lt;scenario&gt;: &lt;why&gt;</code>, exit 1, no traceback. These
+are a config with no <code>sweep</code> section, <code>sweep.constraints</code> naming more than
+one key, what the expansion refuses (a <code>sweep.case_index</code> past its cases, a
+constraint or binding that does not parse, a <code>sweep.odd_sample</code> setting or
+<code>weights</code> file it refuses, ...), and a Lanelet2 map it cannot load, whose
+<code>&lt;why&gt;</code> is <code>LaneletConstraintSweeper: &lt;why&gt;</code>, naming the map: a
+<code>map.directory</code> that does not exist, a <code>map.source</code> that cannot be fetched, a
+map cache whose root is not a directory (<code>AUTOWARE_DATA_DIR</code> naming a file),
+or a <code>map.lanelet2_path</code> that is missing or that Lanelet2 cannot read. With
+<code>HYDRA_FULL_ERROR=1</code> each is raised instead, traceback and all. Every other
+error the sweeper meets keeps Hydra's traceback, invalid <code>controls</code> among
+them.</p>
 <p>Ctrl-C or <code>SIGTERM</code> stops the sweep and the case it is running. The case is
 sent <code>SIGTERM</code>, so it stops its CARLA server and Autoware stack as on Ctrl-C,
 and <code>SIGKILL</code> if it is still running 30 s later (a second Ctrl-C does not
@@ -6368,7 +6377,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 10:08:40 UTC"><span class="timeago" datetime="2026-11-05T10:08:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 10:08:40 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 23:59:35 UTC"><span class="timeago" datetime="2026-11-05T23:59:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 23:59:35 UTC">2026-11-05</span>
   </span>
 
     
