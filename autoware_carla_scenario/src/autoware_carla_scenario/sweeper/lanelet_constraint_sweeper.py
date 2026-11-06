@@ -164,8 +164,10 @@ def _read_verdict(output_dir: Path) -> bool | None:
     Returns:
         ``True`` if the scenario passed, ``False`` if it ran and failed, or
         ``None`` if there is no verdict: no result JSON (the run raised
-        before :class:`ScenarioRunner` could write it) or one that cannot be
-        read.
+        before :class:`ScenarioRunner` could write it), one that cannot be
+        read, or one whose ``passed`` is missing or not a JSON boolean
+        (``"false"`` and ``1`` are no verdict, not a pass, as the viewer and
+        the gate read them).
     """
     result_file = last_result_path(output_dir)
     if result_file is None:
@@ -176,7 +178,8 @@ def _read_verdict(output_dir: Path) -> bool | None:
         return None
     if not isinstance(data, dict):
         return None
-    return bool(data.get("passed", True))
+    passed = data.get("passed")
+    return passed if isinstance(passed, bool) else None
 
 
 def _get_job_output_dir(ret: JobReturn) -> str | None:
