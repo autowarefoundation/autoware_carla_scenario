@@ -1764,6 +1764,43 @@ def test_the_driver_bridge_is_moved_to_the_task_s_port(
     )
 
 
+def test_an_autoware_group_without_an_address_is_moved_too() -> None:
+    """``autoware`` without ``address`` listens on AutowareBridgeConfig's
+    default, every task's on the node (#1885)."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    cfg = run._compose_config(_CONCRETE, ["ego.entity=autoware", "~autoware.address"])
+    changes = worker_overrides(cfg, PortSlot(index=0, base=20000))
+    assert changes["autoware.address"] == "localhost:20004"
+    assert cfg.autoware.address == "localhost:20004"
+
+
+def test_a_ros2_group_without_a_domain_gets_the_task_s_own(tmp_path: Path) -> None:
+    """``ros2`` without ``domain_id`` joins Ros2EgoConfig's default, 0, which
+    two tasks on a node would share (#1885)."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot, RosDomains
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    overrides = ["ego.entity=ros2", "~ros2.domain_id"]
+    first, second = RosDomains(tmp_path), RosDomains(tmp_path)
+    try:
+        taken = []
+        for index, domains in ((0, first), (1, second)):
+            cfg = run._compose_config(_CONCRETE, overrides)
+            slot = PortSlot(index=index, base=20000 + 10 * index)
+            changes = worker_overrides(cfg, slot, domains)
+            assert cfg.ros2.domain_id == changes["ros2.domain_id"]
+            taken.append(changes["ros2.domain_id"])
+        assert taken[0] == 0
+        assert taken[0] != taken[1]
+    finally:
+        first.release()
+        second.release()
+
+
 def test_no_driver_bridge_is_left_without_one() -> None:
     from autoware_carla_scenario.examples import run
     from autoware_carla_scenario.slurm.ports import PortSlot

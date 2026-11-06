@@ -137,6 +137,11 @@ class _RssSampler(threading.Thread):
         )
 
 
+#: The keys :func:`worker_overrides` may write where the config leaves them
+#: out, its dataclass default standing in for them.
+_DEFAULTED = frozenset({"autoware.address", "driver.bridge.address", "ros2.domain_id"})
+
+
 def worker_overrides(
     cfg: "DictConfig", slot: PortSlot, domains: RosDomains | None = None
 ) -> dict[str, Any]:
@@ -161,28 +166,27 @@ def worker_overrides(
         "server.port": slot.rpc,
         "traffic_manager.port": slot.traffic_manager,
     }
+    # A bridge that names no address of its own listens on
+    # AutowareBridgeConfig's default, which every task on the node would then
+    # share (#1883, #1885).
+    from autoware_carla_scenario.autoware_bridge.base import (  # noqa: PLC0415
+        AutowareBridgeConfig,
+    )
+
     autoware = cfg.get("autoware")
-    if autoware is not None and autoware.get("address"):
-        changes["autoware.address"] = _with_port(autoware.address, slot.autoware_bridge)
+    if autoware is not None:
+        address = autoware.get("address") or AutowareBridgeConfig.address
+        changes["autoware.address"] = _with_port(address, slot.autoware_bridge)
     driver = cfg.get("driver")
     bridge = None if driver is None else driver.get("bridge")
     if bridge is not None:
-        # A bridge that names no address of its own listens on
-        # AutowareBridgeConfig's default, which every task on the node would
-        # then share (#1883).
-        from autoware_carla_scenario.autoware_bridge.base import (  # noqa: PLC0415
-            AutowareBridgeConfig,
-        )
-
         address = bridge.get("address") or AutowareBridgeConfig.address
         changes["driver.bridge.address"] = _with_port(address, slot.driver_bridge)
     if domains is not None:
         changes.update(_domain_overrides(cfg, domains))
     for key, value in changes.items():
-        # force_add for the bridge: its mapping need not hold the address key.
-        OmegaConf.update(
-            cfg, key, value, merge=False, force_add=key == "driver.bridge.address"
-        )
+        # force_add: a group need not hold the key its default stands for.
+        OmegaConf.update(cfg, key, value, merge=False, force_add=key in _DEFAULTED)
     tm_key = _backend_tm_port_key(cfg, slot.traffic_manager)
     if tm_key is not None:
         changes[tm_key] = slot.traffic_manager
@@ -236,10 +240,13 @@ def _domain_overrides(cfg: "DictConfig", domains: RosDomains) -> dict[str, Any]:
         ego is not None
         and str(ego.get("entity", "autopilot")) == "ros2"
         and ros2 is not None
-        and ros2.get("domain_id") is not None
     ):
+        # A ros2 group without domain_id joins Ros2EgoConfig's default, which
+        # every task on the node would then share (#1885).
+        from ..ros2.config import Ros2EgoConfig  # noqa: PLC0415
+
         key = "ros2.domain_id"
-        wanted = check_whole_number(key, ros2.get("domain_id"))
+        wanted = check_whole_number(key, ros2.get("domain_id", Ros2EgoConfig.domain_id))
         new = wanted not in domains.mapping
         domain = _take_domain(domains, wanted, key)
         if new and domain != wanted:
