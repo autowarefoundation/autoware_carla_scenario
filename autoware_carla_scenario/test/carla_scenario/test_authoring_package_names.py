@@ -2,7 +2,8 @@
 checked :mod:`autoware_carla_scenario.authoring.package_names` (#1695).
 
 The move must not rename the package of any id that exported before; the ids
-whose package would be the framework's own are now refused by the validator.
+whose package would be the framework's own are now refused by the validator,
+and so are the ids of the built-in scenarios (#1808).
 """
 
 from __future__ import annotations
@@ -59,7 +60,7 @@ def _random_ids(count: int) -> list[str]:
 
 
 _FIXED_IDS = [
-    "cut_in",
+    "my_cut_in",
     "cut_in_scenario",
     "stop__line",
     "stop_line_",
@@ -85,9 +86,9 @@ class TestNames:
         )
 
     def test_package_names_wraps_names_for_id(self) -> None:
-        document = new_document("cut_in")
+        document = new_document("my_cut_in")
         assert package_export.package_names(document) == package_names.names_for_id(
-            "cut_in"
+            "my_cut_in"
         )
 
     def test_the_exporter_re_exports_the_moved_names(self) -> None:
@@ -136,12 +137,64 @@ class TestFrameworkName:
             generator.resolve_names("autoware_carla_scenario")
 
 
+class TestBuiltinScenarioName:
+    """An id that names a built-in scenario is refused (#1808).
+
+    The package registers its builder under the id, so once installed it
+    would replace the built-in one while the built-in configs still select
+    it, as ``scenario-new`` refuses the same name (#1802).
+    """
+
+    @pytest.mark.parametrize("scenario_id", names.BUILTIN_SCENARIO_NAMES)
+    def test_every_built_in_name_is_refused(self, scenario_id: str) -> None:
+        problem = package_names.framework_name_problem(scenario_id)
+        assert problem is not None
+        assert "names a built-in scenario" in problem
+        assert f"scenario={scenario_id}/..." in problem
+        with pytest.raises(ValueError, match="names a built-in scenario"):
+            package_names.names_for_id(scenario_id)
+
+    @pytest.mark.parametrize(
+        "scenario_id", ["my_cut_in", "cut_in_scenario", "cut__in", "lane_change2"]
+    )
+    def test_names_close_to_one_are_not(self, scenario_id: str) -> None:
+        assert package_names.framework_name_problem(scenario_id) is None
+
+    def test_the_message_is_worded_as_scenario_new_words_it(self) -> None:
+        problem = package_names.framework_name_problem("cut_in")
+        with pytest.raises(ValueError) as raised:
+            generator.resolve_names("my_pkg", scenario_name="cut_in")
+        # Both name the reason and the built-in scenarios the same way; only
+        # what to pass instead differs (an id, a ``--scenario``).
+        shared = str(raised.value).split(": ", 1)[1].rsplit(" Pass a", 1)[0]
+        assert problem is not None
+        assert shared in problem
+
+    def test_the_validator_reports_an_id_error(self) -> None:
+        report = validate_document(new_document("cut_in"))
+        assert not report.ok
+        errors = [i for i in report.errors if i.path == "id"]
+        assert len(errors) == 1
+        assert "names a built-in scenario" in errors[0].message
+        assert not [i for i in report.warnings if i.path == "id"]
+
+    def test_the_export_refuses_it_and_writes_nothing(self, tmp_path: Path) -> None:
+        with pytest.raises(
+            package_export.PackageExportError, match="names a built-in scenario"
+        ):
+            package_export.export_package(new_document("cut_in"), tmp_path)
+        assert list(tmp_path.iterdir()) == []
+
+    def test_the_starter_does_not_take_one(self) -> None:
+        assert new_document().id not in names.BUILTIN_SCENARIO_NAMES
+
+
 class TestSharedDirectory:
     """Ids that share a package directory are documented, not warned about."""
 
     @pytest.mark.parametrize(
         "scenario_id",
-        ["cut_in", "cut_in_scenario", "cut__in", "cut_in_", "cut__in_scenario_"],
+        ["cut_in_scenario", "cut__in", "cut_in_", "cut__in_scenario_"],
     )
     def test_ids_share_one_package(self, scenario_id: str) -> None:
         assert (
@@ -149,7 +202,7 @@ class TestSharedDirectory:
         )
 
     @pytest.mark.parametrize(
-        "scenario_id", ["cut_in", "cut_in_scenario", "cut__in", "new_scenario"]
+        "scenario_id", ["cut_in_scenario", "cut__in", "new_scenario"]
     )
     def test_the_validator_does_not_warn(self, scenario_id: str) -> None:
         report = validate_document(new_document(scenario_id))

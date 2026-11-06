@@ -1637,7 +1637,9 @@ def _check_id(out: _Collector, scenario_id: str) -> None:
     An error when that package would be the framework's own
     (``autoware_carla`` and ``autoware_carla_scenario``), so the editor shows
     it before an export starts rather than ``uv lock`` failing on a package
-    that depends on itself.
+    that depends on itself; and when the id names a built-in scenario
+    (``cut_in``, ``lane_change``, ..., #1808), which the installed package
+    would replace.
     """
     problem = framework_name_problem(scenario_id)
     if problem is not None:

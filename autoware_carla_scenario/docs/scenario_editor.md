@@ -835,9 +835,9 @@ a network you trust.
 wheel the scenario needs:
 
 ```
-cut_in-wheelhouse.zip
-`-- cut_in_scenario_wheelhouse/
-    |-- cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
+my_cut_in-wheelhouse.zip
+`-- my_cut_in_scenario_wheelhouse/
+    |-- my_cut_in_scenario-0.1.0-py3-none-any.whl  # the scenario itself
     |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
     |-- typesafe_carla-*.whl                       # the CARLA client, CPython package prebuilt
     |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
@@ -850,10 +850,10 @@ Install it with pip and nothing else -- no `uv`, no `git`, no network, no
 resolution:
 
 ```bash
-unzip cut_in-wheelhouse.zip
+unzip my_cut_in-wheelhouse.zip
 python3 -m venv .venv
-.venv/bin/pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario
-.venv/bin/scenario scenario=cut_in map=nishishinjuku
+.venv/bin/pip install --no-index --find-links my_cut_in_scenario_wheelhouse my-cut-in-scenario
+.venv/bin/scenario scenario=my_cut_in map=nishishinjuku
 ```
 
 The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_carla),
@@ -883,9 +883,10 @@ beside it.
 The package is named after the document's **id**, which is lower-case letters,
 digits and `_`, starting with a letter (`^[a-z][a-z0-9_]*$`). Repeated and
 trailing `_` are collapsed and `_scenario` is appended unless the id already
-ends with it: `cut_in` exports the package `cut_in_scenario` (distribution
-`cut-in-scenario`, directory `cut_in_scenario/`), and the id itself stays the
-scenario's name (`scenario=cut_in`).
+ends with it: `my_cut_in` (the **Cut-in example** starter's id) exports the
+package `my_cut_in_scenario` (distribution `my-cut-in-scenario`, directory
+`my_cut_in_scenario/`), and the id itself stays the scenario's name
+(`scenario=my_cut_in`).
 
 The validator (`authoring/package_names.py`) **refuses** an id whose package
 would be the framework's own, `autoware_carla_scenario`: the ids
@@ -894,9 +895,25 @@ itself and replaces the installed framework, so it is an `id` error, shown
 before an export starts, by the same rule `scenario-new` refuses that name
 with.
 
+It also **refuses** an id that names a built-in scenario (`adversity`,
+`cut_in`, `intersection_passing`, `lane_change`, `pedestrian_dart_out`,
+`temporary_stop`, `traffic_light_compliance`: `scaffold/names.py`'s
+`BUILTIN_SCENARIO_NAMES`). The id is the name the package registers its
+builder under, so once installed the package would replace the built-in
+builder while the built-in configs (`scenario=cut_in/left`, ...) still select
+it and hand it the built-in's config keys. It is an `id` error, `The id
+'cut_in' is reserved: it names a built-in scenario ...`, worded as
+`scenario-new`'s refusal of the same `--scenario`.
+
+`export_package` and `names_for_id`, called directly, refuse it too, before
+writing anything. That is why the Cut-in example starts as `my_cut_in`, not
+`cut_in`. A draft saved from the Cut-in example before this change
+has the id `cut_in`: rename it in the Scenario inspector before exporting it.
+
 Ids that differ only by a trailing `_scenario`, or by doubled or trailing
-`_`, export to the same package and so the same directory: `cut_in`,
-`cut_in_scenario`, `cut__in` and `cut_in_` all export as `cut_in_scenario/`.
+`_`, export to the same package and so the same directory: `my_cut_in`,
+`my_cut_in_scenario`, `my_cut__in` and `my_cut_in_` all export as
+`my_cut_in_scenario/`.
 Exporting one of them with force (replacing an existing package) replaces the
 package another of them exported there. The validator does not warn about
 this, since it cannot know whether the other package exists; pick one id per
@@ -977,11 +994,11 @@ The manifest records only values that were actually observed:
 
 ```yaml
 format_version: 3
-scenario: {id: cut_in, title: Cut in, document_version: 1, package: cut-in-scenario}
+scenario: {id: my_cut_in, title: Cut in, document_version: 1, package: my-cut-in-scenario}
 runtime: {python: 3.12.10, uv: 0.12.0, requires_python: '>=3.10,<3.15'}
 wheelhouse:
-  directory: cut_in_scenario_wheelhouse
-  install: pip install --no-index --find-links cut_in_scenario_wheelhouse cut-in-scenario
+  directory: my_cut_in_scenario_wheelhouse
+  install: pip install --no-index --find-links my_cut_in_scenario_wheelhouse my-cut-in-scenario
   wheels: 104
   python: ['3.10', '3.11', '3.12', '3.13', '3.14']
 autoware_carla_scenario:
@@ -990,13 +1007,13 @@ autoware_carla_scenario:
   commit: 0123456789abcdef0123456789abcdef01234567
   subdirectory: autoware_carla_scenario
 files:
-  document: src/cut_in_scenario/document.yaml
-  hydra_config: src/cut_in_scenario/conf/scenario/cut_in.yaml
+  document: src/my_cut_in_scenario/document.yaml
+  hydra_config: src/my_cut_in_scenario/conf/scenario/my_cut_in.yaml
 notes: []
 ```
 
 A scenario whose map is a source or a directory also lists
-`map_config: src/cut_in_scenario/conf/map/cut_in_map.yaml`, the map group it
+`map_config: src/my_cut_in_scenario/conf/map/my_cut_in_map.yaml`, the map group it
 runs with ([Running an authored scenario](#running-an-authored-scenario)).
 
 Anything that could not be determined is `null` with a note, never a plausible
@@ -1042,10 +1059,10 @@ uses (see [Architecture](architecture.md)) -- installed from its wheelhouse, the
 `scenario` command is on the venv's `PATH`:
 
 ```bash
-.venv/bin/scenario scenario=cut_in map=nishishinjuku
+.venv/bin/scenario scenario=my_cut_in map=nishishinjuku
 
 # Sweep every lanelet the spawn constraints match:
-.venv/bin/scenario --multirun scenario=cut_in map=nishishinjuku \
+.venv/bin/scenario --multirun scenario=my_cut_in map=nishishinjuku \
     hydra/sweeper=lanelet_constraint
 ```
 
@@ -1056,7 +1073,7 @@ scenario whose map is named by a source (picked from the Map library) or a
 the package's README and the Scenario inspector all name it:
 
 ```bash
-.venv/bin/scenario scenario=cut_in map=cut_in_map
+.venv/bin/scenario scenario=my_cut_in map=my_cut_in_map
 ```
 
 ```yaml
@@ -1086,9 +1103,9 @@ before their sweep reads any map (`Error: <name>: ...`, exit 1), the viewer's
 **Run** of a sweep, and `scenario-odd route` (the scenario is not planned):
 
 ```text
-Error: scenario 'cut_in' runs on the map its document names, but map.name is
+Error: scenario 'my_cut_in' runs on the map its document names, but map.name is
 'NishishinjukuMap', not the document's 'Town10HD_Opt'.  Run it with
-map=cut_in_map, the map group its package ships
+map=my_cut_in_map, the map group its package ships
 ```
 
 The package's `register()` registers its document with its builder
@@ -1100,7 +1117,7 @@ the document's is another map, or another revision whose lanelet ids are not the
 ones the document names: move the pin in the document and export again.
 `map.lanelet2_path` and `map.xodr_path` are not compared, since an explicit file
 is how a run points at its own copy of the same map
-(`map=cut_in_map map.xodr_path=/tmp/patched.xodr`).
+(`map=my_cut_in_map map.xodr_path=/tmp/patched.xodr`).
 
 The group never installs an OpenDRIVE into CARLA (`overwrite_xodr: false`),
 even when the document names its own `.xodr`: that file is what the run reads

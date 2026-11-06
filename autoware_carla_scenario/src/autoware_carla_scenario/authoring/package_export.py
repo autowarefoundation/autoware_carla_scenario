@@ -137,7 +137,8 @@ def package_names(document: ScenarioDocument) -> dict[str, str]:
     """Return the naming variants a package exported from *document* needs.
 
     :func:`.package_names.names_for_id` of ``document.id``; raises
-    ``ValueError`` for an id whose package would be the framework's own, which
+    ``ValueError`` for an id whose package would be the framework's own, or
+    that names a built-in scenario, which
     :func:`.validator.validate_document` reports as an error first.
     """
     return names_for_id(document.id)

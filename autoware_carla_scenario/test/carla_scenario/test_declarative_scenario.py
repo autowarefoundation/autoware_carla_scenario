@@ -167,8 +167,8 @@ class TestConstruction:
         from autoware_carla_scenario.authoring.persistence import save_document
 
         path = save_document(new_document(), tmp_path / "document.yaml")
-        config = DeclarativeScenarioConfig(name="cut_in", document_path=str(path))
-        assert _scenario_from(config).document.id == "cut_in"
+        config = DeclarativeScenarioConfig(name="my_cut_in", document_path=str(path))
+        assert _scenario_from(config).document.id == "my_cut_in"
 
     def test_spawn_overrides_reach_the_entity(self) -> None:
         """This is how a swept NPC spawn arrives from the sweeper."""

@@ -303,7 +303,7 @@ class EditorService:
         """Return the directory holding *draft_id*'s staged archive.
 
         Keyed by the draft, not the document: every draft made from one starter
-        shares a document id (``cut_in``, ``new_scenario``), and an archive
+        shares a document id (``my_cut_in``, ``new_scenario``), and an archive
         keyed by that was served by every one of them.
         """
         return self.export_dir / draft_id
