@@ -173,6 +173,48 @@ def test_a_failing_close_does_not_raise() -> None:
     entity.on_scenario_end(clock.world)
 
 
+def test_a_failed_open_is_closed_and_a_later_start_opens_again() -> None:
+    """A transport whose open() fails half-way is not leaked (#1870)."""
+    config = Ros2EgoConfig(sources=_SOURCES, rear_axle_offset_m=-1.4)
+    transport = FakeRos2Transport(config)
+    real_open = transport.open
+    transport.open = MagicMock(  # type: ignore[method-assign]
+        side_effect=[RuntimeError("bad topic"), None]
+    )
+    entity = Ros2EgoEntity(config, transport=transport)
+    entity._vehicle = _actor()
+    clock = _Clock()
+    with pytest.raises(RuntimeError, match="bad topic"):
+        entity.on_scenario_start(clock.world)
+    assert transport.closed == 1
+    assert entity._open is False
+    # The end of the failed attempt does not close it a second time.
+    entity.on_scenario_end(clock.world)
+    assert transport.closed == 1
+
+    transport.open = real_open  # type: ignore[method-assign]
+    entity.on_scenario_start(clock.world)
+    assert transport.opened == 1
+    assert entity._open is True
+    _tick(entity, clock)
+    assert len(transport.published) == 2
+    entity.on_scenario_end(clock.world)
+    assert transport.closed == 2
+
+
+def test_a_failing_close_after_a_failed_open_raises_the_open_s_error() -> None:
+    config = Ros2EgoConfig(sources=_SOURCES, rear_axle_offset_m=-1.4)
+    transport = FakeRos2Transport(config)
+    transport.open = MagicMock(side_effect=RuntimeError("bad topic"))  # type: ignore[method-assign]
+    transport.close = MagicMock(side_effect=OSError("close"))  # type: ignore[method-assign]
+    entity = Ros2EgoEntity(config, transport=transport)
+    entity._vehicle = _actor()
+    with pytest.raises(RuntimeError, match="bad topic"):
+        entity.on_scenario_start(_Clock().world)
+    transport.close.assert_called_once_with()
+    assert entity._open is False
+
+
 # ---------------------------------------------------------------------------
 # Applying commands
 # ---------------------------------------------------------------------------

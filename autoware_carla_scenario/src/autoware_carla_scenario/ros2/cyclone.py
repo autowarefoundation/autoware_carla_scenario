@@ -285,11 +285,32 @@ class CycloneRos2Transport(Ros2EgoTransport):
         self._turn_indicators = None
 
     def open(self) -> None:
+        """Join the domain and create every writer and reader, or none.
+
+        All or nothing: the handles are kept only once everything is made.
+        If a step fails -- Cyclone refusing a topic, say -- the participant,
+        and with it every entity made so far, is deleted and the error
+        raised, so a later :meth:`open` starts afresh instead of finding a
+        participant and returning with no command readers (#1870).
+        """
         if self._participant is not None:
             return
-        config = self._config
-        participant = DomainParticipant(config.domain_id)
+        participant = DomainParticipant(self._config.domain_id)
+        try:
+            self._build(participant)
+        except BaseException:
+            self.close()
+            # Deleted now, not when the traceback, whose frames hold it,
+            # goes.  Deleting a participant deletes every entity it owns, and
+            # Entity.__del__ deletes once: it does nothing when the object is
+            # collected later.
+            participant.__del__()
+            raise
         self._participant = participant
+
+    def _build(self, participant: DomainParticipant) -> None:
+        """Create the writers and readers in *participant* and keep them."""
+        config = self._config
         state_topics: Tuple[Tuple[Optional[str], Any, _Build], ...] = (
             (
                 config.kinematic_state_topic,
@@ -324,7 +345,7 @@ class CycloneRos2Transport(Ros2EgoTransport):
             ),
         )
         published = [(name, t, build) for name, t, build in state_topics if name]
-        self._publishers = [
+        publishers = [
             (
                 DataWriter(
                     participant,
@@ -337,7 +358,7 @@ class CycloneRos2Transport(Ros2EgoTransport):
         ]
         # Reliable, as every other topic here: it matches a best-effort
         # subscriber (ROS 2's sensor-data profile) as well as a reliable one.
-        self._image_writers = [
+        image_writers = [
             DataWriter(
                 participant,
                 Topic(participant, msg.dds_topic(camera.topic), msg.Image),
@@ -345,17 +366,24 @@ class CycloneRos2Transport(Ros2EgoTransport):
             )
             for camera in config.cameras
         ]
-        self._drains = [
+        drains = [
             (source.name, _source_drain(participant, source))
             for source in config.sources
         ]
-        if config.turn_indicators_command_topic:
-            self._turn_indicators = _reader(
+        turn_indicators = (
+            _reader(
                 participant,
                 config.turn_indicators_command_topic,
                 msg.TurnIndicatorsCommand,
                 1,
             )
+            if config.turn_indicators_command_topic
+            else None
+        )
+        self._publishers = publishers
+        self._image_writers = image_writers
+        self._drains = drains
+        self._turn_indicators = turn_indicators
         logger.info(
             "Joined DDS domain %d: publishing %s; commands from %s%s",
             config.domain_id,

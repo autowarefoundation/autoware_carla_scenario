@@ -62,6 +62,55 @@ def _whole_number(owner: str, key: str, value: int) -> int:
     return check_whole_number(f"{owner}: {key}", value)
 
 
+#: The characters of a topic name: ROS 2's, less ``~`` and ``{}``.
+_TOPIC_NAME_CHARACTERS: str = (
+    "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789_/"
+)
+
+
+def _topic_name_problem(name: str) -> str:
+    """Why *name* is not a topic name the entity can use; ``""`` if it is one.
+
+    The ROS 2 name rules, less what a node expands: a name is absolute
+    (``/vehicle/speed``) or relative (``vehicle/speed``, which the entity, in
+    no namespace, takes as ``/vehicle/speed``), made of ``A-Z``, ``a-z``,
+    ``0-9``, ``_`` and ``/``, with no empty token (``//``), no trailing ``/``
+    (so not ``/`` alone) and no token that starts with a digit.  A private
+    name (``~``) and a substitution (``{node}``) are refused: a ROS 2 node
+    expands them, and the entity is not one.  Cyclone itself refuses some of
+    these names (a space, a ``*``), but only as the entity joins the domain,
+    once the ego has spawned (#1870).
+    """
+    if not name:
+        return "it is empty"
+    for character in name:
+        if character == "~" or character == "{" or character == "}":
+            return (
+                "a private name (~) or a substitution ({...}) is expanded by a "
+                "ROS 2 node, which this entity is not: give the name in full"
+            )
+        if character not in _TOPIC_NAME_CHARACTERS:
+            return f"{character!r} is none of A-Z, a-z, 0-9, _ and /"
+    if "//" in name:
+        return "it holds an empty token (//)"
+    if name.endswith("/"):
+        return "it ends with /"
+    for token in name.split("/"):
+        if token and token[0] in "0123456789":
+            return f"its token {token!r} starts with a digit"
+    return ""
+
+
+def _check_topic(key: str, name: str) -> None:
+    """Refuse *name* unless it is a ROS 2 topic name (:func:`_topic_name_problem`);
+    the error names *key*, as the ``domain_id`` check does."""
+    if not isinstance(name, str):
+        raise ValueError(f"{key} must be a ROS 2 topic name, got {name!r}")
+    problem = _topic_name_problem(name)
+    if problem:
+        raise ValueError(f"{key} must be a ROS 2 topic name, got {name!r}: {problem}")
+
+
 @dataclass(frozen=True)
 class CommandSourceConfig:
     """One ROS 2 publisher the ego takes commands from.
@@ -132,6 +181,15 @@ class CommandSourceConfig:
         elif not self.topic:
             raise ValueError(f"command source {self.name!r}: {self.kind} needs a topic")
         owner = f"command source {self.name!r}"
+        # Checked here: Cyclone refuses a bad name only as the entity joins
+        # the domain, once the scenario has started (#1870).
+        for topic_key, topic in (
+            ("topic", self.topic),
+            ("steering_topic", self.steering_topic),
+            ("acceleration_topic", self.acceleration_topic),
+        ):
+            if topic:
+                _check_topic(f"{owner}: {topic_key}", topic)
         # The arbiter compares priorities: a quoted "10" would only fail there,
         # on the first tick two sources are fresh, and a NaN would never win.
         object.__setattr__(
@@ -231,11 +289,11 @@ class Ros2CameraConfig:
         logical_id: The camera's name in logs.
 
     Raises:
-        ValueError: If the topic is empty, the image size is not a positive
-            whole number (``960``, or ``960.0`` kept as the int ``960``; not
-            ``960.5``, a bool or a string), the fps is not positive and
-            finite, the ``fov`` is outside (0, 180) degrees, or the mount is
-            not finite.
+        ValueError: If the topic is not a ROS 2 topic name, the image size
+            is not a positive whole number (``960``, or ``960.0`` kept as the
+            int ``960``; not ``960.5``, a bool or a string), the fps is not
+            positive and finite, the ``fov`` is outside (0, 180) degrees, or
+            the mount is not finite.
     """
 
     topic: str = ""
@@ -256,6 +314,7 @@ class Ros2CameraConfig:
         if not self.topic:
             raise ValueError(f"camera {self.logical_id!r} needs a topic")
         owner = f"camera {self.logical_id!r}"
+        _check_topic(f"{owner}: topic", self.topic)
         # A whole number, as a driver camera's (DriverCameraConfig), kept as
         # an int: CARLA is handed str(image_width), so "960", never "960.0";
         # 960.5, a bool and a string are refused (#1472).
@@ -355,8 +414,10 @@ def _default_sources() -> Tuple[CommandSourceConfig, ...]:
 class Ros2EgoConfig:
     """How the ego meets ROS 2 nodes over DDS.
 
-    Topics are ROS 2 names (``/vehicle/speed``); ``None`` leaves that one
-    unpublished.  Poses are published in the right-handed local frame -- CARLA's
+    Topics are ROS 2 names (``/vehicle/speed``), checked as the config is
+    built (absolute or relative, ``A-Z``, ``a-z``, ``0-9``, ``_`` and ``/``; no
+    ``//``, trailing ``/``, token starting with a digit, ``~`` or ``{}``);
+    ``None`` leaves that one unpublished.  Poses are published in the right-handed local frame -- CARLA's
     world with ``y`` flipped, as CARLA's own ROS 2 interface publishes it -- with
     the origin on the rear axle, Autoware's ``base_link``.
 
@@ -418,6 +479,17 @@ class Ros2EgoConfig:
                 f"{MAX_ROS_DOMAIN_ID}, got {self.domain_id!r}"
             )
         object.__setattr__(self, "domain_id", domain_id)
+        # Each one set; None (or "") leaves it unpublished, or unread.
+        for key, topic in (
+            ("kinematic_state_topic", self.kinematic_state_topic),
+            ("steering_status_topic", self.steering_status_topic),
+            ("speed_topic", self.speed_topic),
+            ("clock_topic", self.clock_topic),
+            ("turn_indicators_command_topic", self.turn_indicators_command_topic),
+            ("turn_indicators_report_topic", self.turn_indicators_report_topic),
+        ):
+            if topic is not None and topic:
+                _check_topic(key, topic)
         if self.on_stale not in ON_STALE_ACTIONS:
             raise ValueError(
                 f"unknown on_stale {self.on_stale!r}, expected one of "
