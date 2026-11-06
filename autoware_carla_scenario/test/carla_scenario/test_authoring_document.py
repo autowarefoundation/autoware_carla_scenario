@@ -70,6 +70,109 @@ class TestStarterDocuments:
         assert any(a.trigger is not None for a in document.actions)
 
 
+class TestNodeIds:
+    """Action and condition node ids are Hydra keys and lookups (#1889)."""
+
+    @staticmethod
+    def _id_errors(document: ScenarioDocument) -> list[tuple[str, str]]:
+        return [
+            (i.path, i.message)
+            for i in validate_document(document).errors
+            if " id " in i.message
+        ]
+
+    @pytest.mark.parametrize("make", [new_document, blank_document])
+    def test_starter_documents_have_no_id_errors(self, make: Any) -> None:
+        assert self._id_errors(make()) == []
+
+    def test_editor_generated_ids_are_accepted(self) -> None:
+        document = new_document()
+        document.actions.append(ActionNode(type="set_speed", actor="npc1"))
+        document.assertions.fail_conditions.append(
+            ConditionNode(type="any", children=[ConditionNode(type="timeout")])
+        )
+        assert self._id_errors(document) == []
+
+    def test_a_dotted_condition_id_is_an_error(self) -> None:
+        document = new_document()
+        nested = document.assertions.pass_conditions[0].children[0]
+        nested.id = "npc.in_lane"
+        errors = self._id_errors(document)
+        assert errors == [
+            (
+                "assertions.pass[0].children[0]",
+                "Condition id 'npc.in_lane' must be lower_snake_case starting "
+                "with a letter: it names the node's Hydra overrides "
+                "(scenario.param_overrides.<id>.<field>).",
+            )
+        ]
+        issue = next(
+            i for i in validate_document(document).errors if " id " in i.message
+        )
+        assert issue.object_id == "npc.in_lane"
+
+    def test_a_dotted_action_id_is_an_error(self) -> None:
+        document = new_document()
+        document.actions[0].id = "cut.in"
+        assert [p for p, m in self._id_errors(document) if "lower_snake" in m] == [
+            "actions[0]"
+        ]
+
+    def test_duplicate_condition_ids_are_an_error(self) -> None:
+        document = new_document()
+        trigger = document.actions[0].trigger
+        assert trigger is not None
+        document.assertions.fail_conditions[0].id = trigger.id
+        assert self._id_errors(document) == [
+            (
+                "assertions.fail[0]",
+                f"Duplicate condition id {trigger.id!r}: the condition at "
+                "actions[0].trigger has it too.",
+            )
+        ]
+
+    def test_a_condition_id_equal_to_an_action_id_is_an_error(self) -> None:
+        document = new_document()
+        document.assertions.pass_conditions[0].id = document.actions[0].id
+        assert self._id_errors(document) == [
+            (
+                "assertions.pass[0]",
+                f"Duplicate condition id {document.actions[0].id!r}: the action "
+                "at actions[0] has it too.",
+            )
+        ]
+
+    def test_duplicate_action_ids_are_reported_once(self) -> None:
+        document = new_document()
+        document.actions.append(
+            ActionNode(id=document.actions[0].id, type="set_speed", actor="npc1")
+        )
+        assert self._id_errors(document) == [
+            (
+                "actions[1]",
+                f"Duplicate action id {document.actions[0].id!r}: the action at "
+                "actions[0] has it too.",
+            )
+        ]
+
+    def test_a_trigger_sharing_its_actions_id_is_an_error(self) -> None:
+        document = new_document()
+        document.actions[0].id = "a_one"
+        assert document.actions[0].trigger is not None
+        document.actions[0].trigger.id = "a_one"
+        assert [p for p, _ in self._id_errors(document)] == ["actions[0].trigger"]
+
+    def test_a_hand_edited_document_loads_and_reports_the_ids(
+        self, tmp_path: Path
+    ) -> None:
+        """Loading does not validate: the draft opens and shows the errors."""
+        document = new_document()
+        document.assertions.pass_conditions[0].id = "Pass-1"
+        path = save_document(document, tmp_path / "document.yaml")
+        loaded = load_document(path)
+        assert [p for p, _ in self._id_errors(loaded)] == ["assertions.pass[0]"]
+
+
 class TestRoundTrip:
     def test_yaml_round_trip_is_lossless(self, tmp_path) -> None:
         document = new_document()
