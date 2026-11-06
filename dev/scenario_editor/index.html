@@ -3949,6 +3949,22 @@ viewer (<a href="../usage/">usage</a>), also refuses them:</p>
   <code>cross-site</code> or <code>same-site</code>, or whose <code>Origin</code> header is not the
   editor's own scheme, host and port (<code>Origin: null</code> included). A request
   with neither header, as curl or a script sends it, is served.</li>
+<li>Two <code>GET</code> routes do more than read, and are refused the same way:
+  the map library with a repository (<code>/maps?repo=...</code>), which runs
+  <code>git ls-remote</code> against it and may clone or fetch it, and the map panel
+  (<code>/draft/&lt;id&gt;/map-view</code>), which parses the map with <code>load_map=1</code> and
+  binds patterns on it. A link from another site to either is answered
+  with 403 and reaches no git server and loads no map. The editor's own
+  links, forms and htmx requests send <code>Sec-Fetch-Site: same-origin</code>, and
+  a URL typed in the address bar or opened from a bookmark sends
+  <code>Sec-Fetch-Site: none</code>; both are served, and so is a request with
+  neither header. Every other <code>GET</code> only reads drafts and files already
+  on disk. This rests on the browser sending <code>Sec-Fetch-Site</code>, which
+  current browsers do for <code>localhost</code> and loopback addresses but not for
+  plain HTTP on another address (<code>--host 0.0.0.0</code>, a LAN address), and
+  which older browsers (Safari before 16.4, Firefox before 90) never
+  send; a link or image from another site then carries neither header
+  and is served.</li>
 <li>Against DNS rebinding, a request whose <code>Host</code> header is not
   <code>localhost</code>, a loopback address (<code>127.0.0.1</code>, <code>::1</code>) or the <code>--host</code> the
   editor is bound to, on any port, is refused with 400. Bound to every
@@ -4073,7 +4089,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 14:08:01 UTC"><span class="timeago" datetime="2026-11-06T14:08:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 14:08:01 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 15:03:48 UTC"><span class="timeago" datetime="2026-11-06T15:03:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 15:03:48 UTC">2026-11-06</span>
   </span>
 
     

@@ -4818,7 +4818,7 @@ lists here. -->
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 302 of the package's 427
 modules (71%; about 91,500 of
-157,500 lines) are <code>CHECKED</code>: the kinematics, the
+157,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6348,7 +6348,7 @@ the first:</p>
 <li><code>editor.app</code>: imports fastapi, web_guard (starlette) and serve_cli (argparse, ipaddress), and authoring.models (pydantic), authoring.hydra_config, authoring.persistence, authoring._builders_generated and editor.service (pydantic, through authoring.models), authoring.registry, trajectory.authoring and editor.forms, and, inside create_app(), editor.routes (fastapi), which are neither checked nor modelled</li>
 <li><code>editor.forms</code>: imports trajectory.authoring and authoring.registry, which are not checked, and authoring.registry has no model; parses form values typed Any</li>
 <li><code>editor.map_preview</code>: imports authoring.models (pydantic) and authoring.hydra_config (yaml, and pydantic through authoring.models), which are not checked and have no model</li>
-<li><code>editor.routes</code>: imports fastapi, starlette, pydantic (<code>ValidationError</code>), and anyio inside a function</li>
+<li><code>editor.routes</code>: imports fastapi, starlette, pydantic (<code>ValidationError</code>), web_guard (starlette), which is not checked, and anyio inside a function</li>
 <li><code>editor.scenario_map</code>: imports authoring.models (pydantic), authoring.hydra_config (yaml, and pydantic through authoring.models) and editor.map_preview, which are not checked and have no model</li>
 <li><code>editor.service</code>: imports yaml, zipfile, stat, uuid and weakref (<code>WeakValueDictionary</code>), which Codon has nothing for, and <code>contextlib.contextmanager</code>; imports serve_cli (argparse, ipaddress), which is not checked; reaches pydantic models through authoring.models; takes form fields as <code>Mapping[str, Any]</code>, which Codon cannot express; the gate fields the inspector edits and how they are shown are the checked editor.gate_fields's, and the name a new row gets the checked editor.naming's</li>
 <li><code>entity.carla_driver_entity</code>: imports carla_driver_interface.driver (<code>TurnIndicator</code>) and carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, driver.renderer (the protocol's messages) and rerun_lidar (<code>active_recorder()</code>; the Rerun SDK; <code>CameraMount</code> is the checked rerun_sensor_mount's, #1688), and, inside functions, driver.hdmap_export (itself excluded) and t4_scene.live (t4_scene.convert; also under <code>TYPE_CHECKING</code>), which are neither checked nor modelled, and <code>active_recording()</code>, <code>offer_driver_sensors()</code> and <code>withdraw_driver_sensors()</code> from t4, which the t4 model does not declare; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)</li>

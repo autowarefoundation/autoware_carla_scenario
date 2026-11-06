@@ -6056,6 +6056,19 @@ refuses them:</p>
   or whose <code>Origin</code> header is not the viewer's own scheme, host and port
   (<code>Origin: null</code> included). A request with neither header, as curl or a
   script sends it, is served.</li>
+<li>One <code>GET</code> can make something: a case's recording
+  (<code>/recording/&lt;session&gt;/&lt;index&gt;.rrd</code>) is converted from its trajectory
+  log, and written, when there is none yet. A request from another site
+  (the same <code>Sec-Fetch-Site</code> and <code>Origin</code> rules) is then refused with 403
+  and converts nothing. A recording already made is served to any page
+  (a Rerun viewer hosted elsewhere may load its URL); the
+  viewer's pages make it first (<code>POST /api/recording/...</code>), and the
+  <em>Download .rrd</em> link, a typed URL (<code>Sec-Fetch-Site: none</code>) and curl
+  are served as before. Every other <code>GET</code> only reads files on disk or
+  queries SLURM. Like the editor's (see the scenario editor's guide),
+  this rests on the browser sending <code>Sec-Fetch-Site</code>, which current
+  browsers do for loopback addresses but not for plain HTTP on another
+  address, and older browsers never send.</li>
 <li>A JSON route (<code>/api/run</code>, <code>/api/run/preview</code>,
   <code>/api/slurm/.../resubmit</code>) refuses a body that is not sent as
   <code>Content-Type: application/json</code> with 415, so a <code>text/plain</code> body, which
@@ -6606,7 +6619,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 14:08:01 UTC"><span class="timeago" datetime="2026-11-06T14:08:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 14:08:01 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 15:03:48 UTC"><span class="timeago" datetime="2026-11-06T15:03:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 15:03:48 UTC">2026-11-06</span>
   </span>
 
     
