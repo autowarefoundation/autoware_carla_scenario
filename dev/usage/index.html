@@ -6068,7 +6068,12 @@ whoever submitted it) follows it through <code>squeue</code> and the records its
 write: each case passed, failed, errored, running, pending or missing (with
 why: its task's state and error), each submission's job and tasks (state,
 host, cases done, peak memory), and the cases as they land, before the batch
-has a summary. Its buttons run <code>scenario-slurm</code> on the batch: <em>Resubmit
+has a summary. A submission with no job id names no job: while its <code>sbatch</code>
+is in flight it reads <em>being submitted</em> and its cases pending; once that
+<code>sbatch</code> timed out it reads <em>sbatch timed out</em>, with when, and its cases
+unknown, since the job may exist all the same (check <code>squeue --me</code>); a record
+its submitter left behind more than 600 s ago reads <em>no job</em>, and its cases
+missing. Its buttons run <code>scenario-slurm</code> on the batch: <em>Resubmit
 missing</em> (the cases with no outcome, including a result with no boolean
 <code>passed</code> or one that cannot be reported -- no string <code>message</code>, no number
 <code>elapsed_seconds</code>, unreadable <code>condition_statuses</code> or <code>failure</code> -- which
@@ -6474,7 +6479,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 06:27:48 UTC"><span class="timeago" datetime="2026-11-06T06:27:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 06:27:48 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 06:55:44 UTC"><span class="timeago" datetime="2026-11-06T06:55:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 06:55:44 UTC">2026-11-06</span>
   </span>
 
     
