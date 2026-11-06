@@ -6002,7 +6002,13 @@ missing</em> (the cases with no outcome, including a result with no boolean
 <code>elapsed_seconds</code>, unreadable <code>condition_statuses</code> or <code>failure</code> -- which
 shows as failed, or that errored), <em>Resubmit failed too</em>
 (<code>--failed</code>), with the array parallelism and cases per task to use, <em>Collect</em>
-(the summary and <code>batch_results.json</code>) and <em>Cancel jobs</em>.</p>
+(the summary and <code>batch_results.json</code>) and <em>Cancel jobs</em>. Each shows the
+command's output, marked failed when the command failed: <em>Collect</em> is marked
+done when it collected the batch, even with cases that failed (exit 1 with a
+new <code>slurm/collected.json</code>), and failed when it could not collect it (an
+<code>Error:</code> such as an unreadable manifest or an unwritable batch directory, a
+traceback, or a <code>scenario-slurm</code> that could not be started or did not end in
+five minutes).</p>
 <p><code>VIEWER_SCENARIO_COMMAND</code> replaces <code>uv run scenario</code> as the command a SLURM
 batch is submitted with (<code>.venv/bin/scenario</code>, say, where <code>uv run</code> must not
 sync the environment).</p>
@@ -6396,7 +6402,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 03:15:57 UTC"><span class="timeago" datetime="2026-11-06T03:15:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 03:15:57 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 03:21:52 UTC"><span class="timeago" datetime="2026-11-06T03:21:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 03:21:52 UTC">2026-11-06</span>
   </span>
 
     
