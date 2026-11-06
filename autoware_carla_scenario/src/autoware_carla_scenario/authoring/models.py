@@ -479,7 +479,7 @@ class Entity(_Node):
     @field_validator("id")
     @classmethod
     def _check_id(cls, value: str) -> str:
-        if not _ID_PATTERN.match(value):
+        if not _ID_PATTERN.fullmatch(value):
             raise ValueError(
                 f"Entity id {value!r} must be lower_snake_case starting with a letter."
             )
@@ -1442,7 +1442,7 @@ class ScenarioDocument(_Node):
     @field_validator("id")
     @classmethod
     def _check_id(cls, value: str) -> str:
-        if not _ID_PATTERN.match(value):
+        if not _ID_PATTERN.fullmatch(value):
             raise ValueError(
                 f"Scenario id {value!r} must be lower_snake_case starting with a letter."
             )
