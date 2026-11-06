@@ -412,7 +412,8 @@ def _update_yaml(yaml_path: Path, lanelet_ids: list[int]) -> None:
     The file is edited as text (see :func:`update_no_3d_model_lanelet_ids_text`)
     and replaced atomically (a symlink's target, not the link itself); when
     the edit cannot be made safely, :class:`YamlUpdateError` is raised and
-    the file is left untouched.
+    the file is left untouched.  A file that cannot be read or written
+    raises ``OSError``.
     """
     raw = yaml_path.read_bytes()
     try:
@@ -794,13 +795,30 @@ def main(argv: Sequence[str] | None = None) -> None:
     # ------------------------------------------------------------------
     # Update YAML config
     # ------------------------------------------------------------------
+    _write_detected_ids(args.yaml_path, no_model_ids)
+
+
+def _write_detected_ids(yaml_path: Path, lanelet_ids: list[int]) -> None:
+    """Write *lanelet_ids* into *yaml_path*, or say how to do it by hand.
+
+    Runs after the long ray-cast pass, so a failure must not be a
+    traceback that loses the result: whether the edit was refused
+    (:class:`YamlUpdateError`) or the file could not be read or written
+    (``OSError``: a read-only filesystem, an unreadable file, a directory
+    and file that are both unwritable), the detected IDs are printed and
+    the process exits with status 1.
+    """
     try:
-        _update_yaml(args.yaml_path, no_model_ids)
+        _update_yaml(yaml_path, lanelet_ids)
     except YamlUpdateError as exc:
         logger.error("%s; the file was not changed", exc)
-        logger.error("Set %s by hand to: %s", NO_3D_MODEL_KEY, no_model_ids)
+        logger.error("Set %s by hand to: %s", NO_3D_MODEL_KEY, lanelet_ids)
         sys.exit(1)
-    logger.info("Updated %s with %d lanelet IDs", args.yaml_path, len(no_model_ids))
+    except OSError as exc:
+        logger.error("%s: %s; the file was not changed", yaml_path, exc)
+        logger.error("Set %s by hand to: %s", NO_3D_MODEL_KEY, lanelet_ids)
+        sys.exit(1)
+    logger.info("Updated %s with %d lanelet IDs", yaml_path, len(lanelet_ids))
 
 
 if __name__ == "__main__":
