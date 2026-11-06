@@ -106,7 +106,7 @@ options of the others (`scenario-slurm <command> --help` says the same):
 | `resubmit` | `--cases-per-task N` | cases a task runs (at least 1); default: the batch's `launcher.cases_per_task` |
 | `resubmit` | `--wait`, `--no-wait` | follow the new submission until it ends and collect, or submit and exit; default: the batch's `launcher.wait`. With nothing to resubmit, it collects at once, but only with an explicit `--wait` (and not with `--dry-run`) |
 | `resubmit` | `--force` | submit even while a job of the batch is queued or running, `squeue` cannot tell whether one is, or another submission of the batch is in flight |
-| `resubmit` | `--dry-run` | print the cases it would resubmit, submitting and collecting nothing, even with `--wait`, and exit 0; it still exits 1 where a resubmit would refuse: a busy batch without `--force`, an unknown `--cases` entry or an out-of-range option |
+| `resubmit` | `--dry-run` | print the cases it would resubmit, submitting and collecting nothing, even with `--wait`, and exit 0; it still exits 1 where a resubmit would refuse: a busy batch without `--force`, an unknown `--cases` entry or an out-of-range option, and on an error reading the batch |
 
 A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message
