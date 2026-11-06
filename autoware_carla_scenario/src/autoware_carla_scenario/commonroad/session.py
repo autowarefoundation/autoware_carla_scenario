@@ -25,7 +25,7 @@ import logging
 import operator
 import os
 import threading
-from concurrent.futures import Future, ThreadPoolExecutor
+from concurrent.futures import FIRST_EXCEPTION, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Optional
@@ -252,14 +252,45 @@ def _start_workers(carla_map: Any, name: str) -> list[CommonRoadWorker]:
     logger.info(
         "starting %d CommonRoad workers: %s", settings.workers, " ".join(command)
     )
+    # Every worker whose process runs, its map given or not, so that an
+    # interrupt closes it: in a session of its own, Ctrl-C does not reach it,
+    # and the pool (closed at exit) does not hold it yet (#1780).
+    spawned: list[CommonRoadWorker] = []
+    spawned_lock = threading.Lock()
+    interrupted = False
+
+    def on_start(worker: CommonRoadWorker) -> None:
+        with spawned_lock:
+            if interrupted:
+                # Started after the snapshot below: the worker closes itself.
+                raise CommonRoadWorkerError("interrupted while starting")
+            spawned.append(worker)
+
     # Started together: each spends its first seconds importing CommonRoad.
-    with ThreadPoolExecutor(settings.workers) as starting:
-        futures: list[Future[CommonRoadWorker]] = [
-            starting.submit(
-                CommonRoadWorker, command, map_path, settings.worker_settings()
-            )
-            for _ in range(settings.workers)
-        ]
+    starting = ThreadPoolExecutor(settings.workers)
+    futures: list[Future[CommonRoadWorker]] = [
+        starting.submit(
+            CommonRoadWorker,
+            command,
+            map_path,
+            settings.worker_settings(),
+            on_start=on_start,
+        )
+        for _ in range(settings.workers)
+    ]
+    try:
+        wait(futures)
+    except BaseException:
+        # Not ``with``: its exit would wait for every worker to take the map.
+        starting.shutdown(wait=False, cancel_futures=True)
+        with spawned_lock:
+            interrupted = True
+            closing = list(spawned)
+        # A worker still waiting for its init answer reads the end of its
+        # output once closed, and raises in its own thread.
+        _close_all(closing)
+        raise
+    starting.shutdown()
     started = [f.result() for f in futures if f.exception() is None]
     failed = [f.exception() for f in futures if f.exception() is not None]
     if failed:
@@ -294,11 +325,16 @@ def evaluate_commonroad(
         read = read_frame(world, settings.radius_m)  # type: ignore[arg-type]
         requests.append(None if read is None else (read.ego, read.others))
     reported: set[str] = set()
+    # Set when the evaluation is given up: the shares stop at their next
+    # frame rather than evaluate the rest of theirs (#1780).
+    stop = threading.Event()
 
     def share(k: int) -> list[tuple[int, dict[str, Optional[float]], dict[str, str]]]:
         worker = workers[k]
         done = []
         for i in range(k, len(frames), len(workers)):
+            if stop.is_set():
+                break
             request = requests[i]
             if request is None:
                 continue
@@ -306,16 +342,34 @@ def evaluate_commonroad(
             done.append((i, got, errors))
         return done
 
+    # Not ``with``: on an interrupt its exit would wait for every share to
+    # evaluate all of its frames before the workers are closed (#1780).
+    pool = ThreadPoolExecutor(len(workers))
+    futures = [pool.submit(share, k) for k in range(len(workers))]
     try:
-        with ThreadPoolExecutor(len(workers)) as pool:
-            shares = list(pool.map(share, range(len(workers))))
+        wait(futures, return_when=FIRST_EXCEPTION)
+        for future in futures:
+            if future.done() and future.exception() is not None:
+                raise future.exception()  # type: ignore[misc]
+        shares = [future.result() for future in futures]
     except BaseException:
+        stop.set()
+        pool.shutdown(wait=False, cancel_futures=True)
         # A worker that failed, answered out of protocol or was interrupted
         # mid-request is not reused: the next run starts the pool afresh.
+        # Closing it also ends the requests of the shares still running:
+        # they read the end of its output, and raise in their own threads.
         with _POOL_LOCK:
             if _POOL.workers is workers:
                 close_commonroad_workers()
+        # Bounded: a share is not waited for longer than a worker's closing.
+        # Not those cancelled before they ran, which wait() never sees done.
+        wait(
+            [future for future in futures if not future.cancelled()],
+            timeout=_SHARES_JOIN_S,
+        )
         raise
+    pool.shutdown()
     for done in shares:
         for i, got, errors in done:
             for key in keys:
@@ -327,6 +381,11 @@ def evaluate_commonroad(
     return values
 
 
+#: How long :func:`evaluate_commonroad`, given up, waits for its shares to
+#: stop once their workers are closed, in seconds.
+_SHARES_JOIN_S = 5.0
+
+
 def close_commonroad_workers() -> None:
     """Stop the workers, if any run."""
     with _POOL_LOCK:
@@ -336,10 +395,29 @@ def close_commonroad_workers() -> None:
 
 
 def _close_all(workers: list[CommonRoadWorker]) -> None:
-    """Close each of *workers*: one that cannot be closed neither stops the
-    others' closing nor masks the error being raised, if any."""
-    for worker in workers:
+    """Close each of *workers*, all at once: one that cannot be closed neither
+    stops the others' closing nor masks the error being raised, if any.
+
+    At once, so that stuck workers take one close timeout, not one each.
+    Each close is bounded, so the threads are joined without a bound.
+    """
+
+    def close(worker: CommonRoadWorker) -> None:
         try:
             worker.close()
         except Exception:  # noqa: BLE001
             logger.warning("could not close a CommonRoad worker", exc_info=True)
+
+    if len(workers) == 1:
+        close(workers[0])
+        return
+    threads = [
+        threading.Thread(
+            target=close, args=(worker,), name="commonroad-close", daemon=False
+        )
+        for worker in workers
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()

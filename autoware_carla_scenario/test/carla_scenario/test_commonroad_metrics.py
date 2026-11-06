@@ -10,12 +10,14 @@ one when the ``commonroad_metrics`` environment is there.
 
 from __future__ import annotations
 
+import contextlib
 import json
 import logging
 import math
 import os
 import platform
 import re
+import signal
 import sys
 import textwrap
 from pathlib import Path
@@ -1336,6 +1338,292 @@ def test_closing_a_worker_that_has_exited_is_fine(
             worker.evaluate([CRIME_TTC_S], {}, [])
     finally:
         _kill(process)
+
+
+# ---------------------------------------------------------------------------
+# Interrupts, and workers under a wrapper (#1780)
+# ---------------------------------------------------------------------------
+
+#: A worker run by :data:`_WRAPPER`: it answers its ``init``, having written
+#: its pid to ``sys.argv[1]``, and then ignores the end of its input and
+#: sleeps, as a worker deep in an evaluation would.
+_IGNORES_EOF = textwrap.dedent(
+    """
+    import json, os, sys, time
+
+    json.loads(sys.stdin.readline())
+    with open(sys.argv[1] + ".tmp", "w") as f:
+        f.write(str(os.getpid()))
+    os.replace(sys.argv[1] + ".tmp", sys.argv[1])
+    sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+    sys.stdout.flush()
+    for line in sys.stdin:
+        pass
+    while True:
+        time.sleep(60)
+    """
+)
+
+#: A wrapper that, as ``uv run`` does, runs the worker as its child and waits
+#: for it: killing the wrapper alone leaves the worker running.
+_WRAPPER = textwrap.dedent(
+    """
+    import subprocess, sys
+
+    sys.exit(subprocess.call([sys.executable] + sys.argv[1:]))
+    """
+)
+
+#: A worker that reads its requests and answers none, ``init`` included,
+#: exiting at the end of its input.
+_NEVER_ANSWERS = textwrap.dedent(
+    """
+    import sys
+
+    for line in sys.stdin:
+        pass
+    """
+)
+
+
+def _gone(pid: int) -> bool:
+    """Whether *pid* no longer runs (a zombie waiting for its reaper does
+    not)."""
+    try:
+        os.kill(pid, 0)
+    except ProcessLookupError:
+        return True
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return True
+    return stat.rsplit(")", 1)[1].split()[0] == "Z"
+
+
+def _eventually(check: Any, seconds: float) -> bool:
+    """Whether *check()* holds within *seconds*."""
+    import time
+
+    deadline = time.monotonic() + seconds
+    while not check():
+        if time.monotonic() > deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def _kill_pid_running(pid: int, script: Path) -> None:
+    """Kill *pid* if it still runs *script* (a process the test started)."""
+    try:
+        cmdline = Path(f"/proc/{pid}/cmdline").read_bytes()
+    except OSError:
+        return
+    if str(script).encode() in cmdline:
+        with contextlib.suppress(ProcessLookupError):
+            os.kill(pid, signal.SIGKILL)
+
+
+def _bounded(call: Any, seconds: float) -> tuple[Optional[BaseException], float]:
+    """Run *call()* in a thread: what it raised, if anything, and how long it
+    took; fails if it is still running after *seconds*, without waiting
+    longer."""
+    import threading
+    import time
+
+    raised: list[BaseException] = []
+
+    def run() -> None:
+        try:
+            call()
+        except BaseException as exc:  # noqa: BLE001
+            raised.append(exc)
+
+    start = time.monotonic()
+    thread = threading.Thread(target=run, daemon=True)
+    thread.start()
+    thread.join(seconds)
+    took = time.monotonic() - start
+    assert not thread.is_alive(), f"still running after {seconds} s"
+    return (raised[0] if raised else None), took
+
+
+def _recording_popen(monkeypatch: pytest.MonkeyPatch) -> list[Any]:
+    """The processes the workers start from now on."""
+    started: list[Any] = []
+    popen = cr_worker.subprocess.Popen
+
+    def recording_popen(*args: Any, **kwargs: Any) -> Any:
+        process = popen(*args, **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr(cr_worker.subprocess, "Popen", recording_popen)
+    return started
+
+
+def _wrapped_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> tuple[cr_worker.CommonRoadWorker, Any, int, Path]:
+    """A worker run by :data:`_WRAPPER`, the wrapper's process, the worker's
+    pid, and the worker's script."""
+    child = tmp_path / "ignores_eof.py"
+    child.write_text(_IGNORES_EOF)
+    wrapper = tmp_path / "wrapper.py"
+    wrapper.write_text(_WRAPPER)
+    pid_file = tmp_path / "worker.pid"
+    started = _recording_popen(monkeypatch)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(wrapper), str(child), str(pid_file)],
+        tmp_path / "map.xml",
+    )
+    (process,) = started
+    return worker, process, int(pid_file.read_text()), child
+
+
+def test_a_worker_runs_in_a_session_of_its_own(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker, process = _started_worker(tmp_path, monkeypatch, _EXITS_AT_EOF)
+    try:
+        assert os.getsid(process.pid) == process.pid
+        assert os.getpgid(process.pid) == process.pid
+    finally:
+        worker.close()
+        _kill(process)
+
+
+def test_close_kills_the_worker_under_a_wrapper(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #1780: the kill reaches the worker a ``uv run`` started, not
+    only ``uv``."""
+    worker, process, pid, child = _wrapped_worker(tmp_path, monkeypatch)
+    try:
+        _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10)
+        assert process.poll() is not None
+        assert _eventually(lambda: _gone(pid), 10), f"worker {pid} still runs"
+    finally:
+        _kill_pid_running(pid, child)
+        _kill(process)
+
+
+def test_close_returns_while_a_request_is_blocked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #1780: close() does not wait for the output a thread blocked in
+    request() holds; that request raises once the worker is gone."""
+    import threading
+
+    worker, process, pid, child = _wrapped_worker(tmp_path, monkeypatch)
+    raised: list[BaseException] = []
+
+    def evaluate() -> None:
+        try:
+            worker.evaluate([CRIME_TTC_S], {}, [])
+        except BaseException as exc:  # noqa: BLE001
+            raised.append(exc)
+
+    requesting = threading.Thread(target=evaluate, daemon=True)
+    try:
+        requesting.start()
+        requesting.join(0.5)  # in request(), waiting for an answer
+        _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10)
+        requesting.join(10)
+        assert not requesting.is_alive()
+        assert len(raised) == 1
+        assert isinstance(raised[0], cr_worker.CommonRoadWorkerError)
+        assert _eventually(lambda: _gone(pid), 10), f"worker {pid} still runs"
+    finally:
+        _kill_pid_running(pid, child)
+        _kill(process)
+
+
+def test_an_interrupted_evaluation_closes_its_workers_at_once(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #1780: an interrupt does not wait for the remaining frames; the
+    stuck workers are closed together, within about one close timeout."""
+    from concurrent.futures import FIRST_EXCEPTION
+
+    script = tmp_path / "worker.py"
+    script.write_text(_STUCK)
+    cr_session.configure_commonroad_metrics(
+        command=(sys.executable, str(script)),
+        cache_dir=tmp_path / "maps",
+        workers=3,
+    )
+    world = _following(opendrive)
+    frames = _recorded(world, TIMES)
+    carla_map = world.get_map()
+    # Started before the interrupt is armed.
+    started = _recording_popen(monkeypatch)
+    cr_session._workers_for(carla_map)
+    real_wait = cr_session.wait
+
+    def interrupted(fs: Any, timeout: Any = None, return_when: Any = None) -> Any:
+        if return_when == FIRST_EXCEPTION:
+            # Each share is blocked in its first request by now.
+            real_wait(fs, timeout=1.0, return_when=FIRST_EXCEPTION)
+            raise KeyboardInterrupt
+        return real_wait(fs, timeout=timeout)
+
+    monkeypatch.setattr(cr_session, "wait", interrupted)
+    try:
+        raised, took = _bounded(
+            lambda: cr_session.evaluate_commonroad(frames, carla_map, [CRIME_TTC_S]),
+            cr_worker._CLOSE_TIMEOUT_S * 3 + 10,
+        )
+        assert isinstance(raised, KeyboardInterrupt)
+        assert len(started) == 3
+        assert all(process.poll() is not None for process in started)
+        assert cr_session._POOL.workers == []
+        # One close timeout for all three, not one each.
+        assert took < cr_worker._CLOSE_TIMEOUT_S * 2
+    finally:
+        for process in started:
+            _kill(process)
+
+
+def test_an_interrupt_while_starting_closes_the_workers_started(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Issue #1780: workers that are still waiting for their ``init`` answer
+    when an interrupt comes are closed, not left to the end of the run."""
+    script = tmp_path / "worker.py"
+    script.write_text(_NEVER_ANSWERS)
+    cr_session.configure_commonroad_metrics(
+        command=(sys.executable, str(script)),
+        cache_dir=tmp_path / "maps",
+        workers=2,
+    )
+    world = _following(opendrive)
+    started = _recording_popen(monkeypatch)
+    real_wait = cr_session.wait
+
+    def interrupted(fs: Any, timeout: Any = None, return_when: Any = None) -> Any:
+        if timeout is None and return_when is None:
+            _eventually(lambda: len(started) == 2, 30)
+            real_wait(fs, timeout=0.5)  # each is waiting for its answer
+            raise KeyboardInterrupt
+        return real_wait(fs, timeout=timeout)
+
+    monkeypatch.setattr(cr_session, "wait", interrupted)
+    try:
+        raised, _ = _bounded(
+            lambda: cr_session.evaluate_commonroad(
+                _recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S]
+            ),
+            cr_worker._CLOSE_TIMEOUT_S * 2 + 30,
+        )
+        assert isinstance(raised, KeyboardInterrupt)
+        assert len(started) == 2
+        assert _eventually(
+            lambda: all(process.poll() is not None for process in started), 10
+        )
+        assert cr_session._POOL.workers == []
+    finally:
+        for process in started:
+            _kill(process)
 
 
 def test_a_worker_answering_out_of_protocol_is_not_reused(
