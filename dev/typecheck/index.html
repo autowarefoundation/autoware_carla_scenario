@@ -4875,7 +4875,7 @@ lists here. -->
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 302 of the package's 427
 modules (71%; about 91,600 of
-157,700 lines) are <code>CHECKED</code>: the kinematics, the
+157,800 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6162,20 +6162,20 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>157 functions and methods of those modules are <code>UNCALLED</code>
-(48 of them protected helpers, see <em>What is
+<p>156 functions and methods of those modules are <code>UNCALLED</code>
+(47 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
 document (<code>Mapping[str, Any]</code>, <code>Any</code>), what writes a manifest or a result
 document of mixed values, and protected helpers of the same kinds. The rest
 need what Codon has nothing for (ctypes, cv2, a signal handler's frame), hold
-a class or a list of callbacks the check has no value of, or take a parameter
+a class the check has no value of, or take a parameter
 Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a parameter
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 157 UNCALLED functions and methods, and why</summary>
+<summary>The 156 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6271,7 +6271,6 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>route.model._whole_number</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express (a route search's match_index, max_matches or seed, the ODD sample count, and every whole-number setting a run reads through odd.sampler's whole_number_setting(): the run, ODD sample and background_traffic seeds and the server and background_traffic counts); only parse_route_search, itself uncalled, and the excluded odd.sampler call it</li>
 <li><code>route.model.parse_route_search</code>: reads a YAML mapping of values of any type (<code>Any</code>: numbers, strings, booleans, lists, mappings or None), which Codon cannot express</li>
 <li><code>run_timeout.run_timeout_seconds</code>: takes the run's config (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express; the check it applies is check_run_timeout's</li>
-<li><code>scenario_base.BaseScenario._register_tick</code>: takes the list a plain callback goes into (<code>List[Callable[[carla.World], None]]</code>), and the check has no value of a list of callables to call with; register_init(), register_pre_tick() and register_post_tick() call it with BaseScenario's own lists, so its body is compiled through them</li>
 <li><code>scenario_base.BaseScenario.register_cover</code>: builds a CoverItem of values of any type (<code>expression: Callable[[carla.World], Any]</code>, <code>values: Iterable[Any]</code>, <code>ignore: Callable[[Any], bool]</code>, <code>event: SamplingEvent | BaseCondition</code>), which Codon cannot express; coverage.items is not checked</li>
 <li><code>scenario_queue.ScenarioQueue.as_fixture</code>: builds a pytest fixture (pytest, imported inside it), a generator function returned as a <code>Callable[[], Generator[ScenarioQueue, None, None]]</code></li>
 <li><code>scenario_runner._build_condition_status</code>: builds a ConditionStatus, which holds the condition's details (<code>dict[str, Any]</code>), which Codon cannot express; only _collect_condition_statuses, itself uncalled, calls it</li>
@@ -6523,7 +6522,11 @@ called once with each member, so the body is checked for every type it
 accepts. A parameter with no annotation, or one Codon cannot
 express (<code>Any</code>, <code>object</code>, <code>Callable[..., R]</code>, <code>Callable[[Any], Any]</code>, ...),
 gives the check nothing to call with and is reported as a problem of the
-module, at its line: annotate it with the type its callers pass. The
+module, at its line: annotate it with the type its callers pass. A
+container of a <code>Callable</code> (<code>List[Callable[[carla.World], None]]</code>), which a
+parameter annotation cannot spell, can be named with a module-level
+<code>TypeAlias</code> (<code>_TickCallbacks</code> in <code>scenario_base.py</code>): the check passes the
+alias through and Codon resolves it. The
 exceptions are <code>other: object</code> in <code>__eq__</code> and <code>__ne__</code>, which Python
 requires, called with the class itself, and a parameter Codon cannot express
 that has a default: a function whose every such parameter has one is called
@@ -8393,7 +8396,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 17:30:32 UTC"><span class="timeago" datetime="2026-11-06T17:30:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 17:30:32 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 18:16:45 UTC"><span class="timeago" datetime="2026-11-06T18:16:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 18:16:45 UTC">2026-11-06</span>
   </span>
 
     
