@@ -183,6 +183,15 @@ the seconds and metres (`timeout_s`, `policy_timestep_s`, `warmup_s`,
 and for `image_quality`, a whole number (see below) in 1-100: `90`, or `90.0`
 kept as `90`.
 
+The switches `send_ground_truth`, `send_renderer_data`,
+`send_actor_ground_truth` and `t4_scene` are each `true` or `false`, or one of
+their spellings as text in any case (`"false"`, `"no"`, `"off"`, `"0"`, and
+`"true"`, `"yes"`, `"on"`, `"1"`), or the integer `0` or `1`, as the run's
+other switches are ([The switches](usage.md#the-switches)). So a quoted
+`driver.t4_scene='false'` is false, not true; anything else (`ture`, `2`,
+null) is refused as the config is read, naming the key
+(`driver.send_ground_truth must be true or false, got 'ture'`).
+
 The same holds for `driver.control` (and `ros2.control`): each gain and limit
 is a finite int or float (an int is read as a float), each `enable_*` switch a
 boolean and `velocity_smoothing_window` a whole number, and a `*_deg` angle

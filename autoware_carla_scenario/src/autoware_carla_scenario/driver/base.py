@@ -20,6 +20,7 @@ from typing import Any, Dict, List, Mapping, Optional, Sequence, Tuple
 
 import numpy as np
 
+from ..config_flags import check_flag
 from ..constants import tick_multiple
 from ..seed import check_seed, check_whole_number
 from ..sensor.carla_camera import CarlaCameraSensorConfig
@@ -586,7 +587,15 @@ class DriverClientConfig:
         self._check_numbers()
 
     def _check_types(self) -> None:
-        """Refuse a number field holding a bool or a string.
+        """Read the switches strictly, and refuse a number field holding a
+        bool or a string.
+
+        Hydra does not coerce a switch either, and ``bool("false")`` is true
+        (#1760), so ``send_ground_truth``,
+        ``send_renderer_data``, ``send_actor_ground_truth`` and ``t4_scene``
+        are read with :func:`~autoware_carla_scenario.config_flags.check_flag`
+        (a boolean, ``"true"``/``"false"`` and the other spellings, 1 or 0)
+        and kept as bools, before :meth:`__post_init__` reads ``t4_scene``.
 
         The mapping is not coerced, and Hydra reads ``=true`` as a bool, which
         a number check takes as 1 and the T4 dataset's ``float()``/``int()``
@@ -594,6 +603,24 @@ class DriverClientConfig:
         ``image_quality=true`` encode at quality 1 (#1506).  The JPEG quality
         is kept as an int (``90.0`` as ``90``), as a camera's size is.
         """
+        object.__setattr__(
+            self,
+            "send_ground_truth",
+            check_flag("driver.send_ground_truth", self.send_ground_truth),
+        )
+        object.__setattr__(
+            self,
+            "send_renderer_data",
+            check_flag("driver.send_renderer_data", self.send_renderer_data),
+        )
+        object.__setattr__(
+            self,
+            "send_actor_ground_truth",
+            check_flag("driver.send_actor_ground_truth", self.send_actor_ground_truth),
+        )
+        object.__setattr__(
+            self, "t4_scene", check_flag("driver.t4_scene", self.t4_scene)
+        )
         for key, value in (
             ("timeout_s", self.timeout_s),
             ("policy_timestep_s", self.policy_timestep_s),

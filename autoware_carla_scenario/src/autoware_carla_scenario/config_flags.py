@@ -12,8 +12,10 @@ and ``background_traffic`` switches, ``autoware.launcher.rosdep`` and
 ``metrics.heavy`` (``examples.run``, #1761) are read with it, as
 are ``sweep.odd_sample``'s ``tire_friction`` and ``visibility``
 (``odd.sampler``), a route search's ``ego_goal`` (``route.model``, #1756),
-the traffic options' (``traffic.sumo.config``, ``traffic.fidelity``) and
-the bool vehicle parameters (``traffic.parameters``).
+the traffic options' (``traffic.sumo.config``, ``traffic.fidelity``),
+the bool vehicle parameters (``traffic.parameters``) and the ``driver``
+switches (``send_ground_truth``, ``send_renderer_data``,
+``send_actor_ground_truth``, ``t4_scene``; ``driver.base``, #1760).
 """
 
 from __future__ import annotations
