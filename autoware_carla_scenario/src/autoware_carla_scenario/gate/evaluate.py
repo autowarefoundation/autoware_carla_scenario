@@ -49,9 +49,7 @@ from .criteria import (
     CriterionResult,
     _case_coverage,
     _criterion,
-    _number,
     _outcomes,
-    _warning_lines,
     _where,
     _written_at,
     consistency,
@@ -59,6 +57,14 @@ from .criteria import (
     station_values,
 )
 from .record import GateRecord, read_gate_record
+from .report import (
+    case_changes,
+    comparison_markdown,
+    criterion_cell,
+    criterion_changes,
+    records_by_scenario,
+    verdict_markdown,
+)
 
 __all__ = [
     "CaseChange",
@@ -135,26 +141,16 @@ class GateVerdict:
         }
 
     def to_markdown(self) -> str:
-        mark = "PASSED" if self.passed else "FAILED"
-        lines = [
-            f"## {self.title or self.scenario} (`{self.scenario}`): {mark}",
-            "",
-            f"{self.passed_runs} of {self.runs} run(s) passed.",
-            "",
-            "| Criterion | Measured | Required | Result |",
-            "|---|---|---|---|",
-        ]
-        for c in self.criteria:
-            value = "-" if c.value is None else _number(c.value)
-            result = "pass" if c.passed else "**FAIL**"
-            detail = f" ({c.detail})" if c.detail else ""
-            lines.append(
-                f"| {c.name} | {value}{detail} | {c.comparison} "
-                f"{_number(c.threshold)} | {result} |"
-            )
-        lines += _warning_lines(self.warnings)
-        lines += [f"- error: {e}" for e in self.errors]
-        return "\n".join(lines)
+        return verdict_markdown(
+            self.scenario,
+            self.title,
+            self.passed,
+            self.passed_runs,
+            self.runs,
+            self.criteria,
+            self.warnings,
+            self.errors,
+        )
 
 
 def _gate_key(gate: Mapping[str, Any]) -> str:
@@ -444,65 +440,28 @@ class GateComparison:
         }
 
     def to_markdown(self) -> str:
-        if self.candidate is None:
-            verdict = "NOT RUN"
-        else:
-            verdict = "PASSED" if self.candidate.passed else "FAILED"
-        trend = "REGRESSED" if self.regressed else "no regression"
-        lines = [
-            f"## {self.title or self.scenario} (`{self.scenario}`): "
-            f"{verdict}, {trend}",
-            "",
-        ]
-        for name, verdict_of in (
-            ("Baseline", self.baseline),
-            ("Candidate", self.candidate),
-        ):
-            if verdict_of is None:
-                lines.append(f"- {name}: no run")
-            else:
-                mark = "passed" if verdict_of.passed else "failed"
-                lines.append(
-                    f"- {name}: {verdict_of.passed_runs} of {verdict_of.runs} "
-                    f"run(s) passed; gate {mark}"
-                )
-        lines += [
-            "",
-            "| Criterion | Required | Baseline | Candidate | Change |",
-            "|---|---|---|---|---|",
-        ]
-        for c in self.criteria:
-            ref = c.candidate or c.baseline
-            assert ref is not None  # noqa: S101 -- one side judged it
-            required = f"{ref.comparison} {_number(ref.threshold)}"
-            change = c.change
-            if change == "regressed":
-                change = "**regressed**"
-            lines.append(
-                f"| {c.name} | {required} | {_cell(c.baseline)} | "
-                f"{_cell(c.candidate)} | {change} |"
-            )
-        for title, cases in (
-            ("Newly failing cases", self.newly_failing),
-            ("Fixed cases", self.fixed),
-        ):
-            if cases:
-                lines += ["", f"{title}:", ""]
-                lines += [
-                    f"- {case.label()}: baseline {case.baseline[0]}/"
-                    f"{case.baseline[1]} passed, candidate {case.candidate[0]}/"
-                    f"{case.candidate[1]}"
-                    for case in cases
-                ]
-        lines += _warning_lines(self.warnings)
-        return "\n".join(lines)
+        return comparison_markdown(
+            self.scenario,
+            self.title,
+            _summary(self.baseline),
+            _summary(self.candidate),
+            self.regressed,
+            self.criteria,
+            self.newly_failing,
+            self.fixed,
+            self.warnings,
+        )
+
+
+def _summary(verdict: Optional[GateVerdict]) -> Optional[tuple[int, int, bool]]:
+    """``(passed runs, runs, whether the gate passed)`` of *verdict*."""
+    if verdict is None:
+        return None
+    return verdict.passed_runs, verdict.runs, verdict.passed
 
 
 def _cell(result: Optional[CriterionResult]) -> str:
-    if result is None:
-        return "-"
-    value = "n/a" if result.value is None else _number(result.value)
-    return value if result.passed else f"{value} (fail)"
+    return criterion_cell(result)
 
 
 def compare(
@@ -540,25 +499,13 @@ def compare(
                 "the baseline and the candidate ran different versions of the "
                 "document"
             )
-    before_by_name = {c.name: c for c in (before.criteria if before else [])}
-    after_by_name = {c.name: c for c in (after.criteria if after else [])}
     # The candidate's order, then what only the baseline judged.
-    order = [*after_by_name, *(n for n in before_by_name if n not in after_by_name)]
-    criteria = [
-        CriterionChange(name, before_by_name.get(name), after_by_name.get(name))
-        for name in order
-    ]
-    newly_failing: list[CaseChange] = []
-    fixed: list[CaseChange] = []
-    before_cases, after_cases = _outcomes(baseline), _outcomes(candidate)
-    for key in sorted(before_cases.keys() & after_cases.keys()):
-        b, a = before_cases[key], after_cases[key]
-        change = CaseChange(key[0], key[1], b, a)
-        if b[0] == b[1] and a[0] < a[1]:
-            newly_failing.append(change)
-        elif b[0] < b[1] and a[0] == a[1]:
-            fixed.append(change)
-    missing = len(before_cases.keys() - after_cases.keys())
+    criteria = criterion_changes(
+        before.criteria if before else [], after.criteria if after else []
+    )
+    newly_failing, fixed, missing = case_changes(
+        _outcomes(baseline), _outcomes(candidate)
+    )
     if missing and after is not None:
         warnings.append(f"{missing} case(s) the baseline ran did not run")
     latest = after or before
@@ -594,11 +541,7 @@ def _by_scenario(
     records: Sequence[GateRecord], scenario: Optional[str] = None
 ) -> dict[str, list[GateRecord]]:
     """*records* grouped by scenario id; only *scenario*'s when it is given."""
-    groups: dict[str, list[GateRecord]] = {}
-    for record in records:
-        if scenario is None or record.scenario == scenario:
-            groups.setdefault(record.scenario, []).append(record)
-    return groups
+    return records_by_scenario(records, scenario)
 
 
 # ---------------------------------------------------------------------------
