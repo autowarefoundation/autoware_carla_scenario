@@ -4905,6 +4905,23 @@ scenario's YAML omits it (the dataclass default in <code>examples/configs.py</co
 <strong>Shipped</strong> is the value the shipped config (<code>examples/conf/scenario/...</code>) sets,
 or — when it ships the default. Every shipped config lists every key of its
 config class, so a <code>scenario.&lt;key&gt;=</code> override reaches any of them without <code>+</code>.</p>
+<p>A run or batch refuses a value out of its key's bounds before anything starts,
+naming the key (<code>Error: scenario.walk_speed_ms must be finite and positive, not
+0.0</code>): the config class checks it when it is built (#1815, #1816). Every
+<code>timeout_seconds</code>, and the thresholds, distances and durations a check
+compares against -- <code>min_speed_kmh</code>, <code>speed_check_delay_seconds</code>,
+<code>turn_indicator_grace_seconds</code>, <code>light_switch_delay_seconds</code>,
+<code>moving_speed_kmh</code>, <code>departure_speed_kmh</code>, <code>timeout_after_green_seconds</code>,
+<code>standstill_seconds</code>, <code>s_margin</code>, <code>stop_duration</code>, <code>restart_speed_kmh</code>,
+<code>trigger_distance_m</code>, <code>walk_speed_ms</code>, <code>cut_in_after_seconds</code> and
+<code>hold_seconds</code> -- must be finite and positive: at 0 or below the check would
+never fire, or always hold, and the run pass or fail on nothing. Speeds and
+margins that may be 0 -- <code>npc_initial_speed_kmh</code>, <code>npc_speed_kmh</code>,
+<code>ego_speed_kmh</code>, <code>speed_threshold</code>, <code>standstill_speed_mps</code>,
+<code>stop_line_tolerance_m</code>, <code>pass_beyond_m</code>, <code>turn_back_within_m</code>,
+<code>turn_back_ttc_s</code> and <code>turn_back_distance_m</code> -- must be finite and not
+negative, and <code>stop_zone_min_m</code> must not be past <code>stop_zone_max_m</code>. A
+<code>null</code> still turns an optional check off.</p>
 <h4 id="intersection-passing">Intersection Passing<a class="headerlink" href="#intersection-passing" title="Permanent link">&para;</a></h4>
 <p>Tests ego vehicle traversal through an intersection. Verifies that the ego passes through the expected OpenDRIVE road sequence.</p>
 <table>
@@ -4950,7 +4967,7 @@ config class, so a <code>scenario.&lt;key&gt;=</code> override reaches any of th
 <td><code>intersection_passing/straight_3npc</code></td>
 <td>— (<code>null</code>)</td>
 <td><code>10.0</code></td>
-<td><code>0.0</code></td>
+<td>—</td>
 <td>Straight with 3 NPC vehicles, no <code>TurnAction</code></td>
 </tr>
 </tbody>
@@ -4986,7 +5003,7 @@ config class, so a <code>scenario.&lt;key&gt;=</code> override reaches any of th
 <td>float | null</td>
 <td>null</td>
 <td>per config (above)</td>
-<td>Minimum ego speed (fail if below). <code>null</code> disables check</td>
+<td>Minimum ego speed (fail if below; positive). <code>null</code> disables check</td>
 </tr>
 <tr>
 <td><code>scenario.speed_check_delay_seconds</code></td>
@@ -5048,8 +5065,8 @@ config class, so a <code>scenario.&lt;key&gt;=</code> override reaches any of th
 </code></pre></div>
 <p>An NPC's <code>spawn_s</code> must be finite and its <code>initial_speed_kmh</code> finite and not
 negative; a run or batch refuses another value before anything starts
-(<code>Error: npc_vehicles[0].initial_speed_kmh must be finite and at least 0, got
-nan</code>).</p>
+(<code>Error: scenario.npc_vehicles[0].initial_speed_kmh must be finite and at
+least 0, got nan</code>).</p>
 <p><strong>Behavior:</strong>
 - Sets all traffic lights to GREEN
 - Registers a TurnAction when <code>turn_direction</code> is set -- <code>left</code>, <code>right</code> or <code>straight</code> (sets the ego's path through the junction via the TrafficManager); none when it is <code>null</code>
@@ -6495,7 +6512,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 08:55:32 UTC"><span class="timeago" datetime="2026-11-06T08:55:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 08:55:32 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 09:43:20 UTC"><span class="timeago" datetime="2026-11-06T09:43:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 09:43:20 UTC">2026-11-06</span>
   </span>
 
     
