@@ -4816,9 +4816,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-302 of the package's 426
+302 of the package's 427
 modules (71%; about 91,400 of
-157,200 lines) are <code>CHECKED</code>: the kinematics, the
+157,400 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6279,7 +6279,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number, which checks the traffic options, calls it with the float the check types the option with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 124 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 125 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6308,7 +6308,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 124 EXCLUDED modules, and why</summary>
+<summary>The 125 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads into values of any type (<code>Any</code>)</li>
@@ -6345,7 +6345,7 @@ the first:</p>
 <li><code>driver.hdmap_export</code>: imports errno (<code>_RACES</code>), which Codon has nothing for, more of tempfile than its shim declares (<code>TemporaryDirectory()</code>), and, inside <code>_import_roadgen()</code>, roadgen, which has no Codon model; _can_export() and _export() test for and call roadgen's exporter by a name held in a variable, through hasattr() and getattr() (<code>export_{name}</code>), which Codon does not compile; export_map() reads an OSError's <code>errno</code>, which the check refuses; _file_digest() reads the file in chunks with the two-argument <code>iter(callable, sentinel)</code>, and Codon's <code>iter()</code> takes one argument; builds the manifest and its format records as <code>Dict[str, Any]</code> of mixed value types, which Codon cannot express; the file names of a map set, where each format is written (<code>MAP_FORMATS</code>) and map_id_for() are the checked driver.hdmap_files's (#1728), which it re-exports</li>
 <li><code>driver.renderer</code>: imports carla_driver_interface.protocol (the protobuf messages it builds and reads: CarlaRendererData, CarlaActorState, CarlaWeather, TrafficLight, StopPoint, LidarSweep, the TrafficLightState values, and common_pb2's AABB, DynamicState and Vec3), which its model (geometry only) does not declare; and _weather() reads the weather's fields by a name held in a variable, through getattr(), and passes them to CarlaWeather as ** a dict, neither of which Codon compiles; and the velocity it reports for an actor is a measured Vector3 or CARLA's Vector3D in one conditional expression, which Codon cannot type; which light governs the ego and where it stops for it are the checked driver.stop_lines'</li>
 <li><code>editor</code>: imports argparse and serve_cli (argparse, ipaddress), which is not checked; imports uvicorn and editor.app (fastapi) inside main()</li>
-<li><code>editor.app</code>: imports fastapi, and authoring.models (pydantic), authoring.hydra_config, authoring.persistence, authoring._builders_generated and editor.service (pydantic, through authoring.models), authoring.registry, trajectory.authoring and editor.forms, and, inside create_app(), editor.routes (fastapi), which are neither checked nor modelled</li>
+<li><code>editor.app</code>: imports fastapi, web_guard (starlette) and serve_cli (argparse, ipaddress), and authoring.models (pydantic), authoring.hydra_config, authoring.persistence, authoring._builders_generated and editor.service (pydantic, through authoring.models), authoring.registry, trajectory.authoring and editor.forms, and, inside create_app(), editor.routes (fastapi), which are neither checked nor modelled</li>
 <li><code>editor.forms</code>: imports trajectory.authoring and authoring.registry, which are not checked, and authoring.registry has no model; parses form values typed Any</li>
 <li><code>editor.map_preview</code>: imports authoring.models (pydantic) and authoring.hydra_config (yaml, and pydantic through authoring.models), which are not checked and have no model</li>
 <li><code>editor.routes</code>: imports fastapi, starlette, pydantic (<code>ValidationError</code>), and anyio inside a function</li>
@@ -6424,7 +6424,7 @@ the first:</p>
 <li><code>trajectory.authoring</code>: parses document values of <code>Any</code> (YAML rows, editor fields) into <code>dict[str, Any]</code>, which Codon cannot express; what it does with the editor's text and with parsed rows is the checked trajectory.vertex_text's, and the typed builders it re-exports (the goal, via lanelets, timing and lanelet path) are the checked trajectory.authored's</li>
 <li><code>trajectory_recorder</code>: writes JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) serialised with orjson (module level; <code>orjson.JSONEncodeError</code>), reads the projector's settings with yaml (inside <code>_projector_info</code>), and neither has a Codon model; trajectory_recorder.codon models what scenario_runner uses of it</li>
 <li><code>ui</code>: imports argparse and serve_cli (argparse, ipaddress), which is not checked; imports uvicorn, ui.app (fastapi) and the registry (omegaconf, importlib) inside main(), and ui.recordings (tarfile) inside a function</li>
-<li><code>ui.app</code>: imports fastapi, asyncio, more of contextlib than its shim declares (<code>asynccontextmanager</code>, for _lifespan()), and openodd (a Rust extension) inside _openodd()</li>
+<li><code>ui.app</code>: imports fastapi, web_guard (starlette), which is not checked, asyncio, more of contextlib than its shim declares (<code>asynccontextmanager</code>, for _lifespan()), and openodd (a Rust extension) inside _openodd()</li>
 <li><code>ui.cases</code>: imports slurm.manifest, which is not checked; reads JSON documents of any type (<code>Any</code>); the path guard, the case stems and a batch's stamp (<code>batch_stamp</code>, <code>_summary_is_current</code>) are the checked ui.case_paths's</li>
 <li><code>ui.models</code>: imports pydantic</li>
 <li><code>ui.recordings</code>: imports base64, io, tarfile, urllib.request and zlib, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (<code>Any</code>); the web viewer's selection and the path rules of the recordings and of the web viewer's copy are the checked ui.web_viewer_paths's</li>
@@ -6434,6 +6434,7 @@ the first:</p>
 <li><code>ui.sweep_resolver</code>: imports hydra and the registry (omegaconf, importlib), and, inside resolve_sweep(), authoring.hydra_config (pydantic, through authoring.models), odd.controls and sweeper.expand (omegaconf), which are not checked; imports <code>OddDraws</code> from odd.sampler (under <code>TYPE_CHECKING</code>), which the odd model does not declare</li>
 <li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields), takes the options as <code>Mapping[str, Any]</code> and, in checked_str_list(), a list setting of any type (<code>value: Any</code>), which Codon cannot express</li>
 <li><code>weather_rules</code>: imports openodd (a Rust extension), reads rule files and <code>environment.rules</code> as <code>Mapping[str, Any]</code>, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it; the quantities, the weather inputs, <code>rule_values()</code> and which <code>vehicles</code> entry a vehicle follows (<code>vehicle_entry()</code>) are the checked weather_inputs's (#1732)</li>
+<li><code>web_guard</code>: an ASGI middleware: takes ASGI scopes and messages as <code>MutableMapping[str, Any]</code> and calls the application and <code>send</code> as async callables, which Codon cannot express; imports starlette, and serve_cli (argparse, ipaddress), which is not checked</li>
 </ul>
 </details>
 <p>The scenario check is not limited by this: it compiles every scenario against
