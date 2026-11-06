@@ -1679,6 +1679,12 @@ is recorded as failed, and the jobs after it do not start.
       interface (`0.0.0.0` or `::`), the viewer was asked to answer whatever
       name it is reached under, and checks no `Host`; the `Origin` check still
       applies.
+      A page served from a rebound name then passes both checks, so a
+      wildcard bind gives up the rebinding protection, even inside a container
+      published only on `127.0.0.1`. Behind a reverse proxy or a remote port
+      forwarder that serves it under another name or over HTTPS, the viewer
+      refuses requests unless it is bound to every interface; an SSH `-L`
+      tunnel to a loopback port keeps working.
 
 ### Seeing a run in the viewer
 

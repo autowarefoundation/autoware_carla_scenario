@@ -1072,6 +1072,12 @@ draft is left as it was.
       interface (`0.0.0.0` or `::`), the editor was asked to answer whatever
       name it is reached under, and checks no `Host`; the `Origin` check still
       applies.
+      A page served from a rebound name then passes both checks, so a
+      wildcard bind gives up the rebinding protection, even inside a container
+      published only on `127.0.0.1`. Behind a reverse proxy or a remote port
+      forwarder that serves it under another name or over HTTPS, the editor
+      refuses requests unless it is bound to every interface; an SSH `-L`
+      tunnel to a loopback port keeps working.
 
 ## Running an authored scenario
 
