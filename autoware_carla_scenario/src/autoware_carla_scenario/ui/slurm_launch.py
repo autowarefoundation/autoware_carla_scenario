@@ -21,6 +21,7 @@ from __future__ import annotations
 import os
 import re
 import shlex
+import signal
 import subprocess
 import sys
 import threading
@@ -220,21 +221,77 @@ def _new_manifests(base: Path, before: set[Path]) -> list[Path]:
     return sorted(set((base / "outputs").glob("*/*/slurm/manifest.json")) - before)
 
 
-def _submit(command: list[str], base: Path, record: Submission) -> None:
-    before = set((base / "outputs").glob("*/*/slurm/manifest.json"))
+#: How long the ``scenario ... --no-wait`` a submit runs may take (#1786).
+#: It expands and checks the batch before it calls sbatch -- the Codon check
+#: alone may take up to ``typecheck.check.DEFAULT_TIMEOUT_SECONDS`` (600 s),
+#: and ``uv run`` may sync the environment first -- so it is given minutes;
+#: past them the submit is recorded as failed (:data:`TIMED_OUT`), and the
+#: viewer takes a new one.
+SUBMIT_TIMEOUT_SECONDS = 1800.0
+
+
+def _kill_group(process: subprocess.Popen[str]) -> None:
+    """SIGKILL *process*'s group (its own session's, ``start_new_session``):
+    the ``scenario`` it ran, the ``uv run`` in front of it and the sbatch or
+    checks it started."""
     try:
-        done = subprocess.run(  # noqa: S603
+        os.killpg(process.pid, signal.SIGKILL)
+    except ProcessLookupError:
+        pass  # Every process of the group has ended already.
+
+
+def _run_submit(command: list[str], base: Path) -> tuple[int | None, str]:
+    """Run the submitting *command* in *base*, as :func:`run_cli` runs
+    ``scenario-slurm``: its exit status and output; :data:`TIMED_OUT`, with
+    why, when it did not end within :data:`SUBMIT_TIMEOUT_SECONDS`, its whole
+    process group killed; ``None`` when it could not be started."""
+    try:
+        process = subprocess.Popen(  # noqa: S603
             command,
             cwd=str(base),
-            capture_output=True,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
             encoding="utf-8",
             errors="replace",
-            check=False,
+            start_new_session=True,
         )
-        output = "\n".join(s for s in (done.stdout, done.stderr) if s)
-        returncode = done.returncode
     except (OSError, ValueError) as exc:  # ValueError: a NUL in an argument
-        output, returncode = f"Could not run {command[0]}: {exc}", None
+        return None, f"Could not run {command[0]}: {exc}"
+    timeout = SUBMIT_TIMEOUT_SECONDS
+    try:
+        stdout, stderr = process.communicate(timeout=timeout)
+    except subprocess.TimeoutExpired:
+        _kill_group(process)
+        # Bounded: what the killed group wrote, once its pipes close.
+        try:
+            stdout, stderr = process.communicate(timeout=10.0)
+        except subprocess.TimeoutExpired:
+            # A process that left the group holds the pipes: reap ours.
+            process.wait()
+            stdout, stderr = "", ""
+        output = "\n".join(s for s in (stdout, stderr) if s)
+        reason = (
+            f"{command[0]} did not end within {timeout:g} s and was stopped: "
+            "the batch's checks or sbatch hung (is the SLURM controller "
+            "answering?). Stopped during sbatch, it keeps the batch's "
+            "submission record, as the controller may have taken the job: if "
+            "`squeue --me` lists it, it runs and the batch can be collected "
+            "once it ends (or scancel it), and resubmits of that batch are "
+            "refused until 600 s after the record was made. A new submit (a "
+            "new batch) is taken now."
+        )
+        return TIMED_OUT, f"{output}\n{reason}" if output else reason
+    except BaseException:
+        _kill_group(process)
+        process.wait()
+        raise
+    return process.returncode, "\n".join(s for s in (stdout, stderr) if s)
+
+
+def _submit(command: list[str], base: Path, record: Submission) -> None:
+    before = set((base / "outputs").glob("*/*/slurm/manifest.json"))
+    returncode, output = _run_submit(command, base)
     match = None
     for match in _OUTPUTS_IN.finditer(output):
         pass

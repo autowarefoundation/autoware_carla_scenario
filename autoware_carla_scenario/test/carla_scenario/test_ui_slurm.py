@@ -294,6 +294,83 @@ def test_a_batch_directory_with_spaces_is_read_whole(tmp_path: Path) -> None:
     assert record.state == "submitted"
 
 
+def _alive(pid: int) -> bool:
+    """Whether *pid* runs (a zombie, ended but not yet reaped, does not)."""
+    try:
+        stat = Path(f"/proc/{pid}/stat").read_text()
+    except OSError:
+        return False
+    return stat.rsplit(")", 1)[1].split()[0] != "Z"
+
+
+def _group_running(pgid: int) -> list[int]:
+    """The processes of group *pgid* that run (zombies left out)."""
+    running = []
+    for stat_path in Path("/proc").glob("[0-9]*/stat"):
+        try:
+            stat = stat_path.read_text()
+        except OSError:
+            continue
+        fields = stat.rsplit(")", 1)[1].split()
+        if fields[0] != "Z" and int(fields[2]) == pgid:
+            running.append(int(stat_path.parent.name))
+    return running
+
+
+def _wait_for(predicate: Any, seconds: float) -> bool:
+    deadline = time.monotonic() + seconds
+    while not predicate():
+        if time.monotonic() >= deadline:
+            return False
+        time.sleep(0.05)
+    return True
+
+
+def test_a_submit_that_hangs_is_stopped_and_a_new_one_taken(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1786: a submit that does not end in time kills its whole process
+    group and is recorded failed (124), so the viewer takes the next one."""
+    monkeypatch.setattr(slurm_launch, "SUBMIT_TIMEOUT_SECONDS", 1.0)
+    monkeypatch.setattr(slurm_launch, "_submission", None)
+    pids = tmp_path / "pids"
+    # The child starts a grandchild (as `uv run` starts `scenario`), writes
+    # both pids, says it started and hangs; stdin must not be the viewer's.
+    hang = (
+        "import os, subprocess, sys, time\n"
+        "child = subprocess.Popen([sys.executable, '-c', 'import time; time.sleep(60)'])\n"
+        f"open({str(pids)!r}, 'w').write(f'{{os.getpid()}} {{child.pid}}')\n"
+        "print('checking the batch', flush=True)\n"
+        "assert sys.stdin.read() == ''\n"
+        "time.sleep(60)\n"
+    )
+    record = slurm_launch.start_submit([sys.executable, "-c", hang], tmp_path)
+    started: list[int] = []
+    try:
+        assert _wait_for(lambda: record.state != "submitting", 30.0)
+        started = [int(p) for p in pids.read_text().split()]
+        assert record.state == "failed"
+        assert record.returncode == slurm_launch.TIMED_OUT == 124
+        assert "checking the batch" in record.output
+        assert "did not end within 1 s" in record.output
+        assert _wait_for(lambda: not any(_alive(p) for p in started), 10.0)
+        # The group (the child's session) has no process left running.
+        assert _wait_for(lambda: not _group_running(started[0]), 10.0)
+    finally:
+        for pid in started:  # only what this test started, should it run
+            if _alive(pid):
+                os.kill(pid, 9)
+    batch_dir = tmp_path / "outputs" / "2026-01-01" / "00-00-00"
+    line = f"SLURM job 1: 1 case(s); outputs in {batch_dir}"
+    again = slurm_launch.start_submit(
+        [sys.executable, "-c", f"print({line!r})"], tmp_path
+    )
+    assert again is not record
+    assert _wait_for(lambda: again.state != "submitting", 30.0)
+    assert again.state == "submitted"
+    assert again.batch_dir == str(batch_dir)
+
+
 def test_the_command_submits_and_does_not_wait(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.delenv("VIEWER_SCENARIO_COMMAND", raising=False)
     options = SlurmOptions(partition="main")

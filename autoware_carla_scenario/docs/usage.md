@@ -1682,8 +1682,15 @@ paths](slurm.md#a-submit-host-with-other-paths)); the extra overrides can set
 any other. The
 viewer runs `scenario [--multirun] scenario=... launcher=slurm ... --no-wait`
 (with a sweeper, every case of the sweep) in its base path, and opens the
-batch's page once it is submitted. Where `sbatch` is not on the viewer's
-`PATH` the option is disabled, and says so.
+batch's page once it is submitted. The command is run with no input and in
+a process group of its own; one that has not ended after 30 minutes (it runs
+the batch's checks before `sbatch`) is killed with its whole group, and the
+submission is marked failed (exit status 124) with why, so the next submit is
+taken. Stopped during `sbatch`, it leaves the batch's submission record in
+place, as a timed-out `sbatch` does ([Running a Batch on
+SLURM](slurm.md#how-it-works)): if `squeue --me` lists the job, it runs and the
+batch's page collects it. Where `sbatch` is not on the viewer's `PATH` the option is disabled,
+and says so.
 
 A SLURM batch's page (`outputs/<date>/<time>/` with a `slurm/` directory,
 whoever submitted it) follows it through `squeue` and the records its tasks
