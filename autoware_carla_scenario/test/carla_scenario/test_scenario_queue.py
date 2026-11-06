@@ -35,6 +35,13 @@ def _make_ego_config() -> EgoConfig:
     )
 
 
+def _position(order: list[object], scenario: object) -> int:
+    """Where *scenario* first ran in *order*, by identity: the fakes keep the
+    scenarios themselves, not their id(), which CPython hands out again once
+    a released scenario is freed (a later scenario then took its position)."""
+    return next(i for i, seen in enumerate(order) if seen is scenario)
+
+
 class _NullScenario(BaseScenario):
     """Minimal scenario: setup is a no-op, is_done always returns True."""
 
@@ -97,14 +104,14 @@ class _SecondCaseRaises:
     def __init__(self, error: BaseException) -> None:
         self.error = error
         self.failing: BaseScenario | None = None
-        self.order: list[int] = []
+        self.order: list[object] = []
         self.ran: list[int] = []
         self.events: list[str] = []
 
     def run_scenario(self, scenario: BaseScenario, **_: object) -> ScenarioResult:
-        if id(scenario) not in self.order:
-            self.order.append(id(scenario))
-        self.ran.append(self.order.index(id(scenario)))
+        if not any(seen is scenario for seen in self.order):
+            self.order.append(scenario)
+        self.ran.append(_position(self.order, scenario))
         self.events.append("run")
         if scenario is self.failing:
             raise self.error
@@ -122,15 +129,15 @@ class _RaisesThenRuns:
     def __init__(self, *, run_failures: int = 1, reset_failures: int = 0) -> None:
         self.run_failures = run_failures
         self.reset_failures = reset_failures
-        self.order: list[int] = []
+        self.order: list[object] = []
         self.events: list[tuple[str, object]] = []
 
     def run_scenario(
         self, scenario: BaseScenario, *, reset_world: bool = True, **_: object
     ) -> ScenarioResult:
-        if id(scenario) not in self.order:
-            self.order.append(id(scenario))
-        self.events.append(("run", (self.order.index(id(scenario)), reset_world)))
+        if not any(seen is scenario for seen in self.order):
+            self.order.append(scenario)
+        self.events.append(("run", (_position(self.order, scenario), reset_world)))
         if self.run_failures > 0:
             self.run_failures -= 1
             raise RuntimeError("RPC timed out")
@@ -1110,7 +1117,7 @@ class _CrashingRunner:
         self.server = server
         self.events = events
         self.crash_after = crash_after
-        self.order: list[int] = []
+        self.order: list[object] = []
         self._world = None
 
     def load_map_by_name(self, name: str) -> None:
@@ -1120,9 +1127,9 @@ class _CrashingRunner:
         if not self.server.alive:
             self.events.append("run on a dead server")
             raise RuntimeError("time-out while waiting for the simulator")
-        if id(scenario) not in self.order:
-            self.order.append(id(scenario))
-        position = self.order.index(id(scenario))
+        if not any(seen is scenario for seen in self.order):
+            self.order.append(scenario)
+        position = _position(self.order, scenario)
         self.events.append(f"run {position}")
         if position == self.crash_after:
             self.server.alive = False
@@ -1149,7 +1156,7 @@ def _crashing_queue(
 
     events: list[str] = []
     server = _DyingServer(events, reused=reused, start_failures=start_failures)
-    shared: list[int] = []
+    shared: list[object] = []
     runners: list[_CrashingRunner] = []
 
     def make_runner(*args: object, **kwargs: object) -> _CrashingRunner:
