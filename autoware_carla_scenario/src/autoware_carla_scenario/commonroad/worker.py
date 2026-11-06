@@ -57,6 +57,10 @@ _EXCERPT_CHARS = 200
 #: killing it, in seconds.
 _CLOSE_TIMEOUT_S = 5.0
 
+#: How long :meth:`CommonRoadWorker.close`, the worker gone, waits for a
+#: request still holding a pipe to let go of it, in seconds.
+_PIPE_RELEASE_S = 1.0
+
 
 def _excerpt(line: str) -> str:
     """*line*, stripped and cut to :data:`_EXCERPT_CHARS`, quoted."""
@@ -137,6 +141,9 @@ class CommonRoadWorker:
         # buffered pipe waits for the thread holding it (#1780).
         self._write_lock = threading.Lock()
         self._read_lock = threading.Lock()
+        # Set by close(): a request that fails from then on closes the pipe
+        # it holds, which close() did not wait for.
+        self._closing = False
         try:
             self._process: subprocess.Popen[str] = subprocess.Popen(  # noqa: S603
                 self.command,
@@ -182,10 +189,20 @@ class CommonRoadWorker:
             )
         try:
             with self._write_lock:
-                process.stdin.write(json.dumps(request) + "\n")
-                process.stdin.flush()
+                try:
+                    process.stdin.write(json.dumps(request) + "\n")
+                    process.stdin.flush()
+                except (OSError, ValueError):
+                    self._close_if_closing(process.stdin)
+                    raise
             with self._read_lock:
-                line = process.stdout.readline()
+                try:
+                    line = process.stdout.readline()
+                except (OSError, ValueError):
+                    self._close_if_closing(process.stdout)
+                    raise
+                if not line:
+                    self._close_if_closing(process.stdout)
         except (OSError, ValueError) as exc:
             # ValueError: its pipes were closed (close()) meanwhile.
             raise CommonRoadWorkerError(f"the CommonRoad worker failed: {exc}") from exc
@@ -234,6 +251,13 @@ class CommonRoadWorker:
         errors = {str(k): str(v) for k, v in dict(answer.get("errors", {})).items()}
         return values, errors
 
+    def _close_if_closing(self, pipe: Any) -> None:
+        """Close *pipe*, which the caller holds the lock of, if the worker is
+        being closed: close() may have left it to this request (#1780)."""
+        if self._closing:
+            with contextlib.suppress(OSError, ValueError):
+                pipe.close()
+
     def running(self) -> bool:
         """Whether the worker's process has not exited."""
         return self._process.poll() is None
@@ -252,6 +276,7 @@ class CommonRoadWorker:
         exited, or closing it twice, does nothing more.
         """
         process = self._process
+        self._closing = True
         self._ask_to_exit()
         try:
             process.wait(timeout=_CLOSE_TIMEOUT_S)
@@ -278,15 +303,26 @@ class CommonRoadWorker:
                 process.kill()
             process.wait()
         # Its answer to ``close``, if any, is not read.  A thread blocked in
-        # request() holds the output's buffer, which closing would wait for;
-        # it reads the end of the output now the worker is gone, and the pipe
-        # is closed with the worker.
-        if process.stdout is not None and self._read_lock.acquire(blocking=False):
-            try:
-                with contextlib.suppress(OSError, ValueError):
-                    process.stdout.close()
-            finally:
-                self._read_lock.release()
+        # request() holds a pipe's buffer, which closing would wait for.  Now
+        # the worker is gone, that request fails (the end of the output, or a
+        # broken input pipe) and, seeing _closing, closes the pipe itself;
+        # the lock is waited for briefly, so that whichever of the two takes
+        # it second finds the pipe closed (or closes it).  A pipe held open
+        # by a process outside the worker's group is left to that request.
+        self._close_pipe(process.stdin, self._write_lock)
+        self._close_pipe(process.stdout, self._read_lock)
+
+    @staticmethod
+    def _close_pipe(pipe: Any, lock: threading.Lock) -> None:
+        """Close *pipe* once no request holds *lock*, waiting at most
+        :data:`_PIPE_RELEASE_S` for that."""
+        if pipe is None or not lock.acquire(timeout=_PIPE_RELEASE_S):
+            return
+        try:
+            with contextlib.suppress(OSError, ValueError):
+                pipe.close()
+        finally:
+            lock.release()
 
     def _ask_to_exit(self) -> None:
         """Send ``close`` and the end of the worker's input, without blocking.

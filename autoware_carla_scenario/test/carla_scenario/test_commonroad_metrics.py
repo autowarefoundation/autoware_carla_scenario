@@ -1533,9 +1533,64 @@ def test_close_returns_while_a_request_is_blocked(
         assert len(raised) == 1
         assert isinstance(raised[0], cr_worker.CommonRoadWorkerError)
         assert _eventually(lambda: _gone(pid), 10), f"worker {pid} still runs"
+        # Neither pipe is left open for the garbage collector.
+        assert process.stdout.closed and process.stdin.closed
     finally:
         _kill_pid_running(pid, child)
         _kill(process)
+
+
+def test_close_returns_while_a_request_is_blocked_writing(
+    tmp_path: Path,
+) -> None:
+    """Issue #1780: a request blocked writing to a worker that reads nothing
+    does not hold close() up; it raises once the worker is killed, its pipes
+    closed (no ResourceWarning when the worker is collected)."""
+    import gc
+    import threading
+    import warnings
+    import weakref
+
+    script = tmp_path / "worker.py"
+    script.write_text(_STUCK)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script)], tmp_path / "map.xml"
+    )
+    pid = worker._process.pid
+    raised: list[BaseException] = []
+
+    def evaluate(worker: cr_worker.CommonRoadWorker) -> None:
+        try:
+            # Far more than a pipe holds: the write blocks.
+            worker.evaluate([CRIME_TTC_S], {}, [{"pad": "x" * 1_000_000}])
+        except BaseException as exc:  # noqa: BLE001
+            raised.append(exc)
+
+    # The worker as an argument, not a closure's: the thread lets go of it.
+    requesting = threading.Thread(target=evaluate, args=(worker,), daemon=True)
+    try:
+        requesting.start()
+        requesting.join(0.5)  # blocked writing the request
+        _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10)
+        requesting.join(10)
+        assert not requesting.is_alive()
+        assert len(raised) == 1
+        assert isinstance(raised[0], cr_worker.CommonRoadWorkerError)
+        process = worker._process
+        assert process.poll() is not None
+        assert process.stdin is not None and process.stdin.closed
+        assert process.stdout is not None and process.stdout.closed
+        collected = weakref.ref(process)
+        del process
+        with warnings.catch_warnings(record=True) as caught:
+            warnings.simplefilter("always", ResourceWarning)
+            del worker
+            raised.clear()  # the error's traceback holds the worker
+            gc.collect()
+        assert collected() is None  # so its pipes would have warned
+        assert not [w for w in caught if issubclass(w.category, ResourceWarning)]
+    finally:
+        _kill_pid_running(pid, script)
 
 
 def test_an_interrupted_evaluation_closes_its_workers_at_once(
