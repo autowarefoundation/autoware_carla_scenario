@@ -883,14 +883,22 @@ def load_config(path: Union[str, Path]) -> HilsConfig:
     """The configuration in the YAML file *path*.
 
     Raises:
-        HilsConfigError: The file is missing or not a configuration.
+        HilsConfigError: The file is missing, unreadable, not UTF-8 text, or
+            not a configuration.
     """
     import yaml  # noqa: PLC0415
 
     path = Path(path).expanduser()
-    if not path.is_file():
-        raise HilsConfigError(f"{path} is not a file")
-    loader = yaml.SafeLoader(path.read_text(encoding="utf-8"))
+    try:
+        # is_file() too: before Python 3.14 it lets a PermissionError through.
+        if not path.is_file():
+            raise HilsConfigError(f"{path} is not a file")
+        text = path.read_text(encoding="utf-8")
+    except UnicodeDecodeError as exc:
+        raise HilsConfigError(f"{path}: not UTF-8 text ({exc})") from exc
+    except OSError as exc:
+        raise HilsConfigError(f"{path}: cannot be read ({exc})") from exc
+    loader = yaml.SafeLoader(text)
     try:
         node = loader.get_single_node()
         if node is not None:
