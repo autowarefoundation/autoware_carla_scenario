@@ -110,6 +110,11 @@ output; logs go to the standard error.
 {"ok": true}
 ```
 
+The worker exits after answering `close`, and at the end of its input too.
+The framework does not wait for the answer to `close`: it sends the request,
+closes the worker's input, and kills a worker that has not exited within five
+seconds (one deep in an evaluation).
+
 A road user is `id` (positive), `kind` (`car`, `truck`, `bus`, `motorcycle`,
 `bicycle`, `pedestrian`), `x`, `y`, `yaw`, `vx`, `vy`, `ax`, `ay`, `yaw_rate`,
 `length` and `width`. A value is a number, `Infinity` (no conflict: TTC never

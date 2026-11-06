@@ -1191,6 +1191,153 @@ def test_a_worker_answering_its_init_out_of_protocol_is_not_left_running(
     assert process.poll() is not None
 
 
+#: A worker that answers its ``init`` and then neither reads nor answers
+#: anything more, as one deep in a long (or deadlocked) evaluation would.
+_STUCK = textwrap.dedent(
+    """
+    import json, sys, time
+
+    json.loads(sys.stdin.readline())
+    sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+    sys.stdout.flush()
+    while True:
+        time.sleep(60)
+    """
+)
+
+#: A worker that answers its ``init`` and exits at the end of its input,
+#: answering nothing else (not even ``close``).
+_EXITS_AT_EOF = textwrap.dedent(
+    """
+    import json, sys
+
+    json.loads(sys.stdin.readline())
+    sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+    sys.stdout.flush()
+    for line in sys.stdin:
+        pass
+    """
+)
+
+
+def _closed_within(worker: cr_worker.CommonRoadWorker, seconds: float) -> float:
+    """How long ``worker.close()`` took; fails if it took over *seconds*,
+    without waiting for it longer than that."""
+    import threading
+    import time
+
+    errors: list[BaseException] = []
+
+    def close() -> None:
+        try:
+            worker.close()
+        except BaseException as exc:  # noqa: BLE001
+            errors.append(exc)
+
+    start = time.monotonic()
+    closing = threading.Thread(target=close, daemon=True)
+    closing.start()
+    closing.join(seconds)
+    took = time.monotonic() - start
+    assert not closing.is_alive(), f"close() still blocked after {seconds} s"
+    assert not errors, errors
+    return took
+
+
+def _started_worker(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> tuple[cr_worker.CommonRoadWorker, Any]:
+    """A worker running *source*, and its process."""
+    script = tmp_path / "worker.py"
+    script.write_text(source)
+    started: list[Any] = []
+    popen = cr_worker.subprocess.Popen
+
+    def recording_popen(*args: Any, **kwargs: Any) -> Any:
+        process = popen(*args, **kwargs)
+        started.append(process)
+        return process
+
+    monkeypatch.setattr(cr_worker.subprocess, "Popen", recording_popen)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script)], tmp_path / "map.xml"
+    )
+    (process,) = started
+    return worker, process
+
+
+def _kill(process: Any) -> None:
+    """Make sure the test leaves *process* (one it started) not running."""
+    if process.poll() is None:
+        process.kill()
+        process.wait()
+
+
+def test_a_stuck_worker_is_killed_by_close(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1775: close() does not wait for an answer a busy worker never gives;
+    the worker is killed once the close timeout is up."""
+    worker, process = _started_worker(tmp_path, monkeypatch, _STUCK)
+    try:
+        took = _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10)
+        assert took >= cr_worker._CLOSE_TIMEOUT_S - 0.5
+        assert process.poll() is not None
+        assert not worker.running()
+        # Closing it again does nothing more.
+        assert _closed_within(worker, 5) < 1
+    finally:
+        _kill(process)
+
+
+def test_a_worker_exiting_at_the_end_of_its_input_closes_at_once(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker, process = _started_worker(tmp_path, monkeypatch, _EXITS_AT_EOF)
+    try:
+        assert _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10) < (
+            cr_worker._CLOSE_TIMEOUT_S
+        )
+        assert process.returncode == 0
+    finally:
+        _kill(process)
+
+
+def test_a_worker_answering_close_closes_at_once_and_twice(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker, process = _started_worker(
+        tmp_path,
+        monkeypatch,
+        _ANSWERS_OUT_OF_PROTOCOL.replace(
+            "when, answer = sys.argv[1], sys.argv[2]", "when, answer = 'never', ''"
+        ),
+    )
+    try:
+        assert _closed_within(worker, cr_worker._CLOSE_TIMEOUT_S + 10) < (
+            cr_worker._CLOSE_TIMEOUT_S
+        )
+        assert process.returncode == 0
+        assert _closed_within(worker, 5) < 1
+    finally:
+        _kill(process)
+
+
+def test_closing_a_worker_that_has_exited_is_fine(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    worker, process = _started_worker(tmp_path, monkeypatch, _STUCK)
+    try:
+        process.kill()
+        process.wait()
+        assert _closed_within(worker, 5) < 1
+        assert not worker.running()
+        with pytest.raises(cr_worker.CommonRoadWorkerError, match="has exited"):
+            worker.evaluate([CRIME_TTC_S], {}, [])
+    finally:
+        _kill(process)
+
+
 def test_a_worker_answering_out_of_protocol_is_not_reused(
     opendrive: str, tmp_path: Path
 ) -> None:
