@@ -364,12 +364,20 @@ def test_the_port_and_durations_in_range_are_read() -> None:
     assert config.steps("startup")[0].seconds == 0.0
 
 
-def test_the_command_refuses_a_bad_port_override(tmp_path: Path) -> None:
+def test_the_command_refuses_a_bad_port_override(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
     path = tmp_path / "hils.yaml"
     path.write_text(example_config())
-    for port in ("0", "70000", "2000.7"):
-        with pytest.raises(SystemExit):
+    for port, message in (
+        ("0", "must be within 1-65535, got 0"),
+        ("70000", "must be within 1-65535, got 70000"),
+        ("2000.7", "expected an integer, got '2000.7'"),
+    ):
+        with pytest.raises(SystemExit) as exc:
             main([str(path), "--check", "--port", port])
+        assert exc.value.code == 2
+        assert f"argument --port: {message}" in capsys.readouterr().err
 
 
 def test_relative_files_are_relative_to_the_configuration(tmp_path: Path) -> None:

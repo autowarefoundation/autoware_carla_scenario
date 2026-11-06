@@ -1458,7 +1458,7 @@ uv run detect-no-3d-model $CONF/nishishinjuku.yaml -v
 |--------|-------|----------|---------|-------------|
 | `yaml_path` | - | Yes | - | Path to map configuration YAML (map settings at the top level or under `map:`; see below) |
 | `--host` | - | No | `localhost` | CARLA server hostname |
-| `--port` | - | No | `2000` | CARLA server port |
+| `--port` | - | No | `2000` | CARLA server port, 1-65535 |
 | `--ray-upper` | - | No | `5.0` | Ray search range above z estimate (meters); the runner's `entity.ground_projection_ray_distance_upper` |
 | `--ray-lower` | - | No | `10.0` | Ray search range below z estimate (meters); the runner's `entity.ground_projection_ray_distance_lower` |
 | `--timeout` | - | No | `10.0` | CARLA client timeout (seconds); positive and finite |
@@ -1473,7 +1473,8 @@ cannot).
 `--ray-upper` and `--ray-lower` must be finite and non-negative, with a
 positive sum, as the runner's keys must be: a ray of no length hits nothing, so
 every lanelet would be flagged and written to the YAML. The tool refuses such
-values, and a `--timeout` that is not positive and finite, with a usage error
+values, a `--timeout` that is not positive and finite, and a `--port` outside
+1-65535, with a usage error
 (exit 2) before it connects to CARLA or reads the YAML.
 
 ### Input YAML Requirements
@@ -1535,7 +1536,9 @@ Then open `http://localhost:9000` (or the configured host/port) in a browser.
 
 Each option defaults to its environment variable, so a flag on the command line
 wins over the environment. An unknown option is an error (exit 2) and serves
-nothing.
+nothing, as is a port (`--port` or `VIEWER_PORT`) that is not an integer within
+1-65535: 0, which would have the system pick a port the viewer does not report,
+is refused too.
 
 Ctrl-C or `SIGTERM` stops the viewer and the run it started from the Run form.
 An open browser tab keeps the server waiting for it for at most 5 s. The

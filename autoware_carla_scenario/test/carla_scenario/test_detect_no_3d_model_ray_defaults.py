@@ -82,3 +82,21 @@ def test_explicit_ray_options_override_the_defaults() -> None:
         ["map.yaml", "--ray-upper", "7.5", "--ray-lower", "20"]
     )
     assert (args.ray_upper, args.ray_lower) == (7.5, 20.0)
+
+
+@pytest.mark.parametrize("bad", ["0", "-1", "70000", "abc"])
+def test_a_port_outside_1_to_65535_is_a_usage_error(
+    bad: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """It used to reach ``carla.Client`` unchecked (#1774)."""
+    with pytest.raises(SystemExit) as exc:
+        tool.main(["map.yaml", "--port", bad])
+    assert exc.value.code == 2
+    err = capsys.readouterr().err
+    assert "usage: " in err and "argument --port" in err
+
+
+@pytest.mark.parametrize("edge", [1, 65535])
+def test_the_ends_of_the_port_range_are_accepted(edge: int) -> None:
+    args = tool._build_parser().parse_args(["map.yaml", "--port", str(edge)])
+    assert args.port == edge

@@ -81,6 +81,7 @@ from autoware_carla_scenario.maps.opendrive import (
     map_asset_path,
 )
 from autoware_carla_scenario.scenario_config import EntityConfig
+from autoware_carla_scenario.serve_cli import port
 
 logger = logging.getLogger(__name__)
 
@@ -676,9 +677,9 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--port",
-        type=int,
+        type=port,
         default=2000,
-        help="CARLA server port (default: 2000)",
+        help="CARLA server port, 1-65535 (default: 2000)",
     )
     parser.add_argument(
         "--ray-upper",
