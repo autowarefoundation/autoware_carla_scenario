@@ -459,6 +459,80 @@ class TestValidation:
             for i in validate_document(document).errors
         )
 
+    @pytest.mark.parametrize("entity_id", ["ego", "npc1"])
+    def test_a_negative_initial_speed_is_an_error_on_its_path(
+        self, entity_id: str
+    ) -> None:
+        """#1809: the entity's config refuses it at run time, once CARLA runs."""
+        document = new_document()
+        index, entity = next(
+            (i, e) for i, e in enumerate(document.entities) if e.id == entity_id
+        )
+        entity.initial_speed_kmh = -5.0
+        errors = [
+            i
+            for i in validate_document(document).errors
+            if i.path == f"entities[{index}].initial_speed_kmh"
+        ]
+        assert [i.message for i in errors] == [
+            "This must be 0 or more: a speed is never below zero."
+        ]
+
+    @pytest.mark.parametrize("speed", [0.0, -0.0, 12.5])
+    def test_a_still_or_moving_initial_speed_is_not_an_error(
+        self, speed: float
+    ) -> None:
+        document = new_document()
+        npc = next(e for e in document.entities if e.id == "npc1")
+        npc.initial_speed_kmh = speed
+        assert not [
+            i
+            for i in validate_document(document).errors
+            if i.path.endswith(".initial_speed_kmh")
+        ]
+
+    @pytest.mark.parametrize(
+        "speed", [-5.0, -0.0, 0.0, 30.0, float("nan"), float("inf"), -float("inf")]
+    )
+    def test_a_speed_the_validator_accepts_builds_the_vehicle_config(
+        self, speed: float
+    ) -> None:
+        """#1809: every speed the validator accepts on a vehicle is one
+        ``VehicleEntityConfig`` (and the configs built on it) accepts, and every
+        one it refuses is refused there too -- at run time, too late."""
+        import typesafe_carla.carla as carla
+
+        from autoware_carla_scenario import (
+            EgoConfig,
+            MotorcycleEntityConfig,
+            SpawnTransform,
+            VehicleEntityConfig,
+        )
+
+        document = new_document()
+        npc = next(e for e in document.entities if e.id == "npc1")
+        npc.initial_speed_kmh = speed
+        accepted = not [
+            i
+            for i in validate_document(document).errors
+            if i.path.endswith(".initial_speed_kmh")
+        ]
+        spawn = SpawnTransform(carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0)))
+        for build in (
+            lambda: VehicleEntityConfig(
+                role_name="npc1", spawn_location=spawn, initial_speed_kmh=speed
+            ),
+            lambda: MotorcycleEntityConfig(
+                role_name="npc1", spawn_location=spawn, initial_speed_kmh=speed
+            ),
+            lambda: EgoConfig(spawn_location=spawn, initial_speed_kmh=speed),
+        ):
+            if accepted:
+                build()
+            else:
+                with pytest.raises(ValueError, match="initial_speed_kmh"):
+                    build()
+
     def test_an_override_on_an_action_on_no_entity_is_an_error(self) -> None:
         document = new_document()
         document.actions.append(ActionNode(type="environment", overrides=True))
