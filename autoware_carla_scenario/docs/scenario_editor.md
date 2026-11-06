@@ -883,22 +883,23 @@ The scenario's document and Hydra config travel **inside** its wheel, so an
 installed scenario is self-contained: there is no directory that has to be kept
 beside it.
 
-### The package's name
+### The scenario id names the package
 
 The package is named after the document's **id**, which is lower-case letters,
-digits and `_`, starting with a letter (`^[a-z][a-z0-9_]*$`). Repeated and
-trailing `_` are collapsed and `_scenario` is appended unless the id already
-ends with it: `my_cut_in` (the **Cut-in example** starter's id) exports the
-package `my_cut_in_scenario` (distribution `my-cut-in-scenario`, directory
+digits and `_`, starting with a letter (`^[a-z][a-z0-9_]*$`). The id is the
+name `scenario=<id>` selects, and the exported package is named after it with
+`_scenario` added: `my_cut_in` (the **Cut-in example** starter's id) exports
+the module `my_cut_in_scenario` (distribution `my-cut-in-scenario`, directory
 `my_cut_in_scenario/`), and the id itself stays the scenario's name
-(`scenario=my_cut_in`).
+(`scenario=my_cut_in`). The suffix is added even to an id that already ends in
+it, so `new_scenario` is exported as `new_scenario_scenario`, never as the
+package of the id `new`.
 
 The validator (`authoring/package_names.py`) **refuses** an id whose package
-would be the framework's own, `autoware_carla_scenario`: the ids
-`autoware_carla` and `autoware_carla_scenario`. Such a package depends on
-itself and replaces the installed framework, so it is an `id` error, shown
-before an export starts, by the same rule `scenario-new` refuses that name
-with.
+would be the framework's own, `autoware_carla_scenario`: the id
+`autoware_carla` (and `autoware__carla` or `autoware_carla_`). Such a package depends on itself and replaces the installed
+framework, so it is an `id` error, shown before an export starts, by the same
+rule `scenario-new` refuses that name with.
 
 It also **refuses** an id that names a built-in scenario (`adversity`,
 `cut_in`, `intersection_passing`, `lane_change`, `pedestrian_dart_out`,
@@ -910,19 +911,64 @@ it and hand it the built-in's config keys. It is an `id` error, `The id
 'cut_in' is reserved: it names a built-in scenario ...`, worded as
 `scenario-new`'s refusal of the same `--scenario`.
 
-`export_package` and `names_for_id`, called directly, refuse it too, before
+`export_package` and `names_for_id`, called directly, refuse both too, before
 writing anything. That is why the Cut-in example starts as `my_cut_in`, not
 `cut_in`. A draft saved from the Cut-in example before this change
 has the id `cut_in`: rename it in the Scenario inspector before exporting it.
 
-Ids that differ only by a trailing `_scenario`, or by doubled or trailing
-`_`, export to the same package and so the same directory: `my_cut_in`,
-`my_cut_in_scenario`, `my_cut__in` and `my_cut_in_` all export as
-`my_cut_in_scenario/`.
-Exporting one of them with force (replacing an existing package) replaces the
-package another of them exported there. The validator does not warn about
-this, since it cannot know whether the other package exists; pick one id per
-scenario and keep to it.
+Package installers compare distribution names with every run of `_`, `-` and
+`.` folded into one `-`, so an id that differs from another only in its
+underscores would be the *same* package -- installing one would silently
+uninstall the other. `export_package` refuses these ids, writing nothing; the
+validator reports them as **warnings** on the `id` field, so the draft -- and a
+package exported with such an id before #1358 -- still compiles and runs:
+
+| Id | Would be packaged as | Use instead |
+| --- | --- | --- |
+| `stop__line` (a `__`) | `stop_line_scenario`, the package of `stop_line` | `stop_line` |
+| `stop_line_` (a trailing `_`) | `stop_line_scenario`, the package of `stop_line` | `stop_line` |
+
+A draft that already uses such an id still opens and saves; rename it before
+exporting. Every id the export accepts gets a package of its own.
+
+!!! warning "Ids ending in `_scenario` are exported under a new name since #1358"
+    Earlier exports did not add the suffix to an id that already ended in
+    `_scenario`, so `stop_line_scenario` and `stop_line` both became the
+    package `stop_line_scenario`. Re-exporting such an id -- the editor's
+    default `new_scenario` among them -- now gives it a package of its own.
+    For the id `new_scenario`:
+
+    | | Before | Now |
+    | --- | --- | --- |
+    | Distribution (`pip install ...`) | `new-scenario` | `new-scenario-scenario` |
+    | Import module and `src/` directory | `new_scenario` | `new_scenario_scenario` |
+    | Entry point in `autoware_carla_scenario.scenarios` | `new_scenario` | `new_scenario_scenario` |
+    | Export directory and wheelhouse directory | `new_scenario/`, `new_scenario_wheelhouse/` | `new_scenario_scenario/`, `new_scenario_scenario_wheelhouse/` |
+    | Document override variable | `NEW_SCENARIO_DOCUMENT_PATH` | `NEW_SCENARIO_SCENARIO_DOCUMENT_PATH` |
+
+    What selects and configures the scenario does **not** change: it is still
+    `scenario=new_scenario`, from the conf file `conf/scenario/new_scenario.yaml`
+    whose `scenario.name` is `new_scenario`, and the downloaded archive is still
+    `new_scenario-wheelhouse.zip`.
+
+    Because the distribution name changed, installing the re-export does not
+    replace the old one. Uninstall the old distribution first:
+
+    ```bash
+    .venv/bin/pip uninstall new-scenario     # or: uv pip uninstall new-scenario
+    .venv/bin/pip install --no-index --find-links new_scenario_scenario_wheelhouse new-scenario-scenario
+    ```
+
+    With both installed, both register a builder named `new_scenario` (the
+    one loaded last silently wins) and both put a `scenario/new_scenario.yaml`
+    on Hydra's search path (the one registered first wins), so a run can mix
+    one package's builder with the other's config, depending on the order the
+    entry points happen to load in.
+
+    The id `autoware_carla_scenario`, refused before because it exported as
+    the framework's own package, now exports as `autoware_carla_scenario_scenario`
+    and is accepted. Every id that does not end in `_scenario` keeps exactly the
+    package name it always had.
 
 ### What the wheelhouse is built from
 

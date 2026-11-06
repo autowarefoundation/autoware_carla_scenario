@@ -11,7 +11,7 @@ The id itself is restricted by the document model to ``^[a-z][a-z0-9_]*$``.
 On top of that:
 
 an id whose package would be the framework's own (``autoware_carla_scenario``:
-the ids ``autoware_carla`` and ``autoware_carla_scenario``) is refused, by the
+the id ``autoware_carla``, or ``autoware__carla``) is refused, by the
 rule ``scenario-new`` applies (:func:`scaffold.names._is_framework_name`).
 So is an id that names a built-in scenario
 (:data:`scaffold.names.BUILTIN_SCENARIO_NAMES`: ``cut_in``, ``lane_change``,
@@ -19,10 +19,14 @@ So is an id that names a built-in scenario
 registers its builder under, so once installed it would replace the built-in
 builder while the built-in configs still select it.
 
-Ids that differ only by a ``_scenario`` suffix or by repeated or trailing
-underscores (``my_cut_in``, ``my_cut_in_scenario``, ``my_cut__in``) share one
-package name, and so one directory.  That is documented, not warned about: the
-validator cannot tell whether the other id's package exists.
+The package is always ``<id>_scenario``: ``_scenario`` is added even to an
+id that already ends in it, so ``my_cut_in`` and ``my_cut_in_scenario`` export
+as ``my_cut_in_scenario`` and ``my_cut_in_scenario_scenario`` rather than as
+one package (#1358).  Ids with repeated or trailing underscores
+(``my_cut__in``, ``my_cut_in_``) would still share the package of the id
+without them, as PEP 503 folds every run of ``_`` when it compares
+distribution names; :func:`scenario_id_problem` flags them, the validator
+warns about them (they still run) and the export refuses them.
 """
 
 from __future__ import annotations
@@ -41,6 +45,7 @@ __all__ = [
     "PACKAGE_SUFFIX",
     "framework_name_problem",
     "names_for_id",
+    "scenario_id_problem",
 ]
 
 #: What every exported package name ends in.
@@ -58,10 +63,7 @@ def _sanitize_identifier(raw: str) -> str:
 
 def _package_name(scenario_id: str) -> str:
     """Return the Python package name the id *scenario_id* exports as."""
-    module_id = _sanitize_identifier(scenario_id)
-    if module_id.endswith(PACKAGE_SUFFIX):
-        return module_id
-    return f"{module_id}{PACKAGE_SUFFIX}"
+    return f"{_sanitize_identifier(scenario_id)}{PACKAGE_SUFFIX}"
 
 
 def framework_name_problem(scenario_id: str) -> Optional[str]:
@@ -94,6 +96,38 @@ def framework_name_problem(scenario_id: str) -> Optional[str]:
     )
 
 
+def scenario_id_problem(scenario_id: str) -> Optional[str]:
+    """Return why *scenario_id* would share another id's package, or ``None``.
+
+    The exported package is ``<id>_scenario`` (distribution ``<id>-scenario``),
+    and installers compare distribution names with every run of ``_`` folded
+    into one ``-`` (PEP 503).  So ``__`` and a trailing ``_``, which the
+    model's pattern accepts, would give an id the package of the id without
+    them, and installing one would replace the other (#1358).  They are refused
+    by :func:`~autoware_carla_scenario.authoring.package_export.export_package`
+    alone: :func:`~autoware_carla_scenario.authoring.validator.validate_document`
+    only warns, because it also gates every run, and a package exported with
+    such an id before #1358 has to keep running.  The model's pattern still
+    accepts them, so a draft that uses one opens and can be renamed.  An id
+    whose package would be the framework's own is :func:`framework_name_problem`'s.
+    """
+    stem = _sanitize_identifier(scenario_id)
+    package_name = _package_name(scenario_id)
+    if "__" in scenario_id:
+        return (
+            f"Scenario id {scenario_id!r} contains `__`, so it would be "
+            f"exported as `{package_name}`, the same package as the id "
+            f"{stem!r}. Use a single `_` between words."
+        )
+    if scenario_id.endswith("_"):
+        return (
+            f"Scenario id {scenario_id!r} ends in `_`, so it would be exported "
+            f"as `{package_name}`, the same package as the id {stem!r}. Drop "
+            "the trailing `_`."
+        )
+    return None
+
+
 def names_for_id(scenario_id: str) -> dict[str, str]:
     """Return the naming variants a package exported from *scenario_id* needs.
 
@@ -103,7 +137,10 @@ def names_for_id(scenario_id: str) -> dict[str, str]:
     as a string, never as a Python identifier, so a keyword such as ``class``
     is harmless.  Only the Python package and distribution names are
     sanitised; the package name always ends in ``_scenario``, so it is never a
-    keyword.
+    keyword.  The mapping is one-to-one over the ids :func:`scenario_id_problem`
+    accepts; this does not refuse the others, which
+    :func:`~autoware_carla_scenario.authoring.package_export.export_package`
+    does before writing anything.
 
     Raises:
         ValueError: If the package would take the framework's own name, or

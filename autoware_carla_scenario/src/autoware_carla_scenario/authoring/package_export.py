@@ -52,6 +52,7 @@ from .package_names import (  # noqa: F401  (re-exported)
     _pin_summary,
     _sanitize_identifier,
     names_for_id,
+    scenario_id_problem,
 )
 from .persistence import dump_document_yaml, dump_yaml, utc_timestamp
 from .uv_tool import UvUnavailable, run_uv
@@ -139,7 +140,11 @@ def package_names(document: ScenarioDocument) -> dict[str, str]:
     :func:`.package_names.names_for_id` of ``document.id``; raises
     ``ValueError`` for an id whose package would be the framework's own, or
     that names a built-in scenario, which
-    :func:`.validator.validate_document` reports as an error first.
+    :func:`.validator.validate_document` reports as an error first.  The
+    package is always ``<id>_scenario``, even for an id already ending in
+    ``_scenario`` (#1358); :func:`export_package` refuses the ids
+    :func:`.package_names.scenario_id_problem` flags, whose package would be
+    another id's.
     """
     return names_for_id(document.id)
 
@@ -621,7 +626,8 @@ def export_package(
         An :class:`ExportResult` describing what was produced.
 
     Raises:
-        PackageExportError: If the document is invalid, the framework cannot be
+        PackageExportError: If the document is invalid, its id cannot name a
+            package of its own (``scenario_id_problem``), the framework cannot be
             pinned immutably, the destination is occupied, or locking or
             verification failed.  Nothing is left at *destination* in that case.
     """
@@ -629,6 +635,10 @@ def export_package(
     if not report.ok:
         detail = "; ".join(f"{i.path}: {i.message}" for i in report.errors)
         raise PackageExportError(f"Cannot export an invalid scenario: {detail}")
+    # Only a warning to validate_document, which also gates every run.
+    id_problem = scenario_id_problem(document.id)
+    if id_problem is not None:
+        raise PackageExportError(f"Cannot export this scenario: {id_problem}")
 
     names = package_names(document)
     parent = Path(destination).expanduser().resolve()

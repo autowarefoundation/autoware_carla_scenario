@@ -3,7 +3,9 @@ checked :mod:`autoware_carla_scenario.authoring.package_names` (#1695).
 
 The move must not rename the package of any id that exported before; the ids
 whose package would be the framework's own are now refused by the validator,
-and so are the ids of the built-in scenarios (#1808).
+and so are the ids of the built-in scenarios (#1808).  Since #1358 the package
+always adds ``_scenario``, so an id already ending in it is the one that
+exports under a new name.
 """
 
 from __future__ import annotations
@@ -17,7 +19,10 @@ import pytest
 from autoware_carla_scenario.authoring import package_export, package_names
 from autoware_carla_scenario.authoring.framework_pin import Pin
 from autoware_carla_scenario.authoring.starter import blank_document, new_document
-from autoware_carla_scenario.authoring.validator import validate_document
+from autoware_carla_scenario.authoring.validator import (
+    EXPORT_REFUSAL_NOTE,
+    validate_document,
+)
 from autoware_carla_scenario.scaffold import generator, names
 from autoware_carla_scenario.typecheck.library import CHECKED
 
@@ -39,6 +44,17 @@ def _old_names(scenario_id: str) -> dict[str, str]:
     package_name = (
         module_id if module_id.endswith("_scenario") else f"{module_id}_scenario"
     )
+    return {
+        "scenario_id": scenario_id,
+        "package_name": package_name,
+        "distribution_name": package_name.replace("_", "-"),
+        "document_path_env": f"{package_name.upper()}_DOCUMENT_PATH",
+    }
+
+
+def _names_since_1358(scenario_id: str) -> dict[str, str]:
+    """``_old_names``, but ``_scenario`` added even when already there (#1358)."""
+    package_name = f"{_old_sanitize(scenario_id)}_scenario"
     return {
         "scenario_id": scenario_id,
         "package_name": package_name,
@@ -79,8 +95,12 @@ class TestNames:
 
     @pytest.mark.parametrize("scenario_id", _FIXED_IDS + _random_ids(300))
     def test_valid_ids_give_the_names_they_gave_before(self, scenario_id: str) -> None:
+        """Only an id already ending in ``_scenario`` is renamed (#1358)."""
         assert _ID.match(scenario_id)
-        assert package_names.names_for_id(scenario_id) == _old_names(scenario_id)
+        names = package_names.names_for_id(scenario_id)
+        assert names == _names_since_1358(scenario_id)
+        if not _old_sanitize(scenario_id).endswith("_scenario"):
+            assert names == _old_names(scenario_id)
         assert package_names._sanitize_identifier(scenario_id) == _old_sanitize(
             scenario_id
         )
@@ -98,7 +118,7 @@ class TestNames:
 
 class TestFrameworkName:
     @pytest.mark.parametrize(
-        "scenario_id", ["autoware_carla", "autoware_carla_scenario", "autoware__carla"]
+        "scenario_id", ["autoware_carla", "autoware__carla", "autoware_carla_"]
     )
     def test_the_framework_package_is_refused(self, scenario_id: str) -> None:
         problem = package_names.framework_name_problem(scenario_id)
@@ -107,13 +127,16 @@ class TestFrameworkName:
         with pytest.raises(ValueError, match="framework's own"):
             package_names.names_for_id(scenario_id)
 
-    @pytest.mark.parametrize("scenario_id", ["autoware", "carla", "autoware_carla_x"])
+    @pytest.mark.parametrize(
+        "scenario_id",
+        # ``autoware_carla_scenario`` exports ``autoware_carla_scenario_scenario``
+        # since ``_scenario`` is always added (#1358).
+        ["autoware", "carla", "autoware_carla_x", "autoware_carla_scenario"],
+    )
     def test_other_ids_are_not(self, scenario_id: str) -> None:
         assert package_names.framework_name_problem(scenario_id) is None
 
-    @pytest.mark.parametrize(
-        "scenario_id", ["autoware_carla", "autoware_carla_scenario"]
-    )
+    @pytest.mark.parametrize("scenario_id", ["autoware_carla", "autoware__carla"])
     def test_the_validator_reports_an_id_error(self, scenario_id: str) -> None:
         report = validate_document(new_document(scenario_id))
         assert not report.ok
@@ -189,25 +212,50 @@ class TestBuiltinScenarioName:
         assert new_document().id not in names.BUILTIN_SCENARIO_NAMES
 
 
-class TestSharedDirectory:
-    """Ids that share a package directory are documented, not warned about."""
+class TestSharedPackage:
+    """No two ids the export accepts share a package (#1358).
+
+    ``_scenario`` is always added, so an id ending in it has a package of its
+    own; ``__`` and a trailing ``_`` still fold into another id's package, so
+    the validator warns about them and the export refuses them.
+    """
 
     @pytest.mark.parametrize(
-        "scenario_id",
-        ["cut_in_scenario", "cut__in", "cut_in_", "cut__in_scenario_"],
+        ("scenario_id", "package_name"),
+        [
+            ("cut_in_scenario", "cut_in_scenario_scenario"),
+            ("cut__in", "cut_in_scenario"),
+            ("cut_in_", "cut_in_scenario"),
+            ("cut__in_scenario_", "cut_in_scenario_scenario"),
+        ],
     )
-    def test_ids_share_one_package(self, scenario_id: str) -> None:
-        assert (
-            package_names.names_for_id(scenario_id)["package_name"] == "cut_in_scenario"
-        )
+    def test_the_package_name(self, scenario_id: str, package_name: str) -> None:
+        assert package_names.names_for_id(scenario_id)["package_name"] == package_name
 
     @pytest.mark.parametrize(
-        "scenario_id", ["cut_in_scenario", "cut__in", "new_scenario"]
+        "scenario_id", ["cut_in_scenario", "my_cut_in", "new_scenario"]
     )
-    def test_the_validator_does_not_warn(self, scenario_id: str) -> None:
+    def test_an_id_of_its_own_is_not_warned_about(self, scenario_id: str) -> None:
+        assert package_names.scenario_id_problem(scenario_id) is None
         report = validate_document(new_document(scenario_id))
         assert report.ok
         assert not [i for i in report.issues if i.path == "id"]
+
+    @pytest.mark.parametrize("scenario_id", ["cut__in", "cut_in_", "cut__in_scenario_"])
+    def test_a_shared_one_is_a_warning(self, scenario_id: str) -> None:
+        problem = package_names.scenario_id_problem(scenario_id)
+        assert problem is not None
+        report = validate_document(new_document(scenario_id))
+        assert report.ok
+        warnings = [i for i in report.warnings if i.path == "id"]
+        assert [w.message for w in warnings] == [f"{problem} {EXPORT_REFUSAL_NOTE}"]
+
+    def test_the_export_refuses_a_shared_one_and_writes_nothing(
+        self, tmp_path: Path
+    ) -> None:
+        with pytest.raises(package_export.PackageExportError, match="contains `__`"):
+            package_export.export_package(new_document("cut__in"), tmp_path)
+        assert list(tmp_path.iterdir()) == []
 
 
 class TestStarterDocuments:

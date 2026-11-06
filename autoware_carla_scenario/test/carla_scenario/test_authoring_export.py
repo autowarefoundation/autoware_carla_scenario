@@ -46,6 +46,15 @@ from autoware_carla_scenario.authoring.package_export import (
     package_names,
 )
 from autoware_carla_scenario.authoring.starter import new_document
+from autoware_carla_scenario.authoring.compiler import compile_document
+from autoware_carla_scenario.authoring.package_names import (
+    framework_name_problem,
+    scenario_id_problem,
+)
+from autoware_carla_scenario.authoring.validator import (
+    EXPORT_REFUSAL_NOTE,
+    validate_document,
+)
 from autoware_carla_scenario.authoring.wheelhouse import (
     TESTED_PYTHONS,
     WheelhouseError,
@@ -1003,14 +1012,107 @@ class TestEveryPathRefusesAnotherMapBeforeReadingIt:
         assert "planned the route" in capsys.readouterr().out
 
 
-#: Valid scenario ids, each with the Python package its export is named after.
-#: ``__`` and a trailing ``_`` are what the package-name sanitising rewrites,
-#: so they are where the scenario id and the names derived from it could part.
+#: Scenario ids an export accepts, each with the Python package it is named
+#: after.  Before #1358 ``__`` and a trailing ``_`` were what the package-name
+#: sanitising rewrote, and so where the scenario id and the names derived from
+#: it could part (#1072); export now refuses them instead (see below).
 _SCENARIO_IDS = [
-    ("stop__line", "stop_line_scenario"),
-    ("stop_line_", "stop_line_scenario"),
     ("stop_line", "stop_line_scenario"),
+    ("my_cut_in", "my_cut_in_scenario"),
+    ("scenario", "scenario_scenario"),
+    ("autoware", "autoware_scenario"),
+    ("autoware_carla_x", "autoware_carla_x_scenario"),
+    ("scenario_one", "scenario_one_scenario"),
+    # Not the framework's package any more: ``_scenario`` is always added.
+    ("autoware_carla_scenario", "autoware_carla_scenario_scenario"),
+    # ``_scenario`` is always added: ``stop_line`` already has its package.
+    ("stop_line_scenario", "stop_line_scenario_scenario"),
+    ("new_scenario", "new_scenario_scenario"),
 ]
+
+#: Ids the model's pattern accepts whose package another id already has
+#: (#1358): each with the id it would collide with and a phrase the refusal
+#: must contain.
+_COLLIDING_IDS = [
+    ("stop__line", "stop_line", "contains `__`"),
+    ("stop_line_", "stop_line", "ends in `_`"),
+]
+
+
+class TestPackageNameCollisions:
+    """No two exportable ids share a package, nor take the framework's (#1358)."""
+
+    @staticmethod
+    def _id_issues(scenario_id: str) -> list[Any]:
+        report = validate_document(new_document(scenario_id))
+        return [issue for issue in report.issues if issue.path == "id"]
+
+    @pytest.mark.parametrize(("scenario_id", "other", "phrase"), _COLLIDING_IDS)
+    def test_a_colliding_id_is_a_validation_warning(
+        self, scenario_id: str, other: str, phrase: str
+    ) -> None:
+        # Without the refusal both would be packaged under the same name.
+        assert (
+            package_names(new_document(scenario_id))["package_name"]
+            == package_names(new_document(other))["package_name"]
+        )
+        assert scenario_id_problem(other) is None
+        issues = self._id_issues(scenario_id)
+        assert [issue.severity for issue in issues] == ["warning"]
+        assert phrase in issues[0].message
+        assert f"`{other}_scenario`" in issues[0].message
+        assert EXPORT_REFUSAL_NOTE in issues[0].message
+
+    @pytest.mark.parametrize("scenario_id", ["stop__line", "stop_line_"])
+    def test_a_refused_id_still_validates_and_compiles(self, scenario_id: str) -> None:
+        """A package exported before #1358 runs ``compile_document`` on every
+        run and in its own tests, so the id must not become an error."""
+        document = new_document(scenario_id)
+        assert validate_document(document).ok
+        assert compile_document(document) is not None
+
+    @pytest.mark.parametrize(("scenario_id", "_other", "phrase"), _COLLIDING_IDS)
+    def test_a_colliding_id_is_not_exported(
+        self, tmp_path: Path, scenario_id: str, _other: str, phrase: str
+    ) -> None:
+        with pytest.raises(PackageExportError, match=re.escape(phrase)) as caught:
+            export_package(new_document(scenario_id), tmp_path, **OFFLINE)
+        assert "Cannot export this scenario" in str(caught.value)
+        assert EXPORT_REFUSAL_NOTE not in str(caught.value)
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "scenario_id", ["autoware_carla", "autoware__carla", "autoware_carla_"]
+    )
+    def test_the_frameworks_name_is_refused(
+        self, tmp_path: Path, scenario_id: str
+    ) -> None:
+        """An id error, as before #1358 (#1695), and the only issue the id gets."""
+        problem = framework_name_problem(scenario_id)
+        assert problem is not None
+        assert "'autoware_carla_scenario'" in problem
+        assert "framework's own" in problem
+        issues = self._id_issues(scenario_id)
+        assert [issue.severity for issue in issues] == ["error"]
+        assert issues[0].message == problem
+        with pytest.raises(PackageExportError, match="framework's own"):
+            export_package(new_document(scenario_id), tmp_path, **OFFLINE)
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize(("scenario_id", "package_name"), _SCENARIO_IDS)
+    def test_an_accepted_id_has_its_own_package(
+        self, scenario_id: str, package_name: str
+    ) -> None:
+        assert scenario_id_problem(scenario_id) is None
+        assert self._id_issues(scenario_id) == []
+        assert package_names(new_document(scenario_id))["package_name"] == (
+            package_name
+        )
+
+    def test_accepted_ids_map_to_distinct_distributions(self) -> None:
+        ids = [scenario_id for scenario_id, _ in _SCENARIO_IDS]
+        names = {package_names(new_document(i))["distribution_name"] for i in ids}
+        assert len(names) == len(ids)
 
 
 class TestScenarioIdAgreement:
@@ -1051,7 +1153,7 @@ class TestScenarioIdAgreement:
         manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
         assert manifest["scenario"]["id"] == scenario_id
 
-    @pytest.mark.parametrize("scenario_id", ["stop__line", "stop_line_"])
+    @pytest.mark.parametrize("scenario_id", ["stop_line"])
     def test_the_exported_packages_own_tests_pass(
         self, tmp_path: Path, scenario_id: str
     ) -> None:

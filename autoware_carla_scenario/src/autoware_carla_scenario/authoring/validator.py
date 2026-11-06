@@ -38,7 +38,7 @@ from ..trajectory.authoring import (
 )
 from ..constants import MIN_BACKGROUND_SPEED_KMH
 from .hydra_config import MAP_EXCLUSION_REF
-from .package_names import framework_name_problem
+from .package_names import framework_name_problem, scenario_id_problem
 from ._builders_generated import (
     FAILURE_ONLY_CONDITIONS,
     ONCE_ACTIONS,
@@ -66,6 +66,12 @@ Severity = Literal["error", "warning"]
 #: showing amber to one movement still has vehicles in it, which is exactly why
 #: a real one never shows amber to a movement that crosses it either.
 PERMISSIVE_SIGNAL_STATES = frozenset({"green", "yellow"})
+
+#: Appended to a :func:`scenario_id_problem` reported as a validation warning.
+EXPORT_REFUSAL_NOTE = (
+    "The scenario still runs, but Export Wheelhouse refuses it until the id "
+    "is changed."
+)
 
 
 @dataclass(frozen=True)
@@ -1645,15 +1651,22 @@ def _check_id(out: _Collector, scenario_id: str) -> None:
     """Check the package the id *scenario_id* exports as (#1695).
 
     An error when that package would be the framework's own
-    (``autoware_carla`` and ``autoware_carla_scenario``), so the editor shows
-    it before an export starts rather than ``uv lock`` failing on a package
-    that depends on itself; and when the id names a built-in scenario
-    (``cut_in``, ``lane_change``, ..., #1808), which the installed package
-    would replace.
+    (``autoware_carla``), so the editor shows it before an export starts
+    rather than ``uv lock`` failing on a package that depends on itself; and
+    when the id names a built-in scenario (``cut_in``, ``lane_change``, ...,
+    #1808), which the installed package would replace.  A warning when the
+    package would be another id's (``__``, a trailing ``_``, #1358), which
+    the export refuses.
     """
     problem = framework_name_problem(scenario_id)
     if problem is not None:
         out.error("id", problem)
+        return
+    # A warning, not an error: an id the export refuses still runs, compiles
+    # and passes the tests of a package exported before #1358.
+    shared = scenario_id_problem(scenario_id)
+    if shared is not None:
+        out.warn("id", f"{shared} {EXPORT_REFUSAL_NOTE}")
 
 
 def validate_document(document: ScenarioDocument) -> ValidationReport:
