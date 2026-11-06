@@ -193,6 +193,61 @@ def test_a_case_result_is_compared_by_its_buckets_and_key() -> None:
     assert compared.metrics == {"elapsed_s": 6.0}
 
 
+def test_a_case_s_outcome_is_read_off_its_verdict() -> None:
+    assert comparison.outcome_of(False, True) == "pass"
+    assert comparison.outcome_of(False, False) == "fail"
+    assert comparison.outcome_of(False, None) == "none"
+    for passed in (True, False, None):
+        assert comparison.outcome_of(True, passed) == "error"
+    assert comparison.scenario_of("pkg/cut_in#3") == "pkg/cut_in"
+    assert comparison.scenario_of("pkg/cut_in") == "pkg/cut_in"
+
+
+def _key_before_1721(scenario: str, overrides: list[str]) -> str | None:
+    """``CaseResult.key``'s override part as ``ui.results`` built it before
+    it moved to ``ui.comparison.override_key`` (#1721)."""
+    own = sorted(
+        o.lstrip("+")
+        for o in overrides
+        if not o.lstrip("+").startswith(("odd_case=",))
+        and not o.startswith(("hydra.", "hydra/"))
+    )
+    return f"{scenario}|" + "|".join(own) if own else None
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        [],
+        ["ego.speed=3"],
+        ["b=2", "a=1", "+c=3", "++d=4"],
+        ["odd_case=abc"],
+        ["+odd_case=abc", "++odd_case=abc"],
+        ["hydra.run.dir=out", "hydra/launcher=slurm"],
+        ["+hydra.job.name=x"],
+        ["ego.speed=3", "++odd_case=x", "hydra.run.dir=o", "hydra/sweeper=basic"],
+        ["z=1", "+hydra.verbose=true", "odd_case=7", "a=b|c", "scenario=pkg/x"],
+    ],
+)
+def test_a_case_s_key_by_overrides_is_what_it_was(overrides: list[str]) -> None:
+    """Sessions are matched by key: the moved code gives the same bytes."""
+    expected = _key_before_1721("pkg/cut_in", overrides)
+    assert comparison.override_key("pkg/cut_in", overrides) == expected
+    result = results.CaseResult(
+        index=0,
+        label="pkg/cut_in#2",
+        passed=None,
+        errored=False,
+        elapsed_seconds=None,
+        message="",
+        overrides=overrides,
+        files=None,
+        coverage={"case": {"values": {"b": 2, "a": [1, "x"]}}},
+    )
+    fallback = 'pkg/cut_in|{"a": [1, "x"], "b": 2}'
+    assert result.key == (expected if expected is not None else fallback)
+
+
 def test_the_comparison_gives_what_it_gave_before_it_was_split_out() -> None:
     """``data/ui_results/comparison_golden.json`` is what ``ui.results``'
     own comparison gave on these sessions before #787 moved it into

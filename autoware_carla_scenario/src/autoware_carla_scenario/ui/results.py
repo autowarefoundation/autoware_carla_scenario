@@ -44,6 +44,7 @@ from .comparison import MatchedCase as MatchedCase
 from .comparison import _bucket_order as _bucket_order
 from .comparison import _case_number as _case_number
 from .comparison import compare as _compare
+from .comparison import outcome_of, override_key, scenario_of
 from .comparison import default_axes as _default_axes
 from .comparison import varying_attributes as _varying_attributes
 
@@ -70,13 +71,6 @@ __all__ = [
     "load_results",
     "cases_in_cell",
 ]
-
-#: An override that names the case by its position (the ODD sampler's
-#: encoded case), not by what it runs: left out of a case's key.
-_POSITIONAL_OVERRIDES = ("odd_case=",)
-
-#: Overrides of a run that are not the case (Hydra's own).
-_HYDRA_PREFIXES = ("hydra.", "hydra/")
 
 
 def _read_json(path: Path | None) -> Any:
@@ -127,7 +121,7 @@ class CaseResult:
     @property
     def scenario(self) -> str:
         """The label without its case number (``oneplanner/cut_in``)."""
-        return self.label.split("#", 1)[0]
+        return scenario_of(self.label)
 
     @property
     def case(self) -> dict[str, Any]:
@@ -153,16 +147,11 @@ class CaseResult:
     @property
     def key(self) -> str:
         """What the case ran, to match it in another session: its overrides
-        (less the positional ones), else the ODD values it was drawn at, else
+        (less the positional ones and Hydra's own), else the ODD values it was drawn at, else
         its label."""
-        own = sorted(
-            o.lstrip("+")
-            for o in self.overrides
-            if not o.lstrip("+").startswith(_POSITIONAL_OVERRIDES)
-            and not o.startswith(_HYDRA_PREFIXES)
-        )
-        if own:
-            return f"{self.scenario}|" + "|".join(own)
+        by_overrides = override_key(self.scenario, self.overrides)
+        if by_overrides is not None:
+            return by_overrides
         if self.values:
             return f"{self.scenario}|" + json.dumps(self.values, sort_keys=True)
         return self.label
@@ -170,11 +159,7 @@ class CaseResult:
     @property
     def outcome(self) -> str:
         """``pass``, ``fail``, ``error`` (raised, or no result), or ``none``."""
-        if self.errored:
-            return "error"
-        if self.passed is None:
-            return "none"
-        return "pass" if self.passed else "fail"
+        return outcome_of(self.errored, self.passed)
 
     def compared(self) -> ComparedCase:
         """The case as the comparison reads it: its buckets and key read off
