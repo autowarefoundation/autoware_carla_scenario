@@ -3707,42 +3707,85 @@ imports the other.</p>
 </tbody>
 </table>
 <h2 id="cli-entry-points">CLI entry points<a class="headerlink" href="#cli-entry-points" title="Permanent link">&para;</a></h2>
-<p>Defined in <code>pyproject.toml</code>:</p>
+<p>Defined in <code>pyproject.toml</code>'s <code>[project.scripts]</code>, in that order:</p>
 <table>
 <thead>
 <tr>
 <th>Command</th>
 <th>Module</th>
+<th>Description</th>
 </tr>
 </thead>
 <tbody>
 <tr>
 <td><code>scenario</code></td>
 <td><code>autoware_carla_scenario.examples.run:main</code></td>
+<td>Run scenarios in CARLA (Hydra). See <a href="../usage/#scenario-scenario-runner">Usage</a>.</td>
 </tr>
 <tr>
-<td><code>detect-no-3d-model</code></td>
-<td><code>autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main</code></td>
+<td><code>scenario-expand</code></td>
+<td><code>autoware_carla_scenario.examples.expand:main</code></td>
+<td>Print the concrete scenarios of a scenario as JSON, without running anything. See <a href="../logical_scenarios/">Logical Scenarios</a>.</td>
 </tr>
 <tr>
-<td><code>viewer</code></td>
-<td><code>autoware_carla_scenario.ui:main</code></td>
-</tr>
-<tr>
-<td><code>scenario-editor</code></td>
-<td><code>autoware_carla_scenario.editor:main</code></td>
-</tr>
-<tr>
-<td><code>scenario-new</code></td>
-<td><code>autoware_carla_scenario.scaffold.generator:main</code></td>
+<td><code>scenario-check</code></td>
+<td><code>autoware_carla_scenario.typecheck.cli:main</code></td>
+<td>Compile scenarios with Codon without running them (the static check the runner makes before a run). See <a href="../typecheck/">Static Check</a>.</td>
 </tr>
 <tr>
 <td><code>scenario-coverage</code></td>
 <td><code>autoware_carla_scenario.coverage.report:main</code></td>
+<td>Merge the coverage files of scenario runs into an ODD/scenario coverage report. See <a href="../coverage/">Coverage</a>.</td>
+</tr>
+<tr>
+<td><code>scenario-gate</code></td>
+<td><code>autoware_carla_scenario.gate.evaluate:main</code></td>
+<td>Judge logical scenarios' gates (runs, success rate, coverage, trajectory consistency) from their runs' gate records. See <a href="../gate/#judging-scenario-gate">Gates</a>.</td>
+</tr>
+<tr>
+<td><code>scenario-slurm</code></td>
+<td><code>autoware_carla_scenario.slurm.cli:main</code></td>
+<td>Follow, collect, resubmit or cancel a batch run with <code>launcher=slurm</code>. See <a href="../slurm/#following-collecting-resubmitting">SLURM</a>.</td>
 </tr>
 <tr>
 <td><code>scenario-odd</code></td>
 <td><code>autoware_carla_scenario.odd.cli:main</code></td>
+<td>Check an ODD (Python with Codon, or OpenODD YAML) and show its buckets. See <a href="../odd/#checking-an-odd">ODD</a>.</td>
+</tr>
+<tr>
+<td><code>scenario-new</code></td>
+<td><code>autoware_carla_scenario.scaffold.generator:main</code></td>
+<td>Generate a standalone scenario package. See <a href="../tutorial/">Tutorial</a>.</td>
+</tr>
+<tr>
+<td><code>scenario-setup</code></td>
+<td><code>autoware_carla_scenario.carla_install:main</code></td>
+<td>Download a CARLA server (the nightly build by default) for the runner to launch. See <a href="../installation/">Installation</a>.</td>
+</tr>
+<tr>
+<td><code>detect-no-3d-model</code></td>
+<td><code>autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main</code></td>
+<td>Detect lanelets without a matching 3D ground model in CARLA. See <a href="../usage/#detect-no-3d-model-3d-model-detection">Usage</a>.</td>
+</tr>
+<tr>
+<td><code>viewer</code></td>
+<td><code>autoware_carla_scenario.ui:main</code></td>
+<td>Scenario Result Viewer: a web UI for browsing scenario results and starting runs. See <a href="../usage/#viewer-scenario-result-viewer">Usage</a>.</td>
+</tr>
+<tr>
+<td><code>scenario-editor</code></td>
+<td><code>autoware_carla_scenario.editor:main</code></td>
+<td>Scenario Editor: a web UI for authoring scenarios and exporting them as packages; a separate application from <code>viewer</code>. See <a href="../scenario_editor/">Scenario Editor</a>.</td>
+</tr>
+<tr>
+<td><code>scenario-hils</code></td>
+<td><code>autoware_carla_scenario.hils.cli:main</code></td>
+<td>Stream a run's ego to devices under test (CAN, GNSS, LiDAR, cameras); needs the <code>hils</code> extra. See <a href="../hils/">HILS Bridge</a>.</td>
+</tr>
+<tr>
+<td><code>scenario-t4scene</code></td>
+<td><code>autoware_carla_scenario.t4_scene.__main__:main</code></td>
+<td>Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit. See <a href="../t4_scene/">T4 Scene</a>.</td>
 </tr>
 </tbody>
 </table>
@@ -3808,7 +3851,7 @@ imports the other.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 00:58:23 UTC"><span class="timeago" datetime="2026-11-06T00:58:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 00:58:23 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 05:21:04 UTC"><span class="timeago" datetime="2026-11-06T05:21:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 05:21:04 UTC">2026-11-06</span>
   </span>
 
     
