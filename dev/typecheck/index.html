@@ -4817,7 +4817,7 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 293 of the package's 415
-modules (71%; about 89,500 of
+modules (71%; about 89,600 of
 153,100 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4857,7 +4857,9 @@ the stem a log is of, its recording and its sensor recording, which <code>rerun<
 <code>rerun_lidar</code> and <code>ui.web_viewer_paths</code> all name them with; <code>ui.case_paths</code>
 names a case's log and recording with it too; the suffixes of a run's result
 and coverage file are its too, which <code>scenario_runner</code>, <code>ui.case_paths</code>,
-<code>ui.scanner</code> and <code>examples/run.py</code> name them with, #1704), the typed core of the sensors
+<code>ui.scanner</code> and <code>examples/run.py</code> name them with, #1704; so are those of a
+run's environment and lock and of its T4Scene and map, which <code>environment</code> and
+<code>t4_scene.convert</code> re-export, #1713), the typed core of the sensors
 in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
 entities are the sensors', the parse of <code>rerun rrd print</code> and the scan of a
 recording's bytes for those entities: <code>rerun_sensor_mount</code>, #1688, #1697; not <code>rerun_lidar</code>, which holds the Rerun SDK as
@@ -6304,7 +6306,7 @@ the first:</p>
 <li><code>editor.service</code>: imports yaml, zipfile, stat, uuid and weakref (<code>WeakValueDictionary</code>), which Codon has nothing for, and <code>contextlib.contextmanager</code>; reaches pydantic models through authoring.models; takes form fields as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
 <li><code>entity.carla_driver_entity</code>: imports carla_driver_interface.driver (<code>TurnIndicator</code>) and carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, driver.renderer (the protocol's messages) and rerun_lidar (<code>active_recorder()</code>; the Rerun SDK; <code>CameraMount</code> is the checked rerun_sensor_mount's, #1688), and, inside functions, driver.hdmap_export (itself excluded) and t4_scene.live (t4_scene.convert; also under <code>TYPE_CHECKING</code>), which are neither checked nor modelled, and <code>active_recording()</code>, <code>offer_driver_sensors()</code> and <code>withdraw_driver_sensors()</code> from t4, which the t4 model does not declare; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)</li>
 <li><code>entity.hils_entity</code>: imports hils.protocol (socket), which is neither checked nor modelled</li>
-<li><code>environment</code>: imports platform, more of sys than Codon's declares (<code>sys.prefix</code>), and more of importlib.metadata than its shim declares (<code>distributions()</code>, <code>packages_distributions()</code>, <code>Distribution</code>) and of urllib.parse (<code>urlparse()</code>); records packages as <code>dict[str, Any]</code>, which Codon cannot express; the source record and the requirement a distribution is pinned to are the checked environment_pin's</li>
+<li><code>environment</code>: imports platform, more of sys than Codon's declares (<code>sys.prefix</code>), and more of importlib.metadata than its shim declares (<code>distributions()</code>, <code>packages_distributions()</code>, <code>Distribution</code>) and of urllib.parse (<code>urlparse()</code>); records packages as <code>dict[str, Any]</code>, which Codon cannot express; the source record and the requirement a distribution is pinned to are the checked environment_pin's, and the suffixes of a run's environment and lock (<code>ENVIRONMENT_SUFFIX</code>, <code>LOCK_SUFFIX</code>) the checked run_outputs's (#1713), which it re-exports</li>
 <li><code>examples</code>: re-exports examples.run (omegaconf, hydra) and the registry (omegaconf, importlib)</li>
 <li><code>examples.compose_errors</code>: imports difflib, and, inside functions, hydra and omegaconf (their errors), the registry (omegaconf, importlib) and examples.run (hydra, omegaconf), which are neither checked nor modelled; reads a composed config of any shape (<code>Any</code>), which Codon cannot express</li>
 <li><code>examples.expand</code>: imports the registry (omegaconf, importlib) and sweeper.expand (omegaconf), and, inside main(), authoring.hydra_config (pydantic, through authoring.models), odd.controls (omegaconf, difflib) and examples.compose_errors (difflib, and hydra, omegaconf and examples.run inside its functions), which are not checked, and <code>OddDraws</code> from odd.sampler, which the odd model does not declare; holds the composed config as <code>Any</code>, which Codon cannot express</li>
@@ -6361,7 +6363,7 @@ the first:</p>
 <li><code>t4_scene</code>: re-exports t4_scene.convert and t4_scene.map_resource, which are not checked, and the checked t4_scene.exporter; t4_scene.codon models what scenario_runner, scenario_queue and t4_scene.exporter use of it</li>
 <li><code>t4_scene.__main__</code>: the scenario-t4scene command: imports argparse and t4_scene.convert, which is not checked</li>
 <li><code>t4_scene._proto.t4_scene_pb2</code>: imports google.protobuf</li>
-<li><code>t4_scene.convert</code>: reads JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) with orjson, imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); its frame math (the map frame's positions and angles, the rotations and quaternions) is the checked t4_scene.frames (#1665), and so is the check of a rear-axle offset (<code>checked_rear_axle_offset()</code>, #1697), which it re-exports for t4_scene.live and t4_scene.__main__; t4_scene.codon models the write_t4_scene() the checked t4_scene.exporter calls</li>
+<li><code>t4_scene.convert</code>: reads JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) with orjson, imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); its frame math (the map frame's positions and angles, the rotations and quaternions) is the checked t4_scene.frames (#1665), and so is the check of a rear-axle offset (<code>checked_rear_axle_offset()</code>, #1697), which it re-exports for t4_scene.live and t4_scene.__main__; the suffixes of a T4Scene and its map (<code>SCENE_SUFFIX</code>, <code>MAP_SUFFIX</code>) are the checked run_outputs's (#1713); t4_scene.codon models the write_t4_scene() the checked t4_scene.exporter calls</li>
 <li><code>t4_scene.live</code>: builds the run's scenes with t4_scene.convert, which is not checked, from a subclass of trajectory_recorder's TrajectoryRecorder (excluded), and imports numpy.typing (<code>NDArray</code>); entity.carla_driver_entity (excluded) is all that uses it</li>
 <li><code>t4_scene.map_resource</code>: imports xml.etree.ElementTree, which Codon has no shim for, and more of tempfile than its shim declares (<code>TemporaryDirectory()</code>), and builds protobuf messages (t4_scene._proto)</li>
 <li><code>t4_scene.route</code>: Codon crashes compiling RouteGraph.of(), which builds the lane graph with lanelet2's routing graph (a segmentation fault, or an assertion at translate.cpp:193); imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks; holds the lane graph as <code>Mapping[int, tuple[int, ...]]</code> attributes; and moves a map's points with <code>Lanelet.resetCache()</code> and <code>LineString3d.__setitem__()</code>, which the lanelet2 model does not declare; t4_scene.convert and t4_scene.live, which are not checked, are all that use it</li>
@@ -8284,7 +8286,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 23:53:26 UTC"><span class="timeago" datetime="2026-11-05T23:53:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 23:53:26 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 00:15:34 UTC"><span class="timeago" datetime="2026-11-06T00:15:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 00:15:34 UTC">2026-11-06</span>
   </span>
 
     
