@@ -168,46 +168,48 @@ The directory's name is predictable and sits in a world-writable one, so the
 gate trusts it only if it is private: it is created with mode `0o700`, opened
 without following a symlink, and used only if it is a real directory owned by
 you that neither its group nor others can write to. Every later use goes
-through that open directory, so it cannot be swapped once checked;
-`gate.lock` and the holds are opened without following symlinks, a hold is
-created only if it does not exist, and a file that is not a regular one (a
-FIFO) is ignored. A hold or `gate.lock` is trusted only if it is a regular
-file of yours with a single link (a hard link could make it one of your files
-elsewhere): a hold another user owns is removed and never counted, a hold
-with another link is never counted, and a `gate.lock` that fails this starts
-the build ungated (the gate's own directories: below). A `gate.lock` others could open (an older gate's `0o644`)
-is not just narrowed: it is replaced by a fresh `0o600` file, so a descriptor
-someone opened on the old one no longer contends for it. A build tries for
-the lock for at most two minutes (`LOCK_TIMEOUT_S`; the gate's own builds hold
-it for milliseconds), so no one holding it can stall the checks. After that,
-in the gate's own directories, the lock is replaced the same way (it was held
-through a descriptor opened before an earlier gate made it `0o600` in place);
-in a configured directory the build warns and starts ungated, and later
-builds of the same process try for it for only a second (enough for the
-gate's own builds) until one takes it again. Before a swap, the gate tries for
-the old lock for a second, so that none of its own builds holds it during the
-swap; a build waiting for it notices the file was replaced and takes the new
-one. Only a lock held longer than that, through a kept descriptor, is
-replaced while held: builds that waited out that holder together may then
-decide at once, each for that one look at the holds, once per machine.
+through that open directory, so it cannot be swapped once checked; `gate.lock`
+and the holds are opened without following symlinks, a hold is created only if
+it does not exist, and a file that is not a regular one (a FIFO) is ignored. A
+hold or `gate.lock` is trusted only if it is a regular file of yours with a
+single link (a hard link could make it one of your files elsewhere): a hold
+another user owns is removed and never counted, a hold with another link is
+never counted, and a `gate.lock` that fails this starts the build ungated (the
+gate's own directories: below). A `gate.lock` others could open (an older
+gate's `0o644`) is not just narrowed: it is replaced by a fresh `0o600` file,
+so a descriptor someone opened on the old one no longer contends for it. A
+build tries for the lock for at most two minutes (`LOCK_TIMEOUT_S`; the gate's
+own builds hold it for milliseconds), so no one holding it can stall the
+checks. After that, in the gate's own directories, the lock is replaced the
+same way (it was held through a descriptor opened before an earlier gate made
+it `0o600` in place); in a configured directory the build warns and starts
+ungated, and later builds of the same process try for it for only a second
+(enough for the gate's own builds) until one takes it again. Before a swap, the
+gate tries for the old lock for a second, so that none of its own builds holds
+it during the swap; a build waiting for it notices the file was replaced and
+takes the new one. Only a lock held longer than that, through a kept
+descriptor, is replaced while held: builds that waited out that holder together
+may then decide at once, each for that one look at the holds, once per machine.
 
 A directory set with `AUTOWARE_CARLA_SCENARIO_CODON_GATE` must be private in
-the same way (yours, mode `0o700` or at least not group- or other-writable),
-or it is skipped; the gate never changes its mode or anything in it but its
-own files (`gate.lock`, replaced as above, and the holds). Only the gate's own
+the same way (yours, mode `0o700` or at least not group- or other-writable), or
+it is skipped; the gate never changes its mode or anything in it but its own
+files (`gate.lock`, replaced as above, and the holds). Only the gate's own
 directories are repaired: one of them that its group or others can use at all
 (as an older gate left it, `0o755`, or `0o775` under a umask of `002`) is made
 `0o700`, if it holds nothing but `gate.lock` and holds. On every use, the
 gate's files another user owns are removed from its own directory, which is
 used only if nothing of another user's remains and its `gate.lock`, if any, is
-a regular file of yours with a single link, so a repair that failed once keeps
-falling back. A `gate.lock` of yours with another link is removed there and
-made afresh (the other file stays as it is), and a fresh lock that a build
-killed during the swap left behind is removed too. When the directory fails
-these rules (or there is no temporary directory), the gate warns and falls
-back to `$XDG_RUNTIME_DIR/acs-codon-gate`, then to
-`~/.cache/autoware_carla_scenario/codon-gate`; when none is usable, or
-the gate's own files or the memory budget fail (a lock refused on NFS, a full
+a regular file of yours, so a repair that failed once keeps falling back. A
+`gate.lock` of yours with another link is swapped there for a fresh one, as
+above (the other file stays as it is), and a fresh lock that a build killed
+during the swap left behind is removed. Anywhere, a `gate.lock` found replaced
+while it is checked (another build's swap leaves the old file with no links) is
+let go and the one in place is tried instead. When the directory fails these
+rules (or there is no temporary directory), the gate warns and falls back to
+`$XDG_RUNTIME_DIR/acs-codon-gate`, then to
+`~/.cache/autoware_carla_scenario/codon-gate`; when none is usable, or the
+gate's own files or the memory budget fail (a lock refused on NFS, a full
 disk), it warns and starts the build ungated. The gate never holds up or fails
 a check on its own account, and never hides what a build raised.
 

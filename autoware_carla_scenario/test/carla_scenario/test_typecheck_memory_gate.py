@@ -15,6 +15,7 @@ import multiprocessing
 import os
 import threading
 import time
+from contextlib import suppress
 from pathlib import Path
 
 import pytest
@@ -989,3 +990,113 @@ def test_a_fresh_lock_replaced_in_turn_is_given_up(
     finally:
         os.close(old)
         os.close(dir_fd)
+
+
+def _swap_in_fresh_lock(gate: Path) -> int:
+    """Rename a fresh 0o600 file over *gate*'s ``gate.lock``, as another
+    build's swap does: its inode."""
+    fresh = gate / "gate.lock.swap"
+    fresh.write_text("")
+    fresh.chmod(0o600)
+    inode = fresh.stat().st_ino
+    fresh.rename(gate / "gate.lock")
+    return inode
+
+
+def test_a_lock_swapped_between_its_open_and_its_check_is_retried(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default_gate.mkdir(mode=0o700)
+    (default_gate / "gate.lock").write_text("")
+    (default_gate / "gate.lock").chmod(0o600)
+    real_fstat = os.fstat
+    swapped: list[int] = []
+
+    def fstat(fd: int) -> os.stat_result:
+        if not swapped and os.readlink(f"/proc/self/fd/{fd}").endswith("/gate.lock"):
+            swapped.append(_swap_in_fresh_lock(default_gate))  # old: 0 links now
+        return real_fstat(fd)
+
+    monkeypatch.setattr(os, "fstat", fstat)
+    with admitted(2 * GB, budget=_budget(14), sleep=_never):
+        assert len(list(default_gate.glob("*.hold"))) == 1  # gated
+    assert swapped
+    assert (default_gate / "gate.lock").stat().st_ino == swapped[0]  # kept
+    assert not fallbacks.exists()
+
+
+def test_a_lock_seen_with_no_links_mid_swap_is_not_judged_or_removed(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default_gate.mkdir(mode=0o700)
+    (default_gate / "gate.lock").write_text("")
+    (default_gate / "gate.lock").chmod(0o600)
+    real_stat = os.stat
+    swapped: list[int] = []
+
+    def stat(*args: object, **kwargs: object) -> os.stat_result:
+        result = real_stat(*args, **kwargs)  # type: ignore[arg-type]
+        if not swapped and args and args[0] == "gate.lock" and "dir_fd" in kwargs:
+            swapped.append(_swap_in_fresh_lock(default_gate))
+            fields = list(result)
+            fields[3] = 0  # st_nlink of the old file, now replaced
+            return os.stat_result(fields)
+        return result
+
+    monkeypatch.setattr(os, "stat", stat)
+    with admitted(2 * GB, budget=_budget(14), sleep=_never):
+        assert len(list(default_gate.glob("*.hold"))) == 1  # gated
+    assert swapped
+    assert (default_gate / "gate.lock").stat().st_ino == swapped[0]  # not removed
+    assert not fallbacks.exists()
+
+
+def test_builds_stay_exclusive_while_the_lock_is_swapped_under_them(
+    default_gate: Path, fallbacks: Path
+) -> None:
+    # A swapper keeps making our own lock 0o644 again, so builds keep
+    # replacing it while others hold or wait for it: still one decision at a
+    # time, every build gated, and no fallback.
+    threads = 8
+    stop = threading.Event()
+    guard = threading.Lock()
+    active = 0
+    most = 0
+    gated: list[bool] = []
+
+    def budget() -> int:  # called with the gate's lock held
+        nonlocal active, most
+        with guard:
+            active += 1
+            most = max(most, active)
+        time.sleep(0.001)
+        with guard:
+            active -= 1
+        return 1000 * GB
+
+    def builds() -> None:
+        while not stop.is_set():
+            with admitted(GB // 64, budget=budget):
+                mine = f"{os.getpid()}-{threading.get_ident()}-*.hold"
+                gated.append(len(list(default_gate.glob(mine))) == 1)
+
+    def swapper() -> None:
+        while not stop.is_set():
+            with suppress(OSError):
+                (default_gate / "gate.lock").chmod(0o644)
+            time.sleep(0.001)
+
+    with admitted(GB // 64, budget=_budget(1000)):
+        pass  # the directory and its lock exist
+    workers = [threading.Thread(target=builds) for _ in range(threads)]
+    workers.append(threading.Thread(target=swapper))
+    for worker in workers:
+        worker.start()
+    time.sleep(1.2)
+    stop.set()
+    for worker in workers:
+        worker.join(30)
+    assert gated and all(gated)
+    assert most == 1
+    assert not fallbacks.exists()
+    assert sorted(p.name for p in default_gate.iterdir()) == ["gate.lock"]
