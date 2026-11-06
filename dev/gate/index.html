@@ -2446,11 +2446,17 @@ and the criterion fails.</p>
 <h3 id="case-coverage">Case coverage<a class="headerlink" href="#case-coverage" title="Permanent link">&para;</a></h3>
 <p><code>scenario-expand</code> (and the sweeper) write how many cases the route search
 expanded to on the map (<code>scenario.route.case_count</code>) into every case, and each
-run records it with its case: the map and the route's lanelets. The case
+run records it with its case: the map, the route's lanelets and where its
+segments split (<code>segment_lanelets</code>, how many of the lanelets each segment
+holds). The route search keeps two matches over the same lanelets that split
+differently apart (two lane segments over three lanelets, split after the
+first or after the second), so the gate does too: they are two cases. The case
 coverage is the number of distinct cases that ran over the sum of the counts,
-over every map the runs were on. A run that was not expanded counts the
-matches it searched itself (those the ego cannot be placed on included, which
-an expansion skips). A record with no count (a run told nothing) makes the
+over every map the runs were on. A record written before the split was
+recorded (no <code>segment_lanelets</code>) is told apart by its map and lanelets alone,
+and is the same case as a record of those lanelets with a split. A run that
+was not expanded counts the matches it searched itself (those the ego cannot
+be placed on included, which an expansion skips). A record with no count (a run told nothing) makes the
 criterion fail: the share cannot be known.</p>
 <h2 id="what-a-run-records">What a run records<a class="headerlink" href="#what-a-run-records" title="Permanent link">&para;</a></h2>
 <p>A run of a logical scenario with a gate writes <code>{stem}_gate.json</code> beside
@@ -2467,19 +2473,20 @@ criterion fail: the share cannot be known.</p>
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a><span class="w">    </span><span class="nt">"lanelet_ids"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">101</span><span class="p">,</span><span class="w"> </span><span class="mi">102</span><span class="p">,</span><span class="w"> </span><span class="mi">602</span><span class="p">,</span><span class="w"> </span><span class="mi">301</span><span class="p">],</span>
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="w">    </span><span class="nt">"case_count"</span><span class="p">:</span><span class="w"> </span><span class="mi">12</span><span class="p">,</span>
 <a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="w">    </span><span class="nt">"segment_kinds"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"lane"</span><span class="p">,</span><span class="w"> </span><span class="s2">"junction"</span><span class="p">,</span><span class="w"> </span><span class="s2">"lane"</span><span class="p">],</span>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">    </span><span class="nt">"segment_ends"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">60.0</span><span class="p">,</span><span class="w"> </span><span class="mf">78.5</span><span class="p">,</span><span class="w"> </span><span class="mf">118.5</span><span class="p">]</span>
-<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">  </span><span class="nt">"outcome"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"passed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">,</span><span class="w"> </span><span class="nt">"elapsed_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mf">21.4</span><span class="p">,</span><span class="w"> </span><span class="nt">"failure_category"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">},</span>
-<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">  </span><span class="nt">"files"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">    </span><span class="nt">"result"</span><span class="p">:</span><span class="w"> </span><span class="s2">"logical_left_turn-3_result.json"</span><span class="p">,</span>
-<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">    </span><span class="nt">"coverage"</span><span class="p">:</span><span class="w"> </span><span class="s2">"logical_left_turn-3_coverage.json"</span><span class="p">,</span>
-<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">    </span><span class="nt">"trajectory"</span><span class="p">:</span><span class="w"> </span><span class="s2">"logical_left_turn-3.trajectory.jsonl"</span>
-<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">  </span><span class="p">},</span>
-<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">  </span><span class="nt">"ego"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
-<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">    </span><span class="nt">"columns"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"t"</span><span class="p">,</span><span class="w"> </span><span class="s2">"s"</span><span class="p">,</span><span class="w"> </span><span class="s2">"lateral_m"</span><span class="p">,</span><span class="w"> </span><span class="s2">"speed_mps"</span><span class="p">],</span>
-<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">    </span><span class="nt">"rows"</span><span class="p">:</span><span class="w"> </span><span class="p">[[</span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">5.0</span><span class="p">,</span><span class="w"> </span><span class="mf">0.02</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0</span><span class="p">],</span><span class="w"> </span><span class="p">[</span><span class="mf">0.05</span><span class="p">,</span><span class="w"> </span><span class="mf">5.0</span><span class="p">,</span><span class="w"> </span><span class="mf">0.02</span><span class="p">,</span><span class="w"> </span><span class="mf">0.1</span><span class="p">],</span><span class="w"> </span><span class="s2">"..."</span><span class="p">]</span>
-<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">  </span><span class="p">}</span>
-<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="p">}</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="w">    </span><span class="nt">"segment_ends"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mf">60.0</span><span class="p">,</span><span class="w"> </span><span class="mf">78.5</span><span class="p">,</span><span class="w"> </span><span class="mf">118.5</span><span class="p">],</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="w">    </span><span class="nt">"segment_lanelets"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="mi">2</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">,</span><span class="w"> </span><span class="mi">1</span><span class="p">]</span>
+<a id="__codelineno-1-15" name="__codelineno-1-15" href="#__codelineno-1-15"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-1-16" name="__codelineno-1-16" href="#__codelineno-1-16"></a><span class="w">  </span><span class="nt">"outcome"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span><span class="nt">"passed"</span><span class="p">:</span><span class="w"> </span><span class="kc">true</span><span class="p">,</span><span class="w"> </span><span class="nt">"message"</span><span class="p">:</span><span class="w"> </span><span class="s2">"..."</span><span class="p">,</span><span class="w"> </span><span class="nt">"elapsed_seconds"</span><span class="p">:</span><span class="w"> </span><span class="mf">21.4</span><span class="p">,</span><span class="w"> </span><span class="nt">"failure_category"</span><span class="p">:</span><span class="w"> </span><span class="kc">null</span><span class="p">},</span>
+<a id="__codelineno-1-17" name="__codelineno-1-17" href="#__codelineno-1-17"></a><span class="w">  </span><span class="nt">"files"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-18" name="__codelineno-1-18" href="#__codelineno-1-18"></a><span class="w">    </span><span class="nt">"result"</span><span class="p">:</span><span class="w"> </span><span class="s2">"logical_left_turn-3_result.json"</span><span class="p">,</span>
+<a id="__codelineno-1-19" name="__codelineno-1-19" href="#__codelineno-1-19"></a><span class="w">    </span><span class="nt">"coverage"</span><span class="p">:</span><span class="w"> </span><span class="s2">"logical_left_turn-3_coverage.json"</span><span class="p">,</span>
+<a id="__codelineno-1-20" name="__codelineno-1-20" href="#__codelineno-1-20"></a><span class="w">    </span><span class="nt">"trajectory"</span><span class="p">:</span><span class="w"> </span><span class="s2">"logical_left_turn-3.trajectory.jsonl"</span>
+<a id="__codelineno-1-21" name="__codelineno-1-21" href="#__codelineno-1-21"></a><span class="w">  </span><span class="p">},</span>
+<a id="__codelineno-1-22" name="__codelineno-1-22" href="#__codelineno-1-22"></a><span class="w">  </span><span class="nt">"ego"</span><span class="p">:</span><span class="w"> </span><span class="p">{</span>
+<a id="__codelineno-1-23" name="__codelineno-1-23" href="#__codelineno-1-23"></a><span class="w">    </span><span class="nt">"columns"</span><span class="p">:</span><span class="w"> </span><span class="p">[</span><span class="s2">"t"</span><span class="p">,</span><span class="w"> </span><span class="s2">"s"</span><span class="p">,</span><span class="w"> </span><span class="s2">"lateral_m"</span><span class="p">,</span><span class="w"> </span><span class="s2">"speed_mps"</span><span class="p">],</span>
+<a id="__codelineno-1-24" name="__codelineno-1-24" href="#__codelineno-1-24"></a><span class="w">    </span><span class="nt">"rows"</span><span class="p">:</span><span class="w"> </span><span class="p">[[</span><span class="mf">0.0</span><span class="p">,</span><span class="w"> </span><span class="mf">5.0</span><span class="p">,</span><span class="w"> </span><span class="mf">0.02</span><span class="p">,</span><span class="w"> </span><span class="mf">0.0</span><span class="p">],</span><span class="w"> </span><span class="p">[</span><span class="mf">0.05</span><span class="p">,</span><span class="w"> </span><span class="mf">5.0</span><span class="p">,</span><span class="w"> </span><span class="mf">0.02</span><span class="p">,</span><span class="w"> </span><span class="mf">0.1</span><span class="p">],</span><span class="w"> </span><span class="s2">"..."</span><span class="p">]</span>
+<a id="__codelineno-1-25" name="__codelineno-1-25" href="#__codelineno-1-25"></a><span class="w">  </span><span class="p">}</span>
+<a id="__codelineno-1-26" name="__codelineno-1-26" href="#__codelineno-1-26"></a><span class="p">}</span>
 </code></pre></div>
 <ul>
 <li><code>digest</code> is the SHA-256 of the document the run ran, its <code>ui</code> layout left
@@ -2572,9 +2579,16 @@ baseline whose runs stated another gate is re-judged, with a warning.</p>
 </tr>
 </tbody>
 </table>
-<p>and so is each case (the map and the route's lanelets) both ran: a case every
-baseline run of passed and a candidate run of failed is <strong>newly failing</strong>, one
-a baseline run of failed and every candidate run of passed is <strong>fixed</strong>.</p>
+<p>and so is each case (the map, the route's lanelets and where its segments
+split, as in the case coverage) both ran: a case every baseline run of passed
+and a candidate run of failed is <strong>newly failing</strong>, one a baseline run of
+failed and every candidate run of passed is <strong>fixed</strong>. Two cases over the same
+lanelets are labelled with their split, a <code>|</code> where one segment ends and the
+next begins (<code>Nishishinjuku [101|102,602]</code> and <code>Nishishinjuku [101,102|602]</code>).
+When either side has a record without a split (a baseline recorded before it
+was), the cases of those lanelets are compared by map and lanelets alone: each
+side's runs of every split of them are summed into one case, labelled without
+a split.</p>
 <p>The candidate <strong>regressed</strong> when a criterion regressed, a case is newly
 failing, or it did not run the scenario at all. The report always says so,
 but by default only the <strong>candidate's gate</strong> decides the exit code: a case
@@ -2691,7 +2705,7 @@ whatever its <code>gate_record(result, file_stem)</code> method returns (a
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 03:38:45 UTC"><span class="timeago" datetime="2026-11-06T03:38:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 03:38:45 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 10:53:40 UTC"><span class="timeago" datetime="2026-11-06T10:53:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 10:53:40 UTC">2026-11-06</span>
   </span>
 
     
