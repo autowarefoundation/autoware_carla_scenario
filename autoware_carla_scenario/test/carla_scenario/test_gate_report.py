@@ -34,6 +34,7 @@ def _rec(
     map_name: str = "Town",
     digest: str = "d",
     gate: Optional[dict[str, Any]] = None,
+    split: tuple[int, ...] = (),
 ) -> GateRecord:
     return GateRecord(
         scenario=scenario,
@@ -47,6 +48,7 @@ def _rec(
             case_count=4,
             segment_kinds=("lane",),
             segment_ends=(100.0,),
+            segment_lanelets=split,
         ),
         passed=passed,
         message="",
@@ -228,6 +230,35 @@ class TestComparisonMarkdown:
 
 
 class TestCompare:
+    def test_cases_split_differently_over_the_same_lanelets_stay_apart(
+        self,
+    ) -> None:
+        baseline = [
+            _rec(lanelets=(1, 2, 3), split=(1, 2)),
+            _rec(lanelets=(1, 2, 3), split=(2, 1), passed=False),
+            _rec(lanelets=(4, 5), split=(1, 1)),
+        ]
+        candidate = [
+            _rec(lanelets=(1, 2, 3), split=(1, 2), passed=False),
+            _rec(lanelets=(1, 2, 3), split=(2, 1)),
+            _rec(lanelets=(4, 5), split=(1, 1), passed=False),
+        ]
+        result = compare(baseline, candidate)
+        assert result.newly_failing == [
+            CaseChange("Town", (1, 2, 3), (1, 1), (0, 1), (1, 2), True),
+            CaseChange("Town", (4, 5), (1, 1), (0, 1), (1, 1), False),
+        ]
+        assert result.fixed == [
+            CaseChange("Town", (1, 2, 3), (0, 1), (1, 1), (2, 1), True),
+        ]
+        assert [c.label() for c in result.newly_failing] == [
+            "Town [1|2,3]",
+            "Town [4,5]",
+        ]
+        assert result.fixed[0].label() == "Town [1,2|3]"
+        assert result.fixed[0].to_dict()["segment_lanelets"] == [2, 1]
+        assert not result.warnings
+
     def test_newly_failing_fixed_and_missing(self) -> None:
         baseline = [
             _rec(lanelets=(1,)),

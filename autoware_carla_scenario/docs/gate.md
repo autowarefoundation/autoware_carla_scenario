@@ -93,9 +93,14 @@ and the criterion fails.
 
 `scenario-expand` (and the sweeper) write how many cases the route search
 expanded to on the map (`scenario.route.case_count`) into every case, and each
-run records it with its case: the map and the route's lanelets. The case
+run records it with its case: the map, the route's lanelets and where its
+segments split (`segment_lanelets`, how many of the lanelets each segment
+holds). The route search keeps two matches over the same lanelets that split
+differently apart (two lane segments over three lanelets, split after the
+first or after the second), so the gate does too: they are two cases. The case
 coverage is the number of distinct cases that ran over the sum of the counts,
-over every map the runs were on. A run that was not expanded counts the
+over every map the runs were on. A record written before the split was
+recorded (no `segment_lanelets`) is told apart by its map and lanelets alone. A run that was not expanded counts the
 matches it searched itself (those the ego cannot be placed on included, which
 an expansion skips). A record with no count (a run told nothing) makes the
 criterion fail: the share cannot be known.
@@ -118,7 +123,8 @@ A run of a logical scenario with a gate writes `{stem}_gate.json` beside
     "lanelet_ids": [101, 102, 602, 301],
     "case_count": 12,
     "segment_kinds": ["lane", "junction", "lane"],
-    "segment_ends": [60.0, 78.5, 118.5]
+    "segment_ends": [60.0, 78.5, 118.5],
+    "segment_lanelets": [2, 1, 1]
   },
   "outcome": {"passed": true, "message": "...", "elapsed_seconds": 21.4, "failure_category": null},
   "files": {
@@ -211,9 +217,12 @@ Each criterion is compared:
 | `same` | Neither moved |
 | `new` / `dropped` | Only the candidate / only the baseline judged it |
 
-and so is each case (the map and the route's lanelets) both ran: a case every
-baseline run of passed and a candidate run of failed is **newly failing**, one
-a baseline run of failed and every candidate run of passed is **fixed**.
+and so is each case (the map, the route's lanelets and where its segments
+split, as in the case coverage) both ran: a case every baseline run of passed
+and a candidate run of failed is **newly failing**, one a baseline run of
+failed and every candidate run of passed is **fixed**. Two cases over the same
+lanelets are labelled with their split, a `|` where one segment ends and the
+next begins (`Nishishinjuku [101|102,602]` and `Nishishinjuku [101,102|602]`).
 
 The candidate **regressed** when a criterion regressed, a case is newly
 failing, or it did not run the scenario at all. The report always says so,

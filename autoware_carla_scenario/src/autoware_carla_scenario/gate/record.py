@@ -91,12 +91,16 @@ class GateCase:
     Attributes:
         map: The map the run was on.
         index: The match's index in its search.
-        lanelet_ids: The route's lanelets, in driving order; with :attr:`map`,
-            what tells two cases apart.
+        lanelet_ids: The route's lanelets, in driving order.
         case_count: How many cases the search expanded to on this map; ``0``
             when the run was not told.
         segment_kinds: Each segment's kind (``lane`` / ``junction``).
         segment_ends: The route s each segment ends at; the first starts at 0.
+        segment_lanelets: How many of :attr:`lanelet_ids` each segment holds,
+            in order: where the segments split.  The route search keeps two
+            matches over the same lanelets that split differently apart
+            (their trims follow from the split), so this tells them apart
+            too; empty in a record written before it was recorded.
     """
 
     map: str
@@ -105,11 +109,16 @@ class GateCase:
     case_count: int = 0
     segment_kinds: tuple[str, ...] = ()
     segment_ends: tuple[float, ...] = ()
+    segment_lanelets: tuple[int, ...] = ()
 
     @property
-    def key(self) -> tuple[str, tuple[int, ...]]:
-        """What tells this case apart from the logical scenario's others."""
-        return self.map, self.lanelet_ids
+    def key(self) -> tuple[str, tuple[int, ...], tuple[int, ...]]:
+        """What tells this case apart from the logical scenario's others: the
+        map, the route's lanelets and where its segments split, as the route
+        search tells its matches apart.  Integers only, so the same match in
+        two runs of a sweep (a baseline and a candidate) has the same key.  A
+        record with no split recorded keys by its map and lanelets alone."""
+        return self.map, self.lanelet_ids, self.segment_lanelets
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -119,6 +128,7 @@ class GateCase:
             "case_count": self.case_count,
             "segment_kinds": list(self.segment_kinds),
             "segment_ends": [round(v, 4) for v in self.segment_ends],
+            "segment_lanelets": list(self.segment_lanelets),
         }
 
     @classmethod
@@ -138,6 +148,7 @@ class GateCase:
             case_count=int(raw.get("case_count") or 0),
             segment_kinds=tuple(str(v) for v in _array(raw, "segment_kinds")),
             segment_ends=tuple(float(v) for v in _array(raw, "segment_ends")),
+            segment_lanelets=tuple(int(v) for v in _array(raw, "segment_lanelets")),
         )
 
 

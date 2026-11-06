@@ -69,6 +69,7 @@ def _record(
     ego: Optional[list[tuple[float, float, float, float]]] = None,
     ends: tuple[float, ...] = (40.0, 60.0, 100.0),
     scenario: str = "left_turn",
+    split: tuple[int, ...] = (),
 ) -> GateRecord:
     return GateRecord(
         scenario=scenario,
@@ -82,6 +83,7 @@ def _record(
             case_count=case_count,
             segment_kinds=("lane", "junction", "lane"),
             segment_ends=ends,
+            segment_lanelets=split,
         ),
         passed=passed,
         message="ok" if passed else "collision",
@@ -220,6 +222,26 @@ class TestRecord:
         assert read.ego == [tuple(round(v, 4) for v in row) for row in record.ego]
         assert (read.passed, read.failure_category) == (False, "collision")
         assert read.file("coverage") == tmp_path / "Left_coverage.json"
+
+    def test_the_split_round_trips(self, tmp_path: Path) -> None:
+        record = _record(split=(1, 1, 1))
+        path = _write(tmp_path, "Split", record)
+        assert json.loads(path.read_text())["case"]["segment_lanelets"] == [1, 1, 1]
+        read = read_gate_record(path)
+        assert read.case.segment_lanelets == (1, 1, 1)
+        assert read.case.key == ("Town", (1, 2, 3), (1, 1, 1))
+
+    def test_a_record_without_the_split_keys_by_its_lanelets(
+        self, tmp_path: Path
+    ) -> None:
+        # Written before the split was recorded: keyed as it was then.
+        path = _write(tmp_path, "Old", _record())
+        raw = json.loads(path.read_text())
+        raw["case"].pop("segment_lanelets")
+        path.write_text(json.dumps(raw))
+        read = read_gate_record(path)
+        assert read.case.segment_lanelets == ()
+        assert read.case.key == ("Town", (1, 2, 3), ())
 
     def test_another_schema_is_refused(self, tmp_path: Path) -> None:
         path = tmp_path / "x_gate.json"
@@ -453,6 +475,40 @@ class TestJudge:
         assert case.value == pytest.approx(2 / 4)
         assert case.passed
         assert "2 of 4 case(s) on 2 map(s)" == case.detail
+
+    def test_matches_split_differently_over_the_same_lanelets_are_two_cases(
+        self,
+    ) -> None:
+        gate = {"min_case_coverage": 1.0}
+        verdict = judge(
+            [
+                _record(
+                    gate=gate, lanelets=(1, 2, 3, 4), case_count=2, split=(1, 1, 2)
+                ),
+                _record(
+                    gate=gate,
+                    lanelets=(1, 2, 3, 4),
+                    case_count=2,
+                    split=(2, 1, 1),
+                    ends=(60.0, 80.0, 100.0),
+                ),
+            ]
+        )
+        (_, case) = verdict.criteria
+        assert case.value == pytest.approx(1.0)
+        assert case.passed
+        assert case.detail == "2 of 2 case(s) on 1 map(s)"
+
+    def test_records_without_the_split_share_a_case(self) -> None:
+        gate = {"min_case_coverage": 1.0}
+        verdict = judge(
+            [
+                _record(gate=gate, case_count=2, ends=(40.0, 60.0, 100.0)),
+                _record(gate=gate, case_count=2, ends=(60.0, 60.0, 100.0)),
+            ]
+        )
+        (_, case) = verdict.criteria
+        assert case.value == pytest.approx(0.5)
 
     def test_an_unknown_case_count_fails_the_case_coverage(self) -> None:
         verdict = judge([_record(gate={"min_case_coverage": 0.1}, case_count=0)])

@@ -165,8 +165,8 @@ def criterion_changes(
 
 
 def case_changes(
-    baseline: Mapping[tuple[str, tuple[int, ...]], tuple[int, int]],
-    candidate: Mapping[tuple[str, tuple[int, ...]], tuple[int, int]],
+    baseline: Mapping[tuple[str, tuple[int, ...], tuple[int, ...]], tuple[int, int]],
+    candidate: Mapping[tuple[str, tuple[int, ...], tuple[int, ...]], tuple[int, int]],
 ) -> tuple[list[CaseChange], list[CaseChange], int]:
     """The cases both sides ran whose outcome changed, from each side's
     ``(passed runs, runs)`` of each case (``criteria._outcomes``).
@@ -177,7 +177,7 @@ def case_changes(
         run of passed (fixed), each sorted by case, and how many cases the
         baseline ran that the candidate did not.
     """
-    common: list[tuple[str, tuple[int, ...]]] = []
+    common: list[tuple[str, tuple[int, ...], tuple[int, ...]]] = []
     missing = 0
     for key in baseline:
         if key in candidate:
@@ -185,11 +185,18 @@ def case_changes(
         else:
             missing += 1
     common.sort()
+    # How many splits of each map's lanelets either side ran: a case whose
+    # lanelets another shares is labelled with its split.
+    splits: dict[tuple[str, tuple[int, ...]], set[tuple[int, ...]]] = {}
+    for side in (baseline, candidate):
+        for key in side:
+            splits.setdefault((key[0], key[1]), set()).add(key[2])
     newly_failing: list[CaseChange] = []
     fixed: list[CaseChange] = []
     for key in common:
         b, a = baseline[key], candidate[key]
-        change = CaseChange(key[0], key[1], b, a)
+        shared = len(splits[(key[0], key[1])]) > 1
+        change = CaseChange(key[0], key[1], b, a, key[2], shared)
         if b[0] == b[1] and a[0] < a[1]:
             newly_failing.append(change)
         elif b[0] < b[1] and a[0] == a[1]:

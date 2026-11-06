@@ -570,6 +570,7 @@ class DeclarativeScenario(BaseScenario):
                 case_count=self._case_count,
                 segment_kinds=tuple(seg.kind for seg in match.segments),
                 segment_ends=tuple(float(seg.end) for seg in match.segments),
+                segment_lanelets=tuple(len(seg.lanelet_ids) for seg in match.segments),
             ),
             passed=result.passed,
             message=result.message,
