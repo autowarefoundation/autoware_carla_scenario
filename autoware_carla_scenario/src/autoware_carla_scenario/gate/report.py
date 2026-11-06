@@ -165,11 +165,17 @@ def criterion_changes(
 
 
 def case_changes(
-    baseline: Mapping[tuple[str, tuple[int, ...]], tuple[int, int]],
-    candidate: Mapping[tuple[str, tuple[int, ...]], tuple[int, int]],
+    baseline: Mapping[tuple[str, tuple[int, ...], tuple[int, ...]], tuple[int, int]],
+    candidate: Mapping[tuple[str, tuple[int, ...], tuple[int, ...]], tuple[int, int]],
 ) -> tuple[list[CaseChange], list[CaseChange], int]:
     """The cases both sides ran whose outcome changed, from each side's
     ``(passed runs, runs)`` of each case (``criteria._outcomes``).
+
+    A case is matched by its map, lanelets and split when both sides
+    recorded a split for those lanelets.  When either side has a record
+    without one (written before the split was recorded), the case is matched
+    by its map and lanelets alone: each side's outcomes are summed over every
+    split of them, and its label is not split.
 
     Returns:
         The cases every baseline run of passed and a candidate run of failed
@@ -177,19 +183,63 @@ def case_changes(
         run of passed (fixed), each sorted by case, and how many cases the
         baseline ran that the candidate did not.
     """
-    common: list[tuple[str, tuple[int, ...]]] = []
-    missing = 0
+    # Each side's splits of each map's lanelets.
+    base_splits: dict[tuple[str, tuple[int, ...]], list[tuple[int, ...]]] = {}
     for key in baseline:
-        if key in candidate:
-            common.append(key)
-        else:
-            missing += 1
+        base_splits.setdefault((key[0], key[1]), []).append(key[2])
+    cand_splits: dict[tuple[str, tuple[int, ...]], list[tuple[int, ...]]] = {}
+    for key in candidate:
+        cand_splits.setdefault((key[0], key[1]), []).append(key[2])
+    # Each case both sides ran, and its baseline's and candidate's outcomes.
+    common: list[tuple[str, tuple[int, ...], tuple[int, ...]]] = []
+    b_of: dict[tuple[str, tuple[int, ...], tuple[int, ...]], tuple[int, int]] = {}
+    a_of: dict[tuple[str, tuple[int, ...], tuple[int, ...]], tuple[int, int]] = {}
+    missing = 0
+    for lanelets, b_splits in base_splits.items():
+        old_baseline = any(not split for split in b_splits)
+        if lanelets not in cand_splits:
+            missing += 1 if old_baseline else len(b_splits)
+            continue
+        c_splits = cand_splits[lanelets]
+        if old_baseline or any(not split for split in c_splits):
+            # An old record on either side: one case of the lanelets.
+            b_sum = (0, 0)
+            for split in b_splits:
+                one = baseline[(lanelets[0], lanelets[1], split)]
+                b_sum = (b_sum[0] + one[0], b_sum[1] + one[1])
+            c_sum = (0, 0)
+            for split in c_splits:
+                one = candidate[(lanelets[0], lanelets[1], split)]
+                c_sum = (c_sum[0] + one[0], c_sum[1] + one[1])
+            # The empty split, of the key's type (sliced, not a literal).
+            whole = (lanelets[0], lanelets[1], b_splits[0][:0])
+            common.append(whole)
+            b_of[whole] = b_sum
+            a_of[whole] = c_sum
+            continue
+        for split in b_splits:
+            if split in c_splits:
+                key = (lanelets[0], lanelets[1], split)
+                common.append(key)
+                b_of[key] = baseline[key]
+                a_of[key] = candidate[key]
+            else:
+                missing += 1
     common.sort()
     newly_failing: list[CaseChange] = []
     fixed: list[CaseChange] = []
-    for key in common:
-        b, a = baseline[key], candidate[key]
-        change = CaseChange(key[0], key[1], b, a)
+    for entry in common:
+        map_name, ids, split = entry
+        b, a = b_of[entry], a_of[entry]
+        # A case whose lanelets another split shares is labelled with its
+        # split (never a case matched without one).
+        shared = False
+        if split:
+            seen = set(base_splits[(map_name, ids)])
+            for other in cand_splits[(map_name, ids)]:
+                seen.add(other)
+            shared = len(seen) > 1
+        change = CaseChange(map_name, ids, b, a, split, shared)
         if b[0] == b[1] and a[0] < a[1]:
             newly_failing.append(change)
         elif b[0] < b[1] and a[0] == a[1]:

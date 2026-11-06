@@ -657,6 +657,7 @@ class TestTheGateRecord:
         assert (record.case.index, record.case.lanelet_ids) == (2, (7, 8))
         assert record.case.case_count == 5
         assert record.case.segment_ends == (25.0,)
+        assert record.case.segment_lanelets == (2,)
         # The runner names the outputs it wrote (scenario_runner._write_gate_record).
         assert record.files == {}
         assert record.ego == [(0.0, 1.0, 0.2, 3.0)]

@@ -208,16 +208,28 @@ def _criterion(
 def _case_coverage(records: Sequence[GateRecord]) -> tuple[Optional[float], str]:
     """The share of the cases that ran, over every map the runs were on."""
     counts: dict[str, int] = {}
-    run: dict[str, set[tuple[int, ...]]] = {}
+    run: dict[str, set[tuple[str, tuple[int, ...], tuple[int, ...]]]] = {}
     for record in records:
         case = record.case
         counts[case.map] = max(counts.get(case.map, 0), case.case_count)
-        run.setdefault(case.map, set()).add(case.lanelet_ids)
+        run.setdefault(case.map, set()).add(case.key)
     unknown = sorted(name or "?" for name, count in counts.items() if count <= 0)
     if unknown:
         return None, f"the case count on {', '.join(unknown)} is not known"
+    # A record without a split (written before it was recorded) is the same
+    # case as one of its lanelets with a split: counted once.
+    split_ids: set[tuple[str, tuple[int, ...]]] = set()
+    for keys in run.values():
+        for key in keys:
+            if key[2]:
+                split_ids.add((key[0], key[1]))
+    distinct: dict[str, int] = {}
+    for name, keys in run.items():
+        distinct[name] = sum(
+            1 for key in keys if key[2] or (key[0], key[1]) not in split_ids
+        )
     total = sum(counts.values())
-    covered = sum(min(len(run[name]), counts[name]) for name in counts)
+    covered = sum(min(distinct[name], counts[name]) for name in counts)
     maps = len(counts)
     # Typed: Codon types a returned tuple by its values, not the annotation.
     share: Optional[float] = covered / total
@@ -307,21 +319,42 @@ class CaseChange:
         lanelet_ids: Its route's lanelets.
         baseline: ``(passed runs, runs)`` in the baseline.
         candidate: ``(passed runs, runs)`` in the candidate.
+        segment_lanelets: How many of its lanelets each segment holds (where
+            its segments split); empty when its records did not say.
+        shares_lanelets: Whether another case of the comparison has the same
+            map and lanelets (split differently): its label then shows the
+            split.
     """
 
     map: str
     lanelet_ids: tuple[int, ...]
     baseline: tuple[int, int]
     candidate: tuple[int, int]
+    segment_lanelets: tuple[int, ...] = ()
+    shares_lanelets: bool = False
 
     def label(self) -> str:
-        ids = ",".join(str(v) for v in self.lanelet_ids)
-        return f"{self.map or '?'} [{ids}]"
+        """The map and the lanelets (``Town [1,2,3]``); split where the
+        segments meet (``Town [1|2,3]``) when another case shares them."""
+        if not self.shares_lanelets or not self.segment_lanelets:
+            ids = ",".join(str(v) for v in self.lanelet_ids)
+            return f"{self.map or '?'} [{ids}]"
+        parts: list[str] = []
+        at = 0
+        for count in self.segment_lanelets:
+            chunk = self.lanelet_ids[at : at + count]
+            parts.append(",".join(str(v) for v in chunk))
+            at += count
+        rest = self.lanelet_ids[at:]
+        if rest:
+            parts.append(",".join(str(v) for v in rest))
+        return f"{self.map or '?'} [{'|'.join(parts)}]"
 
     def to_dict(self) -> dict[str, Any]:
         return {
             "map": self.map,
             "lanelet_ids": list(self.lanelet_ids),
+            "segment_lanelets": list(self.segment_lanelets),
             "baseline": {"passed": self.baseline[0], "runs": self.baseline[1]},
             "candidate": {"passed": self.candidate[0], "runs": self.candidate[1]},
         }
@@ -329,9 +362,9 @@ class CaseChange:
 
 def _outcomes(
     records: Sequence[GateRecord],
-) -> dict[tuple[str, tuple[int, ...]], tuple[int, int]]:
-    """``(passed runs, runs)`` of each case."""
-    out: dict[tuple[str, tuple[int, ...]], tuple[int, int]] = {}
+) -> dict[tuple[str, tuple[int, ...], tuple[int, ...]], tuple[int, int]]:
+    """``(passed runs, runs)`` of each case, by :attr:`GateCase.key`."""
+    out: dict[tuple[str, tuple[int, ...], tuple[int, ...]], tuple[int, int]] = {}
     for record in records:
         passed, runs = out.get(record.case.key, (0, 0))
         out[record.case.key] = (passed + int(record.passed), runs + 1)
