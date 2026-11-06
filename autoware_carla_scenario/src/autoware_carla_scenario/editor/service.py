@@ -315,8 +315,8 @@ class EditorService:
     def archive_path(self, draft: Draft) -> Path:
         """Return where an export of *draft* stages its wheelhouse now.
 
-        A directory per draft, and a file named after the scenario, so the
-        download is called what the package inside it is called.
+        A directory per draft, and a file named after the scenario id (the
+        package inside it is the id's package, ``<id>_scenario``).
         """
         return self._archive_dir(draft.id) / f"{draft.document.id}{_ARCHIVE_SUFFIX}"
 

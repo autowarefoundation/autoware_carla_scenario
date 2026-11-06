@@ -897,7 +897,7 @@ package of the id `new`.
 
 The validator (`authoring/package_names.py`) **refuses** an id whose package
 would be the framework's own, `autoware_carla_scenario`: the id
-`autoware_carla`. Such a package depends on itself and replaces the installed
+`autoware_carla` (and `autoware__carla` or `autoware_carla_`). Such a package depends on itself and replaces the installed
 framework, so it is an `id` error, shown before an export starts, by the same
 rule `scenario-new` refuses that name with.
 
