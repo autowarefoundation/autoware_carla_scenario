@@ -4818,7 +4818,7 @@ lists here. -->
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 298 of the package's 420
 modules (71%; about 89,900 of
-153,500 lines) are <code>CHECKED</code>: the kinematics, the
+153,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6398,7 +6398,7 @@ the first:</p>
 <li><code>trajectory_recorder</code>: writes JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) serialised with orjson (module level; <code>orjson.JSONEncodeError</code>), reads the projector's settings with yaml (inside <code>_projector_info</code>), and neither has a Codon model; trajectory_recorder.codon models what scenario_runner uses of it</li>
 <li><code>ui</code>: imports argparse and serve_cli (argparse, ipaddress), which is not checked; imports uvicorn, ui.app (fastapi) and the registry (omegaconf, importlib) inside main(), and ui.recordings (tarfile) inside a function</li>
 <li><code>ui.app</code>: imports fastapi, asyncio, more of contextlib than its shim declares (<code>asynccontextmanager</code>, for _lifespan()), and openodd (a Rust extension) inside _openodd()</li>
-<li><code>ui.cases</code>: reads JSON documents of any type (<code>Any</code>); the path guard, the case stems and a batch's stamp (<code>batch_stamp</code>, <code>_summary_is_current</code>) are the checked ui.case_paths's</li>
+<li><code>ui.cases</code>: imports slurm.manifest, which is not checked; reads JSON documents of any type (<code>Any</code>); the path guard, the case stems and a batch's stamp (<code>batch_stamp</code>, <code>_summary_is_current</code>) are the checked ui.case_paths's</li>
 <li><code>ui.models</code>: imports pydantic</li>
 <li><code>ui.recordings</code>: imports base64, io, tarfile, urllib.request and zlib, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (<code>Any</code>); the web viewer's selection and the path rules of the recordings and of the web viewer's copy are the checked ui.web_viewer_paths's</li>
 <li><code>ui.results</code>: imports ui.cases, which is not checked and has no model, and yaml inside a function; reads JSON documents and trajectory log records of any type (<code>Any</code>); the comparison of sessions (fed the buckets and key read here), a case's outcome and scenario, and its key by overrides are the checked ui.comparison's, only the key's fallback (the JSON of the ODD values the case was drawn at) is built here, and a session's job indices and a case's <code>scenario=</code> override are the checked ui.case_paths's</li>

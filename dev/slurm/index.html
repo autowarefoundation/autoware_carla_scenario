@@ -2383,8 +2383,16 @@ table at the end. A case's outputs do not depend on which task ran it or when.</
 killed for memory, or its node failed -- is reported as <code>ERROR</code> with a message
 saying so, and <code>collect</code> lists them. So is a case whose recorded outcome holds
 no verdict -- no <code>result</code> object, or a <code>passed</code> that is not <code>true</code> or <code>false</code>
-(<code>"false"</code> and <code>1</code> are none): it did not pass, and <code>collect</code> names its file;
-<code>status</code> and the viewer count it as not passed. <code>resubmit</code> submits again the
+(<code>"false"</code> and <code>1</code> are none) -- or a result that cannot be reported: a
+<code>message</code> that is missing or not a string, an <code>elapsed_seconds</code> that is not a
+number (<code>true</code> is none), <code>condition_statuses</code> that are not a list of objects
+each with a string <code>label</code> and <code>message</code> and a boolean <code>satisfied</code>, or a
+<code>failure</code> that is not an object or cannot be read (an <code>at</code> of the wrong
+type, say). What the worker writes always is readable; <code>rerun_recording</code>
+and <code>failure</code> may be missing. It did not pass, and <code>collect</code> reports it as
+<code>ERROR</code> naming its file; a <code>rerun_error</code> the task recorded for it is kept in
+<code>batch_results.json</code>. <code>status</code>, <code>wait</code> and the viewer count it as not
+passed: the results pages show it as an error. <code>resubmit</code> submits again the
 cases with no outcome or no verdict and those that raised on every attempt
 (<code>ERROR</code>); <code>--failed</code> adds the
 ones that ran and failed, <code>--cases a,b</code> names them (labels or indices; a case
@@ -2803,7 +2811,7 @@ dialled by every task, as a TCP one is.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 01:16:55 UTC"><span class="timeago" datetime="2026-11-06T01:16:55+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 01:16:55 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 02:09:37 UTC"><span class="timeago" datetime="2026-11-06T02:09:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 02:09:37 UTC">2026-11-06</span>
   </span>
 
     
