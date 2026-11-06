@@ -23,30 +23,35 @@ The directory is private: it is used only if it is a real directory (not a
 symlink) owned by this user that no one else can write to, it is used through
 a descriptor opened once it is checked, and the lock and hold files are opened
 without following symlinks.  A lock or hold is trusted only if it is a regular
-file of this user's with one link (no hard link elsewhere): a hold that is not
-is never counted (and removed, if another user owns it or the directory is
-the gate's own), a lock that is not runs the build ungated.  A lock others
-may open (an older gate's 0o644) is replaced by a fresh 0o600 one, so a
-descriptor someone kept on the old one no longer contends for it; so is, in
-the gate's own directories, one held for over :data:`LOCK_TIMEOUT_S` (through
-a descriptor opened before it was made private).  In a configured directory,
-a lock held that long -- by anyone -- runs the build ungated instead, and the
-process's later builds then try for it only briefly until one takes it.
+file of this user's with one link (no hard link elsewhere) that, for the lock,
+no one else may open: a hold that is not is never counted (and removed if
+another user owns it, or if it is a hard link in the gate's own directory).
+A lock found replaced while it is checked is let go and the one in place
+tried instead.
 
 Only the gate's own directories (the default and the fallbacks) are ever
-repaired -- made 0o700 and cleared of the gate's files other users own --
-and only when they hold nothing but the gate's files; every use of one clears
-it again (of fresh locks left by builds that died, too) and checks that
-nothing in it is another user's and that its lock is a regular file of this
-user's, and falls back otherwise; a hard-linked lock there is swapped for a
-fresh one.  In any directory, a lock found replaced while it is checked (by
-another build's swap) is let go, and the one in place tried instead.  In a
-configured directory the gate changes
-nothing but its own files (the lock and the holds).  When the directory is
-not private, the gate warns and falls back to a per-user directory (under
-``$XDG_RUNTIME_DIR``, then ``~/.cache``) and, failing that, admits the build
-ungated -- as it does when its own files or the budget fail: the gate never
-blocks or fails a check of its own accord.
+changed, and every change to one -- its repair, removing what other users
+own, removing a lock that is not trusted -- is made under an exclusive lock
+on the directory itself (no one else can open it once it is private), after
+checking again what it changes, so no two builds change it at once.  One its
+group or others may use (an older gate's 0o755) is made 0o700, if it holds
+nothing but the gate's files; on every use the gate's files other users own
+are removed from it, and it is used only if nothing of another user's
+remains and its lock, if any, is a regular file of this user's.  A lock there
+that is not trusted (others may open an older gate's 0o644 one, or it is a
+hard link) is removed -- after trying for it for :data:`_REPLACE_WAIT_S`, so
+a build inside it finishes first -- and made afresh by the next build, so a
+descriptor someone kept on the old one no longer contends; so is, once per
+build, one held for over :data:`LOCK_TIMEOUT_S` (through a descriptor opened
+before it was made private).  A configured directory is never changed but
+for the gate's lock and holds created in it and holds removed from it (of
+builds that died, of other users): a lock there that is not trusted runs the
+build ungated, as does one held for over :data:`LOCK_TIMEOUT_S`, after which
+the process's later builds try for it only briefly until one takes it.  When
+the directory is not private, the gate warns and falls back to a per-user
+directory (under ``$XDG_RUNTIME_DIR``, then ``~/.cache``) and, failing that,
+admits the build ungated -- as it does when its own files or the budget fail:
+the gate never blocks or fails a check of its own accord.
 
 The gate is Linux's (``fcntl``, ``/proc/meminfo``), as Codon is.  Without
 ``fcntl``, or with ``AUTOWARE_CARLA_SCENARIO_CODON_GATE=0``, every build is
@@ -111,17 +116,17 @@ LOCK_TIMEOUT_S = 120.0
 #: How long a build waits between tries for the lock (s).
 _LOCK_POLL_S = 0.05
 
-#: How long a build tries for an older gate's lock before it replaces it (s):
-#: the gate's own builds release it within milliseconds, so one not released
-#: by then is held through a descriptor someone kept.
+#: How long a build tries for an untrusted lock before it removes it (s): the
+#: gate's own builds release it within milliseconds.
 _REPLACE_WAIT_S = 1.0
 
 #: How often a build waiting for the lock checks it was not replaced (s).
 _NAMES_CHECK_S = 0.5
 
-#: Set while the last try of this process for the lock timed out: later builds
-#: then try for it only for :data:`_REPLACE_WAIT_S` (long enough for the
-#: gate's own builds) before they run ungated; cleared once one takes it.
+#: Set while the last try of this process for a configured directory's lock
+#: timed out: later builds there then try for it only for
+#: :data:`_REPLACE_WAIT_S` before they run ungated; cleared once one takes it.
+#: (A lock in the gate's own directories held that long is removed instead.)
 _LOCK_TIMED_OUT = threading.Event()
 
 _COUNTER = itertools.count()
@@ -284,19 +289,19 @@ def _wait_for_room(
 
 def _take_lock(fcntl: ModuleType, dir_fd: int, own: bool) -> int:
     """A descriptor of the directory *dir_fd*'s ``gate.lock``, exclusively
-    locked, that still names it: created if missing, and replaced by a fresh
-    one (:func:`_replace_lock`) if others may open it or -- in one of the
-    gate's own directories (*own*) -- if it has another link or stays taken
-    for :data:`LOCK_TIMEOUT_S`.  A file found replaced since it was opened
-    (another build's swap: no links left, or no longer the one named) is let
-    go and the one in place tried instead.  Raises :class:`OSError` when it
-    is not a regular file of this user's with one link (in one of the gate's
-    own directories: with any links), and :class:`TimeoutError` when it is
-    not taken in time: :data:`LOCK_TIMEOUT_S` in all, or, once a build of
-    this process has timed out on it (:data:`_LOCK_TIMED_OUT`), only
-    :data:`_REPLACE_WAIT_S`, long enough for the gate's own builds."""
-    flagged = _LOCK_TIMED_OUT.is_set()
+    locked, that still names it (created if missing; one found replaced
+    since it was opened is let go, and the one in place tried instead).
+
+    In one of the gate's own directories (*own*), a lock that is not trusted
+    (:func:`_untrusted`), or -- once -- one held for :data:`LOCK_TIMEOUT_S`,
+    is removed (:func:`_drop_lock`) and the fresh one taken.  In a configured
+    directory, the first raises :class:`PermissionError`, and the second
+    :class:`TimeoutError`, as does one still held after
+    :data:`_REPLACE_WAIT_S` once a build of this process has timed out there
+    (:data:`_LOCK_TIMED_OUT`)."""
+    flagged = not own and _LOCK_TIMED_OUT.is_set()
     deadline = time.monotonic() + (_REPLACE_WAIT_S if flagged else LOCK_TIMEOUT_S)
+    dropped = False
     while True:
         fd = os.open(
             "gate.lock",
@@ -306,52 +311,45 @@ def _take_lock(fcntl: ModuleType, dir_fd: int, own: bool) -> int:
         )
         try:
             info = os.fstat(fd)
-            fresh: int | None = None
             if info.st_nlink == 0 or not _names_lock(dir_fd, info):
                 pass  # replaced since it was opened: try the one there now
-            elif problem := _unsound(info, links=own):
-                raise PermissionError(errno.EPERM, f"gate.lock {problem}")
-            elif info.st_nlink != 1:
-                # A hard link (to some other file of this user's): never
-                # locked or changed, but swapped out by name.
-                fresh = _replace_lock(fcntl, dir_fd, fd, info, wait=None)
-            elif stat.S_IMODE(info.st_mode) & 0o077:
-                # An older gate's 0o644: someone may hold a descriptor of it.
-                fresh = _replace_lock(fcntl, dir_fd, fd, info, wait=_REPLACE_WAIT_S)
+            elif problem := _untrusted(info):
+                if not own:
+                    raise PermissionError(errno.EPERM, f"gate.lock {problem}")
+                # An older gate's 0o644 (a build of this gate may be inside
+                # it: let it finish), or a hard link (no build locks it).
+                lax = info.st_nlink == 1 and stat.S_ISREG(info.st_mode)
+                _drop_lock(fcntl, dir_fd, fd, info, _REPLACE_WAIT_S if lax else None)
             elif _try_lock(fcntl, fd, deadline, dir_fd, info):
                 if _names_lock(dir_fd, info):
-                    _LOCK_TIMED_OUT.clear()
+                    if not own:
+                        _LOCK_TIMED_OUT.clear()
                     return fd
             elif not _names_lock(dir_fd, info):
                 pass  # replaced while it was waited for: try the new one
-            elif own and not flagged:
+            elif own and not dropped:
                 # Held all this time: through a descriptor someone opened
-                # before the lock was private (an earlier gate made it 0o600
-                # in place).  Ours to replace, once.
-                fresh = _replace_lock(fcntl, dir_fd, fd, info, wait=0.0)
-                flagged = True  # never twice in one build
-                if fresh is None:
-                    deadline = time.monotonic() + _REPLACE_WAIT_S
+                # before an earlier gate made it 0o600 in place.
+                _drop_lock(fcntl, dir_fd, fd, info, None)
+                dropped = True
+                deadline = time.monotonic() + LOCK_TIMEOUT_S
             else:
-                raise _timed_out(flagged)
-            if fresh is not None:
-                with suppress(OSError):
-                    os.close(fd)  # releases the old lock, if it was taken
-                _LOCK_TIMED_OUT.clear()
-                return fresh
+                raise _timed_out(own, flagged)
         except BaseException:
             with suppress(OSError):
                 os.close(fd)
             raise
-        os.close(fd)  # replaced since it was opened: try the one there now
+        os.close(fd)
         if time.monotonic() >= deadline:
-            raise _timed_out(flagged)
+            raise _timed_out(own, flagged)
 
 
-def _timed_out(flagged: bool) -> TimeoutError:
-    """The error of a build that did not get the lock in time, remembered
-    (:data:`_LOCK_TIMED_OUT`) for the process's later builds."""
-    _LOCK_TIMED_OUT.set()
+def _timed_out(own: bool, flagged: bool) -> TimeoutError:
+    """The error of a build that did not get the lock in time; in a
+    configured directory (not *own*), remembered (:data:`_LOCK_TIMED_OUT`)
+    for the process's later builds."""
+    if not own:
+        _LOCK_TIMED_OUT.set()
     if flagged:
         return TimeoutError(
             errno.ETIMEDOUT,
@@ -362,17 +360,19 @@ def _timed_out(flagged: bool) -> TimeoutError:
     )
 
 
-def _unsound(info: os.stat_result, *, links: bool = False) -> str:
+def _untrusted(info: os.stat_result) -> str:
     """Why the file *info* describes cannot be the gate's lock, or ``""``:
     it must be a regular file of this user's with no other link (a hard link
-    could make it some other file of this user's) -- unless *links*, where
-    one with more is to be replaced (:func:`_take_lock`)."""
+    could make it some other file of this user's) that no one else may open
+    (an older gate's was 0o644, and a descriptor of it may have been kept)."""
     if not stat.S_ISREG(info.st_mode):
         return "is not a regular file"
     if info.st_uid != os.getuid():
         return f"is owned by uid {info.st_uid}, not {os.getuid()}"
-    if info.st_nlink != 1 and not links:
+    if info.st_nlink != 1:
         return f"has {info.st_nlink} links"
+    if stat.S_IMODE(info.st_mode) & 0o077:
+        return f"may be opened by others (mode {stat.S_IMODE(info.st_mode):o})"
     return ""
 
 
@@ -386,62 +386,39 @@ def _names_lock(dir_fd: int, info: os.stat_result) -> bool:
     return (now.st_dev, now.st_ino) == (info.st_dev, info.st_ino)
 
 
-def _replace_lock(
-    fcntl: ModuleType,
-    dir_fd: int,
-    old: int,
-    info: os.stat_result,
-    *,
-    wait: float | None,
-) -> int | None:
-    """Put a fresh 0o600 ``gate.lock``, locked, in place of *old* (whose
-    file *info* describes) in the directory *dir_fd*, and return it; ``None``
-    if another build has replaced *old* already.
-
-    A descriptor someone opened on the old file then locks a file the gate no
-    longer uses.  The old lock is tried for first, for *wait* (``None``: not
-    at all, for a hard-linked file no build locks), so that a
-    build of this gate inside it finishes before the swap, and one waiting
-    for it finds the file replaced (:func:`_names_lock`) and tries the new
-    one.  One held longer -- through a descriptor someone kept, which the
-    swap is for -- is replaced while held.  The builds that waited out that
-    holder together may then each put a fresh lock in place before seeing
-    another's, and so decide at once, each for that one look at the holds:
-    at worst those builds are admitted together whatever they need, once per
-    machine (and so may a build of an older gate inside the old lock).
-    A fresh lock that another build's has replaced by the time it is in place
-    is given up (``None``), so a build only ever returns the lock in place.
-
-    The fresh file is named ``gate.lock.<pid>-...`` until it is in place and
-    records its process's start time, so one left behind by a build that was
-    killed is removed (:func:`_clear`)."""
-    if wait is not None:
-        _try_lock(fcntl, old, time.monotonic() + wait)
-    if not _names_lock(dir_fd, info):
-        return None
-    name = f"gate.lock.{os.getpid()}-{threading.get_ident()}-{next(_COUNTER)}"
-    fd = os.open(
-        name,
-        os.O_RDWR | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW | os.O_CLOEXEC,
-        0o600,
-        dir_fd=dir_fd,
-    )
+@contextmanager
+def _dir_locked(fcntl: ModuleType, dir_fd: int) -> Iterator[None]:
+    """Hold the exclusive lock on the gate's own directory *dir_fd*, which
+    every change to it is made under; raises :class:`TimeoutError` if it is
+    not taken within :data:`LOCK_TIMEOUT_S` (held through a descriptor of
+    the directory someone opened while it was open to others)."""
+    if not _try_lock(fcntl, dir_fd, time.monotonic() + LOCK_TIMEOUT_S):
+        raise TimeoutError(
+            errno.ETIMEDOUT,
+            f"the gate's directory held elsewhere for over {LOCK_TIMEOUT_S:g} s",
+        )
     try:
-        start = _start_time(os.getpid())
-        if start is not None:
-            os.write(fd, str(start).encode())
-        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)  # no one else can open it
-        os.rename(name, "gate.lock", src_dir_fd=dir_fd, dst_dir_fd=dir_fd)
-        current = _names_lock(dir_fd, os.fstat(fd))
-    except BaseException:
-        os.close(fd)
-        with suppress(OSError):
-            os.unlink(name, dir_fd=dir_fd)
-        raise
-    if not current:
-        os.close(fd)  # replaced in turn by another build's: try that one
-        return None
-    return fd
+        yield
+    finally:
+        fcntl.flock(dir_fd, fcntl.LOCK_UN)
+
+
+def _drop_lock(
+    fcntl: ModuleType, dir_fd: int, fd: int, info: os.stat_result, wait: float | None
+) -> None:
+    """Remove ``gate.lock`` -- the file *fd*, which *info* describes -- from
+    the gate's own directory *dir_fd*, so the next build makes it afresh; but
+    only if it still names that file, checked under the directory's lock,
+    which every change to it is made under.  It is tried for first, for
+    *wait* (``None``: not at all), so that a build inside it finishes first;
+    a build that waited for it then finds it replaced and takes the new one.
+    A build inside it for longer (a gate stalled for over *wait*, or an
+    older gate's) may decide while the next build in the fresh one does."""
+    with _dir_locked(fcntl, dir_fd):
+        if wait is not None:
+            _try_lock(fcntl, fd, time.monotonic() + wait)
+        if _names_lock(dir_fd, info):
+            os.unlink("gate.lock", dir_fd=dir_fd)
 
 
 def _try_lock(
@@ -520,10 +497,12 @@ def _open_private(where: Path, *, own: bool) -> int | str:
     One of the gate's own directories (*own*; never a configured one) its
     group or others may use at all -- as an older gate left it, 0o755 or,
     under a lax umask, 0o775 -- is made 0o700, if it holds nothing but the
-    gate's files.  Every time, the gate's files other users own are removed
-    from one of its own directories, which is used only if nothing of another
-    user's survives and its ``gate.lock``, if any, is sound (:func:`_unsound`):
-    a repair that failed once is not trusted the next time."""
+    gate's files (setting the mode is the same whoever does it, so it needs
+    no lock).  Every time, the gate's files other users own are removed from
+    one of its own directories (:func:`_clear`), which is used only if
+    nothing of another user's survives and its ``gate.lock``, if any, is a
+    regular file of this user's: a repair that failed once is not trusted the
+    next time."""
     try:
         where.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd = os.open(where, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -555,11 +534,8 @@ def _open_private(where: Path, *, own: bool) -> int | str:
 
 
 def _is_gate_file(name: str) -> bool:
-    """Whether *name* is one the gate's directory holds (the lock, a lock
-    being put in its place, a hold)."""
-    return (
-        name == "gate.lock" or name.startswith("gate.lock.") or name.endswith(".hold")
-    )
+    """Whether *name* is one the gate's directory holds (the lock, a hold)."""
+    return name == "gate.lock" or name.endswith(".hold")
 
 
 def _repair(dir_fd: int) -> str:
@@ -572,63 +548,51 @@ def _repair(dir_fd: int) -> str:
 
 
 def _clear(dir_fd: int) -> str:
-    """Remove from the gate's own (private) directory *dir_fd* the gate's
-    files other users own and the fresh locks (:func:`_replace_lock`) of
-    builds that died: why it cannot be used then, or ``""``.
+    """Remove the gate's files other users own from the gate's own (private)
+    directory *dir_fd* -- under the directory's lock, checking each again
+    there -- and say why it cannot be used then, or ``""``.  An entry gone,
+    or seen with no links left (being replaced or removed right now), is
+    skipped; ``gate.lock`` itself is judged when it is taken
+    (:func:`_take_lock`)."""
+    import fcntl  # noqa: PLC0415 - Linux's; the gate is off without it
 
-    Other builds may swap ``gate.lock`` meanwhile, so it is never removed for
-    its links (a hard-linked one is swapped out under the lock instead,
-    :func:`_take_lock`), and one seen with no links left -- replaced while it
-    was looked at -- is not judged: the build checks the one in place when it
-    takes it."""
+    if _foreign_entries(dir_fd):
+        with _dir_locked(fcntl, dir_fd):
+            for name in _foreign_entries(dir_fd):
+                with suppress(FileNotFoundError):
+                    os.unlink(name, dir_fd=dir_fd)  # others could write here once
     uid = os.getuid()
     for name in os.listdir(dir_fd):
-        if not _is_gate_file(name):
+        entry = _lstat(dir_fd, name)
+        if entry is None:
             continue
-        with suppress(OSError):  # FileNotFoundError: gone meanwhile
-            entry = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-            if entry.st_nlink == 0:
-                continue  # being replaced or removed right now
-            if entry.st_uid != uid:
-                os.unlink(name, dir_fd=dir_fd)  # others could write here once
-            elif name.startswith("gate.lock.") and _stale_lock(dir_fd, name):
-                os.unlink(name, dir_fd=dir_fd)
-    for name in os.listdir(dir_fd):
-        try:
-            entry = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
-        except FileNotFoundError:
-            continue  # a hold or fresh lock another build just removed
-        if entry.st_nlink == 0:
-            continue  # being replaced or removed right now
         if entry.st_uid != uid:
             return f"{name} of uid {entry.st_uid} cannot be removed"
-        if name == "gate.lock":
-            problem = _unsound(entry, links=True)
-            if problem:
-                return f"gate.lock {problem}"
+        if name == "gate.lock" and not stat.S_ISREG(entry.st_mode):
+            return "gate.lock is not a regular file"
     return ""
 
 
-def _stale_lock(dir_fd: int, name: str) -> bool:
-    """Whether the fresh lock *name* (``gate.lock.<pid>-...``) was left by a
-    build that is gone (its pid dead, or since reused by another process)."""
+def _foreign_entries(dir_fd: int) -> list[str]:
+    """The gate's files in the directory *dir_fd* that other users own."""
+    uid = os.getuid()
+    names = []
+    for name in os.listdir(dir_fd):
+        if _is_gate_file(name):
+            entry = _lstat(dir_fd, name)
+            if entry is not None and entry.st_uid != uid:
+                names.append(name)
+    return names
+
+
+def _lstat(dir_fd: int, name: str) -> os.stat_result | None:
+    """*name* in the directory *dir_fd*, not followed if a symlink; ``None``
+    if it is gone, or has no links left (being replaced or removed)."""
     try:
-        pid = int(name[len("gate.lock.") :].split("-", 1)[0])
-    except ValueError:
-        return False  # not one of the gate's
-    if not 0 < pid <= _PID_MAX:
-        return False
-    text = _read_hold(dir_fd, name)
-    if text is None or text is _FOREIGN:
-        return False
-    if text is _LINKED:
-        return True
-    fields = text.split()
-    try:
-        start = int(fields[0]) if fields else None
-    except ValueError:
-        start = None  # not what the gate writes: judge by the pid alone
-    return not _alive(pid, start)
+        entry = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+    except FileNotFoundError:
+        return None
+    return entry if entry.st_nlink else None
 
 
 def _write_hold(dir_fd: int, name: str, record: str) -> None:
