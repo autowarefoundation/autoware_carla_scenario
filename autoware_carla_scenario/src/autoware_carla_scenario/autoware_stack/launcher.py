@@ -480,7 +480,8 @@ class CommandAutowareLauncher:
         env["AUTOWARE_BRIDGE_ADDRESS"] = episode.bridge_address
         # The name as given, for a script that quotes it: `{name}` is only
         # its shell-safe form.
-        env["AUTOWARE_SCENARIO_NAME"] = episode.name
+        # Without NUL, which no environment can hold.
+        env["AUTOWARE_SCENARIO_NAME"] = episode.name.replace("\0", "")
         logger.info("Starting the Autoware stack for %s: %s", episode.name, argv)
         self._process = ProcessGroup(
             argv,
@@ -545,14 +546,15 @@ def fill_placeholders(
     can hold unquoted; the name as given is the launcher's to pass (the
     command launcher's ``AUTOWARE_SCENARIO_NAME``).
     """
-    values: dict[str, str] = {
-        "bridge_address": episode.bridge_address,
-        "index": str(episode.index),
-        "name": _safe_name(episode.name),
-    }
+    # *extra* first: a key of its own never replaces a built-in one, so
+    # `{name}` stays the shell-safe form whatever the caller passes.
+    values: dict[str, str] = {}
     if extra is not None:
         for key, value in extra.items():
             values[key] = value
+    values["bridge_address"] = episode.bridge_address
+    values["index"] = str(episode.index)
+    values["name"] = _safe_name(episode.name)
     # A hand-written scan rather than re.sub() with a callback, which Codon
     # does not compile (typecheck/library.py checks this module).
     parts: list[str] = []

@@ -430,6 +430,16 @@ def test_fill_placeholders_does_not_expand_what_it_put_in() -> None:
     assert filled == "{name} _scenario_bridge__index_ run {index} {name} 2"
 
 
+def test_fill_placeholders_keeps_its_own_keys_over_extra() -> None:
+    episode = AutowareEpisode(4, "a;b", "h:1")
+    filled = fill_placeholders(
+        "{name} {index} {bridge_address} {more}",
+        episode,
+        {"name": "x;y", "index": "9", "bridge_address": "z", "more": "m"},
+    )
+    assert filled == "a_b 4 h:1 m"
+
+
 def test_fill_placeholders_leaves_other_braces_alone() -> None:
     episode = AutowareEpisode(1, "n", "h:1")
     assert fill_placeholders("${HOME} {x} {{index}} {} {index", episode) == (
