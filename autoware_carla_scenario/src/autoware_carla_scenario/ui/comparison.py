@@ -14,17 +14,63 @@ framework itself").
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 __all__ = [
+    "HYDRA_PREFIXES",
     "METRICS",
+    "POSITIONAL_OVERRIDES",
     "CellComparison",
     "ComparedCase",
     "Comparison",
     "MatchedCase",
     "compare",
     "default_axes",
+    "outcome_of",
+    "override_key",
+    "scenario_of",
     "varying_attributes",
 ]
+
+#: An override that names the case by its position (the ODD sampler's
+#: encoded case), not by what it runs: left out of a case's key.
+POSITIONAL_OVERRIDES = ("odd_case=",)
+
+#: Overrides of a run that are not the case (Hydra's own).
+HYDRA_PREFIXES = ("hydra.", "hydra/")
+
+
+def scenario_of(label: str) -> str:
+    """A case's label without its case number (``oneplanner/cut_in``)."""
+    return label.split("#", 1)[0]
+
+
+def outcome_of(errored: bool, passed: Optional[bool]) -> str:
+    """``pass``, ``fail``, ``error`` (raised, or no result), or ``none``."""
+    if errored:
+        return "error"
+    if passed is None:
+        return "none"
+    return "pass" if passed else "fail"
+
+
+def _own_override(override: str) -> bool:
+    """Whether *override* says what the case runs: neither positional nor
+    Hydra's own."""
+    bare = override.lstrip("+")
+    if any(bare.startswith(prefix) for prefix in POSITIONAL_OVERRIDES):
+        return False
+    return not any(override.startswith(prefix) for prefix in HYDRA_PREFIXES)
+
+
+def override_key(scenario: str, overrides: list[str]) -> Optional[str]:
+    """What a case of *scenario* ran, by its *overrides* (less the positional
+    ones and Hydra's, without a leading ``+``, sorted), to match it in another
+    session; ``None`` when none is left."""
+    own = sorted([o.lstrip("+") for o in overrides if _own_override(o)])
+    if not own:
+        return None
+    return f"{scenario}|" + "|".join(own)
 
 
 def _metric(label: str, more_is_better: bool | None) -> tuple[str, bool | None]:
@@ -67,17 +113,12 @@ class ComparedCase:
     @property
     def scenario(self) -> str:
         """The label without its case number (``oneplanner/cut_in``)."""
-        return self.label.split("#", 1)[0]
+        return scenario_of(self.label)
 
     @property
     def outcome(self) -> str:
         """``pass``, ``fail``, ``error`` (raised, or no result), or ``none``."""
-        if self.errored:
-            return "error"
-        passed = self.passed
-        if passed is None:
-            return "none"
-        return "pass" if passed else "fail"
+        return outcome_of(self.errored, self.passed)
 
 
 def _distinct_buckets(cases: list[ComparedCase]) -> dict[str, set[str]]:

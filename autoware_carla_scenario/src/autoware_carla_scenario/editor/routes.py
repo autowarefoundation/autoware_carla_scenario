@@ -11,7 +11,8 @@ banner from ever disagreeing with each other.
 from __future__ import annotations
 
 import logging
-from typing import Any, Optional
+from typing import Any, Iterator, Optional
+from urllib.parse import quote
 
 from fastapi import APIRouter, Request
 from pydantic import ValidationError
@@ -22,7 +23,9 @@ from fastapi.responses import (
     PlainTextResponse,
     RedirectResponse,
     Response,
+    StreamingResponse,
 )
+from starlette.types import Receive, Scope, Send
 
 from ..authoring.models import ScenarioDocument
 from ..authoring.package_export import PackageExportError
@@ -30,7 +33,13 @@ from ..authoring.persistence import Draft, dump_document_yaml
 from ..authoring.registry import TRUTHY_VALUES
 from ..maps import opendrive
 from . import map_preview, scenario_map
-from .service import EditorError, EditorService, as_int, find_constraint
+from .service import (
+    EditorError,
+    EditorService,
+    StagedArchive,
+    as_int,
+    find_constraint,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -1115,9 +1124,63 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
     )
 
 
+#: How much of a staged archive one chunk of the download reads.
+_DOWNLOAD_CHUNK = 1024 * 1024
+
+
+def _attachment(filename: str) -> str:
+    """Return the ``content-disposition`` naming a download *filename*, as
+    Starlette's ``FileResponse`` writes it."""
+    quoted = quote(filename)
+    if quoted != filename:
+        return f"attachment; filename*=utf-8''{quoted}"
+    return f'attachment; filename="{filename}"'
+
+
+class _ArchiveResponse(StreamingResponse):
+    """Stream an archive already opened, and close it however the response ends.
+
+    Starlette's ``FileResponse`` takes a path and opens it only once the
+    response is sent, by when the archive may be gone (#1719); this serves the
+    handle :meth:`EditorService.open_staged_archive` opened under the archive
+    lock, which stays readable after an unlink.  The handle is closed when the
+    response finishes, fails or the client disconnects -- neither the body
+    iterator nor a background task is guaranteed to run to the end on a
+    disconnect, so it is closed around the whole of ``__call__``.
+    """
+
+    def __init__(self, archive: StagedArchive) -> None:
+        self._archive = archive
+        super().__init__(
+            self._chunks(archive),
+            media_type="application/zip",
+            headers={
+                "content-length": str(archive.size),
+                "content-disposition": _attachment(archive.name),
+            },
+        )
+
+    @staticmethod
+    def _chunks(archive: StagedArchive) -> Iterator[bytes]:
+        """Yield *archive* a chunk at a time."""
+        while chunk := archive.file.read(_DOWNLOAD_CHUNK):
+            yield chunk
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        try:
+            await super().__call__(scope, receive, send)
+        finally:
+            self._archive.file.close()
+
+
 @router.get("/draft/{draft_id}/wheelhouse.zip")
-def download_wheelhouse(request: Request, draft_id: str) -> FileResponse:
+def download_wheelhouse(request: Request, draft_id: str) -> Response:
     """Serve the wheelhouse the last export staged for this draft.
+
+    The archive is opened before the response is built, under the lock that
+    staging and deleting it hold, so an archive removed after the link was
+    rendered is a 404 rather than a 500 from a path that no longer exists, and
+    one removed while it downloads still downloads whole (#1719).
 
     Raises:
         EditorError: If nothing has been exported yet, or the archive has since
@@ -1125,14 +1188,10 @@ def download_wheelhouse(request: Request, draft_id: str) -> FileResponse:
     """
     service = _service(request)
     draft = service.require_draft(draft_id)
-    archive = service.staged_archive(draft)
+    archive = service.open_staged_archive(draft)
     if archive is None:
         raise EditorError("No exported wheelhouse to download. Run the export again.")
-    return FileResponse(
-        archive,
-        media_type="application/zip",
-        filename=archive.name,
-    )
+    return _ArchiveResponse(archive)
 
 
 def _checked(form: dict[str, Any], name: str) -> bool:
