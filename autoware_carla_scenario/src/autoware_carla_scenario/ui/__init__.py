@@ -99,10 +99,13 @@ def main(argv: list[str] | None = None) -> None:
     # loads them; once per process (the scanner and the resolver ask again).
     load_scenario_plugins()
 
-    if args.base_path is not None:
-        from . import app as app_module  # noqa: PLC0415
+    from . import app as app_module  # noqa: PLC0415
 
+    if args.base_path is not None:
         app_module.BASE_PATH = Path(args.base_path).resolve()
+    # The Host names it answers to: the loopback ones and the one it is bound
+    # to; any, when bound to every interface (web_guard).
+    app_module.HOSTS.bind(args.host)
 
     warn_if_exposed(
         "viewer",

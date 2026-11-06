@@ -640,7 +640,8 @@ class TestTheRunPicksItsRoute:
 @pytest.fixture
 def client(tmp_path: Path) -> TestClient:
     return TestClient(
-        create_app(draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages")
+        create_app(draft_dir=tmp_path / "drafts", export_dir=tmp_path / "packages"),
+        base_url="http://127.0.0.1",
     )
 
 

@@ -1874,7 +1874,7 @@ def editor(
 
     monkeypatch.setenv(CACHE_ROOT_ENV, str(cache.root))
     map_preview.clear_cache()
-    return TestClient(create_app(draft_dir=drafts.root))
+    return TestClient(create_app(draft_dir=drafts.root), base_url="http://127.0.0.1")
 
 
 def _new_draft(client: "TestClient") -> str:

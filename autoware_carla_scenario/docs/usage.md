@@ -1660,6 +1660,32 @@ is recorded as failed, and the jobs after it do not start.
     `VIEWER_HOST=0.0.0.0`) on a network you trust. The viewer prints a warning
     when it listens on anything but a loopback address.
 
+    Binding loopback keeps other machines out, not a web page open in your own
+    browser, which can send requests to `127.0.0.1` too. So the viewer also
+    refuses them:
+
+    * A `POST`, `PUT`, `PATCH` or `DELETE` from another site is refused with
+      403: one whose `Sec-Fetch-Site` header is `cross-site` or `same-site`,
+      or whose `Origin` header is not the viewer's own scheme, host and port
+      (`Origin: null` included). A request with neither header, as curl or a
+      script sends it, is served.
+    * A JSON route (`/api/run`, `/api/run/preview`,
+      `/api/slurm/.../resubmit`) refuses a body that is not sent as
+      `Content-Type: application/json` with 415, so a `text/plain` body, which
+      a page may send without asking the server first, is never read as JSON.
+    * Against DNS rebinding, a request whose `Host` header is not
+      `localhost`, a loopback address (`127.0.0.1`, `::1`) or the `--host` the
+      viewer is bound to, on any port, is refused with 400. Bound to every
+      interface (`0.0.0.0` or `::`), the viewer was asked to answer whatever
+      name it is reached under, and checks no `Host`; the `Origin` check still
+      applies.
+      A page served from a rebound name then passes both checks, so a
+      wildcard bind gives up the rebinding protection, even inside a container
+      published only on `127.0.0.1`. Behind a reverse proxy or a remote port
+      forwarder that serves it under another name or over HTTPS, the viewer
+      refuses requests unless it is bound to every interface; an SSH `-L`
+      tunnel to a loopback port keeps working.
+
 ### Seeing a run in the viewer
 
 A scenario's page shows its run in Rerun's web viewer, embedded in the page:

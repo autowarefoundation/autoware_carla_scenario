@@ -347,7 +347,7 @@ def test_the_viewer_answers_a_malformed_pattern_with_an_error(
 
     monkeypatch.setattr(runner, "start_run", no_run)
     monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [star_star_conf])
-    client = TestClient(app_module.app)
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
     response = client.post(
         "/api/run",
         json={"scenario": "x/**a", "extra_overrides": [], "sweeper": sweeper},
@@ -369,7 +369,7 @@ def test_the_viewer_runs_every_config_below_a_double_star(
 
     monkeypatch.setattr(runner, "start_run", fake_start_run)
     monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [star_star_conf])
-    client = TestClient(app_module.app)
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
     response = client.post("/api/run", json={"scenario": "x/**"})
     assert response.json() == {"status": "started"}
     assert seen == [[[f"scenario={name}"] for name in _EVERY_X]]
@@ -444,7 +444,7 @@ def test_the_viewer_answers_a_pattern_outside_scenario_with_an_error(
 
     monkeypatch.setattr(runner, "start_run", no_run)
     monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [star_star_conf])
-    client = TestClient(app_module.app)
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
     response = client.post("/api/run", json={"scenario": pattern})
     assert response.status_code == 200
     body = response.json()
