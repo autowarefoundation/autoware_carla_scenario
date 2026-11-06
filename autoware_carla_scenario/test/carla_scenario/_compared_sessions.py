@@ -8,7 +8,8 @@ and named buckets; and metrics whose deltas are and are not significant.
 :func:`snapshot` writes out everything ``compare.html`` reads of a
 comparison, and the axes, for ``data/ui_results/comparison_golden.json``:
 the comparison's output from before it was split out of ``ui.results``
-(#787), which it must still give.
+(#787), which it must still give -- but for a key run twice in one session,
+whose every run it has kept since #1825.
 """
 
 from __future__ import annotations
@@ -187,7 +188,10 @@ def snapshot(comparison: Any) -> dict[str, Any]:
                 "key": case.key,
                 "change": case.change(),
                 "first": _run(case.first),
-                "runs": [_run(run) for run in case.runs],
+                "runs": [_run(run) for run in case.latest],
+                "every": [[_run(run) for run in runs] for runs in case.runs],
+                "tallies": [list(case.tally(i)) for i in range(count)],
+                "verdicts": [case.verdict(i) for i in range(count)],
                 "ran": [_run(run) for run in case.ran],
                 "delta": {m: case.delta(m) for m in results.METRICS},
                 "significant": {m: case.significant(m) for m in results.METRICS},

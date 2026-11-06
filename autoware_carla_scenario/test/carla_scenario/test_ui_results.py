@@ -500,6 +500,44 @@ def test_a_change_is_between_the_first_and_last_sessions_that_ran_it(
     assert by_case == {"0": "fixed", "1": "new"}
 
 
+def _drawn(index: int, odd_case: str, passed: bool) -> results.CaseResult:
+    """A case drawn at the same ODD values as every other, named by its
+    position alone (``++odd_case``)."""
+    return results.CaseResult(
+        index=index,
+        label=f"pkg/cut_in#{index + 1}",
+        passed=passed,
+        errored=False,
+        elapsed_seconds=5.0,
+        message="",
+        overrides=[f"++odd_case={odd_case}"],
+        files=None,
+        coverage={
+            "case": {"buckets": {GAP: "[0, 10)"}, "values": {GAP: 5.0, SPEED: -1.0}}
+        },
+    )
+
+
+def test_cases_differing_only_in_odd_case_are_all_compared() -> None:
+    """#1825: two cases whose values are identical and that differ only in
+    their position share a key, and both are compared, not the last alone."""
+    first = [_drawn(0, "a", False), _drawn(1, "b", True)]
+    second = [_drawn(0, "c", True), _drawn(1, "d", True)]
+    assert first[0].key == first[1].key == second[0].key
+    comparison = results.compare(
+        [("batch/2026-10-18/10-00-00", first), ("batch/2026-10-18/11-00-00", second)],
+        x=GAP,
+    )
+    assert len(comparison.cases) == 1
+    case = comparison.cases[0]
+    assert [[r.index for r in runs] for runs in case.runs] == [[0, 1], [0, 1]]
+    assert [case.tally(i) for i in range(2)] == [(1, 2), (2, 2)]
+    # Passed and failed in the baseline: flaky, not dropped as a pass.
+    assert case.change() == "flaky"
+    assert comparison.totals == [(1, 2), (2, 2)]
+    assert comparison.cells[("[0, 10)", "")].tallies == comparison.totals
+
+
 # ── The pages ──────────────────────────────────────────────────────────────
 
 
@@ -570,9 +608,31 @@ def test_the_compare_page(client: TestClient, tmp_path: Path) -> None:
     assert f'href="/session/{a}/0#recording"' in text
     # A side-by-side view of the regressed case's runs: #0 in a, #3 in b.
     assert f"/compare/runs?run={a}/0&amp;run={b}/3" in text
+    # Each session's run of each case: four in each.
+    rows = text.split('id="case-table"', 1)[1]
+    assert rows.count('data-runs="1"') == 8
     # Both sessions are offered, and picked.
     assert text.count('name="s"') == 2
     assert text.count("checked") >= 2
+
+
+def test_the_compare_page_shows_every_run_of_a_repeated_case(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """#1825: a session that ran a case twice (#0 and #1, the same ODD
+    values) lists and links both runs, and counts both in its cell."""
+    a = _session(tmp_path, "10-00-00", [False, True, False, False], order=[0, 1])
+    b = _session(tmp_path, "11-00-00", [True, True, False, False], order=[0, 0, 1])
+    page = client.get("/compare", params=[("s", a), ("s", b)])
+    assert page.status_code == 200, page.text
+    rows = page.text.split('id="case-table"', 1)[1]
+    assert 'data-runs="2" data-passed="2"' in rows
+    assert "2/2 passed" in rows
+    assert f'href="/session/{b}/0#recording"' in rows
+    assert f'href="/session/{b}/1#recording"' in rows
+    # Side by side: the baseline's run, and the latest session's last.
+    assert f"/compare/runs?run={a}/0&amp;run={b}/1" in rows
+    assert "3/3 passed" in page.text.split('id="compare-summary"', 1)[1]
 
 
 def test_the_compare_page_with_fewer_than_two_sessions_offers_them(

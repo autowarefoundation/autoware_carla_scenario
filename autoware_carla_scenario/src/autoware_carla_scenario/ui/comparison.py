@@ -94,7 +94,7 @@ METRICS: dict[str, tuple[str, bool | None]] = {
 
 @dataclass
 class ComparedCase:
-    """One case of a session, as the comparison reads it."""
+    """One run of a case in a session, as the comparison reads it."""
 
     index: int
     #: What the batch calls it (``oneplanner/cut_in#8``), or the scenario.
@@ -151,53 +151,101 @@ def default_axes(cases: list[ComparedCase]) -> tuple[str | None, str | None]:
 
 @dataclass
 class MatchedCase:
-    """One case as each compared session ran it (``None``: did not)."""
+    """One case as each compared session ran it: every run of its key in each
+    session, in run order (empty: the session did not run it). A session
+    runs a key more than once when its cases repeat one (a sweep that draws
+    the same ODD values twice, a case run again): every run is kept."""
 
     key: str
-    runs: list[ComparedCase | None]
+    runs: list[list[ComparedCase]]
 
     @property
     def first(self) -> ComparedCase:
-        for run in self.runs:
-            if run is not None:
+        """The first run of the first session that ran it."""
+        for session in self.runs:
+            for run in session:
                 return run
         raise StopIteration()
 
     @property
     def ran(self) -> list[ComparedCase]:
-        """The runs of the sessions that ran it, oldest first."""
+        """Every run, oldest session first, each session's in run order."""
         out: list[ComparedCase] = []
-        for run in self.runs:
-            if run is not None:
-                out.append(run)
+        for session in self.runs:
+            out.extend(session)
         return out
 
+    @property
+    def latest(self) -> list[ComparedCase | None]:
+        """Each session's last run of it (``None``: did not run it)."""
+        out: list[ComparedCase | None] = []
+        for session in self.runs:
+            last: ComparedCase | None = session[-1] if session else None
+            out.append(last)
+        return out
+
+    def tally(self, i: int) -> tuple[int, int]:
+        """(passed, runs) of session *i*'s runs of it."""
+        passed = sum(1 for r in self.runs[i] if r.outcome == "pass")
+        return passed, len(self.runs[i])
+
+    def verdict(self, i: int) -> str:
+        """Session *i*'s verdict on it: ``pass`` (every run passed), ``fail``
+        (none did: failed, errored or without a verdict), ``mixed`` (some
+        did), ``""`` (did not run it)."""
+        passed, runs = self.tally(i)
+        if runs == 0:
+            return ""
+        if passed == runs:
+            return "pass"
+        return "fail" if passed == 0 else "mixed"
+
     def change(self) -> str:
-        """Between the first session that ran it and the last: ``regression``
-        (passed, then not), ``fixed`` (the other way), ``flaky`` (passed at
-        both ends and not in between, or the other way), ``same`` (a fail and
-        an error are both not passing); ``new`` or
-        ``gone`` when one session alone ran it (not the baseline, or only
-        the baseline)."""
-        ran = self.ran
-        if len(ran) == 1:
-            return "gone" if self.runs[0] is not None else "new"
-        before, after = ran[0].outcome, ran[-1].outcome
-        if before == "pass" and after != "pass":
+        """How its verdict changed across the sessions that ran it, each
+        session's verdict read off all of its runs (:meth:`verdict`):
+        ``flaky`` when a session both passed and failed it, or when the first
+        and last sessions agree but one between does not; else, between the
+        first session that ran it and the last, ``regression`` (every run
+        passed, then none), ``fixed`` (no run passed, then every one),
+        ``same`` (a fail and an error are both not passing); ``new`` or
+        ``gone`` when one session alone ran it (not the baseline, or only the
+        baseline)."""
+        verdicts: list[str] = []
+        for i in range(len(self.runs)):
+            verdict = self.verdict(i)
+            if verdict:
+                verdicts.append(verdict)
+        if "mixed" in verdicts:
+            return "flaky"
+        if len(verdicts) == 1:
+            return "gone" if self.runs[0] else "new"
+        before, after = verdicts[0], verdicts[-1]
+        if before == "pass" and after == "fail":
             return "regression"
-        if before != "pass" and after == "pass":
+        if before == "fail" and after == "pass":
             return "fixed"
         # The same at both ends, and passed (or not) in between.
-        if any((r.outcome == "pass") != (before == "pass") for r in ran):
+        if any(v != before for v in verdicts):
             return "flaky"
         return "same"
 
+    def _means(self, metric: str) -> list[float]:
+        """*metric*'s mean over each session's runs that have it, oldest
+        first (sessions without one left out)."""
+        means: list[float] = []
+        for session in self.runs:
+            values = [r.metrics[metric] for r in session if metric in r.metrics]
+            if values:
+                means.append(sum(values) / len(values))
+        return means
+
     def delta(self, metric: str) -> float | None:
-        """*metric* of the last session that ran it less the first's."""
-        ran = [r for r in self.ran if metric in r.metrics]
-        if len(ran) < 2:
+        """*metric* of the last session that ran it less the first's, each
+        the mean of the session's runs."""
+        means = self._means(metric)
+        if len(means) < 2:
             return None
-        return round(ran[-1].metrics[metric] - ran[0].metrics[metric], 3)
+        return round(means[-1] - means[0], 3)
 
     def significant(self, metric: str) -> bool:
         """Whether the delta is more than noise: over 5% of the first value
@@ -205,11 +253,8 @@ class MatchedCase:
         delta = self.delta(metric)
         if delta is None:
             return False
-        for run in self.ran:
-            if metric in run.metrics:
-                base = run.metrics[metric]
-                return abs(delta) > max(0.05, 0.05 * abs(base))
-        raise StopIteration()
+        base = self._means(metric)[0]
+        return abs(delta) > max(0.05, 0.05 * abs(base))
 
 
 @dataclass
@@ -218,7 +263,7 @@ class CellComparison:
 
     x: str
     y: str
-    #: Per session: (passed, runs) of its cases drawn in the cell.
+    #: Per session: (passed, runs) of every run of the keys in the cell.
     tallies: list[tuple[int, int]]
     keys: list[str]
 
@@ -261,10 +306,9 @@ class Comparison:
     def metrics(self) -> list[str]:
         present: set[str] = set()
         for case in self.cases:
-            for run in case.runs:
-                if run is not None:
-                    for name in run.metrics:
-                        present.add(name)
+            for run in case.ran:
+                for name in run.metrics:
+                    present.add(name)
         return [m for m in METRICS if m in present]
 
 
@@ -331,14 +375,18 @@ def compare(
     for i, (_, cases) in enumerate(sessions):
         for result in cases:
             if result.key not in matched:
-                runs: list[ComparedCase | None] = [None for _ in range(count)]
+                runs: list[list[ComparedCase]] = [[] for _ in range(count)]
                 matched[result.key] = MatchedCase(result.key, runs)
-            # A key run twice in one session (a repeated case): the last run.
-            matched[result.key].runs[i] = result
+            # A key run twice in one session (a repeated case): every run.
+            matched[result.key].runs[i].append(result)
     ordered = sorted(matched.values(), key=_case_order)
     cells: dict[tuple[str, str], CellComparison] = {}
     x_labels: set[str] = set()
     y_labels: set[str] = set()
+    # Every run of a key is tallied in the key's cell (where its first run
+    # was drawn: a run that errored before it was drawn has no buckets), so
+    # that the cells add up to the totals, less the keys drawn in no bucket
+    # of x or y.
     for case in matched.values():
         buckets = case.first.buckets
         bx = _bucket_of(buckets, x)
@@ -352,11 +400,10 @@ def compare(
             cells[(bx, by)] = CellComparison(bx, by, tallies, [])
         cell = cells[(bx, by)]
         cell.keys.append(case.key)
-        for i, run in enumerate(case.runs):
-            if run is not None:
-                passed, ran = cell.tallies[i]
-                won = 1 if run.outcome == "pass" else 0
-                cell.tallies[i] = (passed + won, ran + 1)
+        for i in range(count):
+            passed, ran = cell.tallies[i]
+            won, played = case.tally(i)
+            cell.tallies[i] = (passed + won, ran + played)
     totals: list[tuple[int, int]] = []
     for _, cases in sessions:
         totals.append((sum(1 for r in cases if r.outcome == "pass"), len(cases)))

@@ -1688,17 +1688,32 @@ session's page) compares two or more sessions of the same scenarios
 - **Cases** are matched by what they ran -- their sweep overrides (less
   `++odd_case`, which names a case's position), else the ODD values they
   were drawn at -- not by their index, so a case keeps its match when a
-  sweep's order or size changes. Each is marked by how its verdict changed
-  between the first session that ran it and the last: `pass → fail` (a
-  regression, listed first and in red), `fail → pass`, flaky, the same, or
-  run by one session only. Beside it, the change of each metric (bold when
-  more than 5%), each run's verdict linking to its page, and *side by side*:
-  the first and last runs in two Rerun viewers on one page
+  sweep's order or size changes. Cases of one session that share a key (a
+  sweep that draws the same ODD values twice, as one over categorical
+  buckets can) are all kept: each run is listed, and a session with more
+  than one run of a case shows how many of them passed (`1/2 passed`).
+  Each case is marked by how its verdict changed, a session's verdict being
+  `pass` when every one of its runs passed, `fail` when none did (a fail and
+  an error are both not passing), and mixed otherwise:
+  - flaky (amber) when a session's verdict is mixed, whichever session it
+    is, even when that session alone ran the case; or when the first and
+    last sessions that ran it agree but a session between them does not;
+  - else `pass → fail` (a regression, listed first and in red) when every
+    run of the first session that ran it passed and no run of the last did,
+    and `fail → pass` (fixed) the other way;
+  - else the same, or run by one session only (new, or gone).
+
+  Beside it, the change of each metric (the mean of the last session's runs
+  less the first's; bold when more than 5%), each run's verdict linking to
+  its page, and *side by side*: the first run of the first session and the
+  last run of the last in two Rerun viewers on one page
   (`/compare/runs?run=type/date/time/index&run=...`).
 - **ODD cells**: each session's passes and runs in each cell of the two
   attributes picked (the buckets the cases were drawn in), red where the last
   session passes fewer of them, green where more; and openodd's matrix of
-  each session beside the others.
+  each session beside the others. Every run is counted, a repeated case's
+  each run, so a session's cells add up to its pass rate's runs (but for the
+  cases drawn in no bucket of the attributes picked).
 - **Pass rates** of each session.
 
 A SLURM batch can be compared before it is collected, from what its tasks
