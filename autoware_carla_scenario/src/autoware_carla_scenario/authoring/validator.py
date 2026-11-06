@@ -1326,10 +1326,14 @@ def _check_binding(
 
 
 def _check_entity_numbers(out: _Collector, path: str, entity: Entity) -> None:
-    """Reject a NaN or infinite speed, offset, heading or size.
+    """Reject a NaN or infinite speed, offset, heading or size, and a
+    negative initial speed.
 
     The model accepts them (a Pydantic float does), and the runtime would
-    place the actor at no position, or drive it at no speed.
+    place the actor at no position, or drive it at no speed.  A negative
+    speed is refused by the entity's config at run time
+    (``VehicleEntityConfig``, ``ego.initial_speed_kmh``, #1809), once CARLA
+    is already running: refused here, it is refused on its path.
     """
     numbers: list[tuple[str, float]] = [
         ("initial_speed_kmh", entity.initial_speed_kmh),
@@ -1345,6 +1349,12 @@ def _check_entity_numbers(out: _Collector, path: str, entity: Entity) -> None:
     for key, number in numbers:
         if not math.isfinite(number):
             out.error(f"{path}.{key}", "This must be a finite number.", entity.id)
+    if math.isfinite(entity.initial_speed_kmh) and entity.initial_speed_kmh < 0.0:
+        out.error(
+            f"{path}.initial_speed_kmh",
+            "This must be 0 or more: a speed is never below zero.",
+            entity.id,
+        )
 
 
 def _check_unread_fields(out: _Collector, path: str, entity: Entity) -> None:

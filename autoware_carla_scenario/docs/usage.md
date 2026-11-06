@@ -705,11 +705,19 @@ Defines the default config group composition:
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
 | `ego.vehicle_type` | str | `vehicle.mini.cooper` | CARLA blueprint ID for ego vehicle |
-| `ego.initial_speed_kmh` | float | `0.0` | Initial speed of ego vehicle (km/h) |
+| `ego.initial_speed_kmh` | float | `0.0` | Initial speed of ego vehicle (km/h); finite, `0` or more |
 | `ego.spawn_lanelet_id` | int | `242` | Lanelet ID for spawn position |
 | `ego.spawn_s` | float | `25.0` | Longitudinal offset along lanelet centerline (meters) |
 | `ego.spawn_t` | float | `0.0` | Lateral offset from the lanelet centerline, positive to its left (meters) |
 | `ego.spawn_heading` | float | `0.0` | Yaw relative to the lanelet's direction of travel, positive anticlockwise (radians) |
+| `ego.goal_s` | float | `0.0` | Longitudinal offset along the goal lanelet (`ego.goal_lanelet_id`) centerline (meters) |
+
+The speed must be finite and not negative, and the poses (`ego.spawn_s`,
+`ego.spawn_t`, `ego.spawn_heading`, `ego.goal_s`) finite: a negative or NaN
+speed would leave the ego still with no error, an infinite one break its
+physics, and a NaN pose fail far from the key behind it. A run or batch
+refuses such a value before anything starts, naming the key (`Error:
+ego.initial_speed_kmh must be finite and at least 0, got -20`).
 
 #### Entity Configuration
 
@@ -720,8 +728,8 @@ Controls ground projection (ray casting) and spawn retry behavior:
 | `entity.ground_projection_ray_distance_upper` | float | `5.0` | Ray search range above estimated z (meters) |
 | `entity.ground_projection_ray_distance_lower` | float | `10.0` | Ray search range below estimated z (meters) |
 | `entity.spawn_retry_max_count` | int | `10` | Maximum retry attempts for spawn |
-| `entity.spawn_retry_t_step` | float | `0.1` | Lateral offset shift per retry (meters) |
-| `entity.spawn_retry_z_step` | float | `0.5` | Vertical shift per retry (meters) |
+| `entity.spawn_retry_t_step` | float | `0.1` | Lateral offset shift per retry, tried to both sides (meters); finite, `0` or more (`0`: no lateral shift) |
+| `entity.spawn_retry_z_step` | float | `0.5` | Vertical shift per retry, tried up and down (meters); finite, `0` or more (`0`: no vertical shift) |
 
 The two ray distances must be finite and non-negative, and their sum (the
 ray's length) positive. A ray that cannot hit anything would leave every pose
@@ -974,6 +982,11 @@ npc_vehicles:
     vehicle_type: vehicle.mini.cooper
     initial_speed_kmh: 10.0
 ```
+
+An NPC's `spawn_s` must be finite and its `initial_speed_kmh` finite and not
+negative; a run or batch refuses another value before anything starts
+(`Error: npc_vehicles[0].initial_speed_kmh must be finite and at least 0, got
+nan`).
 
 **Behavior:**
 - Sets all traffic lights to GREEN

@@ -600,6 +600,11 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
 
+An entity's spawn offsets, heading, goal `s`, size and initial speed must be
+finite numbers, and its initial speed 0 or more: the validator refuses another
+value on the entity's path (`entities[1].initial_speed_kmh`), where the run
+would refuse it only once CARLA was running.
+
 ## A logical scenario: the route search
 
 A document may describe the ego's drive as a pattern of road instead of

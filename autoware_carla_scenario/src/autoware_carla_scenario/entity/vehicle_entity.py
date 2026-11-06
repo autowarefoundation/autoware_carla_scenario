@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional
 
@@ -82,6 +83,25 @@ class VehicleEntityConfig:
         # it to one anyway, and the static check (docs/typecheck.md) needs an
         # attribute of one type.
         self.role_name = str(self.role_name)
+        # A speed is never below zero: a negative or NaN one is skipped by the
+        # runner's `> 0.0` and the vehicle starts still with no error, an
+        # infinite one breaks the actor's physics.  A retry step is shifted by
+        # on both sides, so a negative one means nothing; 0 keeps that axis
+        # (#1809).
+        _check_non_negative_finite("initial_speed_kmh", self.initial_speed_kmh)
+        _check_non_negative_finite("spawn_retry_t_step", self.spawn_retry_t_step)
+        _check_non_negative_finite("spawn_retry_z_step", self.spawn_retry_z_step)
+
+
+def _check_non_negative_finite(name: str, value: float) -> None:
+    """Refuse *value* of the config field *name* unless finite and at least 0.
+
+    Raises:
+        ValueError: naming the field.
+    """
+    # NaN fails `value >= 0.0` as well.
+    if not (math.isfinite(value) and value >= 0.0):
+        raise ValueError(f"{name} must be finite and at least 0, got {value}")
 
 
 class VehicleEntity(BackendDriven):

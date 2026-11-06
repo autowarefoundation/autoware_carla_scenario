@@ -24,7 +24,7 @@
   {% if target.kind != 'pedestrian' or target.initial_speed_kmh %}
   <div class="ed-field">
     <label class="ed-label">Initial speed <span class="unit">(km/h)</span></label>
-    <input type="number" step="any" name="initial_speed_kmh" class="ed-input"
+    <input type="number" step="any" min="0" name="initial_speed_kmh" class="ed-input"
            value="{{ target.initial_speed_kmh }}">
   </div>
   {% endif %}

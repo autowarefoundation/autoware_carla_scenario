@@ -270,6 +270,68 @@ def _config_float(key: str, value: Any) -> float:
         raise ValueError(f"{key} must be finite, got {shown(value)}") from None
 
 
+def _config_finite(key: str, value: Any, *, minimum: float | None = None) -> float:
+    """:func:`_config_float` of the config's *key*, refused unless finite and,
+    with *minimum*, at least *minimum* -- a ``ValueError`` naming the key
+    (#1809).  A NaN, an infinity or a negative speed would otherwise reach the
+    run: an ego that starts still with no error, an actor whose physics an
+    infinite velocity breaks, a pose that fails far from the key behind it.
+    """
+    number = _config_float(key, value)
+    if minimum is None:
+        if not math.isfinite(number):
+            raise ValueError(f"{key} must be finite, got {shown(value)}")
+    elif not (math.isfinite(number) and number >= minimum):
+        raise ValueError(
+            f"{key} must be finite and at least {minimum:g}, got {shown(value)}"
+        )
+    return number
+
+
+#: The ego's and entities' number settings a run reads through
+#: :func:`_config_finite`, with the least each may be (``None``: any finite
+#: number), as :func:`_check_ego_numbers` refuses them before a run starts
+#: (#1809).  A speed is never below zero (the initial speed is only applied
+#: above it); a retry step is a distance the retries are shifted by on both
+#: sides, so a negative one is meaningless and 0 keeps that axis where it is;
+#: a pose is any finite offset or angle.
+_EGO_NUMBER_MINIMA: tuple[tuple[str, float | None], ...] = (
+    ("ego.initial_speed_kmh", 0.0),
+    ("ego.spawn_s", None),
+    ("ego.spawn_t", None),
+    ("ego.spawn_heading", None),
+    ("ego.goal_s", None),
+    ("entity.spawn_retry_t_step", 0.0),
+    ("entity.spawn_retry_z_step", 0.0),
+)
+
+
+def _ego_number(key: str, value: Any) -> float:
+    """:func:`_config_finite` of *key*, one of :data:`_EGO_NUMBER_MINIMA`,
+    with its minimum."""
+    return _config_finite(key, value, minimum=dict(_EGO_NUMBER_MINIMA)[key])
+
+
+def _check_ego_numbers(cfg: DictConfig) -> None:
+    """Refuse the ego's and entities' number settings of
+    :data:`_EGO_NUMBER_MINIMA` -- a NaN, an infinity, a negative speed or
+    retry step -- as building the ego would (:func:`build_ego_and_spawn`), so
+    a batch refuses them before CARLA starts (#1809).  A key that is absent
+    or null is left to the build, which reads its default or refuses it.
+
+    Raises:
+        ValueError: naming the key of the value refused.
+    """
+    for key, _ in _EGO_NUMBER_MINIMA:
+        block_name, name = key.split(".", 1)
+        block = cfg.get(block_name)
+        if not isinstance(block, (DictConfig, Mapping)):
+            continue
+        value = block.get(name)
+        if value is not None:
+            _ego_number(key, value)
+
+
 def _config_int(key: str, value: Any) -> int:
     """``int(value)`` of the config's *key*; for a value ``int()`` cannot read
     (not a number, an infinity, a string of more digits than
@@ -306,16 +368,16 @@ def build_ego_and_spawn(
             carla.Transform(carla.Location(x=0.0, y=0.0, z=0.0))
         ),
         vehicle_type=cfg.ego.vehicle_type,
-        initial_speed_kmh=_config_float(
+        initial_speed_kmh=_ego_number(
             "ego.initial_speed_kmh", cfg.ego.initial_speed_kmh
         ),
         spawn_retry_max_count=_config_int(
             "entity.spawn_retry_max_count", cfg.entity.spawn_retry_max_count
         ),
-        spawn_retry_t_step=_config_float(
+        spawn_retry_t_step=_ego_number(
             "entity.spawn_retry_t_step", cfg.entity.spawn_retry_t_step
         ),
-        spawn_retry_z_step=_config_float(
+        spawn_retry_z_step=_ego_number(
             "entity.spawn_retry_z_step", cfg.entity.spawn_retry_z_step
         ),
         goal_pose=build_goal_pose(cfg),
@@ -371,9 +433,9 @@ def build_spawn_pose(cfg: DictConfig) -> Lanelet2Pose:
     ego_cfg = cfg.ego
     return Lanelet2Pose(
         lanelet_id=int(ego_cfg.spawn_lanelet_id),
-        s=_config_float("ego.spawn_s", ego_cfg.spawn_s),
-        t=_config_float("ego.spawn_t", ego_cfg.get("spawn_t", 0.0) or 0.0),
-        heading=_config_float(
+        s=_ego_number("ego.spawn_s", ego_cfg.spawn_s),
+        t=_ego_number("ego.spawn_t", ego_cfg.get("spawn_t", 0.0) or 0.0),
+        heading=_ego_number(
             "ego.spawn_heading", ego_cfg.get("spawn_heading", 0.0) or 0.0
         ),
     )
@@ -391,7 +453,7 @@ def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
         return None
     return Lanelet2Pose(
         lanelet_id=int(goal_lanelet_id),
-        s=_config_float("ego.goal_s", ego_cfg.get("goal_s", 0.0)),
+        s=_ego_number("ego.goal_s", ego_cfg.get("goal_s", 0.0)),
     )
 
 
@@ -432,9 +494,9 @@ def build_planned_route(cfg: DictConfig, name: str = "") -> PlannedRoute:
         raise RouteError("no ego.spawn_lanelet_id: the route has no start")
     start = Lanelet2Pose(
         lanelet_id=int(spawn_lanelet_id),
-        s=_config_float("ego.spawn_s", ego_cfg.get("spawn_s", 0.0)),
-        t=_config_float("ego.spawn_t", ego_cfg.get("spawn_t", 0.0) or 0.0),
-        heading=_config_float(
+        s=_ego_number("ego.spawn_s", ego_cfg.get("spawn_s", 0.0)),
+        t=_ego_number("ego.spawn_t", ego_cfg.get("spawn_t", 0.0) or 0.0),
+        heading=_ego_number(
             "ego.spawn_heading", ego_cfg.get("spawn_heading", 0.0) or 0.0
         ),
     )
@@ -2136,8 +2198,10 @@ def check_batch_configs(
     settings of an ``ego.entity=ros2`` case (:func:`_check_ros2_settings`), the
     ``backends`` settings of the backends this package ships
     (:func:`_check_backend_settings`), the ``scenario`` settings its config
-    class refuses (:func:`_check_scenario_config`), ``odd_case`` and
-    ``metrics.heavy`` (:func:`metrics_heavy`); and the server, traffic and Autoware launcher settings its
+    class refuses (:func:`_check_scenario_config`), the ego's and entities'
+    numbers (``ego.initial_speed_kmh``, the spawn and goal poses,
+    ``entity.spawn_retry_*_step``: :func:`_check_ego_numbers`), ``odd_case``
+    and ``metrics.heavy`` (:func:`metrics_heavy`); and the server, traffic and Autoware launcher settings its
     queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
     each distinct set of them.  A batch is refused for these before any
     scenario is built or the map is resolved (#1430): a local one would refuse
@@ -2180,6 +2244,7 @@ def check_batch_configs(
             _check_scenario_config(cfg)
             _odd_case(cfg)
             build_ground_projection(cfg)
+            _check_ego_numbers(cfg)
             # Every case's, though apply_metrics reads only the first set.
             metrics_heavy(cfg)
             # Once a distinct setting: a sweep's cases mostly share them.  The
@@ -3027,8 +3092,7 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
         except ValueError as exc:
             # Not a number, or not a positive finite duration (#1660).
             raise ValueError(
-                f"background_traffic.{key}: {shown(seconds)} is not a "
-                f"duration ({exc})"
+                f"background_traffic.{key}: {shown(seconds)} is not a duration ({exc})"
             ) from exc
 
     max_vehicles = checked.max_vehicles
