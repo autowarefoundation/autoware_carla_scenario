@@ -783,7 +783,7 @@ class SmartPedestrianControllerAction(BaseAction):
                  prompts: List[TimedPrompt] = List[TimedPrompt](),
                  waypoints: List[WalkWaypoint] = List[WalkWaypoint](),
                  speed_ms: float = 1.3, keyframes: Optional[str] = None,
-                 duration_s: Optional[float] = None, seed: int = 0,
+                 duration_s: Optional[float] = None, seed: Optional[int] = None,
                  overrides: bool = False):
         _keyword_only(_kw, "SmartPedestrianControllerAction(): label, once, prompts, "
                       "waypoints, speed_ms, keyframes, duration_s, seed and overrides")

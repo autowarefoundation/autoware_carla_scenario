@@ -9,8 +9,10 @@ from __future__ import annotations
 
 import json
 import math
+import random
 import sys
 from concurrent import futures
+from contextlib import contextmanager
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator
@@ -43,10 +45,12 @@ from autoware_carla_scenario.pedestrian.motion_client import (
     to_contract,
 )
 from autoware_carla_scenario.pedestrian.poser import WalkerPoser
+from autoware_carla_scenario.authoring import registry
 from autoware_carla_scenario.pedestrian.skeleton import directions_from_joints
 from autoware_carla_scenario.prepare import Resources
 from autoware_carla_scenario.prepare import pool as pool_module
 from autoware_carla_scenario.prepare.pool import BackendPool
+from autoware_carla_scenario.seed import DEFAULT_SEED, set_run_seed
 
 from .test_play_motion import _bones
 
@@ -227,9 +231,21 @@ class _Scene:
             self.elapsed += DT
 
 
-@pytest.fixture
-def generator() -> Iterator[_Generator]:
-    servicer = _Generator()
+class _SeededGenerator(_Generator):
+    """Walks straight on, turned by an angle drawn from the session's seed:
+    a generator whose motion follows its seed, as a real one's does."""
+
+    def OpenSession(self, request: Any, context: Any) -> Any:
+        session = pb.OpenSessionRequest()
+        session.CopyFrom(request)
+        session.heading += random.Random(request.seed).uniform(-0.5, 0.5)
+        self.sessions[request.session_id] = session
+        return pb.OpenSessionResponse()
+
+
+@contextmanager
+def _serving(servicer: _Generator) -> Iterator[_Generator]:
+    """*servicer* as the run's ``ardy`` backend, for as long as the block runs."""
     server = grpc.server(futures.ThreadPoolExecutor(max_workers=2))
     pb_grpc.add_PedestrianMotionServicer_to_server(servicer, server)
     port = server.add_insecure_port("127.0.0.1:0")
@@ -237,9 +253,17 @@ def generator() -> Iterator[_Generator]:
     pool = BackendPool(check_resources=False)
     pool._running["ardy"] = _Backend(f"127.0.0.1:{port}")  # type: ignore[assignment]
     pool_module._ACTIVE = pool
-    yield servicer
-    pool_module._ACTIVE = None
-    server.stop(None)
+    try:
+        yield servicer
+    finally:
+        pool_module._ACTIVE = None
+        server.stop(None)
+
+
+@pytest.fixture
+def generator() -> Iterator[_Generator]:
+    with _serving(_Generator()) as servicer:
+        yield servicer
 
 
 @pytest.fixture
@@ -591,3 +615,78 @@ class TestSmartPedestrianControllerAction:
             SmartPedestrianControllerAction(
                 "walker1", keyframes=str(tmp_path / "x.json")
             )
+
+
+@pytest.fixture
+def _restore_run_seed() -> Iterator[None]:
+    previous = set_run_seed(DEFAULT_SEED)
+    yield
+    set_run_seed(previous)
+
+
+def _walk(**kwargs: Any) -> tuple[int, tuple[float, float]]:
+    """The seed a fresh walker's session opened with, and where its generated
+    motion took it in one second."""
+    built = _Scene()
+    action = SmartPedestrianControllerAction("walker1", "walks", **kwargs)
+    register_entity("walker1", built.entity)
+    try:
+        with _serving(_SeededGenerator()) as servicer:
+            built.run(action, 1.0)
+            (session,) = servicer.sessions.values()
+    finally:
+        # As a run's end does: gives back the walker for the next walk.
+        action.close()
+        unregister_entity("walker1")
+    where = built.walker.transform.location
+    return session.seed, (where.x, where.y)
+
+
+@pytest.mark.usefixtures("_restore_run_seed")
+class TestTheRunSeed:
+    """#1835: the generator's seed follows the run's unless it is given one."""
+
+    def test_without_a_seed_the_action_takes_the_runs(self) -> None:
+        set_run_seed(42)
+        assert SmartPedestrianControllerAction("walker1")._seed == 42  # noqa: SLF001
+        set_run_seed(43)
+        assert SmartPedestrianControllerAction("walker1")._seed == 43  # noqa: SLF001
+
+    def test_an_explicit_seed_is_kept(self) -> None:
+        set_run_seed(42)
+        action = SmartPedestrianControllerAction("walker1", seed=7)
+        assert action._seed == 7  # noqa: SLF001
+
+    def test_the_authoring_default_follows_the_run(self) -> None:
+        (spec,) = [
+            s for s in registry.action_specs() if s.type_id == "smart_pedestrian"
+        ]
+        (field,) = [f for f in spec.fields if f.name == "seed"]
+        assert field.default is None
+        assert not field.required
+
+    def test_the_runs_seed_reaches_the_generator(self) -> None:
+        set_run_seed(42)
+        seed, _ = _walk()
+        assert seed == 42
+
+    def test_different_run_seeds_give_different_motion(self) -> None:
+        set_run_seed(1)
+        first = _walk()
+        set_run_seed(2)
+        second = _walk()
+        assert first[0] != second[0]
+        assert first[1] != pytest.approx(second[1], abs=1e-3)
+
+    def test_the_same_run_seed_gives_the_same_motion(self) -> None:
+        set_run_seed(5)
+        first = _walk()
+        second = _walk()
+        assert first == second
+
+    def test_an_explicit_seed_does_not_follow_the_run(self) -> None:
+        set_run_seed(1)
+        first = _walk(seed=9)
+        set_run_seed(2)
+        second = _walk(seed=9)
+        assert first == second

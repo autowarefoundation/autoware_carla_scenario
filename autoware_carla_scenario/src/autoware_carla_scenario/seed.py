@@ -13,7 +13,9 @@ draws at random takes it unless it is given a seed of its own:
 * the scenario's actions and conditions that draw: the adversarial actions,
   :class:`~autoware_carla_scenario.actions.adversarial_traffic.AdversarialTrafficAction`,
   :class:`~autoware_carla_scenario.actions.background_traffic.TrafficSourceAction`
-  (and the config's ``background_traffic``);
+  (and the config's ``background_traffic``), and
+  :class:`~autoware_carla_scenario.actions.smart_pedestrian.SmartPedestrianControllerAction`'s
+  motion generator;
 * the driver policy's ``start_session`` seed and its LiDARs' weather noise.
 
 Every seed is a whole number from 0 to :data:`MAX_SEED` (``2**31 - 1``):
