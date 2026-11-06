@@ -59,6 +59,7 @@ from typing import Any, Literal
 from urllib.parse import urlparse
 from urllib.request import url2pathname
 
+from ..atomic_file import write_text_atomically
 from .driver import (
     DRIVER_MODULE,
     render_driver,
@@ -2612,7 +2613,8 @@ def _store(key: str, result: TypeCheckResult, sources: _Sources) -> TypeCheckRes
     process: the next check of the same program (the next case of a sweep,
     which has the same key) compiles it again (#694). The file is written
     whole or not at all: workers that compile the same program race
-    harmlessly.
+    harmlessly, and a write that fails or is interrupted leaves no scratch
+    file behind in the shared directory (#1859).
     """
     if result.killed:
         return result
@@ -2622,11 +2624,8 @@ def _store(key: str, result: TypeCheckResult, sources: _Sources) -> TypeCheckRes
         return result
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        fd, tmp = tempfile.mkstemp(dir=path.parent, suffix=".tmp")
-        with os.fdopen(fd, "w", encoding="utf-8") as out:
-            kept = _relocated(result, _module_markers(sources))
-            json.dump(dataclasses.asdict(kept), out)
-        os.replace(tmp, path)
+        kept = _relocated(result, _module_markers(sources))
+        write_text_atomically(path, json.dumps(dataclasses.asdict(kept)))
     except OSError:
         pass
     return result

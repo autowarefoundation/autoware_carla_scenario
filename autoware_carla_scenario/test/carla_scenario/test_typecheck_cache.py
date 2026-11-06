@@ -493,6 +493,53 @@ def test_an_unwritable_directory_keeps_verdicts_in_the_process(
     assert _cached("k", _sources("/run1")) is not None
 
 
+def _fail_replace(monkeypatch: pytest.MonkeyPatch, error: BaseException) -> list[Path]:
+    """Make the rename of the scratch file over the entry raise *error*;
+    the scratch files it was asked to rename are listed in the result."""
+    renamed: list[Path] = []
+
+    def replace(src: str, dst: str) -> None:
+        renamed.append(Path(src))
+        raise error
+
+    monkeypatch.setattr(os, "replace", replace)
+    return renamed
+
+
+def test_a_failed_write_leaves_no_scratch_file(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A full disk, say: the verdict stays in the process, and the shared
+    # directory gains no scratch file (#1859).
+    renamed = _fail_replace(monkeypatch, OSError(28, "No space left on device"))
+    result = _failed()
+    assert _store("k", result, _sources("/run1")) is result
+    assert renamed and renamed[0].parent == cache_dir
+    assert list(cache_dir.iterdir()) == []
+    assert _cached("k", _sources("/run1")) is result
+
+
+def test_an_interrupted_write_leaves_no_scratch_file(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    renamed = _fail_replace(monkeypatch, KeyboardInterrupt())
+    with pytest.raises(KeyboardInterrupt):
+        _store("k", _failed(), _sources("/run1"))
+    assert renamed and renamed[0].parent == cache_dir
+    assert list(cache_dir.iterdir()) == []
+
+
+def test_a_stored_entry_is_the_json_of_the_verdict(cache_dir: Path) -> None:
+    _store("k", _failed(), _sources("/run1"))
+    entry = cache_dir / "k.json"
+    assert [p.name for p in cache_dir.iterdir()] == ["k.json"]
+    assert entry.stat().st_mode & 0o777 == 0o644
+    stored = json.loads(entry.read_text(encoding="utf-8"))
+    assert stored["scenario"] == "pkg.MyScenario"
+    check._CACHE.clear()
+    assert _cached("k", _sources("/run1")) == _failed()
+
+
 def test_another_compiler_at_the_same_path_is_another_key(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
