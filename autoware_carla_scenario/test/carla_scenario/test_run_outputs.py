@@ -11,21 +11,25 @@ from autoware_carla_scenario import (
     environment,
     rerun,
     rerun_lidar,
+    rerun_metrics,
     run_outputs,
     t4_settings,
 )
+from autoware_carla_scenario.coverage import collector
 from autoware_carla_scenario.gate import record as gate_record
 from autoware_carla_scenario.run_outputs import (
     RUN_DIR_SUFFIXES,
     RUN_FILE_SUFFIXES,
+    remove_run_outputs,
     run_output_paths,
+    run_output_stems,
     run_outputs_exist,
 )
 from autoware_carla_scenario.scenario_runner import _run_file_stem
 from autoware_carla_scenario.slurm import manifest
 from autoware_carla_scenario.slurm.worker import _remove_outputs
 from autoware_carla_scenario.t4_scene import convert
-from autoware_carla_scenario.ui import recordings, web_viewer_paths
+from autoware_carla_scenario.ui import case_paths, recordings, web_viewer_paths
 from autoware_carla_scenario.traffic.base import TrafficContext
 from autoware_carla_scenario.traffic.sumo import backend as sumo_backend
 
@@ -49,6 +53,8 @@ def test_the_suffixes_are_the_writers_own() -> None:
         rerun.TRAJECTORY_SUFFIX,
         rerun.RECORDING_SUFFIX,
         rerun_lidar.SENSORS_SUFFIX,
+        rerun_metrics.METRICS_SUFFIX,
+        collector.ODD_ARCHIVE_SUFFIX,
         convert.SCENE_SUFFIX,
         convert.MAP_SUFFIX,
         environment.ENVIRONMENT_SUFFIX,
@@ -69,6 +75,31 @@ def test_environment_and_t4scene_suffixes_are_run_outputs_s() -> None:
     assert environment.LOCK_SUFFIX is run_outputs.LOCK_SUFFIX
     assert convert.SCENE_SUFFIX is run_outputs.T4SCENE_SUFFIX
     assert convert.MAP_SUFFIX is run_outputs.T4SCENE_MAP_SUFFIX
+
+
+def test_the_metrics_and_odd_archive_suffixes_are_run_outputs_s() -> None:
+    # Defined in the checked run_outputs (#1748): rerun_metrics re-exports
+    # its scratch recording's under the name it had; openodd's ODD archive
+    # suffix, which run_outputs cannot import, is the one named here, which
+    # the checked ui.case_paths reads.
+    assert rerun_metrics.METRICS_SUFFIX is run_outputs.METRICS_SUFFIX
+    assert run_outputs.ODD_ARCHIVE_SUFFIX == collector.ODD_ARCHIVE_SUFFIX
+    assert case_paths.ODD_ARCHIVE_SUFFIX is run_outputs.ODD_ARCHIVE_SUFFIX
+
+
+def test_a_left_metrics_recording_is_the_runs_own(tmp_path: Path) -> None:
+    # A run killed while its metrics were merged leaves X.metrics.rrd: it
+    # reads as stem X, not X.metrics, and a case run again removes it.
+    left = tmp_path / f"{STEM}{run_outputs.METRICS_SUFFIX}"
+    left.write_bytes(b"RRF2")
+    assert left.name == f"{STEM}.metrics.rrd"
+    assert run_output_stems(tmp_path, None) == {STEM}
+    assert _run_file_stem(tmp_path, STEM) == f"{STEM}-1"
+
+    remove_run_outputs(tmp_path, STEM)
+
+    assert not left.exists()
+    assert run_output_stems(tmp_path, None) == set()
 
 
 def test_the_log_and_recording_path_rule_is_run_outputs_s() -> None:
