@@ -2379,6 +2379,64 @@ table at the end. A case's outputs do not depend on which task ran it or when.</
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a>scenario-slurm<span class="w"> </span>resubmit<span class="w"> </span>outputs/2026-10-18/12-00-00<span class="w">   </span><span class="c1"># the cases with no result</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>scenario-slurm<span class="w"> </span>cancel<span class="w">   </span>outputs/2026-10-18/12-00-00<span class="w">   </span><span class="c1"># scancel the batch's jobs</span>
 </code></pre></div>
+<p><code>status</code>, <code>collect</code> and <code>cancel</code> take nothing but the batch directory. The
+options of the others (<code>scenario-slurm &lt;command&gt; --help</code> says the same):</p>
+<table>
+<thead>
+<tr>
+<th>Command</th>
+<th>Option</th>
+<th></th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>wait</code></td>
+<td><code>--submission K</code></td>
+<td>the submission to follow, by its index (<code>slurm/submissions/&lt;K&gt;.json</code>; <code>0</code> is the first); default: the latest</td>
+</tr>
+<tr>
+<td><code>wait</code></td>
+<td><code>--poll-seconds S</code></td>
+<td>seconds between two polls of <code>squeue</code>; default: the batch's <code>launcher.poll_seconds</code>. Below 0.1 is taken as 0.1, a negative number is refused</td>
+</tr>
+<tr>
+<td><code>resubmit</code></td>
+<td><code>--failed</code></td>
+<td>also the cases that ran and failed</td>
+</tr>
+<tr>
+<td><code>resubmit</code></td>
+<td><code>--cases a,b</code></td>
+<td>these cases instead, by label or index; a case named twice runs once</td>
+</tr>
+<tr>
+<td><code>resubmit</code></td>
+<td><code>--array-parallelism K</code></td>
+<td>at most this many tasks at once (at least 1); default: the batch's <code>launcher.array_parallelism</code></td>
+</tr>
+<tr>
+<td><code>resubmit</code></td>
+<td><code>--cases-per-task N</code></td>
+<td>cases a task runs (at least 1); default: the batch's <code>launcher.cases_per_task</code></td>
+</tr>
+<tr>
+<td><code>resubmit</code></td>
+<td><code>--wait</code>, <code>--no-wait</code></td>
+<td>follow the new submission until it ends and collect, or submit and exit; default: the batch's <code>launcher.wait</code>. With nothing to resubmit, it collects at once, but only with an explicit <code>--wait</code> (and not with <code>--dry-run</code>)</td>
+</tr>
+<tr>
+<td><code>resubmit</code></td>
+<td><code>--force</code></td>
+<td>submit even while a job of the batch is queued or running, <code>squeue</code> cannot tell whether one is, or another submission of the batch is in flight</td>
+</tr>
+<tr>
+<td><code>resubmit</code></td>
+<td><code>--dry-run</code></td>
+<td>print the cases it would resubmit, submitting and collecting nothing, even with <code>--wait</code>, and exit 0; it still exits 1 where a resubmit would refuse: a busy batch without <code>--force</code>, an unknown <code>--cases</code> entry or an out-of-range option, and on an error reading the batch</td>
+</tr>
+</tbody>
+</table>
 <p>A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as <code>ERROR</code> with a message
 saying so, and <code>collect</code> lists them. So is a case whose recorded outcome holds
@@ -2818,7 +2876,7 @@ dialled by every task, as a TCP one is.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 02:55:23 UTC"><span class="timeago" datetime="2026-11-06T02:55:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 02:55:23 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 05:05:48 UTC"><span class="timeago" datetime="2026-11-06T05:05:48+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 05:05:48 UTC">2026-11-06</span>
   </span>
 
     
