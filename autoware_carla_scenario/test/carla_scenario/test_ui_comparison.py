@@ -62,38 +62,88 @@ def test_the_axes_are_the_attributes_with_the_most_buckets() -> None:
     assert comparison.default_axes([]) == (None, None)
 
 
-def test_a_change_is_read_between_the_first_and_last_runs() -> None:
-    def change(*outcomes: bool | None | str) -> str:
-        runs: list[comparison.ComparedCase | None] = []
-        for i, outcome in enumerate(outcomes):
+def _runs(*sessions: object) -> list[list[comparison.ComparedCase]]:
+    """Each session's runs of key ``a``: ``"-"`` none, a verdict (``True``,
+    ``False``, ``None``, ``"error"``) one run, a tuple of them several."""
+    out: list[list[comparison.ComparedCase]] = []
+    for i, outcomes in enumerate(sessions):
+        group = outcomes if isinstance(outcomes, tuple) else (outcomes,)
+        runs: list[comparison.ComparedCase] = []
+        for j, outcome in enumerate(group):
             if outcome == "-":
-                runs.append(None)
-            elif outcome == "error":
-                runs.append(_case(i, "a", None, errored=True))
+                continue
+            if outcome == "error":
+                runs.append(_case(10 * i + j, "a", None, errored=True))
             else:
-                runs.append(_case(i, "a", outcome))  # type: ignore[arg-type]
-        return comparison.MatchedCase("a", runs).change()
+                runs.append(_case(10 * i + j, "a", outcome))  # type: ignore[arg-type]
+        out.append(runs)
+    return out
 
-    assert change(True, False) == "regression"
-    assert change(True, "error") == "regression"
-    assert change(False, True) == "fixed"
-    assert change(True, False, True) == "flaky"
-    assert change(False, True, "error") == "flaky"
-    assert change(False, "error") == "same"
-    assert change(True, "-", True) == "same"
-    assert change(True, "-") == "gone"
-    assert change("-", True) == "new"
+
+def _change(*sessions: object) -> str:
+    return comparison.MatchedCase("a", _runs(*sessions)).change()
+
+
+def test_a_change_is_read_between_the_first_and_last_runs() -> None:
+    assert _change(True, False) == "regression"
+    assert _change(True, "error") == "regression"
+    assert _change(False, True) == "fixed"
+    assert _change(True, False, True) == "flaky"
+    assert _change(False, True, "error") == "flaky"
+    assert _change(False, "error") == "same"
+    assert _change(True, "-", True) == "same"
+    assert _change(True, "-") == "gone"
+    assert _change("-", True) == "new"
+
+
+def test_a_change_with_several_runs_in_a_session_counts_every_run() -> None:
+    """A session's verdict on a key is read off every run of it: ``pass``
+    when all passed, ``fail`` when none did, ``mixed`` (flaky) otherwise
+    (#1825)."""
+    # Every run passed, then none did: a regression; the other way: fixed.
+    assert _change((True, True), (False, "error")) == "regression"
+    assert _change((False, None), (True, True, True)) == "fixed"
+    # The same verdict on every run of every session: the same.
+    assert _change((True, True), True) == "same"
+    assert _change((False, "error"), (False,)) == "same"
+    # A session that both passed and failed it: flaky, whichever it is, and
+    # whatever the others did -- even when it alone ran it.
+    assert _change((False, True), (True, True)) == "flaky"
+    assert _change((True, True), (True, False)) == "flaky"
+    assert _change(True, (True, False), True) == "flaky"
+    assert _change((True, False), "-") == "flaky"
+    assert _change("-", ("error", True)) == "flaky"
+    # Consistent sessions that disagree between the ends: flaky.
+    assert _change((True, True), (False, False), (True,)) == "flaky"
+    # One session's runs alone, each the same: new or gone.
+    assert _change((True, True), "-") == "gone"
+    assert _change("-", (False, False)) == "new"
+
+
+def test_a_session_s_tally_and_verdict_on_a_key() -> None:
+    matched = comparison.MatchedCase("a", _runs((False, True), "-", (True,), "error"))
+    assert [matched.tally(i) for i in range(4)] == [(1, 2), (0, 0), (1, 1), (0, 1)]
+    assert [matched.verdict(i) for i in range(4)] == ["mixed", "", "pass", "fail"]
+    # The first run of the first session; each session's last.
+    assert matched.first is matched.runs[0][0]
+    assert matched.latest == [
+        matched.runs[0][1],
+        None,
+        matched.runs[2][0],
+        matched.runs[3][0],
+    ]
+    assert matched.ran == [*matched.runs[0], *matched.runs[2], *matched.runs[3]]
 
 
 def test_a_metric_delta_and_whether_it_is_more_than_noise() -> None:
-    runs: list[comparison.ComparedCase | None] = [
-        _case(0, "a", True, metrics={"min_gap_m": 2.0, "elapsed_s": 10.0}),
-        None,
-        _case(2, "a", True, metrics={"min_gap_m": 1.0, "elapsed_s": 10.4}),
+    runs: list[list[comparison.ComparedCase]] = [
+        [_case(0, "a", True, metrics={"min_gap_m": 2.0, "elapsed_s": 10.0})],
+        [],
+        [_case(2, "a", True, metrics={"min_gap_m": 1.0, "elapsed_s": 10.4})],
     ]
     matched = comparison.MatchedCase("a", runs)
-    assert matched.first is runs[0]
-    assert matched.ran == [runs[0], runs[2]]
+    assert matched.first is runs[0][0]
+    assert matched.ran == [runs[0][0], runs[2][0]]
     assert matched.delta("min_gap_m") == -1.0
     assert matched.significant("min_gap_m")
     # 0.4 s of 10 s: under 5%.
@@ -103,9 +153,24 @@ def test_a_metric_delta_and_whether_it_is_more_than_noise() -> None:
     assert not matched.significant("distance_m")
 
 
+def test_a_metric_delta_is_between_the_sessions_means() -> None:
+    runs: list[list[comparison.ComparedCase]] = [
+        [
+            _case(0, "a", True, metrics={"min_gap_m": 1.0}),
+            _case(1, "a", True, metrics={"min_gap_m": 3.0}),
+            _case(2, "a", True),
+        ],
+        [_case(0, "a", True, metrics={"min_gap_m": 2.5})],
+    ]
+    matched = comparison.MatchedCase("a", runs)
+    # Means 2.0 and 2.5; a run without the metric is left out.
+    assert matched.delta("min_gap_m") == 0.5
+    assert matched.significant("min_gap_m")
+
+
 def test_a_match_no_session_ran_has_no_first() -> None:
     with pytest.raises(StopIteration):
-        comparison.MatchedCase("a", [None, None]).first
+        comparison.MatchedCase("a", [[], []]).first
 
 
 def test_buckets_read_in_order_numeric_ranges_by_their_lower_bound() -> None:
@@ -152,6 +217,39 @@ def test_sessions_are_compared_by_key_and_by_cell() -> None:
     assert compared.cells[("[5, 10)", "")].delta == -1.0
     assert compared.cells[("[0, 5)", "")].keys == ["s#1", "s#4"]
     assert compared.metrics == ["elapsed_s"]
+
+
+def _cell_sums(compared: comparison.Comparison) -> list[tuple[int, int]]:
+    sums = [(0, 0) for _ in compared.sessions]
+    for cell in compared.cells.values():
+        for i, (passed, runs) in enumerate(cell.tallies):
+            sums[i] = (sums[i][0] + passed, sums[i][1] + runs)
+    return sums
+
+
+def test_every_run_of_a_key_a_session_repeats_is_kept_and_tallied() -> None:
+    """#1825: a session that ran a key twice, failing then passing, keeps
+    both runs; its cell tallies both, so the cells add up to the totals."""
+    base = [
+        _case(0, "s#1", False, buckets={GAP: "[0, 5)"}, key="k1"),
+        _case(1, "s#2", True, buckets={GAP: "[5, 10)"}, key="k2"),
+        _case(2, "s#1", True, buckets={GAP: "[0, 5)"}, key="k1"),
+    ]
+    new = [
+        _case(0, "s#1", True, buckets={GAP: "[0, 5)"}, key="k1"),
+        _case(1, "s#2", True, buckets={GAP: "[5, 10)"}, key="k2"),
+    ]
+    compared = comparison.compare([("a", base), ("b", new)], x=GAP)
+    k1 = next(c for c in compared.cases if c.key == "k1")
+    # The failure is not dropped.
+    assert [r.outcome for r in k1.runs[0]] == ["fail", "pass"]
+    assert k1.tally(0) == (1, 2)
+    assert k1.change() == "flaky"
+    assert compared.count("flaky") == 1
+    assert compared.cells[("[0, 5)", "")].tallies == [(1, 2), (1, 1)]
+    assert compared.cells[("[0, 5)", "")].keys == ["k1"]
+    assert compared.totals == [(2, 3), (2, 2)]
+    assert _cell_sums(compared) == compared.totals
 
 
 def test_results_re_exports_the_comparison() -> None:
@@ -251,7 +349,9 @@ def test_a_case_s_key_by_overrides_is_what_it_was(overrides: list[str]) -> None:
 def test_the_comparison_gives_what_it_gave_before_it_was_split_out() -> None:
     """``data/ui_results/comparison_golden.json`` is what ``ui.results``'
     own comparison gave on these sessions before #787 moved it into
-    ``ui.comparison``: everything ``compare.html`` reads of it."""
+    ``ui.comparison``: everything ``compare.html`` reads of it. Regenerated
+    for #1825, which keeps every run of a key a session ran twice (``a2``
+    of the second session) instead of its last."""
     golden = json.loads(_GOLDEN.read_text(encoding="utf-8"))
     now = json.loads(json.dumps(_compared_sessions.snapshots(), ensure_ascii=False))
     assert now.keys() == golden.keys()
