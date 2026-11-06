@@ -293,6 +293,70 @@ def test_a_start_that_fails_stops_what_it_launched(
     assert manager._process is None
 
 
+class _ExitingCarla(_FakeCarla):
+    """A fake launcher that backgrounds "UE5" and exits *code* itself (#1766).
+
+    The watchdog then exits too, and the first ``poll()`` reaps it, while UE5
+    still runs in its group.  The launcher waits for UE5's pid file so that a
+    test always knows which process to look for.
+    """
+
+    def __init__(self, directory: Path, code: int) -> None:
+        super().__init__(directory)
+        ue5 = shlex.quote(str(self.ue5_pid))
+        self.exe.write_text(
+            "#!/bin/sh\n"
+            f"/bin/sh -c '{_write_pid(_ARG0)} && exec sleep 600' {ue5} &\n"
+            f"while [ ! -e {ue5} ]; do sleep 0.05; done\n"
+            f"exit {code}\n"
+        )
+
+
+def test_a_launcher_that_exits_does_not_leave_its_children_running(
+    tmp_path: Path, free_port: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """start() stops the group of a launcher that exited early, reaped or not."""
+    carla = _ExitingCarla(tmp_path, 3)
+    monkeypatch.setenv(CarlaServerManager.ENV_VAR, str(carla.exe))
+    monkeypatch.setattr(CarlaServerManager, "_ping", lambda self: False)
+    manager = CarlaServerManager(port=free_port, timeout=30.0, reuse_if_running=False)
+    try:
+        with pytest.raises(RuntimeError, match="exited with code 3"):
+            manager.start()
+        ue5 = _wait_for(carla.ue5_pid)
+        assert _gone(ue5, timeout=5.0), f"UE5 (pid {ue5}) outlived the failed start"
+        assert manager._process is None
+    finally:
+        manager.stop()
+        carla.kill()
+
+
+def test_stop_reaches_the_group_after_is_alive_reaped_the_launcher(
+    tmp_path: Path, free_port: int, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    carla = _ExitingCarla(tmp_path, 0)
+    monkeypatch.setenv(CarlaServerManager.ENV_VAR, str(carla.exe))
+    monkeypatch.setattr(
+        CarlaServerManager, "_ping", lambda self: carla.ue5_pid.exists()
+    )
+    manager = CarlaServerManager(port=free_port, reuse_if_running=False)
+    try:
+        manager.start()
+        ue5 = _wait_for(carla.ue5_pid)
+        deadline = time.monotonic() + 30.0
+        while manager.is_alive():  # until poll() has reaped the watchdog
+            assert time.monotonic() < deadline, "the launcher did not exit"
+            time.sleep(0.1)
+        assert manager._process is not None
+        assert manager._process.returncode == 0
+        assert _alive(ue5), "UE5 should still run in the launcher's group"
+        manager.stop()
+        assert _gone(ue5, timeout=5.0), f"UE5 (pid {ue5}) outlived stop()"
+    finally:
+        manager.stop()
+        carla.kill()
+
+
 def test_a_carla_started_from_a_thread_outlives_the_thread(
     fake_carla: _FakeCarla, free_port: int, monkeypatch: pytest.MonkeyPatch
 ) -> None:
