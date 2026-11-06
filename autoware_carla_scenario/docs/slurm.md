@@ -415,7 +415,7 @@ SLURM gives each job a private one (`job_container/tmpfs`): it is
 `launcher.port_lock_dir`. The default range, 20000-29999, is below Linux's
 ephemeral ports.
 
-The TrafficManager's port is the slot's whatever the config says: the traffic
+The TrafficManager's port is always the slot's, whatever the config says: the traffic
 groups interpolate the backend's own (`traffic.options.port`, sumo's
 `traffic.options.tm_port`) from `traffic_manager.port`, and one set outright
 (`traffic.options.port=8101`, or `null` for the backend's default) is
