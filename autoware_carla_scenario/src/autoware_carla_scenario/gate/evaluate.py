@@ -28,6 +28,12 @@ baseline run of passed and a candidate run of failed.  The candidate's gate
 decides the exit code; ``--fail-on-regression`` makes a regression fail it
 too.
 
+A case of a batch that raised rather than ran (``ERROR`` in its summary,
+``batch_results.json``) or, under SLURM, has no outcome, wrote no record: the
+success rate would be judged over the runs that survived.  A set of runs
+holding such a batch is refused (:func:`unrecorded_cases`) unless
+``--allow-unrecorded`` is given.
+
 See ``docs/gate.md``.
 """
 
@@ -56,7 +62,7 @@ from .criteria import (
     find_gate_records,
     station_values,
 )
-from .record import GateRecord, read_gate_record
+from .record import GATE_RECORD_SUFFIX, GateRecord, read_gate_record
 from .report import (
     case_changes,
     comparison_markdown,
@@ -82,6 +88,7 @@ __all__ = [
     "load_gate_records",
     "main",
     "station_values",
+    "unrecorded_cases",
 ]
 
 #: Exit codes of ``scenario-gate``.
@@ -188,6 +195,111 @@ def load_gate_records(paths: Iterable[Path]) -> tuple[list[GateRecord], list[str
             continue
         records.append(record)
     return records, errors
+
+
+#: The summary a batch writes beside its runs' outputs (``batch_report``).
+BATCH_RESULTS = "batch_results.json"
+
+#: How many of a batch's unrecorded cases the refusal names.
+_NAMED = 5
+
+
+def _batch_dirs(path: Path) -> list[Path]:
+    """The batches under *path*: each directory holding a summary
+    (``batch_results.json``) or a SLURM batch's manifest, sorted."""
+    found = {p.parent for p in path.rglob(BATCH_RESULTS)}
+    found.update(p.parent.parent for p in path.rglob("slurm/manifest.json"))
+    return sorted(found)
+
+
+def _slurm_unrecorded(directory: Path) -> tuple[list[str], int] | str:
+    """The labels of a SLURM batch's cases that errored, have no outcome or
+    one holding no verdict, and left no gate record at their stem; and how
+    many cases it has.  Why the manifest cannot be read, instead, if it
+    cannot."""
+    from ..slurm.manifest import BatchLayout, recorded_verdict  # noqa: PLC0415
+
+    layout = BatchLayout(directory)
+    try:
+        manifest = layout.read_manifest()
+        cases = list(manifest["cases"])
+    except (KeyError, OSError, TypeError, ValueError) as exc:
+        return f"{layout.manifest}: the SLURM manifest cannot be read ({exc})"
+    unrecorded: list[str] = []
+    for case in cases:
+        try:
+            index = int(case["index"])
+        except (KeyError, TypeError, ValueError):
+            return f"{layout.manifest}: a case without an index ({case!r})"
+        record = layout.read_result(index)
+        if (
+            record is not None
+            and recorded_verdict(record) is not None
+            and not record.get("errored")
+        ):
+            continue
+        stem = case.get("stem")
+        if stem and (directory / f"{stem}{GATE_RECORD_SUFFIX}").is_file():
+            continue
+        unrecorded.append(str(case.get("label") or case.get("scenario") or index))
+    return unrecorded, len(cases)
+
+
+def _summary_unrecorded(directory: Path) -> tuple[list[str], int] | str:
+    """The names of a local batch's errored cases (``"error": true`` in its
+    ``batch_results.json``), which raised and so wrote no gate record; and
+    how many cases it has.  Why the summary cannot be read, instead."""
+    path = directory / BATCH_RESULTS
+    try:
+        entries = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, RecursionError, ValueError) as exc:
+        return f"{path}: the batch summary cannot be read ({exc})"
+    if not isinstance(entries, list):
+        return f"{path}: not a batch summary (not a JSON array)"
+    unrecorded = [
+        str(entry.get("scenario") or i)
+        for i, entry in enumerate(entries)
+        if not isinstance(entry, dict) or entry.get("error") is True
+    ]
+    return unrecorded, len(entries)
+
+
+def unrecorded_cases(path: Path) -> list[str]:
+    """Why the runs under *path* cannot be judged as they are: one line per
+    batch under it whose cases raised rather than ran, or (SLURM) have no
+    outcome, and left no gate record.
+
+    A run that raises writes no record, so judging the records there are
+    would compute ``min_success_rate`` over the runs that survived.  A
+    SLURM batch (``slurm/manifest.json``) is read from its tasks' outcomes,
+    collected or not, and a case with a record at its stem is not counted; a
+    local batch is read from its ``batch_results.json``, whose errored
+    entries wrote no record.  A summary or manifest that cannot be read is
+    reported too.  Empty for a gate record (a file), and for a directory
+    holding no batch.
+    """
+    if not path.is_dir():
+        return []
+    lines: list[str] = []
+    for directory in _batch_dirs(path):
+        if (directory / "slurm" / "manifest.json").is_file():
+            found = _slurm_unrecorded(directory)
+        else:
+            found = _summary_unrecorded(directory)
+        if isinstance(found, str):
+            lines.append(found)
+            continue
+        names, total = found
+        if not names:
+            continue
+        shown = ", ".join(names[:_NAMED])
+        more = f", and {len(names) - _NAMED} more" if len(names) > _NAMED else ""
+        lines.append(
+            f"{directory}: {len(names)} of {total} case(s) raised or have no "
+            f"outcome, and left no gate record ({shown}{more}); the gate would "
+            "be judged over the runs that survived"
+        )
+    return lines
 
 
 # ---------------------------------------------------------------------------
@@ -588,6 +700,16 @@ def _parser(prog: Optional[str]) -> argparse.ArgumentParser:
             "the gate. By default only the candidate's gate decides"
         ),
     )
+    parser.add_argument(
+        "--allow-unrecorded",
+        action="store_true",
+        help=(
+            "judge the records there are even when a batch among the runs "
+            "lists cases that raised (ERROR) or, under SLURM, have no outcome, "
+            "and left no gate record; warned of on stderr. By default such a "
+            "set is refused (exit 2)"
+        ),
+    )
     parser.add_argument("--scenario", help="judge only the runs of this scenario id")
     parser.add_argument("--json", type=Path, help="also write the verdicts as JSON")
     parser.add_argument(
@@ -617,8 +739,10 @@ def main(
 
     0 when every gate passes (on the candidate, with two sets), 1 when one
     fails -- or, with ``--fail-on-regression``, something regressed -- and 2
-    when there is nothing to judge, a file cannot be read, or an output
-    (``--markdown``, ``--json``) cannot be written.
+    when there is nothing to judge, a file cannot be read, a batch among the
+    runs lists cases that left no record (:func:`unrecorded_cases`; unless
+    ``--allow-unrecorded``), or an output (``--markdown``, ``--json``)
+    cannot be written.
     """
     parser = _parser(prog)
     args = parser.parse_args(argv)
@@ -645,6 +769,17 @@ def main(
             return EXIT_ERROR
         gate = document.gate
         scenario = scenario or document.id
+    unrecorded = [line for path in args.runs for line in unrecorded_cases(path)]
+    if unrecorded and not args.allow_unrecorded:
+        for line in unrecorded:
+            print(
+                f"scenario-gate: {line}. Run them again, or pass "
+                "--allow-unrecorded to judge the records there are",
+                file=sys.stderr,
+            )
+        return EXIT_ERROR
+    for line in unrecorded:
+        print(f"scenario-gate: warning: {line}", file=sys.stderr)
     errors: list[str] = []
     sets = [_load(path, errors) for path in args.runs]
     for error in errors:
