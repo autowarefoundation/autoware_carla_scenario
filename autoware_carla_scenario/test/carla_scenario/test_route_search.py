@@ -1118,3 +1118,15 @@ class TestJunctionTrafficLights:
 
         with pytest.raises((ValueError, IndexError)):
             junction_traffic_lights(self._frame(road), 3, "same", None)
+
+
+def test_a_numpy_bool_is_no_whole_number() -> None:
+    """``float()`` takes numpy's bool_ as 0 or 1 (#1902)."""
+    import numpy as np
+
+    from autoware_carla_scenario.route.model import _whole_number
+
+    for value in (np.True_, np.False_, np.array(True)):
+        with pytest.raises(ValueError, match=r"^k must be a whole number"):
+            _whole_number("k", value)
+    assert _whole_number("k", np.int64(4)) == 4
