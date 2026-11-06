@@ -153,37 +153,58 @@ def fallbacks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     return runtime / "acs-codon-gate"
 
 
+@pytest.fixture
+def default_gate(
+    tmp_path: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> Path:
+    """Put the gate's default directory (none configured) into *tmp_path*."""
+    temp = tmp_path / "tmp"
+    temp.mkdir()
+    monkeypatch.setattr(memory_gate.tempfile, "gettempdir", lambda: str(temp))
+    monkeypatch.delenv(GATE_ENV, raising=False)
+    gate = gate_dir()
+    assert gate is not None and gate.parent == temp
+    return gate
+
+
 @pytest.mark.parametrize("mode", [0o775, 0o777])
-def test_a_directory_of_mine_others_can_write_to_is_made_private(
-    tmp_path: Path, fallbacks: Path, mode: int
+def test_the_default_directory_others_can_write_to_is_made_private(
+    default_gate: Path, fallbacks: Path, mode: int
 ) -> None:
     # As an older gate left it under a umask of 002 (0o775), or worse.
-    gate = tmp_path / "gate"
-    gate.mkdir()
-    gate.chmod(mode)
-    with admitted(2 * GB, directory=gate, budget=_budget(14)):
-        assert len(list(gate.glob("*.hold"))) == 1
-    assert (gate.stat().st_mode & 0o777) == 0o700
+    default_gate.mkdir()
+    (default_gate / "gate.lock").write_text("")
+    default_gate.chmod(mode)
+    with admitted(2 * GB, budget=_budget(14)):
+        assert len(list(default_gate.glob("*.hold"))) == 1
+    assert (default_gate.stat().st_mode & 0o777) == 0o700
     assert not fallbacks.exists()
 
 
-def _fchmod_fails(monkeypatch: pytest.MonkeyPatch) -> None:
-    def fchmod(fd: int, mode: int) -> None:
-        raise PermissionError(errno.EPERM, "not permitted")
-
-    monkeypatch.setattr(os, "fchmod", fchmod)
+def test_the_default_directory_with_other_files_is_not_touched(
+    default_gate: Path, fallbacks: Path
+) -> None:
+    default_gate.mkdir()
+    notes = default_gate / "notes.txt"
+    notes.write_text("someone's")
+    default_gate.chmod(0o777)
+    with admitted(2 * GB, budget=_budget(14)):
+        assert len(list(fallbacks.glob("*.hold"))) == 1
+    assert (default_gate.stat().st_mode & 0o7777) == 0o777
+    assert sorted(default_gate.iterdir()) == [notes]
+    assert notes.read_text() == "someone's"
 
 
 def test_a_directory_others_can_write_to_is_not_used(
-    tmp_path: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, fallbacks: Path
 ) -> None:
     shared = tmp_path / "shared"
     shared.mkdir()
     shared.chmod(0o777)
-    _fchmod_fails(monkeypatch)
     with admitted(2 * GB, directory=shared, budget=_budget(14)):
         assert not list(shared.iterdir())
         assert len(list(fallbacks.glob("*.hold"))) == 1
+    assert (shared.stat().st_mode & 0o7777) == 0o777  # never repaired
     assert (fallbacks.stat().st_mode & 0o777) == 0o700
 
 
@@ -197,17 +218,22 @@ def test_a_symlinked_directory_is_not_used(tmp_path: Path, fallbacks: Path) -> N
         assert len(list(fallbacks.glob("*.hold"))) == 1
 
 
-def test_a_configured_directory_is_checked_too(
+def test_a_configured_directory_is_checked_but_never_changed(
     tmp_path: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    shared = tmp_path / "shared"
-    shared.mkdir()
-    shared.chmod(0o777)
-    _fchmod_fails(monkeypatch)
-    monkeypatch.setenv(GATE_ENV, str(shared))
+    # A team's setgid directory, a colleague's file in it.
+    team = tmp_path / "team"
+    team.mkdir()
+    team.chmod(0o2775)
+    report = team / "report.txt"
+    report.write_text("a colleague's")
+    _foreign(monkeypatch, report)
+    monkeypatch.setenv(GATE_ENV, str(team))
     with admitted(2 * GB, budget=_budget(14)):
-        assert not list(shared.iterdir())
         assert len(list(fallbacks.glob("*.hold"))) == 1
+    assert (team.stat().st_mode & 0o7777) == 0o2775
+    assert sorted(team.iterdir()) == [report]
+    assert report.read_text() == "a colleague's"
 
 
 def test_a_directory_of_another_user_is_not_used(
@@ -463,26 +489,37 @@ def test_another_user_s_hold_is_removed(
 
 
 def test_a_repaired_directory_is_cleared_of_other_users_entries(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    gate = tmp_path / "gate"
-    gate.mkdir()
-    planted = gate / "1-0-0.hold"
+    default_gate.mkdir()
+    planted = default_gate / "1-0-0.hold"
     planted.write_text(str(1000 * GB))
-    lock = gate / "gate.lock"
+    lock = default_gate / "gate.lock"
     lock.write_text("")
-    other = gate / "notes.txt"
-    other.write_text("planted")
-    mine = gate / "mine.txt"
-    mine.write_text("kept")
-    gate.chmod(0o777)
-    _foreign(monkeypatch, planted, lock, other)
-    with admitted(9 * GB, directory=gate, budget=_budget(14), sleep=_never):
-        assert len(list(gate.glob("*.hold"))) == 1  # ours
+    mine = default_gate / f"{os.getpid()}-7-7.hold"
+    mine.write_text("0")
+    default_gate.chmod(0o777)
+    _foreign(monkeypatch, planted, lock)
+    with admitted(9 * GB, budget=_budget(14), sleep=_never):
+        assert len(list(default_gate.glob("*.hold"))) == 2  # ours
     assert not planted.exists()
-    assert not other.exists()
-    assert mine.read_text() == "kept"
-    assert (gate.stat().st_mode & 0o777) == 0o700
+    assert mine.exists()
+    assert (default_gate.stat().st_mode & 0o777) == 0o700
+    assert not fallbacks.exists()
+
+
+def test_a_repaired_directory_with_a_lock_it_cannot_remove_is_not_used(
+    default_gate: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    default_gate.mkdir()
+    lock = default_gate / "gate.lock"
+    lock.mkdir()  # another user's directory, not empty: unlink cannot remove it
+    (lock / "inside").write_text("")
+    default_gate.chmod(0o777)
+    _foreign(monkeypatch, lock)
+    with admitted(2 * GB, budget=_budget(14), sleep=_never):
+        assert len(list(fallbacks.glob("*.hold"))) == 1
+    assert (lock / "inside").exists()
 
 
 def test_another_user_s_lock_runs_the_build_ungated(

@@ -20,12 +20,14 @@ hold whose process has died is forgotten, and so is one whose pid now names
 another process (its start time, from ``/proc/<pid>/stat``, differs).
 
 The directory is private: it is used only if it is a real directory (not a
-symlink) owned by this user that no one else can write to (one of this user's
-that others can is made 0o700 first), it is used through a descriptor opened
-once it is checked, and the lock and hold files are opened without following
-symlinks; a lock or hold owned by another user is never trusted (a hold is
-removed, a lock runs the build ungated), and a repaired directory is first
-cleared of every entry another user owns.  When it is not, the gate warns and falls back to a per-user
+symlink) owned by this user that no one else can write to, it is used through
+a descriptor opened once it is checked, and the lock and hold files are opened
+without following symlinks; a lock or hold owned by another user is never
+trusted (a hold is removed, a lock runs the build ungated).  Only the gate's
+own directories (the default and the fallbacks) are ever repaired -- made
+0o700 and cleared of what other users own -- and only when they hold nothing
+but the gate's files; a configured directory is never changed.  When the
+directory is not private, the gate warns and falls back to a per-user
 directory (under ``$XDG_RUNTIME_DIR``, then ``~/.cache``) and, failing that,
 admits the build ungated -- as it does when its own files or the budget fail:
 the gate never blocks or fails a check of its own accord.
@@ -110,12 +112,17 @@ def gate_dir() -> Path | None:
     A configured directory (:data:`GATE_ENV`, or :func:`admitted`'s
     *directory*) is held to the same rule as the default: :func:`admitted`
     uses it only if it is a private directory of this user's, and falls back
-    otherwise."""
+    otherwise -- without ever changing it."""
     configured = os.environ.get(GATE_ENV, "")
     if configured == "0":
         return None
     if configured:
         return Path(configured)
+    return _default_dir()
+
+
+def _default_dir() -> Path:
+    """The gate's own directory of holds, when none is configured."""
     uid = os.getuid() if hasattr(os, "getuid") else 0
     return Path(tempfile.gettempdir()) / f"acs-codon-gate-{uid}"
 
@@ -252,13 +259,13 @@ def _private_dir(configured: Path) -> tuple[Path, int] | None:
     user's; else the first per-user fallback that is; else ``None``.  With
     the directory comes a descriptor of it, which every later use of the
     directory goes through, so it cannot be swapped once checked."""
-    opened = _open_private(configured)
+    opened = _open_private(configured, repair=configured == _default_dir())
     if isinstance(opened, int):
         return configured, opened
     for candidate in _fallback_dirs():
         if candidate == configured:
             continue
-        fallback = _open_private(candidate)
+        fallback = _open_private(candidate, repair=True)
         if isinstance(fallback, int):
             _warn(
                 f"Codon memory gate: not using {configured} ({opened}); "
@@ -272,11 +279,17 @@ def _private_dir(configured: Path) -> tuple[Path, int] | None:
     return None
 
 
-def _open_private(where: Path) -> int | str:
+def _open_private(where: Path, *, repair: bool) -> int | str:
     """A descriptor of *where*, or why it cannot be the gate's directory: it
     is created (mode 0o700) if missing, and must be a real directory (not a
-    symlink) owned by this user; one its group or others may write to (made
-    so by an older gate under a lax umask) is made 0o700 first."""
+    symlink) owned by this user that its group and others cannot write to.
+
+    With *repair* (the gate's own directories only, never a configured one),
+    one its group or others may write to -- as an older gate left it under a
+    lax umask -- is made 0o700 and cleared of what other users own, if it
+    holds nothing but the gate's files; it is used only if nothing of
+    another user's survives and its ``gate.lock``, if any, is a regular file
+    of this user's."""
     try:
         where.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd = os.open(where, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -287,13 +300,13 @@ def _open_private(where: Path) -> int | str:
         if info.st_uid != os.getuid():
             problem = f"owned by uid {info.st_uid}, not {os.getuid()}"
         elif info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-            os.fchmod(fd, 0o700)
-            info = os.fstat(fd)
-            if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-                problem = f"writable by others (mode {stat.S_IMODE(info.st_mode):o})"
+            mode = f"mode {stat.S_IMODE(info.st_mode):o}"
+            if not repair:
+                problem = f"writable by others ({mode})"
+            elif not all(_is_gate_file(name) for name in os.listdir(fd)):
+                problem = f"writable by others ({mode}) and holds other files"
             else:
-                problem = ""
-                _remove_foreign(fd)  # others could write here until now
+                problem = _repair(fd)
         else:
             problem = ""
     except OSError as error:
@@ -303,6 +316,28 @@ def _open_private(where: Path) -> int | str:
     with suppress(OSError):
         os.close(fd)
     return problem
+
+
+def _is_gate_file(name: str) -> bool:
+    """Whether *name* is one the gate's directory holds."""
+    return name == "gate.lock" or name.endswith(".hold")
+
+
+def _repair(dir_fd: int) -> str:
+    """Make the gate's directory *dir_fd* private: why that failed, or ``""``."""
+    os.fchmod(dir_fd, 0o700)
+    info = os.fstat(dir_fd)
+    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        return f"writable by others (mode {stat.S_IMODE(info.st_mode):o})"
+    _remove_foreign(dir_fd)  # others could write here until now
+    uid = os.getuid()
+    for name in os.listdir(dir_fd):
+        entry = os.stat(name, dir_fd=dir_fd, follow_symlinks=False)
+        if entry.st_uid != uid:
+            return f"{name} of uid {entry.st_uid} cannot be removed"
+        if name == "gate.lock" and not stat.S_ISREG(entry.st_mode):
+            return "gate.lock is not a regular file"
+    return ""
 
 
 def _remove_foreign(dir_fd: int) -> None:
