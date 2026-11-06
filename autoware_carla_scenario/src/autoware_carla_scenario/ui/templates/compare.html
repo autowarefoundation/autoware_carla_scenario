@@ -37,7 +37,7 @@
         <td class="px-3 py-1 font-mono whitespace-nowrap">{{ s.date }} {{ s.time }}</td>
         <td class="px-3 py-1 text-gray-500">{{ s.session_type }}</td>
         <td class="px-3 py-1 text-gray-700 truncate max-w-md" title="{{ s.scenario_name }}">{{ s.scenario_name.split(',')[0].split('#')[0] }}</td>
-        <td class="px-3 py-1 text-right whitespace-nowrap {% if s.passed_count == s.total_count %}text-green-700{% else %}text-red-700{% endif %}">{{ s.passed_count }}/{{ s.total_count }}</td>
+        <td class="px-3 py-1 text-right whitespace-nowrap {% if s.passed_count == s.total_count %}text-green-700{% elif s.total_count - s.passed_count - s.pending_count > 0 %}text-red-700{% else %}text-gray-700{% endif %}">{{ s.passed_count }}/{{ s.total_count }}{% if s.pending_count %} <span class="text-gray-500">{{ s.pending_count }} pending</span>{% endif %}</td>
       </tr>
       {% endfor %}
     </table>

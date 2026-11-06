@@ -959,6 +959,7 @@ classDiagram
         +scenario_name: str
         +passed_count: int
         +total_count: int
+        +pending_count: int
     }
 
     class SessionItem {

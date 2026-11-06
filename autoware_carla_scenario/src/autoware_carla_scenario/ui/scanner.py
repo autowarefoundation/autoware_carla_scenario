@@ -219,6 +219,7 @@ def _scan_outputs_session(
         if not entries:
             return None
         passed_count = sum(1 for item in entries if _passed(item.get("passed")))
+        pending_count = sum(1 for item in entries if item.get("pending") is True)
         scenario_names = {_name(item.get("scenario"), "unknown") for item in entries}
         return SessionSummary(
             date=date,
@@ -227,6 +228,7 @@ def _scan_outputs_session(
             scenario_name=", ".join(sorted(scenario_names)),
             passed_count=passed_count,
             total_count=len(entries),
+            pending_count=pending_count,
         )
 
     # Single run: look for *_result.json
