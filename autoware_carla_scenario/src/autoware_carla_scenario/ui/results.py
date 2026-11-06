@@ -147,7 +147,7 @@ class CaseResult:
     @property
     def key(self) -> str:
         """What the case ran, to match it in another session: its overrides
-        (less the positional ones), else the ODD values it was drawn at, else
+        (less the positional ones and Hydra's own), else the ODD values it was drawn at, else
         its label."""
         by_overrides = override_key(self.scenario, self.overrides)
         if by_overrides is not None:
