@@ -446,7 +446,7 @@ case left does: its constraints, route or ODD sample match nothing on the map
 (`the sweep expands to no case`), or `--resume-from` is past its last case.
 A `--multirun` batch, the viewer and `scenario-expand` refuse such a sweep
 with the same message, naming the scenario. They refuse an invalid sweep (a
-`sweep.case_index` past its cases, a constraint that does not parse, a
+`sweep.case_index` that is not a whole number >= 0 or is past its cases, a constraint that does not parse, a
 Lanelet2 map that is missing, unreadable or cannot be resolved, ...) the same
 way, `Error: <scenario>: <why>`; a batch or `scenario-expand` of a glob
 reports every scenario refused, not just the first, and runs or lists nothing.
@@ -454,7 +454,7 @@ The sweeper (`hydra/sweeper=lanelet_constraint`, a single scenario's
 `--multirun`) refuses an invalid sweep the same way, before any case runs:
 one line on stderr, `Error: <scenario>: <why>`, exit 1, no traceback. These
 are a config with no `sweep` section, `sweep.constraints` naming more than
-one key, what the expansion refuses (a `sweep.case_index` past its cases, a
+one key, what the expansion refuses (a `sweep.case_index` that is not a whole number >= 0 or is past its cases, a
 constraint or binding that does not parse, a `sweep.odd_sample` setting or
 `weights` file it refuses, ...), and a Lanelet2 map it cannot load, whose
 `<why>` is `LaneletConstraintSweeper: <why>`, naming the map: a
@@ -489,7 +489,7 @@ A scenario without a `sweep:` section is already concrete, so it expands to a
 single empty case. Only the Lanelet2 map is needed, not a CARLA server. A
 sweep that expands to no case is refused rather than listed as `"cases": []`:
 `Error: <scenario>: the sweep expands to no case ...` on stderr, nothing on
-stdout, exit 1. So is an invalid sweep -- a `sweep.case_index` past its cases,
+stdout, exit 1. So is an invalid sweep -- a `sweep.case_index` that is not a whole number >= 0 or is past its cases,
 a constraint or binding that does not parse, constraints for more than one
 key, a Lanelet2 map that is missing, unreadable or cannot be resolved (a
 `map.directory` that does not exist, a `map.source` that cannot be fetched or

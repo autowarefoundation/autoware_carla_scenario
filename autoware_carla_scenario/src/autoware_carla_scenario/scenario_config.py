@@ -652,5 +652,6 @@ class SweepConfig:
 
     #: Keep only the case at this (0-based) index of the expansion; ``None``
     #: keeps them all.  ``++sweep.case_index=0`` on a batch runs each scenario
-    #: on its first case.
+    #: on its first case.  A whole number >= 0 (``3`` or ``"3"``): a bool, a
+    #: fraction such as ``1.9`` or another string is refused, naming the key.
     case_index: int | None = None

@@ -88,6 +88,22 @@ def _override_value(value: Any) -> str:
     return str(value)
 
 
+def _case_index(value: Any) -> int | None:
+    """``sweep.case_index``, checked before anything is drawn or searched:
+    a whole number >= 0, or ``None`` when unset.  Not ``int()``, which reads
+    ``1.9`` and ``true`` as 1 and does not name the key on ``"abc"`` (#1819).
+
+    Raises:
+        ValueError: Naming ``sweep.case_index``
+            (:func:`~autoware_carla_scenario.odd.sampler.whole_number_setting`).
+    """
+    if value is None:
+        return None
+    from ..odd.sampler import whole_number_setting  # noqa: PLC0415
+
+    return whole_number_setting("sweep.case_index", value, minimum=0)
+
+
 def expand_sweep(
     sweep: Mapping[Any, Any],
     lanelet_map: Any,
@@ -120,9 +136,11 @@ def expand_sweep(
         ValueError: If ``sweep`` has none of constraints, a route search and
             ``odd_sample``, or both constraints and a route search, or
             constraints for more than one target key, or a ``case_index``
-            past the cases it expands to.
+            that is not a non-negative whole number or is past the cases it
+            expands to.
     """
     check_constraint_keys(sweep)
+    index = _case_index(sweep.get("case_index"))
     odd_sample = sweep.get("odd_sample") or {}
     if odd_sample and odd_sample.get("seed") is None:
         # A run without a seed draws as one with DEFAULT_SEED does.
@@ -152,9 +170,7 @@ def expand_sweep(
             drawn,
             lanelet_map=lanelet_map if base_cases != [[]] else None,
         )
-    case_index = sweep.get("case_index")
-    if case_index is not None:
-        index = int(case_index)
+    if index is not None:
         if not 0 <= index < len(base_cases):
             raise ValueError(
                 f"sweep.case_index {index} is out of range: the sweep expands "
