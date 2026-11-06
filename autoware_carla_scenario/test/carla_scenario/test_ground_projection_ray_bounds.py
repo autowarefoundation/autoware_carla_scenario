@@ -246,5 +246,5 @@ def test_a_batch_is_refused_before_any_scenario_is_built(
             ["entity.ground_projection_ray_distance_upper=-2"],
         )
     assert exited.value.code == 1
-    out = capsys.readouterr().out
-    assert "entity.ground_projection_ray_distance_upper must be non-negative" in out
+    err = capsys.readouterr().err
+    assert "entity.ground_projection_ray_distance_upper must be non-negative" in err
