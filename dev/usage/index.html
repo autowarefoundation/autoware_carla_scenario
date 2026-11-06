@@ -4172,7 +4172,7 @@ case left does: its constraints, route or ODD sample match nothing on the map
 (<code>the sweep expands to no case</code>), or <code>--resume-from</code> is past its last case.
 A <code>--multirun</code> batch, the viewer and <code>scenario-expand</code> refuse such a sweep
 with the same message, naming the scenario. They refuse an invalid sweep (a
-<code>sweep.case_index</code> past its cases, a constraint that does not parse, a
+<code>sweep.case_index</code> that is not a whole number &gt;= 0 or is past its cases, a constraint that does not parse, a
 Lanelet2 map that is missing, unreadable or cannot be resolved, ...) the same
 way, <code>Error: &lt;scenario&gt;: &lt;why&gt;</code>; a batch or <code>scenario-expand</code> of a glob
 reports every scenario refused, not just the first, and runs or lists nothing.
@@ -4180,7 +4180,7 @@ The sweeper (<code>hydra/sweeper=lanelet_constraint</code>, a single scenario's
 <code>--multirun</code>) refuses an invalid sweep the same way, before any case runs:
 one line on stderr, <code>Error: &lt;scenario&gt;: &lt;why&gt;</code>, exit 1, no traceback. These
 are a config with no <code>sweep</code> section, <code>sweep.constraints</code> naming more than
-one key, what the expansion refuses (a <code>sweep.case_index</code> past its cases, a
+one key, what the expansion refuses (a <code>sweep.case_index</code> that is not a whole number &gt;= 0 or is past its cases, a
 constraint or binding that does not parse, a <code>sweep.odd_sample</code> setting or
 <code>weights</code> file it refuses, ...), and a Lanelet2 map it cannot load, whose
 <code>&lt;why&gt;</code> is <code>LaneletConstraintSweeper: &lt;why&gt;</code>, naming the map: a
@@ -4210,7 +4210,7 @@ scenario. These are the same cases, in the same order, that the sweeper runs:</p
 single empty case. Only the Lanelet2 map is needed, not a CARLA server. A
 sweep that expands to no case is refused rather than listed as <code>"cases": []</code>:
 <code>Error: &lt;scenario&gt;: the sweep expands to no case ...</code> on stderr, nothing on
-stdout, exit 1. So is an invalid sweep -- a <code>sweep.case_index</code> past its cases,
+stdout, exit 1. So is an invalid sweep -- a <code>sweep.case_index</code> that is not a whole number &gt;= 0 or is past its cases,
 a constraint or binding that does not parse, constraints for more than one
 key, a Lanelet2 map that is missing, unreadable or cannot be resolved (a
 <code>map.directory</code> that does not exist, a <code>map.source</code> that cannot be fetched or
@@ -6512,7 +6512,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 09:43:20 UTC"><span class="timeago" datetime="2026-11-06T09:43:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 09:43:20 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 10:06:40 UTC"><span class="timeago" datetime="2026-11-06T10:06:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 10:06:40 UTC">2026-11-06</span>
   </span>
 
     
