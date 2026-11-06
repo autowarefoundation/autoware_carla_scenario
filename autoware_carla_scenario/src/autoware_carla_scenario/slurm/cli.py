@@ -405,7 +405,7 @@ def _parser() -> argparse.ArgumentParser:
         action="store_true",
         help="submit even while a job of the batch is queued or running, "
         "squeue cannot tell, or another submission of it is in flight or "
-        "its sbatch timed out less than 600 s ago",
+        "its sbatch timed out less than 600 s after its record was made",
     )
     resubmit.add_argument(
         "--dry-run",
