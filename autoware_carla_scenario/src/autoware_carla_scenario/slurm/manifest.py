@@ -348,6 +348,7 @@ class BatchLayout(BatchPaths):
             FileNotFoundError: *batch_dir* holds no SLURM batch.
             ValueError: The manifest is not JSON, not a JSON object, or of a
                 version this framework cannot read (#1630).
+            OSError: The manifest cannot be read.
         """
         if not self.manifest.is_file():
             raise FileNotFoundError(

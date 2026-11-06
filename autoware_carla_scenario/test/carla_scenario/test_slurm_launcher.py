@@ -10,6 +10,7 @@ under SLURM must report exactly what the same batch run here reports.
 
 from __future__ import annotations
 
+import errno
 import json
 import math
 import os
@@ -2505,6 +2506,122 @@ def test_what_the_worker_records_is_readable() -> None:
     without = _recorded(False)
     del without["result"]["condition_statuses"]
     assert recorded_verdict(without) is False
+
+
+_UNWRITABLE = pytest.mark.parametrize(
+    "error",
+    [
+        PermissionError(errno.EACCES, "Permission denied"),
+        OSError(errno.EROFS, "Read-only file system"),
+    ],
+    ids=["permission", "read-only"],
+)
+
+
+def _one_error_line(err: str) -> str:
+    """The one line *err* holds, which is no traceback."""
+    assert "Traceback" not in err
+    lines = err.splitlines()
+    assert len(lines) == 1, err
+    return lines[0]
+
+
+@_UNWRITABLE
+@pytest.mark.parametrize("output", ["batch_results.json", "collected.json"])
+def test_collect_into_an_unwritable_batch_reports_one_error_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    error: OSError,
+    output: str,
+) -> None:
+    """#1740: a batch directory ``collect`` cannot write (shared storage, a
+    read-only mount) is one ``Error:`` line, after the summary."""
+    from autoware_carla_scenario import batch_report
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm import collect as collect_module
+
+    layout = _with_case_1(tmp_path, _recorded(True))
+    # Monkeypatched, as a chmod would not stop root.
+    target = layout.batch_dir / output
+    written: list[Path] = []
+
+    def refuse(path: Path, *args: Any, **kwargs: Any) -> None:
+        written.append(Path(path))
+        raise type(error)(error.errno, error.strerror, str(path))
+
+    if output == "batch_results.json":
+        monkeypatch.setattr(batch_report, "write_text_atomically", refuse)
+    else:
+        monkeypatch.setattr(collect_module, "write_json", refuse)
+        target = layout.root / output
+    assert cli.main(["collect", str(layout.batch_dir)]) == 1
+    captured = capsys.readouterr()
+    assert written == [target]
+    line = _one_error_line(captured.err)
+    assert line == f"Error: [Errno {error.errno}] {error.strerror}: '{target}'"
+    # The verdict is printed before the error.
+    assert "[PASS] s#1" in captured.out
+    assert "3/3 scenarios passed" in captured.out
+    assert ("Result JSON:" in captured.out) == (output == "collected.json")
+
+
+def test_collect_still_prints_its_hints_before_collected_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1740: ``collected.json`` is written last, so the hint to resubmit the
+    missing cases is printed though it cannot be."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm import collect as collect_module
+
+    layout = _batch_on_disk(tmp_path)
+
+    def refuse(path: Path, data: Any) -> None:
+        raise PermissionError(errno.EACCES, "Permission denied", str(path))
+
+    monkeypatch.setattr(collect_module, "write_json", refuse)
+    assert cli.main(["collect", str(layout.batch_dir)]) == 1
+    captured = capsys.readouterr()
+    assert _one_error_line(captured.err).startswith("Error: [Errno 13]")
+    assert "0/3 scenarios passed, 3 errored" in captured.out
+    assert "3 case(s) have no result" in captured.out
+    assert (layout.batch_dir / "batch_results.json").is_file()
+
+
+@pytest.mark.parametrize("command", ["status", "collect", "wait", "resubmit"])
+def test_an_unreadable_manifest_is_one_error_line(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    command: str,
+) -> None:
+    """#1740: a manifest that cannot be read is one ``Error:`` line, and a
+    batch directory with none keeps its message."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm import manifest as manifest_module
+
+    layout = _batch_on_disk(tmp_path)
+    read_json = manifest_module.read_json
+
+    def unreadable(path: Path) -> Any:
+        if Path(path) == layout.manifest:
+            raise PermissionError(errno.EACCES, "Permission denied", str(path))
+        return read_json(path)
+
+    monkeypatch.setattr(manifest_module, "read_json", unreadable)
+    assert cli.main([command, str(layout.batch_dir)]) == 1
+    line = _one_error_line(capsys.readouterr().err)
+    assert line == f"Error: [Errno 13] Permission denied: '{layout.manifest}'"
+
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    assert cli.main([command, str(empty)]) == 1
+    line = _one_error_line(capsys.readouterr().err)
+    assert line == (
+        f"Error: {empty} holds no SLURM batch (no {BatchLayout(empty).manifest})"
+    )
 
 
 def test_a_result_with_no_verdict_keeps_its_rerun_error(tmp_path: Path) -> None:
