@@ -274,8 +274,12 @@ def _run_submit(command: list[str], base: Path) -> tuple[int | None, str]:
         reason = (
             f"{command[0]} did not end within {timeout:g} s and was stopped: "
             "the batch's checks or sbatch hung (is the SLURM controller "
-            "answering?). Check `squeue --me` for a job it may have submitted, "
-            "then submit again."
+            "answering?). Stopped during sbatch, it keeps the batch's "
+            "submission record, as the controller may have taken the job: if "
+            "`squeue --me` lists it, it runs and the batch can be collected "
+            "once it ends (or scancel it), and resubmits of that batch are "
+            "refused until 600 s after the record was made. A new submit (a "
+            "new batch) is taken now."
         )
         return TIMED_OUT, f"{output}\n{reason}" if output else reason
     except BaseException:

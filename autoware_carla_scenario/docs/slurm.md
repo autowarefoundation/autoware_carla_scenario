@@ -38,9 +38,17 @@ On the machine you run `scenario` on (a SLURM submit host):
 3. `sbatch --array=0-(N-1)%K` submits the cases, `launcher.cases_per_task` to a
    task, at most `launcher.array_parallelism` tasks at once. An `sbatch` that
    has not returned after 120 s (a controller that does not answer) is
-   stopped, and the submit fails with `sbatch timed out after 120.0 s`; check
-   `squeue --me` before submitting again, as the controller may have taken the
-   job all the same.
+   stopped, and the submit fails with `sbatch timed out after 120.0 s`. Unlike
+   a refused sbatch, whose submission record is removed, the controller may
+   have taken this job all the same, so its record is kept with no job id: if
+   `squeue --me` lists the job, its tasks find their cases and run, and
+   `scenario-slurm collect` collects the batch once it ends (`cancel` knows no
+   job id to cancel: `scancel` it by hand). Its index is not given to another
+   submission, and the record counts as in flight, so a `resubmit` of the
+   batch is refused until 600 s (`SBATCH_IN_FLIGHT_SECONDS`) after it was
+   made; after that the record is stale and a `resubmit` is taken -- one that
+   would run the cases a still-queued job also runs, so check `squeue --me`
+   first.
 4. By default `scenario` follows the array (`squeue`, and the outcome each task
    records) until it ends, then prints the summary and writes
    `batch_results.json`, as a local batch does, and exits 0 when every case
@@ -99,7 +107,9 @@ scenario-slurm cancel   outputs/2026-10-18/12-00-00   # scancel the batch's jobs
 
 `cancel` gives `scancel` 60 s; one that has not returned by then is
 stopped, `cancel` says so on one line and exits 1. The same 120 s limit on
-`sbatch` as above holds for `resubmit`.
+`sbatch`, and the kept record, as above hold for `resubmit`; should the
+collect job's `sbatch` time out, the array runs all the same and `scenario`
+says how to collect it by hand.
 
 `status`, `collect` and `cancel` take nothing but the batch directory. The
 options of the others (`scenario-slurm <command> --help` says the same):

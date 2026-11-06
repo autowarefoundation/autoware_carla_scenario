@@ -2152,6 +2152,39 @@ def test_a_failed_sbatch_removes_the_reservation(
     assert len(seen) == 1  # sbatch never ran
 
 
+def test_a_timed_out_sbatch_keeps_the_reservation_in_flight(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1786: an sbatch that timed out may have been taken, so its record
+    stays (job_id None), its tasks would find their chunks, its index is not
+    reused, and resubmits are refused while it is in flight."""
+    from autoware_carla_scenario.slurm import cli, queue, submit
+    from autoware_carla_scenario.slurm.manifest import sbatch_in_flight
+
+    layout = _batch_on_disk(tmp_path)
+    sbatch = _hanging_tool(tmp_path / "bin", "sbatch")
+    monkeypatch.setattr(queue, "require_sbatch", lambda: str(sbatch))
+    monkeypatch.setattr(queue, "SBATCH_TIMEOUT_SECONDS", 0.5)
+    monkeypatch.setattr(submit, "job_script", lambda *_a, **_k: "#!/bin/sh\n")
+    monkeypatch.setattr(submit, "max_array_size", lambda: 1001)
+    started = time.monotonic()
+    with pytest.raises(submit.SbatchTimedOut, match="record is kept"):
+        submit.submit_cases(layout, layout.read_manifest(), SlurmSettings(), [0, 2])
+    assert time.monotonic() - started < 10.0
+    assert layout.submissions() == [0, 1]
+    record = layout.read_submission(1)
+    assert record["job_id"] is None and record["chunks"] == [[0], [2]]
+    assert sbatch_in_flight(record)
+    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    capsys.readouterr()
+    assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
+    assert (
+        "submission(s) 1 of this batch are being submitted" in capsys.readouterr().err
+    )
+
+
 def test_resubmit_refuses_while_a_submission_is_in_flight(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

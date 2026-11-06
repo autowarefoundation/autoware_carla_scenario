@@ -39,6 +39,7 @@ from .manifest import (
 # check compiles; these are named here as they were before.
 from .queue import ACTIVE_STATES as ACTIVE_STATES
 from .queue import CANCEL_WAIT_SECONDS as CANCEL_WAIT_SECONDS
+from .queue import SbatchTimedOut as SbatchTimedOut
 from .queue import _array_refused as _array_refused
 from .queue import _chunks as _chunks
 from .queue import _run_sbatch as _run_sbatch
@@ -366,7 +367,9 @@ def submit_cases(
     Raises:
         RuntimeError: ``launcher.cases_per_task`` makes more tasks than
             ``MaxArraySize`` allows (nothing is submitted), or sbatch refused
-            the array.
+            the array (its submission record removed).
+        SbatchTimedOut: sbatch did not return in time (a RuntimeError); the
+            submission record is kept, as the job may have been taken.
     """
     if not case_indices:
         raise ValueError("no case to submit")
@@ -406,6 +409,11 @@ def submit_cases(
         command = sbatch_command(layout, settings, script, len(chunks))
         submission["sbatch"] = command
         submission["job_id"] = _run_sbatch(command)
+    except SbatchTimedOut:
+        # The job may have been taken (#1786): keep the record its tasks
+        # read, job_id None, so it counts as in flight (refusing resubmits)
+        # until SBATCH_IN_FLIGHT_SECONDS, and its index is not reused.
+        raise
     except RuntimeError as exc:
         layout.submission(index).unlink(missing_ok=True)
         if not _array_refused(str(exc)):

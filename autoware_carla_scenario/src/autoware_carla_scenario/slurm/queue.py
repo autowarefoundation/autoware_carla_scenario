@@ -28,6 +28,7 @@ __all__ = [
     "CANCEL_WAIT_SECONDS",
     "SBATCH_TIMEOUT_SECONDS",
     "SCANCEL_TIMEOUT_SECONDS",
+    "SbatchTimedOut",
     "availability",
     "cancel_jobs",
     "max_array_size",
@@ -71,6 +72,17 @@ SBATCH_TIMEOUT_SECONDS = 120.0
 SCANCEL_TIMEOUT_SECONDS = 60.0
 
 
+class SbatchTimedOut(RuntimeError):
+    """``sbatch`` did not return within :data:`SBATCH_TIMEOUT_SECONDS` and was
+    stopped (#1786).  Unlike a refusal, the controller may have taken the job
+    all the same, so the submission record its tasks read is kept."""
+
+    # Spelled out: Codon 0.19 cannot raise an exception subclass that leaves
+    # its constructor to the built-in base (docs/typecheck.md).
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
+
 def _chunks(indices: list[int], size: int) -> list[list[int]]:
     return [indices[i : i + size] for i in range(0, len(indices), size)]
 
@@ -79,8 +91,9 @@ def _run_sbatch(command: list[str]) -> str:
     """Run *command* (an ``sbatch --parsable``); the job id it printed.
 
     Raises:
-        RuntimeError: sbatch failed, printed no job id, or did not end within
-            :data:`SBATCH_TIMEOUT_SECONDS` (#1786).
+        SbatchTimedOut: sbatch did not end within
+            :data:`SBATCH_TIMEOUT_SECONDS` (#1786); a :class:`RuntimeError`.
+        RuntimeError: sbatch failed or printed no job id.
     """
     command = [require_sbatch(), *command[1:]]
     logger.info("Submitting: %s", shlex.join(command))
@@ -96,10 +109,14 @@ def _run_sbatch(command: list[str]) -> str:
     except subprocess.TimeoutExpired as exc:
         # run() killed sbatch.  Whether the controller took the job before
         # that cannot be told from here: say where to look.
-        raise RuntimeError(
+        raise SbatchTimedOut(
             f"sbatch timed out after {SBATCH_TIMEOUT_SECONDS} s; the SLURM "
-            "controller may not be answering (check `squeue --me` for a job "
-            "it may have submitted all the same)"
+            "controller may not be answering, and may have taken the job all "
+            "the same: its submission record is kept (no job id), so its tasks "
+            "can run. If `squeue --me` lists the job, collect the batch once it "
+            "ends (scenario-slurm collect), or scancel it; resubmits are "
+            "refused while the record is in flight, and the record is ignored "
+            "600 s after it was made"
         ) from exc
     if completed.returncode != 0:
         raise RuntimeError(
