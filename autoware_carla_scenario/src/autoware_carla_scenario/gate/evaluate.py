@@ -300,6 +300,23 @@ def _has_result(directory: Path) -> bool:
         return False
 
 
+def _has_result_since(marker: Path) -> bool:
+    """Whether the job directory of *marker* holds a run's result
+    (``*_result.json``) written no earlier than the marker: one of an
+    earlier run in the same directory is not this attempt's.  ``False`` when
+    either cannot be read."""
+    try:
+        since = marker.stat().st_mtime
+        return any(
+            p.name.endswith(_RESULT_SUFFIX)
+            and p.is_file()
+            and p.stat().st_mtime >= since
+            for p in marker.parent.iterdir()
+        )
+    except OSError:
+        return False
+
+
 def _unstarted_jobs(path: Path) -> tuple[list[str], list[str]]:
     """One line per sweep under *path* whose plan (``sweep_plan.json``,
     :mod:`.sweep_plan`) lists jobs that never ran: their directory holds no
@@ -345,12 +362,14 @@ def _errored_jobs(path: Path) -> list[str]:
     gate record.
 
     A marker saying the job did not finish (``"unfinished": true``) beside a
-    run's result (``*_result.json``) is not counted either: the run wrote its
-    result -- of a scenario without a gate, which writes no record -- and its
-    process was killed in what follows (the world reset, the Rerun
-    conversion) before the marker was removed (#1840).  A marker of a job
-    given up counts beside a result, which may be an earlier attempt's, and
-    so does one that cannot be read."""
+    run's result (``*_result.json``) written no earlier than it is not
+    counted either.  The runner writes a run's gate record before its
+    result, so the run was of a scenario without a gate, which writes no
+    record, and its process was killed in what follows (the world reset, the
+    Rerun conversion) before the marker was removed (#1840).  A result older
+    than the marker is an earlier run's, and the marker counts.  A marker of
+    a job given up counts beside a result, which may be an earlier
+    attempt's.  A marker that cannot be read counts too."""
     by_sweep: dict[Path, list[str]] = {}
     for marker in find_case_errored(path):
         job = marker.parent
@@ -358,7 +377,11 @@ def _errored_jobs(path: Path) -> list[str]:
             # The run wrote its record before the job failed: it is judged.
             continue
         data = read_case_errored(marker)
-        if data is not None and data.get("unfinished") is True and _has_result(job):
+        if (
+            data is not None
+            and data.get("unfinished") is True
+            and _has_result_since(marker)
+        ):
             # The run wrote its result and was killed after it: it ran a
             # scenario without a gate, no concern of the gate.
             continue
@@ -425,13 +448,15 @@ def unrecorded_cases(path: Path) -> list[str]:
     local batch is read from its ``batch_results.json``, whose errored and
     pending entries count (its entries name no stem, so an errored case that
     did write a record is counted too); a sweep is read from its jobs'
-    markers (``case_errored.json``), and a job whose directory holds a gate
-    record, or a marker saying it did not finish (``"unfinished": true``)
-    and a result (``*_result.json``, a scenario without a gate killed after
-    writing it, #1840), is not counted -- a marker of a job given up, or
-    one that cannot be read, counts beside a result; and a lanelet sweep from its plan
-    (``sweep_plan.json``), a planned job whose directory holds no gate
-    record, no marker and no result counting as one that never ran (#1833).
+    markers (``case_errored.json``).  A job whose directory holds a gate
+    record is not counted.  Nor is one whose marker says it did not finish
+    (``"unfinished": true``) beside a result (``*_result.json``) written no
+    earlier than the marker: a scenario without a gate, killed after
+    writing its result (#1840).  A marker of a job given up, or one that
+    cannot be read, counts whatever results are beside it.  A lanelet sweep
+    is read from its plan (``sweep_plan.json``): a planned job whose
+    directory holds no gate record, no marker and no result counts as one
+    that never ran (#1833).
     Empty for a gate record (a file), and for a directory holding no batch,
     no marker and no plan.  A summary, manifest or plan that cannot be read
     is not reported here but by :func:`batch_read_errors`.

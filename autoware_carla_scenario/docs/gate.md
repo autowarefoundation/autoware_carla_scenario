@@ -109,7 +109,9 @@ criterion fail: the share cannot be known.
 ## What a run records
 
 A run of a logical scenario with a gate writes `{stem}_gate.json` beside
-`{stem}_result.json` (best effort, as the coverage file):
+`{stem}_result.json` (best effort, as the coverage file). The coverage file
+and the record are written before the result, so a run whose result is on
+disk has its record there too:
 
 ```json
 {
@@ -238,12 +240,15 @@ scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no ou
   too, and counts. A job run again in the same directory replaces its old
   marker as it starts.
 
-  An unfinished marker beside a run's result (`*_result.json`) and no gate
-  record does not count: a scenario without a gate writes a result and no
-  record, and its job was killed after writing it -- in the world reset or
-  while its Rerun recordings were converted -- before the marker was
-  removed. A marker of a job given up still counts beside a result, which
-  may be an earlier attempt's, and so does a marker that cannot be read.
+  An unfinished marker beside a run's result (`*_result.json`) written no
+  earlier than the marker, and no gate record, does not count. A run writes
+  its gate record before its result, so this job ran a scenario without a
+  gate, which writes a result and no record, and was killed after writing
+  it -- in the world reset or while its Rerun recordings were converted --
+  before the marker was removed. A result older than the marker is an
+  earlier run's in the same directory, and the marker counts. A marker of a
+  job given up still counts beside a result, which may be an earlier
+  attempt's, and so does a marker that cannot be read.
 
   ```text
   scenario-gate: multirun/2026-11-06/12-00-00: 7 job(s) of the sweep raised, timed out, crashed or did not finish, and left no gate record (3 (timed out after 900s), 4 (crashed (SIGSEGV)), 5 (exit code 1), 6 (exit code 1), 7 (did not finish (its process died, or the sweep was stopped)), and 2 more); the gate would be judged over the runs that survived. Run them again, or pass --allow-unrecorded to judge the records there are

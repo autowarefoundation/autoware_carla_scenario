@@ -1059,6 +1059,21 @@ class TestTheRunnerWritesTheRecord:
         }
         assert record.file("coverage") is None
 
+    def test_the_result_written_after_the_record_is_named(self, tmp_path: Path) -> None:
+        from autoware_carla_scenario.conditions import ScenarioResult
+        from autoware_carla_scenario.scenario_runner import _write_gate_record
+
+        result = ScenarioResult(passed=True, message="", elapsed_seconds=1.0)
+        _write_gate_record(
+            tmp_path,
+            "Left",
+            self._Scenario(_record()),  # type: ignore[arg-type]
+            result,
+            result_follows=True,
+        )
+        record = read_gate_record(tmp_path / "Left_gate.json")
+        assert record.files == {"result": "Left_result.json"}
+
     def test_a_scenario_without_a_record_writes_none(self, tmp_path: Path) -> None:
         from autoware_carla_scenario.conditions import ScenarioResult
         from autoware_carla_scenario.scenario_runner import _write_gate_record
@@ -1350,6 +1365,30 @@ class TestErroredJobs:
         (tmp_path / "3" / "App_result.json").write_text("{}")
         (line,) = unrecorded_cases(tmp_path)
         assert "1 job(s) of the sweep" in line and "(3)" in line
+        assert main([str(tmp_path)]) == EXIT_ERROR
+
+    def test_an_unfinished_marker_beside_an_older_result_still_counts(
+        self, tmp_path: Path
+    ) -> None:
+        import os
+
+        from autoware_carla_scenario.gate.errored import write_case_unfinished
+
+        self._sweep(tmp_path, given_up=0)
+        # An earlier run in the same directory left its result; the attempt
+        # after it was killed before it wrote one.
+        result = tmp_path / "3" / "App_result.json"
+        result.parent.mkdir()
+        result.write_text("{}")
+        marker = write_case_unfinished(tmp_path / "3", overrides=[], attempt=1)
+        os.utime(result, (1_000_000, 1_000_000))
+        os.utime(marker, (2_000_000, 2_000_000))
+        (line,) = unrecorded_cases(tmp_path)
+        assert "1 job(s) of the sweep" in line and "3 (did not finish" in line
+        assert main([str(tmp_path)]) == EXIT_ERROR
+        # A result written no earlier than the marker is this attempt's.
+        os.utime(result, (2_000_000, 2_000_000))
+        assert unrecorded_cases(tmp_path) == []
 
     def test_an_unreadable_marker_still_counts(self, tmp_path: Path) -> None:
         self._sweep(tmp_path, given_up=0)

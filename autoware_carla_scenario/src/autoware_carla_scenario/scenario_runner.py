@@ -638,9 +638,16 @@ def _write_gate_record(
     file_stem: str,
     scenario: "BaseScenario",
     result: ScenarioResult,
+    *,
+    result_follows: bool = False,
 ) -> None:
     """Write ``{file_stem}_gate.json``: what a run of a logical scenario with a
     gate leaves for it (``docs/gate.md``), when the scenario has one to give.
+
+    *result_follows* says the run's result (``{file_stem}_result.json``) is
+    written right after the record, so the record names it although it is
+    not there yet: the runner writes the record first, so that a result on
+    disk means the record is too (#1840).
 
     A scenario gives one with a ``gate_record(result, file_stem)`` method
     (:meth:`~autoware_carla_scenario.declarative.DeclarativeScenario.gate_record`)
@@ -668,7 +675,9 @@ def _write_gate_record(
             ("coverage", COVERAGE_SUFFIX),
             ("trajectory", TRAJECTORY_SUFFIX),
         ):
-            if (output_dir / f"{file_stem}{suffix}").exists():
+            if (role == "result" and result_follows) or (
+                output_dir / f"{file_stem}{suffix}"
+            ).exists():
                 record.files[role] = f"{file_stem}{suffix}"
         write_gate_record(path, record)
     except Exception:  # noqa: BLE001 - the run's result matters more than this
@@ -2280,6 +2289,32 @@ class ScenarioRunner:
             json_path = self.output_dir / f"{file_stem}{RESULT_SUFFIX}"
             json_path.parent.mkdir(parents=True, exist_ok=True)
             try:
+                # The coverage file and the gate record go before the result:
+                # a job killed after writing its result then holds its gate
+                # record too, if its scenario has a gate, and a sweep's job
+                # left with a result and no record ran one without a gate
+                # (gate.evaluate's _errored_jobs, #1840).
+                if coverage is not None:
+                    _record_run(coverage, case, result, scenario.outcome_weight)
+                    coverage_path = self.output_dir / f"{file_stem}{COVERAGE_SUFFIX}"
+                    coverage.write(coverage_path, scenario_name)
+                    logger.info(
+                        "[%s] Coverage written to: %s", scenario_name, coverage_path
+                    )
+                if TYPE_CHECKING:
+                    # A logical scenario's gate record: _write_gate_record
+                    # calls a scenario method found with getattr() and writes
+                    # JSON of mixed value types (UNCALLED in
+                    # typecheck/library.py).
+                    pass
+                else:
+                    _write_gate_record(
+                        self.output_dir,
+                        file_stem,
+                        scenario,
+                        result,
+                        result_follows=True,
+                    )
                 if TYPE_CHECKING:
                     # The result document of mixed value types, with the
                     # traffic and environment records (UNCALLED in
@@ -2299,20 +2334,6 @@ class ScenarioRunner:
                     written: RerunConverter = self.rerun
                     written.submit(rerun_log, file_stem)
             logger.info("[%s] Result JSON written to: %s", scenario_name, json_path)
-            if coverage is not None:
-                _record_run(coverage, case, result, scenario.outcome_weight)
-                coverage_path = self.output_dir / f"{file_stem}{COVERAGE_SUFFIX}"
-                coverage.write(coverage_path, scenario_name)
-                logger.info(
-                    "[%s] Coverage written to: %s", scenario_name, coverage_path
-                )
-            if TYPE_CHECKING:
-                # A logical scenario's gate record: _write_gate_record calls a
-                # scenario method found with getattr() and writes JSON of
-                # mixed value types (UNCALLED in typecheck/library.py).
-                pass
-            else:
-                _write_gate_record(self.output_dir, file_stem, scenario, result)
 
         if reset_world:
             self.reset_world(scenario_name)
