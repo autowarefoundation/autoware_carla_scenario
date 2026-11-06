@@ -1183,6 +1183,20 @@ class TestZOffsetFromSpawnPoints:
             0.5, abs=0.05
         )
 
+    def test_spawn_points_under_a_deck_do_not_shift_the_offset(self, map_manager):
+        # #1874: a spawn point is matched to the lanelet nearest it in plan,
+        # which where roads are stacked is the deck over it. With one in ten
+        # spawn points on a road 7 m under the lanelet it is matched to, the
+        # mean of them all moved the offset 0.7 m.
+        world = self._world(map_manager, road_below_lanelet2=0.5, spawn_above_road=0.5)
+        spawns = world.get_map().get_spawn_points()
+        assert len(spawns) == 20
+        for sp in spawns[::10]:
+            sp.location.z -= 7.0
+        assert map_manager._z_offset_from_spawn_points(world) == pytest.approx(
+            0.5, abs=0.1
+        )
+
     def test_without_a_road_the_spawn_point_is_used(self, map_manager):
         world = self._world(map_manager, road_below_lanelet2=0.0, spawn_above_road=0.0)
         world.get_map().__class__.get_waypoint = lambda self, *a, **k: None

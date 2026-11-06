@@ -28,7 +28,9 @@ __all__ = ["cached_z_offset", "z_offset_key"]
 #: Bumped whenever the computation changes, so values from the old one are not reused.
 #: 2: the Lanelet2 map is anchored at the origin's altitude too, which moves a
 #: LocalCartesian map's z (and so its offset) under an unchanged projection key.
-_METHOD_VERSION = 2
+#: 3: spawn points matched to a lanelet on another level of stacked roads are
+#: left out of the mean (#1874), which moves a stacked map's offset.
+_METHOD_VERSION = 3
 
 
 #: Each file's digest by what it is now (``(path, device, inode, size,

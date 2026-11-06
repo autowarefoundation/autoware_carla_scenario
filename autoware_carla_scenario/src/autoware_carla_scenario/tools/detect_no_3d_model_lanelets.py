@@ -63,8 +63,11 @@ from omegaconf import DictConfig, OmegaConf
 from omegaconf.errors import OmegaConfBaseException
 from tqdm import tqdm
 
-from autoware_carla_scenario.coordinate.map_manager import MapManager
-from autoware_carla_scenario.coordinate.snap import check_ray_distances
+from autoware_carla_scenario.coordinate.map_manager import MapManager, run_carla_map
+from autoware_carla_scenario.coordinate.snap import (
+    _nearest_spawn_z,
+    check_ray_distances,
+)
 from autoware_carla_scenario.coordinate.transform import (
     _interpolate_at_s as _interpolate_at_s_4,
 )
@@ -111,7 +114,11 @@ def detect_no_3d_model_lanelets(
     For each lanelet, the midpoint (s = length / 2, t = 0) is computed and
     converted to CARLA world coordinates.  A downward ray is cast from
     ``z_estimate + ray_distance_upper`` with a total search distance of
-    ``ray_distance_upper + ray_distance_lower``.
+    ``ray_distance_upper + ray_distance_lower``.  ``z_estimate`` is the one a
+    run starts its ray from (``coordinate.snap``): the spawn point nearest in
+    plan within ``snap._SAME_LEVEL_M`` of the lanelet's height, else that
+    height -- so a lanelet under a deck is checked on its own level, as a run
+    places it (#1874).
 
     - If the ray hits nothing (``result is None``), the lanelet is recorded.
     - If the ray hits geometry with ``CityObjectLabel.NONE``, a warning is
@@ -154,6 +161,8 @@ def detect_no_3d_model_lanelets(
     )
     no_model_ids: list[int] = []
     total = len(lanelet_map.laneletLayer)
+    # Read once: the same for every lanelet.
+    spawn_points = run_carla_map(world).get_spawn_points()
 
     for lanelet in tqdm(
         lanelet_map.laneletLayer, total=total, desc="Checking lanelets"
@@ -170,7 +179,9 @@ def detect_no_3d_model_lanelets(
         # MGRS -> CARLA world coordinates
         carla_x = mgrs_x - mgrs_offset[0]
         carla_y = -(mgrs_y - mgrs_offset[1])
-        carla_z = mgrs_z - z_offset
+        on_lanelet_z = mgrs_z - z_offset
+        spawn_z = _nearest_spawn_z(spawn_points, carla_x, carla_y, on_lanelet_z)
+        carla_z = spawn_z if spawn_z is not None else on_lanelet_z
 
         origin = carla.Location(
             x=carla_x,
