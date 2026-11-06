@@ -643,8 +643,9 @@ class AdversityConfig:
     #: the ego.
     nade_challenge_npcs: bool = True
 
-    #: ``nade``: the sampler's seed.
-    nade_seed: int = 7
+    #: ``nade``: the sampler's seed; ``None`` follows the run's ``seed``, as
+    #: the scenario's other adversarial actions do.
+    nade_seed: Optional[int] = None
 
     def __post_init__(self) -> None:
         """Refuse an unknown kind, or a number outside its bounds, naming its

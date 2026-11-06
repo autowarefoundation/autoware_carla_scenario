@@ -67,7 +67,7 @@ happened by `timeout_seconds`.
 | `scenario.nade_is_probability` | 0.5 | NADE: the importance-sampling probability, in [0, 1] |
 | `scenario.nade_cooldown` | 2.0 | NADE: no adversity for this long after one (s; not negative) |
 | `scenario.nade_challenge_npcs` | `true` | NADE: an adversity may challenge another NPC |
-| `scenario.nade_seed` | 7 | NADE: the sampler's seed |
+| `scenario.nade_seed` | null | NADE: the sampler's seed; null follows the run's `seed` |
 
 A run refuses a `scenario.nade_*` value outside its bounds before anything
 starts, naming the key (#1458), and so an unknown `scenario.kind` (`Error:
