@@ -590,8 +590,8 @@ class DriverClientConfig:
         """Read the switches strictly, and refuse a number field holding a
         bool or a string.
 
-        A switch is not coerced either, so ``bool()`` of a Hydra override's
-        ``"false"`` would read it as true (#1760): ``send_ground_truth``,
+        Hydra does not coerce a switch either, and ``bool("false")`` is true
+        (#1760), so ``send_ground_truth``,
         ``send_renderer_data``, ``send_actor_ground_truth`` and ``t4_scene``
         are read with :func:`~autoware_carla_scenario.config_flags.check_flag`
         (a boolean, ``"true"``/``"false"`` and the other spellings, 1 or 0)
