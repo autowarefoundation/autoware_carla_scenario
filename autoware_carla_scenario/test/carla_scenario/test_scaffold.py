@@ -200,6 +200,95 @@ class TestReservedScenarioNames:
         assert f"class {result.names['scenario_class']}" in module
 
 
+class TestBuiltinScenarioNames:
+    """A generated package may not take a built-in scenario's name (#1802)."""
+
+    def test_the_list_matches_the_built_in_registry(self) -> None:
+        """What ``examples.run`` registers, read in a fresh interpreter.
+
+        A fresh one so that what other tests register (or an installed
+        scenario package, which the runner only loads later) does not count.
+        """
+        import json  # noqa: PLC0415
+        import subprocess  # noqa: PLC0415
+
+        from autoware_carla_scenario.scaffold.names import (  # noqa: PLC0415
+            BUILTIN_SCENARIO_NAMES,
+        )
+
+        code = (
+            "import json\n"
+            "from autoware_carla_scenario import registry\n"
+            "before = set(registry.get_scenario_registry())\n"
+            "import autoware_carla_scenario.examples.run\n"
+            "after = set(registry.get_scenario_registry())\n"
+            "print(json.dumps(sorted(after - before)))\n"
+        )
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=300,
+        )
+        registered = json.loads(result.stdout.strip().splitlines()[-1])
+        assert registered == sorted(BUILTIN_SCENARIO_NAMES)
+        assert list(BUILTIN_SCENARIO_NAMES) == sorted(BUILTIN_SCENARIO_NAMES)
+
+    @pytest.mark.parametrize(
+        "scenario", ["lane_change", "cut_in", "LaneChange", "cut-in", "adversity"]
+    )
+    def test_a_built_in_name_is_refused(self, scenario: str) -> None:
+        with pytest.raises(ValueError, match="names a built-in scenario"):
+            resolve_names("my_pkg", scenario_name=scenario)
+
+    def test_a_derived_built_in_name_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="'lane_change' is reserved"):
+            resolve_names("lane_change_package")
+
+    def test_cli_reports_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main(["my_pkg", "--scenario", "lane_change", "-o", str(tmp_path)]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("Error: scenario name 'lane_change' is reserved")
+        assert "built-in scenario" in err
+        assert "Traceback" not in err
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize("scenario", ["my_lane_change", "lane_change_merge"])
+    def test_near_misses_still_work(self, scenario: str) -> None:
+        assert resolve_names("my_pkg", scenario_name=scenario)["scenario_name"] == (
+            scenario
+        )
+
+    def test_the_check_does_not_import_the_runner(self) -> None:
+        """``scenario-new`` reads the list without importing the runner or CARLA."""
+        import subprocess  # noqa: PLC0415
+
+        code = (
+            "import sys\n"
+            "from autoware_carla_scenario.scaffold.generator import resolve_names\n"
+            "try:\n"
+            "    resolve_names('my_pkg', scenario_name='lane_change')\n"
+            "except ValueError:\n"
+            "    pass\n"
+            "loaded = [m for m in ('autoware_carla_scenario.examples.run',"
+            " 'typesafe_carla.carla') if m in sys.modules]\n"
+            "print(loaded)\n"
+        )
+        result = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", code],
+            capture_output=True,
+            text=True,
+            check=True,
+            timeout=300,
+        )
+        assert result.stdout.strip().splitlines()[-1] == "[]"
+
+
 class TestScenarioModuleShadowing:
     """A generated class may not replace a name ``scenario.py`` imports (#809)."""
 
