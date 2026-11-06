@@ -44,11 +44,15 @@ def _original_case_states(
             "overrides": case.get("case_overrides") or [],
         }
         if record is not None:
-            result = record.get("result") or {}
+            # A result that is no object reads as an empty one, and only a
+            # boolean ``true`` as a pass (#1718).
+            result = record.get("result")
+            if not isinstance(result, dict):
+                result = {}
             entry.update(
                 state="errored"
                 if record.get("errored")
-                else ("passed" if result.get("passed") else "failed"),
+                else ("passed" if result.get("passed") is True else "failed"),
                 message=result.get("message", ""),
                 elapsed_seconds=result.get("elapsed_seconds"),
                 host=record.get("host"),
@@ -122,10 +126,12 @@ def _record(rng: random.Random) -> dict[str, Any]:
     if kind < 0.15:
         pass  # no result
     elif kind < 0.25:
-        record["result"] = rng.choice([None, {}])
+        record["result"] = rng.choice([None, {}, "passed", [True], 3, True])
     else:
         result: dict[str, Any] = {}
-        passed = rng.choice([True, False, None, 1, 0, "", "x", "missing"])
+        passed = rng.choice(
+            [True, False, None, 1, 0, "", "x", "true", "false", 1.0, "missing"]
+        )
         if passed != "missing":
             result["passed"] = passed
         if rng.random() < 0.7:
@@ -235,6 +241,48 @@ def test_a_task_file_holding_no_object_fails_where_it_did(
     except Exception as error:  # noqa: BLE001
         got = type(error)
     assert got == want
+
+
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"passed": "false"},
+        {"passed": "true"},
+        {"passed": 1},
+        {"passed": None},
+        {},
+        "passed",
+        [True],
+        None,
+        "missing",
+    ],
+    ids=[
+        "str-false",
+        "str-true",
+        "int",
+        "null",
+        "no-passed",
+        "str-result",
+        "list-result",
+        "null-result",
+        "no-result",
+    ],
+)
+def test_a_result_with_no_verdict_is_failed_not_passed(result: Any) -> None:
+    """#1718: only a boolean ``passed`` in a ``result`` object is a verdict;
+    any other record is a case that failed, and none raises."""
+    record: dict[str, Any] = {"errored": False, "host": "node1"}
+    if result != "missing":
+        record["result"] = result
+    layout = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {0: record}, {})
+    manifest = {"cases": [{"index": 0}]}
+    (entry,) = slurm_launch._case_states(layout, manifest, {0: {}})  # type: ignore[arg-type]
+    assert entry["state"] == "failed"
+    assert entry["host"] == "node1"
+    passed = {"errored": False, "result": {"passed": True}}
+    layout = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {0: passed}, {})
+    (entry,) = slurm_launch._case_states(layout, manifest, {0: {}})  # type: ignore[arg-type]
+    assert entry["state"] == "passed"
 
 
 def test_the_typed_active_states_are_squeue_s() -> None:

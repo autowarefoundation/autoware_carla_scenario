@@ -5,6 +5,8 @@ outcome each task wrote for each of its cases (``slurm/results/<i>.json``), in
 the batch's order -- the same table, the same JSON, whichever task ran a case
 and when.  A case with no outcome is reported as one: ``ERROR``, with a message
 saying it has none and how to run it again (``scenario-slurm resubmit``).
+So is a case whose outcome holds no verdict -- no ``result`` object, or a
+``passed`` that is not a boolean (#1718): it did not pass.
 """
 
 from __future__ import annotations
@@ -15,9 +17,15 @@ from typing import Any
 
 from ..batch_report import print_summary
 from ..failure import Failure, FailureCategory
-from .manifest import BatchLayout, resubmit_target, write_json
+from .manifest import BatchLayout, recorded_verdict, resubmit_target, write_json
 
-__all__ = ["RecordedResult", "collect", "missing_cases", "unfinished_cases"]
+__all__ = [
+    "RecordedResult",
+    "collect",
+    "missing_cases",
+    "recorded_verdict",
+    "unfinished_cases",
+]
 
 
 @dataclass
@@ -37,7 +45,8 @@ class RecordedResult:
 
     @property
     def passed(self) -> bool:
-        return bool(self.data["passed"])
+        # Only a boolean is a verdict: ``"false"`` or ``1`` is no pass (#1718).
+        return self.data.get("passed") is True
 
     @property
     def message(self) -> str:
@@ -100,6 +109,28 @@ def _missing_message(layout: BatchLayout, case: int, target: str) -> str:
     )
 
 
+def _error_result(message: str) -> RecordedResult:
+    """The outcome reported for a case that has none to report: ``ERROR``."""
+    failure = Failure("", FailureCategory.INFRASTRUCTURE, 0.0, message)
+    return RecordedResult(
+        {
+            "passed": False,
+            "message": message,
+            "elapsed_seconds": 0.0,
+            "condition_statuses": [],
+            "failure": failure.to_dict(),
+        }
+    )
+
+
+def _no_verdict_message(layout: BatchLayout, case: int, target: str) -> str:
+    return (
+        f"No verdict: {layout.result(case)} holds no result whose `passed` "
+        "is true or false. "
+        f"Run the case again with: scenario-slurm resubmit {target}"
+    )
+
+
 def missing_cases(layout: BatchLayout) -> list[int]:
     """The cases of the batch no task has recorded an outcome for."""
     manifest = layout.read_manifest()
@@ -111,17 +142,20 @@ def missing_cases(layout: BatchLayout) -> list[int]:
 
 
 def unfinished_cases(layout: BatchLayout, *, failed: bool = False) -> list[int]:
-    """The cases to run again: without an outcome, or one that raised on every
-    attempt (``ERROR``); with *failed*, also those that ran and failed."""
+    """The cases to run again: without an outcome, with one that holds no
+    verdict, or one that raised on every attempt (``ERROR``); with *failed*,
+    also those that ran and failed."""
     manifest = layout.read_manifest()
     chosen: list[int] = []
     for case in manifest["cases"]:
         index = int(case["index"])
         record = layout.read_result(index)
+        verdict = recorded_verdict(record)
         if (
             record is None
+            or verdict is None
             or record.get("errored")
-            or (failed and not record["result"]["passed"])
+            or (failed and not verdict)
         ):
             chosen.append(index)
     return chosen
@@ -136,6 +170,8 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
     results: list[RecordedResult] = []
     errored: list[int] = []
     missing: list[int] = []
+    # The cases whose outcome holds no verdict (#1718): ERROR, as if missing.
+    unreadable: list[int] = []
     # The cases whose Rerun recording the task failed to make (rerun.enabled).
     rerun_errors: dict[int, str] = {}
     for position, case in enumerate(manifest["cases"]):
@@ -144,19 +180,11 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         record = layout.read_result(index)
         if record is None:
             missing.append(position)
-            message = _missing_message(layout, index, target)
-            failure = Failure("", FailureCategory.INFRASTRUCTURE, 0.0, message)
-            results.append(
-                RecordedResult(
-                    {
-                        "passed": False,
-                        "message": message,
-                        "elapsed_seconds": 0.0,
-                        "condition_statuses": [],
-                        "failure": failure.to_dict(),
-                    }
-                )
-            )
+            results.append(_error_result(_missing_message(layout, index, target)))
+            continue
+        if recorded_verdict(record) is None:
+            unreadable.append(position)
+            results.append(_error_result(_no_verdict_message(layout, index, target)))
             continue
         results.append(RecordedResult(dict(record["result"])))
         if record.get("errored"):
@@ -173,7 +201,7 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         results,
         output_dir=Path(layout.batch_dir),
         overrides=overrides,
-        errored=sorted({*errored, *missing}),
+        errored=sorted({*errored, *missing, *unreadable}),
         rerun_errors=rerun_errors,
     )
     write_json(
@@ -181,10 +209,16 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         {
             "cases": len(labels),
             "passed": sum(1 for r in results if r.passed),
-            "errored": [labels[i] for i in errored],
+            "errored": [labels[i] for i in sorted({*errored, *unreadable})],
             "missing": [labels[i] for i in missing],
         },
     )
+    if unreadable and not quiet_hint:
+        print(  # noqa: T201
+            f"{len(unreadable)} case(s) have a result with no verdict: "
+            + ", ".join(labels[i] for i in unreadable)
+            + f"\nRun them again with: scenario-slurm resubmit {target}"
+        )
     if missing and not quiet_hint:
         print(  # noqa: T201
             f"{len(missing)} case(s) have no result: "

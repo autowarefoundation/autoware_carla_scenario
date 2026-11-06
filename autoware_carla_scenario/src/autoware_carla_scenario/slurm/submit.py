@@ -29,6 +29,7 @@ from .manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
     config_files,
+    recorded_verdict,
     sbatch_in_flight,
     sequential_stems,
     write_json,
@@ -507,7 +508,7 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
                 record = layout.read_result(case)
                 if record is not None and record.get("submission") == index:
                     done += 1
-                    passed += bool(record["result"]["passed"])
+                    passed += recorded_verdict(record) is True
             running = sum(1 for s in (states or {}).values() if s == "RUNNING")
             pending = sum(1 for s in (states or {}).values() if s == "PENDING")
             line = (

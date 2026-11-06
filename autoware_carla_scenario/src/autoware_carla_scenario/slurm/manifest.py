@@ -46,6 +46,7 @@ __all__ = [
     "resubmit_target",
     "read_json",
     "read_submission_record",
+    "recorded_verdict",
     "sbatch_in_flight",
     "sequential_stems",
     "write_json",
@@ -233,6 +234,21 @@ def _create_exclusive(path: Path, data: Any) -> bool:
         return True
     finally:
         Path(tmp).unlink(missing_ok=True)
+
+
+def recorded_verdict(record: dict[str, Any] | None) -> bool | None:
+    """Whether the outcome a task recorded for a case (``results/<i>.json``,
+    read by :meth:`BatchLayout.read_result`) passed: its ``result``'s
+    ``passed`` when ``result`` is an object and ``passed`` a boolean, else
+    ``None`` -- a record that holds no verdict, which every reader takes as
+    not passed (#1718), never ``"false"`` or ``1`` as a pass."""
+    if not isinstance(record, dict):
+        return None
+    result = record.get("result")
+    if not isinstance(result, dict):
+        return None
+    passed = result.get("passed")
+    return passed if isinstance(passed, bool) else None
 
 
 @dataclass(frozen=True)
