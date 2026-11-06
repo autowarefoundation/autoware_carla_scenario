@@ -137,3 +137,168 @@ def test_the_budget_is_the_machine_s_memory_less_a_reserve(
     assert 14 * GB <= budget_bytes() < 16 * GB
     monkeypatch.setattr(memory_gate, "_cgroup_limit", lambda: 8 * GB)
     assert budget_bytes() < 8 * GB
+
+
+@pytest.fixture
+def fallbacks(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """Point the per-user fallbacks into *tmp_path*; the runtime one returned."""
+    runtime = tmp_path / "runtime"
+    runtime.mkdir(mode=0o700)
+    home = tmp_path / "home"
+    home.mkdir(mode=0o700)
+    monkeypatch.setenv("XDG_RUNTIME_DIR", str(runtime))
+    monkeypatch.setenv("HOME", str(home))
+    return runtime / "acs-codon-gate"
+
+
+def test_a_directory_others_can_write_to_is_not_used(
+    tmp_path: Path, fallbacks: Path
+) -> None:
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    with admitted(2 * GB, directory=shared, budget=_budget(14)):
+        assert not list(shared.iterdir())
+        assert len(list(fallbacks.glob("*.hold"))) == 1
+    assert (fallbacks.stat().st_mode & 0o777) == 0o700
+
+
+def test_a_symlinked_directory_is_not_used(tmp_path: Path, fallbacks: Path) -> None:
+    real = tmp_path / "real"
+    real.mkdir(mode=0o700)
+    link = tmp_path / "link"
+    link.symlink_to(real)
+    with admitted(2 * GB, directory=link, budget=_budget(14)):
+        assert not list(real.iterdir())
+        assert len(list(fallbacks.glob("*.hold"))) == 1
+
+
+def test_a_configured_directory_is_checked_too(
+    tmp_path: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    shared = tmp_path / "shared"
+    shared.mkdir()
+    shared.chmod(0o777)
+    monkeypatch.setenv(GATE_ENV, str(shared))
+    with admitted(2 * GB, budget=_budget(14)):
+        assert not list(shared.iterdir())
+        assert len(list(fallbacks.glob("*.hold"))) == 1
+
+
+def test_a_directory_of_another_user_is_not_used(
+    tmp_path: Path, fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As another user, every directory here -- the fallbacks too -- is
+    # someone else's: the build runs ungated rather than blocked or failed.
+    gate = tmp_path / "gate"
+    gate.mkdir(mode=0o700)
+    monkeypatch.setattr(os, "getuid", lambda: os.geteuid() + 1)
+
+    def never(seconds: float) -> None:
+        raise AssertionError("waited")
+
+    (gate / f"{os.getpid()}-1-1.hold").write_text(str(12 * GB))
+    with admitted(9 * GB, directory=gate, budget=_budget(14), sleep=never):
+        assert len(list(gate.glob("*.hold"))) == 1  # only the planted one
+    assert not list(fallbacks.parent.glob("acs-codon-gate/*.hold"))
+
+
+def test_a_file_that_is_not_a_hold_is_ignored(tmp_path: Path) -> None:
+    (tmp_path / "junk.hold").write_text(str(12 * GB))
+    (tmp_path / "-1-1.hold").write_text(str(12 * GB))
+
+    def never(seconds: float) -> None:
+        raise AssertionError("waited for a stray file")
+
+    with admitted(9 * GB, directory=tmp_path, budget=_budget(14), sleep=never):
+        assert len(list(tmp_path.glob("*.hold"))) == 3
+    assert (tmp_path / "junk.hold").exists()
+
+
+def test_a_symlinked_lock_is_not_followed(tmp_path: Path) -> None:
+    # The build runs ungated; the symlink's target is not touched.
+    gate = tmp_path / "gate"
+    gate.mkdir(mode=0o700)
+    target = tmp_path / "target"
+    target.write_text("precious")
+    (gate / "gate.lock").symlink_to(target)
+    ran = False
+    with admitted(2 * GB, directory=gate, budget=_budget(14)):
+        ran = True
+        assert not list(gate.glob("*.hold"))
+    assert ran
+    assert target.read_text() == "precious"
+    assert (gate / "gate.lock").is_symlink()
+
+
+def test_a_hold_records_its_process_s_start_time(tmp_path: Path) -> None:
+    start = memory_gate._start_time(os.getpid())
+    assert start is not None
+    with admitted(2 * GB, directory=tmp_path, budget=_budget(14)):
+        (hold,) = tmp_path.glob("*.hold")
+        assert hold.read_text() == f"{2 * GB} {start}"
+        assert (hold.stat().st_mode & 0o777) == 0o600
+
+
+def test_the_hold_of_a_reused_pid_is_forgotten(tmp_path: Path) -> None:
+    start = memory_gate._start_time(os.getpid())
+    assert start is not None
+    stale = tmp_path / f"{os.getpid()}-1-1.hold"
+    stale.write_text(f"{12 * GB} {start + 1}")  # this pid, another process
+
+    def never(seconds: float) -> None:
+        raise AssertionError("waited for a process that is gone")
+
+    with admitted(9 * GB, directory=tmp_path, budget=_budget(14), sleep=never):
+        pass
+    assert not stale.exists()
+
+
+class _Waited(Exception):
+    pass
+
+
+def test_the_hold_of_a_live_process_is_kept(tmp_path: Path) -> None:
+    start = memory_gate._start_time(os.getpid())
+    live = tmp_path / f"{os.getpid()}-1-1.hold"
+    live.write_text(f"{12 * GB} {start}")
+
+    def waits(seconds: float) -> None:
+        raise _Waited
+
+    with pytest.raises(_Waited):
+        with admitted(9 * GB, directory=tmp_path, budget=_budget(14), sleep=waits):
+            pass
+    assert live.exists()
+
+
+def test_without_proc_a_hold_falls_back_to_the_pid(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(memory_gate, "_start_time", lambda pid: None)
+    live = tmp_path / f"{os.getpid()}-1-1.hold"
+    live.write_text(f"{12 * GB} 1")
+
+    def waits(seconds: float) -> None:
+        raise _Waited
+
+    with pytest.raises(_Waited):
+        with admitted(9 * GB, directory=tmp_path, budget=_budget(14), sleep=waits):
+            pass
+    assert live.exists()
+
+
+def test_the_start_time_is_read_after_the_last_parenthesis(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    fields = " ".join(str(n) for n in range(3, 30))  # field n holds n
+    text = f"42 (a) (b c) {fields}\n"
+    real = Path.read_text
+
+    def read_text(self: Path, *args: object, **kwargs: object) -> str:
+        if str(self) == "/proc/42/stat":
+            return text
+        return real(self, *args, **kwargs)  # type: ignore[arg-type]
+
+    monkeypatch.setattr(Path, "read_text", read_text)
+    assert memory_gate._start_time(42) == 22

@@ -156,9 +156,24 @@ builds of a machine record what they hold in one directory
 (`$TMPDIR/acs-codon-gate-<uid>`), and one is started when what the running
 builds hold plus its own estimate fits the machine's memory (or its cgroup's
 limit) less 1.5 GB, or when none is running: a build too large for the machine
-still runs, alone. The holds of a process that died are forgotten. Set
+still runs, alone. The holds of a process that died are forgotten, and so
+are those whose pid now names another process (a hold records its process's
+start time, from `/proc/<pid>/stat`; without `/proc`, only the pid is
+checked). Files in the directory that are not holds are ignored. Set
 `AUTOWARE_CARLA_SCENARIO_CODON_GATE` to another directory to share it
 differently, or to `0` to start every build at once.
+
+The directory's name is predictable and sits in a world-writable one, so the
+gate trusts it only if it is private: it is created with mode `0o700`, and is
+used only if it is a real directory (not a symlink) owned by you that neither
+its group nor others can write to; `gate.lock` and the holds are opened
+without following symlinks, and a hold is created only if it does not exist.
+A directory set with `AUTOWARE_CARLA_SCENARIO_CODON_GATE` is held to the same
+rule. When the directory fails it, the gate warns and falls back to
+`$XDG_RUNTIME_DIR/acs-codon-gate`, then to
+`~/.cache/autoware_carla_scenario/codon-gate`; when none is usable, or the
+lock or a hold cannot be opened, it warns and starts the build ungated. The
+gate never holds up or fails a check on its own account.
 
 ### Installing Codon and typesafe_carla
 
