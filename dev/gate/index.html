@@ -2482,7 +2482,10 @@ be placed on included, which an expansion skips). A record with no count (a run 
 criterion fail: the share cannot be known.</p>
 <h2 id="what-a-run-records">What a run records<a class="headerlink" href="#what-a-run-records" title="Permanent link">&para;</a></h2>
 <p>A run of a logical scenario with a gate writes <code>{stem}_gate.json</code> beside
-<code>{stem}_result.json</code> (best effort, as the coverage file):</p>
+<code>{stem}_result.json</code> (best effort, as the coverage file). The coverage file
+and the record are written before the result, so a run whose result is on
+disk has its record there too, unless writing the record failed (which is
+logged):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="p">{</span>
 <a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a><span class="w">  </span><span class="nt">"schema"</span><span class="p">:</span><span class="w"> </span><span class="s2">"autoware_carla_scenario.gate_record/1"</span><span class="p">,</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a><span class="w">  </span><span class="nt">"scenario"</span><span class="p">:</span><span class="w"> </span><span class="s2">"logical_left_turn"</span><span class="p">,</span>
@@ -2527,7 +2530,9 @@ criterion fail: the share cannot be known.</p>
   <code>--document</code> too, though the document's gate replaces it: the record is
   corrupt all the same.</li>
 <li><code>files</code> names the run's other outputs the runner wrote beside the record
-  (one it did not write is left out); the coverage criteria merge the
+  (one it did not write is left out, except the result, written just after
+  the record and named even if that write then fails); the coverage
+  criteria merge the
   <code>coverage</code> files of the runs judged.</li>
 <li>The record is compact JSON: a row a tick adds up over a long run.</li>
 </ul>
@@ -2600,6 +2605,15 @@ record:</p>
   segfaulting it, the OOM killer, <code>SIGKILL</code>, Ctrl-C -- leaves the marker
   too, and counts. A job run again in the same directory replaces its old
   marker as it starts.</p>
+<p>An unfinished marker beside a run's result (<code>*_result.json</code>) written no
+  earlier than the marker, and no gate record, does not count. A run writes
+  its gate record before its result, so this job ran a scenario without a
+  gate, which writes a result and no record, and was killed after writing
+  it -- in the world reset or while its Rerun recordings were converted --
+  before the marker was removed. A result older than the marker is an
+  earlier run's in the same directory, and the marker counts. A marker of a
+  job given up still counts beside a result, which may be an earlier
+  attempt's, and so does a marker that cannot be read.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a>scenario-gate: multirun/2026-11-06/12-00-00: 7 job(s) of the sweep raised, timed out, crashed or did not finish, and left no gate record (3 (timed out after 900s), 4 (crashed (SIGSEGV)), 5 (exit code 1), 6 (exit code 1), 7 (did not finish (its process died, or the sweep was stopped)), and 2 more); the gate would be judged over the runs that survived. Run them again, or pass --allow-unrecorded to judge the records there are
 </code></pre></div>
 <ul>
@@ -2827,7 +2841,7 @@ whatever its <code>gate_record(result, file_stem)</code> method returns (a
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 12:22:27 UTC"><span class="timeago" datetime="2026-11-06T12:22:27+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 12:22:27 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 13:14:21 UTC"><span class="timeago" datetime="2026-11-06T13:14:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 13:14:21 UTC">2026-11-06</span>
   </span>
 
     
