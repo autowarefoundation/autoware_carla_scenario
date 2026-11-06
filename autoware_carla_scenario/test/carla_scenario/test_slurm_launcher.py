@@ -1695,6 +1695,35 @@ def test_environment_snapshot_takes_the_patterns_only() -> None:
     assert snapshot == {"ONEPLANNER_MAP_DIR": "/m", "PATH": "/bin"}
 
 
+def test_an_environment_snapshot_leaves_out_names_no_shell_takes() -> None:
+    """A pattern can match a name the job script could not export (#1891)."""
+    env = {"BASH_FUNC_f%%": "() { :; }", "CARLA_ROOT": "/c", "CARLA-X": "1"}
+    assert snapshot_environment(["BASH_FUNC_*", "CARLA*"], env) == {"CARLA_ROOT": "/c"}
+
+
+@pytest.mark.parametrize("name", ["MY-VAR", "1BAD", "", "A B", "A;B", "A=B"])
+def test_a_launcher_env_name_no_shell_takes_is_refused(name: str) -> None:
+    """``launcher.env`` names are written into the job script as they are, so
+    one no shell takes is refused as the run panel refuses it (#1891)."""
+    with pytest.raises(ValueError, match="launcher.env: .* is not an environment"):
+        SlurmSettings.from_mapping({"type": "slurm", "env": {name: "1"}})
+
+
+def test_a_launcher_env_name_a_shell_takes_is_kept() -> None:
+    settings = SlurmSettings.from_mapping(
+        {"type": "slurm", "env": {"_A1": "x", "ONEPLANNER_MAP_DIR": "/m"}}
+    )
+    assert settings.env == {"_A1": "x", "ONEPLANNER_MAP_DIR": "/m"}
+
+
+def test_the_job_script_refuses_to_export_a_name_no_shell_takes() -> None:
+    from autoware_carla_scenario.slurm.scripts import _exports
+
+    assert _exports({"B": "it's", "A": "1"}) == ["export A=1", "export B='it'\"'\"'s'"]
+    with pytest.raises(ValueError, match="not an environment variable name"):
+        _exports({"A-B": "1"})
+
+
 def test_queue_names_a_case_by_the_stem_it_is_given(tmp_path: Path) -> None:
     from unittest.mock import MagicMock
 
