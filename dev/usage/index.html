@@ -4543,7 +4543,7 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <td><code>ego.initial_speed_kmh</code></td>
 <td>float</td>
 <td><code>0.0</code></td>
-<td>Initial speed of ego vehicle (km/h)</td>
+<td>Initial speed of ego vehicle (km/h); finite, <code>0</code> or more</td>
 </tr>
 <tr>
 <td><code>ego.spawn_lanelet_id</code></td>
@@ -4569,8 +4569,20 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <td><code>0.0</code></td>
 <td>Yaw relative to the lanelet's direction of travel, positive anticlockwise (radians)</td>
 </tr>
+<tr>
+<td><code>ego.goal_s</code></td>
+<td>float</td>
+<td><code>0.0</code></td>
+<td>Longitudinal offset along the goal lanelet (<code>ego.goal_lanelet_id</code>) centerline (meters)</td>
+</tr>
 </tbody>
 </table>
+<p>The speed must be finite and not negative, and the poses (<code>ego.spawn_s</code>,
+<code>ego.spawn_t</code>, <code>ego.spawn_heading</code>, <code>ego.goal_s</code>) finite: a negative or NaN
+speed would leave the ego still with no error, an infinite one break its
+physics, and a NaN pose fail far from the key behind it. A run or batch
+refuses such a value before anything starts, naming the key (<code>Error:
+ego.initial_speed_kmh must be finite and at least 0, got -20</code>).</p>
 <h4 id="entity-configuration">Entity Configuration<a class="headerlink" href="#entity-configuration" title="Permanent link">&para;</a></h4>
 <p>Controls ground projection (ray casting) and spawn retry behavior:</p>
 <table>
@@ -4605,13 +4617,13 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <td><code>entity.spawn_retry_t_step</code></td>
 <td>float</td>
 <td><code>0.1</code></td>
-<td>Lateral offset shift per retry (meters)</td>
+<td>Lateral offset shift per retry, tried to both sides (meters); finite, <code>0</code> or more (<code>0</code>: no lateral shift)</td>
 </tr>
 <tr>
 <td><code>entity.spawn_retry_z_step</code></td>
 <td>float</td>
 <td><code>0.5</code></td>
-<td>Vertical shift per retry (meters)</td>
+<td>Vertical shift per retry, tried up and down (meters); finite, <code>0</code> or more (<code>0</code>: no vertical shift)</td>
 </tr>
 </tbody>
 </table>
@@ -5034,6 +5046,10 @@ config class, so a <code>scenario.&lt;key&gt;=</code> override reaches any of th
 <a id="__codelineno-21-4" name="__codelineno-21-4" href="#__codelineno-21-4"></a><span class="w">    </span><span class="nt">vehicle_type</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">vehicle.mini.cooper</span>
 <a id="__codelineno-21-5" name="__codelineno-21-5" href="#__codelineno-21-5"></a><span class="w">    </span><span class="nt">initial_speed_kmh</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">10.0</span>
 </code></pre></div>
+<p>An NPC's <code>spawn_s</code> must be finite and its <code>initial_speed_kmh</code> finite and not
+negative; a run or batch refuses another value before anything starts
+(<code>Error: npc_vehicles[0].initial_speed_kmh must be finite and at least 0, got
+nan</code>).</p>
 <p><strong>Behavior:</strong>
 - Sets all traffic lights to GREEN
 - Registers a TurnAction when <code>turn_direction</code> is set -- <code>left</code>, <code>right</code> or <code>straight</code> (sets the ego's path through the junction via the TrafficManager); none when it is <code>null</code>
@@ -6479,7 +6495,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 06:55:44 UTC"><span class="timeago" datetime="2026-11-06T06:55:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 06:55:44 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 08:55:32 UTC"><span class="timeago" datetime="2026-11-06T08:55:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 08:55:32 UTC">2026-11-06</span>
   </span>
 
     
