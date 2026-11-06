@@ -56,7 +56,8 @@ On the machine you run `scenario` on (a SLURM submit host):
    (not `missing`), and `wait` says it has no job id to follow and where to
    look for the job (and, within those 600 s, that a `resubmit` is refused);
    `collect` reports each of its cases as `task <n> of submission <i> never
-   started` with the same note, never `job None`.
+   started` with the same note, never `job None`, and (within those 600 s)
+   that a `resubmit` is refused.
 4. By default `scenario` follows the array (`squeue`, and the outcome each task
    records) until it ends, then prints the summary and writes
    `batch_results.json`, as a local batch does, and exits 0 when every case
@@ -136,7 +137,15 @@ options of the others (`scenario-slurm <command> --help` says the same):
 
 A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message
-saying so, and `collect` lists them. So is a case whose recorded outcome holds
+saying so, and `collect` lists them, saying what to do about them, chosen from
+the batch's records alone (#1803): where the case's task may still be queued
+or running (it has a job, and its status is missing or not yet `done`,
+`failed` or `cancelled`), to wait for it with `scenario-slurm wait` if
+`squeue --me` still lists it and to `resubmit` once it has ended; where its
+submission is in flight, to try again once sbatch returns; where its sbatch
+timed out less than 600 s ago, to `collect` once the job ends if `squeue --me`
+lists it, and otherwise to `resubmit`, which is refused until those 600 s
+have passed unless with `--force`; and otherwise to `resubmit`. So is a case whose recorded outcome holds
 no verdict -- no `result` object, or a `passed` that is not `true` or `false`
 (`"false"` and `1` are none) -- or a result that cannot be reported: a
 `message` that is missing or not a string, an `elapsed_seconds` that is not a
