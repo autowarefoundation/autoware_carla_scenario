@@ -3721,6 +3721,17 @@ before anything is spawned.</p>
 <a id="__codelineno-18-4" name="__codelineno-18-4" href="#__codelineno-18-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.scenario_pedestrians<span class="o">=</span>sumo
 <a id="__codelineno-18-5" name="__codelineno-18-5" href="#__codelineno-18-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>...<span class="w"> </span><span class="nv">traffic</span><span class="o">=</span>sumo<span class="w"> </span>traffic.options.fcd_output<span class="o">=</span><span class="nb">true</span><span class="w">   </span><span class="c1"># &lt;output&gt;/{stem}.sumo/fcd.xml</span>
 </code></pre></div>
+<p><strong>Its switches</strong> -- <code>publish_walkers</code>, <code>pedestrian_crossings</code>,
+<code>cycle_on_sidewalks</code>, <code>use_libsumo</code>, <code>fcd_output</code>, <code>ambient.enabled</code>,
+<code>ambient.use_safe_weights</code>, <code>pedestrians.enabled</code>, <code>bicycles.enabled</code> and
+<code>mesoscopic.enabled</code>, <code>mesoscopic.scenario_vehicles</code> and
+<code>mesoscopic.junction_control</code> under <code>traffic.options</code> -- are each <code>true</code> or
+<code>false</code>, or a spelling of either (<code>"false"</code>, <code>"no"</code>, <code>"off"</code>, <code>"0"</code>, <code>0</code>,
+and <code>"true"</code>, <code>"yes"</code>, <code>"on"</code>, <code>"1"</code>, <code>1</code>), read as the run's own switches
+are (<a href="../usage/#the-switches">The switches</a>): so a quoted
+<code>traffic.options.fcd_output='false'</code> is false. Anything else (<code>maybe</code>, <code>2</code>,
+null) is refused before the run, naming the option as
+<code>ambient.enabled must be true or false, got 'maybe'</code>.</p>
 <p><strong>Its outputs</strong> are the run's own: everything the backend writes -- SUMO's
 log (<code>sumo.log</code>), the demand it generates (<code>ambient.rou.xml</code>,
 <code>pedestrians.rou.xml</code>, <code>bicycles.rou.xml</code>), the type files below and, with
@@ -4280,7 +4291,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 03:50:18 UTC"><span class="timeago" datetime="2026-11-06T03:50:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 03:50:18 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 04:09:08 UTC"><span class="timeago" datetime="2026-11-06T04:09:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 04:09:08 UTC">2026-11-06</span>
   </span>
 
     
