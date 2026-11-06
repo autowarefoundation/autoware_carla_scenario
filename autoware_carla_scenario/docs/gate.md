@@ -140,7 +140,9 @@ A run of a logical scenario with a gate writes `{stem}_gate.json` beside
   one is refused, as is one whose gate is not a valid gate (a field a gate
   does not have, a value of the wrong type or out of range), or whose
   `case`, `outcome`, `files` or `ego` is not a JSON object, whose lists
-  are not JSON arrays, whose ego rows hold a route s, lateral offset or
+  are not JSON arrays, whose `outcome.passed` is not a JSON boolean
+  (missing, or `"false"`, `0`, `[0]`: a truthy value is never read as a
+  pass), whose ego rows hold a route s, lateral offset or
   speed beyond 1e7, or whose text cannot be written back as UTF-8 (a lone
   surrogate): `scenario-gate` reports it as unreadable (exit code 2)
   and judges the other records. A malformed gate is refused with

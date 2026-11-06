@@ -295,6 +295,43 @@ class TestRecord:
         with pytest.raises(ValueError, match="no 'gate' object"):
             read_gate_record(path)
 
+    @pytest.mark.parametrize(
+        ("passed", "named"),
+        [
+            ("false", "'false'"),
+            ("true", "'true'"),
+            ("no", "'no'"),
+            (1, "1, int"),
+            (0, "0, int"),
+            ([0], "[0], list"),
+            (None, "None, NoneType"),
+            ("missing", "None, NoneType"),
+        ],
+    )
+    def test_a_passed_that_is_not_a_boolean_is_refused(
+        self, tmp_path: Path, passed: Any, named: str
+    ) -> None:
+        # bool("false") is True: read as a truthy value, the record would
+        # count a failed run as passed and the gate would fail open.
+        path = _write(tmp_path, "x", _record(passed=False))
+        raw = json.loads(path.read_text())
+        if passed == "missing":
+            del raw["outcome"]["passed"]
+        else:
+            raw["outcome"]["passed"] = passed
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match="'passed' is not a JSON boolean") as exc:
+            read_gate_record(path)
+        assert named in str(exc.value) and "x_gate.json" in str(exc.value)
+
+    def test_a_record_without_an_outcome_is_refused(self, tmp_path: Path) -> None:
+        path = _write(tmp_path, "x", _record())
+        raw = json.loads(path.read_text())
+        del raw["outcome"]
+        path.write_text(json.dumps(raw))
+        with pytest.raises(ValueError, match="'passed' is not a JSON boolean"):
+            read_gate_record(path)
+
     def test_an_empty_gate_is_still_a_gate(self, tmp_path: Path) -> None:
         path = _write(tmp_path, "x", _record(gate={}))
         assert read_gate_record(path).gate == {}
@@ -587,6 +624,32 @@ class TestCli:
         path.write_text(json.dumps(raw))
         assert main([str(tmp_path)]) == EXIT_ERROR
         assert "b_gate.json" in capsys.readouterr().err
+
+    @pytest.mark.parametrize("passed", ["false", "no", 1, [0], "missing"])
+    def test_a_passed_that_is_not_a_boolean_exits_2(
+        self, tmp_path: Path, capsys: Any, passed: Any
+    ) -> None:
+        # Only failed runs on disk: read as truthy, "false" would make the
+        # success rate 100% and the gate pass (0). It is unreadable (2), and
+        # the error names the file and the value.
+        verdict = tmp_path / "v.json"
+        _write(tmp_path, "a", _record(passed=False))
+        path = _write(tmp_path, "b", _record(passed=False))
+        raw = json.loads(path.read_text())
+        if passed == "missing":
+            del raw["outcome"]["passed"]
+        else:
+            raw["outcome"]["passed"] = passed
+        path.write_text(json.dumps(raw))
+        assert main([str(tmp_path), "--json", str(verdict)]) == EXIT_ERROR
+        err = capsys.readouterr().err
+        assert "b_gate.json" in err
+        assert "'passed' is not a JSON boolean" in err
+        shown = None if passed == "missing" else passed
+        assert repr(shown) in err
+        # The other record is still judged, as the failed run it is.
+        judged = json.loads(verdict.read_text())["verdicts"][0]
+        assert (judged["runs"], judged["passed_runs"]) == (1, 0)
 
     @pytest.mark.parametrize(
         ("old", "new"),
