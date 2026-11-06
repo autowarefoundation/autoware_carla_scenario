@@ -34,6 +34,7 @@ from autoware_carla_scenario.gate.evaluate import (
     load_gate_records,
     main,
     station_values,
+    unrecorded_cases,
 )
 from autoware_carla_scenario.gate.probe import signed_lateral
 from autoware_carla_scenario.gate.record import (
@@ -1065,3 +1066,157 @@ class TestTheRunnerWritesTheRecord:
         _write_gate_record(tmp_path, "X", self._Scenario(None), result)  # type: ignore[arg-type]
         _write_gate_record(tmp_path, "Y", object(), result)  # type: ignore[arg-type]
         assert not list(tmp_path.iterdir())
+
+
+# ---------------------------------------------------------------------------
+# Cases that raised and left no record (#1826)
+# ---------------------------------------------------------------------------
+
+
+def _batch_summary(directory: Path, passed: list[bool], errored: list[int]) -> None:
+    """A local batch's ``batch_results.json``, as the batch writes it."""
+    from autoware_carla_scenario.batch_report import write_batch_result_json
+    from autoware_carla_scenario.conditions import ScenarioResult
+
+    results = [
+        ScenarioResult(passed=p, message="", elapsed_seconds=1.0) for p in passed
+    ]
+    names = [f"left_turn-{i}" for i in range(len(passed))]
+    write_batch_result_json(names, results, directory, errored=errored)
+
+
+def _slurm_batch(directory: Path, outcomes: list[Optional[dict[str, Any]]]) -> None:
+    """A SLURM batch of one case per outcome (``None``: no outcome yet)."""
+    root = directory / "slurm"
+    (root / "results").mkdir(parents=True)
+    cases = [
+        {"index": i, "label": f"left_turn-{i}", "stem": f"left_turn-{i}"}
+        for i in range(len(outcomes))
+    ]
+    (root / "manifest.json").write_text(json.dumps({"version": 2, "cases": cases}))
+    for i, outcome in enumerate(outcomes):
+        if outcome is not None:
+            (root / "results" / f"{i}.json").write_text(json.dumps(outcome))
+
+
+def _outcome(passed: bool, errored: bool = False) -> dict[str, Any]:
+    result = {
+        "passed": passed,
+        "message": "",
+        "elapsed_seconds": 1.0,
+        "condition_statuses": [],
+    }
+    return {"result": result, "errored": errored}
+
+
+class TestUnrecordedCases:
+    """7 of 10 cases raise and 3 pass: judged over the 3 records alone, the
+    gate would pass at 3/3 (#1826)."""
+
+    def _three_passed(self, directory: Path) -> None:
+        for i in range(3):
+            _write(
+                directory, f"left_turn-{i}", _record(gate={"min_success_rate": 0.95})
+            )
+
+    def test_a_batch_with_errored_cases_is_refused(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        self._three_passed(tmp_path)
+        _batch_summary(tmp_path, [True] * 3 + [False] * 7, errored=list(range(3, 10)))
+        assert main([str(tmp_path)]) == EXIT_ERROR
+        captured = capsys.readouterr()
+        assert captured.out == ""
+        (line,) = captured.err.strip().splitlines()
+        assert "7 of 10 case(s) raised" in line
+        assert "left_turn-3, left_turn-4" in line and "and 2 more" in line
+        assert "--allow-unrecorded" in line
+
+    def test_allow_unrecorded_judges_the_records_with_a_warning(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        self._three_passed(tmp_path)
+        _batch_summary(tmp_path, [True] * 3 + [False] * 7, errored=list(range(3, 10)))
+        assert main([str(tmp_path), "--allow-unrecorded"]) == EXIT_PASSED
+        assert "warning: " in capsys.readouterr().err
+
+    def test_a_batch_without_errors_is_judged_as_before(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        self._three_passed(tmp_path)
+        _batch_summary(tmp_path, [True] * 3, errored=[])
+        assert unrecorded_cases(tmp_path) == []
+        assert main([str(tmp_path)]) == EXIT_PASSED
+        assert capsys.readouterr().err == ""
+
+    def test_a_batch_nested_in_the_runs_is_found(self, tmp_path: Path) -> None:
+        batch = tmp_path / "2026-11-06" / "12-00-00"
+        batch.mkdir(parents=True)
+        self._three_passed(batch)
+        _batch_summary(batch, [True] * 3 + [False], errored=[3])
+        (line,) = unrecorded_cases(tmp_path)
+        assert line.startswith(f"{batch}: 1 of 4 case(s)")
+        # A record named on its own is judged as it is.
+        record = batch / "left_turn-0_gate.json"
+        assert unrecorded_cases(record) == []
+        assert main([str(record)]) == EXIT_PASSED
+
+    def test_either_set_of_a_comparison_is_checked(self, tmp_path: Path) -> None:
+        baseline, candidate = tmp_path / "v1", tmp_path / "v2"
+        baseline.mkdir()
+        candidate.mkdir()
+        self._three_passed(baseline)
+        self._three_passed(candidate)
+        _batch_summary(baseline, [True] * 3 + [False], errored=[3])
+        assert main([str(baseline), str(candidate)]) == EXIT_ERROR
+
+    def test_an_unreadable_summary_is_refused(self, tmp_path: Path) -> None:
+        self._three_passed(tmp_path)
+        (tmp_path / "batch_results.json").write_text("{not json")
+        (line,) = unrecorded_cases(tmp_path)
+        assert "cannot be read" in line
+        assert main([str(tmp_path)]) == EXIT_ERROR
+
+    def test_a_slurm_batch_counts_errored_and_missing_cases(
+        self, tmp_path: Path
+    ) -> None:
+        self._three_passed(tmp_path)
+        _slurm_batch(
+            tmp_path,
+            [
+                *(_outcome(True) for _ in range(3)),
+                _outcome(False, errored=True),
+                None,  # no outcome: killed, or still running
+                {"result": {"passed": "false"}},  # no verdict
+            ],
+        )
+        (line,) = unrecorded_cases(tmp_path)
+        assert "3 of 6 case(s)" in line
+        assert "left_turn-3, left_turn-4, left_turn-5" in line
+        assert main([str(tmp_path)]) == EXIT_ERROR
+
+    def test_a_slurm_case_with_a_record_is_not_counted(self, tmp_path: Path) -> None:
+        # Its run wrote a record, and then the task raised (#1826): the
+        # record is judged, and the batch is not refused for it.
+        self._three_passed(tmp_path)
+        _slurm_batch(tmp_path, [_outcome(True), _outcome(True), _outcome(True, True)])
+        # The collected summary lists the case as errored too; the outcomes
+        # are read, not it.
+        _batch_summary(tmp_path, [True] * 3, errored=[2])
+        assert unrecorded_cases(tmp_path) == []
+        assert main([str(tmp_path)]) == EXIT_PASSED
+
+    def test_a_slurm_batch_without_errors_is_judged_as_before(
+        self, tmp_path: Path
+    ) -> None:
+        self._three_passed(tmp_path)
+        _slurm_batch(tmp_path, [_outcome(True) for _ in range(3)])
+        assert unrecorded_cases(tmp_path) == []
+        assert main([str(tmp_path)]) == EXIT_PASSED
+
+    def test_an_unreadable_slurm_manifest_is_refused(self, tmp_path: Path) -> None:
+        self._three_passed(tmp_path)
+        (tmp_path / "slurm").mkdir()
+        (tmp_path / "slurm" / "manifest.json").write_text(json.dumps({"version": 99}))
+        (line,) = unrecorded_cases(tmp_path)
+        assert "SLURM manifest cannot be read" in line

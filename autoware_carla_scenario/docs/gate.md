@@ -181,6 +181,48 @@ scenario-gate outputs/ --scenario logical_left_turn --json gate.json --markdown 
 scenario-gate runs/v1.4/ runs/v1.5/
 ```
 
+### Cases that raised: no record, so the set is refused
+
+A run that raises (a spawn that fails on every attempt, a lost CARLA
+connection) writes no result and so no gate record. The batch still lists the
+case -- `ERROR` in its summary, `"error": true` in `batch_results.json` -- but
+judged over the records alone, `min_success_rate` would be the share of the
+runs that **survived** that passed: 7 cases that raised and 3 that passed
+judge as 3 of 3.
+
+So before judging, `scenario-gate` looks for the batches in each set of runs
+(every directory under it that holds a `batch_results.json` or a SLURM
+batch's `slurm/manifest.json`) and **refuses the set**, with exit code `2`
+and one line per batch on stderr, when one lists cases that left no record:
+
+```text
+scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no outcome, and left no gate record (left_turn-3, left_turn-4, left_turn-5, left_turn-6, left_turn-7, and 2 more); the gate would be judged over the runs that survived. Run them again, or pass --allow-unrecorded to judge the records there are
+```
+
+- A **local batch** is read from its `batch_results.json`: each entry with
+  `"error": true` raised on every attempt, and wrote no record.
+- A **SLURM batch** is read from its tasks' outcomes (`slurm/results/`),
+  collected or not: a case that errored, has no outcome (its task was killed,
+  or is still running) or one with no verdict counts, unless a gate record is
+  at its stem -- its run wrote one before the task failed, and that record is
+  judged.
+- A summary or manifest that cannot be read refuses the set too.
+- A gate record named on its own (not a directory) is judged as it is.
+
+The refusal does not tell the cases apart by logical scenario (a case that
+raised may have raised before it knew its route, and wrote nothing to say
+which it was), so one errored case of any scenario in the batch refuses the
+set, with `--scenario` too. Run the cases again (`scenario-slurm resubmit`
+for a SLURM batch), or pass `--allow-unrecorded` to judge the records there
+are, the lines printed as warnings.
+
+The runs are not given a failed record in their place: a run that raised
+before its route was chosen has no case to record, a made-up one would skew
+the case coverage and the cases a regression compares, and an attempt the
+batch retried would leave a failure beside the retry that passed. The
+batch's own list of what did not run is the one that is complete -- it holds
+too the SLURM tasks killed before Python could write anything.
+
 Records are grouped by the scenario id. Without `--document`, the gate a group
 is judged against is the one its latest record (by file time) states; when
 its records state different gates, or ran different versions of the document,
@@ -263,7 +305,7 @@ Newly failing cases:
 |-----------|---------|
 | `0` | Every gate judged passed (two sets: on the candidate; with `--fail-on-regression`, and nothing regressed) |
 | `1` | A gate failed, or (two sets, `--fail-on-regression`) something regressed |
-| `2` | Nothing to judge, a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, `--document` has no gate, or the `--markdown` or `--json` file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged) |
+| `2` | Nothing to judge, a batch among the runs lists cases that raised or have no outcome and left no record (unless `--allow-unrecorded`; above), a batch summary or SLURM manifest could not be read, a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, `--document` has no gate, or the `--markdown` or `--json` file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged) |
 
 The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 `passed`, `runs`, `passed_runs`, the `gate` judged, each criterion (`name`,
