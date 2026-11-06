@@ -40,6 +40,23 @@ def test_nade_runs_among_background_traffic() -> None:
     assert cfg.scenario.nade_is_probability > cfg.scenario.nade_probability
 
 
+def test_the_nade_sampler_follows_the_run_s_seed_by_default() -> None:
+    """No shipped case pins the sampler's seed, so a seed sweep draws other
+    adversities in each case, as the scenario's other adversarial actions do
+    (docs/usage.md#one-seed-for-the-whole-run)."""
+    assert AdversityConfig().nade_seed is None
+    for case in run._resolve_scenario_glob("adversity/*"):
+        cfg = run._compose_config(case, ["map=town10hd_opt"])
+        assert cfg.scenario.nade_seed is None, case
+
+
+def test_a_nade_seed_of_its_own_is_kept() -> None:
+    cfg = run._compose_config(
+        "adversity/nade", ["map=town10hd_opt", "scenario.nade_seed=7"]
+    )
+    assert cfg.scenario.nade_seed == 7
+
+
 @pytest.mark.parametrize(
     ("key", "value"),
     [

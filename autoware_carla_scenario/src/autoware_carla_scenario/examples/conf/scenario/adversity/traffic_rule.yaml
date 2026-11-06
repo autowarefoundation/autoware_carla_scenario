@@ -24,7 +24,7 @@ scenario:
   nade_is_probability: 0.5
   nade_cooldown: 2.0
   nade_challenge_npcs: true
-  nade_seed: 7
+  nade_seed: null
 
 ego:
   initial_speed_kmh: 20.0
