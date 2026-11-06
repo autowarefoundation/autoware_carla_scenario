@@ -589,6 +589,48 @@ class TestHydraSwitch:
             durations.add(end.duration_seconds)
         assert durations == {float(value)}
 
+    @pytest.mark.parametrize("off", ["'false'", "no", "0", "'0'"])
+    def test_enabled_spelled_off_as_text_is_off(self, off: str) -> None:
+        """``${oc.env:VAR,false}`` gives text: ``"false"`` is off, where
+        ``bool("false")`` turned the traffic on (#1753)."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed(
+            [f"background_traffic.enabled={off}", "background_traffic.seed=1.9"]
+        )
+        assert run.background_traffic_settings(cfg) is None
+        scenario = _scenario()
+        run.add_background_traffic(cfg, scenario)
+        assert not scenario._init_actions and not scenario._pre_tick_actions
+        run.check_run_config(cfg)
+
+    @pytest.mark.parametrize("on", ["'true'", "yes", "1", "' On '"])
+    def test_enabled_spelled_on_as_text_is_on(self, on: str) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([f"background_traffic.enabled={on}"])
+        assert run.background_traffic_settings(cfg) is not None
+
+    @pytest.mark.parametrize(
+        ("bad", "shown"), [("ture", "'ture'"), ("2", "2"), ("0.0", "0.0")]
+    )
+    def test_enabled_that_spells_neither_is_refused_up_front(
+        self, bad: str, shown: str
+    ) -> None:
+        import re
+
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([f"background_traffic.enabled={bad}"])
+        message = (
+            rf"^background_traffic\.enabled must be true or false, "
+            rf"got {re.escape(shown)}$"
+        )
+        with pytest.raises(ValueError, match=message):
+            run.add_background_traffic(cfg, _scenario())
+        with pytest.raises(run.RunConfigError, match=message):
+            run.check_run_config(cfg)
+
     def test_a_disabled_block_is_not_read(self) -> None:
         from autoware_carla_scenario.examples import run
 

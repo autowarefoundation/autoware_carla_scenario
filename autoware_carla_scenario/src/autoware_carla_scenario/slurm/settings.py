@@ -20,6 +20,7 @@ from collections.abc import Iterable, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
+from ..config_flags import check_flag
 from ..seed import check_whole_number
 
 __all__ = [
@@ -212,14 +213,6 @@ def _check_remote_path(value: str, name: str) -> None:
         )
 
 
-#: The spellings of a true and a false flag in a string (or an int), as
-#: authoring.registry's TRUTHY_VALUES and FALSY_VALUES (read_bool): a Hydra
-#: override or an ``${oc.env:...}`` may give a flag as text.  Repeated here,
-#: not imported, so that this module stays free of the authoring package.
-_TRUE_TEXT = frozenset({"1", "true", "on", "yes"})
-_FALSE_TEXT = frozenset({"0", "false", "off", "no"})
-
-
 def _whole_number(value: Any, name: str, minimum: int = 1) -> int:
     """A whole-number setting, at least *minimum*.
 
@@ -280,17 +273,10 @@ def _flag(value: Any, name: str) -> bool:
     """A true/false setting: a boolean, or its spelling (``"false"``, ``0``).
 
     ``bool()`` read ``"false"`` as true; anything that spells neither (a
-    float, a list, null, ``"ture"``) is refused.
+    float, a list, null, ``"ture"``) is refused (config_flags.check_flag,
+    as every switch of a run is read).
     """
-    if isinstance(value, bool):
-        return value
-    if isinstance(value, (str, int)):
-        text = str(value).strip().lower()
-        if text in _TRUE_TEXT:
-            return True
-        if text in _FALSE_TEXT:
-            return False
-    raise ValueError(f"launcher.{name} must be true or false, got {value!r}")
+    return check_flag(f"launcher.{name}", value)
 
 
 @dataclass(frozen=True)

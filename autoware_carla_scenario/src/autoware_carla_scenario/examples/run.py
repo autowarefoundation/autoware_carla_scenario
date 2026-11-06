@@ -73,6 +73,7 @@ from autoware_carla_scenario.batch_report import print_summary as _print_summary
 from autoware_carla_scenario.batch_report import write_batch_result_json
 from autoware_carla_scenario.canvas import use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
+from autoware_carla_scenario.config_flags import check_flag
 from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
@@ -1180,10 +1181,28 @@ def _map_source(cfg: DictConfig) -> str | None:
     return None
 
 
+def _switch(cfg: DictConfig, block: str, key: str) -> bool:
+    """The true/false switch ``<block>.<key>`` of *cfg*, off when absent.
+
+    A boolean or its spelling (``"false"``, ``"yes"``, ``0``: what an
+    ``${oc.env:VAR,false}`` or a quoted override gives), not its truthiness:
+    ``bool("false")`` was true, and so was a typo (#1753).
+
+    Raises:
+        ValueError: naming the key, for a value that spells neither
+            (:func:`~autoware_carla_scenario.config_flags.check_flag`).
+    """
+    settings = cfg.get(block) or {}
+    return check_flag(f"{block}.{key}", settings.get(key, False))
+
+
 def _rerun_settings(cfg: DictConfig) -> tuple[bool, bool]:
-    """``rerun.enabled`` and ``rerun.strict`` (both off when absent)."""
-    rerun_cfg = cfg.get("rerun") or {}
-    return bool(rerun_cfg.get("enabled", False)), bool(rerun_cfg.get("strict", False))
+    """``rerun.enabled`` and ``rerun.strict`` (both off when absent).
+
+    Raises:
+        ValueError: Either is not true or false (:func:`_switch`).
+    """
+    return _switch(cfg, "rerun", "enabled"), _switch(cfg, "rerun", "strict")
 
 
 def _rerun_lidar_max_points(cfg: DictConfig) -> int | None:
@@ -1194,11 +1213,12 @@ def _rerun_lidar_max_points(cfg: DictConfig) -> int | None:
     gives) counts as that integer, as ``int()`` read them before (#1226).
 
     Raises:
-        ValueError: It is not a non-negative integer (a bool is not one).
+        ValueError: It is not a non-negative integer (a bool is not one), or
+            ``rerun.lidar`` is not true or false (:func:`_switch`).
     """
-    rerun_cfg = cfg.get("rerun") or {}
-    if not rerun_cfg.get("lidar", False):
+    if not _switch(cfg, "rerun", "lidar"):
         return None
+    rerun_cfg = cfg.get("rerun") or {}
     value = rerun_cfg.get("lidar_max_points", 0)
     if value is None:
         return 0
@@ -1250,7 +1270,7 @@ def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
     ]
     strict = any(strict for _, strict in settings)
     cameras = any(
-        enabled and bool((cfg.get("rerun") or {}).get("cameras", False))
+        enabled and _switch(cfg, "rerun", "cameras")
         for cfg, (enabled, _) in zip(cfgs, settings)
     )
     sensors: dict[str, Any] = {}
@@ -1287,9 +1307,9 @@ def _t4_settings(*cfgs: DictConfig) -> T4Settings | None:
     from autoware_carla_scenario.driver import DriverClientConfig  # noqa: PLC0415
 
     for cfg in cfgs:
-        t4_cfg = cfg.get("t4") or {}
-        if not t4_cfg.get("enabled", False):
+        if not _switch(cfg, "t4", "enabled"):
             continue
+        t4_cfg = cfg.get("t4") or {}
         driver_cfg = cfg.get("driver")
         if driver_cfg is None:
             raise ValueError(
@@ -1327,9 +1347,9 @@ def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
             bool, not a number or not positive and finite.
     """
     for cfg in cfgs:
-        t4scene_cfg = cfg.get("t4scene") or {}
-        if not t4scene_cfg.get("enabled", False):
+        if not _switch(cfg, "t4scene", "enabled"):
             continue
+        t4scene_cfg = cfg.get("t4scene") or {}
         # Handed over as read: the exporter refuses a bool, which float()
         # would turn into a 1 s step or a 1 m distance (#1502, #1231).
         return T4SceneExporter(
@@ -1923,7 +1943,12 @@ def _check_batch_writer_settings(configs: list[DictConfig]) -> None:
     they read them -- ``rerun.lidar_max_points`` of every case asking for
     recordings, the ``t4`` and ``driver`` settings and the ``t4scene``
     settings of the first case enabling each -- without the extras those
-    need, which :func:`check_run_extras` asks for.
+    need, which :func:`check_run_extras` asks for.  And every case's
+    switches (``rerun.enabled``, ``.strict``, ``.lidar`` and ``.cameras``,
+    ``t4.enabled``, ``t4scene.enabled``): true or false, or a spelling of
+    either (:func:`_switch`), so that ``rerun.enabled=ture`` is refused in
+    one line before anything runs, whichever case of the batch sets it
+    (#1753).
 
     Raises:
         ValueError: naming the key of the first value refused.
@@ -1931,6 +1956,10 @@ def _check_batch_writer_settings(configs: list[DictConfig]) -> None:
     for cfg in configs:
         if _rerun_settings(cfg)[0]:
             _rerun_lidar_max_points(cfg)
+        _switch(cfg, "rerun", "lidar")
+        _switch(cfg, "rerun", "cameras")
+        _switch(cfg, "t4", "enabled")
+        _switch(cfg, "t4scene", "enabled")
     _t4_settings(*configs)
     # Holds nothing that starts: built to be checked, and dropped.
     build_t4scene_exporter(*configs)
@@ -2872,7 +2901,7 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
         ValueError: naming the key of the first value refused.
     """
     background = cfg.get("background_traffic")
-    if background is None or not background.get("enabled", False):
+    if background is None or not _switch(cfg, "background_traffic", "enabled"):
         return None
     settings = _to_dict(background)
     source = settings.get("source") or {}

@@ -836,7 +836,9 @@ self.register_pre_tick(
   be null), `seed` at most 2147483647 (`2**31 - 1`, what SUMO's `--seed`
   takes): `2.9`, `true`, `-5` or `2147483648` is refused, naming the key, rather than run
   as 2, 1 or a negative seed. The run refuses all of these before anything
-  starts, whenever `background_traffic.enabled` is true. `TrafficSourceAction`
+  starts, whenever `background_traffic.enabled` is true (`true` or `false`, or
+  a spelling of either such as `"false"`; anything else is refused:
+  [The switches](usage.md#the-switches)). `TrafficSourceAction`
   applies the same rule to its `initial_vehicles`, `max_vehicles` and `seed`
   (the last two when given), naming the parameter, so a count of `2.5` or NaN
   is refused when the action is built rather than mid-run.
