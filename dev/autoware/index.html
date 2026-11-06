@@ -2353,16 +2353,35 @@ given:</p>
 <li>The workspace is built (<code>colcon build</code> in that image) when
   <code>autoware.launcher.build</code> says so: <code>auto</code> builds it only when
   <code>install/setup.bash</code> is missing, <code>always</code> before every batch, <code>never</code>
-  leaves building to you. The output goes to <code>autoware-build.log</code>.</li>
+  leaves building to you. The output goes to <code>autoware-build.log</code>.
+  When there is a dependency image to make or a build to run, it is done
+  under a lock, <code>.autoware_carla_scenario-build.lock</code> at the root of the
+  workspace (kept there, not in a cache directory of yours, so runs on
+  every node that shares the workspace see it): a second run waits for
+  the first's (up to 4 hours, then fails saying so), and with <code>auto</code>
+  uses its build rather than build again. A run with nothing to make
+  takes no lock. The file stays; git shows it as untracked unless you
+  add it to the workspace's <code>.git/info/exclude</code>.</li>
 <li>A workspace whose <code>autoware_carla_interface</code> launch takes no
   <code>scenario_mode</code> -- one built from a branch without scenario support --
   is refused here, not after the first scenario has timed out waiting for
   it.</li>
-<li>Containers left behind by a run of yours that was killed (they carry the
-  <code>autoware_carla_scenario.stack=uid-&lt;your uid&gt;</code> label) are removed.
-  Another user's are left alone, but two of your own batches on one host
-  are not supported -- the shared host network (CARLA's ports, the
-  bridge's, the ROS graph) would not allow them anyway.</li>
+<li>Containers left behind by a run of yours that was killed are removed.
+  Each container carries the <code>autoware_carla_scenario.stack=uid-&lt;your uid&gt;</code>
+  label, so another user's are left alone, and the
+  <code>autoware_carla_scenario.owner=&lt;host&gt;:&lt;pid&gt;</code> label of the process that
+  started it, so the live stack of another run of yours on the host (a
+  SLURM task beside this one) is left alone too: only those whose process
+  no longer runs on this host are removed. One without an owner label (from
+  a version before it) or another host's is removed only once it runs
+  nothing (<code>exited</code>, <code>created</code> or <code>dead</code>), and only named in a warning
+  otherwise (<code>running</code>, <code>paused</code>, <code>restarting</code>). The owner is looked up
+  in the launcher's pid namespace, so the runs on a host are assumed to
+  share it: a run inside a container of its own (a pid namespace of its
+  own) that keeps the host's name could take another run's live stack
+  for a leftover. Two of your own runs on one
+  host each need ports and ROS domains of their own, which SLURM tasks are
+  given (<a href="../slurm/#ros-domains">slurm.md</a>) and two local batches are not.</li>
 <li>Every docker call the launcher makes for its answer (<code>docker ps</code>,
   <code>docker image inspect</code>, <code>docker rm</code>) is given 60 s, <code>docker commit</code> of
   the dependency image 30 minutes: a daemon that stops answering fails
@@ -2544,7 +2563,9 @@ such a <code>stop_timeout_s</code>, <code>DockerAutowareConfig</code> such a dom
 </table>
 <p><code>ros_domain_ids</code> moves each scenario's stack to another ROS domain, so it does
 not discover what is left of the last one before those participants time out:
-<code>'autoware.launcher.ros_domain_ids=[10,11]'</code>.</p>
+<code>'autoware.launcher.ros_domain_ids=[10,11]'</code>.
+Under <code>launcher=slurm</code> each task maps these ids to domains no other task on
+the node holds (<a href="../slurm/#ros-domains">slurm.md</a>).</p>
 <h2 id="sweeps">Sweeps<a class="headerlink" href="#sweeps" title="Permanent link">&para;</a></h2>
 <p>A sweep (<code>--multirun hydra/sweeper=lanelet_constraint</code>) runs each case in a
 job of its own, and each job starts and removes its own Autoware the same way:</p>
@@ -2656,7 +2677,7 @@ stack (<code>autoware_carla_scenario.autoware_stack.bridge_node</code> builds it
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 15:26:13 UTC"><span class="timeago" datetime="2026-11-06T15:26:13+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 15:26:13 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 18:57:20 UTC"><span class="timeago" datetime="2026-11-06T18:57:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 18:57:20 UTC">2026-11-06</span>
   </span>
 
     

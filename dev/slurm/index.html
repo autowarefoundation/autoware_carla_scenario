@@ -1888,6 +1888,28 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#ros-domains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ROS domains
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#autoware-stacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Autoware stacks
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2253,6 +2275,28 @@
     <span class="md-ellipsis">
       
         Ports
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#ros-domains" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        ROS domains
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#autoware-stacks" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Autoware stacks
       
     </span>
   </a>
@@ -2859,6 +2903,60 @@ socket, and with <code>unix</code> it serves it on a socket in a directory of it
 (under <code>$TMPDIR</code>, which SLURM does not set by default, so usually <code>/tmp</code>), so neither needs a port of the slot and tasks
 sharing a node never meet; a <code>unix:</code> <code>driver.address</code> someone else serves is
 dialled by every task, as a TCP one is.</p>
+<h3 id="ros-domains">ROS domains<a class="headerlink" href="#ros-domains" title="Permanent link">&para;</a></h3>
+<p>The ROS 2 nodes of tasks on one node would share a DDS domain: they all start
+from the same config. So each task maps every domain id its config names to
+one no other task on the node holds (<code>slurm/ports.py</code>, <code>RosDomains</code>), and
+keeps it for all its cases:</p>
+<table>
+<thead>
+<tr>
+<th>Config</th>
+<th>What the task changes</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code>ego.entity=ros2</code></td>
+<td><code>ros2.domain_id</code></td>
+</tr>
+<tr>
+<td><code>autoware.launcher.type=docker</code></td>
+<td>each <code>autoware.launcher.ros_domain_ids</code> entry; with none, one taken from <code>autoware.launcher.env.ROS_DOMAIN_ID</code>, else 0</td>
+</tr>
+<tr>
+<td><code>autoware.launcher.type=command</code></td>
+<td><code>ROS_DOMAIN_ID</code> in <code>autoware.launcher.env</code> (from its own value, else the job's exported <code>ROS_DOMAIN_ID</code>, else 0)</td>
+</tr>
+</tbody>
+</table>
+<p>An id maps to the first domain from it on (up to 232, then from 0) whose lock,
+<code>&lt;lock dir&gt;/autoware_carla_scenario-ros-domain-&lt;id&gt;.lock</code> beside the port
+slots', no other task holds; the lock goes when the task's process does. The
+first task on a node gets the ids it asked for, the next ones the ids after:
+with <code>ros_domain_ids=[10,11]</code>, one task runs on 10 and 11 and the next on 12
+and 13. The ids are checked as a local run checks them (whole numbers from 0 to 232;
+a string <code>ros_domain_ids</code> is refused), naming the key.</p>
+<p>A task whose domain is not the one configured logs a warning naming both and
+records the mapping in its progress file (<code>slurm/tasks/&lt;submission&gt;-&lt;task&gt;.json</code>,
+<code>ros_domains</code>, configured id to domain, beside <code>ports</code>). With
+<code>ego.entity=ros2</code> that matters: ROS 2 nodes started outside the framework
+must join the task's domain (<code>ROS_DOMAIN_ID=&lt;domain&gt;</code>), not the configured
+one, so read it there, or give each such task a node to itself.</p>
+<p>The domains are not part of the port slot: a slot's index runs to
+<code>port_slots</code> (1000 by default), and ROS 2 has 233 domains. Keep
+<code>array_parallelism</code> times the domains a task uses well below that, and below
+102 on Linux (0 to 101 is what the ROS 2 documentation calls safe). The locks
+are per user (the lock directory is), so another user's tasks on the node
+may still pick the same domain.</p>
+<h3 id="autoware-stacks">Autoware stacks<a class="headerlink" href="#autoware-stacks" title="Permanent link">&para;</a></h3>
+<p>The docker launcher labels each container it starts with your uid and with
+its owner, <code>autoware_carla_scenario.owner=&lt;host&gt;:&lt;pid&gt;</code>. A task removes only
+the leftover containers whose owner no longer runs, so a live stack of
+another task on the node is left alone (<a href="../autoware/">autoware.md</a>). Tasks
+that build one workspace (<code>build: always</code>, or <code>auto</code> while it is unbuilt) do
+so one at a time, under a lock in the workspace: a task that waits for
+another's <code>auto</code> build uses it rather than build again.</p>
 <h2 id="limits">Limits<a class="headerlink" href="#limits" title="Permanent link">&para;</a></h2>
 <ul>
 <li><strong>Memory.</strong> A task runs a CARLA (about 6 GB resident) and a scenario process
@@ -2890,9 +2988,11 @@ dialled by every task, as a TCP one is.</p>
   long, or a waiter that stalled for 10 s in the middle of taking a lock
   over.</li>
 <li><strong>ROS 2 and Autoware egos</strong> (<code>ego.entity=ros2</code>, <code>ego.entity=autoware</code> with
-  a launcher) run their stacks on DDS, whose domain the tasks would share; give
-  each its own <code>ROS_DOMAIN_ID</code> (the Autoware launcher's <code>ros_domain_ids</code>), or
-  run such batches locally.</li>
+  a launcher) run their stacks on DDS. Each task takes ROS domains of its own
+  (<a href="#ros-domains">ROS domains</a>), and its Autoware containers are told apart
+  from another task's (<a href="#autoware-stacks">Autoware stacks</a>), so tasks sharing
+  a node do not meet. A command launcher's script that sets <code>ROS_DOMAIN_ID</code>
+  itself rather than reading it from its environment is the exception.</li>
 <li><strong>File names.</strong> A case is named by its position in the batch, which is the
   name a local batch gives it whenever every earlier case opened its trajectory
   log. A case that raises before it opens it (while its ego is created or the
@@ -2923,7 +3023,7 @@ dialled by every task, as a TCP one is.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 18:23:30 UTC"><span class="timeago" datetime="2026-11-06T18:23:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 18:23:30 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 18:57:20 UTC"><span class="timeago" datetime="2026-11-06T18:57:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 18:57:20 UTC">2026-11-06</span>
   </span>
 
     
