@@ -192,8 +192,9 @@ judge as 3 of 3.
 
 So before judging, `scenario-gate` looks for the batches in each set of runs
 (every directory under it that holds a `batch_results.json` or a SLURM
-batch's `slurm/manifest.json`) and the `--multirun` jobs given up (every
-`case_errored.json` under it), and **refuses the set**, with exit code `2`
+batch's `slurm/manifest.json`), the `--multirun` jobs given up or killed
+(every `case_errored.json` under it) and the lanelet sweeps' plans (every
+`sweep_plan.json` under it), and **refuses the set**, with exit code `2`
 and one line per batch or sweep on stderr, when one lists cases that left no
 record:
 
@@ -203,10 +204,14 @@ scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no ou
 
 - A **local batch** is read from its `batch_results.json`: each entry with
   `"error": true` raised on every attempt, and each with `"pending": true`
-  was never finished -- the batch rewrites the file as each case ends,
-  listing the cases it has not run yet as pending, so a batch that died
-  mid-run (a segfault, the OOM killer, `SIGKILL`, a node reboot) still lists
-  the case it was running and the ones after it. Both count. The entries name
+  was never finished -- the batch writes the file before its first case
+  runs, every case pending, and rewrites it as each case ends, listing the
+  cases it has not run yet as pending, so a batch that died mid-run (a
+  segfault, the OOM killer, `SIGKILL`, a node reboot), in its first case
+  too, still lists the case it was running and the ones after it. Both
+  count. A batch refused before any case runs (its pre-run checks: a backend
+  the host has no room for, an Autoware workspace that cannot run, CARLA not
+  coming up) writes no summary: it ran nothing. The entries name
   no stem, so an errored case is counted even in the rare event that its run
   did write a record (its last attempt raised only once the run had ended,
   resetting the world): the refusal errs on the side of the runs that
@@ -223,19 +228,52 @@ scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no ou
   overrides, last exit code, attempts and why. Each counts, unless the job's
   directory holds a gate record (its run wrote one before the job failed).
   A job that ran and failed leaves no marker (its record is judged), nor does
-  one a retry passed; a job run again in the same directory removes its old
-  marker before it starts.
+  one a retry passed.
+
+  The marker is also written **before each attempt**, saying the job did not
+  finish (`"unfinished": true`, reason `did not finish ...`), and removed
+  once the job ends with a verdict (passed or failed) or replaced by the
+  marker of a job given up. So a job whose sweep died with it -- CARLA
+  segfaulting it, the OOM killer, `SIGKILL`, Ctrl-C -- leaves the marker
+  too, and counts. A job run again in the same directory replaces its old
+  marker as it starts.
 
   ```text
-  scenario-gate: multirun/2026-11-06/12-00-00: 7 job(s) of the sweep raised, timed out or crashed, and left no gate record (3 (timed out after 900s), 4 (crashed (SIGSEGV)), 5 (exit code 1), 6 (exit code 1), 7 (exit code 1), and 2 more); the gate would be judged over the runs that survived. Run them again, or pass --allow-unrecorded to judge the records there are
+  scenario-gate: multirun/2026-11-06/12-00-00: 7 job(s) of the sweep raised, timed out, crashed or did not finish, and left no gate record (3 (timed out after 900s), 4 (crashed (SIGSEGV)), 5 (exit code 1), 6 (exit code 1), 7 (did not finish (its process died, or the sweep was stopped)), and 2 more); the gate would be judged over the runs that survived. Run them again, or pass --allow-unrecorded to judge the records there are
   ```
 
-- A summary or manifest that cannot be read refuses the set too, and
+- A **lanelet sweep** (`hydra/sweeper=lanelet_constraint`) writes its plan,
+  `sweep_plan.json`, into its sweep directory before it launches the first
+  job: the directory and the overrides of every job it is about to run. A
+  planned job whose directory holds no gate record, no marker and no result
+  never ran -- the sweep was killed before it got there -- and counts. (A job
+  with a result and no record ran a scenario without a gate.) A sweep that
+  is refused before it runs writes no plan; a sweep planned again into the
+  same directory (`hydra.sweep.dir=` naming it again, a `--resume-from`
+  rerun) replaces the entries of the jobs it runs and keeps the others, whose
+  outputs are still there. A plan lists only the jobs its own run launches,
+  so a sweep resumed into a new directory plans only the jobs from the resume
+  point; the directory of the run it resumes keeps its plan and the marker of
+  the job it was killed in, and is refused on its own. To gate a resumed
+  sweep as a whole, resume it into the same `hydra.sweep.dir`.
+
+  ```text
+  scenario-gate: multirun/2026-11-06/12-00-00: 12 of 20 planned job(s) of the sweep never ran, and left no gate record (8, 9, 10, 11, 12, and 7 more); the gate would be judged over the runs that survived. Run them again, or pass --allow-unrecorded to judge the records there are
+  ```
+
+  **Hydra's basic sweeper** (a `--multirun` without
+  `hydra/sweeper=lanelet_constraint`) creates each job's directory only as it
+  reaches the job and writes no plan, so a basic sweep killed mid-run leaves
+  the marker of the job it was running and **no trace of the jobs after
+  it**: `scenario-gate` judges the jobs that ran as the whole sweep. Use the
+  lanelet sweeper, or a batch, for runs a gate is to judge.
+
+- A summary, manifest or sweep plan that cannot be read refuses the set too, and
   `--allow-unrecorded` does not change that: what it left without a record
   cannot be told. Its line says so:
 
   ```text
-  scenario-gate: outputs/2026-11-06/12-00-00/batch_results.json: the batch summary cannot be read (...); the cases it left without a record cannot be told, so the runs are not judged (--allow-unrecorded does not apply). Repair the file, or run the batch again
+  scenario-gate: outputs/2026-11-06/12-00-00/batch_results.json: the batch summary cannot be read (...); the cases it left without a record cannot be told, so the runs are not judged (--allow-unrecorded does not apply). Repair the file, or run the batch or sweep again
   ```
 
 - A gate record named on its own (not a directory) is judged as it is.
@@ -336,7 +374,7 @@ Newly failing cases:
 |-----------|---------|
 | `0` | Every gate judged passed (two sets: on the candidate; with `--fail-on-regression`, and nothing regressed) |
 | `1` | A gate failed, or (two sets, `--fail-on-regression`) something regressed |
-| `2` | Nothing to judge, a batch among the runs lists cases that raised, were never finished or have no outcome, or a `--multirun` job among them was given up, and left no record (unless `--allow-unrecorded`; above), a batch summary or SLURM manifest could not be read (even with `--allow-unrecorded`), a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, `--document` has no gate, or the `--markdown` or `--json` file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged) |
+| `2` | Nothing to judge, a batch among the runs lists cases that raised, were never finished or have no outcome, or a `--multirun` job among them was given up, did not finish or (planned) never ran, and left no record (unless `--allow-unrecorded`; above), a batch summary, SLURM manifest or sweep plan could not be read (even with `--allow-unrecorded`), a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, `--document` has no gate, or the `--markdown` or `--json` file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged) |
 
 The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 `passed`, `runs`, `passed_runs`, the `gate` judged, each criterion (`name`,

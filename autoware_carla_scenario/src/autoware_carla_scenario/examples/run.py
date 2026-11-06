@@ -79,6 +79,7 @@ from autoware_carla_scenario.constants import DEFAULT_TM_PORT
 from autoware_carla_scenario.gate.errored import (
     remove_case_errored,
     write_case_errored,
+    write_case_unfinished,
 )
 from autoware_carla_scenario.maps import resolve_map_paths
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
@@ -2562,6 +2563,8 @@ def run_batch(
     # and the cases it has not run yet as pending, so that a batch that dies
     # mid-run (a segfault, the OOM killer, SIGKILL) lists them too, and
     # scenario-gate does not judge the cases that survived alone (#1831).
+    # It is first written before the first case runs, every case pending, so
+    # that a batch that dies in its first case leaves it too (#1833).
     # The summary below writes it once more, whole, when the batch ends.
     done: list[ScenarioResult] = []
 
@@ -2586,6 +2589,14 @@ def run_batch(
     finished = False
     try:
         with queue:
+            # Every case pending, once the queue has started: its pre-run
+            # checks (a backend the host has no room for, an Autoware
+            # workspace that cannot run, CARLA not coming up) refuse a batch
+            # before any case runs, and such a batch leaves no summary.  One
+            # that dies from here on -- in its first case too -- lists every
+            # case it did not finish, and scenario-gate refuses it rather than
+            # skip it (#1833).
+            write_done()
             # A case that cannot run (a spawn point without ground, say) is
             # recorded as errored, and the rest of the batch still runs.
             results = queue.run_all(
@@ -2596,6 +2607,8 @@ def run_batch(
     finally:
         if not finished and done:
             # Cut short: the cases it ran, as the last case's end wrote them.
+            # (One cut short before any case ended keeps the summary written
+            # before the first, every case pending.)
             write_done()
         # Each log was converted as its case ended; wait for the last ones.
         conversions = rerun.close() if rerun is not None else []
@@ -3360,6 +3373,9 @@ def _hydra_main(cfg: DictConfig) -> None:
     except Exception as exc:
         _mark_case_errored(marker_dir, exc, exit_code=1)
         raise
+    # Ended with a verdict, passed or failed: the run wrote its result (and
+    # gate record), and is judged; the marker saying it did not finish goes.
+    _clear_case_errored(marker_dir)
     # Only exit for single-run mode. In --multirun, Hydra calls this
     # function repeatedly; sys.exit() would kill the entire sweep.  Hydra
     # discards what a job returns, so the verdict is recorded for main().
@@ -3373,9 +3389,18 @@ def _hydra_main(cfg: DictConfig) -> None:
 
 def _case_errored_dir() -> Path | None:
     """The job directory a ``--multirun`` case of Hydra's basic sweeper
-    leaves its marker in if it raises (``case_errored.json``,
-    :mod:`~autoware_carla_scenario.gate.errored`), with any marker an earlier
-    run of it left there removed; ``None`` outside such a case.
+    leaves its marker in (``case_errored.json``,
+    :mod:`~autoware_carla_scenario.gate.errored`), given the marker saying
+    the case did not finish, which replaces any an earlier run of it left
+    there; ``None`` outside such a case.
+
+    The marker is replaced by the one of a case that raised
+    (:func:`_mark_case_errored`), or removed once the case ends with a
+    verdict (:func:`_clear_case_errored`): left behind, it is the trace of a
+    case whose sweep died with it -- a segfault, the OOM killer, ``SIGKILL``,
+    Ctrl-C (#1833).  Hydra's basic sweeper creates each job's directory as
+    it reaches the job, and so the cases it never reached leave nothing
+    (docs/gate.md).
 
     A case the lanelet sweeper forked (``SWEEPER_OWNS_RETRIES_ENV``) leaves
     it alone: the sweeper owns its retries, and so its marker.
@@ -3388,11 +3413,42 @@ def _case_errored_dir() -> Path | None:
         return None
     try:
         directory = Path(HydraConfig.get().runtime.output_dir)
-        remove_case_errored(directory)
     except Exception:  # noqa: BLE001 - the case runs anyway
-        logger.warning("Cannot clear the case's error marker", exc_info=True)
+        logger.warning("Cannot tell the case's output directory", exc_info=True)
         return None
+    try:
+        write_case_unfinished(directory, overrides=_task_overrides(), attempt=1)
+    except Exception:  # noqa: BLE001 - the case runs anyway
+        logger.warning("Cannot write the case's unfinished marker", exc_info=True)
+        try:
+            # At least no stale marker of an earlier run is left to say this
+            # one raised.
+            remove_case_errored(directory)
+        except Exception:  # noqa: BLE001
+            logger.warning("Cannot clear the case's error marker", exc_info=True)
+            return None
     return directory
+
+
+def _task_overrides() -> list[str]:
+    """The overrides of the ``--multirun`` case running, as Hydra holds
+    them; none when they cannot be read."""
+    try:
+        return [str(o) for o in HydraConfig.get().overrides.task]
+    except Exception:  # noqa: BLE001 - the marker is written anyway
+        return []
+
+
+def _clear_case_errored(directory: Path | None) -> None:
+    """Remove the marker of a ``--multirun`` case that ended with a verdict
+    from *directory* (:func:`_case_errored_dir`).  Nothing when *directory*
+    is ``None``; never raises."""
+    if directory is None:
+        return
+    try:
+        remove_case_errored(directory)
+    except Exception:  # noqa: BLE001 - the verdict is what is reported
+        logger.warning("Cannot remove the case's unfinished marker", exc_info=True)
 
 
 def _mark_case_errored(
@@ -3405,13 +3461,9 @@ def _mark_case_errored(
     if directory is None:
         return
     try:
-        overrides = [str(o) for o in HydraConfig.get().overrides.task]
-    except Exception:  # noqa: BLE001 - the marker says the case raised anyway
-        overrides = []
-    try:
         write_case_errored(
             directory,
-            overrides=overrides,
+            overrides=_task_overrides(),
             exit_code=exit_code,
             attempts=1,
             reason=f"raised {type(exc).__name__}: {exc}",

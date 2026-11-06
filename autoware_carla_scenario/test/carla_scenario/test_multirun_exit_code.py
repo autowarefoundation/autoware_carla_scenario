@@ -29,8 +29,10 @@ import pytest
 #: ``ScenarioRunner`` does, names its outputs after the first stem none has
 #: taken (``App``, ``App-1`` ...); the first time it runs it writes a passing
 #: result and raises after it (as a teardown that raises does), and the retry
-#: fails.  With ``+hang=true`` every case sleeps past any job timeout, and with
-#: ``+die=true`` every case kills itself with ``SIGKILL``.
+#: fails.  With ``+hang=true`` every case sleeps past any job timeout, with
+#: ``+die=true`` every case kills itself with ``SIGKILL``, and with
+#: ``+kill_sweep=true`` the first case kills the sweep (its parent) with
+#: ``SIGKILL``, as the OOM killer would.
 _SWEEPER_APP = """
 import json
 import os
@@ -96,6 +98,10 @@ def task(cfg: DictConfig) -> None:
     if cfg.get("die", False):
         import signal
         os.kill(os.getpid(), signal.SIGKILL)
+    if cfg.get("kill_sweep", False):
+        import signal
+        os.kill(os.getppid(), signal.SIGKILL)
+        os._exit(1)
     if cfg.get("refuse", False):
         # What examples/run.py:_hydra_main does for a refused scenario.
         raise SystemExit(2)
@@ -125,6 +131,11 @@ def fake_run_scenario(cfg, **_):
     if str(cfg.verdict) == "refuse":
         print("case verdict=refuse", flush=True)
         raise run.ScenarioTypeError("does not type-check")
+    if str(cfg.verdict) == "kill":
+        # The sweep dies with its case: CARLA segfaulting it, the OOM killer.
+        import os
+        import signal
+        os.kill(os.getpid(), signal.SIGKILL)
     passed = str(cfg.verdict) == "pass"
     print(f"case verdict={cfg.verdict}", flush=True)
     return SimpleNamespace(passed=passed)
@@ -1224,3 +1235,189 @@ def test_basic_sweeper_marks_no_case_that_ran(
     proc = _run(_BASIC_APP, tmp_path, "+verdict=pass,fail")
     assert proc.returncode == 1, proc.stdout + proc.stderr
     assert _markers(session) == {}
+
+
+# ---------------------------------------------------------------------------
+# A sweep killed mid-job: the unfinished marker and the plan (#1833)
+# ---------------------------------------------------------------------------
+
+
+def _plan(session: Path) -> list[tuple[str, list[str]]]:
+    """The jobs of the sweep plan in *session*: each directory as written,
+    and its overrides."""
+    import json
+
+    data = json.loads((session / "sweep_plan.json").read_text(encoding="utf-8"))
+    assert data["schema"] == "autoware_carla_scenario.sweep_plan/1"
+    return [(job["dir"], job["overrides"]) for job in data["jobs"]]
+
+
+def test_lanelet_sweeper_writes_its_plan_before_the_first_job(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.gate.evaluate import (
+        batch_read_errors,
+        unrecorded_cases,
+    )
+
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    session = tmp_path / "multirun"
+    plan = _plan(session)
+    assert [d for d, _ in plan] == ["0", "1"]
+    assert "+case=1" in plan[0][1] and "+case=2" in plan[1][1]
+    # A complete sweep leaves no marker, and is judged as before.
+    assert _markers(session) == {}
+    assert unrecorded_cases(session) == []
+    assert batch_read_errors(session) == []
+    # The viewer lists the sweep's jobs, not the plan beside them.
+    from autoware_carla_scenario.ui import scanner
+
+    summary = scanner._scan_multirun_session(session, "d", "t")
+    assert summary is not None
+    assert (summary.passed_count, summary.total_count) == (2, 2)
+
+
+def test_a_sweep_refused_before_it_runs_leaves_no_plan(tmp_path: Path) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+sweep.none=true",
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    assert not (tmp_path / "multirun" / "sweep_plan.json").exists()
+
+
+def test_a_killed_lanelet_sweep_leaves_its_job_marked_and_the_rest_planned(
+    tmp_path: Path,
+) -> None:
+    """The sweep dies in its first job (SIGKILL): that job leaves the marker
+    written before its attempt, and the job it never reached is in the plan;
+    scenario-gate refuses both."""
+    from autoware_carla_scenario.gate.evaluate import main, unrecorded_cases
+
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+kill_sweep=true",
+    )
+    session = tmp_path / "multirun"
+    assert proc.returncode == -9, proc.stdout + proc.stderr
+    markers = _markers(session)
+    assert list(markers) == ["0"]
+    assert markers["0"]["unfinished"] is True
+    assert markers["0"]["exit_code"] is None
+    assert markers["0"]["attempts"] == 1
+    assert markers["0"]["reason"].startswith("did not finish")
+    assert "+case=1" in markers["0"]["overrides"]
+    assert [d for d, _ in _plan(session)] == ["0", "1"]
+    assert not (session / "1").exists()
+
+    errored, unstarted = unrecorded_cases(session)
+    assert "1 job(s) of the sweep" in errored and "0 (did not finish" in errored
+    assert "1 of 2 planned job(s) of the sweep never ran" in unstarted
+    assert "(1)" in unstarted
+    assert main([str(session)]) == 2
+
+
+def test_rerunning_a_sweep_into_its_directory_clears_its_markers_and_keeps_its_plan(
+    tmp_path: Path,
+) -> None:
+    """The killed sweep resumed at its first job into the same directory
+    finishes every job; resumed at its second, it keeps the first job in the
+    plan, which it skips."""
+    from autoware_carla_scenario.gate.evaluate import unrecorded_cases
+
+    session = tmp_path / "multirun"
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+kill_sweep=true",
+        sweep_dir=session,
+    )
+    assert proc.returncode == -9, proc.stdout + proc.stderr
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        sweep_dir=session,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _markers(session) == {}
+    assert unrecorded_cases(session) == []
+
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+fail=true",
+        resume_from=2,
+        sweep_dir=session,
+    )
+    assert proc.returncode == 1, proc.stdout + proc.stderr
+    plan = _plan(session)
+    assert [d for d, _ in plan] == ["0", "1"]
+    # Job 0 as the earlier sweep planned it; job 1 as this one did.
+    assert "+fail=true" not in plan[0][1]
+    assert "+fail=true" in plan[1][1]
+    # A failed verdict is judged: no marker.
+    assert _markers(session) == {}
+    assert unrecorded_cases(session) == []
+
+
+def test_a_sweep_resumed_into_a_new_directory_plans_only_what_it_runs(
+    tmp_path: Path,
+) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        resume_from=2,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert [d for d, _ in _plan(tmp_path / "multirun")] == ["1"]
+
+
+def test_a_retry_that_passes_clears_the_unfinished_marker(tmp_path: Path) -> None:
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+server.cooldown_max_retries=1",
+        "+raise_once=true",
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert _markers(tmp_path / "multirun") == {}
+
+
+def test_a_killed_basic_sweep_leaves_its_case_marked(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Hydra's basic sweeper runs its cases in the sweep's process: the case
+    killed with it leaves the marker written as it started.  It plans
+    nothing: the cases it never reached leave no trace (docs/gate.md)."""
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    proc = _run(_BASIC_APP, tmp_path, "+verdict=pass,kill,pass")
+    session = tmp_path / "multirun"
+    assert proc.returncode == -9, proc.stdout + proc.stderr
+    markers = _markers(session)
+    assert list(markers) == ["1"]
+    assert markers["1"]["unfinished"] is True
+    assert "+verdict=kill" in markers["1"]["overrides"]
+    assert not (session / "2").exists()
+    assert not (session / "sweep_plan.json").exists()
