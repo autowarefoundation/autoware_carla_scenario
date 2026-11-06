@@ -2405,9 +2405,38 @@ builds of a machine record what they hold in one directory
 (<code>$TMPDIR/acs-codon-gate-&lt;uid&gt;</code>), and one is started when what the running
 builds hold plus its own estimate fits the machine's memory (or its cgroup's
 limit) less 1.5 GB, or when none is running: a build too large for the machine
-still runs, alone. The holds of a process that died are forgotten. Set
-<code>AUTOWARE_CARLA_SCENARIO_CODON_GATE</code> to another directory to share it
-differently, or to <code>0</code> to start every build at once.</p>
+still runs, alone. The holds of a process that died are forgotten, and so
+are those whose pid now names another process (a hold records its process's
+start time, from <code>/proc/&lt;pid&gt;/stat</code>; without <code>/proc</code>, only the pid is
+checked). Files in the directory that are not holds are ignored. The
+directory is per user; set <code>AUTOWARE_CARLA_SCENARIO_CODON_GATE</code> to another
+directory of yours to use that one instead, or to <code>0</code> to start every build at
+once.</p>
+<p>The directory's name is predictable and sits in a world-writable one, so the
+gate trusts it only if it is private: it is created with mode <code>0o700</code>, opened
+without following a symlink, and used only if it is a real directory owned by
+you that neither its group nor others can write to. Every later use goes
+through that open directory, so it cannot be swapped once checked;
+<code>gate.lock</code> and the holds are opened without following symlinks, a hold is
+created only if it does not exist, a file that is not a regular one (a FIFO)
+is ignored, a hold another user owns is removed and never counted, and a
+<code>gate.lock</code> another user owns starts the build ungated. The lock is made
+<code>0o600</code>, and a build tries for it for at most two minutes
+(<code>LOCK_TIMEOUT_S</code>; the gate's own builds hold it for milliseconds) before it
+warns and starts ungated, so no one holding it can stall the checks.</p>
+<p>A directory set with <code>AUTOWARE_CARLA_SCENARIO_CODON_GATE</code> must be private in
+the same way (yours, mode <code>0o700</code> or at least not group- or other-writable),
+or it is skipped; the gate never changes it. Only the gate's own directories
+are repaired: one of them that its group or others can use at all (as an older
+gate left it, <code>0o755</code>, or <code>0o775</code> under a umask of <code>002</code>) is made <code>0o700</code> and
+cleared of what other users own, if it holds nothing but <code>gate.lock</code> and
+holds, and is used only if nothing of another user's remains. When the
+directory fails these rules (or there is no temporary directory), the gate
+warns and falls back to <code>$XDG_RUNTIME_DIR/acs-codon-gate</code>, then to
+<code>~/.cache/autoware_carla_scenario/codon-gate</code>; when none is usable, or the
+gate's own files or the memory budget fail (a lock refused on NFS, a full
+disk), it warns and starts the build ungated. The gate never holds up or fails
+a check on its own account, and never hides what a build raised.</p>
 <h3 id="installing-codon-and-typesafe_carla">Installing Codon and typesafe_carla<a class="headerlink" href="#installing-codon-and-typesafe_carla" title="Permanent link">&para;</a></h3>
 <p>The check needs typesafe_carla (the <code>typesafe-carla</code> package, from PyPI) and
 the Codon compiler it pins (<code>typesafe-carla-toolchain</code>, 0.19, which
@@ -8336,7 +8365,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 03:15:57 UTC"><span class="timeago" datetime="2026-11-06T03:15:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 03:15:57 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 15:48:17 UTC"><span class="timeago" datetime="2026-11-06T15:48:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 15:48:17 UTC">2026-11-06</span>
   </span>
 
     
