@@ -76,7 +76,7 @@ from autoware_carla_scenario.coordinate import (
 )
 from autoware_carla_scenario.failure import FailureCategory
 
-from .configs import CutInConfig
+from .configs import CUT_IN_SIDES, CutInConfig
 
 logger = logging.getLogger(__name__)
 
@@ -281,7 +281,11 @@ class CutInScenario(BaseScenario):
         if spawn is None:
             raise ValueError("cut_in needs an ego spawn pose")
         if cfg.side not in _CHANGE_TOWARDS_EGO:
-            raise ValueError(f"cut_in side must be 'left' or 'right', got {cfg.side!r}")
+            # The config's check (CUT_IN_SIDES) refuses it first; a backstop.
+            raise ValueError(
+                f"scenario.side must be one of {', '.join(CUT_IN_SIDES)}, "
+                f"not {cfg.side!r}"
+            )
 
         self._setup_ego_spawn()
         self.register_init(

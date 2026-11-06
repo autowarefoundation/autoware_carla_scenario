@@ -416,6 +416,11 @@ reach_goal_pkg/
     └── conf/scenario/reach_goal/default.yaml
 ```
 
+Its `ReachGoalConfig` has the template's `__post_init__`: it refuses a
+`timeout_seconds` that is not finite and positive (0, `nan`), naming
+`scenario.timeout_seconds`, when the config is built -- before anything
+starts, since a run builds it in `check_batch_configs`.
+
 `scenario-new` refuses a package directory that already exists. With
 `--force` (`force=True` in the Python API) it replaces the whole directory, as
 the scenario editor's package export (`export_package(..., force=True)`) does:

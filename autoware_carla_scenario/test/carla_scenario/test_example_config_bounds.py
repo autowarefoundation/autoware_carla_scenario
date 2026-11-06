@@ -12,13 +12,18 @@ from __future__ import annotations
 import math
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
 import pytest
 
+from omegaconf import OmegaConf
+
 from autoware_carla_scenario.examples import run
 from autoware_carla_scenario.examples.configs import (
+    CUT_IN_SIDES,
+    TURN_DIRECTIONS,
     AdversityConfig,
     CutInConfig,
     IntersectionPassingConfig,
@@ -139,6 +144,125 @@ def test_none_still_turns_an_optional_check_off(cls: type, key: str) -> None:
     assert getattr(cls(**{key: None}), key) is None
 
 
+#: (config class, field) that ``None`` turns off.
+OPTIONAL_FIELDS: list[tuple[type, str]] = [
+    (IntersectionPassingConfig, "min_speed_kmh"),
+    (TrafficLightComplianceConfig, "departure_speed_kmh"),
+    (TrafficLightComplianceConfig, "timeout_after_green_seconds"),
+    (PedestrianDartOutConfig, "turn_back_ttc_s"),
+    (PedestrianDartOutConfig, "turn_back_distance_m"),
+    (AdversityConfig, "ego_speed_kmh"),
+]
+
+#: Every number field above, and the others compared without a bound.
+NUMBER_FIELDS: list[tuple[type, str]] = [
+    *POSITIVE_FIELDS,
+    *NOT_NEGATIVE_FIELDS,
+    (TrafficLightComplianceConfig, "stop_zone_min_m"),
+    (TrafficLightComplianceConfig, "stop_zone_max_m"),
+    (AdversityConfig, "nade_probability"),
+    (AdversityConfig, "nade_is_probability"),
+]
+
+#: Not a number (#1818): a bool would pass as 1 or 0, and a string or a list
+#: make ``math.isfinite()`` raise a ``TypeError`` naming no key.
+NOT_A_NUMBER = [True, False, "10", "nan", [1.0]]
+
+
+@pytest.mark.parametrize("value", NOT_A_NUMBER, ids=repr)
+@pytest.mark.parametrize(
+    ("cls", "key"),
+    NUMBER_FIELDS,
+    ids=[f"{c.__name__}.{k}" for c, k in NUMBER_FIELDS],
+)
+def test_a_value_not_a_number_is_refused(cls: type, key: str, value: Any) -> None:
+    with pytest.raises(ValueError, match=_message(key, "a number, got ")):
+        cls(**{key: value})
+
+
+@pytest.mark.parametrize(
+    ("cls", "key"),
+    [f for f in NUMBER_FIELDS if f not in OPTIONAL_FIELDS],
+    ids=[
+        f"{c.__name__}.{k}" for c, k in NUMBER_FIELDS if (c, k) not in OPTIONAL_FIELDS
+    ],
+)
+def test_null_is_refused_where_nothing_is_optional(cls: type, key: str) -> None:
+    with pytest.raises(ValueError, match=_message(key, "a number, got None$")):
+        cls(**{key: None})
+
+
+@pytest.mark.parametrize(
+    ("cls", "key"),
+    POSITIVE_FIELDS,
+    ids=[f"{c.__name__}.{k}" for c, k in POSITIVE_FIELDS],
+)
+def test_an_int_is_a_number(cls: type, key: str) -> None:
+    """Hydra reads ``scenario.<key>=1`` as an int, not a float."""
+    assert getattr(cls(**{key: 1}), key) == 1
+
+
+@pytest.mark.parametrize("value", [True, "3", 2.5], ids=repr)
+@pytest.mark.parametrize(
+    "key", ["max_steering_reversals", "max_turn_indicator_changes"]
+)
+def test_a_limit_must_be_a_whole_number(key: str, value: Any) -> None:
+    with pytest.raises(ValueError, match=_message(key, "a whole number, got ")):
+        IntersectionPassingConfig(**{key: value})
+
+
+@pytest.mark.parametrize("value", [True, "5", math.nan])
+def test_the_turn_indicator_distance_must_be_a_finite_number(value: Any) -> None:
+    with pytest.raises(ValueError, match=r"^scenario\.turn_indicator_before_m must be"):
+        IntersectionPassingConfig(turn_direction="left", turn_indicator_before_m=value)
+
+
+@pytest.mark.parametrize("side", ["up", "", "Left", "straight"])
+def test_an_unknown_cut_in_side_is_refused(side: str) -> None:
+    with pytest.raises(
+        ValueError,
+        match=rf"^scenario\.side must be one of left, right, not {re.escape(repr(side))}$",
+    ):
+        CutInConfig(side=side)
+
+
+@pytest.mark.parametrize("side", CUT_IN_SIDES)
+def test_a_cut_in_side_is_accepted(side: str) -> None:
+    assert CutInConfig(side=side).side == side
+
+
+@pytest.mark.parametrize("direction", ["lft", "", "Left", "up"])
+def test_an_unknown_turn_direction_is_refused(direction: str) -> None:
+    with pytest.raises(
+        ValueError,
+        match=r"^scenario\.turn_direction must be one of left, right, straight or "
+        rf"null, not {re.escape(repr(direction))}$",
+    ):
+        IntersectionPassingConfig(turn_direction=direction)
+
+
+@pytest.mark.parametrize("direction", [*TURN_DIRECTIONS, None])
+def test_a_turn_direction_is_accepted(direction: str | None) -> None:
+    assert IntersectionPassingConfig(turn_direction=direction).turn_direction == (
+        direction
+    )
+
+
+def test_the_turn_directions_are_the_setups() -> None:
+    """The config accepts exactly what ``setup()`` turns into a TurnAction."""
+    from autoware_carla_scenario.examples import (  # noqa: PLC0415
+        intersection_passing,
+    )
+
+    assert set(TURN_DIRECTIONS) == set(intersection_passing._TURN_DIRECTION_MAP)
+
+
+def test_the_cut_in_sides_are_the_setups() -> None:
+    from autoware_carla_scenario.examples import cut_in  # noqa: PLC0415
+
+    assert set(CUT_IN_SIDES) == set(cut_in._CHANGE_TOWARDS_EGO)
+
+
 def test_every_default_is_accepted() -> None:
     for cls in (
         IntersectionPassingConfig,
@@ -223,6 +347,19 @@ _CASES = {
         ("adversity", "scenario.npc_speed_kmh=-5"),
         ("adversity", "scenario.ego_speed_kmh=nan"),
         ("adversity", "scenario.timeout_seconds=0"),
+        # Not a number, or not a word the scenario knows (#1818).
+        ("intersection_passing", "scenario.timeout_seconds=null"),
+        ("intersection_passing", "scenario.timeout_seconds='10'"),
+        ("intersection_passing", "scenario.timeout_seconds=true"),
+        ("intersection_passing", "scenario.turn_direction=lft"),
+        ("intersection_passing", "scenario.speed_check_delay_seconds=false"),
+        ("traffic_light_compliance", "scenario.stop_zone_min_m=null"),
+        ("lane_change", "scenario.timeout_seconds='10'"),
+        ("cut_in", "scenario.side=up"),
+        ("cut_in", "scenario.hold_seconds=null"),
+        ("cut_in", "scenario.npc_initial_speed_kmh=true"),
+        ("adversity", "scenario.nade_probability='0.5'"),
+        ("temporary_stop", "scenario.timeout_seconds=null"),
     ],
 )
 def test_the_batch_check_refuses_an_override(scenario: str, override: str) -> None:
@@ -237,6 +374,61 @@ def test_the_batch_check_refuses_an_override(scenario: str, override: str) -> No
 def test_the_shipped_case_passes_the_batch_check(scenario: str) -> None:
     case, overrides = _CASES[scenario]
     run.check_batch_configs([run._compose_config(case, overrides)])
+
+
+@pytest.mark.parametrize("scenario", sorted(_CASES))
+@pytest.mark.parametrize("timeout", ["10", "10.5"])
+def test_a_number_from_hydra_passes_the_batch_check(
+    scenario: str, timeout: str
+) -> None:
+    """Hydra gives ``=10`` as an int and ``=10.5`` as a float: both pass."""
+    case, overrides = _CASES[scenario]
+    cfg = run._compose_config(case, [*overrides, f"scenario.timeout_seconds={timeout}"])
+    assert cfg.scenario.timeout_seconds == float(timeout)
+    run.check_batch_configs([cfg])
+
+
+def test_an_unknown_key_is_left_to_the_build() -> None:
+    """Only a key the class does not define is skipped (#1818)."""
+    case, overrides = _CASES["cut_in"]
+    cfg = run._compose_config(case, [*overrides, "+scenario.not_a_key=1"])
+    run._check_scenario_config(cfg)
+
+
+def test_an_unknown_key_hides_no_other_refusal() -> None:
+    case, overrides = _CASES["cut_in"]
+    cfg = run._compose_config(
+        case, [*overrides, "+scenario.not_a_key=1", "scenario.timeout_seconds=null"]
+    )
+    with pytest.raises(
+        run.RunConfigError,
+        match=r"^scenario\.timeout_seconds must be a number, got None$",
+    ):
+        run.check_batch_configs([cfg])
+
+
+def test_a_type_error_of_a_package_config_is_reported(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A config class of a package's own that raises a ``TypeError`` (no key
+    named) is refused too, not taken for an unknown key."""
+
+    @dataclass
+    class StrictConfig:
+        name: str = "strict"
+        timeout_seconds: float = 10.0
+
+        def __post_init__(self) -> None:
+            math.isfinite(self.timeout_seconds)
+
+    monkeypatch.setattr(
+        run, "get_scenario_classes", lambda name: (object, StrictConfig)
+    )
+    good = OmegaConf.create({"scenario": {"name": "strict", "unknown": 1}})
+    run._check_scenario_config(good)
+    bad = OmegaConf.create({"scenario": {"name": "strict", "timeout_seconds": None}})
+    with pytest.raises(ValueError, match=r"^scenario: StrictConfig refused"):
+        run._check_scenario_config(bad)
 
 
 @pytest.mark.parametrize(

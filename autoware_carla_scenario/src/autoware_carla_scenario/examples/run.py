@@ -35,6 +35,7 @@ Usage examples::
 
 from __future__ import annotations
 
+import dataclasses
 import json
 import logging
 import math
@@ -2751,8 +2752,17 @@ def _check_scenario_config(cfg: DictConfig) -> None:
     above 1, #1458) before anything starts.  Nothing is built of a scenario
     with a custom builder or a declarative one.
 
+    A key the class does not take (one not among its
+    :func:`dataclasses.fields`) is left out: the build refuses it, with the
+    scenario's own context.  Only those are: a value of the wrong type
+    (``scenario.timeout_seconds=null``, a quoted ``'10'``, #1818) is
+    refused, as any other value the class refuses.
+
     Raises:
-        ValueError: When the scenario's config class refuses a value.
+        ValueError: When the scenario's config class refuses a value; one it
+            refuses with a ``TypeError`` (which names no key, as a class of
+            a scenario package's own may) is headed by ``scenario`` and the
+            class's name.
     """
     scenario = cfg.get("scenario")
     if not isinstance(scenario, DictConfig) or scenario.get("name") is None:
@@ -2761,12 +2771,22 @@ def _check_scenario_config(cfg: DictConfig) -> None:
     if classes is None:
         return
     _, config_cls = classes
-    try:
-        config_cls(**_to_dict(scenario))
-    except TypeError:
-        # A key the class does not take: the build refuses it, with the
-        # scenario's own context.
+    settings = _to_dict(scenario)
+    if not dataclasses.is_dataclass(config_cls):
+        # No fields to tell an unknown key by: a TypeError may be one, which
+        # the build refuses with its context.
+        try:
+            config_cls(**settings)
+        except TypeError:
+            pass
         return
+    known = {f.name for f in dataclasses.fields(config_cls) if f.init}
+    try:
+        config_cls(**{key: value for key, value in settings.items() if key in known})
+    except TypeError as exc:
+        raise ValueError(
+            f"scenario: {config_cls.__name__} refused the settings: {exc}"
+        ) from exc
 
 
 def build_scenario(

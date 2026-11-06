@@ -77,7 +77,7 @@ from autoware_carla_scenario.failure import FailureCategory
 from autoware_carla_scenario.coordinate import MapManager, route_road_ids
 from autoware_carla_scenario.metrics import STEERING_REVERSALS, TURN_INDICATOR_CHANGES
 from autoware_carla_scenario.odd import lanelet_in_junction
-from .configs import IntersectionPassingConfig
+from .configs import TURN_DIRECTIONS, IntersectionPassingConfig
 
 logger = logging.getLogger(__name__)
 
@@ -217,6 +217,14 @@ class IntersectionPassingScenario(BaseScenario):
 
         # --- Optional turn action ---
         if cfg.turn_direction is not None:
+            if cfg.turn_direction not in _TURN_DIRECTION_MAP:
+                # The config's check (TURN_DIRECTIONS) refuses it first; a
+                # backstop for one built without it.
+                raise ValueError(
+                    "scenario.turn_direction must be one of "
+                    f"{', '.join(TURN_DIRECTIONS)} or null, "
+                    f"not {cfg.turn_direction!r}"
+                )
             direction = _TURN_DIRECTION_MAP[cfg.turn_direction]
             turn_action = TurnAction(
                 entity_name=EGO_ROLE_NAME,

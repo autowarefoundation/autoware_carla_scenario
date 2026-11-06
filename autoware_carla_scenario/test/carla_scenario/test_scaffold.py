@@ -11,6 +11,7 @@ steps that need a live CARLA world.
 from __future__ import annotations
 
 import importlib
+import math
 import os
 import sys
 from pathlib import Path
@@ -793,6 +794,44 @@ class TestOneGoalLanelet:
         finally:
             for name in [m for m in sys.modules if m.split(".")[0] == "one_goal_pkg"]:
                 del sys.modules[name]
+
+
+class TestGeneratedConfig:
+    """The generated config refuses a bad timeout, as the template's does (#1818)."""
+
+    @pytest.mark.parametrize("value", [0.0, -1.0, math.nan, math.inf])
+    def test_a_timeout_not_positive_is_refused(
+        self, tmp_path: Path, value: float
+    ) -> None:
+        result = create_scenario_package("timeout_pkg", output_dir=tmp_path)
+        (configs,) = _import_from(result.root / "src", "timeout_pkg.configs")
+        try:
+            config_cls = getattr(configs, result.names["config_class"])
+            with pytest.raises(
+                ValueError,
+                match=r"^scenario\.timeout_seconds must be finite and positive, ",
+            ):
+                config_cls(timeout_seconds=value)
+            assert config_cls(timeout_seconds=8.0).timeout_seconds == 8.0
+            assert config_cls().timeout_seconds == 10.0
+        finally:
+            for name in [m for m in sys.modules if m.split(".")[0] == "timeout_pkg"]:
+                del sys.modules[name]
+
+    def test_the_check_is_the_templates(self, tmp_path: Path) -> None:
+        """The same ``__post_init__`` as the scenario package template's."""
+        result = create_scenario_package("same_pkg", output_dir=tmp_path)
+        generated = (result.root / "src" / "same_pkg" / "configs.py").read_text(
+            encoding="utf-8"
+        )
+        template = (_TEMPLATE_SRC / "my_scenario_package" / "configs.py").read_text(
+            encoding="utf-8"
+        )
+        marker = "    def __post_init__"
+        assert marker in template
+        assert (
+            generated[generated.index(marker) :] == template[template.index(marker) :]
+        )
 
 
 class TestGoalFromRoute:
