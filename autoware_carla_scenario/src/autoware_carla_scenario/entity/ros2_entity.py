@@ -161,6 +161,8 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
     _last_ackermann: Optional[Tuple[float, float, float, float]]
     #: Non-finite commands refused so far (the log's rate limit).
     _non_finite: int
+    #: Whether a control command's negative jerk has been logged.
+    _negative_jerk_logged: bool
 
     def __init__(
         self,
@@ -186,6 +188,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._tracking = False
         self._last_ackermann = None
         self._non_finite = 0
+        self._negative_jerk_logged = False
 
     # ------------------------------------------------------------------
     # Properties
@@ -246,6 +249,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._plan_steps = 0
         self._tracking = False
         self._last_ackermann = None
+        self._negative_jerk_logged = False
         self._transport.publish_state(self._state(world, actor)[0])
         # The actor, not narrowed by the check above for the camera's attach().
         mount: "carla.Actor" = actor
@@ -483,6 +487,12 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             control_jerk = control.jerk_mps3
             if control_jerk is not None:
                 jerk_mps3 = control_jerk
+                if control_jerk < 0.0:
+                    # Autoware's jerk is signed (negative while the
+                    # deceleration grows); CARLA's Ackermann jerk is a limit,
+                    # so it takes the magnitude.
+                    self._note_negative_jerk(control_jerk)
+                    jerk_mps3 = -control_jerk
         if (
             math.isfinite(steer_rad)
             and math.isfinite(speed_mps)
@@ -509,6 +519,18 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 jerk=float(jerk_mps3),
             )
         )
+
+    def _note_negative_jerk(self, jerk_mps3: float) -> None:
+        """Log, once a session, that a negative jerk was taken as its magnitude."""
+        if not self._negative_jerk_logged:
+            logger.info(
+                "Command source %r sent a negative jerk (%g m/s^3); CARLA's "
+                "Ackermann controller takes its magnitude as the jerk limit "
+                "(logged once)",
+                self._active,
+                jerk_mps3,
+            )
+            self._negative_jerk_logged = True
 
     def _refuse_non_finite(self, what: str) -> None:
         """Log a refused non-finite *what*: the first time, then once in a hundred."""

@@ -187,6 +187,11 @@ an acceleration, a jerk, or a trajectory's poses, speeds or accelerations) is
 refused, with a warning: the active source's last good command of that kind drives
 on, and with none, the ego is held on its brakes.
 
+A `control` command's jerk is signed in Autoware (negative while the deceleration
+grows), while CARLA's Ackermann jerk is a limit: a negative one is handed over as its
+magnitude, logged once a session. A `control` command that leaves its jerk undefined,
+and every `steer_accel` command, takes the source's `jerk_mps3`.
+
 ```yaml
 ros2:
   domain_id: 0
@@ -215,6 +220,13 @@ and joined the domain:
 * `stale_s`, `pair_window_s`, `steering_sign`, `speed_horizon_s`, `jerk_mps3`,
   `rear_axle_offset_m` and a camera's numeric fields are numbers, an int or a float
   (not a bool or a quoted string), and finite, within the bounds above.
+* A source's `speed_horizon_s` is positive: zero would pin a `steer_accel` target
+  speed to the current speed, and a negative horizon would turn a request to
+  accelerate into braking.
+* A source's `jerk_mps3` is not negative. `0` is allowed: it is the jerk
+  `carla.VehicleAckermannControl` takes by default.
+* A source's `steering_sign` is not zero, which would pin the steering straight. Its
+  magnitude scales the steering and a negative value flips it, so both are kept.
 
 ## The Open AD Kit safety-island demo
 
