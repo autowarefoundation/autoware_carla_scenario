@@ -16,6 +16,7 @@ from __future__ import annotations
 from .devcontainer import DevContainer, DevContainerError, read_devcontainer
 from .docker import (
     DEPENDENCY_IMAGE_REPOSITORY,
+    OWNER_LABEL,
     STACK_LABEL,
     DockerAutowareConfig,
     DockerAutowareLauncher,
@@ -30,6 +31,7 @@ from .launcher import (
 
 __all__ = [
     "DEPENDENCY_IMAGE_REPOSITORY",
+    "OWNER_LABEL",
     "STACK_LABEL",
     "AutowareEpisode",
     "AutowareLauncher",

@@ -24,6 +24,13 @@ the node sees: not ``/tmp`` where a cluster gives each job a private one, so
 ``launcher.port_lock_dir``.  The default 20000-29999 stays below Linux's ephemeral
 range (32768-60999), so an outgoing connection never takes a slot's port.
 
+A task's ROS domains are held the same way (:class:`RosDomains`): each domain
+id the task's config names is mapped to the first id from it on that no other
+task on the node holds (``<lock dir>/autoware_carla_scenario-ros-domain-<id>.lock``),
+so the Autoware stacks and ROS 2 egos of tasks sharing a node never share a
+DDS domain.  Not part of the port slot: a slot's index runs to
+``launcher.port_slots`` (1000 by default), past the 233 domains ROS 2 has.
+
 The arithmetic of the slots is in :mod:`.port_slots`, which the library check
 compiles (docs/typecheck.md); this module takes the slots and re-exports it.
 """
@@ -31,6 +38,7 @@ compiles (docs/typecheck.md); this module takes the slots and re-exports it.
 from __future__ import annotations
 
 import fcntl
+import logging
 import os
 import signal
 import socket
@@ -41,6 +49,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import IO
 
+from ..constants import MAX_ROS_DOMAIN_ID
 from .port_slots import (
     PORT_SLOT_WIDTH,
     SlotPorts,
@@ -55,12 +64,15 @@ __all__ = [
     "PORT_SLOT_WIDTH",
     "CarlaWatchdog",
     "PortSlot",
+    "RosDomains",
     "acquire_slot",
     "carla_processes_on_port",
     "default_lock_dir",
     "first_slot",
     "kill_carla_on_port",
 ]
+
+logger = logging.getLogger(__name__)
 
 #: Where the slot locks are when no node-wide directory can be made.
 LOCK_DIR = Path("/tmp")
@@ -137,17 +149,9 @@ def acquire_slot(
     lock_dir = default_lock_dir() if lock_dir is None else lock_dir
     lock_dir.mkdir(parents=True, exist_ok=True)
     for index, slot_base in slot_order(base, slots, start):
-        path = lock_dir / lock_name(slot_base)
-        try:
-            fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
-        except OSError:
-            continue  # another user's lock file we cannot open: not ours
-        stream = os.fdopen(fd, "rb")
-        try:
-            fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except OSError:
-            stream.close()
-            continue
+        stream = _try_lock(lock_dir / lock_name(slot_base))
+        if stream is None:
+            continue  # held by another task, or another user's lock file
         slot = PortSlot(index=index, base=slot_base, _lock=stream)
         if all(_port_free(port) for port in slot.ports()):
             return slot
@@ -156,6 +160,95 @@ def acquire_slot(
         f"No free port slot among {slots} from {base}: every one is held by "
         "another task or has a port in use (launcher.port_base, launcher.port_slots)"
     )
+
+
+def _try_lock(path: Path) -> IO[bytes] | None:
+    """*path* opened and locked (exclusive, not waiting); None when another
+    process holds it or it cannot be opened (another user's lock file)."""
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
+    except OSError:
+        return None
+    stream = os.fdopen(fd, "rb")
+    try:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        stream.close()
+        return None
+    return stream
+
+
+class RosDomains:
+    """The ROS domains a task holds, none of them held by another task on the node.
+
+    :meth:`take` maps a domain id the config names (``ros2.domain_id``, an
+    ``autoware.launcher.ros_domain_ids`` entry) to the first id from it on
+    (up to :data:`~autoware_carla_scenario.constants.MAX_ROS_DOMAIN_ID`, then
+    from 0) whose lock no other process holds, and keeps it: the same id
+    always maps to the same domain within a task, two different ones to two
+    different domains.  The first task on a node gets the ids it asked for.
+    The locks go when :meth:`release` is called or the process ends.
+    """
+
+    def __init__(
+        self, lock_dir: Path | None = None, *, highest: int = MAX_ROS_DOMAIN_ID
+    ) -> None:
+        self._lock_dir = lock_dir
+        self._highest = highest
+        self._mapped: dict[int, int] = {}
+        self._held: dict[int, IO[bytes]] = {}
+
+    @property
+    def mapping(self) -> dict[int, int]:
+        """Each configured id taken so far, and the domain it maps to."""
+        return dict(self._mapped)
+
+    def take(self, wanted: int) -> int:
+        """The domain this task uses for the configured id *wanted*.
+
+        Raises:
+            ValueError: *wanted* is not a domain id (0 to the highest).
+            RuntimeError: Every domain is held by another task on the node.
+        """
+        if isinstance(wanted, bool) or not 0 <= wanted <= self._highest:
+            raise ValueError(
+                f"ROS domain id must be a whole number from 0 to {self._highest}, "
+                f"got {wanted!r}"
+            )
+        if wanted in self._mapped:
+            return self._mapped[wanted]
+        if self._lock_dir is None:
+            self._lock_dir = default_lock_dir()
+        self._lock_dir.mkdir(parents=True, exist_ok=True)
+        for domain in [*range(wanted, self._highest + 1), *range(wanted)]:
+            if domain in self._held:
+                continue  # this task's, for another configured id
+            stream = _try_lock(
+                self._lock_dir / f"autoware_carla_scenario-ros-domain-{domain}.lock"
+            )
+            if stream is None:
+                continue
+            self._held[domain] = stream
+            self._mapped[wanted] = domain
+            if domain != wanted:
+                logger.info(
+                    "ROS domain %d is another task's on this node: using %d",
+                    wanted,
+                    domain,
+                )
+            return domain
+        raise RuntimeError(
+            f"No free ROS domain on this node: all {self._highest + 1} are held by "
+            "this task or other tasks (lower array_parallelism, or use fewer "
+            "autoware.launcher.ros_domain_ids)"
+        )
+
+    def release(self) -> None:
+        """Let every domain go."""
+        for stream in self._held.values():
+            stream.close()
+        self._held.clear()
+        self._mapped.clear()
 
 
 def carla_processes_on_port(port: int) -> list[int]:
