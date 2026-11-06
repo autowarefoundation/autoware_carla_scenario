@@ -1846,6 +1846,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#cases-that-raised-no-record-so-the-set-is-refused" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cases that raised: no record, so the set is refused
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#regression-a-baseline-against-a-candidate" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2250,6 +2261,17 @@
       <ul class="md-nav__list">
         
           <li class="md-nav__item">
+  <a href="#cases-that-raised-no-record-so-the-set-is-refused" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Cases that raised: no record, so the set is refused
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
   <a href="#regression-a-baseline-against-a-candidate" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2526,21 +2548,57 @@ two are refused.</p>
 <a id="__codelineno-2-10" name="__codelineno-2-10" href="#__codelineno-2-10"></a><span class="c1"># Regression: the candidate's runs against the baseline's</span>
 <a id="__codelineno-2-11" name="__codelineno-2-11" href="#__codelineno-2-11"></a>scenario-gate<span class="w"> </span>runs/v1.4/<span class="w"> </span>runs/v1.5/
 </code></pre></div>
+<h3 id="cases-that-raised-no-record-so-the-set-is-refused">Cases that raised: no record, so the set is refused<a class="headerlink" href="#cases-that-raised-no-record-so-the-set-is-refused" title="Permanent link">&para;</a></h3>
+<p>A run that raises (a spawn that fails on every attempt, a lost CARLA
+connection) writes no result and so no gate record. The batch still lists the
+case -- <code>ERROR</code> in its summary, <code>"error": true</code> in <code>batch_results.json</code> -- but
+judged over the records alone, <code>min_success_rate</code> would be the share of the
+runs that <strong>survived</strong> that passed: 7 cases that raised and 3 that passed
+judge as 3 of 3.</p>
+<p>So before judging, <code>scenario-gate</code> looks for the batches in each set of runs
+(every directory under it that holds a <code>batch_results.json</code> or a SLURM
+batch's <code>slurm/manifest.json</code>) and <strong>refuses the set</strong>, with exit code <code>2</code>
+and one line per batch on stderr, when one lists cases that left no record:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no outcome, and left no gate record (left_turn-3, left_turn-4, left_turn-5, left_turn-6, left_turn-7, and 2 more); the gate would be judged over the runs that survived. Run them again, or pass --allow-unrecorded to judge the records there are
+</code></pre></div>
+<ul>
+<li>A <strong>local batch</strong> is read from its <code>batch_results.json</code>: each entry with
+  <code>"error": true</code> raised on every attempt, and wrote no record.</li>
+<li>A <strong>SLURM batch</strong> is read from its tasks' outcomes (<code>slurm/results/</code>),
+  collected or not: a case that errored, has no outcome (its task was killed,
+  or is still running) or one with no verdict counts, unless a gate record is
+  at its stem -- its run wrote one before the task failed, and that record is
+  judged.</li>
+<li>A summary or manifest that cannot be read refuses the set too.</li>
+<li>A gate record named on its own (not a directory) is judged as it is.</li>
+</ul>
+<p>The refusal does not tell the cases apart by logical scenario (a case that
+raised may have raised before it knew its route, and wrote nothing to say
+which it was), so one errored case of any scenario in the batch refuses the
+set, with <code>--scenario</code> too. Run the cases again (<code>scenario-slurm resubmit</code>
+for a SLURM batch), or pass <code>--allow-unrecorded</code> to judge the records there
+are, the lines printed as warnings.</p>
+<p>The runs are not given a failed record in their place: a run that raised
+before its route was chosen has no case to record, a made-up one would skew
+the case coverage and the cases a regression compares, and an attempt the
+batch retried would leave a failure beside the retry that passed. The
+batch's own list of what did not run is the one that is complete -- it holds
+too the SLURM tasks killed before Python could write anything.</p>
 <p>Records are grouped by the scenario id. Without <code>--document</code>, the gate a group
 is judged against is the one its latest record (by file time) states; when
 its records state different gates, or ran different versions of the document,
 the report warns. The report lists each criterion with what the runs measured
 and what the gate asks:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="gu">## Left turn (`logical_left_turn`): FAILED</span>
-<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>
-<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>11 of 12 run(s) passed.
-<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>
-<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>| Criterion | Measured | Required | Result |
-<a id="__codelineno-3-6" name="__codelineno-3-6" href="#__codelineno-3-6"></a>|---|---|---|---|
-<a id="__codelineno-3-7" name="__codelineno-3-7" href="#__codelineno-3-7"></a>| min_runs | 12 (12 run(s)) | &gt;= 10 | pass |
-<a id="__codelineno-3-8" name="__codelineno-3-8" href="#__codelineno-3-8"></a>| min_success_rate | 0.9167 (11 of 12 passed) | &gt;= 0.95 | <span class="gs">**FAIL**</span> |
-<a id="__codelineno-3-9" name="__codelineno-3-9" href="#__codelineno-3-9"></a>| min_case_coverage | 1 (12 of 12 case(s) on 1 map(s)) | &gt;= 0.8 | pass |
-<a id="__codelineno-3-10" name="__codelineno-3-10" href="#__codelineno-3-10"></a>| max_lateral_spread_m | 0.2213 (segment 1 at 45%, 60 station(s)) | &lt;= 0.4 | pass |
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="gu">## Left turn (`logical_left_turn`): FAILED</span>
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a>11 of 12 run(s) passed.
+<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a>
+<a id="__codelineno-4-5" name="__codelineno-4-5" href="#__codelineno-4-5"></a>| Criterion | Measured | Required | Result |
+<a id="__codelineno-4-6" name="__codelineno-4-6" href="#__codelineno-4-6"></a>|---|---|---|---|
+<a id="__codelineno-4-7" name="__codelineno-4-7" href="#__codelineno-4-7"></a>| min_runs | 12 (12 run(s)) | &gt;= 10 | pass |
+<a id="__codelineno-4-8" name="__codelineno-4-8" href="#__codelineno-4-8"></a>| min_success_rate | 0.9167 (11 of 12 passed) | &gt;= 0.95 | <span class="gs">**FAIL**</span> |
+<a id="__codelineno-4-9" name="__codelineno-4-9" href="#__codelineno-4-9"></a>| min_case_coverage | 1 (12 of 12 case(s) on 1 map(s)) | &gt;= 0.8 | pass |
+<a id="__codelineno-4-10" name="__codelineno-4-10" href="#__codelineno-4-10"></a>| max_lateral_spread_m | 0.2213 (segment 1 at 45%, 60 station(s)) | &lt;= 0.4 | pass |
 </code></pre></div>
 <h3 id="regression-a-baseline-against-a-candidate">Regression: a baseline against a candidate<a class="headerlink" href="#regression-a-baseline-against-a-candidate" title="Permanent link">&para;</a></h3>
 <p>Given two sets -- the runs of one version of the driver (the baseline) and of
@@ -2596,23 +2654,23 @@ that broke while the success rate still clears the gate is reported, and the
 comparison passes. <code>--fail-on-regression</code> makes any regression fail it too,
 for a release that must not lose a case it had. A scenario the candidate did
 not run fails either way; one only the candidate ran is judged on its own.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="c1"># Strict: exit 1 on any regression, even inside the gate</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>scenario-gate<span class="w"> </span>runs/v1.4/<span class="w"> </span>runs/v1.5/<span class="w"> </span>--fail-on-regression
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="c1"># Strict: exit 1 on any regression, even inside the gate</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>scenario-gate<span class="w"> </span>runs/v1.4/<span class="w"> </span>runs/v1.5/<span class="w"> </span>--fail-on-regression
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="gu">## Left turn (`logical_left_turn`): PASSED, REGRESSED</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="k">-</span><span class="w"> </span>Baseline: 12 of 12 run(s) passed; gate passed
-<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="k">-</span><span class="w"> </span>Candidate: 11 of 12 run(s) passed; gate passed
-<a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
-<a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a>| Criterion | Required | Baseline | Candidate | Change |
-<a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a>|---|---|---|---|---|
-<a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a>| min_runs | &gt;= 10 | 12 | 12 | same |
-<a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a>| min_success_rate | &gt;= 0.9 | 1 | 0.9167 | worse |
-<a id="__codelineno-5-10" name="__codelineno-5-10" href="#__codelineno-5-10"></a>| max_lateral_spread_m | &lt;= 0.4 | 0.1804 | 0.2213 | worse |
-<a id="__codelineno-5-11" name="__codelineno-5-11" href="#__codelineno-5-11"></a>
-<a id="__codelineno-5-12" name="__codelineno-5-12" href="#__codelineno-5-12"></a>Newly failing cases:
-<a id="__codelineno-5-13" name="__codelineno-5-13" href="#__codelineno-5-13"></a>
-<a id="__codelineno-5-14" name="__codelineno-5-14" href="#__codelineno-5-14"></a><span class="k">-</span><span class="w"> </span>Nishishinjuku [101,102,602,301]: baseline 1/1 passed, candidate 0/1
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="gu">## Left turn (`logical_left_turn`): PASSED, REGRESSED</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="k">-</span><span class="w"> </span>Baseline: 12 of 12 run(s) passed; gate passed
+<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="k">-</span><span class="w"> </span>Candidate: 11 of 12 run(s) passed; gate passed
+<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a>
+<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>| Criterion | Required | Baseline | Candidate | Change |
+<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>|---|---|---|---|---|
+<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>| min_runs | &gt;= 10 | 12 | 12 | same |
+<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>| min_success_rate | &gt;= 0.9 | 1 | 0.9167 | worse |
+<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a>| max_lateral_spread_m | &lt;= 0.4 | 0.1804 | 0.2213 | worse |
+<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>
+<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a>Newly failing cases:
+<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a>
+<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a><span class="k">-</span><span class="w"> </span>Nishishinjuku [101,102,602,301]: baseline 1/1 passed, candidate 0/1
 </code></pre></div>
 <table>
 <thead>
@@ -2632,7 +2690,7 @@ not run fails either way; one only the candidate ran is judged on its own.</p>
 </tr>
 <tr>
 <td><code>2</code></td>
-<td>Nothing to judge, a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, <code>--fail-on-regression</code> with one set, <code>--document</code> has no gate, or the <code>--markdown</code> or <code>--json</code> file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged)</td>
+<td>Nothing to judge, a batch among the runs lists cases that raised or have no outcome and left no record (unless <code>--allow-unrecorded</code>; above), a batch summary or SLURM manifest could not be read, a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, <code>--fail-on-regression</code> with one set, <code>--document</code> has no gate, or the <code>--markdown</code> or <code>--json</code> file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged)</td>
 </tr>
 </tbody>
 </table>
@@ -2659,26 +2717,26 @@ own, added by name (at 100 %) and dropped by unticking it. A value out of
 range -- a share over 100 % -- is refused with the reason, and the draft is
 left as it was.</p>
 <h2 id="python-api">Python API<a class="headerlink" href="#python-api" title="Permanent link">&para;</a></h2>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
-<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
-<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.authoring.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">GateSpec</span>
-<a id="__codelineno-6-4" name="__codelineno-6-4" href="#__codelineno-6-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.gate</span><span class="w"> </span><span class="kn">import</span> <span class="n">read_gate_record</span>
-<a id="__codelineno-6-5" name="__codelineno-6-5" href="#__codelineno-6-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.gate.evaluate</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-6-6" name="__codelineno-6-6" href="#__codelineno-6-6"></a>    <span class="n">compare_all</span><span class="p">,</span>
-<a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a>    <span class="n">find_gate_records</span><span class="p">,</span>
-<a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a>    <span class="n">judge_all</span><span class="p">,</span>
-<a id="__codelineno-6-9" name="__codelineno-6-9" href="#__codelineno-6-9"></a>    <span class="n">load_gate_records</span><span class="p">,</span>
-<a id="__codelineno-6-10" name="__codelineno-6-10" href="#__codelineno-6-10"></a><span class="p">)</span>
-<a id="__codelineno-6-11" name="__codelineno-6-11" href="#__codelineno-6-11"></a>
-<a id="__codelineno-6-12" name="__codelineno-6-12" href="#__codelineno-6-12"></a><span class="n">records</span><span class="p">,</span> <span class="n">errors</span> <span class="o">=</span> <span class="n">load_gate_records</span><span class="p">(</span><span class="n">find_gate_records</span><span class="p">([</span><span class="n">Path</span><span class="p">(</span><span class="s2">"outputs"</span><span class="p">)]))</span>
-<a id="__codelineno-6-13" name="__codelineno-6-13" href="#__codelineno-6-13"></a><span class="k">for</span> <span class="n">verdict</span> <span class="ow">in</span> <span class="n">judge_all</span><span class="p">(</span><span class="n">records</span><span class="p">,</span> <span class="n">GateSpec</span><span class="p">(</span><span class="n">min_success_rate</span><span class="o">=</span><span class="mf">0.9</span><span class="p">)):</span>
-<a id="__codelineno-6-14" name="__codelineno-6-14" href="#__codelineno-6-14"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">verdict</span><span class="o">.</span><span class="n">scenario</span><span class="p">,</span> <span class="n">verdict</span><span class="o">.</span><span class="n">passed</span><span class="p">)</span>
-<a id="__codelineno-6-15" name="__codelineno-6-15" href="#__codelineno-6-15"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">verdict</span><span class="o">.</span><span class="n">to_markdown</span><span class="p">())</span>
-<a id="__codelineno-6-16" name="__codelineno-6-16" href="#__codelineno-6-16"></a>
-<a id="__codelineno-6-17" name="__codelineno-6-17" href="#__codelineno-6-17"></a><span class="c1"># Regression: a baseline's runs against a candidate's, under one gate</span>
-<a id="__codelineno-6-18" name="__codelineno-6-18" href="#__codelineno-6-18"></a><span class="n">baseline</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">load_gate_records</span><span class="p">(</span><span class="n">find_gate_records</span><span class="p">([</span><span class="n">Path</span><span class="p">(</span><span class="s2">"runs/v1.4"</span><span class="p">)]))</span>
-<a id="__codelineno-6-19" name="__codelineno-6-19" href="#__codelineno-6-19"></a><span class="k">for</span> <span class="n">comparison</span> <span class="ow">in</span> <span class="n">compare_all</span><span class="p">(</span><span class="n">baseline</span><span class="p">,</span> <span class="n">records</span><span class="p">):</span>
-<a id="__codelineno-6-20" name="__codelineno-6-20" href="#__codelineno-6-20"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">comparison</span><span class="o">.</span><span class="n">scenario</span><span class="p">,</span> <span class="n">comparison</span><span class="o">.</span><span class="n">regressed</span><span class="p">,</span> <span class="n">comparison</span><span class="o">.</span><span class="n">newly_failing</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">pathlib</span><span class="w"> </span><span class="kn">import</span> <span class="n">Path</span>
+<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a>
+<a id="__codelineno-7-3" name="__codelineno-7-3" href="#__codelineno-7-3"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.authoring.models</span><span class="w"> </span><span class="kn">import</span> <span class="n">GateSpec</span>
+<a id="__codelineno-7-4" name="__codelineno-7-4" href="#__codelineno-7-4"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.gate</span><span class="w"> </span><span class="kn">import</span> <span class="n">read_gate_record</span>
+<a id="__codelineno-7-5" name="__codelineno-7-5" href="#__codelineno-7-5"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.gate.evaluate</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
+<a id="__codelineno-7-6" name="__codelineno-7-6" href="#__codelineno-7-6"></a>    <span class="n">compare_all</span><span class="p">,</span>
+<a id="__codelineno-7-7" name="__codelineno-7-7" href="#__codelineno-7-7"></a>    <span class="n">find_gate_records</span><span class="p">,</span>
+<a id="__codelineno-7-8" name="__codelineno-7-8" href="#__codelineno-7-8"></a>    <span class="n">judge_all</span><span class="p">,</span>
+<a id="__codelineno-7-9" name="__codelineno-7-9" href="#__codelineno-7-9"></a>    <span class="n">load_gate_records</span><span class="p">,</span>
+<a id="__codelineno-7-10" name="__codelineno-7-10" href="#__codelineno-7-10"></a><span class="p">)</span>
+<a id="__codelineno-7-11" name="__codelineno-7-11" href="#__codelineno-7-11"></a>
+<a id="__codelineno-7-12" name="__codelineno-7-12" href="#__codelineno-7-12"></a><span class="n">records</span><span class="p">,</span> <span class="n">errors</span> <span class="o">=</span> <span class="n">load_gate_records</span><span class="p">(</span><span class="n">find_gate_records</span><span class="p">([</span><span class="n">Path</span><span class="p">(</span><span class="s2">"outputs"</span><span class="p">)]))</span>
+<a id="__codelineno-7-13" name="__codelineno-7-13" href="#__codelineno-7-13"></a><span class="k">for</span> <span class="n">verdict</span> <span class="ow">in</span> <span class="n">judge_all</span><span class="p">(</span><span class="n">records</span><span class="p">,</span> <span class="n">GateSpec</span><span class="p">(</span><span class="n">min_success_rate</span><span class="o">=</span><span class="mf">0.9</span><span class="p">)):</span>
+<a id="__codelineno-7-14" name="__codelineno-7-14" href="#__codelineno-7-14"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">verdict</span><span class="o">.</span><span class="n">scenario</span><span class="p">,</span> <span class="n">verdict</span><span class="o">.</span><span class="n">passed</span><span class="p">)</span>
+<a id="__codelineno-7-15" name="__codelineno-7-15" href="#__codelineno-7-15"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">verdict</span><span class="o">.</span><span class="n">to_markdown</span><span class="p">())</span>
+<a id="__codelineno-7-16" name="__codelineno-7-16" href="#__codelineno-7-16"></a>
+<a id="__codelineno-7-17" name="__codelineno-7-17" href="#__codelineno-7-17"></a><span class="c1"># Regression: a baseline's runs against a candidate's, under one gate</span>
+<a id="__codelineno-7-18" name="__codelineno-7-18" href="#__codelineno-7-18"></a><span class="n">baseline</span><span class="p">,</span> <span class="n">_</span> <span class="o">=</span> <span class="n">load_gate_records</span><span class="p">(</span><span class="n">find_gate_records</span><span class="p">([</span><span class="n">Path</span><span class="p">(</span><span class="s2">"runs/v1.4"</span><span class="p">)]))</span>
+<a id="__codelineno-7-19" name="__codelineno-7-19" href="#__codelineno-7-19"></a><span class="k">for</span> <span class="n">comparison</span> <span class="ow">in</span> <span class="n">compare_all</span><span class="p">(</span><span class="n">baseline</span><span class="p">,</span> <span class="n">records</span><span class="p">):</span>
+<a id="__codelineno-7-20" name="__codelineno-7-20" href="#__codelineno-7-20"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">comparison</span><span class="o">.</span><span class="n">scenario</span><span class="p">,</span> <span class="n">comparison</span><span class="o">.</span><span class="n">regressed</span><span class="p">,</span> <span class="n">comparison</span><span class="o">.</span><span class="n">newly_failing</span><span class="p">)</span>
 </code></pre></div>
 <p>A hand-written scenario can leave a gate record too: the runner writes
 whatever its <code>gate_record(result, file_stem)</code> method returns (a
@@ -2705,7 +2763,7 @@ whatever its <code>gate_record(result, file_stem)</code> method returns (a
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 10:53:40 UTC"><span class="timeago" datetime="2026-11-06T10:53:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 10:53:40 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 11:03:58 UTC"><span class="timeago" datetime="2026-11-06T11:03:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 11:03:58 UTC">2026-11-06</span>
   </span>
 
     
