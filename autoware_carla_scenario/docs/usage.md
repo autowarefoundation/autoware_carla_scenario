@@ -444,10 +444,11 @@ constraint or binding that does not parse, a `sweep.odd_sample` setting or
 map cache whose root is not a directory (`AUTOWARE_DATA_DIR` naming a file),
 or a `map.lanelet2_path` that is missing or that Lanelet2 cannot read. With
 `HYDRA_FULL_ERROR=1` each is raised instead, traceback and all. Invalid
-`controls` are refused as `scenario-expand` refuses them, before the map is
+`controls` are refused in `scenario-expand`'s format, before the map is
 loaded (so before a `map.source` is cloned): one line on stderr per problem,
 `<scenario>: <path>: <why>` (see [Checking controls](odd.md#checking-controls)),
-exit 1; with `HYDRA_FULL_ERROR=1` they are raised instead. Every other error
+exit 1; unlike `scenario-expand`, the sweeper raises them instead with
+`HYDRA_FULL_ERROR=1`. Every other error
 the sweeper meets keeps Hydra's traceback.
 
 Ctrl-C or `SIGTERM` stops the sweep and the case it is running. The case is

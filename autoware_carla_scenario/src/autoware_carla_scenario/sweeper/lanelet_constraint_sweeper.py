@@ -409,9 +409,10 @@ def _read_controls(cfg: DictConfig) -> dict[str, Any]:
     stderr per problem, ``<scenario>: <path>: <why>``
     (:func:`~..odd.controls.format_diagnostics`), and exit 1, a
     configuration error (docs/usage.md, "Exit Codes").  The scenario is the
-    config's ``scenario`` choice; without one the lines name none.  With
-    ``HYDRA_FULL_ERROR=1`` the :class:`~..odd.controls.ControlsError` is
-    raised instead, traceback and all.
+    config's ``scenario`` choice; without one the lines name none.  Unlike
+    ``scenario-expand``, with ``HYDRA_FULL_ERROR=1`` the
+    :class:`~..odd.controls.ControlsError` is raised instead, traceback and
+    all.
 
     Raises:
         ControlsError: With ``HYDRA_FULL_ERROR=1``, when they are invalid.
