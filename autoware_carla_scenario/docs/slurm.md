@@ -233,7 +233,7 @@ command line (`launcher.mem=12G`), or in a config.
 | `extra_sbatch_args` | `[]` | further `sbatch` arguments |
 | `export` | `null` | `sbatch --export`; `null`: `ALL`, or `NONE` with `remote_cwd` |
 | `env_passthrough` | `null` | variables recorded at submission and set again in the job (a matched name no shell takes, such as an exported bash function, is left out); `null`: see below, or none with `remote_cwd` |
-| `setup` | `[]` | shell lines the job runs before the worker (`module load`, `source .venv/bin/activate`) |
+| `setup` | `[]` | shell lines the job runs before the worker (`module load`, `source .venv/bin/activate`); each is one command, and one ending in an unescaped backslash is refused |
 | `env` | `{}` | variables set in the job, last; a name must be a shell variable name (`[A-Za-z_][A-Za-z0-9_]*`), as the run panel requires |
 | `python` | `null` | the interpreter the jobs run (the tasks and the collect job): an absolute path, a path relative to the job's working directory (`.venv/bin/python`), `~/...` (the home on the node), or a command on the node's `PATH` (`python3`); `null`: the submitting one |
 | `remote_cwd` | `null` | where the jobs work on the nodes, for a submit host that sees their file system at another path ([A submit host with other paths](#a-submit-host-with-other-paths)); `null`: the directory `scenario` runs in |
