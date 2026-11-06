@@ -46,7 +46,6 @@ from __future__ import annotations
 
 import json
 import logging
-import math
 import os
 import signal
 import sys
@@ -84,27 +83,23 @@ from .isolation import (  # noqa: F401  (SWEEPER_OWNS_RETRIES_ENV: re-exported)
     _launch_isolated,
     _raise_interrupted,
 )
+from .job_status import (
+    DEFAULT_JOB_TIMEOUT,
+    FAILED_VERDICT_EXIT_CODE,
+    MAX_JOB_TIMEOUT,
+    REFUSED_EXIT_CODE,
+    verdict_exit_code,
+    whole_job_seconds,
+)
 
 logger = logging.getLogger(__name__)
 
-# Default hard timeout per job (seconds).  Can be overridden via
-# ``sweep.job_timeout_seconds`` in the scenario YAML.
-_DEFAULT_JOB_TIMEOUT = 120
-
-#: The largest ``sweep.job_timeout_seconds``: ``signal.alarm`` takes a C
-#: ``int`` and raises ``OverflowError`` above it (about 68 years).
-_MAX_JOB_TIMEOUT = 2**31 - 1
-
-#: The exit status of a refused run (docs/usage.md, "Exit Codes").
-_REFUSED_EXIT_CODE = 2
-
-#: The exit status of a forked case whose scenario ran to a FAILED verdict
-#: (its result JSON says ``passed: false``).  Final, as in
-#: :class:`~autoware_carla_scenario.scenario_queue.ScenarioQueue`, which
-#: retries a run that raised but not one that completed: only a case exiting
-#: 1 (it raised, or wrote no result), timing out or dying of a signal is
-#: retried (``server.cooldown_max_retries``).
-_FAILED_VERDICT_EXIT_CODE = 3
+# The case's timeout and exit statuses are the checked :mod:`.job_status`'s;
+# the old private names stay, for what imports them from here.
+_DEFAULT_JOB_TIMEOUT = DEFAULT_JOB_TIMEOUT
+_MAX_JOB_TIMEOUT = MAX_JOB_TIMEOUT
+_REFUSED_EXIT_CODE = REFUSED_EXIT_CODE
+_FAILED_VERDICT_EXIT_CODE = FAILED_VERDICT_EXIT_CODE
 
 
 class SweepFailedError(CompactHydraException):
@@ -149,13 +144,10 @@ def _job_timeout_seconds(value: Any) -> int:
     except (TypeError, ValueError, OverflowError):
         # OverflowError: an int too big for a float (10**400) (#1652).
         raise ValueError(message) from None
-    if (
-        not math.isfinite(seconds)
-        or not 0 <= seconds <= _MAX_JOB_TIMEOUT
-        or seconds != math.floor(seconds)
-    ):
+    whole = whole_job_seconds(seconds)
+    if whole is None:
         raise ValueError(message)
-    return int(seconds)
+    return whole
 
 
 def _read_verdict(output_dir: Path) -> bool | None:
@@ -293,10 +285,7 @@ def _job_exit_code(job_returns: Any) -> int:
     output_dir = _get_job_output_dir(ret)
     if not output_dir or not Path(output_dir).is_dir():
         return 0
-    verdict = _read_verdict(Path(output_dir))
-    if verdict is None:
-        return 1
-    return 0 if verdict else _FAILED_VERDICT_EXIT_CODE
+    return verdict_exit_code(_read_verdict(Path(output_dir)))
 
 
 def _launch_job_isolated(
