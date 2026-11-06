@@ -111,7 +111,8 @@ criterion fail: the share cannot be known.
 A run of a logical scenario with a gate writes `{stem}_gate.json` beside
 `{stem}_result.json` (best effort, as the coverage file). The coverage file
 and the record are written before the result, so a run whose result is on
-disk has its record there too:
+disk has its record there too, unless writing the record failed (which is
+logged):
 
 ```json
 {
@@ -158,7 +159,9 @@ disk has its record there too:
   `--document` too, though the document's gate replaces it: the record is
   corrupt all the same.
 - `files` names the run's other outputs the runner wrote beside the record
-  (one it did not write is left out); the coverage criteria merge the
+  (one it did not write is left out, except the result, written just after
+  the record and named even if that write then fails); the coverage
+  criteria merge the
   `coverage` files of the runs judged.
 - The record is compact JSON: a row a tick adds up over a long run.
 
