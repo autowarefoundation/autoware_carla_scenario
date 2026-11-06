@@ -7,6 +7,7 @@ Both used to ignore their arguments: ``viewer --help`` or
 
 from __future__ import annotations
 
+import argparse
 import os
 import socket
 import subprocess
@@ -17,7 +18,7 @@ from typing import Any, Callable
 import pytest
 
 from autoware_carla_scenario import editor, ui
-from autoware_carla_scenario.serve_cli import is_loopback, warn_if_exposed
+from autoware_carla_scenario.serve_cli import is_loopback, port, warn_if_exposed
 
 _ENV = (
     "VIEWER_HOST",
@@ -139,6 +140,56 @@ class TestBothCommands:
         assert exc.value.code == 2
         assert served == []
 
+    @pytest.mark.parametrize("bad", ["0", "-1", "70000", "abc"])
+    def test_an_out_of_range_port_flag_is_a_usage_error(
+        self,
+        prog: str,
+        bad: str,
+        served: list[dict[str, Any]],
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        # Out of range used to reach uvicorn, whose asyncio bind raised an
+        # OverflowError traceback (#1774).
+        with pytest.raises(SystemExit) as exc:
+            _MAINS[prog](["--port", bad])
+        assert exc.value.code == 2
+        assert served == []
+        err = capsys.readouterr().err
+        assert f"usage: {prog}" in err
+        assert "argument --port" in err
+
+    @pytest.mark.parametrize("bad", ["0", "-1", "70000", "abc"])
+    def test_an_out_of_range_port_variable_is_a_usage_error(
+        self,
+        prog: str,
+        bad: str,
+        served: list[dict[str, Any]],
+        monkeypatch: pytest.MonkeyPatch,
+        capsys: pytest.CaptureFixture[str],
+    ) -> None:
+        monkeypatch.setenv(f"{_PREFIX[prog]}_PORT", bad)
+        with pytest.raises(SystemExit) as exc:
+            _MAINS[prog]([])
+        assert exc.value.code == 2
+        assert served == []
+        err = capsys.readouterr().err
+        assert f"usage: {prog}" in err
+        assert "argument --port" in err
+
+    @pytest.mark.parametrize("edge", [1, 65535])
+    def test_the_ends_of_the_port_range_are_served(
+        self,
+        prog: str,
+        edge: int,
+        served: list[dict[str, Any]],
+        base_path: None,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _MAINS[prog](["--port", str(edge)])
+        monkeypatch.setenv(f"{_PREFIX[prog]}_PORT", str(edge))
+        _MAINS[prog]([])
+        assert [call["port"] for call in served] == [edge, edge]
+
     def test_every_interface_is_served_with_a_warning(
         self,
         prog: str,
@@ -248,6 +299,25 @@ def test_the_warning_brackets_an_ipv6_address(
 ) -> None:
     warn_if_exposed("viewer", "::", 9000, "do things")
     assert "listening on [::]:9000" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("0", "must be within 1-65535, got 0"),
+        ("-1", "must be within 1-65535, got -1"),
+        ("65536", "must be within 1-65535, got 65536"),
+        ("abc", "expected an integer, got 'abc'"),
+        ("2000.7", "expected an integer, got '2000.7'"),
+    ],
+)
+def test_port_refuses_what_is_not_a_tcp_port(text: str, message: str) -> None:
+    with pytest.raises(argparse.ArgumentTypeError, match=message):
+        port(text)
+
+
+def test_port_accepts_the_tcp_range() -> None:
+    assert [port(text) for text in ("1", "2000", "65535")] == [1, 2000, 65535]
 
 
 def _free_port() -> int:

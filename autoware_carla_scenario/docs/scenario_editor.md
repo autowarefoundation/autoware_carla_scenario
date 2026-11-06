@@ -1010,12 +1010,14 @@ guess.
 | `--export-dir` | `SCENARIO_EDITOR_EXPORT_DIR` | `./scenario_packages` | Where an export's wheelhouse `.zip` is staged for download, in a directory per draft; it is kept, so the link can be followed again, until the draft is deleted or exported again |
 | — | `SCENARIO_EDITOR_MAP_ROOTS` | the working directory | Directories a Lanelet2 map may be read from, `:`-separated; the map cache (`map_root()`: `$AUTOWARE_DATA_DIR/maps`, `~/autoware_data/maps` by default, or `AUTOWARE_CARLA_SCENARIO_MAP_CACHE`) is always added, set or not |
 | `--host` | `SCENARIO_EDITOR_HOST` | `127.0.0.1` | Bind address |
-| `--port` | `SCENARIO_EDITOR_PORT` | `9100` | Bind port (the result viewer uses 9000) |
+| `--port` | `SCENARIO_EDITOR_PORT` | `9100` | Bind port, 1-65535 (the result viewer uses 9000) |
 | — | `SCENARIO_EDITOR_MAP_VIEWER` | GitHub Pages build | URL of `simple_lanelet2`'s `viewer.js` |
 
 An option defaults to its variable, so a flag on the command line wins over the
 environment (`uv run scenario-editor --host 0.0.0.0 --port 9200`). An unknown
-option is an error (exit 2) and serves nothing.
+option is an error (exit 2) and serves nothing, as is a port (`--port` or
+`SCENARIO_EDITOR_PORT`) that is not an integer within 1-65535: 0, which would
+have the system pick a port the editor does not report, is refused too.
 
 The drafts directory holds every `*.yaml` the editor finds there, drafts or
 not. A file that is not a draft is left out of the list, and so is one the
