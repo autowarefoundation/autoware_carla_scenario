@@ -211,14 +211,24 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             _ENTITY_REGISTRY,
         ),
     },
-    f"{_PACKAGE}.weather_rules": _each(
-        "DEFAULT_RULES EGO_KEY QUANTITIES RulesError WEATHER_INPUTS check_weather_rules "
-        "default_rules rule_values use_weather_rules vehicle_range weather_rule_files",
-        "reads rule files with openodd (a Rust extension) and takes "
-        "`environment.rules` as `Mapping[str, Any]`, the runner's; a scenario "
-        "sets the weather, not the rules (weather_rules.codon models what "
-        "visibility and actions.environment read the rules through)",
-    ),
+    f"{_PACKAGE}.weather_rules": {
+        **_each(
+            "DEFAULT_RULES RulesError check_weather_rules default_rules "
+            "use_weather_rules vehicle_range weather_rule_files",
+            "reads rule files with openodd (a Rust extension) and takes "
+            "`environment.rules` as `Mapping[str, Any]`, the runner's; a "
+            "scenario sets the weather, not the rules (weather_rules.codon "
+            "models what visibility and actions.environment read the rules "
+            "through)",
+        ),
+        **_each(
+            "EGO_KEY QUANTITIES WEATHER_INPUTS rule_values",
+            "re-exported from weather_inputs, which the library check "
+            "compiles from its source; a scenario sets the weather, not the "
+            "rules (weather_rules.codon models what visibility and "
+            "actions.environment read the rules through)",
+        ),
+    },
     f"{_PACKAGE}.environment": {
         "write": (
             "writes the run's environment with json (`dict[str, Any]`), the "

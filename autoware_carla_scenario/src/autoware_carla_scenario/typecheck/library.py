@@ -353,6 +353,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.value_text",
     "autoware_carla_scenario.visibility",
     "autoware_carla_scenario.waypoint_arrival",
+    "autoware_carla_scenario.weather_inputs",
     "autoware_carla_scenario.world_reset",
 )
 
@@ -723,7 +724,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.ui.slurm_launch": "imports more of shlex than its shim declares (`shlex.split()`, for the command VIEWER_SCENARIO_COMMAND names), datetime, and slurm.manifest, which is not checked; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (`Any`); the options' checks, their overrides and the command line are the checked ui.slurm_options', the state of each case and its message the checked ui.slurm_case_state's, and what it asks SLURM (squeue, sinfo, whether sbatch and squeue are on PATH) the checked slurm.queue's",
     "autoware_carla_scenario.ui.sweep_resolver": "imports hydra and the registry (omegaconf, importlib), and, inside resolve_sweep(), authoring.hydra_config (pydantic, through authoring.models), odd.controls and sweeper.expand (omegaconf), which are not checked; imports `OddDraws` from odd.sampler (under `TYPE_CHECKING`), which the odd model does not declare",
     "autoware_carla_scenario.utils.config": "reads the fields of a dataclass it is handed as a class (`type`, dataclasses.fields), takes the options as `Mapping[str, Any]` and, in checked_str_list(), a list setting of any type (`value: Any`), which Codon cannot express",
-    "autoware_carla_scenario.weather_rules": "imports openodd (a Rust extension), reads rule files and `environment.rules` as `Mapping[str, Any]`, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it",
+    "autoware_carla_scenario.weather_rules": "imports openodd (a Rust extension), reads rule files and `environment.rules` as `Mapping[str, Any]`, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it; the quantities, the weather inputs, `rule_values()` and which `vehicles` entry a vehicle follows (`vehicle_entry()`) are the checked weather_inputs's (#1732)",
 }
 
 #: Model modules (``codon/autoware_carla_scenario/<name>.codon``) the library

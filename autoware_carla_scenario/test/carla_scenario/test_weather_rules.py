@@ -510,3 +510,80 @@ def test_well_formed_rules_pass_the_batch_check_unread() -> None:
         {"default": "https://example.com/r.yaml", "vehicles": {"ego": "x.yaml"}},
     ):
         run.check_batch_configs([_composed(rules)])  # type: ignore[list-item]
+
+
+@pytest.mark.parametrize(
+    "name", ["EGO_KEY", "QUANTITIES", "WEATHER_INPUTS", "rule_values"]
+)
+def test_weather_rules_re_exports_the_checked_weather_inputs(name: str) -> None:
+    # #1732: the plain part moved to the checked weather_inputs; weather_rules
+    # (and odd.backend through it) still names the same objects.
+    from autoware_carla_scenario import weather_inputs, weather_rules
+
+    assert getattr(weather_rules, name) is getattr(weather_inputs, name)
+    assert name in weather_rules.__all__
+    assert CARLA_BACKEND.rule_inputs is weather_inputs.WEATHER_INPUTS
+
+
+def test_rule_values_adds_water_from_the_wetter_of_wetness_and_deposits() -> None:
+    from autoware_carla_scenario.weather_inputs import rule_values
+
+    assert rule_values({"wetness": 30, "precipitation_deposits": 70}) == {
+        "wetness": 30.0,
+        "precipitation_deposits": 70.0,
+        "water": 70.0,
+    }
+    assert rule_values({"wetness": 20.0, "water": 5.0})["water"] == 5.0
+    assert rule_values({"fog_density": 10.0}) == {"fog_density": 10.0}
+
+
+@pytest.mark.parametrize(
+    ("patterns", "type_id", "role", "expected"),
+    [
+        ([], "vehicle.mini.cooper", "Ego", -1),
+        (["ego"], "vehicle.mini.cooper", "Ego", 0),
+        (["EGO"], "vehicle.mini.cooper", "Ego", 0),
+        (["Ego"], "vehicle.mini.cooper", "ego", -1),
+        # The ego key matches the role only, never the blueprint.
+        (["ego"], "ego", "", -1),
+        (["vehicle.mini.*", "ego"], "vehicle.mini.cooper", "Ego", 0),
+        (["ego", "vehicle.mini.*"], "vehicle.mini.cooper", "Ego", 0),
+        (["ego", "vehicle.mini.*"], "vehicle.mini.cooper", "", 1),
+        (["vehicle.tesla.*", "vehicle.*"], "vehicle.mini.cooper", "", 1),
+        (["vehicle.mini.cooper"], "vehicle.mini.cooper", "", 0),
+        (["vehicle.mini.coope?"], "vehicle.mini.cooper", "", 0),
+        (["vehicle.mini.coope?"], "vehicle.mini.coope", "", -1),
+        (["vehicle.[mt]*"], "vehicle.mini.cooper", "", 0),
+        (["vehicle.[!m]*"], "vehicle.mini.cooper", "", -1),
+        (["vehicle.[!m]*"], "vehicle.tesla.model3", "", 0),
+        (["vehicle.[a-l]*"], "vehicle.mini.cooper", "", -1),
+        (["vehicle.[l-n]*"], "vehicle.mini.cooper", "", 0),
+        # A `[` with no `]` is itself; `[[]` and `[*]` escape.
+        (["vehicle.[mini"], "vehicle.[mini", "", 0),
+        (["vehicle.[[]x"], "vehicle.[x", "", 0),
+        (["vehicle.[*]"], "vehicle.*", "", 0),
+        (["vehicle.[*]"], "vehicle.x", "", -1),
+        # Case-sensitive, and of the whole name.
+        (["Vehicle.*"], "vehicle.mini.cooper", "", -1),
+        (["vehicle.mini"], "vehicle.mini.cooper", "", -1),
+    ],
+)
+def test_vehicle_entry_is_the_first_pattern_the_vehicle_matches(
+    patterns: list[str], type_id: str, role: str, expected: int
+) -> None:
+    import fnmatch
+
+    from autoware_carla_scenario.weather_inputs import EGO_KEY, vehicle_entry
+
+    assert vehicle_entry(patterns, type_id, role) == expected
+    # As the loop weather_rules ran before the move (#1732).
+    before = -1
+    for index, pattern in enumerate(patterns):
+        if pattern.lower() == EGO_KEY:
+            if role == "Ego":
+                before = index
+                break
+        elif fnmatch.fnmatchcase(type_id, pattern):
+            before = index
+            break
+    assert before == expected
