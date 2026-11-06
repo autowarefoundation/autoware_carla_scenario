@@ -394,17 +394,24 @@ imports the other.
 
 ## CLI entry points
 
-Defined in `pyproject.toml`:
+Defined in `pyproject.toml`'s `[project.scripts]`, in that order:
 
-| Command | Module |
-|---------|--------|
-| `scenario` | `autoware_carla_scenario.examples.run:main` |
-| `detect-no-3d-model` | `autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main` |
-| `viewer` | `autoware_carla_scenario.ui:main` |
-| `scenario-editor` | `autoware_carla_scenario.editor:main` |
-| `scenario-new` | `autoware_carla_scenario.scaffold.generator:main` |
-| `scenario-coverage` | `autoware_carla_scenario.coverage.report:main` |
-| `scenario-odd` | `autoware_carla_scenario.odd.cli:main` |
+| Command | Module | Description |
+|---------|--------|-------------|
+| `scenario` | `autoware_carla_scenario.examples.run:main` | Run scenarios in CARLA (Hydra). See [Usage](usage.md#scenario-scenario-runner). |
+| `scenario-expand` | `autoware_carla_scenario.examples.expand:main` | Print the concrete scenarios of a scenario as JSON, without running anything. See [Logical Scenarios](logical_scenarios.md). |
+| `scenario-check` | `autoware_carla_scenario.typecheck.cli:main` | Compile scenarios with Codon without running them (the static check the runner makes before a run). See [Static Check](typecheck.md). |
+| `scenario-coverage` | `autoware_carla_scenario.coverage.report:main` | Merge the coverage files of scenario runs into an ODD/scenario coverage report. See [Coverage](coverage.md). |
+| `scenario-gate` | `autoware_carla_scenario.gate.evaluate:main` | Judge logical scenarios' gates (runs, success rate, coverage, trajectory consistency) from their runs' gate records. See [Gates](gate.md#judging-scenario-gate). |
+| `scenario-slurm` | `autoware_carla_scenario.slurm.cli:main` | Follow, collect, resubmit or cancel a batch run with `launcher=slurm`. See [SLURM](slurm.md#following-collecting-resubmitting). |
+| `scenario-odd` | `autoware_carla_scenario.odd.cli:main` | Check an ODD (Python with Codon, or OpenODD YAML) and show its buckets. See [ODD](odd.md#checking-an-odd). |
+| `scenario-new` | `autoware_carla_scenario.scaffold.generator:main` | Generate a standalone scenario package. See [Tutorial](tutorial.md). |
+| `scenario-setup` | `autoware_carla_scenario.carla_install:main` | Download a CARLA server (the nightly build by default) for the runner to launch. See [Installation](installation.md). |
+| `detect-no-3d-model` | `autoware_carla_scenario.tools.detect_no_3d_model_lanelets:main` | Detect lanelets without a matching 3D ground model in CARLA. See [Usage](usage.md#detect-no-3d-model-3d-model-detection). |
+| `viewer` | `autoware_carla_scenario.ui:main` | Scenario Result Viewer: a web UI for browsing scenario results and starting runs. See [Usage](usage.md#viewer-scenario-result-viewer). |
+| `scenario-editor` | `autoware_carla_scenario.editor:main` | Scenario Editor: a web UI for authoring scenarios and exporting them as packages; a separate application from `viewer`. See [Scenario Editor](scenario_editor.md). |
+| `scenario-hils` | `autoware_carla_scenario.hils.cli:main` | Stream a run's ego to devices under test (CAN, GNSS, LiDAR, cameras); needs the `hils` extra. See [HILS Bridge](hils.md). |
+| `scenario-t4scene` | `autoware_carla_scenario.t4_scene.__main__:main` | Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit. See [T4 Scene](t4_scene.md). |
 
 The `scenario` command also exposes Python-level helpers in
 `autoware_carla_scenario.examples.run` for downstream packages:
