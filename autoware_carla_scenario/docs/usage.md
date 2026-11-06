@@ -1647,7 +1647,13 @@ missing* (the cases with no outcome, including a result with no boolean
 `elapsed_seconds`, unreadable `condition_statuses` or `failure` -- which
 shows as failed, or that errored), *Resubmit failed too*
 (`--failed`), with the array parallelism and cases per task to use, *Collect*
-(the summary and `batch_results.json`) and *Cancel jobs*.
+(the summary and `batch_results.json`) and *Cancel jobs*. Each shows the
+command's output, marked failed when the command failed: *Collect* is marked
+done when it collected the batch, even with cases that failed (exit 1 with a
+new `slurm/collected.json`), and failed when it could not collect it (an
+`Error:` such as an unreadable manifest or an unwritable batch directory, a
+traceback, or a `scenario-slurm` that could not be started or did not end in
+five minutes).
 
 `VIEWER_SCENARIO_COMMAND` replaces `uv run scenario` as the command a SLURM
 batch is submitted with (`.venv/bin/scenario`, say, where `uv run` must not

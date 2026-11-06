@@ -978,7 +978,9 @@ async def slurm_status(date: str, time: str) -> dict[str, Any]:
 async def slurm_action(
     request: Request, date: str, time: str, action: str
 ) -> JSONResponse:
-    """``scenario-slurm resubmit|collect|cancel`` on the batch.
+    """``scenario-slurm resubmit|collect|cancel`` on the batch: ``ok`` when it
+    did what was asked -- for ``collect``, when it collected the batch, even
+    with cases that failed (``code`` 1).
 
     ``resubmit`` takes ``{"failed": bool, "array_parallelism": n,
     "cases_per_task": n}`` and submits without waiting; a body that is not
@@ -1034,8 +1036,12 @@ async def slurm_action(
                     )
                 args.extend([f"--{key.replace('_', '-')}", str(int(value))])
         args.append("--no-wait")
-    code, output = await asyncio.to_thread(slurm_launch.run_cli, args)
+    if action == "collect":
+        # Exit 1 is "collected, a case failed" only when collect wrote its
+        # record; an ``Error:`` or a traceback exits 1 too (#1746).
+        ok, code, output = await asyncio.to_thread(slurm_launch.run_collect, directory)
+    else:
+        code, output = await asyncio.to_thread(slurm_launch.run_cli, args)
+        ok = code == 0
     scanner.clear_cache()
-    return JSONResponse(
-        {"ok": code == 0 or action == "collect", "code": code, "output": output}
-    )
+    return JSONResponse({"ok": ok, "code": code, "output": output})

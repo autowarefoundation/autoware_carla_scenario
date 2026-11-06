@@ -38,6 +38,7 @@ _LAUNCH_NAMES = {
     "build_command",
     "partitions",
     "run_cli",
+    "run_collect",
     "scenario_command",
     "start_submit",
     "submission",

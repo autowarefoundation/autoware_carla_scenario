@@ -588,6 +588,72 @@ def test_collect_writes_the_summary(
     summary = json.loads((batch / "batch_results.json").read_text())
     assert [e["passed"] for e in summary] == [True, False, False, False]
     assert scanner.load_session(tmp_path, "batch", "2026-10-19", "12-00-00")[0].passed
+    # Collecting again rewrites collected.json: still collected.
+    again = client.post("/api/slurm/2026-10-19/12-00-00/collect").json()
+    assert again["ok"] and again["code"] == 1
+
+
+def test_a_collect_that_could_not_collect_is_not_ok(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1746: ``scenario-slurm collect`` exits 1 on an ``Error:`` too (an
+    unreadable manifest here): the viewer reports it failed, not "collected,
+    a case failed" -- even with an earlier collect's record in place."""
+    batch = _manifest_batch(tmp_path)
+    _fake_squeue(tmp_path, monkeypatch, "")
+    assert client.post("/api/slurm/2026-10-19/12-00-00/collect").json()["ok"]
+    (batch / "slurm" / "manifest.json").write_text("{not json")
+    # _slurm_batch() only asks that the manifest be there.
+    collected = client.post("/api/slurm/2026-10-19/12-00-00/collect").json()
+    assert collected["code"] == 1 and "Error:" in collected["output"]
+    assert not collected["ok"]
+
+
+def test_a_collect_that_exits_1_without_collecting_is_not_ok(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1746: exit 1 with no new ``collected.json`` (a traceback, say) is not
+    collected."""
+    _manifest_batch(tmp_path)
+    monkeypatch.setattr(
+        slurm_launch, "run_cli", lambda args, timeout=300.0: (1, "Traceback ...")
+    )
+    collected = client.post("/api/slurm/2026-10-19/12-00-00/collect").json()
+    assert collected == {"ok": False, "code": 1, "output": "Traceback ..."}
+
+
+@pytest.mark.parametrize(
+    ("raised", "code"),
+    [
+        (subprocess.TimeoutExpired(["scenario-slurm"], 300.0), slurm_launch.TIMED_OUT),
+        (FileNotFoundError("no python"), slurm_launch.NOT_STARTED),
+    ],
+    ids=["timeout", "oserror"],
+)
+@pytest.mark.parametrize("action", ["collect", "cancel", "resubmit"])
+def test_a_scenario_slurm_that_could_not_run_is_not_ok(
+    client: TestClient,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    raised: Exception,
+    code: int,
+    action: str,
+) -> None:
+    """#1746: run_cli turns a timeout or an OSError into a code of its own,
+    neither 0 nor 1, which no action reports done."""
+    _manifest_batch(tmp_path)
+    monkeypatch.setattr(slurm_launch, "availability", lambda: (True, ""))
+
+    def run(*args: Any, **kwargs: Any) -> Any:
+        raise raised
+
+    monkeypatch.setattr(slurm_launch.subprocess, "run", run)
+    assert slurm_launch.run_cli(["status", "x"])[0] == code
+    response = client.post(f"/api/slurm/2026-10-19/12-00-00/{action}", json={})
+    assert response.status_code == 200
+    out = response.json()
+    assert not out["ok"] and out["code"] == code
+    assert out["output"] == str(raised)
 
 
 # ── Through the fake SLURM ─────────────────────────────────────────────────

@@ -66,6 +66,7 @@ __all__ = [
     "build_command",
     "partitions",
     "run_cli",
+    "run_collect",
     "scenario_command",
     "start_submit",
     "submission",
@@ -439,9 +440,18 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
     }
 
 
+#: What :func:`run_cli` returns when ``scenario-slurm`` could not be started
+#: (an ``OSError``) or did not end in time, as a shell does: never 0 or 1, so
+#: no action reads either as done, nor collect as "collected, a case failed"
+#: (#1746).
+NOT_STARTED = 127
+TIMED_OUT = 124
+
+
 def run_cli(args: list[str], timeout: float = 300.0) -> tuple[int, str]:
     """``scenario-slurm <args>``, run by this viewer's interpreter: its exit
-    status and output."""
+    status and output; :data:`NOT_STARTED` or :data:`TIMED_OUT`, with why,
+    when it could not be started or did not end within *timeout* seconds."""
     command = [sys.executable, "-m", "autoware_carla_scenario.slurm.cli", *args]
     try:
         done = subprocess.run(  # noqa: S603
@@ -452,6 +462,37 @@ def run_cli(args: list[str], timeout: float = 300.0) -> tuple[int, str]:
             timeout=timeout,
             check=False,
         )
-    except (OSError, subprocess.TimeoutExpired) as exc:
-        return 1, str(exc)
+    except subprocess.TimeoutExpired as exc:
+        return TIMED_OUT, str(exc)
+    except OSError as exc:
+        return NOT_STARTED, str(exc)
     return done.returncode, "\n".join(s for s in (done.stdout, done.stderr) if s)
+
+
+def _stat_key(path: Path) -> tuple[int, int, int] | None:
+    """What tells one ``collected.json`` from the next: ``write_json`` renames
+    a new file over the old one, so its inode changes on every write."""
+    try:
+        stat = path.stat()
+    except OSError:
+        return None
+    return stat.st_ino, stat.st_mtime_ns, stat.st_size
+
+
+def run_collect(batch_dir: Path, timeout: float = 300.0) -> tuple[bool, int, str]:
+    """``scenario-slurm collect <batch_dir>``: whether it collected the batch,
+    its exit status and output.
+
+    Collected is exit 0 (every case passed), or exit 1 with
+    ``slurm/collected.json`` written by this run: collect writes it last, so
+    it is there only once the summary and ``batch_results.json`` are (#1746).
+    Exit 1 alone is no evidence: ``scenario-slurm`` also exits 1 on an
+    ``Error:`` (an unreadable manifest, an unwritable batch directory) and on
+    a traceback.
+    """
+    collected = BatchLayout(batch_dir).root / "collected.json"
+    before = _stat_key(collected)
+    code, output = run_cli(["collect", str(batch_dir)], timeout)
+    after = _stat_key(collected)
+    ok = code == 0 or (code == 1 and after is not None and after != before)
+    return ok, code, output
