@@ -4,8 +4,8 @@ The coordinate transform pipeline (Lanelet2 → OpenDRIVE → CARLA) can produce
 positions that are slightly off the drivable surface due to geometry mismatches
 between the Lanelet2 map and the XODR road network.  :func:`snap_to_carla_road`
 corrects the position via OpenDRIVE projection (for :class:`Lanelet2Pose` input)
-or the CARLA waypoint API (for :class:`CarlaWorldPose` input), and z via the
-nearest spawn point.
+or the CARLA waypoint API (for :class:`CarlaWorldPose` input), and z via a ray
+cast down onto the ground from the pose's own level of road (#1874).
 """
 
 from __future__ import annotations
@@ -23,6 +23,16 @@ logger = logging.getLogger(__name__)
 
 #: Maximum distance (m) to the nearest spawn point before a warning is emitted.
 _SPAWN_POINT_WARN_DISTANCE: float = 10.0
+
+#: How far (m) a spawn point may be above or below a pose's own height and
+#: still be taken for the same level of road (#1874).  The ray that finds the
+#: ground starts above its estimate, so an estimate taken off a spawn point on
+#: a deck over the pose lands it on the deck, and one off a road under the
+#: pose lands it under the bridge; an overpass is 4.5 m or more over the road
+#: below.  CARLA's own maps hold spawn points half a metre over the road, so
+#: this leaves the Lanelet2 height some 2 m to be off by; it is
+#: ``actions.background_traffic._OTHER_LEVEL_M`` (2 m) with that half metre.
+_SAME_LEVEL_M: float = 2.5
 
 
 @dataclass(frozen=True)
@@ -147,9 +157,13 @@ def snap_to_carla_road(
     When given a :class:`CarlaWorldPose`, the function uses the CARLA waypoint
     API to project x/y onto the nearest road.
 
-    For Lanelet2 and CARLA-world inputs z is corrected using the nearest CARLA
-    spawn point (spawn-point elevations match the physics-engine ground plane),
-    then refined by a ray cast onto the ground.
+    For Lanelet2 and CARLA-world inputs z is estimated on the pose's own level
+    of road -- the Lanelet2 pose's height, or the waypoint's, which CARLA picks
+    nearest the CARLA pose's height -- or from the CARLA spawn point nearest in
+    plan within :data:`_SAME_LEVEL_M` of it (spawn-point elevations match the
+    physics-engine ground plane), then refined by a ray cast onto the ground.
+    A spawn point on a deck over the pose, or on a road under it, is never
+    used: the ray would find that level instead (#1874).
 
     If the pose cannot be matched to any road, a warning is logged and the
     original pose (or its CARLA equivalent) is returned unchanged.
@@ -221,15 +235,22 @@ def _snap_lanelet2_to_its_centreline(
 
     None of those can arise from reading the lanelet directly.
 
-    Height still comes from CARLA: the nearest spawn point gives the elevation
-    the physics engine uses, and a ray cast refines it, so a pose written on a
-    map with its own idea of elevation still lands on the road.
+    Height still comes from CARLA: a ray cast finds the ground, so a pose
+    written on a map with its own idea of elevation still lands on the road.
+    The ray starts from the pose's own level: the spawn point nearest in plan
+    whose elevation (the one the physics engine uses) is within
+    :data:`_SAME_LEVEL_M` of the lanelet's height, else that height itself.
+    The spawn point nearest in plan regardless of height used to be taken,
+    and where roads are stacked that one can be on the deck over the lanelet
+    or the road under it, which the ray then found instead (#1874).
     """
     from .transform import to_carla_world  # noqa: PLC0415
 
     on_lanelet = to_carla_world(pose)
 
-    snapped_z = _z_from_nearest_spawn_point(on_lanelet.x, on_lanelet.y, world)
+    snapped_z = _z_from_nearest_spawn_point(
+        on_lanelet.x, on_lanelet.y, world, z_hint=on_lanelet.z
+    )
     base_z = snapped_z if snapped_z is not None else on_lanelet.z
     refined_z = refine_z_with_ground_projection(
         on_lanelet.x,
@@ -345,15 +366,18 @@ def _snap_carla_via_waypoint(
 ) -> CarlaWorldPose:
     """Snap a CARLA world pose using the waypoint API.
 
-    Uses ``get_waypoint()`` to project x/y onto the nearest road and the
-    nearest spawn point for z.  The original yaw is preserved.
+    Uses ``get_waypoint()`` to project the pose onto the nearest road -- at
+    its own height, as CARLA picks the road nearest in 3D, so a pose on a deck
+    stays on the deck and one under it on the road below (#1874) -- and takes
+    z from the waypoint's level of road (:func:`_z_from_nearest_spawn_point`,
+    hinted with the waypoint's height).  The original yaw is preserved.
     """
     from .map_manager import run_carla_map  # noqa: PLC0415
 
     carla_map = run_carla_map(world)
 
     waypoint = carla_map.get_waypoint(
-        carla.Location(x=pose.x, y=pose.y, z=0.0),
+        carla.Location(x=pose.x, y=pose.y, z=pose.z),
     )
     if waypoint is None:
         logger.warning(
@@ -366,9 +390,10 @@ def _snap_carla_via_waypoint(
 
     snapped_x = waypoint.transform.location.x
     snapped_y = waypoint.transform.location.y
+    road_z = waypoint.transform.location.z
 
-    snapped_z = _z_from_nearest_spawn_point(snapped_x, snapped_y, world)
-    base_z = snapped_z if snapped_z is not None else pose.z
+    snapped_z = _z_from_nearest_spawn_point(snapped_x, snapped_y, world, z_hint=road_z)
+    base_z = snapped_z if snapped_z is not None else road_z
     refined_z = refine_z_with_ground_projection(
         snapped_x, snapped_y, base_z, world, ground_projection=ground_projection
     )
@@ -401,22 +426,39 @@ def _snap_carla_via_waypoint(
 
 
 def _z_from_nearest_spawn_point(
-    x: float, y: float, world: "carla.World"
+    x: float, y: float, world: "carla.World", z_hint: float | None = None
 ) -> float | None:
     """Return z from the nearest CARLA spawn point, or ``None`` if unavailable.
 
-    Emits a warning when the nearest spawn point is more than
-    :data:`_SPAWN_POINT_WARN_DISTANCE` metres away.
+    With *z_hint* (the height of the pose's own level of road) only spawn
+    points within :data:`_SAME_LEVEL_M` of it are considered, so a spawn point
+    on a deck over the pose or a road under it, however near in plan, is not
+    taken (#1874); ``None`` when there is none.  Of those considered, the one
+    nearest in plan is taken (:func:`_nearest_spawn_z`).
     """
     from .map_manager import run_carla_map  # noqa: PLC0415
 
-    spawn_points = run_carla_map(world).get_spawn_points()
-    if not spawn_points:
-        return None
+    return _nearest_spawn_z(run_carla_map(world).get_spawn_points(), x, y, z_hint)
 
+
+def _nearest_spawn_z(
+    spawn_points: list[carla.Transform],
+    x: float,
+    y: float,
+    z_hint: float | None = None,
+) -> float | None:
+    """The z of the spawn point nearest ``(x, y)`` in plan, on *z_hint*'s level.
+
+    Without *z_hint* every spawn point is considered; with it, only those
+    within :data:`_SAME_LEVEL_M` of it.  ``None`` when none is.  Emits a
+    warning when the one taken is more than :data:`_SPAWN_POINT_WARN_DISTANCE`
+    metres away.
+    """
     best_dist2 = float("inf")
     best_z: float | None = None
     for sp in spawn_points:
+        if z_hint is not None and abs(sp.location.z - z_hint) > _SAME_LEVEL_M:
+            continue
         d2 = (sp.location.x - x) ** 2 + (sp.location.y - y) ** 2
         if d2 < best_dist2:
             best_dist2 = d2
@@ -456,7 +498,9 @@ def refine_z_with_ground_projection(
     x, y:
         CARLA world horizontal coordinates.
     z_estimate:
-        The best z estimate from existing logic (spawn-point / waypoint).
+        The best z estimate from existing logic (spawn-point / waypoint), on
+        the pose's own level of road: the ray finds the first surface below
+        ``z_estimate + ray_distance_upper``.
     world:
         An active ``carla.World`` instance.
     ground_projection:

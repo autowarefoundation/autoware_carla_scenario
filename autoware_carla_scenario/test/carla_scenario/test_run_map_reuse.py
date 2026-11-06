@@ -74,8 +74,9 @@ class TestWithAHeldMap:
             _snap_carla_via_waypoint,
         )
 
+        # The road 0.5 m under the spawn point (3.5): on its level (#1874).
         held_map.get_waypoint.return_value.transform.location = SimpleNamespace(
-            x=1.0, y=2.0, z=0.0
+            x=1.0, y=2.0, z=3.0
         )
         with patch(
             "autoware_carla_scenario.coordinate.snap.refine_z_with_ground_projection",

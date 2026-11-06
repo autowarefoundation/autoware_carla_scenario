@@ -51,6 +51,15 @@ __all__ = ["MapManager", "_parse_geo_reference"]
 
 logger = logging.getLogger(__name__)
 
+#: How far (m) a spawn point's offset may be from the median of them all and
+#: still be counted in the z offset (#1874).  A spawn point is matched to the
+#: lanelet nearest it in plan, which where roads are stacked can be the deck
+#: over it or the road under it, 4.5 m or more away: its offset is off by that
+#: much, and on a map whose stacking is one-sided those would bias every
+#: Lanelet2 <-> CARLA height.  Matches on the spawn point's own level agree to
+#: well within this.
+_Z_OFFSET_SAME_LEVEL_M = 2.0
+
 
 def _road_z(carla_map: carla.Map, location: carla.Location) -> float:
     """The height of the road under *location*, or its own where there is none.
@@ -372,10 +381,12 @@ class MapManager:
         """Compute ``lanelet2_z − carla_z``.
 
         When *carla_world* is provided, every CARLA spawn point is projected
-        onto the nearest Lanelet2 centerline and the per-point offset
-        ``(lanelet2_z − carla_spawn_z)`` is averaged.  This yields a more
-        accurate result than single-point sampling because it smooths out
-        local interpolation noise.
+        onto the nearest Lanelet2 centerline and the per-point offsets
+        ``(lanelet2_z − carla_road_z)`` are averaged, those of a spawn point
+        matched to a lanelet on another level left out
+        (:meth:`_z_offset_from_spawn_points`).  This yields a more accurate
+        result than single-point sampling because it smooths out local
+        interpolation noise.
 
         When *carla_world* is ``None`` (e.g. in unit tests without a CARLA
         connection) the legacy single-point fallback is used.
@@ -389,13 +400,19 @@ class MapManager:
     # -- spawn-point based (preferred) ------------------------------------
 
     def _z_offset_from_spawn_points(self, carla_world: carla.World) -> Optional[float]:
-        """Average ``lanelet2_z − carla_z`` over all CARLA spawn points.
+        """Average ``lanelet2_z − carla_z`` over the CARLA spawn points.
 
         A spawn point is where a vehicle is dropped from, not the road under
         it: CARLA's own maps put them half a metre up, a map cooked from
         roadgen four metres.  The road's height there is what the Lanelet2
         centerline is compared with, so it is read off the road the point
         stands on.
+
+        Each spawn point is matched to the lanelet nearest it in plan, which
+        where roads are stacked may be on the level over or under it.  So the
+        mean is taken over the offsets within :data:`_Z_OFFSET_SAME_LEVEL_M`
+        of their median, which those matches do not move (#1874); the mean of
+        them all let a map stacked on one side bias every height.
 
         Returns ``None`` when no usable spawn points are found so the caller
         can fall back to the reference-line method.
@@ -452,7 +469,17 @@ class MapManager:
         if not offsets:
             return None
 
-        return float(np.mean(offsets))
+        # The lower median: an offset of the list itself, so at least that one
+        # is within reach of it -- a mean of two levels' values could fall
+        # between them, leaving none to average.
+        ordered = sorted(offsets)
+        median = ordered[(len(ordered) - 1) // 2]
+        same_level = [
+            offset
+            for offset in offsets
+            if abs(offset - median) <= _Z_OFFSET_SAME_LEVEL_M
+        ]
+        return float(np.mean(same_level))
 
     # -- single-point fallback (for tests without CARLA) ------------------
 
