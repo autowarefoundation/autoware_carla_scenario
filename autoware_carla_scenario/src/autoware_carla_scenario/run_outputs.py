@@ -22,7 +22,9 @@ The modules that write each output keep their own name for its suffix
 ``test_run_outputs.py`` keeps them equal to the ones here.  Those of a run's
 environment and lock and of its T4Scene and map are defined here, and
 ``environment`` and ``t4_scene.convert`` re-export them under the names they
-had (#1713).  The path rule of
+had (#1713); so is the metrics' scratch recording, which ``rerun_metrics``
+re-exports, and the ODD archive, openodd's ``ODD_ARCHIVE_SUFFIX``, which
+``ui.case_paths`` reads from here (#1748).  The path rule of
 a trajectory log and its recordings lives here too (:func:`trajectory_stem`,
 :func:`recording_path`, :func:`sensors_recording_path`), so that the checked
 ``ui.web_viewer_paths`` shares it with ``rerun`` and ``rerun_lidar``, which
@@ -44,6 +46,8 @@ __all__ = [
     "COVERAGE_SUFFIX",
     "ENVIRONMENT_SUFFIX",
     "LOCK_SUFFIX",
+    "METRICS_SUFFIX",
+    "ODD_ARCHIVE_SUFFIX",
     "RECORDING_SUFFIX",
     "RESULT_SUFFIX",
     "RUN_DIR_SUFFIXES",
@@ -72,6 +76,12 @@ TRAJECTORY_SUFFIX = ".trajectory.jsonl"
 RECORDING_SUFFIX = ".rrd"
 #: The sensors recorded during the run: ``{stem}.sensors.rrd``.
 SENSORS_SUFFIX = ".sensors.rrd"
+#: The scratch recording a run's metrics are written to before they are merged
+#: into its recording: ``{stem}.metrics.rrd``.
+METRICS_SUFFIX = ".metrics.rrd"
+#: The run's ODD as the files it was read from: ``{stem}_odd.tar.gz``
+#: (openodd's ``ODD_ARCHIVE_SUFFIX``, which this module cannot import).
+ODD_ARCHIVE_SUFFIX = "_odd.tar.gz"
 #: The run's environment: ``{stem}_environment.json``.
 ENVIRONMENT_SUFFIX = "_environment.json"
 #: The lock of that environment: ``{stem}_requirements.lock``.
@@ -88,7 +98,7 @@ RUN_FILE_SUFFIXES: tuple[str, ...] = (
     COVERAGE_SUFFIX,
     # A logical scenario's gate record (docs/gate.md).
     GATE_RECORD_SUFFIX,
-    "_odd.tar.gz",
+    ODD_ARCHIVE_SUFFIX,
     ENVIRONMENT_SUFFIX,
     LOCK_SUFFIX,
     # CARLA's own recorder (its replay log).
@@ -98,6 +108,9 @@ RUN_FILE_SUFFIXES: tuple[str, ...] = (
     # The sensors recorded during the run, merged into the recording and
     # removed when it is written; left behind by a run that did not finish.
     SENSORS_SUFFIX,
+    # The metrics' scratch recording, merged into the recording and removed;
+    # left behind by a run killed while it was merged (a SLURM timeout).
+    METRICS_SUFFIX,
     # The T4Scene of the trajectory log and its map (t4scene.enabled).
     T4SCENE_SUFFIX,
     T4SCENE_MAP_SUFFIX,
@@ -112,7 +125,7 @@ RUN_DIR_SUFFIXES: tuple[str, ...] = (
 )
 
 #: Every suffix of a run output, longest first, so that ``X.sensors.rrd``
-#: reads as stem ``X``, not ``X.sensors``.
+#: and ``X.metrics.rrd`` read as stem ``X``, not ``X.sensors`` or ``X.metrics``.
 RUN_SUFFIXES: tuple[str, ...] = tuple(
     sorted(
         RUN_FILE_SUFFIXES + RUN_DIR_SUFFIXES,
