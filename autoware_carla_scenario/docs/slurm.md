@@ -56,7 +56,8 @@ On the machine you run `scenario` on (a SLURM submit host):
    (not `missing`), and `wait` says it has no job id to follow and where to
    look for the job (and, within those 600 s, that a `resubmit` is refused);
    `collect` reports each of its cases as `task <n> of submission <i> never
-   started` with the same note, never `job None`.
+   started` with the same note, never `job None`, and (within those 600 s)
+   that a `resubmit` is refused.
 4. By default `scenario` follows the array (`squeue`, and the outcome each task
    records) until it ends, then prints the summary and writes
    `batch_results.json`, as a local batch does, and exits 0 when every case
@@ -136,28 +137,37 @@ options of the others (`scenario-slurm <command> --help` says the same):
 
 A case that has no outcome -- its task was cancelled, ran out of time, was
 killed for memory, or its node failed -- is reported as `ERROR` with a message
-saying so, and `collect` lists them. So is a case whose recorded outcome holds
-no verdict -- no `result` object, or a `passed` that is not `true` or `false`
-(`"false"` and `1` are none) -- or a result that cannot be reported: a
-`message` that is missing or not a string, an `elapsed_seconds` that is not a
-number (`true` is none), `condition_statuses` that are not a list of objects
-each with a string `label` and `message` and a boolean `satisfied`, or a
-`failure` that is not an object or cannot be read (an `at` of the wrong
-type, say). What the worker writes always is readable; `rerun_recording`
-and `failure` may be missing. It did not pass, and `collect` reports it as
-`ERROR` naming its file; a `rerun_error` the task recorded for it is kept in
-`batch_results.json`. `status`, `wait` and the viewer count it as not
-passed: the results pages show it as an error. `resubmit` submits again the
-cases with no outcome or no verdict and those that raised on every attempt
-(`ERROR`); `--failed` adds the
-ones that ran and failed, `--cases a,b` names them (labels or indices; a case
-named twice runs once), and `--array-parallelism`/`--cases-per-task` change
-how they are spread. A case run again replaces its earlier files: before it
-runs, the task removes every output of its stem (`run_outputs`), its T4
-dataset directory (`{stem}.t4`) included, so none of the last attempt's is left
-beside the new result. So `resubmit` refuses while a job of the batch is queued
-or running, while `squeue` cannot tell whether one is, or while another
-submission of the batch is in flight (`--force` submits all the same).
+saying so, and `collect` lists them, saying what to do about them, chosen from
+the batch's records alone (#1803): where the case's task may still be queued
+or running (it has a job, and it has no status yet, or its status says
+`starting`, `waiting`, `building` or `running`), to wait for it with
+`scenario-slurm wait` (with `--submission <k>` when its submission is not the
+latest) if `squeue --me` still lists it and to `resubmit` once it has ended;
+where its submission is in flight, to try again once sbatch returns; where its
+sbatch timed out less than 600 s ago, to `collect` once the job ends if
+`squeue --me` lists it, and otherwise to `resubmit`, which is refused until
+those 600 s have passed unless with `--force`; and otherwise to `resubmit`. So
+is a case whose recorded outcome holds no verdict -- no `result` object, or a
+`passed` that is not `true` or `false` (`"false"` and `1` are none) -- or a
+result that cannot be reported: a `message` that is missing or not a string,
+an `elapsed_seconds` that is not a number (`true` is none),
+`condition_statuses` that are not a list of objects each with a string `label`
+and `message` and a boolean `satisfied`, or a `failure` that is not an object
+or cannot be read (an `at` of the wrong type, say). What the worker writes
+always is readable; `rerun_recording` and `failure` may be missing. It did not
+pass, and `collect` reports it as `ERROR` naming its file; a `rerun_error` the
+task recorded for it is kept in `batch_results.json`. `status`, `wait` and the
+viewer count it as not passed: the results pages show it as an error.
+`resubmit` submits again the cases with no outcome or no verdict and those
+that raised on every attempt (`ERROR`); `--failed` adds the ones that ran and
+failed, `--cases a,b` names them (labels or indices; a case named twice runs
+once), and `--array-parallelism`/`--cases-per-task` change how they are
+spread. A case run again replaces its earlier files: before it runs, the task
+removes every output of its stem (`run_outputs`), its T4 dataset directory
+(`{stem}.t4`) included, so none of the last attempt's is left beside the new
+result. So `resubmit` refuses while a job of the batch is queued or running,
+while `squeue` cannot tell whether one is, or while another submission of the
+batch is in flight (`--force` submits all the same).
 
 A batch directory that `scenario-slurm` cannot read or write -- a manifest it
 may not read, or shared storage mounted read-only -- is one `Error: ...` line

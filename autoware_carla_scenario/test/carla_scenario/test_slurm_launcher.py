@@ -2630,6 +2630,151 @@ def test_collect_still_prints_its_hints_before_collected_json(
     assert (layout.batch_dir / "batch_results.json").is_file()
 
 
+def _advised_layout(tmp_path: Path, situation: str) -> BatchLayout:
+    """A batch of three cases, none with a result, its one submission in
+    *situation* (#1803)."""
+    from autoware_carla_scenario.slurm.manifest import (
+        SBATCH_IN_FLIGHT_SECONDS,
+        write_json,
+    )
+
+    layout = _batch_on_disk(tmp_path)
+    chunks = [[0, 1, 2]]
+    now = time.time()
+    if situation in ("running", "queued", "finished"):
+        if situation != "queued":
+            state = "running" if situation == "running" else "failed"
+            write_json(layout.task(0, 0), {"task": 0, "state": state})
+        return layout
+    record: dict[str, Any] = {"index": 0, "job_id": None, "chunks": chunks}
+    if situation == "in_flight":
+        record["submitted_at"] = now
+    elif situation in ("timed_out_young", "timed_out_old"):
+        old = situation == "timed_out_old"
+        record["submitted_at"] = now - (SBATCH_IN_FLIGHT_SECONDS + 60 if old else 0)
+        record["sbatch_timed_out"] = True
+        record["sbatch_timed_out_at"] = "2026-11-06T12:00:00"
+    else:
+        raise AssertionError(situation)
+    write_json(layout.submission(0), record)
+    return layout
+
+
+@pytest.mark.parametrize(
+    "situation",
+    ["running", "queued", "in_flight", "timed_out_young", "timed_out_old", "finished"],
+)
+def test_collect_advises_only_what_resubmit_would_take(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], situation: str
+) -> None:
+    """#1803: a missing case's message, and the hint on the missing cases,
+    advise a resubmit only where ``resubmit`` takes it: they say to wait for a
+    task that may still be queued or running, to try again once an in-flight
+    sbatch returns, and that a resubmit is refused while a timed-out sbatch's
+    record is young."""
+    from autoware_carla_scenario.slurm import cli
+
+    layout = _advised_layout(tmp_path, situation)
+    target = str(layout.batch_dir)
+    assert cli.main(["collect", target]) == 1
+    out = capsys.readouterr().out
+    results = json.loads((layout.batch_dir / "batch_results.json").read_text())
+    messages = [entry["message"] for entry in results]
+    assert len(set(messages)) == 1
+    message = messages[0]
+    hint = out[out.index("3 case(s) have no result") :]
+    wait = f"scenario-slurm wait {target}"
+    resubmit = f"scenario-slurm resubmit {target}"
+    refused = "a resubmit is refused until 600 s after the record was made"
+    if situation in ("running", "queued"):
+        state = "running" if situation == "running" else "never started"
+        assert f"(task 0 of job 77 {state})" in message
+        for text in (message, hint):
+            assert f"wait for it with: {wait}" in text or (
+                f"wait for them with: {wait}" in text
+            )
+            # Only once the task has ended, as resubmit would refuse before.
+            assert re.search(r"once (it has|they have) ended, run", text)
+            assert resubmit in text
+    elif situation == "in_flight":
+        assert "no job id yet (sbatch in flight)" in message
+        for text in (message, hint):
+            assert f"try again once sbatch returns: {wait}" in text
+            assert "resubmit" not in text
+    elif situation == "timed_out_young":
+        for text in (message, hint):
+            assert f"scenario-slurm collect {target}" in text
+            assert f"{resubmit} ({refused}, unless with --force)" in text
+    else:
+        if situation == "finished":
+            assert "(task 0 of job 77 failed)" in message
+        else:
+            assert "sbatch timed out" in message
+        for text in (message, hint):
+            assert text.rstrip().endswith(
+                f"Run {'it' if text is message else 'them'} again with: {resubmit}"
+            )
+            assert "wait" not in text and "refused" not in text
+
+
+def test_collect_hint_puts_a_running_task_before_a_resubmit(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#1803: resubmit refuses the whole batch while a task of it may still
+    run, so of cases needing either, the hint says to wait first."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = _batch_on_disk(tmp_path)
+    write_json(
+        layout.submission(0),
+        {"index": 0, "job_id": "77", "chunks": [[0, 1], [2]]},
+    )
+    write_json(layout.task(0, 0), {"task": 0, "state": "done"})
+    write_json(layout.task(0, 1), {"task": 1, "state": "building"})
+    target = str(layout.batch_dir)
+    assert cli.main(["collect", target]) == 1
+    out = capsys.readouterr().out
+    results = json.loads((layout.batch_dir / "batch_results.json").read_text())
+    assert results[0]["message"].endswith(
+        f"Run it again with: scenario-slurm resubmit {target}"
+    )
+    assert f"wait for it with: scenario-slurm wait {target}" in results[2]["message"]
+    hint = out[out.index("3 case(s) have no result") :]
+    assert f"wait for them with: scenario-slurm wait {target}" in hint
+
+
+def test_collect_names_an_older_submission_still_running_to_wait_for(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#1803: ``wait`` follows the latest submission unless told which, so
+    where an older one may still be running and the latest has ended, the
+    message and the hint name it (``--submission 0``)."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm.manifest import write_json
+
+    layout = _batch_on_disk(tmp_path)
+    write_json(layout.task(0, 0), {"task": 0, "state": "running"})
+    write_json(
+        layout.submission(1),
+        {"index": 1, "job_id": "78", "chunks": [[2]]},
+    )
+    write_json(layout.task(1, 0), {"task": 0, "state": "failed"})
+    target = str(layout.batch_dir)
+    assert cli.main(["collect", target]) == 1
+    out = capsys.readouterr().out
+    results = json.loads((layout.batch_dir / "batch_results.json").read_text())
+    older = f"scenario-slurm wait --submission 0 {target}"
+    for entry in results[:2]:
+        assert f"wait for it with: {older};" in entry["message"]
+    assert results[2]["message"].endswith(
+        f"Run it again with: scenario-slurm resubmit {target}"
+    )
+    hint = out[out.index("3 case(s) have no result") :]
+    assert f"wait for them with: {older};" in hint
+    assert f"scenario-slurm wait {target}" not in hint
+
+
 @pytest.mark.parametrize("command", ["status", "collect", "wait", "resubmit"])
 def test_an_unreadable_manifest_is_one_error_line(
     tmp_path: Path,

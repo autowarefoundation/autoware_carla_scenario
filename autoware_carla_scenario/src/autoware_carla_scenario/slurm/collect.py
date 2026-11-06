@@ -4,7 +4,12 @@ What a local batch prints and writes when its last case has run, made from the
 outcome each task wrote for each of its cases (``slurm/results/<i>.json``), in
 the batch's order -- the same table, the same JSON, whichever task ran a case
 and when.  A case with no outcome is reported as one: ``ERROR``, with a message
-saying it has none and how to run it again (``scenario-slurm resubmit``).
+saying it has none and what to do about it (#1803): wait for its task where
+that may still be queued or running (``scenario-slurm wait``), try again once
+sbatch returns where its submission is in flight, and run it again
+(``scenario-slurm resubmit``) otherwise -- saying, where its sbatch timed out
+less than ``SBATCH_IN_FLIGHT_SECONDS`` ago, that a resubmit is refused until
+then -- never advising a resubmit that ``resubmit`` would refuse.
 So is a case whose outcome holds no verdict -- no ``result`` object, a
 ``passed`` that is not a boolean (#1718), or a result that cannot be reported
 (``readable_result()``: its ``message``, ``elapsed_seconds``,
@@ -20,10 +25,13 @@ from typing import Any
 from ..batch_report import print_summary
 from ..failure import Failure, FailureCategory
 from .manifest import (
+    SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
     no_job_note,
     recorded_verdict,
     resubmit_target,
+    sbatch_in_flight,
+    sbatch_timed_out,
     write_json,
 )
 
@@ -100,10 +108,53 @@ def _last_submission_of(
     return None
 
 
-def _missing_message(layout: BatchLayout, case: int, target: str) -> str:
+#: The states a task's status records before the task has finished with its
+#: cases (``slurm/worker.py``): it may still be running them -- or have been
+#: killed (out of time, out of memory) before it could say otherwise.
+_UNFINISHED_TASK_STATES = frozenset({"starting", "waiting", "building", "running"})
+
+#: What a missing case's message advises (#1803), in the order of
+#: ``cli._busy``'s reasons a resubmit is refused: its task may still be queued
+#: or running; its submission's sbatch has not returned; its sbatch timed out
+#: less than SBATCH_IN_FLIGHT_SECONDS ago; else run it again.
+_RUNNING = "running"
+_IN_FLIGHT = "in_flight"
+_TIMED_OUT = "timed_out"
+_RESUBMIT = "resubmit"
+_ADVICE_ORDER = (_RUNNING, _IN_FLIGHT, _TIMED_OUT, _RESUBMIT)
+
+_REFUSED_UNTIL = (
+    f"a resubmit is refused until {SBATCH_IN_FLIGHT_SECONDS:.0f} s after the "
+    "record was made, unless with --force"
+)
+
+
+def _wait_command(layout: BatchLayout, index: int, target: str) -> str:
+    """``scenario-slurm wait`` on submission *index*: it follows the latest
+    one unless told which."""
+    submissions = layout.submissions()
+    if submissions and submissions[-1] == index:
+        return f"scenario-slurm wait {target}"
+    return f"scenario-slurm wait --submission {index} {target}"
+
+
+def _missing_message(
+    layout: BatchLayout, case: int, target: str
+) -> tuple[str, str, int | None]:
+    """The message of *case*, which has no outcome, which advice it gives
+    (``_RUNNING``, ``_IN_FLIGHT``, ``_TIMED_OUT`` or ``_RESUBMIT``), and the
+    submission that advice is about (None for ``_RESUBMIT``).
+
+    The advice is chosen from what the batch's records say, asking SLURM
+    nothing, as ``wait`` words it (#1801): a resubmit is advised only where
+    ``resubmit`` takes it, or with the reason it is refused for now."""
     where = _last_submission_of(layout, case)
+    resubmit = f"Run it again with: scenario-slurm resubmit {target}"
+    advice = _RESUBMIT
+    about: int | None = None
     if where is None:
         detail = "it was never submitted"
+        then = resubmit
     else:
         index, task, submission = where
         status = layout.read_task(index, task)
@@ -118,10 +169,67 @@ def _missing_message(layout: BatchLayout, case: int, target: str) -> str:
             )
         if status is not None and status.get("error"):
             detail += f": {status['error']}"
+        if job and (status is None or state in _UNFINISHED_TASK_STATES):
+            # Queued (no status yet) or running -- or killed before its status
+            # said so: only squeue can tell, and resubmit refuses while it is.
+            advice, about = _RUNNING, index
+            then = (
+                "If `squeue --me` still lists the task, it is still queued or "
+                f"running: wait for it with: {_wait_command(layout, index, target)}; "
+                "once it has ended, run the case again with: "
+                f"scenario-slurm resubmit {target}"
+            )
+        elif not job and sbatch_timed_out(submission) and sbatch_in_flight(submission):
+            advice, about = _TIMED_OUT, index
+            then = (
+                "If `squeue --me` lists the job, collect the batch once it "
+                f"ends: scenario-slurm collect {target}; if not, run the case "
+                f"again with: scenario-slurm resubmit {target} ({_REFUSED_UNTIL})"
+            )
+        elif not job and sbatch_in_flight(submission):
+            advice, about = _IN_FLIGHT, index
+            then = (
+                "Its submission is being submitted; try again once sbatch "
+                f"returns: {_wait_command(layout, index, target)}"
+            )
+        else:
+            then = resubmit
     return (
-        f"No result: the case did not finish under SLURM ({detail}). "
-        f"Run it again with: scenario-slurm resubmit {target}"
+        f"No result: the case did not finish under SLURM ({detail}). {then}",
+        advice,
+        about,
     )
+
+
+def _missing_hint(layout: BatchLayout, target: str, advice: dict[str, set[int]]) -> str:
+    """What the hint on the cases with no outcome advises, from the advice
+    their messages give and the submissions it is about: a resubmit refuses
+    the whole batch while any of them is busy (``cli._busy``), so the first
+    of _ADVICE_ORDER wins.  ``wait`` follows the latest submission unless
+    told which, so it is told which of the others it is about."""
+    first = next(kind for kind in _ADVICE_ORDER if kind in advice)
+    waits = " and ".join(
+        _wait_command(layout, index, target) for index in sorted(advice[first])
+    )
+    if first == _RUNNING:
+        return (
+            "Some may still be queued or running: if `squeue --me` lists their "
+            f"tasks, wait for them with: {waits}; once "
+            f"they have ended, run them again with: scenario-slurm resubmit {target}"
+        )
+    if first == _IN_FLIGHT:
+        return (
+            "A submission of this batch is being submitted; try again once "
+            f"sbatch returns: {waits}"
+        )
+    if first == _TIMED_OUT:
+        return (
+            "An sbatch of this batch timed out: if `squeue --me` lists its "
+            f"job, collect the batch once it ends: scenario-slurm collect {target}; "
+            f"if not, run them again with: scenario-slurm resubmit {target} "
+            f"({_REFUSED_UNTIL})"
+        )
+    return f"Run them again with: scenario-slurm resubmit {target}"
 
 
 def _error_result(message: str) -> RecordedResult:
@@ -193,6 +301,9 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
     results: list[RecordedResult] = []
     errored: list[int] = []
     missing: list[int] = []
+    # What the missing cases' messages advise, and the submissions it is
+    # about (#1803).
+    advice: dict[str, set[int]] = {}
     # The cases whose outcome holds no verdict or cannot be reported (#1718,
     # #1726): ERROR, as if missing.
     unreadable: list[int] = []
@@ -204,7 +315,11 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         record = layout.read_result(index)
         if record is None:
             missing.append(position)
-            results.append(_error_result(_missing_message(layout, index, target)))
+            message, kind, about = _missing_message(layout, index, target)
+            about_kind = advice.setdefault(kind, set())
+            if about is not None:
+                about_kind.add(about)
+            results.append(_error_result(message))
             continue
         # Reported whatever the result holds: the task recorded why (#1726).
         if record.get("rerun_error"):
@@ -239,7 +354,8 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         print(  # noqa: T201
             f"{len(missing)} case(s) have no result: "
             + ", ".join(labels[i] for i in missing)
-            + f"\nRun them again with: scenario-slurm resubmit {target}"
+            + "\n"
+            + _missing_hint(layout, target, advice)
         )
     # Written last: the summary and the hints are printed even when the batch
     # directory cannot be written (#1740).
