@@ -1,6 +1,6 @@
 name: Setup Environment
 description: >
-  Common CI environment setup: Python, uv, an optional 'uv sync --dev', and
+  Common CI environment setup: Python, uv, an optional 'uv sync' (with or without the dev group), and
   optional pre-commit execution. Every dependency installs from a wheel, so
   there is no apt step and no compiler in the loop.
 
