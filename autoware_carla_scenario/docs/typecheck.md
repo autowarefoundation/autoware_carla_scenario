@@ -2608,7 +2608,11 @@ called once with each member, so the body is checked for every type it
 accepts. A parameter with no annotation, or one Codon cannot
 express (`Any`, `object`, `Callable[..., R]`, `Callable[[Any], Any]`, ...),
 gives the check nothing to call with and is reported as a problem of the
-module, at its line: annotate it with the type its callers pass. The
+module, at its line: annotate it with the type its callers pass. A
+container of a `Callable` (`List[Callable[[carla.World], None]]`), which a
+parameter annotation cannot spell, can be named with a module-level
+`TypeAlias` (`_TickCallbacks` in `scenario_base.py`): the check passes the
+alias through and Codon resolves it. The
 exceptions are `other: object` in `__eq__` and `__ne__`, which Python
 requires, called with the class itself, and a parameter Codon cannot express
 that has a default: a function whose every such parameter has one is called

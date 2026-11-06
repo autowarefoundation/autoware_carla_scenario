@@ -61,8 +61,9 @@ class _Registrations:
     (:meth:`BaseScenario._reset_registrations`).  The scenario copies each
     list on the way in and on the way out, so a run that appends to the
     scenario's lists leaves this one as it was.  Filled field by field rather
-    than through a constructor: Codon cannot express a parameter of a list of
-    callables (docs/typecheck.md), only an attribute declared as one.
+    than through a constructor: the check cannot spell a parameter of a list
+    of callables unless its type is named with a ``TypeAlias``, as
+    ``_TickCallbacks`` is (docs/typecheck.md).
     """
 
     entities: List[VehicleEntity]
