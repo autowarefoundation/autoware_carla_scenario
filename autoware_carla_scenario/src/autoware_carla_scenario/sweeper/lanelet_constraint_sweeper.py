@@ -401,6 +401,36 @@ def _refuse_invalid_sweep(cfg: DictConfig, exc: ValueError) -> NoReturn:
     sys.exit(1)
 
 
+def _read_controls(cfg: DictConfig) -> dict[str, Any]:
+    """The config's ``controls`` (:func:`.expand.scenario_controls`), or exit 1.
+
+    Invalid ``controls`` are reported as ``scenario-expand`` and a
+    ``--multirun`` batch report them (``examples/expand.py``): one line on
+    stderr per problem, ``<scenario>: <path>: <why>``
+    (:func:`~..odd.controls.format_diagnostics`), and exit 1, a
+    configuration error (docs/usage.md, "Exit Codes").  The scenario is the
+    config's ``scenario`` choice; without one the lines name none.  Unlike
+    ``scenario-expand``, with ``HYDRA_FULL_ERROR=1`` the
+    :class:`~..odd.controls.ControlsError` is raised instead, traceback and
+    all.
+
+    Raises:
+        ControlsError: With ``HYDRA_FULL_ERROR=1``, when they are invalid.
+        SystemExit: With status 1, when they are invalid, otherwise.
+    """
+    from ..odd.controls import ControlsError, format_diagnostics  # noqa: PLC0415
+
+    try:
+        return scenario_controls(cfg)
+    except ControlsError as exc:
+        if os.environ.get("HYDRA_FULL_ERROR") == "1":
+            raise
+        name = OmegaConf.select(cfg, "hydra.runtime.choices.scenario", default=None)
+        for line in format_diagnostics(exc.diagnostics, name or ""):
+            print(line, file=sys.stderr)  # noqa: T201
+        sys.exit(1)
+
+
 class LaneletConstraintSweeper(Sweeper):
     """Sweep over lanelets that satisfy declarative constraints."""
 
@@ -505,8 +535,11 @@ class LaneletConstraintSweeper(Sweeper):
                 (:func:`.expand.load_sweep_map`, the message naming it), or
                 :func:`.expand.expand_sweep` refuses it -- after printing
                 ``Error: <scenario>: <message>`` to stderr, as
-                ``scenario-expand`` does.
-            ValueError: Instead of that exit, with ``HYDRA_FULL_ERROR=1``.
+                ``scenario-expand`` does; or when its ``controls`` are
+                invalid, before its map is loaded, after printing each
+                problem as ``<scenario>: <path>: <why>``, one line each.
+            ValueError: Instead of that exit, with ``HYDRA_FULL_ERROR=1``
+                (for invalid ``controls``, a :class:`~..odd.controls.ControlsError`).
         """
         self._current_case = None
         try:
@@ -554,6 +587,10 @@ class LaneletConstraintSweeper(Sweeper):
             sweep_dict = _read_sweep_section(cfg)
         except ValueError as exc:
             _refuse_invalid_sweep(cfg, exc)
+        # Its `controls` too: they do not depend on the map, and invalid ones
+        # are refused one line per problem, exit 1, before a `map.source` is
+        # cloned (#1710).
+        controls = _read_controls(cfg)
         # Checked here, before any map is fetched or case runs, and refused
         # as step 0 refuses a config value: exit 2, naming the key.
         try:
@@ -579,7 +616,6 @@ class LaneletConstraintSweeper(Sweeper):
 
         # -- 4-6. Expand: matching lanelets -> one override batch each -----
         odd = OmegaConf.select(cfg, "odd")
-        controls = scenario_controls(cfg)
         seed = _config_seed(cfg)
         try:
             batches: list[tuple[str, ...]] = [
