@@ -13,6 +13,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    TypeAlias,
     Union,
 )
 
@@ -48,6 +49,9 @@ from .traffic.base import DrivenEntity, TrafficBackend, WalkedEntity
 from .traffic.driven import BackendDriven
 
 logger = logging.getLogger(__name__)
+
+#: The plain callbacks of one phase (init, pre-tick or post-tick).
+_TickCallbacks: TypeAlias = List[Callable[[carla.World], None]]
 
 
 class _Registrations:
@@ -589,7 +593,7 @@ class BaseScenario(ABC):
         self,
         cb: Union[BaseAction, Callable[["carla.World"], None]],
         actions: List[BaseAction],
-        callbacks: List[Callable[["carla.World"], None]],
+        callbacks: _TickCallbacks,
     ) -> None:
         """Dispatch *cb* into the appropriate list.
 
