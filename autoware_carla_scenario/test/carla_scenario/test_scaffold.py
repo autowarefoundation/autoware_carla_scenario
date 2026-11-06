@@ -26,6 +26,62 @@ from autoware_carla_scenario.scaffold import (
 )
 
 
+class TestHydraSelectableScenarioNames:
+    """``scenario-new`` refuses a scenario name Hydra cannot select (#1858)."""
+
+    @pytest.mark.parametrize("scenario", ["café", "Café", "naïve_run", "ｆｏｏ"])
+    def test_a_non_ascii_name_is_refused(self, scenario: str) -> None:
+        with pytest.raises(ValueError, match="Hydra's override grammar"):
+            resolve_names("my_pkg", scenario_name=scenario)
+
+    def test_cli_reports_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main(["my_pkg", "-s", "café", "-o", str(tmp_path)]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("Error: scenario name 'café' must match")
+        assert "Hydra's override grammar" in err
+        assert "Traceback" not in err
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        ("argv", "scenario"),
+        [
+            (["reach_goal_pkg"], "reach_goal"),
+            (["my-cool-scenario-package"], "my_cool_scenario"),
+            (["ParkingLot"], "parking_lot"),
+            (["my_pkg", "-s", "MyScenario"], "my_scenario"),
+            (["my_pkg", "-s", "cut-in.v2"], "cut_in_v2"),
+            (["my_pkg", "-s", "HTTPServer"], "httpserver"),
+            (["my_pkg", "-s", "fooBar9Baz"], "foo_bar9_baz"),
+            (["my_pkg", "-s", "a1"], "a1"),
+        ],
+    )
+    def test_the_printed_override_parses(
+        self,
+        tmp_path: Path,
+        capsys: pytest.CaptureFixture[str],
+        argv: list[str],
+        scenario: str,
+    ) -> None:
+        from hydra.core.override_parser.overrides_parser import (  # noqa: PLC0415
+            OverridesParser,
+        )
+
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main([*argv, "-o", str(tmp_path)]) == 0
+        out = capsys.readouterr().out
+        overrides = [word for word in out.split() if word.startswith("scenario=")]
+        assert overrides
+        assert set(overrides) == {f"scenario={scenario}/default"}
+        override = OverridesParser.create().parse_override(overrides[0])
+        assert override.key_or_group == "scenario"
+        assert override.value() == f"{scenario}/default"
+
+
 class TestResolveNames:
     @pytest.mark.parametrize(
         ("raw", "expected"),

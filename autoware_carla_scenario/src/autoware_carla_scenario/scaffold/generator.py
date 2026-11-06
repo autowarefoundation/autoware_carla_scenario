@@ -38,6 +38,7 @@ from .names import (
     _to_pascal,
     _to_snake,
     _validate_identifier,
+    _validate_scenario_name,
 )
 
 
@@ -333,6 +334,9 @@ def resolve_names(
     else:
         scenario = _to_snake(scenario_name)
     scenario = _validate_identifier(scenario, kind="scenario name")
+    # Hydra's override grammar takes ASCII ids only, which a Python
+    # identifier need not be (#1858).
+    scenario = _validate_scenario_name(scenario)
     reserved = _reserved_scenario_names()
     if scenario in reserved:
         msg = (

@@ -452,6 +452,17 @@ reserved: it names a built-in scenario ...`. The list is
 constant so that `scenario-new` need not import the runner or CARLA; a test
 checks it against what the runner registers.
 
+The scenario name, after it is snake-cased (`-s MyScenario` becomes
+`my_scenario`, `-s cut-in.v2` becomes `cut_in_v2`), must be a lower-case ASCII
+letter followed by lower-case ASCII letters, digits and `_`
+(`^[a-z][a-z0-9_]*$`, `scaffold.names.SCENARIO_NAME_PATTERN`, the rule the
+Scenario Editor holds an id to). Hydra's override grammar allows only ASCII
+letters in an id, so no override could select `café`'s configs (`token
+recognition error at: 'é'`) even though `café` is a Python identifier:
+`scenario-new my_pkg -s café` is refused with
+`Error: scenario name 'café' must match ^[a-z][a-z0-9_]*$ ...: Hydra's override
+grammar could not select it ...` and writes nothing (#1858).
+
 The package name is the import name and, hyphenated, the distribution name of
 what gets installed, so `scenario-new` also refuses one that would clash once
 installed: the framework's own (`autoware_carla_scenario` /

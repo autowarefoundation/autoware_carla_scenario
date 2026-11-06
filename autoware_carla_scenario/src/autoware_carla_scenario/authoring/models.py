@@ -37,6 +37,7 @@ from pydantic import (
     model_validator,
 )
 
+from ..scaffold.names import SCENARIO_NAME_PATTERN
 from .registry import LaneletPlace, get_action_spec
 
 __all__ = [
@@ -168,7 +169,9 @@ def as_action_phase(value: object) -> Optional[ActionPhaseName]:
     return cast(ActionPhaseName, value) if value in ACTION_PHASE_VALUES else None
 
 
-_ID_PATTERN = re.compile(r"^[a-z][a-z0-9_]*$")
+#: The rule ``scenario-new`` holds a scenario name to (#1858), so an id is
+#: one Hydra's override grammar can select (``scenario=<id>``).
+_ID_PATTERN = re.compile(SCENARIO_NAME_PATTERN)
 
 
 def new_object_id(prefix: str) -> str:
@@ -476,7 +479,7 @@ class Entity(_Node):
     @field_validator("id")
     @classmethod
     def _check_id(cls, value: str) -> str:
-        if not _ID_PATTERN.match(value):
+        if not _ID_PATTERN.fullmatch(value):
             raise ValueError(
                 f"Entity id {value!r} must be lower_snake_case starting with a letter."
             )
@@ -1439,7 +1442,7 @@ class ScenarioDocument(_Node):
     @field_validator("id")
     @classmethod
     def _check_id(cls, value: str) -> str:
-        if not _ID_PATTERN.match(value):
+        if not _ID_PATTERN.fullmatch(value):
             raise ValueError(
                 f"Scenario id {value!r} must be lower_snake_case starting with a letter."
             )
