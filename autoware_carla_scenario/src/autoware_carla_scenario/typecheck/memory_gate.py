@@ -23,18 +23,23 @@ The directory is private: it is used only if it is a real directory (not a
 symlink) owned by this user that no one else can write to (one of this user's
 that others can is made 0o700 first), it is used through a descriptor opened
 once it is checked, and the lock and hold files are opened without following
-symlinks.  When it is not, the gate warns and falls back to a per-user
+symlinks; a lock or hold owned by another user is never trusted (a hold is
+removed, a lock runs the build ungated), and a repaired directory is first
+cleared of every entry another user owns.  When it is not, the gate warns and falls back to a per-user
 directory (under ``$XDG_RUNTIME_DIR``, then ``~/.cache``) and, failing that,
 admits the build ungated -- as it does when its own files or the budget fail:
 the gate never blocks or fails a check of its own accord.
 
-The gate is Linux's (``fcntl``, ``/proc/meminfo``), as Codon is; elsewhere,
-or with ``AUTOWARE_CARLA_SCENARIO_CODON_GATE=0``, every build is admitted at
-once.
+The gate is Linux's (``fcntl``, ``/proc/meminfo``), as Codon is.  Without
+``fcntl``, or with ``AUTOWARE_CARLA_SCENARIO_CODON_GATE=0``, every build is
+admitted at once, with no files; where ``fcntl`` exists but the machine's
+memory cannot be read (macOS: no ``/proc/meminfo``), the budget is 0 and
+every build is admitted at once, though its hold is still recorded.
 """
 
 from __future__ import annotations
 
+import errno
 import itertools
 import logging
 import os
@@ -196,6 +201,11 @@ def _wait_for_room(
             dir_fd=dir_fd,
         )
         try:
+            owner = os.fstat(lock).st_uid
+            if owner != os.getuid():
+                raise PermissionError(
+                    errno.EPERM, f"gate.lock is owned by uid {owner}, not {os.getuid()}"
+                )
             fcntl.flock(lock, fcntl.LOCK_EX)
             held = _held(dir_fd)
             try:
@@ -279,11 +289,11 @@ def _open_private(where: Path) -> int | str:
         elif info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
             os.fchmod(fd, 0o700)
             info = os.fstat(fd)
-            problem = (
-                f"writable by others (mode {stat.S_IMODE(info.st_mode):o})"
-                if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH)
-                else ""
-            )
+            if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+                problem = f"writable by others (mode {stat.S_IMODE(info.st_mode):o})"
+            else:
+                problem = ""
+                _remove_foreign(fd)  # others could write here until now
         else:
             problem = ""
     except OSError as error:
@@ -293,6 +303,15 @@ def _open_private(where: Path) -> int | str:
     with suppress(OSError):
         os.close(fd)
     return problem
+
+
+def _remove_foreign(dir_fd: int) -> None:
+    """Remove every entry of the directory *dir_fd* that another user owns."""
+    uid = os.getuid()
+    for name in os.listdir(dir_fd):
+        with suppress(OSError):
+            if os.stat(name, dir_fd=dir_fd, follow_symlinks=False).st_uid != uid:
+                os.unlink(name, dir_fd=dir_fd)
 
 
 def _write_hold(dir_fd: int, name: str, record: str) -> None:
@@ -341,12 +360,16 @@ def _held(dir_fd: int) -> list[int]:
             pid = int(name.split("-", 1)[0])
         except ValueError:
             continue  # not a hold of ours
-        if pid <= 0:
-            continue
+        if not 0 < pid <= _PID_MAX:
+            continue  # no process's
         try:
             text = _read_hold(dir_fd, name)
             if text is None:
                 continue  # not a regular file
+            if text is _FOREIGN:
+                with suppress(OSError):
+                    os.unlink(name, dir_fd=dir_fd)
+                continue  # another user's: never trusted
             fields = text.split()
             need = int(fields[0]) if fields else 0
             start = int(fields[1]) if len(fields) > 1 else None
@@ -360,15 +383,27 @@ def _held(dir_fd: int) -> list[int]:
     return held
 
 
+#: The largest pid Linux hands out (``pid_max`` is at most 2**22; this is
+#: what ``os.kill`` accepts).
+_PID_MAX = 2**31 - 1
+
+#: What :func:`_read_hold` returns for a hold another user owns.
+_FOREIGN = "\0foreign"
+
+
 def _read_hold(dir_fd: int, name: str) -> str | None:
-    """The text of the hold *name*, or ``None`` if it is not a regular file;
-    never read through a symlink, and never waited on (a FIFO)."""
+    """The text of the hold *name*, ``None`` if it is not a regular file, or
+    :data:`_FOREIGN` if another user owns it; never read through a symlink,
+    and never waited on (a FIFO)."""
     fd = os.open(
         name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK | os.O_CLOEXEC, dir_fd=dir_fd
     )
     try:
-        if not stat.S_ISREG(os.fstat(fd).st_mode):
+        info = os.fstat(fd)
+        if not stat.S_ISREG(info.st_mode):
             return None
+        if info.st_uid != os.getuid():
+            return _FOREIGN
         return os.read(fd, 256).decode()
     finally:
         os.close(fd)
@@ -397,7 +432,7 @@ def _alive(pid: int, start: int | None = None) -> bool:
         # /proc unreadable (gone, or not mounted): fall back to the pid alone
     try:
         os.kill(pid, 0)
-    except ProcessLookupError:
+    except (ProcessLookupError, OverflowError):
         return False
     except PermissionError:
         return True

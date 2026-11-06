@@ -421,3 +421,104 @@ def test_a_hold_that_cannot_be_removed_masks_nothing(
             raise KeyError("from the build")
     with admitted(2 * GB, directory=tmp_path, budget=_budget(14)):
         pass  # no exception without one from the build either
+
+
+def _foreign(monkeypatch: pytest.MonkeyPatch, *paths: Path) -> None:
+    """Make *paths* look owned by another user, to the gate's fstat and stat
+    (by inode and change time, so it holds as root and not, and not for a
+    later file that reuses the inode): ownership cannot be given away
+    without privileges."""
+    inodes = {(info.st_ino, info.st_ctime_ns) for info in map(Path.lstat, paths)}
+    other = os.getuid() + 1
+    real_fstat, real_stat = os.fstat, os.stat
+
+    def disguise(result: os.stat_result) -> os.stat_result:
+        if (result.st_ino, result.st_ctime_ns) not in inodes:
+            return result
+        fields = list(result)
+        fields[4] = other  # st_uid
+        return os.stat_result(fields)
+
+    monkeypatch.setattr(os, "fstat", lambda fd: disguise(real_fstat(fd)))
+    monkeypatch.setattr(
+        os, "stat", lambda *args, **kwargs: disguise(real_stat(*args, **kwargs))
+    )
+
+
+def _never(seconds: float) -> None:
+    raise AssertionError("waited")
+
+
+def test_another_user_s_hold_is_removed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate = tmp_path / "gate"
+    gate.mkdir(mode=0o700)
+    start = memory_gate._start_time(os.getpid())
+    planted = gate / f"{os.getpid()}-1-1.hold"  # a live process, its start
+    planted.write_text(f"{1000 * GB} {start}")
+    _foreign(monkeypatch, planted)
+    with admitted(9 * GB, directory=gate, budget=_budget(14), sleep=_never):
+        assert not planted.exists()
+
+
+def test_a_repaired_directory_is_cleared_of_other_users_entries(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate = tmp_path / "gate"
+    gate.mkdir()
+    planted = gate / "1-0-0.hold"
+    planted.write_text(str(1000 * GB))
+    lock = gate / "gate.lock"
+    lock.write_text("")
+    other = gate / "notes.txt"
+    other.write_text("planted")
+    mine = gate / "mine.txt"
+    mine.write_text("kept")
+    gate.chmod(0o777)
+    _foreign(monkeypatch, planted, lock, other)
+    with admitted(9 * GB, directory=gate, budget=_budget(14), sleep=_never):
+        assert len(list(gate.glob("*.hold"))) == 1  # ours
+    assert not planted.exists()
+    assert not other.exists()
+    assert mine.read_text() == "kept"
+    assert (gate.stat().st_mode & 0o777) == 0o700
+
+
+def test_another_user_s_lock_runs_the_build_ungated(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    gate = tmp_path / "gate"
+    gate.mkdir(mode=0o700)
+    lock = gate / "gate.lock"
+    lock.write_text("")
+    (gate / f"{os.getpid()}-1-1.hold").write_text(str(1000 * GB))
+    _foreign(monkeypatch, lock)
+    ran = False
+    with admitted(9 * GB, directory=gate, budget=_budget(14), sleep=_never):
+        ran = True
+    assert ran
+    assert lock.exists()
+    assert len(list(gate.glob("*.hold"))) == 1  # only the one planted
+
+
+@pytest.mark.parametrize("pid", ["99999999999999999999", str(2**31), "0"])
+def test_a_hold_with_no_process_s_pid_is_ignored(tmp_path: Path, pid: str) -> None:
+    (tmp_path / f"{pid}-1-1.hold").write_text(str(1000 * GB))
+    with admitted(9 * GB, directory=tmp_path, budget=_budget(14), sleep=_never):
+        pass
+    assert memory_gate._alive(10**20) is False
+
+
+def test_an_oserror_of_the_build_propagates_unchanged(tmp_path: Path) -> None:
+    error = OSError(errno.EIO, "from the build")
+    runs = 0
+    with pytest.raises(OSError) as raised:
+        with admitted(2 * GB, directory=tmp_path, budget=_budget(14)):
+            runs += 1
+            assert len(list(tmp_path.glob("*.hold"))) == 1
+            raise error
+    assert raised.value is error
+    assert raised.value.__context__ is None
+    assert runs == 1
+    assert not list(tmp_path.glob("*.hold"))

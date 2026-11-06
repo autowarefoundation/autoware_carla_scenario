@@ -167,7 +167,9 @@ The directory's name is predictable and sits in a world-writable one, so the
 gate trusts it only if it is private: it is created with mode `0o700`, opened
 without following a symlink, and used only if it is a real directory owned by
 you; one of yours that its group or others can write to (as an older gate left
-it under a umask of `002`) is made `0o700` first. Every later use goes through
+it under a umask of `002`) is made `0o700` first, and cleared of every entry
+another user owns. A hold another user owns is removed, never counted, and a
+`gate.lock` another user owns starts the build ungated. Every later use goes through
 that open directory, so it cannot be swapped once checked; `gate.lock` and the
 holds are opened without following symlinks, a hold is created only if it
 does not exist, and a file that is not a regular one (a FIFO) is ignored. A
