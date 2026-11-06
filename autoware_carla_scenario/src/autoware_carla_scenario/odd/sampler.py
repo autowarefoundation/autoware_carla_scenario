@@ -77,6 +77,16 @@ from openodd.sampler import OddSampler as _OddSampler
 from ..route.model import _whole_number
 from ..seed import DEFAULT_SEED, check_seed
 from .backend import CARLA_BACKEND, DEFAULT_KNOBS
+from .control_fields import (
+    CONTROL_TARGETS,
+    FLAKY_FIELDS,
+    MAPPING_FIELDS,
+    ODD_CASE_KEY,
+    SAMPLE_FIELDS,
+    TIRE_FRICTION_KEY,
+    VISIBILITY_KEY,
+    sets_any,
+)
 from .model import OddDefinition
 
 __all__ = [
@@ -106,61 +116,12 @@ __all__ = [
     "with_visibility",
 ]
 
-#: The config key (an override a sweep adds) that carries a drawn case to its
-#: run, encoded (:func:`encode_case`).
-ODD_CASE_KEY = "odd_case"
-
 #: A case drawn from the ODD and the space it was drawn in: what a run records.
 OddCase = tuple[OddSample, ParameterSpace]
 
-#: What a control's ``target`` may say: ``setting`` (the default), a raw
-#: setting the drawn value is mapped onto by ``scale`` and ``offset``; or
-#: ``measure``, a parameter that takes the measure's value at the start itself,
-#: which the scenario solves its placement for.
-CONTROL_TARGETS = ("setting", "measure")
-#: The fields a ``target: measure`` control refuses: what it writes is the
-#: measure's own value, unchanged.
-_MAPPING_FIELDS = ("scale", "offset", "integer", "values")
-
-#: The fields of ``sweep.odd_sample``: ``tire_friction`` and ``visibility``
-#: (default true) say whether each case draws where its grip
-#: (:func:`with_tire_friction`) and its visibility (:func:`with_visibility`)
-#: are in the ranges its weather leaves; the rest are
-#: :func:`search_from_config`'s.
-SAMPLE_FIELDS = {
-    "count",
-    "seed",
-    "strategy",
-    "odd",
-    "coverage_from",
-    "knobs",
-    "weights",
-    "flaky",
-    "tire_friction",
-    "visibility",
-}
-
-#: The setting a case's grip is drawn into: the quantile of the distribution
-#: of grip its weather leaves (``EnvironmentAction``'s ``tire_friction_quantile``).
-TIRE_FRICTION_KEY = "environment.tire_friction_quantile"
-#: The setting a case's visibility is drawn into: the quantile of the
-#: distribution of visibility its weather leaves (``EnvironmentAction``'s
-#: ``visibility_quantile``).
-VISIBILITY_KEY = "environment.visibility_quantile"
-#: The fields of ``sweep.odd_sample.flaky``: :class:`~openodd.FlakySearch`'s
-#: options, and ``scenario``, the scenario whose earlier runs it learns from
-#: (every scenario's, chosen in the same space, when not given).
-FLAKY_FIELDS = {
-    "explore_fraction",
-    "pool",
-    "coverage_depth",
-    "threshold",
-    "epsilon",
-    "perturbations",
-    "draws",
-    "directions",
-    "scenario",
-}
+#: The fields a ``target: measure`` control refuses
+#: (:data:`.control_fields.MAPPING_FIELDS`).
+_MAPPING_FIELDS = MAPPING_FIELDS
 
 
 class OddSampler(_OddSampler):
@@ -524,9 +485,9 @@ def _with_quantile(
     unless it sets *key* or one of the *fixed* keys already."""
     out: list[OddSample] = []
     prefix = f"{key}="
-    given = tuple(f"{k}=" for k in (key, *fixed))
+    given = (key, *fixed)
     for sample in samples:
-        if any(o.lstrip("+").startswith(given) for o in sample.overrides):
+        if sets_any(sample.overrides, given):
             out.append(sample)
             continue
         rng = random.Random(
