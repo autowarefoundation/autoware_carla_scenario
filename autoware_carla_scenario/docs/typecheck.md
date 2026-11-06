@@ -172,20 +172,24 @@ through that open directory, so it cannot be swapped once checked;
 `gate.lock` and the holds are opened without following symlinks, a hold is
 created only if it does not exist, a file that is not a regular one (a FIFO)
 is ignored, a hold another user owns is removed and never counted, and a
-`gate.lock` another user owns starts the build ungated.
+`gate.lock` another user owns starts the build ungated. The lock is made
+`0o600`, and a build tries for it for at most two minutes
+(`LOCK_TIMEOUT_S`; the gate's own builds hold it for milliseconds) before it
+warns and starts ungated, so no one holding it can stall the checks.
 
 A directory set with `AUTOWARE_CARLA_SCENARIO_CODON_GATE` must be private in
 the same way (yours, mode `0o700` or at least not group- or other-writable),
 or it is skipped; the gate never changes it. Only the gate's own directories
-are repaired: one of them that its group or others can write to (as an older
-gate left it under a umask of `002`) is made `0o700` and cleared of what
-other users own, if it holds nothing but `gate.lock` and holds, and is used
-only if nothing of another user's remains. When the directory fails these
-rules, the gate warns and falls back to `$XDG_RUNTIME_DIR/acs-codon-gate`,
-then to `~/.cache/autoware_carla_scenario/codon-gate`; when none is usable,
-or the gate's own files or the memory budget fail (a lock refused on NFS, a
-full disk), it warns and starts the build ungated. The gate never holds up or
-fails a check on its own account, and never hides what a build raised.
+are repaired: one of them that its group or others can use at all (as an older
+gate left it, `0o755`, or `0o775` under a umask of `002`) is made `0o700` and
+cleared of what other users own, if it holds nothing but `gate.lock` and
+holds, and is used only if nothing of another user's remains. When the
+directory fails these rules (or there is no temporary directory), the gate
+warns and falls back to `$XDG_RUNTIME_DIR/acs-codon-gate`, then to
+`~/.cache/autoware_carla_scenario/codon-gate`; when none is usable, or the
+gate's own files or the memory budget fail (a lock refused on NFS, a full
+disk), it warns and starts the build ungated. The gate never holds up or fails
+a check on its own account, and never hides what a build raised.
 
 ### Installing Codon and typesafe_carla
 

@@ -23,14 +23,16 @@ The directory is private: it is used only if it is a real directory (not a
 symlink) owned by this user that no one else can write to, it is used through
 a descriptor opened once it is checked, and the lock and hold files are opened
 without following symlinks; a lock or hold owned by another user is never
-trusted (a hold is removed, a lock runs the build ungated).  Only the gate's
-own directories (the default and the fallbacks) are ever repaired -- made
-0o700 and cleared of what other users own -- and only when they hold nothing
-but the gate's files; a configured directory is never changed.  When the
-directory is not private, the gate warns and falls back to a per-user
-directory (under ``$XDG_RUNTIME_DIR``, then ``~/.cache``) and, failing that,
-admits the build ungated -- as it does when its own files or the budget fail:
-the gate never blocks or fails a check of its own accord.
+trusted (a hold is removed, a lock runs the build ungated), and a lock held
+for over :data:`LOCK_TIMEOUT_S` -- by anyone -- runs the build ungated too.
+The lock is made 0o600.  Only the gate's own directories (the default and the
+fallbacks) are ever repaired -- made 0o700 and cleared of what other users
+own -- and only when they hold nothing but the gate's files; a configured
+directory is never changed.  When the directory is not private, the gate
+warns and falls back to a per-user directory (under ``$XDG_RUNTIME_DIR``,
+then ``~/.cache``) and, failing that, admits the build ungated -- as it does
+when its own files or the budget fail: the gate never blocks or fails a check
+of its own accord.
 
 The gate is Linux's (``fcntl``, ``/proc/meminfo``), as Codon is.  Without
 ``fcntl``, or with ``AUTOWARE_CARLA_SCENARIO_CODON_GATE=0``, every build is
@@ -60,6 +62,7 @@ __all__ = [
     "BASE_BYTES",
     "BYTES_PER_CHAR",
     "GATE_ENV",
+    "LOCK_TIMEOUT_S",
     "admitted",
     "budget_bytes",
     "codon_bytes",
@@ -84,6 +87,15 @@ _RESERVE_BYTES = int(1.5 * _GIB)
 
 #: How long a build waits between looks at what is running (s).
 _POLL_S = 0.5
+
+#: How long a build tries for the gate's lock before it runs ungated (s).
+#: The gate's own builds hold it only to look at the holds and add one, a few
+#: milliseconds; one held longer is someone else's (another user may open an
+#: older gate's world-readable lock and keep it), which must not stall builds.
+LOCK_TIMEOUT_S = 120.0
+
+#: How long a build waits between tries for the lock (s).
+_LOCK_POLL_S = 0.05
 
 _COUNTER = itertools.count()
 
@@ -121,10 +133,20 @@ def gate_dir() -> Path | None:
     return _default_dir()
 
 
-def _default_dir() -> Path:
-    """The gate's own directory of holds, when none is configured."""
+def _default_dir() -> Path | None:
+    """The gate's own directory of holds, when none is configured: under the
+    temporary directory, or, with none usable, the first per-user fallback
+    (``None``, the gate off, without one either)."""
     uid = os.getuid() if hasattr(os, "getuid") else 0
-    return Path(tempfile.gettempdir()) / f"acs-codon-gate-{uid}"
+    try:
+        return Path(tempfile.gettempdir()) / f"acs-codon-gate-{uid}"
+    except OSError as error:  # FileNotFoundError: no usable temporary directory
+        fallbacks = _fallback_dirs()
+        _warn(
+            f"Codon memory gate: no temporary directory ({error}); "
+            + (f"using {fallbacks[0]}" if fallbacks else "builds run ungated")
+        )
+        return fallbacks[0] if fallbacks else None
 
 
 @contextmanager
@@ -213,7 +235,9 @@ def _wait_for_room(
                 raise PermissionError(
                     errno.EPERM, f"gate.lock is owned by uid {owner}, not {os.getuid()}"
                 )
-            fcntl.flock(lock, fcntl.LOCK_EX)
+            if stat.S_IMODE(os.fstat(lock).st_mode) & 0o077:
+                os.fchmod(lock, 0o600)  # an older gate's 0o644: no one else's
+            _lock(fcntl, lock)
             held = _held(dir_fd)
             try:
                 room = budget()
@@ -239,6 +263,23 @@ def _wait_for_room(
             )
             waited = True
         sleep(_POLL_S)
+
+
+def _lock(fcntl: ModuleType, fd: int) -> None:
+    """Take the exclusive lock on *fd*, trying for :data:`LOCK_TIMEOUT_S`;
+    raises :class:`TimeoutError` (an :class:`OSError`) once that has passed."""
+    deadline = time.monotonic() + LOCK_TIMEOUT_S
+    while True:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            return
+        except BlockingIOError:
+            if time.monotonic() >= deadline:
+                raise TimeoutError(
+                    errno.ETIMEDOUT,
+                    f"gate.lock held elsewhere for over {LOCK_TIMEOUT_S:g} s",
+                ) from None
+            time.sleep(_LOCK_POLL_S)
 
 
 def _fallback_dirs() -> list[Path]:
@@ -285,11 +326,11 @@ def _open_private(where: Path, *, repair: bool) -> int | str:
     symlink) owned by this user that its group and others cannot write to.
 
     With *repair* (the gate's own directories only, never a configured one),
-    one its group or others may write to -- as an older gate left it under a
-    lax umask -- is made 0o700 and cleared of what other users own, if it
-    holds nothing but the gate's files; it is used only if nothing of
-    another user's survives and its ``gate.lock``, if any, is a regular file
-    of this user's."""
+    one its group or others may use at all -- as an older gate left it, 0o755
+    or, under a lax umask, 0o775 -- is made 0o700 and cleared of what other
+    users own, if it holds nothing but the gate's files; it is used only if
+    nothing of another user's survives and its ``gate.lock``, if any, is a
+    regular file of this user's."""
     try:
         where.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd = os.open(where, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW | os.O_CLOEXEC)
@@ -299,14 +340,14 @@ def _open_private(where: Path, *, repair: bool) -> int | str:
         info = os.fstat(fd)
         if info.st_uid != os.getuid():
             problem = f"owned by uid {info.st_uid}, not {os.getuid()}"
-        elif info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+        elif repair and info.st_mode & 0o077:
             mode = f"mode {stat.S_IMODE(info.st_mode):o}"
-            if not repair:
-                problem = f"writable by others ({mode})"
-            elif not all(_is_gate_file(name) for name in os.listdir(fd)):
-                problem = f"writable by others ({mode}) and holds other files"
+            if not all(_is_gate_file(name) for name in os.listdir(fd)):
+                problem = f"open to others ({mode}) and holds other files"
             else:
                 problem = _repair(fd)
+        elif info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
+            problem = f"writable by others (mode {stat.S_IMODE(info.st_mode):o})"
         else:
             problem = ""
     except OSError as error:
@@ -327,8 +368,8 @@ def _repair(dir_fd: int) -> str:
     """Make the gate's directory *dir_fd* private: why that failed, or ``""``."""
     os.fchmod(dir_fd, 0o700)
     info = os.fstat(dir_fd)
-    if info.st_mode & (stat.S_IWGRP | stat.S_IWOTH):
-        return f"writable by others (mode {stat.S_IMODE(info.st_mode):o})"
+    if info.st_mode & 0o077:
+        return f"open to others (mode {stat.S_IMODE(info.st_mode):o})"
     _remove_foreign(dir_fd)  # others could write here until now
     uid = os.getuid()
     for name in os.listdir(dir_fd):

@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import errno
 import fcntl
+import logging
 import multiprocessing
 import os
 import threading
@@ -167,7 +168,7 @@ def default_gate(
     return gate
 
 
-@pytest.mark.parametrize("mode", [0o775, 0o777])
+@pytest.mark.parametrize("mode", [0o755, 0o775, 0o777])
 def test_the_default_directory_others_can_write_to_is_made_private(
     default_gate: Path, fallbacks: Path, mode: int
 ) -> None:
@@ -559,3 +560,77 @@ def test_an_oserror_of_the_build_propagates_unchanged(tmp_path: Path) -> None:
     assert raised.value.__context__ is None
     assert runs == 1
     assert not list(tmp_path.glob("*.hold"))
+
+
+def test_a_configured_directory_others_can_only_read_is_used_as_it_is(
+    tmp_path: Path,
+) -> None:
+    gate = tmp_path / "gate"
+    gate.mkdir()
+    gate.chmod(0o755)
+    with admitted(2 * GB, directory=gate, budget=_budget(14)):
+        assert len(list(gate.glob("*.hold"))) == 1
+    assert (gate.stat().st_mode & 0o7777) == 0o755
+
+
+def test_an_older_gate_s_lock_is_made_private(tmp_path: Path) -> None:
+    lock = tmp_path / "gate.lock"
+    lock.write_text("")
+    lock.chmod(0o644)
+    with admitted(2 * GB, directory=tmp_path, budget=_budget(14)):
+        pass
+    assert (lock.stat().st_mode & 0o777) == 0o600
+
+
+def _hold_lock(path: Path) -> int:
+    """Lock *path* through a descriptor of its own (flock locks of two open
+    descriptions conflict, even within one process)."""
+    fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o600)
+    fcntl.flock(fd, fcntl.LOCK_EX)
+    return fd
+
+
+def test_a_lock_held_elsewhere_runs_the_build_ungated_in_time(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 0.3)
+    fd = _hold_lock(tmp_path / "gate.lock")
+    try:
+        began = time.monotonic()
+        ran = False
+        with caplog.at_level(logging.WARNING, logger=memory_gate.__name__):
+            with admitted(2 * GB, directory=tmp_path, budget=_budget(14), sleep=_never):
+                ran = True
+        assert ran
+        assert 0.3 <= time.monotonic() - began < 10
+        assert not list(tmp_path.glob("*.hold"))
+        assert "held elsewhere" in caplog.text
+    finally:
+        os.close(fd)
+
+
+def test_a_lock_held_briefly_is_waited_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 30.0)
+    fd = _hold_lock(tmp_path / "gate.lock")
+    release = threading.Timer(0.3, os.close, args=(fd,))
+    release.start()
+    try:
+        with admitted(2 * GB, directory=tmp_path, budget=_budget(14), sleep=_never):
+            assert len(list(tmp_path.glob("*.hold"))) == 1  # gated
+    finally:
+        release.join()
+
+
+def test_no_temporary_directory_fails_nothing(
+    fallbacks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def gettempdir() -> str:
+        raise FileNotFoundError(errno.ENOENT, "No usable temporary directory")
+
+    monkeypatch.setattr(memory_gate.tempfile, "gettempdir", gettempdir)
+    monkeypatch.delenv(GATE_ENV, raising=False)
+    assert gate_dir() == fallbacks
+    with admitted(2 * GB, budget=_budget(14)):
+        assert len(list(fallbacks.glob("*.hold"))) == 1
