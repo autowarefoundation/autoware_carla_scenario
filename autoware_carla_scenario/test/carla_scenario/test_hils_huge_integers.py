@@ -137,7 +137,8 @@ def test_load_config_names_the_file_for_a_huge_integer(
     # PyYAML's int constructor raises a bare ValueError for it.
     path = tmp_path / "hils.yaml"
     path.write_text(text + "\n")
-    with pytest.raises(HilsConfigError, match=r"hils\.yaml: .*4300 digits"):
+    # "the limit (4300 digits)" from 3.11 on, "the limit (4300)" on 3.10.
+    with pytest.raises(HilsConfigError, match=r"hils\.yaml: .*limit \(4300"):
         load_config(path)
 
 
