@@ -129,7 +129,8 @@ def _no_verdict_message(layout: BatchLayout, case: int, target: str) -> str:
     return (
         f"No verdict: {layout.result(case)} holds no result whose `passed` "
         "is true or false, with a string `message`, a number "
-        "`elapsed_seconds` and `condition_statuses` that can be read. "
+        "`elapsed_seconds`, and `condition_statuses` and a `failure` that "
+        "can be read. "
         f"Run the case again with: scenario-slurm resubmit {target}"
     )
 

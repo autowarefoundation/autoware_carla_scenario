@@ -239,8 +239,15 @@ def _create_exclusive(path: Path, data: Any) -> bool:
 
 
 def _real_number(value: Any) -> bool:
-    # ``True`` is an int, but no number of seconds.
-    return isinstance(value, (int, float)) and not isinstance(value, bool)
+    # ``True`` is an int, but no number of seconds; nor is an int too big
+    # for a float (JSON's ``1e400`` reads as one: ``float()`` overflows).
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return False
+    try:
+        float(value)
+    except OverflowError:
+        return False
+    return True
 
 
 def _readable_status(status: Any) -> bool:

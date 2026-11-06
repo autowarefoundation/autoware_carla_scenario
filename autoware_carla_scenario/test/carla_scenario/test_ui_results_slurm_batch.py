@@ -143,6 +143,38 @@ def test_an_uncollected_batch_shows_what_its_tasks_recorded(tmp_path: Path) -> N
     assert [r.files.stem if r.files else None for r in found] == ["Case0", "Case1"]
 
 
+@pytest.mark.parametrize(
+    "result",
+    [
+        {"passed": True},
+        {"passed": "true", "message": "ok", "elapsed_seconds": 1.0},
+        {**_result(True, "ok"), "elapsed_seconds": "soon"},
+        {**_result(True, "ok"), "condition_statuses": [3]},
+    ],
+    ids=["passed-only", "str-passed", "str-elapsed", "int-status"],
+)
+def test_an_unreadable_recorded_result_is_an_error(
+    tmp_path: Path, result: dict[str, Any]
+) -> None:
+    """#1726: a recorded result with no verdict, or one that cannot be
+    reported, is no pass on the results pages: an error, as collect has it."""
+    batch = _slurm_batch(tmp_path)
+    _record(batch, 0, True, "ok", T0 + 10)
+    _write(
+        batch / "slurm" / "results" / "1.json",
+        {"index": 1, "stem": "Case1", "result": result},
+        T0 + 10,
+    )
+    found = results.load_results(tmp_path, "batch", DATE, TIME, metrics=False)
+    assert [(r.passed, r.outcome, r.pending) for r in found] == [
+        (True, "pass", False),
+        (False, "error", False),
+    ]
+    assert "1.json" in found[1].message
+    items = scanner.load_session(tmp_path, "batch", DATE, TIME)
+    assert [it.passed for it in items] == [True, False]
+
+
 def test_a_resubmitted_batch_shows_the_newer_outcomes(tmp_path: Path) -> None:
     batch = _slurm_batch(tmp_path)
     _record(batch, 0, False, "collision", T0 + 10)

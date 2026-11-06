@@ -32,6 +32,7 @@ from typing import Any
 
 # The path guard, the case stems and a batch's stamp, compiled by the library check; every
 # name stays importable from here.
+from ..slurm.manifest import recorded_verdict
 from .case_paths import _COMPONENT as _COMPONENT
 from .case_paths import _COVERAGE as _COVERAGE
 from .case_paths import _mtime as _mtime
@@ -146,7 +147,9 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
     """The entries a SLURM batch's summary will have, from its manifest and
     the outcomes its tasks recorded (``slurm/results/<case>.json``), while it
     has no ``batch_results.json`` yet. A case without an outcome yet has
-    ``passed`` ``None`` and ``pending`` true."""
+    ``passed`` ``None`` and ``pending`` true; one whose outcome holds no
+    verdict, or a result that cannot be reported (``recorded_verdict``,
+    #1718, #1726), did not pass: ``error`` true, as ``collect`` reports it."""
     manifest = _read_json(directory / "slurm" / "manifest.json")
     if not isinstance(manifest, dict) or not isinstance(manifest.get("cases"), list):
         return None
@@ -163,6 +166,14 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
             entry.update(record["result"])
             if record.get("errored"):
                 entry["error"] = True
+            if recorded_verdict(record) is None:
+                path = directory / "slurm" / "results" / f"{int(case['index'])}.json"
+                entry.update(
+                    passed=False,
+                    error=True,
+                    message=f"No verdict: {path} holds no result that can be "
+                    "reported",
+                )
         else:
             entry.update(
                 passed=None,
