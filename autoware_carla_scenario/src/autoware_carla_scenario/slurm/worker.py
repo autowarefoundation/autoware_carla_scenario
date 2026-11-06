@@ -45,7 +45,6 @@ from ..run_timeout import run_timeout_seconds
 from .manifest import (
     BatchLayout,
     config_key,
-    file_sha256,
     write_json,
 )
 from .ports import (
@@ -55,6 +54,7 @@ from .ports import (
     first_slot,
     kill_carla_on_port,
 )
+from .same_files import SameFiles
 from .settings import SlurmSettings
 from .task_timing import (
     rss_report,
@@ -162,45 +162,11 @@ def worker_overrides(cfg: "DictConfig", slot: PortSlot) -> dict[str, Any]:
     return changes
 
 
-class _SameFiles:
-    """Whether a string of a case's config that differs here names the same
-    thing: the submitting directory's path seen from this job's working
-    directory, or a file with the content it had where it was submitted."""
-
-    def __init__(self, files: dict[str, str], submit_cwd: str | None) -> None:
-        self.files = files
-        self.prefixes: list[tuple[str, str]] = []
-        if submit_cwd:
-            here = {os.getcwd(), os.environ.get("PWD") or os.getcwd()}
-            for directory in sorted(here):
-                if directory != submit_cwd:
-                    self.prefixes.append((submit_cwd.rstrip("/") + "/", directory))
-        self._digests: dict[str, str] = {}
-
-    def why_not(self, key: str, expected: str, actual: str) -> str | None:
-        """``None`` when *actual* names what *expected* did; else why not."""
-        for prefix, directory in self.prefixes:
-            if expected.startswith(prefix):
-                moved = os.path.join(directory, expected[len(prefix) :])
-                if moved == actual:
-                    return None
-        digest = self.files.get(key)
-        if digest is None:
-            return None if expected == actual else ""
-        if not Path(actual).is_file():
-            return f"{expected} there, {actual} here: missing on the node"
-        if actual not in self._digests:
-            self._digests[actual] = file_sha256(Path(actual))
-        if self._digests[actual] != digest:
-            return f"{expected} there, {actual} here: content differs"
-        return None
-
-
 def _differences(
     expected: Any,
     actual: Any,
     prefix: str = "",
-    same: _SameFiles | None = None,
+    same: SameFiles | None = None,
 ) -> list[str]:
     if isinstance(expected, dict) and isinstance(actual, dict):
         keys = sorted(set(expected) | set(actual), key=str)
@@ -252,7 +218,7 @@ def _check_same_config(
     if expected is None:
         return  # it did not resolve where it was submitted: nothing to compare
     actual = OmegaConf.to_container(cfg, resolve=True)
-    same = _SameFiles(dict(case.get("files") or {}), submit_cwd)
+    same = SameFiles(dict(case.get("files") or {}), submit_cwd)
     differing = _differences(expected, actual, same=same)
     if differing:
         shown = ", ".join(differing[:10]) + (" ..." if len(differing) > 10 else "")
