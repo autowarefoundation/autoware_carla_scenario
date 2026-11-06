@@ -1733,6 +1733,89 @@ def test_worker_points_the_config_at_its_ports() -> None:
 
 
 @pytest.mark.parametrize(
+    ("traffic", "option", "explicit"),
+    [
+        ("traffic_manager", "port", "8101"),
+        ("sumo", "tm_port", "8101"),
+        # null leaves the backend's own default: one port for every task too.
+        ("traffic_manager", "port", "null"),
+        ("sumo", "tm_port", "null"),
+    ],
+)
+def test_worker_moves_an_explicit_backend_port_to_the_slot(
+    traffic: str, option: str, explicit: str, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An explicit TrafficManager port does not escape the slot (#1863)."""
+    import logging
+
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    cfg = run._compose_config(
+        _CONCRETE, [f"traffic={traffic}", f"traffic.options.{option}={explicit}"]
+    )
+    slot = PortSlot(index=0, base=20000)
+    with caplog.at_level(logging.WARNING, "autoware_carla_scenario.slurm.worker"):
+        changes = worker_overrides(cfg, slot)
+    assert changes[f"traffic.options.{option}"] == slot.traffic_manager
+    assert cfg.traffic.options[option] == slot.traffic_manager
+    assert run.build_traffic_backend(cfg).port == slot.traffic_manager  # type: ignore[attr-defined]
+    assert run._traffic_manager_port_text(cfg) == str(slot.traffic_manager)
+    warned = [r.getMessage() for r in caplog.records]
+    if explicit == "null":
+        assert not warned
+    else:
+        assert any(f"traffic.options.{option}: 8101" in m for m in warned), warned
+
+
+@pytest.mark.parametrize(
+    ("traffic", "option"), [("traffic_manager", "port"), ("sumo", "tm_port")]
+)
+def test_worker_leaves_the_interpolated_backend_port_following_the_slot(
+    traffic: str, option: str
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    cfg = run._compose_config(_CONCRETE, [f"traffic={traffic}"])
+    slot = PortSlot(index=0, base=20000)
+    changes = worker_overrides(cfg, slot)
+    assert f"traffic.options.{option}" not in changes
+    assert cfg.traffic.options[option] == slot.traffic_manager
+    assert run.build_traffic_backend(cfg).port == slot.traffic_manager  # type: ignore[attr-defined]
+
+
+def test_worker_adds_no_port_to_a_backend_without_one() -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    cfg = run._compose_config(_CONCRETE, ["traffic=none"])
+    changes = worker_overrides(cfg, PortSlot(index=0, base=20000))
+    assert not any(key.startswith("traffic.") for key in changes)
+    assert "port" not in cfg.traffic.options
+    assert run._traffic_manager_port_text(cfg) == "- (traffic backend none)"
+
+
+def test_the_plan_logs_the_port_the_backend_uses(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Not traffic_manager.port when the backend's own is set (#1863)."""
+    import logging
+
+    from autoware_carla_scenario.examples import run
+
+    cfg = run._compose_config(_CONCRETE, ["traffic.options.port=8101"])
+    assert cfg.traffic_manager.port != 8101
+    with caplog.at_level(logging.INFO):
+        run._log_batch_plan([_CONCRETE], [cfg], [])
+    lines = [r.getMessage() for r in caplog.records if "TM port" in r.getMessage()]
+    assert lines == ["  TM port     : 8101"]
+
+
+@pytest.mark.parametrize(
     ("transport", "address"),
     [("direct", "localhost:50051"), ("unix", "unix:///shared/policy.sock")],
 )
