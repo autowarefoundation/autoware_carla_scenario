@@ -95,9 +95,12 @@ def blank_document(
 
 
 def new_document(
-    scenario_id: str = "cut_in", title: str = "Cut in"
+    scenario_id: str = "my_cut_in", title: str = "Cut in"
 ) -> ScenarioDocument:
     """Return a runnable cut-in scenario to start editing from.
+
+    Its id is ``my_cut_in``, not ``cut_in``: that names the built-in cut-in
+    scenario, which an exported package may not take (#1808).
 
     The NPC spawns by constraint search (a lane with a left neighbour, long
     enough, not in a junction, not on the map's exclusion list) with its

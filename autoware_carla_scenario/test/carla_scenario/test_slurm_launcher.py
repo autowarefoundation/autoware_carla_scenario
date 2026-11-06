@@ -1086,7 +1086,7 @@ def test_the_worker_refuses_a_case_off_its_documents_map(
     status = layout.read_task(0, 0)
     assert status is not None and status["state"] == "failed"
     assert "RunConfigError: s#1: " in status["error"]
-    assert "map=cut_in_map" in status["error"]
+    assert "map=my_cut_in_map" in status["error"]
     assert released == [False]
 
 

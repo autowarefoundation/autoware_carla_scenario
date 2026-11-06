@@ -13,10 +13,15 @@ On top of that:
 an id whose package would be the framework's own (``autoware_carla_scenario``:
 the ids ``autoware_carla`` and ``autoware_carla_scenario``) is refused, by the
 rule ``scenario-new`` applies (:func:`scaffold.names._is_framework_name`).
+So is an id that names a built-in scenario
+(:data:`scaffold.names.BUILTIN_SCENARIO_NAMES`: ``cut_in``, ``lane_change``,
+...), as ``scenario-new`` refuses it (#1808): the id is the name the package
+registers its builder under, so once installed it would replace the built-in
+builder while the built-in configs still select it.
 
 Ids that differ only by a ``_scenario`` suffix or by repeated or trailing
-underscores (``cut_in``, ``cut_in_scenario``, ``cut__in``) share one package
-name, and so one directory.  That is documented, not warned about: the
+underscores (``my_cut_in``, ``my_cut_in_scenario``, ``my_cut__in``) share one
+package name, and so one directory.  That is documented, not warned about: the
 validator cannot tell whether the other id's package exists.
 """
 
@@ -25,7 +30,11 @@ from __future__ import annotations
 import re
 from typing import Optional
 
-from ..scaffold.names import _FRAMEWORK_DISTRIBUTION, _is_framework_name
+from ..scaffold.names import (
+    _FRAMEWORK_DISTRIBUTION,
+    BUILTIN_SCENARIO_NAMES,
+    _is_framework_name,
+)
 from .framework_pin import Pin
 
 __all__ = [
@@ -60,8 +69,21 @@ def framework_name_problem(scenario_id: str) -> Optional[str]:
 
     The id is refused when its package would take the framework's own name: a
     package that depends on itself, shadows the framework once installed, and
-    only fails much later, in ``uv lock``.
+    only fails much later, in ``uv lock``.  It is refused too when it names a
+    built-in scenario (:data:`scaffold.names.BUILTIN_SCENARIO_NAMES`, #1808):
+    the package registers its builder under the id, replacing the built-in one
+    once installed, while the built-in configs (``scenario=<id>/...``) still
+    select it and hand it the built-in's config keys.  Worded as
+    ``scenario-new`` words the same refusal.
     """
+    if scenario_id in BUILTIN_SCENARIO_NAMES:
+        return (
+            f"The id {scenario_id!r} is reserved: it names a built-in scenario, "
+            f"which the installed package would replace while the built-in "
+            f"configs (scenario={scenario_id}/...) still select it (built-in "
+            f"scenarios: {', '.join(BUILTIN_SCENARIO_NAMES)}). Choose a "
+            f"different id."
+        )
     package_name = _package_name(scenario_id)
     if not _is_framework_name(package_name):
         return None
@@ -84,8 +106,8 @@ def names_for_id(scenario_id: str) -> dict[str, str]:
     keyword.
 
     Raises:
-        ValueError: If the package would take the framework's own name
-            (:func:`framework_name_problem`).
+        ValueError: If the package would take the framework's own name, or
+            the id names a built-in scenario (:func:`framework_name_problem`).
     """
     problem = framework_name_problem(scenario_id)
     if problem is not None:

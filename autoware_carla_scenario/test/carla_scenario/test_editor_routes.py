@@ -1727,7 +1727,7 @@ class TestScenarioMetadata:
             f"/draft/{draft_id}/scenario", data={"scenario_id": "Not Valid"}
         )
         assert "Scenario id" in response.text
-        assert _document(store, draft_id).id == "cut_in"
+        assert _document(store, draft_id).id == "my_cut_in"
 
     @pytest.mark.parametrize(
         ("field", "label"),
@@ -1813,6 +1813,17 @@ class TestValidateSaveExport:
         response = client.post(f"/draft/{draft_id}/validate")
         assert "cannot be exported" in response.text
 
+    def test_a_built_in_scenario_id_is_an_error(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The id ``cut_in`` names a built-in scenario: stored, then refused (#1808)."""
+        client.post(f"/draft/{draft_id}/scenario", data={"scenario_id": "cut_in"})
+        assert _document(store, draft_id).id == "cut_in"
+        response = client.post(f"/draft/{draft_id}/validate")
+        text = html.unescape(response.text)
+        assert "cannot be exported" in text
+        assert "names a built-in scenario" in text
+
     def test_saving_a_draft_reports_where_it_went(
         self, client: TestClient, draft_id: str
     ) -> None:
@@ -1850,7 +1861,7 @@ class TestValidateSaveExport:
         assert download.status_code == 200
         assert download.headers["content-type"] == "application/zip"
         assert (
-            'filename="cut_in-wheelhouse.zip"'
+            'filename="my_cut_in-wheelhouse.zip"'
             in download.headers["content-disposition"]
         )
 
@@ -1859,11 +1870,11 @@ class TestValidateSaveExport:
         # One top-level directory, so unpacking does not spray wheels into the
         # CWD -- and one named after the scenario, so two of them can be
         # unpacked side by side.
-        assert {n.split("/")[0] for n in names} == {"cut_in_scenario_wheelhouse"}
+        assert {n.split("/")[0] for n in names} == {"my_cut_in_scenario_wheelhouse"}
         assert any(n.endswith(".whl") for n in names)
-        assert "cut_in_scenario_wheelhouse/requirements.txt" in names
+        assert "my_cut_in_scenario_wheelhouse/requirements.txt" in names
         # Provenance travels in the download; the tree holding it is deleted.
-        assert "cut_in_scenario_wheelhouse/manifest.yaml" in names
+        assert "my_cut_in_scenario_wheelhouse/manifest.yaml" in names
 
     def test_the_uv_project_is_not_left_on_the_host(
         self, client: TestClient, offline_export: None, tmp_path: Path, draft_id: str
@@ -1873,7 +1884,7 @@ class TestValidateSaveExport:
         client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
         packages = tmp_path / "packages"
         staged = sorted(str(p.relative_to(packages)) for p in packages.rglob("*"))
-        assert staged == [draft_id, f"{draft_id}/cut_in-wheelhouse.zip"]
+        assert staged == [draft_id, f"{draft_id}/my_cut_in-wheelhouse.zip"]
 
     def test_downloading_before_an_export_is_an_error_not_a_traceback(
         self, client: TestClient, draft_id: str
@@ -3910,7 +3921,7 @@ class TestDerivedLanelets:
 class TestDraftsDoNotShareAnExport:
     """The staged wheelhouse belongs to a draft, not to a document id (#678).
 
-    Every draft made from one starter has the same document id -- ``cut_in``,
+    Every draft made from one starter has the same document id -- ``my_cut_in``,
     ``new_scenario`` -- so an archive keyed by it was one archive shared by all
     of them: one draft's link served another's export.
     """
@@ -3920,7 +3931,7 @@ class TestDraftsDoNotShareAnExport:
         service = app.state.service
         a = service.create_draft("cut_in", title="Draft A")
         b = service.create_draft("cut_in", title="Draft B")
-        assert a.document.id == b.document.id == "cut_in"
+        assert a.document.id == b.document.id == "my_cut_in"
         assert service.archive_path(a) != service.archive_path(b)
 
         archive = service.archive_path(a)
@@ -3934,7 +3945,9 @@ class TestDraftsDoNotShareAnExport:
         own = client.get(f"/draft/{a.id}/wheelhouse.zip")
         assert own.status_code == 200
         assert own.content == b"PK-wheelhouse-of-draft-A"
-        assert 'filename="cut_in-wheelhouse.zip"' in own.headers["content-disposition"]
+        assert (
+            'filename="my_cut_in-wheelhouse.zip"' in own.headers["content-disposition"]
+        )
 
     def test_exporting_one_draft_gives_the_other_nothing_to_download(
         self, client: TestClient, offline_export: None
@@ -3962,7 +3975,7 @@ class TestDraftsDoNotShareAnExport:
         download = client.get(f"/draft/{draft_id}/wheelhouse.zip")
         assert download.status_code == 200
         assert (
-            'filename="cut_in-wheelhouse.zip"'
+            'filename="my_cut_in-wheelhouse.zip"'
             in download.headers["content-disposition"]
         )
 
@@ -4061,7 +4074,7 @@ class TestTheStagedWheelhouseLivesAsLongAsItsDraft:
     ) -> None:
         client.post(f"/draft/{draft_id}/export", data={"dev_mode": "on"})
         packages = client.app.state.service.export_dir  # type: ignore[attr-defined]
-        assert (packages / draft_id / "cut_in-wheelhouse.zip").is_file()
+        assert (packages / draft_id / "my_cut_in-wheelhouse.zip").is_file()
 
         response = client.post(f"/draft/{draft_id}/delete", follow_redirects=False)
         assert response.status_code == 303
@@ -4150,7 +4163,7 @@ class TestTheDownloadOpensTheArchiveUnderItsLock:
         assert download.headers["content-length"] == str(len(self._PAYLOAD))
         assert download.headers["content-type"] == "application/zip"
         assert download.headers["content-disposition"] == (
-            'attachment; filename="cut_in-wheelhouse.zip"'
+            'attachment; filename="my_cut_in-wheelhouse.zip"'
         )
 
     def test_an_archive_removed_after_its_lookup_is_a_404_not_a_500(

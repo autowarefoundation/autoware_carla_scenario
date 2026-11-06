@@ -310,9 +310,9 @@ class TestFrameworkPin:
 class TestGeneratedPackage:
     def test_naming(self) -> None:
         names = package_names(new_document())
-        assert names["scenario_id"] == "cut_in"
-        assert names["package_name"] == "cut_in_scenario"
-        assert names["distribution_name"] == "cut-in-scenario"
+        assert names["scenario_id"] == "my_cut_in"
+        assert names["package_name"] == "my_cut_in_scenario"
+        assert names["distribution_name"] == "my-cut-in-scenario"
 
     def test_expected_files_exist(self, package: Path) -> None:
         for relative in (
@@ -320,8 +320,8 @@ class TestGeneratedPackage:
             "README.md",
             ".python-version",
             "scenario/manifest.yaml",
-            "src/cut_in_scenario/__init__.py",
-            "src/cut_in_scenario/scenario.py",
+            "src/my_cut_in_scenario/__init__.py",
+            "src/my_cut_in_scenario/scenario.py",
             "tests/test_scenario.py",
         ):
             assert (package / relative).is_file(), relative
@@ -335,9 +335,9 @@ class TestGeneratedPackage:
         perfectly and fails at run time, so where these two files sit is the
         difference between a shippable package and a broken one.
         """
-        module = package / "src" / "cut_in_scenario"
+        module = package / "src" / "my_cut_in_scenario"
         assert (module / "document.yaml").is_file()
-        assert (module / "conf" / "scenario" / "cut_in.yaml").is_file()
+        assert (module / "conf" / "scenario" / "my_cut_in.yaml").is_file()
         assert not (package / "scenario" / "document.yaml").exists()
         assert not (package / "conf").exists()
 
@@ -388,18 +388,20 @@ class TestGeneratedPackage:
     def test_the_document_round_trips_into_the_package(self, package: Path) -> None:
         from autoware_carla_scenario.authoring.persistence import load_document
 
-        document = package / "src/cut_in_scenario/document.yaml"
-        assert load_document(document).id == "cut_in"
+        document = package / "src/my_cut_in_scenario/document.yaml"
+        assert load_document(document).id == "my_cut_in"
 
     def test_the_hydra_config_is_package_global(self, package: Path) -> None:
-        text = (package / "src/cut_in_scenario/conf/scenario/cut_in.yaml").read_text()
+        text = (
+            package / "src/my_cut_in_scenario/conf/scenario/my_cut_in.yaml"
+        ).read_text()
         assert text.splitlines()[0] == "# @package _global_"
-        assert yaml.safe_load(text)["scenario"]["name"] == "cut_in"
+        assert yaml.safe_load(text)["scenario"]["name"] == "my_cut_in"
 
     def test_manifest_records_only_observed_values(self, package: Path) -> None:
         manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
         assert manifest["format_version"] == 3
-        assert manifest["scenario"]["id"] == "cut_in"
+        assert manifest["scenario"]["id"] == "my_cut_in"
         assert manifest["runtime"]["python"]
         assert "uv" in manifest["runtime"]
         assert manifest["autoware_carla_scenario"]["source"] in (
@@ -407,7 +409,7 @@ class TestGeneratedPackage:
             "version",
             "path",
         )
-        assert manifest["files"]["document"] == "src/cut_in_scenario/document.yaml"
+        assert manifest["files"]["document"] == "src/my_cut_in_scenario/document.yaml"
 
     def test_skipping_the_lock_is_recorded_as_a_caveat(self, package: Path) -> None:
         manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
@@ -463,7 +465,7 @@ def _compose_exported(package: Path, *overrides: str) -> Any:
         unregister_conf_dir,
     )
 
-    conf_dir = package / "src" / "cut_in_scenario" / "conf"
+    conf_dir = package / "src" / "my_cut_in_scenario" / "conf"
     register_conf_dir(conf_dir)
     try:
         GlobalHydra.instance().clear()
@@ -471,7 +473,7 @@ def _compose_exported(package: Path, *overrides: str) -> Any:
             config_dir=str(_FRAMEWORK_CONF.resolve()), version_base=None
         ):
             return compose(
-                config_name="config", overrides=["scenario=cut_in", *overrides]
+                config_name="config", overrides=["scenario=my_cut_in", *overrides]
             )
     finally:
         unregister_conf_dir(conf_dir)
@@ -492,10 +494,17 @@ class TestExportedMapGroup:
         document = _document_on_own_map(kind)
         package = export_package(document, tmp_path, **OFFLINE).root
 
-        group = package / "src" / "cut_in_scenario" / "conf" / "map" / "cut_in_map.yaml"
+        group = (
+            package
+            / "src"
+            / "my_cut_in_scenario"
+            / "conf"
+            / "map"
+            / "my_cut_in_map.yaml"
+        )
         assert group.read_text().splitlines()[0] == "# @package _global_"
 
-        cfg = _compose_exported(package, "map=cut_in_map")
+        cfg = _compose_exported(package, "map=my_cut_in_map")
         resolved = cfg.map
         assert resolved.name == "Town10HD_Opt"
         assert resolved.lanelet2_path is None
@@ -516,10 +525,12 @@ class TestExportedMapGroup:
         document.map.xodr_path = "/maps/Town10HD_Opt.xodr"
         package = export_package(document, tmp_path, **OFFLINE).root
 
-        cfg = _compose_exported(package, "map=cut_in_map")
+        cfg = _compose_exported(package, "map=my_cut_in_map")
         assert cfg.map.xodr_path == "/maps/Town10HD_Opt.xodr"
         assert cfg.map.overwrite_xodr is False
-        asked = _compose_exported(package, "map=cut_in_map", "map.overwrite_xodr=true")
+        asked = _compose_exported(
+            package, "map=my_cut_in_map", "map.overwrite_xodr=true"
+        )
         assert asked.map.overwrite_xodr is True
 
     def test_the_package_says_to_run_it_with_its_own_group(
@@ -527,18 +538,18 @@ class TestExportedMapGroup:
     ) -> None:
         result = export_package(_document_on_own_map("source"), tmp_path, **OFFLINE)
         readme = (result.root / "README.md").read_text()
-        assert "scenario scenario=cut_in map=cut_in_map" in readme
+        assert "scenario scenario=my_cut_in map=my_cut_in_map" in readme
         assert "map=nishishinjuku" not in readme
-        init = (result.root / "src/cut_in_scenario/__init__.py").read_text()
-        assert "map=cut_in_map" in init
+        init = (result.root / "src/my_cut_in_scenario/__init__.py").read_text()
+        assert "map=my_cut_in_map" in init
         manifest = yaml.safe_load((result.root / "scenario/manifest.yaml").read_text())
         assert (
             manifest["files"]["map_config"]
-            == "src/cut_in_scenario/conf/map/cut_in_map.yaml"
+            == "src/my_cut_in_scenario/conf/map/my_cut_in_map.yaml"
         )
 
     def test_a_built_in_group_ships_no_map_group(self, package: Path) -> None:
-        assert not (package / "src" / "cut_in_scenario" / "conf" / "map").exists()
+        assert not (package / "src" / "my_cut_in_scenario" / "conf" / "map").exists()
         assert "map=nishishinjuku" in (package / "README.md").read_text()
         manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
         assert "map_config" not in manifest["files"]
@@ -643,8 +654,8 @@ class TestExcludedLaneletIds:
 
 @pytest.fixture
 def scenario_registry(monkeypatch: pytest.MonkeyPatch) -> Any:
-    """The scenario registry, restored after the test: an exported ``cut_in``
-    package registers over the built-in ``cut_in``.
+    """The scenario registry, restored after the test: an exported
+    ``my_cut_in`` package registers its document into it.
 
     ``examples.run`` registers the built-in scenarios when it is first
     imported: imported before the registry is copied, or they would be
@@ -677,16 +688,16 @@ class TestRunOnTheDocumentsMap:
 
         document = _document_on_own_map(kind)
         package = export_package(document, tmp_path, **OFFLINE).root
-        scenario_registry.register_scenario_document("cut_in", lambda: document)
+        scenario_registry.register_scenario_document("my_cut_in", lambda: document)
 
         # The default group (nishishinjuku) wins over the scenario's map keys.
         cfg = _compose_exported(package)
         assert cfg.map.name == "NishishinjukuMap"
-        with pytest.raises(RunConfigError, match=r"map=cut_in_map") as raised:
+        with pytest.raises(RunConfigError, match=r"map=my_cut_in_map") as raised:
             self._check(cfg)
         assert "map.name is 'NishishinjukuMap'" in str(raised.value)
 
-        self._check(_compose_exported(package, "map=cut_in_map"))
+        self._check(_compose_exported(package, "map=my_cut_in_map"))
 
     def test_another_revision_of_the_map_is_refused(
         self, tmp_path: Path, scenario_registry: Any
@@ -697,11 +708,11 @@ class TestRunOnTheDocumentsMap:
         document = _document_on_own_map("source")
         document.map.source = _MAP_SOURCE.replace("5058c66", "0000000")
         package = export_package(document, tmp_path, **OFFLINE).root
-        scenario_registry.register_scenario_document("cut_in", lambda: document)
+        scenario_registry.register_scenario_document("my_cut_in", lambda: document)
 
-        with pytest.raises(RunConfigError, match=r"map\.source.*map=cut_in_map"):
+        with pytest.raises(RunConfigError, match=r"map\.source.*map=my_cut_in_map"):
             self._check(_compose_exported(package, "map=town10hd_opt"))
-        self._check(_compose_exported(package, "map=cut_in_map"))
+        self._check(_compose_exported(package, "map=my_cut_in_map"))
 
     def test_a_local_copy_of_the_same_map_is_accepted(
         self, tmp_path: Path, scenario_registry: Any
@@ -709,23 +720,25 @@ class TestRunOnTheDocumentsMap:
         """Explicit files and a directory are how a run points at its own copy."""
         document = _document_on_own_map("source")
         package = export_package(document, tmp_path, **OFFLINE).root
-        scenario_registry.register_scenario_document("cut_in", lambda: document)
+        scenario_registry.register_scenario_document("my_cut_in", lambda: document)
 
         self._check(
             _compose_exported(
                 package,
-                "map=cut_in_map",
+                "map=my_cut_in_map",
                 "map.lanelet2_path=/copy/lanelet2_map.osm",
                 "map.xodr_path=/copy/Town10HD_Opt.xodr",
             )
         )
-        self._check(_compose_exported(package, "map=cut_in_map", "map.directory=/copy"))
+        self._check(
+            _compose_exported(package, "map=my_cut_in_map", "map.directory=/copy")
+        )
 
     def test_a_document_on_a_built_in_group_is_not_checked(
         self, package: Path, scenario_registry: Any
     ) -> None:
         document = new_document()
-        scenario_registry.register_scenario_document("cut_in", lambda: document)
+        scenario_registry.register_scenario_document("my_cut_in", lambda: document)
         self._check(_compose_exported(package))
         # Its group is the map; a run choosing another is the run's choice.
         self._check(_compose_exported(package, "map=town10hd_opt"))
@@ -741,14 +754,16 @@ class TestRunOnTheDocumentsMap:
         import importlib
 
         try:
-            importlib.import_module("cut_in_scenario").register()
-            document = scenario_registry.get_scenario_document("cut_in")
+            importlib.import_module("my_cut_in_scenario").register()
+            document = scenario_registry.get_scenario_document("my_cut_in")
             assert document is not None and document.map.source == _MAP_SOURCE
-            with pytest.raises(RunConfigError, match=r"map=cut_in_map"):
+            with pytest.raises(RunConfigError, match=r"map=my_cut_in_map"):
                 self._check(_compose_exported(package.root))
-            self._check(_compose_exported(package.root, "map=cut_in_map"))
+            self._check(_compose_exported(package.root, "map=my_cut_in_map"))
         finally:
-            for module in [m for m in sys.modules if m.startswith("cut_in_scenario")]:
+            for module in [
+                m for m in sys.modules if m.startswith("my_cut_in_scenario")
+            ]:
                 del sys.modules[module]
 
     def test_a_batch_names_the_case(
@@ -761,8 +776,8 @@ class TestRunOnTheDocumentsMap:
 
         document = _document_on_own_map("directory")
         package = export_package(document, tmp_path, **OFFLINE).root
-        scenario_registry.register_scenario_document("cut_in", lambda: document)
-        with pytest.raises(RunConfigError, match=r"^case-a: .*map=cut_in_map"):
+        scenario_registry.register_scenario_document("my_cut_in", lambda: document)
+        with pytest.raises(RunConfigError, match=r"^case-a: .*map=my_cut_in_map"):
             check_batch_configs([_compose_exported(package)], ["case-a"])
 
     def test_a_batch_loads_each_document_once(
@@ -778,10 +793,10 @@ class TestRunOnTheDocumentsMap:
             loads.append(document.id)
             return document
 
-        scenario_registry.register_scenario_document("cut_in", load)
-        cfg = _compose_exported(package, "map=cut_in_map")
+        scenario_registry.register_scenario_document("my_cut_in", load)
+        cfg = _compose_exported(package, "map=my_cut_in_map")
         check_batch_configs([cfg, cfg, cfg], ["a", "b", "c"])
-        assert loads == ["cut_in"]
+        assert loads == ["my_cut_in"]
 
     @pytest.mark.parametrize(
         "spelling",
@@ -797,9 +812,9 @@ class TestRunOnTheDocumentsMap:
     ) -> None:
         document = _document_on_own_map("source")
         package = export_package(document, tmp_path, **OFFLINE).root
-        scenario_registry.register_scenario_document("cut_in", lambda: document)
+        scenario_registry.register_scenario_document("my_cut_in", lambda: document)
         self._check(
-            _compose_exported(package, "map=cut_in_map", f"map.source='{spelling}'")
+            _compose_exported(package, "map=my_cut_in_map", f"map.source='{spelling}'")
         )
 
     def test_an_unparsable_source_is_compared_as_text(self) -> None:
@@ -825,8 +840,8 @@ class TestEveryPathRefusesAnotherMapBeforeReadingIt:
     """
 
     _REFUSAL = (
-        r"scenario 'cut_in' runs on the map its document names, but map\.name "
-        r"is 'NishishinjukuMap'.*map=cut_in_map"
+        r"scenario 'my_cut_in' runs on the map its document names, but map\.name "
+        r"is 'NishishinjukuMap'.*map=my_cut_in_map"
     )
 
     @pytest.fixture
@@ -847,9 +862,9 @@ class TestEveryPathRefusesAnotherMapBeforeReadingIt:
 
         def load_scenario_plugins() -> None:
             scenario_registry.register_conf_dir(
-                package / "src" / "cut_in_scenario" / "conf"
+                package / "src" / "my_cut_in_scenario" / "conf"
             )
-            scenario_registry.register_scenario_document("cut_in", lambda: document)
+            scenario_registry.register_scenario_document("my_cut_in", lambda: document)
 
         monkeypatch.setattr(
             scenario_registry, "load_scenario_plugins", load_scenario_plugins
@@ -871,17 +886,19 @@ class TestEveryPathRefusesAnotherMapBeforeReadingIt:
 
         exported_package()
         with pytest.raises(SystemExit) as exited:
-            run.run_batch(["cut_in"], [], expand=True)
+            run.run_batch(["my_cut_in"], [], expand=True)
         assert exited.value.code == 1
         err = capsys.readouterr().err
-        assert err.startswith("Error: cut_in: scenario 'cut_in'")
+        assert err.startswith("Error: my_cut_in: scenario 'my_cut_in'")
         assert re.search(self._REFUSAL, err)
 
         # On its own map the sweep is expanded.
         from autoware_carla_scenario.sweeper import expand as sweeper_expand
 
         monkeypatch.setattr(sweeper_expand, "expand_config", lambda *_, **__: [[]])
-        assert run._expand_batch(["cut_in"], ["map=cut_in_map"]) == [("cut_in", [])]
+        assert run._expand_batch(["my_cut_in"], ["map=my_cut_in_map"]) == [
+            ("my_cut_in", [])
+        ]
 
     def test_the_scenario_cli_loads_the_packages_before_the_batch_checks(
         self,
@@ -893,7 +910,9 @@ class TestEveryPathRefusesAnotherMapBeforeReadingIt:
 
         monkeypatch.setattr(run, "load_scenario_plugins", exported_package)
         monkeypatch.setenv("SWEEP_RESUME_FROM", "0")
-        monkeypatch.setattr(sys, "argv", ["scenario", "--multirun", "scenario=cut_in*"])
+        monkeypatch.setattr(
+            sys, "argv", ["scenario", "--multirun", "scenario=my_cut_in*"]
+        )
         with pytest.raises(SystemExit) as exited:
             run.main()
         assert exited.value.code == 1
@@ -913,14 +932,14 @@ class TestEveryPathRefusesAnotherMapBeforeReadingIt:
             "expand_config",
             lambda *_, **__: pytest.fail("expanded the sweep on the composed map"),
         )
-        assert expand.main(["scenario=cut_in"]) == 1
+        assert expand.main(["scenario=my_cut_in"]) == 1
         out, err = capsys.readouterr()
         assert out == ""
-        assert err.startswith("Error: cut_in: scenario 'cut_in'")
+        assert err.startswith("Error: my_cut_in: scenario 'my_cut_in'")
         assert re.search(self._REFUSAL, err)
 
         monkeypatch.setattr(expand, "expand_config", lambda *_, **__: [[]])
-        assert expand.main(["scenario=cut_in", "map=cut_in_map"]) == 0
+        assert expand.main(["scenario=my_cut_in", "map=my_cut_in_map"]) == 0
 
     def test_the_viewers_sweep_resolver(
         self, exported_package: Any, monkeypatch: pytest.MonkeyPatch
@@ -929,15 +948,15 @@ class TestEveryPathRefusesAnotherMapBeforeReadingIt:
 
         monkeypatch.setattr(sweep_resolver, "load_scenario_plugins", exported_package)
         with pytest.raises(sweep_resolver.SweepResolutionError) as raised:
-            sweep_resolver.resolve_sweep("cut_in")
-        assert str(raised.value).startswith("cut_in: scenario 'cut_in'")
+            sweep_resolver.resolve_sweep("my_cut_in")
+        assert str(raised.value).startswith("my_cut_in: scenario 'my_cut_in'")
         assert re.search(self._REFUSAL, str(raised.value))
 
         from autoware_carla_scenario.sweeper import expand as sweeper_expand
 
         monkeypatch.setattr(sweeper_expand, "expand_config", lambda *_, **__: [[]])
-        assert sweep_resolver.resolve_sweep("cut_in", ["map=cut_in_map"]) == [
-            ["scenario=cut_in"]
+        assert sweep_resolver.resolve_sweep("my_cut_in", ["map=my_cut_in_map"]) == [
+            ["scenario=my_cut_in"]
         ]
 
     def test_the_viewers_sweep_resolver_reports_what_the_check_raises(
@@ -956,9 +975,9 @@ class TestEveryPathRefusesAnotherMapBeforeReadingIt:
         monkeypatch.setattr(hydra_config, "scenario_map_refusal", refusal)
         with pytest.raises(
             sweep_resolver.SweepResolutionError,
-            match=r"^cut_in: InterpolationResolutionError: map\.name: no such key",
+            match=r"^my_cut_in: InterpolationResolutionError: map\.name: no such key",
         ):
-            sweep_resolver.resolve_sweep("cut_in")
+            sweep_resolver.resolve_sweep("my_cut_in")
 
     def test_scenario_odd_route(
         self,
@@ -973,14 +992,14 @@ class TestEveryPathRefusesAnotherMapBeforeReadingIt:
             raise AssertionError("planned the route on the composed map")
 
         monkeypatch.setattr(run, "build_planned_route", planned)
-        assert odd_main(["route", "default", "cut_in"]) == 2
+        assert odd_main(["route", "default", "my_cut_in"]) == 2
         out = capsys.readouterr().out
-        assert "cut_in: NOT PLANNED: scenario 'cut_in'" in out
+        assert "my_cut_in: NOT PLANNED: scenario 'my_cut_in'" in out
         assert re.search(self._REFUSAL, out)
         assert "planned the route" not in out
 
         # On its own map the route is planned.
-        assert odd_main(["route", "default", "cut_in", "map=cut_in_map"]) == 2
+        assert odd_main(["route", "default", "my_cut_in", "map=my_cut_in_map"]) == 2
         assert "planned the route" in capsys.readouterr().out
 
 
@@ -1106,7 +1125,7 @@ class TestExportRefusals:
         export's would otherwise stay -- stale wheels beside a fresh manifest
         that says the package has none.
         """
-        stale = tmp_path / "cut_in_scenario_wheelhouse"
+        stale = tmp_path / "my_cut_in_scenario_wheelhouse"
         stale.mkdir()
         (stale / "old-0.0.1-py3-none-any.whl").write_text("", encoding="utf-8")
 
@@ -1252,7 +1271,7 @@ class TestShippedRequirements:
                 "annotated-types==0.8.0",
                 f"{DISTRIBUTION}[carla] @ git+https://example.com/r@abc"
                 "#subdirectory=autoware_carla_scenario",
-                "    # via cut-in-scenario",
+                "    # via my-cut-in-scenario",
                 # uv writes a path source as a bare URL, name and all omitted.
                 "file:///somewhere/local/local_helper",
                 "colorama==0.4.6 ; sys_platform == 'win32'",
@@ -1273,7 +1292,7 @@ class TestShippedRequirements:
         assert not any(line.startswith("file:") for line in rewritten)
         # Markers travel; comments and unbuilt requirements are left alone.
         assert "colorama==0.4.6 ; sys_platform == 'win32'" in rewritten
-        assert "    # via cut-in-scenario" in rewritten
+        assert "    # via my-cut-in-scenario" in rewritten
         assert "unbuilt @ git+https://example.com/nope" in rewritten
         assert not any(" @ git+https://example.com/r" in line for line in rewritten)
 
@@ -1689,7 +1708,7 @@ class TestExportSelfCheck:
         # on any index -- and the CARLA client with the Codon toolchain it
         # pins, without which the scenario cannot import carla.
         names = " ".join(wheelhouse.wheels)
-        assert "cut_in_scenario-" in names
+        assert "my_cut_in_scenario-" in names
         assert "autoware_carla_scenario-" in names
         assert "typesafe_carla-" in names
         assert "typesafe_carla_toolchain-" in names
@@ -1797,7 +1816,7 @@ class TestExportSelfCheck:
                 [
                     str(python),
                     "-c",
-                    "import cut_in_scenario as p;"
+                    "import my_cut_in_scenario as p;"
                     "assert p.DOCUMENT_PATH.is_file(), p.DOCUMENT_PATH;"
                     "assert p.CONF_DIR.is_dir(), p.CONF_DIR",
                 ],

@@ -83,7 +83,7 @@ class TestRoundTrip:
     def test_draft_wrapper_is_accepted_by_load_document(self, tmp_path) -> None:
         store = DraftStore(tmp_path)
         draft = store.create(new_document())
-        assert load_document(store.path_for(draft.id)).id == "cut_in"
+        assert load_document(store.path_for(draft.id)).id == "my_cut_in"
 
     def test_draft_ids_cannot_escape_the_store(self, tmp_path) -> None:
         store = DraftStore(tmp_path)
