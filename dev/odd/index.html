@@ -4163,7 +4163,11 @@ among the case's overrides, recorded in its coverage file), from the sweep's
 <code>seed</code> and the case, so the same sweep draws the same grip. The weather comes
 from the ODD and the grip from the range that weather allows: a heavy-rain
 case never runs on a dry road's grip. <code>tire_friction: false</code> in the
-<code>odd_sample</code> leaves every case at the median, and
+<code>odd_sample</code> leaves every case at the median (<code>true</code> or <code>false</code>, or one of
+their spellings, as <a href="../usage/#the-switches">the run's switches</a> take: <code>"off"</code>,
+<code>"no"</code> and <code>0</code> are false; a missing or null one is true; anything else, such
+as <code>ture</code> or <code>2</code>, is refused, naming <code>sweep.odd_sample.tire_friction</code>, before
+any case is drawn), and
 <code>environment.tire_friction</code> fixes the grip whatever the weather (it wins over
 the quantile, and a case that names one draws no quantile; the ODD's
 <code>tire_friction</code> probe draws it through that knob).</p>
@@ -4265,7 +4269,8 @@ high end; the median when not set); <code>environment.visibility_m</code> fixes 
 the weather. A <code>sweep.odd_sample</code> draws the quantile for every case, as it
 draws the grip, so the ODD's <code>rain</code>, <code>fog</code> and <code>illumination</code> knobs are what
 shorten it: a night case's drivers see 50-150 m, a heavy-fog case's 15-40 m.
-<code>visibility: false</code> in the <code>odd_sample</code> leaves every case at the median. An ODD that names the visibility itself (the <code>visibility</code> probe)
+<code>visibility: false</code> in the <code>odd_sample</code> leaves every case at the median
+(read as <code>tire_friction</code> is, <a href="../usage/#the-switches">strictly</a>). An ODD that names the visibility itself (the <code>visibility</code> probe)
 sets it through its own knob, <code>environment.visibility_m</code>, and a case with one
 keeps it. A run that sets no weather records none, and its traffic sees as
 it always did; each run starts with none, whatever the last left.</p>
@@ -4953,7 +4958,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 23:59:35 UTC"><span class="timeago" datetime="2026-11-05T23:59:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 23:59:35 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 04:07:31 UTC"><span class="timeago" datetime="2026-11-06T04:07:31+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 04:07:31 UTC">2026-11-06</span>
   </span>
 
     
