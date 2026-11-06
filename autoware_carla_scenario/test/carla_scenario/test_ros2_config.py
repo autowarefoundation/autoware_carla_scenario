@@ -448,6 +448,39 @@ def test_a_source_takes_an_int_for_a_float() -> None:
 
 
 @pytest.mark.parametrize(
+    ("key", "value", "message"),
+    [
+        ("speed_horizon_s", 0.0, "speed_horizon_s must be positive, got 0.0"),
+        ("speed_horizon_s", -2.0, "speed_horizon_s must be positive, got -2.0"),
+        ("jerk_mps3", -1.0, "jerk_mps3 must not be negative, got -1.0"),
+        ("steering_sign", 0.0, "steering_sign must not be zero, got 0.0"),
+        ("steering_sign", 0, "steering_sign must not be zero, got 0"),
+    ],
+)
+def test_a_source_refuses_a_gain_out_of_bounds(
+    key: str, value: Any, message: str
+) -> None:
+    """#1804: a negative horizon turned a request to accelerate into braking, a
+    zero one pinned the target speed, and a zero sign pinned the steering."""
+    with pytest.raises(ValueError) as raised:
+        CommandSourceConfig.from_mapping(_source(**{key: value}))
+    assert str(raised.value) == f"command source 'planner': {message}"
+    assert "\n" not in str(raised.value)
+
+
+@pytest.mark.parametrize("sign", [-1.0, -0.5, 2.0])
+def test_a_source_takes_a_negative_or_scaled_steering_sign(sign: float) -> None:
+    assert CommandSourceConfig.from_mapping(
+        _source(steering_sign=sign)
+    ).steering_sign == pytest.approx(sign)
+
+
+def test_a_source_takes_a_zero_jerk_carlas_default() -> None:
+    """``carla.VehicleAckermannControl`` takes ``jerk=0.0`` by default."""
+    assert CommandSourceConfig.from_mapping(_source(jerk_mps3=0)).jerk_mps3 == 0
+
+
+@pytest.mark.parametrize(
     "key",
     [
         "fov",

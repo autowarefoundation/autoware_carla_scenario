@@ -82,12 +82,18 @@ class CommandSourceConfig:
             counting as fresh.
         steering_sign: Multiplies a ``steer_accel`` steering angle before it
             reaches CARLA, whose Ackermann steer is positive to the right.
-            VisionPilot already steers positive to the right, so ``1.0``.
+            VisionPilot already steers positive to the right, so ``1.0``.  Not
+            zero, which would pin the steering straight; a negative value
+            flips the sign.
         speed_horizon_s: A ``steer_accel`` acceleration becomes the Ackermann
             target speed ``speed + acceleration * speed_horizon_s``, as
-            VisionPilot's ``carla_control_publisher`` builds it.
+            VisionPilot's ``carla_control_publisher`` builds it.  Positive: zero
+            would pin the target to the current speed, and a negative horizon
+            would turn a request to accelerate into braking.
         jerk_mps3: The Ackermann jerk limit, for ``steer_accel`` and for a
-            ``control`` command that leaves its jerk undefined.
+            ``control`` command that leaves its jerk undefined.  Not negative;
+            ``0`` is allowed, the jerk ``carla.VehicleAckermannControl`` takes
+            by default.
         pair_window_s: For ``steer_accel``, how far apart (in the publisher's
             clock, by the samples' DDS source timestamps) the steering and the
             acceleration of one cycle may be written.  A half with no partner
@@ -163,6 +169,22 @@ class CommandSourceConfig:
                 raise ValueError(
                     f"command source {self.name!r}: {key} must be finite, got {value}"
                 )
+        # Each is finite here, so a comparison means what it says.
+        if self.steering_sign == 0.0:
+            raise ValueError(
+                f"command source {self.name!r}: steering_sign must not be zero, "
+                f"got {self.steering_sign}"
+            )
+        if self.speed_horizon_s <= 0.0:
+            raise ValueError(
+                f"command source {self.name!r}: speed_horizon_s must be positive, "
+                f"got {self.speed_horizon_s}"
+            )
+        if self.jerk_mps3 < 0.0:
+            raise ValueError(
+                f"command source {self.name!r}: jerk_mps3 must not be negative, "
+                f"got {self.jerk_mps3}"
+            )
 
     @property
     def topics(self) -> Tuple[str, ...]:
