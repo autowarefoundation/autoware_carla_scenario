@@ -16,7 +16,7 @@ import threading
 import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, TypeVar
+from typing import Any, MutableMapping, TypeVar
 
 import pytest
 import yaml
@@ -3956,6 +3956,111 @@ class TestTheStagedWheelhouseLivesAsLongAsItsDraft:
         assert not exporter.is_alive(), "the export never finished"
         packages = client.app.state.service.export_dir  # type: ignore[attr-defined]
         assert not (packages / draft_id).exists()
+
+
+class TestTheDownloadOpensTheArchiveUnderItsLock:
+    """The download opens the archive before it responds, under the archive lock (#1719).
+
+    The route used to hand ``FileResponse`` a path, which it stats and opens
+    only once the response is sent.  A draft deleted, or re-exported under a
+    new scenario id, in between removed the file, and Starlette's
+    ``RuntimeError`` was a 500 rather than the "No exported wheelhouse" 404 a
+    stale link gets.
+    """
+
+    _PAYLOAD = b"PK-" + bytes(range(256)) * 9000
+
+    @classmethod
+    def _staged(cls, tmp_path: Path) -> tuple[Any, EditorService, Draft, Path]:
+        """An app whose one draft has :attr:`_PAYLOAD` staged as its archive."""
+        app = create_app(tmp_path / "drafts", tmp_path / "packages")
+        service = app.state.service
+        draft = service.create_draft("cut_in")
+        archive = service.archive_path(draft)
+        archive.parent.mkdir(parents=True, exist_ok=True)
+        archive.write_bytes(cls._PAYLOAD)
+        return app, service, draft, archive
+
+    def test_a_download_serves_the_bytes_length_and_name(self, tmp_path: Path) -> None:
+        app, _, draft, _ = self._staged(tmp_path)
+        download = TestClient(app).get(f"/draft/{draft.id}/wheelhouse.zip")
+        assert download.status_code == 200
+        assert download.content == self._PAYLOAD
+        assert download.headers["content-length"] == str(len(self._PAYLOAD))
+        assert download.headers["content-type"] == "application/zip"
+        assert download.headers["content-disposition"] == (
+            'attachment; filename="cut_in-wheelhouse.zip"'
+        )
+
+    def test_an_archive_removed_after_its_lookup_is_a_404_not_a_500(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The archive goes between finding its path and opening it -- as a
+        delete or a re-export under a new id removed it before the fix."""
+        app, service, draft, archive = self._staged(tmp_path)
+        real_lookup = service.staged_archive
+
+        def _lookup_then_lose(staged: Draft) -> Path | None:
+            found = real_lookup(staged)
+            archive.unlink()
+            return found
+
+        monkeypatch.setattr(service, "staged_archive", _lookup_then_lose)
+        # raise_server_exceptions stays on: a 500 would raise here.
+        download = TestClient(app).get(f"/draft/{draft.id}/wheelhouse.zip")
+        assert download.status_code == 404
+        assert "No exported wheelhouse" in download.text
+
+    def test_an_archive_removed_once_opened_still_downloads_whole(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Once opened, the draft deleted mid-download costs it nothing, and the
+        handle is closed when the response is done."""
+        app, service, draft, _ = self._staged(tmp_path)
+        real_open = service.open_staged_archive
+        opened: list[Any] = []
+
+        def _open_then_delete(staged: Draft) -> Any:
+            result = real_open(staged)
+            opened.append(result)
+            assert service.delete_draft(staged.id) is True
+            return result
+
+        monkeypatch.setattr(service, "open_staged_archive", _open_then_delete)
+        download = TestClient(app).get(f"/draft/{draft.id}/wheelhouse.zip")
+        assert download.status_code == 200
+        assert download.content == self._PAYLOAD
+        assert not (tmp_path / "packages" / draft.id).exists()
+        assert opened and opened[0].file.closed
+
+    def test_a_client_that_disconnects_has_the_archive_closed(
+        self, tmp_path: Path
+    ) -> None:
+        import anyio
+        from starlette.requests import ClientDisconnect
+
+        from autoware_carla_scenario.editor.routes import _ArchiveResponse
+
+        _, service, draft, _ = self._staged(tmp_path)
+        archive = service.open_staged_archive(draft)
+        assert archive is not None
+        response = _ArchiveResponse(archive)
+
+        async def _receive() -> dict[str, Any]:
+            return {"type": "http.disconnect"}
+
+        async def _send(message: MutableMapping[str, Any]) -> None:
+            if message["type"] == "http.response.body":
+                raise OSError("connection reset")
+
+        scope = {"type": "http", "asgi": {"spec_version": "2.4"}}
+
+        async def _serve() -> None:
+            await response(scope, _receive, _send)
+
+        with pytest.raises(ClientDisconnect):
+            anyio.run(_serve)
+        assert archive.file.closed
 
 
 class TestMapActionsKeepConcurrentEdits:
