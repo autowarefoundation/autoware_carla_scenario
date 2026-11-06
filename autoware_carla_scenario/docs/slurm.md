@@ -400,7 +400,7 @@ ports from `port_base`:
 | `base+0` | CARLA RPC (`server.port`) |
 | `base+1` | CARLA streaming (`-carla-streaming-port`) |
 | `base+2` | CARLA secondary (`-carla-secondary-port`) |
-| `base+3` | TrafficManager (`traffic_manager.port`) |
+| `base+3` | TrafficManager (`traffic_manager.port`, and the traffic backend's own: `traffic.options.port`, sumo's `traffic.options.tm_port`) |
 | `base+4` | the Autoware bridge the run hosts (`autoware.address`) |
 | `base+5` | the driver bridge the run hosts (`driver.bridge.address`) |
 
@@ -414,6 +414,13 @@ SLURM gives each job a private one (`job_container/tmpfs`): it is
 `/dev/shm/acs-slurm-ports-<uid>` (or `/tmp` where that cannot be made), or
 `launcher.port_lock_dir`. The default range, 20000-29999, is below Linux's
 ephemeral ports.
+
+The TrafficManager's port is always the slot's, whatever the config says: the traffic
+groups interpolate the backend's own (`traffic.options.port`, sumo's
+`traffic.options.tm_port`) from `traffic_manager.port`, and one set outright
+(`traffic.options.port=8101`, or `null` for the backend's default) is
+replaced by the slot's too, with a warning naming the key; otherwise every
+task on the node would ask its CARLA for a TrafficManager on that one port.
 
 `driver.address` is not changed: a policy the run serves itself
 (`driver.policy`) listens on a port the OS picks, and one it does not is a

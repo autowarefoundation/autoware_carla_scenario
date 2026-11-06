@@ -13,6 +13,7 @@ from typing import (
     List,
     Optional,
     Sequence,
+    TypeAlias,
     Union,
 )
 
@@ -49,6 +50,9 @@ from .traffic.driven import BackendDriven
 
 logger = logging.getLogger(__name__)
 
+#: The plain callbacks of one phase (init, pre-tick or post-tick).
+_TickCallbacks: TypeAlias = List[Callable[[carla.World], None]]
+
 
 class _Registrations:
     """A copy of what a scenario had registered when its first run started.
@@ -57,8 +61,9 @@ class _Registrations:
     (:meth:`BaseScenario._reset_registrations`).  The scenario copies each
     list on the way in and on the way out, so a run that appends to the
     scenario's lists leaves this one as it was.  Filled field by field rather
-    than through a constructor: Codon cannot express a parameter of a list of
-    callables (docs/typecheck.md), only an attribute declared as one.
+    than through a constructor: the check cannot spell a parameter of a list
+    of callables unless its type is named with a ``TypeAlias``, as
+    ``_TickCallbacks`` is (docs/typecheck.md).
     """
 
     entities: List[VehicleEntity]
@@ -589,7 +594,7 @@ class BaseScenario(ABC):
         self,
         cb: Union[BaseAction, Callable[["carla.World"], None]],
         actions: List[BaseAction],
-        callbacks: List[Callable[["carla.World"], None]],
+        callbacks: _TickCallbacks,
     ) -> None:
         """Dispatch *cb* into the appropriate list.
 

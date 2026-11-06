@@ -1011,6 +1011,32 @@ def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
     return backend
 
 
+#: The option each built-in backend reads the TrafficManager's port from.
+_TM_PORT_OPTIONS = {"traffic_manager": "port", "sumo": "tm_port"}
+
+
+def _traffic_manager_port_text(cfg: DictConfig) -> str:
+    """The TrafficManager port the backend *cfg* selects will use, as text.
+
+    What :func:`build_traffic_backend` gives it, without building it: the
+    backend's own option (``traffic.options.port``, sumo's
+    ``traffic.options.tm_port``) when the ``traffic`` group is composed, and
+    ``traffic_manager.port`` when it is not; the default when either is
+    ``null``.  A backend with no TrafficManager port says so (#1863).
+    """
+    traffic = cfg.get("traffic")
+    if traffic is None:
+        port = _legacy_traffic_manager_options(cfg).get("port")
+    else:
+        backend = str(traffic.get("backend", "traffic_manager"))
+        option = _TM_PORT_OPTIONS.get(backend)
+        if option is None:
+            return f"- (traffic backend {backend})"
+        options = traffic.get("options")
+        port = None if options is None else options.get(option)
+    return str(DEFAULT_TM_PORT if port is None else port)
+
+
 def _apply_ego_config(cfg: DictConfig, scenario: BaseScenario) -> None:
     """Give a scenario the registry did not build the ego the config selects.
 
@@ -1831,7 +1857,7 @@ def _log_batch_plan(
             logger.info("  sweep case  : %s", " ".join(case_overrides[i - 1]))
         logger.info("  map         : %s", cfg.map.name)
         logger.info("  server      : %s:%s", cfg.server.host, cfg.server.port)
-        logger.info("  TM port     : %s", cfg.traffic_manager.port)
+        logger.info("  TM port     : %s", _traffic_manager_port_text(cfg))
         goal_pose = build_goal_pose(cfg)
         logger.info(
             "  ego         : %s (%.1f km/h) spawn=lanelet:%d s:%.1f goal=%s",

@@ -174,6 +174,10 @@ def worker_overrides(
         changes.update(_domain_overrides(cfg, domains))
     for key, value in changes.items():
         OmegaConf.update(cfg, key, value, merge=False)
+    tm_key = _backend_tm_port_key(cfg, slot.traffic_manager)
+    if tm_key is not None:
+        changes[tm_key] = slot.traffic_manager
+        OmegaConf.update(cfg, tm_key, slot.traffic_manager, merge=False, force_add=True)
     return changes
 
 
@@ -285,6 +289,48 @@ def _record_domains(task: Any, domains: RosDomains | None) -> None:
     ports, for the ROS 2 nodes started outside the framework to read."""
     if domains is not None and domains.mapping:
         task.update(ros_domains={str(k): v for k, v in sorted(domains.mapping.items())})
+
+
+#: The option each built-in backend reads the TrafficManager's port from
+#: (``conf/traffic/<backend>.yaml``).
+_TM_PORT_OPTIONS = {"traffic_manager": "port", "sumo": "tm_port"}
+
+
+def _backend_tm_port_key(cfg: "DictConfig", port: int) -> str | None:
+    """The traffic backend's TrafficManager port option, when it must be set.
+
+    The traffic groups interpolate it from ``traffic_manager.port``, which then
+    follows the slot (*port*) by itself: ``None``.  A value stated outright --
+    ``traffic.options.port: 8101``, a ``null`` that leaves the backend's own
+    default, or the option left out -- would put every task on the node on one
+    TrafficManager, so it is the key to point at the slot's port, with a
+    warning when it named another port (#1863).  A config with no ``traffic``
+    group reads ``traffic_manager.port`` itself, and other backends name no
+    TrafficManager port.
+    """
+    from omegaconf import OmegaConf  # noqa: PLC0415
+
+    traffic = cfg.get("traffic")
+    if traffic is None:
+        return None
+    option = _TM_PORT_OPTIONS.get(str(traffic.get("backend", "traffic_manager")))
+    if option is None:
+        return None
+    options = traffic.get("options")
+    if options is not None and option in options:
+        current = options.get(option)
+        if current == port and OmegaConf.is_interpolation(options, option):
+            return None
+        if current is not None and current != port:
+            logger.warning(
+                "traffic.options.%s: %s is replaced by the task's TrafficManager "
+                "port %d: tasks sharing a node each have a port of their own "
+                "(docs/slurm.md)",
+                option,
+                current,
+                port,
+            )
+    return f"traffic.options.{option}"
 
 
 def _differences(
