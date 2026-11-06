@@ -9,6 +9,7 @@ from __future__ import annotations
 import os
 import subprocess
 import sys
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, ClassVar, Mapping, Optional
@@ -687,6 +688,139 @@ class TestDockerBackendOutput:
     ) -> None:
         out = docker_module._docker([_undecodable_docker(tmp_path), "ps"], "list")
         assert out == "out \ufffd\n"
+
+
+#: A docker that records each command line in ``RECORD`` and stops answering
+#: (sleeps, for a bounded time) for the commands that start with one of
+#: ``HANGS``, as a daemon on an overloaded host does (#1785).
+_HANGING_DOCKER = """\
+import sys, time
+args = sys.argv[1:]
+line = " ".join(args)
+with open(RECORD, "a") as record:
+    record.write(line + "\\n")
+if any(line.startswith(hang) for hang in HANGS):
+    time.sleep(30)
+if args[0] == "info":
+    print('{"runc":{}}')
+elif args[0] == "ps":
+    print(LISTING)
+elif args[0] == "run":
+    print("c0ffee")
+elif args[0] == "inspect":
+    print("true")
+"""
+
+
+def _hanging_docker(
+    tmp_path: Path, hangs: tuple[str, ...], listing: str = ""
+) -> tuple[str, Path]:
+    """The fake docker's path, and the file it records its commands in."""
+    record = tmp_path / "calls.txt"
+    script = tmp_path / "docker"
+    script.write_text(
+        f"#!{sys.executable}\n"
+        f"RECORD = {str(record)!r}\nHANGS = {hangs!r}\nLISTING = {listing!r}\n"
+        f"{_HANGING_DOCKER}"
+    )
+    script.chmod(0o755)
+    return str(script), record
+
+
+def _calls(record: Path) -> list[str]:
+    return record.read_text().splitlines() if record.exists() else []
+
+
+class _Ready(_Silent):
+    def ready(self, timeout_s: float) -> bool:
+        return True
+
+
+def _settings(docker: str, startup_timeout_s: float) -> docker_module.DockerSettings:
+    return docker_module.DockerSettings(
+        image="img:1",
+        container_port=1,
+        gpus="none",
+        startup_timeout_s=startup_timeout_s,
+        docker=docker,
+    )
+
+
+class TestDockerThatStopsAnswering:
+    """``startup_timeout_s`` bounds startup even when docker hangs (#1785).
+
+    The fake docker sleeps 30 s at most, so a test that failed to bound a
+    call still ends; each call it makes is a child of ``subprocess.run``,
+    which kills it on its timeout.
+    """
+
+    def test_a_hanging_inspect_ends_in_the_deadline_and_removes_the_container(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(docker_module, "_TAIL_TIMEOUT_S", 1.0)
+        docker, record = _hanging_docker(tmp_path, ("inspect", "logs --tail"))
+        backend = _Silent(_settings(docker, 2.0))
+        began = time.monotonic()
+        with pytest.raises(docker_module.BackendError, match="did not answer") as err:
+            backend.start()
+        assert time.monotonic() - began < 2.0 + 15.0
+        assert "no log" in str(err.value)
+        calls = _calls(record)
+        assert any(c.startswith("inspect") for c in calls)
+        assert "rm --force c0ffee" in calls
+        assert backend._container is None
+
+    def test_a_hanging_image_inspect_fails_the_start_in_bounded_time(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(docker_module, "_CALL_TIMEOUT_S", 1.0)
+        docker, record = _hanging_docker(tmp_path, ("image inspect",))
+        backend = _Ready(_settings(docker, 600.0))
+        began = time.monotonic()
+        with pytest.raises(docker_module.BackendError, match="timed out"):
+            backend.start()
+        assert time.monotonic() - began < 15.0
+        # Nothing was started, and nothing pulled.
+        assert not any(c.split()[0] in ("run", "pull") for c in _calls(record))
+
+    def test_a_leftover_whose_rm_hangs_is_given_up_on_in_bounded_time(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        monkeypatch.setattr(docker_module, "_CALL_TIMEOUT_S", 1.0)
+        host = docker_module.socket.gethostname()
+        docker, record = _hanging_docker(
+            tmp_path, ("rm --force dead",), listing=f"dead {host}:999999999"
+        )
+        backend = _Ready(_settings(docker, 600.0))
+        began = time.monotonic()
+        try:
+            backend.start()
+        finally:
+            backend.close()
+        assert time.monotonic() - began < 15.0
+        assert "rm --force dead" in _calls(record)
+        assert "remove container dead" in caplog.text
+
+    def test_a_docker_that_cannot_be_run_for_a_leftover_is_logged(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        host = docker_module.socket.gethostname()
+        recorded = _Docker(listing=f"dead {host}:999999999\n")
+
+        def run(argv: list[str], **kwargs: Any) -> Any:
+            assert kwargs.get("timeout") is not None, argv
+            if argv[1] == "rm":
+                raise PermissionError("docker is not executable")
+            return recorded(argv, **kwargs)
+
+        monkeypatch.setattr(docker_module.subprocess, "run", run)
+        backend = _Answering.from_settings({})
+        backend.start()
+        assert "docker is not executable" in caplog.text
+        assert backend._container == "c0ffee"
 
 
 class TestQueue:
