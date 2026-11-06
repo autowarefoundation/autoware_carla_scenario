@@ -31,6 +31,7 @@ from .manifest import (
     config_files,
     recorded_verdict,
     sbatch_in_flight,
+    sbatch_timed_out,
     sequential_stems,
     write_json,
 )
@@ -412,7 +413,20 @@ def submit_cases(
     except SbatchTimedOut:
         # The job may have been taken (#1786): keep the record its tasks
         # read, job_id None, so it counts as in flight (refusing resubmits)
-        # until SBATCH_IN_FLIGHT_SECONDS, and its index is not reused.
+        # until SBATCH_IN_FLIGHT_SECONDS, and its index is not reused.  Say
+        # in it that sbatch timed out (#1791), so status, wait and the viewer
+        # tell it from one whose sbatch has not returned yet; atomically, so
+        # a task reading its chunk never sees half a record.
+        submission["sbatch_timed_out"] = True
+        submission["sbatch_timed_out_at"] = _now()
+        try:
+            write_json(layout.submission(index), submission)
+        except OSError:
+            logger.warning(
+                "Could not record in %s that sbatch timed out",
+                layout.submission(index),
+                exc_info=True,
+            )
         raise
     except RuntimeError as exc:
         layout.submission(index).unlink(missing_ok=True)
@@ -472,9 +486,9 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
     """Follow submission *index* until SLURM lists none of its tasks, then
     collect the batch; the exit status (0 when every case passed).
 
-    A submission with no job yet (its sbatch has not returned, or its
-    submitter died before it did) is neither followed nor collected (#1417):
-    ``squeue -j None`` would read as a job that ended."""
+    A submission with no job yet (its sbatch has not returned, timed out, or
+    its submitter died before it did) is neither followed nor collected
+    (#1417, #1791): ``squeue -j None`` would read as a job that ended."""
     from .collect import collect  # noqa: PLC0415
 
     submission = layout.submission_record(index)
@@ -487,7 +501,21 @@ def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
         )
         return 1
     if not submission.get("job_id"):
-        if sbatch_in_flight(submission):
+        if sbatch_timed_out(submission):
+            at = submission.get("sbatch_timed_out_at")
+            print(  # noqa: T201
+                f"Error: submission {index} of this batch has no job id to "
+                "follow: its sbatch timed out"
+                + (f" at {at}" if at else "")
+                + ", and SLURM may have taken the job all the same. If "
+                "`squeue --me` lists it, collect the batch once it ends: "
+                f"scenario-slurm collect {layout.batch_dir}; if not, run its "
+                f"cases again: scenario-slurm resubmit {layout.batch_dir} "
+                f"(refused until {SBATCH_IN_FLIGHT_SECONDS:.0f} s after the "
+                "record was made, unless with --force)",
+                file=sys.stderr,
+            )
+        elif sbatch_in_flight(submission):
             print(  # noqa: T201
                 f"Error: submission {index} of this batch is being submitted "
                 "(sbatch has not returned yet), by another resubmit or the "

@@ -40,15 +40,21 @@ On the machine you run `scenario` on (a SLURM submit host):
    has not returned after 120 s (a controller that does not answer) is
    stopped, and the submit fails with `sbatch timed out after 120.0 s`. Unlike
    a refused sbatch, whose submission record is removed, the controller may
-   have taken this job all the same, so its record is kept with no job id: if
-   `squeue --me` lists the job, its tasks find their cases and run, and
+   have taken this job all the same, so its record is kept with no job id,
+   and says that sbatch timed out, and when (`sbatch_timed_out`,
+   `sbatch_timed_out_at`): if `squeue --me` lists the job, its tasks find
+   their cases and run, and
    `scenario-slurm collect` collects the batch once it ends (`cancel` knows no
    job id to cancel: `scancel` it by hand). Its index is not given to another
    submission, and the record counts as in flight, so a `resubmit` of the
    batch is refused until 600 s (`SBATCH_IN_FLIGHT_SECONDS`) after it was
-   made; after that the record is stale and a `resubmit` is taken -- one that
-   would run the cases a still-queued job also runs, so check `squeue --me`
-   first.
+   made, saying that its sbatch timed out and to check `squeue --me`; after
+   that a `resubmit` is taken -- one that would run the cases a still-queued
+   job also runs, so check `squeue --me` first. `status` and the viewer show
+   such a submission as `no job id: sbatch timed out at <time>; the job may
+   exist all the same: check squeue --me`, its cases `unknown` in the viewer
+   (not `missing`), and `wait` says it has no job id to follow and where to
+   look for the job.
 4. By default `scenario` follows the array (`squeue`, and the outcome each task
    records) until it ends, then prints the summary and writes
    `batch_results.json`, as a local batch does, and exits 0 when every case
@@ -175,7 +181,13 @@ submitter that was killed stops counting as in flight 600 s
 (`SBATCH_IN_FLIGHT_SECONDS`) after it was made. `wait` follows a
 submission only once it has a job id: on one still in flight it asks `squeue`
 nothing, collects nothing and exits non-zero, saying to try again once sbatch
-has returned, and on one left with no job id it says the record is stale.
+has returned; on one whose sbatch timed out, that the job may exist (check
+`squeue --me`, then `collect` or `resubmit`); and on one left with no job id
+it says the record is stale. `status` asks `squeue` nothing about a
+submission with no job id either: it never reads as a job that ended, but as
+`no job id yet (sbatch in flight)`, as one whose sbatch timed out (above), or
+as a stale record; the viewer shows its cases pending, unknown or missing
+respectively.
 A record that cannot be read
 (empty, or not a JSON object) refuses a resubmit for as long after the file
 was last modified, then is ignored with a warning. The other readers skip

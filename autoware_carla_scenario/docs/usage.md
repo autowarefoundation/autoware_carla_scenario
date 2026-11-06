@@ -1697,7 +1697,12 @@ whoever submitted it) follows it through `squeue` and the records its tasks
 write: each case passed, failed, errored, running, pending or missing (with
 why: its task's state and error), each submission's job and tasks (state,
 host, cases done, peak memory), and the cases as they land, before the batch
-has a summary. Its buttons run `scenario-slurm` on the batch: *Resubmit
+has a summary. A submission with no job id names no job: while its `sbatch`
+is in flight it reads *being submitted* and its cases pending; once that
+`sbatch` timed out it reads *sbatch timed out*, with when, and its cases
+unknown, since the job may exist all the same (check `squeue --me`); a record
+its submitter left behind more than 600 s ago reads *no job*, and its cases
+missing. Its buttons run `scenario-slurm` on the batch: *Resubmit
 missing* (the cases with no outcome, including a result with no boolean
 `passed` or one that cannot be reported -- no string `message`, no number
 `elapsed_seconds`, unreadable `condition_statuses` or `failure` -- which

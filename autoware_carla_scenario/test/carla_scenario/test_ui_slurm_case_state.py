@@ -4,21 +4,27 @@ calls it, against the function it was split out of.
 ``_original_case_states`` is ``ui.slurm_launch._case_states`` as it was before
 the split (#839), copied verbatim; over many batches of records, submissions,
 ``squeue`` answers and task statuses, the new one must give the same entries,
-their keys in the same order.
+their keys in the same order.  Only for submissions with a job id: a case of
+one with none is no longer ``missing`` with "job None" (#1791), which the
+tests at the end cover.
 """
 
 from __future__ import annotations
 
 import itertools
 import random
+import time
 from typing import Any
 
 import pytest
 
-from autoware_carla_scenario.slurm.manifest import readable_result
+from autoware_carla_scenario.slurm.manifest import (
+    SBATCH_IN_FLIGHT_SECONDS,
+    readable_result,
+)
 from autoware_carla_scenario.slurm.submit import ACTIVE_STATES
 from autoware_carla_scenario.ui import slurm_launch
-from autoware_carla_scenario.ui.slurm_case_state import case_state
+from autoware_carla_scenario.ui.slurm_case_state import case_state, no_job_case_state
 
 
 def _original_case_states(
@@ -205,9 +211,9 @@ def _batch(rng: random.Random) -> tuple[_Layout, dict[str, Any], dict[int, Any]]
             pool = pool[size:]
             chunks.append([c if rng.random() < 0.8 else str(c) for c in chunk])
         sub: dict[str, Any] = {"chunks": chunks if rng.random() < 0.95 else None}
-        job = rng.choice(["1000", 1000, None, "missing"])
-        if job != "missing":
-            sub["job_id"] = job
+        # A submission with no job id differs from the original on purpose
+        # (#1791): see the no-job tests below.
+        sub["job_id"] = rng.choice(["1000", 1000])
         submissions[sub_index] = sub
         answer = rng.random()
         if answer < 0.2:
@@ -377,3 +383,80 @@ def test_every_combination_of_inputs(
         else:
             why = "done" if task_error is None else "done: boom"
             assert (state, message) == ("missing", f"no result: task 2 of job 77 {why}")
+
+
+@pytest.mark.parametrize(
+    ("timed_out", "in_flight", "at", "want_state", "want_message"),
+    [
+        (
+            True,
+            True,
+            "2026-11-06T12:00:00+09:00",
+            "unknown",
+            "no job id: the sbatch of submission 3 timed out at "
+            "2026-11-06T12:00:00+09:00; the job may exist all the same: check "
+            "`squeue --me`",
+        ),
+        (
+            True,
+            False,
+            "",
+            "unknown",
+            "no job id: the sbatch of submission 3 timed out; the job may exist "
+            "all the same: check `squeue --me`",
+        ),
+        (
+            False,
+            True,
+            "",
+            "pending",
+            "no job id yet: submission 3 is being submitted (sbatch in flight)",
+        ),
+        (
+            False,
+            False,
+            "",
+            "missing",
+            "no result: submission 3 has no job id (its submitter stopped "
+            "before sbatch returned)",
+        ),
+    ],
+    ids=["timed-out", "timed-out-no-time", "in-flight", "stale"],
+)
+def test_no_job_case_state(
+    timed_out: bool, in_flight: bool, at: str, want_state: str, want_message: str
+) -> None:
+    """#1791: a case of a submission with no job id names no job, and is
+    missing only when the record is stale."""
+    state, message = no_job_case_state(3, timed_out, in_flight, at)
+    assert (state, message) == (want_state, want_message)
+    assert "None" not in message
+
+
+@pytest.mark.parametrize("job", [None, "missing", ""], ids=["null", "absent", "empty"])
+@pytest.mark.parametrize("kind", ["in-flight", "timed-out", "stale"])
+def test_a_case_of_a_submission_with_no_job_id(job: Any, kind: str) -> None:
+    """#1791: _case_states asks no squeue answer and reads no task status for
+    a case whose submission has no job id; it says why there is none."""
+    sub: dict[str, Any] = {
+        "chunks": [[0, 1]],
+        "submitted_at": time.time()
+        - (SBATCH_IN_FLIGHT_SECONDS + 1 if kind == "stale" else 0),
+    }
+    if job != "missing":
+        sub["job_id"] = job
+    if kind == "timed-out":
+        sub["sbatch_timed_out"] = True
+        sub["sbatch_timed_out_at"] = "2026-11-06T12:00:00+09:00"
+    passed = {
+        "errored": False,
+        "result": {"passed": True, "message": "ok", "elapsed_seconds": 1.0},
+    }
+    layout = _Layout({0: sub}, {1: passed}, {(0, 0): {"state": "done"}})
+    manifest = {"cases": [{"index": 0}, {"index": 1}, {"index": 2}]}
+    entries = slurm_launch._case_states(layout, manifest, {0: {}})  # type: ignore[arg-type]
+    states = [entry["state"] for entry in entries]
+    want = {"in-flight": "pending", "timed-out": "unknown", "stale": "missing"}[kind]
+    assert states == [want, "passed", "missing"]
+    assert "None" not in entries[0]["message"]
+    assert "job None" not in str(entries)
