@@ -13,7 +13,7 @@ from ..registry import get_conf_dirs, load_scenario_plugins
 from ..run_outputs import RESULT_SUFFIX
 from ..scenario_glob import scenario_names
 from . import cases
-from .case_paths import result_path
+from .case_paths import result_path, session_order
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
 from .runner import _RAW_LOG_MAX_BYTES as _RAW_LOG_MAX_BYTES
@@ -295,8 +295,8 @@ def scan_sessions(base_path: Path) -> list[SessionSummary]:
                 if summary:
                     sessions.append(summary)
 
-    # Sort by date+time descending
-    sessions.sort(key=lambda s: (s.date, s.time), reverse=True)
+    # Sort by date+time descending; ``-10`` after ``-9`` (#1845).
+    sessions.sort(key=lambda s: (s.date, *session_order(s.time)), reverse=True)
 
     _cache[cache_key] = sessions
     return sessions

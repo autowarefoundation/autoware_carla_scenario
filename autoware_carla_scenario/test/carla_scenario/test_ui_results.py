@@ -616,6 +616,22 @@ def test_the_compare_page(client: TestClient, tmp_path: Path) -> None:
     assert text.count("checked") >= 2
 
 
+def test_the_compare_page_takes_minus_9_as_the_baseline_of_minus_10(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """#1845: sessions started in the same second are compared by their
+    number: ``-9`` is the baseline of ``-10``, so a case that passes in
+    ``-9`` and fails in ``-10`` is a regression, not a fix."""
+    nine = _session(tmp_path, "10-00-00-9", [True, True, True, True])
+    ten = _session(tmp_path, "10-00-00-10", [False, True, True, True])
+    page = client.get("/compare", params=[("s", ten), ("s", nine)])
+    assert page.status_code == 200, page.text
+    text = page.text
+    assert "1 regression(s)" in text and "0 fixed" in text
+    summary = text.split('id="compare-summary"', 1)[1]
+    assert summary.index(f"{nine} (baseline)") < summary.index(ten)
+
+
 def test_the_compare_page_shows_every_run_of_a_repeated_case(
     client: TestClient, tmp_path: Path
 ) -> None:

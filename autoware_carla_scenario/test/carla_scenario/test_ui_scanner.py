@@ -281,3 +281,21 @@ def test_the_pages_of_a_run_with_overrides_not_utf8_are_served(
 
     assert session.status_code == 200, session.text
     assert case.status_code == 200, case.text
+
+
+def test_sessions_of_the_same_second_list_by_number(tmp_path: Path) -> None:
+    """#1845: newest first, ``-10`` before ``-9`` (a text sort reverses
+    them), the bare time last."""
+    for time in ("12-00-00", "12-00-00-1", "12-00-00-9", "12-00-00-10"):
+        _session(
+            tmp_path,
+            time,
+            "Good_result.json",
+            json.dumps({"passed": True, "scenario": "Good"}).encode(),
+        )
+    assert [s.time for s in scanner.scan_sessions(tmp_path)] == [
+        "12-00-00-10",
+        "12-00-00-9",
+        "12-00-00-1",
+        "12-00-00",
+    ]
