@@ -677,3 +677,65 @@ def test_every_shipped_driver_preset_passes_the_run_check(preset: str) -> None:
     from .test_video_removed import _shipped
 
     run.check_run_config(_shipped(["ego.entity=carla_driver", f"driver={preset}"]))
+
+
+_DRIVER_SWITCHES = (
+    "send_ground_truth",
+    "send_renderer_data",
+    "send_actor_ground_truth",
+    "t4_scene",
+)
+
+
+def _switch_config(name: str, value: Any) -> DriverClientConfig:
+    """A config with switch *name* set to *value* (t4_scene with its map set)."""
+    extra: dict[str, Any] = {"map_dir": "/maps"} if name == "t4_scene" else {}
+    return DriverClientConfig.from_mapping({name: value, **extra})
+
+
+@pytest.mark.parametrize("name", _DRIVER_SWITCHES)
+@pytest.mark.parametrize("value", ["false", "0", " Off ", 0, False])
+def test_a_driver_switch_spelled_false_is_false(name: str, value: Any) -> None:
+    # "false" from a quoted override used to be bool()-true (#1760).
+    assert getattr(_switch_config(name, value), name) is False
+
+
+@pytest.mark.parametrize("name", _DRIVER_SWITCHES)
+@pytest.mark.parametrize("value", ["true", "Yes", "1", 1, True])
+def test_a_driver_switch_spelled_true_is_true(name: str, value: Any) -> None:
+    assert getattr(_switch_config(name, value), name) is True
+
+
+@pytest.mark.parametrize("name", _DRIVER_SWITCHES)
+@pytest.mark.parametrize("value", ["ture", 2, None, 0.0, []])
+def test_a_driver_switch_of_another_value_is_refused_by_its_key(
+    name: str, value: Any
+) -> None:
+    with pytest.raises(ValueError, match=f"driver.{name} must be true or false"):
+        _switch_config(name, value)
+
+
+def test_the_driver_switches_keep_their_defaults() -> None:
+    config = DriverClientConfig()
+    assert config.send_ground_truth is False
+    assert config.send_renderer_data is True
+    assert config.send_actor_ground_truth is True
+    assert config.t4_scene is False
+
+
+def test_t4_scene_spelled_false_needs_no_map_set() -> None:
+    # Read as true, "false" asked for driver.map_dir (#1760).
+    config = DriverClientConfig.from_mapping({"t4_scene": "false"})
+    assert config.t4_scene is False and config.map_dir is None
+
+
+def test_a_mistyped_t4_scene_is_refused_as_a_switch_not_for_its_map_set() -> None:
+    with pytest.raises(ValueError, match="driver.t4_scene must be true or false"):
+        DriverClientConfig.from_mapping({"t4_scene": "ture"})
+
+
+def test_send_renderer_data_spelled_false_is_seen_by_the_t4_scene_check() -> None:
+    with pytest.raises(ValueError, match="needs driver.send_renderer_data"):
+        DriverClientConfig.from_mapping(
+            {"t4_scene": "true", "map_dir": "/maps", "send_renderer_data": "false"}
+        )
