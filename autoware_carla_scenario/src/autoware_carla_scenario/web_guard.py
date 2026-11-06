@@ -23,6 +23,11 @@ gets in (#1844):
 
 Only the ``Host`` check applies to a GET: reading is not a state change, and
 the rebinding it stops is what would let a foreign page *read* a response.
+A GET route that does more than read -- one that makes the server fetch or
+clone a git repository, parse a map, or write a file -- declares the
+:func:`refuse_cross_site` dependency, which refuses a cross-site request to it
+with 403 by the same rules (#1850).  ``Sec-Fetch-Site: none`` (a URL typed in
+the address bar, a bookmark) is served, as is a request with neither header.
 """
 
 from __future__ import annotations
@@ -31,11 +36,19 @@ from collections.abc import Awaitable, Callable, MutableMapping
 from typing import Any
 from urllib.parse import urlsplit
 
+from starlette.exceptions import HTTPException
+from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
 from .serve_cli import DEFAULT_HOST, is_loopback
 
-__all__ = ["HostAllowlist", "RequestGuard", "is_wildcard"]
+__all__ = [
+    "HostAllowlist",
+    "RequestGuard",
+    "cross_site_refusal",
+    "is_wildcard",
+    "refuse_cross_site",
+]
 
 Scope = MutableMapping[str, Any]
 Message = MutableMapping[str, Any]
@@ -133,6 +146,61 @@ def _parse_origin(text: str) -> tuple[str, str, int | None] | None:
     return _origin(parts.scheme, parts.hostname, port)
 
 
+def _headers(scope: Scope) -> dict[str, str]:
+    """*scope*'s headers by lower-cased name, the first of each name kept."""
+    headers: dict[str, str] = {}
+    for key, value in scope.get("headers", ()):
+        headers.setdefault(key.decode("latin-1").lower(), value.decode("latin-1"))
+    return headers
+
+
+def _foreign_site(
+    scope: Scope, headers: dict[str, str], host: tuple[str, int | None] | None
+) -> tuple[int, str] | None:
+    """The 403 a request from another site is refused with; ``None`` otherwise.
+
+    *host* is the request's own ``Host`` (:func:`_split_host`); without one,
+    no ``Origin`` is the request's own.
+    """
+    if headers.get("sec-fetch-site", "").strip().lower() in _FOREIGN_FETCH_SITES:
+        return 403, "Cross-site request refused"
+    origin = headers.get("origin")
+    if origin is not None:
+        own = _origin(scope.get("scheme", "http"), *host) if host else None
+        if own is None or _parse_origin(origin) != own:
+            return 403, "Cross-origin request refused"
+    return None
+
+
+def cross_site_refusal(scope: Scope) -> tuple[int, str] | None:
+    """The 403 *scope* is refused with when another site sent it, whatever its method.
+
+    The rules :class:`RequestGuard` applies to a state change: ``Sec-Fetch-Site``
+    ``cross-site`` or ``same-site``, or an ``Origin`` that is not the request's
+    own scheme, host and port.  ``None`` to serve it.
+    """
+    headers = _headers(scope)
+    return _foreign_site(scope, headers, _split_host(headers.get("host", "")))
+
+
+def refuse_cross_site(request: Request) -> None:
+    """A route dependency refusing a request another site sends, GET included.
+
+    For a GET route that does more than read: one that makes the server reach
+    the network (a git fetch or clone), parse a map, or write a file, which a
+    foreign page could otherwise make it do (#1850).  The application's own
+    pages send ``Sec-Fetch-Site: same-origin``; a typed URL or a bookmark
+    sends ``none``; curl sends neither.  All three are served.
+
+    Raises:
+        HTTPException: 403, the request comes from another site.
+    """
+    refusal = cross_site_refusal(request.scope)
+    if refusal is not None:
+        status, message = refusal
+        raise HTTPException(status_code=status, detail=message)
+
+
 class RequestGuard:
     """ASGI middleware refusing cross-site state changes and foreign ``Host`` names.
 
@@ -158,19 +226,10 @@ class RequestGuard:
 
     def refusal(self, scope: Scope) -> tuple[int, str] | None:
         """The status and message *scope* is refused with; ``None`` to serve it."""
-        headers: dict[str, str] = {}
-        for key, value in scope.get("headers", ()):
-            headers.setdefault(key.decode("latin-1").lower(), value.decode("latin-1"))
+        headers = _headers(scope)
         host = _split_host(headers.get("host", ""))
         if host is None or not self.hosts.allows(host[0]):
             return 400, "Invalid Host header"
         if scope.get("method", "GET").upper() not in STATE_CHANGING_METHODS:
             return None
-        if headers.get("sec-fetch-site", "").strip().lower() in _FOREIGN_FETCH_SITES:
-            return 403, "Cross-site request refused"
-        origin = headers.get("origin")
-        if origin is not None:
-            own = _origin(scope.get("scheme", "http"), *host)
-            if _parse_origin(origin) != own:
-                return 403, "Cross-origin request refused"
-        return None
+        return _foreign_site(scope, headers, host)

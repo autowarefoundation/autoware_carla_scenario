@@ -2366,7 +2366,7 @@ class TestEditorMapLibrary:
     def test_refuses_a_bad_ref_without_running_git(
         self, editor: "TestClient", monkeypatch: pytest.MonkeyPatch, repo: str
     ) -> None:
-        """The GET has no origin check, so the URI itself must stop it (#1848)."""
+        """A same-origin GET passes the origin check, so the URI must stop it (#1848)."""
         from autoware_carla_scenario.maps import cache as cache_module
 
         ran: list[Any] = []

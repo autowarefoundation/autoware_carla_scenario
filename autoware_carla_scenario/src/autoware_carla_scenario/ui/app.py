@@ -23,7 +23,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
-from ..web_guard import HostAllowlist, RequestGuard
+from ..web_guard import HostAllowlist, RequestGuard, refuse_cross_site
 from . import cases, recordings, results, runner, scanner, slurm_launch
 from .case_paths import session_order
 from .models import RunProgress, SessionSummary
@@ -655,10 +655,20 @@ async def make_recording(
 
 @app.get("/recording/{session_type}/{date}/{time}/{index}.rrd")
 async def recording_file(
-    session_type: str, date: str, time: str, index: int
+    request: Request, session_type: str, date: str, time: str, index: int
 ) -> FileResponse:
-    """The case's Rerun recording (made on the way if need be)."""
+    """The case's Rerun recording (made on the way if need be).
+
+    A recording already made is served to any page, as before: the web viewer
+    loads it from a script that may come from a CDN.  Making one -- converting
+    the log and writing the file -- is a request another site may not make,
+    so one sent cross-site is refused with 403 when there is none yet (#1850).
+    The viewer's own pages make the recording first (``POST /api/recording``),
+    so their GET always finds it.
+    """
     trajectory = _trajectory_of(session_type, date, time, index)
+    if recordings.existing_recording(trajectory) is None:
+        refuse_cross_site(request)
     path = await _recording_of(trajectory)
     return FileResponse(
         path,
