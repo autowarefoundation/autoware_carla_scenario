@@ -80,7 +80,12 @@ CARLA's `/clock` carries, which is what nodes with `use_sim_time` read.
 | `clock_topic` (off) | `rosgraph_msgs/Clock` | for a CARLA server built without ROS 2 |
 | `turn_indicators_report_topic` (`/vehicle/status/turn_indicators_status`) | `autoware_vehicle_msgs/TurnIndicatorsReport` | the indicators the ego shows (hazard, both lit, reports as off, as the report has no hazard) |
 
-`null` leaves a topic unpublished. The pose is in the right-handed local frame --
+`null` leaves a topic unpublished. Every topic the settings name -- these, the command
+sources' and the cameras' -- is checked as the config is read: a ROS 2 name, absolute
+or relative (taken from the root namespace), made of `A-Z`, `a-z`, `0-9`, `_` and `/`,
+with no `//`, no trailing `/` and no token starting with a digit. A private name (`~`)
+or a substitution (`{node}`) is refused too: a ROS 2 node expands those, and the entity
+is not one. The pose is in the right-handed local frame --
 CARLA's world with `y` flipped, as CARLA's own ROS 2 interface publishes it -- with
 its origin on the rear axle, Autoware's `base_link` (`rear_axle_offset_m`, derived
 from the wheels, else the box, when `null`). The run's [trajectory log](trajectory_log.md)

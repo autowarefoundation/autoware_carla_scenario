@@ -225,6 +225,8 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             RuntimeError: If the ego actor has not been spawned yet.
             ImportError: If no transport was given and ``cyclonedds`` is not
                 installed.
+            Exception: Whatever the transport's ``open()`` raises, once the
+                transport is closed; a later start opens it again.
         """
         actor = self.actor
         if actor is None:
@@ -241,7 +243,18 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         )
         if self._transport is None:
             self._transport = _cyclone_transport(self._config)
-        self._transport.open()
+        transport = self._transport
+        try:
+            transport.open()
+        except Exception:
+            # A transport that failed half-way may hold what it made so far:
+            # closed here, as on_scenario_end closes only an open one, so a
+            # retry of the scenario opens it afresh (#1870).
+            try:
+                transport.close()
+            except Exception:  # noqa: BLE001 - the open's error is raised
+                logger.exception("Failed to close the ROS 2 transport")
+            raise
         self._open = True
         self._turn_command = None
         # A retried scenario runs this entity again: nothing the previous

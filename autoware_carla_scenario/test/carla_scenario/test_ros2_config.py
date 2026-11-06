@@ -536,3 +536,102 @@ def test_the_run_check_refuses_a_bad_ros2_setting_up_front() -> None:
 
     # Another ego reads no ros2 settings.
     run.check_run_config(_composed(["ros2.domain_id=233"]))
+
+
+# ---------------------------------------------------------------------------
+# Topic names (#1870)
+# ---------------------------------------------------------------------------
+
+_BAD_TOPICS = [
+    "/vehicle speed",
+    "/vehicle/*",
+    "/vehicle//speed",
+    "/vehicle/speed/",
+    "/",
+    "/vehicle/2speed",
+    "~/speed",
+    "/{node}/speed",
+    "/vehicle/spéed",
+]
+
+
+@pytest.mark.parametrize("name", _BAD_TOPICS)
+@pytest.mark.parametrize(
+    ("kind", "key"),
+    [
+        ("trajectory", "topic"),
+        ("control", "topic"),
+        ("steer_accel", "steering_topic"),
+        ("steer_accel", "acceleration_topic"),
+    ],
+)
+def test_a_source_refuses_a_bad_topic_name(kind: str, key: str, name: str) -> None:
+    topics: dict[str, Any] = {"steering_topic": "/s", "acceleration_topic": "/a"}
+    if kind != "steer_accel":
+        topics = {"topic": "/t"}
+    topics[key] = name
+    with pytest.raises(
+        ValueError,
+        match=rf"^command source 'x': {key} must be a ROS 2 topic name, got ",
+    ):
+        CommandSourceConfig(name="x", kind=kind, **topics)
+
+
+@pytest.mark.parametrize("name", _BAD_TOPICS)
+@pytest.mark.parametrize(
+    "key",
+    [
+        "kinematic_state_topic",
+        "steering_status_topic",
+        "speed_topic",
+        "clock_topic",
+        "turn_indicators_command_topic",
+        "turn_indicators_report_topic",
+    ],
+)
+def test_the_ego_refuses_a_bad_state_topic_name(key: str, name: str) -> None:
+    with pytest.raises(ValueError, match=rf"^{key} must be a ROS 2 topic name, got "):
+        Ros2EgoConfig.from_mapping({key: name})
+
+
+@pytest.mark.parametrize("name", _BAD_TOPICS)
+def test_a_camera_refuses_a_bad_topic_name(name: str) -> None:
+    with pytest.raises(
+        ValueError, match=r"^camera 'cam': topic must be a ROS 2 topic name, got "
+    ):
+        Ros2CameraConfig(logical_id="cam", topic=name)
+
+
+def test_a_topic_name_error_says_what_is_wrong() -> None:
+    with pytest.raises(ValueError, match=r"' ' is none of A-Z"):
+        Ros2CameraConfig(topic="/a b")
+    with pytest.raises(ValueError, match=r"starts with a digit"):
+        Ros2CameraConfig(topic="/a/9b")
+    with pytest.raises(ValueError, match=r"must be a ROS 2 topic name, got 7$"):
+        Ros2EgoConfig.from_mapping({"speed_topic": 7})
+
+
+@pytest.mark.parametrize(
+    "name",
+    [
+        "/localization/kinematic_state",
+        "/vehicle/status/turn_indicators_status",
+        "/carla/hero/main_cam/image",
+        "/clock",
+        "/joy",
+        "/a",
+        "relative/name_2",
+        "_private_looking/Topic9",
+    ],
+)
+def test_a_good_topic_name_is_taken(name: str) -> None:
+    assert Ros2CameraConfig(topic=name).topic == name
+    assert Ros2EgoConfig(speed_topic=name).speed_topic == name
+
+
+def test_an_unset_state_topic_is_not_checked() -> None:
+    config = Ros2EgoConfig.from_mapping(
+        {"clock_topic": None, "speed_topic": "", "turn_indicators_command_topic": None}
+    )
+    assert config.clock_topic is None
+    assert config.speed_topic == ""

@@ -19,6 +19,7 @@ import pytest
 
 cyclonedds = pytest.importorskip("cyclonedds")
 
+from cyclonedds.core import DDSException  # noqa: E402
 from cyclonedds.domain import DomainParticipant  # noqa: E402
 from cyclonedds.pub import DataWriter  # noqa: E402
 from cyclonedds.sub import DataReader  # noqa: E402
@@ -385,5 +386,53 @@ def test_a_camera_frame_reaches_a_ros_2_style_reader(loopback: None) -> None:
         assert (sample.width, sample.height, sample.step) == (1280, 720, 5120)
         assert sample.encoding == "bgra8"
         assert bytes(cast(Any, sample.data)) == pixels
+    finally:
+        transport.close()
+
+
+@pytest.mark.parametrize("failing", [1, 3, 6, 9, 11])
+def test_a_failed_open_leaves_nothing_behind(
+    loopback: None, monkeypatch: pytest.MonkeyPatch, failing: int
+) -> None:
+    """open() builds everything or nothing (#1870): a topic Cyclone refuses
+    half-way leaves no participant, so a second open() tries again rather than
+    returning with no command readers."""
+    from autoware_carla_scenario.ros2 import cyclone
+
+    made: List[Any] = []
+
+    def topic(participant: Any, name: str, message_type: Any) -> Topic:
+        if len(made) + 1 == failing:
+            raise RuntimeError(f"topic {failing} refused")
+        made.append(Topic(participant, name, message_type))
+        return made[-1]
+
+    monkeypatch.setattr(cyclone, "Topic", topic)
+    transport = CycloneRos2Transport(_config(_domain()))
+    with pytest.raises(RuntimeError, match="refused"):
+        transport.open()
+    assert transport._participant is None
+    assert transport._publishers == []
+    assert transport._image_writers == []
+    assert transport._drains == []
+    assert transport._turn_indicators is None
+    # The topics made before the failure went with the participant, deleted
+    # at once rather than when the traceback goes.
+    for made_topic in made:
+        with pytest.raises(DDSException):
+            made_topic.get_qos()
+    count = len(made)
+    with pytest.raises(RuntimeError, match="refused"):
+        transport.open()
+    assert transport._participant is None
+    made.clear()
+
+    monkeypatch.setattr(cyclone, "Topic", Topic)
+    transport.open()
+    try:
+        assert transport._participant is not None
+        assert len(transport._drains) == 3
+        assert transport._turn_indicators is not None
+        assert count == failing - 1
     finally:
         transport.close()
