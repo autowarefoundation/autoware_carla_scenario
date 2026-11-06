@@ -599,6 +599,72 @@ def test_a_batch_with_an_unreadable_submission_record_is_shown_with_a_note(
     assert client.get("/session/batch/2026-10-19/12-00-00").status_code == 200
 
 
+@pytest.mark.parametrize("kind", ["in-flight", "timed-out", "stale"])
+def test_a_submission_with_no_job_id_names_no_job_and_its_cases_are_not_missing(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, kind: str
+) -> None:
+    """#1791: a resubmit of case 3 whose sbatch is in flight, or timed out
+    (the job may exist), shows no "job None" and leaves case 3 pending or
+    unknown, not missing; a stale record's case is missing, naming no job."""
+    from autoware_carla_scenario.slurm.manifest import SBATCH_IN_FLIGHT_SECONDS
+
+    batch = _manifest_batch(tmp_path)
+    record: dict[str, Any] = {
+        "index": 1,
+        "job_id": None,
+        "submitted_at": time.time()
+        - (SBATCH_IN_FLIGHT_SECONDS + 1 if kind == "stale" else 0),
+        "cases": [3],
+        "chunks": [[3]],
+    }
+    if kind == "timed-out":
+        record["sbatch_timed_out"] = True
+        record["sbatch_timed_out_at"] = "2026-11-06T12:00:00+09:00"
+    (batch / "slurm" / "submissions" / "1.json").write_text(json.dumps(record))
+    asked: list[str] = []
+    real = slurm_launch.squeue_states
+
+    def squeue_states(job: str) -> Any:
+        asked.append(job)
+        return real(job)
+
+    monkeypatch.setattr(slurm_launch, "squeue_states", squeue_states)
+    _fake_squeue(tmp_path, monkeypatch, "")
+    status = slurm_launch.batch_status(batch)
+    assert status is not None
+    assert asked == ["999999"]  # never squeue -j None
+    want = {"in-flight": "pending", "timed-out": "unknown", "stale": "missing"}[kind]
+    assert [c["state"] for c in status["cases"]] == [
+        "passed",
+        "failed",
+        "errored",
+        want,
+    ]
+    message = status["cases"][3]["message"]
+    assert "None" not in message and "job" in message
+    if kind == "timed-out":
+        assert "timed out at 2026-11-06T12:00:00+09:00" in message
+        assert "squeue --me" in message
+    second = status["submissions"][1]
+    assert second["job_id"] is None and not second["unreadable"]
+    assert second["in_flight"] is (kind == "in-flight")
+    assert second["sbatch_timed_out"] is (kind == "timed-out")
+    note = second["note"]
+    assert "None" not in note and "ended" not in note
+    if kind == "in-flight":
+        assert note == "no job id yet (sbatch in flight)"
+    elif kind == "timed-out":
+        assert "sbatch timed out" in note and "squeue --me" in note
+    else:
+        assert "stale" in note
+    # Being submitted is followed as a queued job is; the others are not.
+    assert status["active"] is (kind == "in-flight")
+    response = client.get("/api/slurm/2026-10-19/12-00-00/status")
+    assert response.status_code == 200
+    assert "job None" not in response.text
+    assert client.get("/session/batch/2026-10-19/12-00-00").status_code == 200
+
+
 @pytest.mark.parametrize(
     "content", ["[]", "null", '{"version": true}'], ids=["list", "null", "bool"]
 )

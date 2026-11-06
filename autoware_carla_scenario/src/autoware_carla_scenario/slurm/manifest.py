@@ -49,7 +49,9 @@ __all__ = [
     "read_submission_record",
     "readable_result",
     "recorded_verdict",
+    "no_job_note",
     "sbatch_in_flight",
+    "sbatch_timed_out",
     "sequential_stems",
     "write_json",
 ]
@@ -202,6 +204,36 @@ def sbatch_in_flight(submission: dict[str, Any], now: float | None = None) -> bo
         return False
     now = time.time() if now is None else now
     return now - float(started) < SBATCH_IN_FLIGHT_SECONDS
+
+
+def sbatch_timed_out(submission: dict[str, Any]) -> bool:
+    """Whether *submission* has no job id because its sbatch timed out
+    (``sbatch_timed_out``, which ``submit_cases`` records, #1791): SLURM may
+    have taken the job all the same, under a job id nobody was told.
+
+    Such a record still counts as in flight (:func:`sbatch_in_flight`) for
+    :data:`SBATCH_IN_FLIGHT_SECONDS`, as one whose sbatch has not returned."""
+    return not submission.get("job_id") and submission.get("sbatch_timed_out") is True
+
+
+def no_job_note(submission: dict[str, Any], now: float | None = None) -> str:
+    """Why *submission*, which has no ``job_id``, has none (#1791), as
+    ``status``, ``wait``, ``resubmit`` and the viewer say it: its sbatch timed
+    out (the job may exist), it is still in flight, or the record is stale (its
+    submitter stopped before sbatch returned)."""
+    if sbatch_timed_out(submission):
+        at = submission.get("sbatch_timed_out_at")
+        return (
+            "no job id: sbatch timed out"
+            + (f" at {at}" if at else "")
+            + "; the job may exist all the same: check `squeue --me`"
+        )
+    if sbatch_in_flight(submission, now):
+        return "no job id yet (sbatch in flight)"
+    return (
+        "no job id: its submitter stopped before sbatch returned, more than "
+        f"{SBATCH_IN_FLIGHT_SECONDS:.0f} s ago (a stale record)"
+    )
 
 
 def _create_exclusive(path: Path, data: Any) -> bool:

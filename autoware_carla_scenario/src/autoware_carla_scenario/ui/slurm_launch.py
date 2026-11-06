@@ -30,10 +30,16 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
-from ..slurm.manifest import BatchLayout, recorded_verdict
+from ..slurm.manifest import (
+    BatchLayout,
+    no_job_note,
+    recorded_verdict,
+    sbatch_in_flight,
+    sbatch_timed_out,
+)
 from ..slurm.queue import ACTIVE_STATES, squeue_states
 from . import slurm_options as _options
-from .slurm_case_state import case_state
+from .slurm_case_state import case_state, no_job_case_state
 
 # SLURM's command-line tools are run in the checked slurm.queue (#1634):
 # whether SLURM is here, and its partitions, are re-exported from there.
@@ -365,7 +371,18 @@ def _case_states(
         queued: str | None = None
         squeue_known = at_case = False
         task, job_id, task_state, task_error = 0, "", "", None
-        if record is None and index in given:
+        no_job: tuple[str, str] | None = None
+        if record is None and index in given and not given[index][2].get("job_id"):
+            # No job to ask squeue about, nor to name: never "job None" and
+            # never missing while its sbatch is in flight or timed out (#1791).
+            sub_index, _task, sub = given[index]
+            no_job = no_job_case_state(
+                sub_index,
+                sbatch_timed_out(sub),
+                sbatch_in_flight(sub),
+                f"{sub.get('sbatch_timed_out_at') or ''}",
+            )
+        elif record is None and index in given:
             sub_index, task, sub = given[index]
             states = squeue.get(sub_index)
             squeue_known = states is not None
@@ -380,7 +397,7 @@ def _case_states(
                 task_state = f"{status.get('state', 'never started')}"
                 if status.get("error"):
                     task_error = f"{status['error']}"
-        state, message = case_state(
+        state, message = no_job or case_state(
             record is not None,
             errored,
             passed,
@@ -413,7 +430,9 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
     its cases (``passed``, ``failed``, ``errored``, ``running``, ``pending``,
     ``missing`` or ``unknown``), its submissions with their jobs' and tasks'
     states (``squeue``), and whether it has been collected.  A submission
-    whose record cannot be read is listed ``unreadable`` with a ``note``."""
+    whose record cannot be read is listed ``unreadable`` with a ``note``, as
+    is one with no job id, which says why (``in_flight`` or
+    ``sbatch_timed_out``, else a stale record; #1791)."""
     layout = BatchLayout(batch_dir)
     try:
         manifest = layout.read_manifest()
@@ -446,6 +465,9 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
         job = sub.get("job_id")
         states = squeue_states(str(job)) if job else {}
         squeue[index] = states
+        # Its sbatch has not returned yet; one that timed out has (#1791).
+        timed_out = not job and sbatch_timed_out(sub)
+        in_flight = not job and not timed_out and sbatch_in_flight(sub)
         tasks = []
         for task, chunk in enumerate(sub.get("chunks") or []):
             status = layout.read_task(index, task) or {}
@@ -469,12 +491,19 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
                 "collect_job_id": sub.get("collect_job_id"),
                 "collect_error": sub.get("collect_error"),
                 "cases": len(sub.get("cases") or []),
-                "active": states is not None
-                and any(s in ACTIVE_STATES for s in states.values()),
+                # One being submitted is followed as a queued one is.
+                "active": in_flight
+                or (
+                    states is not None
+                    and any(s in ACTIVE_STATES for s in states.values())
+                ),
                 "squeue_unavailable": states is None,
                 "tasks": tasks,
                 "unreadable": False,
-                "note": None,
+                # Why it has no job id: in flight, timed out or stale (#1791).
+                "note": None if job else no_job_note(sub),
+                "sbatch_timed_out": bool(timed_out),
+                "in_flight": bool(in_flight),
             }
         )
     cases = _case_states(layout, manifest, squeue)

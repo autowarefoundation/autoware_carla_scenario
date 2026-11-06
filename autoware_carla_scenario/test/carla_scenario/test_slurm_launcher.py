@@ -2159,9 +2159,13 @@ def test_a_timed_out_sbatch_keeps_the_reservation_in_flight(
 ) -> None:
     """#1786: an sbatch that timed out may have been taken, so its record
     stays (job_id None), its tasks would find their chunks, its index is not
-    reused, and resubmits are refused while it is in flight."""
+    reused, and resubmits are refused while it is in flight.  #1791: the
+    record says that sbatch timed out, and when, and the refusal says so."""
     from autoware_carla_scenario.slurm import cli, queue, submit
-    from autoware_carla_scenario.slurm.manifest import sbatch_in_flight
+    from autoware_carla_scenario.slurm.manifest import (
+        sbatch_in_flight,
+        sbatch_timed_out,
+    )
 
     layout = _batch_on_disk(tmp_path)
     sbatch = _hanging_tool(tmp_path / "bin", "sbatch")
@@ -2176,13 +2180,16 @@ def test_a_timed_out_sbatch_keeps_the_reservation_in_flight(
     assert layout.submissions() == [0, 1]
     record = layout.read_submission(1)
     assert record["job_id"] is None and record["chunks"] == [[0], [2]]
-    assert sbatch_in_flight(record)
+    assert record["sbatch_timed_out"] is True
+    assert isinstance(record["sbatch_timed_out_at"], str)
+    assert sbatch_in_flight(record) and sbatch_timed_out(record)
     monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
     capsys.readouterr()
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
-    assert (
-        "submission(s) 1 of this batch are being submitted" in capsys.readouterr().err
-    )
+    err = capsys.readouterr().err
+    assert "the sbatch of submission(s) 1 of this batch timed out" in err
+    assert "squeue --me" in err and "--force" in err
+    assert "being submitted" not in err and "has not returned" not in err
 
 
 def test_resubmit_refuses_while_a_submission_is_in_flight(
@@ -2798,16 +2805,20 @@ def test_a_scancel_that_hangs_is_reported_and_not_waited_for(
     assert err == "[slurm] scancel 41 42 timed out after 0.5 s\n"
 
 
+@pytest.mark.parametrize("timed_out", [False, True], ids=["", "timed-out"])
 @pytest.mark.parametrize("stale", [False, True], ids=["in-flight", "stale"])
 def test_wait_neither_follows_nor_collects_a_submission_with_no_job(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
     stale: bool,
+    timed_out: bool,
 ) -> None:
     """#1417: a record whose sbatch has not returned (job_id None) is not a
     job that ended: wait asks squeue nothing, collects nothing, and says
-    whether to retry (in flight) or that the record is stale."""
+    whether to retry (in flight) or that the record is stale.  #1791: one
+    whose sbatch timed out says so, in the window or past it, and where to
+    look for the job, never to wait for sbatch to return."""
     from autoware_carla_scenario.slurm import cli, collect, submit
     from autoware_carla_scenario.slurm.manifest import (
         SBATCH_IN_FLIGHT_SECONDS,
@@ -2827,14 +2838,25 @@ def test_wait_neither_follows_nor_collects_a_submission_with_no_job(
     monkeypatch.setattr(submit, "squeue_states", squeue_states)
     monkeypatch.setattr(collect, "collect", no_collect)
     submitted_at = time.time() - (SBATCH_IN_FLIGHT_SECONDS + 1 if stale else 0)
-    write_json(
-        layout.submission(1),
-        {"index": 1, "job_id": None, "submitted_at": submitted_at, "chunks": [[0]]},
-    )
+    record: dict[str, Any] = {
+        "index": 1,
+        "job_id": None,
+        "submitted_at": submitted_at,
+        "chunks": [[0]],
+    }
+    if timed_out:
+        record["sbatch_timed_out"] = True
+        record["sbatch_timed_out_at"] = "2026-11-06T12:00:00+09:00"
+    write_json(layout.submission(1), record)
     for argv in (["wait"], ["wait", "--submission", "1"]):
         assert cli.main([*argv, str(layout.batch_dir)]) == 1
         err = capsys.readouterr().err
-        if stale:
+        if timed_out:
+            assert "submission 1 of this batch has no job id to follow" in err
+            assert "sbatch timed out at 2026-11-06T12:00:00+09:00" in err
+            assert "squeue --me" in err and "scenario-slurm collect" in err
+            assert "try again once it has" not in err and "stale" not in err
+        elif stale:
             assert "submission 1 of this batch has no job" in err
             assert "stale" in err
         else:
@@ -2842,6 +2864,58 @@ def test_wait_neither_follows_nor_collects_a_submission_with_no_job(
             assert "try again once it has" in err
     assert asked == []
     assert not (layout.batch_dir / "batch_results.json").exists()
+
+
+@pytest.mark.parametrize("kind", ["in-flight", "timed-out", "stale"])
+def test_status_names_no_job_for_a_submission_with_no_job_id(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+) -> None:
+    """#1791: status asks squeue nothing for a record with no job id, never
+    prints "job None" nor "ended", and says why it has none."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm.manifest import (
+        SBATCH_IN_FLIGHT_SECONDS,
+        write_json,
+    )
+
+    layout = _batch_on_disk(tmp_path)
+    asked: list[str] = []
+
+    def squeue_states(job: str) -> dict[str, str]:
+        asked.append(job)
+        return {}
+
+    monkeypatch.setattr(cli, "squeue_states", squeue_states)
+    record: dict[str, Any] = {
+        "index": 1,
+        "job_id": None,
+        "submitted_at": time.time()
+        - (SBATCH_IN_FLIGHT_SECONDS + 1 if kind == "stale" else 0),
+        "cases": [1, 2],
+        "chunks": [[1], [2]],
+    }
+    if kind == "timed-out":
+        record["sbatch_timed_out"] = True
+        record["sbatch_timed_out_at"] = "2026-11-06T12:00:00+09:00"
+    write_json(layout.submission(1), record)
+    assert cli.main(["status", str(layout.batch_dir)]) == 0
+    out = capsys.readouterr().out
+    assert asked == ["77"]
+    (line,) = [x for x in out.splitlines() if x.startswith("  submission 1:")]
+    assert "None" not in line and "ended" not in line
+    assert line.startswith("  submission 1: 2 task(s), 2 case(s); no job id")
+    if kind == "in-flight":
+        assert line.endswith("no job id yet (sbatch in flight)")
+    elif kind == "timed-out":
+        assert "sbatch timed out at 2026-11-06T12:00:00+09:00" in line
+        assert "squeue --me" in line
+    else:
+        assert "stale" in line
+    # The submission with a job reads as before.
+    assert "  submission 0: job 77, 1 task(s), 0 case(s); in the queue: ended" in out
 
 
 def test_of_two_resubmits_at_once_the_later_index_refuses(
