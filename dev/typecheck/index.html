@@ -4816,8 +4816,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-295 of the package's 417
-modules (71%; about 89,700 of
+297 of the package's 419
+modules (71%; about 89,900 of
 153,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4874,7 +4874,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 295 CHECKED modules</summary>
+<summary>The 297 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5390,6 +5390,14 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>driver.stop_lines</code></td>
 <td>Which traffic light governs the ego, and where it stops for it.</td>
+</tr>
+<tr>
+<td><code>editor.gate_fields</code></td>
+<td>The gate's thresholds as the editor's inspector edits them.</td>
+</tr>
+<tr>
+<td><code>editor.naming</code></td>
+<td>The names the editor gives the rows it adds.</td>
 </tr>
 <tr>
 <td><code>ego_base_link</code></td>
@@ -6311,7 +6319,7 @@ the first:</p>
 <li><code>editor.map_preview</code>: imports authoring.models (pydantic) and authoring.hydra_config (yaml, and pydantic through authoring.models), which are not checked and have no model</li>
 <li><code>editor.routes</code>: imports fastapi, starlette, pydantic (<code>ValidationError</code>), and anyio inside a function</li>
 <li><code>editor.scenario_map</code>: imports authoring.models (pydantic), authoring.hydra_config (yaml, and pydantic through authoring.models) and editor.map_preview, which are not checked and have no model</li>
-<li><code>editor.service</code>: imports yaml, zipfile, stat, uuid and weakref (<code>WeakValueDictionary</code>), which Codon has nothing for, and <code>contextlib.contextmanager</code>; reaches pydantic models through authoring.models; takes form fields as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
+<li><code>editor.service</code>: imports yaml, zipfile, stat, uuid and weakref (<code>WeakValueDictionary</code>), which Codon has nothing for, and <code>contextlib.contextmanager</code>; reaches pydantic models through authoring.models; takes form fields as <code>Mapping[str, Any]</code>, which Codon cannot express; the gate fields the inspector edits and how they are shown are the checked editor.gate_fields's, and the name a new row gets the checked editor.naming's</li>
 <li><code>entity.carla_driver_entity</code>: imports carla_driver_interface.driver (<code>TurnIndicator</code>) and carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, driver.renderer (the protocol's messages) and rerun_lidar (<code>active_recorder()</code>; the Rerun SDK; <code>CameraMount</code> is the checked rerun_sensor_mount's, #1688), and, inside functions, driver.hdmap_export (itself excluded) and t4_scene.live (t4_scene.convert; also under <code>TYPE_CHECKING</code>), which are neither checked nor modelled, and <code>active_recording()</code>, <code>offer_driver_sensors()</code> and <code>withdraw_driver_sensors()</code> from t4, which the t4 model does not declare; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)</li>
 <li><code>entity.hils_entity</code>: imports hils.protocol (socket), which is neither checked nor modelled</li>
 <li><code>environment</code>: imports platform, more of sys than Codon's declares (<code>sys.prefix</code>), and more of importlib.metadata than its shim declares (<code>distributions()</code>, <code>packages_distributions()</code>, <code>Distribution</code>) and of urllib.parse (<code>urlparse()</code>); records packages as <code>dict[str, Any]</code>, which Codon cannot express; the source record and the requirement a distribution is pinned to are the checked environment_pin's, and the suffixes of a run's environment and lock (<code>ENVIRONMENT_SUFFIX</code>, <code>LOCK_SUFFIX</code>) the checked run_outputs's (#1713), which it re-exports</li>
