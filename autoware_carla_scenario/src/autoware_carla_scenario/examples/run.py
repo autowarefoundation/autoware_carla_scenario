@@ -1616,18 +1616,19 @@ def _resolve_scenario_glob(pattern: str) -> list[str]:
     :func:`~autoware_carla_scenario.scenario_glob.resolve_scenario_glob`.
     An invalid pattern (a ``**`` that is not a whole path component, a
     leading ``/`` or a ``..`` component), like
-    one that matches nothing, is reported on stdout and exits with status 1.
+    one that matches nothing, is reported on stderr and exits with status 1.
     """
     conf_dirs = get_conf_dirs()
     try:
         names = resolve_scenario_glob(pattern, conf_dirs)
     except ValueError as exc:
-        print(f"Error: {exc}")  # noqa: T201
+        print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
         sys.exit(1)
     if not names:
         print(  # noqa: T201
             f"Error: no scenario configs match pattern '{pattern}' "
-            f"under {[str(d) for d in scenario_dirs(conf_dirs)]}"
+            f"under {[str(d) for d in scenario_dirs(conf_dirs)]}",
+            file=sys.stderr,
         )
         sys.exit(1)
     return names
@@ -2242,12 +2243,13 @@ def _batch_launcher(configs: list[DictConfig]) -> str:
     try:
         kinds = {launcher_type(cfg) for cfg in configs}
     except ValueError as exc:
-        print(f"Error: {exc}")  # noqa: T201
+        print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
         sys.exit(1)
     if len(kinds) > 1:
         print(  # noqa: T201
             "Error: batch scenarios must share launcher.type; set it on the "
-            "command line rather than in a scenario's config"
+            "command line rather than in a scenario's config",
+            file=sys.stderr,
         )
         sys.exit(1)
     (kind,) = kinds
@@ -2321,7 +2323,7 @@ def run_batch(
             case_overrides[skip:],
         )
     if not cases:
-        print("Error: no scenario case left to run")  # noqa: T201
+        print("Error: no scenario case left to run", file=sys.stderr)  # noqa: T201
         sys.exit(1)
     configs = [_compose_config(name, case) for name, case in cases]
 
@@ -2343,7 +2345,7 @@ def run_batch(
         # And that each case is on the map its document names, if it has one.
         check_scenario_maps(configs, labels, documents=documents)
     except RunConfigError as exc:
-        print(f"Error: {exc}")  # noqa: T201
+        print(f"Error: {exc}", file=sys.stderr)  # noqa: T201
         sys.exit(1)
     # Before any scenario is built (build_ego_and_spawn reads it), naming the
     # key and the case: a ray that cannot hit spawns nothing (#1416).
@@ -2351,7 +2353,7 @@ def run_batch(
         try:
             build_ground_projection(cfg)
         except ValueError as exc:
-            print(f"Error: {label}: {exc}")  # noqa: T201
+            print(f"Error: {label}: {exc}", file=sys.stderr)  # noqa: T201
             sys.exit(1)
 
     # One launcher for the whole batch: the queue prepares it (and puts its
@@ -2371,13 +2373,14 @@ def run_batch(
     if len(launcher_cfgs) > 1:
         print(  # noqa: T201
             "Error: batch scenarios must share autoware.launcher; set it on the "
-            "command line rather than in a scenario's config"
+            "command line rather than in a scenario's config",
+            file=sys.stderr,
         )
         sys.exit(1)
 
     launcher = _batch_launcher(configs)
     if wait is not None and launcher != "slurm":
-        print("Error: --no-wait is for launcher=slurm only")  # noqa: T201
+        print("Error: --no-wait is for launcher=slurm only", file=sys.stderr)  # noqa: T201
         sys.exit(1)
 
     # Every value a case reads of its config before it starts (the queue's
@@ -3466,7 +3469,7 @@ def _dispatch(resume_from: int) -> None:
             sys.exit(1)
     else:
         if no_wait:
-            print("Error: --no-wait is for launcher=slurm only")  # noqa: T201
+            print("Error: --no-wait is for launcher=slurm only", file=sys.stderr)  # noqa: T201
             sys.exit(1)
         # Single run goes through @hydra.main.  External conf dirs are added to
         # the search path by AutowareScenarioSearchPathPlugin (discovered via

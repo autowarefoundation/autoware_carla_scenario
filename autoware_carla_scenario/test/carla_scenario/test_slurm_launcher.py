@@ -966,9 +966,9 @@ def test_a_batch_on_two_maps_is_refused_before_anything_runs(
     overrides = [] if launcher == "local" else _slurm(fake_slurm)[len(_SWEEP) :]
     status, _batch = _two_case_batch(fake_slurm, launcher, overrides)
     assert status == 1
-    out = capsys.readouterr().out
-    assert f"map.{key} differs" in out
-    assert _SECOND in out
+    err = capsys.readouterr().err
+    assert f"map.{key} differs" in err
+    assert _SECOND in err
     assert _queues(fake_slurm) == []
     assert not (fake_slurm.state / "sbatch.log").exists()
 
@@ -1122,7 +1122,7 @@ def test_no_wait_without_slurm_is_refused(
 ) -> None:
     status, _batch = _run_batch(fake_slurm, "local", list(_SWEEP), wait=False)
     assert status == 1
-    assert "--no-wait is for launcher=slurm only" in capsys.readouterr().out
+    assert "--no-wait is for launcher=slurm only" in capsys.readouterr().err
 
 
 # ---------------------------------------------------------------------------

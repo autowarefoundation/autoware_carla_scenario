@@ -123,7 +123,7 @@ def test_extract_resume_from_refuses_a_missing_non_integer_or_below_1_value(
     with pytest.raises(SystemExit) as exc:
         argv._extract_resume_from(given)
     assert exc.value.code == 2
-    assert capsys.readouterr().out == message + "\n"
+    assert capsys.readouterr().err == message + "\n"
 
 
 # ---------------------------------------------------------------------------

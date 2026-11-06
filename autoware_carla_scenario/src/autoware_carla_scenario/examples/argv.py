@@ -97,12 +97,15 @@ def _resume_from_value(text: str) -> int:
     try:
         value = int(text)
     except ValueError:
-        print(f"Error: --resume-from requires an integer, got '{text}'")  # noqa: T201
+        print(  # noqa: T201
+            f"Error: --resume-from requires an integer, got '{text}'", file=sys.stderr
+        )
         sys.exit(_USAGE_EXIT_CODE)
     if value < 1:
         print(  # noqa: T201
             "Error: --resume-from must be at least 1 (the 1-indexed case to "
-            f"start at), got '{text}'"
+            f"start at), got '{text}'",
+            file=sys.stderr,
         )
         sys.exit(_USAGE_EXIT_CODE)
     return value
@@ -130,7 +133,7 @@ def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
                 resume_from = _resume_from_value(argv[i + 1])
                 skip_next = True
             else:
-                print("Error: --resume-from requires a value")  # noqa: T201
+                print("Error: --resume-from requires a value", file=sys.stderr)  # noqa: T201
                 sys.exit(_USAGE_EXIT_CODE)
         elif arg.startswith("--resume-from="):
             resume_from = _resume_from_value(arg.split("=", 1)[1])
