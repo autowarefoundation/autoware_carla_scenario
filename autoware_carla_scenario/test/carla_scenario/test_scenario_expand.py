@@ -324,6 +324,38 @@ class TestCaseIndex:
         with pytest.raises(ValueError, match="case_index 3 is out of range"):
             expand_sweep(self._sweep(3), object())
 
+    # A case index int() would misread (1.9, true) or not name (#1819).
+    @pytest.mark.parametrize(
+        ("value", "why"),
+        [
+            (True, "must be a whole number, got True"),
+            (1.9, "must be a whole number, got 1.9"),
+            ("abc", "must be a whole number, got 'abc'"),
+            (-1, "must be >= 0, got -1"),
+        ],
+    )
+    def test_an_index_that_is_no_whole_number_is_refused(
+        self, value: object, why: str, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def never(*args: object) -> list[int]:
+            raise AssertionError("the sweep was searched")
+
+        monkeypatch.setattr(expand_module, "parse_constraint", lambda c: c)
+        monkeypatch.setattr(expand_module, "create_routing_graph", lambda m: "graph")
+        monkeypatch.setattr(expand_module, "find_matching_lanelets", never)
+        with pytest.raises(ValueError) as error:
+            expand_sweep(self._sweep(value), object())
+        message = str(error.value)
+        assert message == f"sweep.case_index {why}"
+        assert "\n" not in message
+
+    @pytest.mark.parametrize("value", [2, "2", 2.0])
+    @pytest.mark.usefixtures("_three_lanelets")
+    def test_a_whole_number_or_its_string_is_accepted(self, value: object) -> None:
+        assert expand_sweep(self._sweep(value), object()) == [
+            ["ego.spawn_lanelet_id=7"]
+        ]
+
 
 class TestExpandConfig:
     def test_a_concrete_scenario_expands_to_itself_without_loading_a_map(
@@ -899,6 +931,27 @@ def test_the_cli_reports_an_invalid_sweep_of_each_scenario(
         assert (
             f"Error: {name}: sweep.case_index 99 is out of range: the sweep "
             "expands to 2 case(s)"
+        ) in captured.err
+    assert "Traceback" not in captured.err
+    assert captured.out == ""
+
+
+# A case index that is no whole number is refused, naming the key, for every
+# scenario of a glob (#1819): int() read 1.9 as 1 and failed on "abc" unnamed.
+@pytest.mark.usefixtures("at_repo_root")
+def test_the_cli_reports_a_case_index_that_is_no_whole_number(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from autoware_carla_scenario.examples.expand import main
+
+    code = main(
+        ["scenario=cut_in/*", "+sweep.odd_sample.count=2", "++sweep.case_index=1.9"]
+    )
+    captured = capsys.readouterr()
+    assert code == 1
+    for name in ("cut_in/left", "cut_in/right"):
+        assert (
+            f"Error: {name}: sweep.case_index must be a whole number, got 1.9\n"
         ) in captured.err
     assert "Traceback" not in captured.err
     assert captured.out == ""

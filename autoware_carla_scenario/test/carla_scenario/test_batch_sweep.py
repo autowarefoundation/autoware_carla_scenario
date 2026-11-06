@@ -385,6 +385,30 @@ def test_a_batch_reports_the_invalid_sweep_of_each_scenario(
     assert batch.configs == []
 
 
+# A case index that is no whole number is refused, naming the key, for every
+# scenario before anything runs (#1819): int() read true as case 1.
+@pytest.mark.usefixtures("at_repo_root")
+def test_a_batch_reports_a_case_index_that_is_no_whole_number(
+    batch: _Batch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(
+            ["cut_in/left", "cut_in/right"],
+            ["+sweep.odd_sample.count=2", "++sweep.case_index=true"],
+            expand=True,
+        )
+    assert exited.value.code == 1
+    err = capsys.readouterr().err
+    for name in ("cut_in/left", "cut_in/right"):
+        assert (
+            f"Error: {name}: sweep.case_index must be a whole number, got True"
+        ) in err
+    assert "Traceback" not in err
+    assert batch.configs == []
+
+
 # A missing Lanelet2 map is refused, named, for every scenario before anything
 # runs (#1444): load_map's FileNotFoundError used to escape as a traceback at
 # the first one.
