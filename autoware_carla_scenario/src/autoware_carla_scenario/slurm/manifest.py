@@ -239,8 +239,8 @@ def _create_exclusive(path: Path, data: Any) -> bool:
 
 
 def _real_number(value: Any) -> bool:
-    # ``True`` is an int, but no number of seconds; nor is an int too big
-    # for a float (JSON's ``1e400`` reads as one: ``float()`` overflows).
+    # ``True`` is an int, but no number of seconds; nor is an integer
+    # literal too long for a float (``float()`` overflows on it).
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return False
     try:

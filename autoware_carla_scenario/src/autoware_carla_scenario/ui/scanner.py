@@ -124,7 +124,11 @@ def _seconds(value: Any) -> float | None:
     """A duration: *value* when it is a number (not a boolean), else ``None``."""
     if isinstance(value, bool) or not isinstance(value, (int, float)):
         return None
-    return float(value)
+    try:
+        return float(value)
+    except OverflowError:
+        # An integer too long for a float (#1726).
+        return None
 
 
 def _text(value: Any) -> str:

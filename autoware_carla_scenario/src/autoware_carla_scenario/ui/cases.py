@@ -30,9 +30,10 @@ import json
 from pathlib import Path
 from typing import Any
 
+from ..slurm.manifest import recorded_verdict
+
 # The path guard, the case stems and a batch's stamp, compiled by the library check; every
 # name stays importable from here.
-from ..slurm.manifest import recorded_verdict
 from .case_paths import _COMPONENT as _COMPONENT
 from .case_paths import _COVERAGE as _COVERAGE
 from .case_paths import _mtime as _mtime
@@ -171,6 +172,7 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
                 entry.update(
                     passed=False,
                     error=True,
+                    elapsed_seconds=None,
                     message=f"No verdict: {path} holds no result that can be "
                     "reported",
                 )

@@ -150,8 +150,9 @@ def test_an_uncollected_batch_shows_what_its_tasks_recorded(tmp_path: Path) -> N
         {"passed": "true", "message": "ok", "elapsed_seconds": 1.0},
         {**_result(True, "ok"), "elapsed_seconds": "soon"},
         {**_result(True, "ok"), "condition_statuses": [3]},
+        {**_result(True, "ok"), "elapsed_seconds": 10**400},
     ],
-    ids=["passed-only", "str-passed", "str-elapsed", "int-status"],
+    ids=["passed-only", "str-passed", "str-elapsed", "int-status", "huge-elapsed"],
 )
 def test_an_unreadable_recorded_result_is_an_error(
     tmp_path: Path, result: dict[str, Any]
@@ -173,6 +174,15 @@ def test_an_unreadable_recorded_result_is_an_error(
     assert "1.json" in found[1].message
     items = scanner.load_session(tmp_path, "batch", DATE, TIME)
     assert [it.passed for it in items] == [True, False]
+
+
+def test_a_duration_too_long_for_a_float_is_none() -> None:
+    """#1726: ``_seconds`` reads an integer that ``float()`` overflows on as
+    no duration, in the results and the session pages alike."""
+    for module in (results, scanner):
+        assert module._seconds(10**400) is None
+        assert module._seconds(3) == 3.0
+        assert module._seconds(True) is None
 
 
 def test_a_resubmitted_batch_shows_the_newer_outcomes(tmp_path: Path) -> None:

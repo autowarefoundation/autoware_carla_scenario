@@ -1581,7 +1581,11 @@ how far it drove, its top and final speed, and the elapsed time. openodd's
 plot of the drawn cases (`openodd.CasePlot`) is shown too. A SLURM batch is
 shown before it is collected, from what its tasks have recorded: a case
 without an outcome yet is listed as PENDING, and a task that crashed recorded
-none, so its case stays PENDING until the batch is collected.
+none, so its case stays PENDING until the batch is collected. A case whose
+recorded outcome holds no verdict, or a result that cannot be reported (no
+string `message`, no number `elapsed_seconds`, `condition_statuses` or a
+`failure` that cannot be read), shows as an error, as `scenario-slurm
+collect` reports it.
 
 ### Comparing runs
 
@@ -1611,6 +1615,8 @@ the comparison, as if that session had not run it (no regression, and not in
 its pass rate), and each session's summary says how many of its cases are
 pending (`1/1 passed · 1 pending (not collected)`). A task that crashed
 recorded no outcome, so its case stays pending until the batch is collected.
+A case whose recorded outcome holds no verdict, or a result that cannot be
+reported, is compared as an error.
 
 ### Running through SLURM
 
@@ -1636,7 +1642,9 @@ why: its task's state and error), each submission's job and tasks (state,
 host, cases done, peak memory), and the cases as they land, before the batch
 has a summary. Its buttons run `scenario-slurm` on the batch: *Resubmit
 missing* (the cases with no outcome, including a result with no boolean
-`passed`, which shows as failed, or that errored), *Resubmit failed too*
+`passed` or one that cannot be reported -- no string `message`, no number
+`elapsed_seconds`, unreadable `condition_statuses` or `failure` -- which
+shows as failed, or that errored), *Resubmit failed too*
 (`--failed`), with the array parallelism and cases per task to use, *Collect*
 (the summary and `batch_results.json`) and *Cancel jobs*.
 
