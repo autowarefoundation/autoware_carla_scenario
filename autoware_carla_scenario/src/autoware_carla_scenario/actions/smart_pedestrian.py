@@ -38,7 +38,7 @@ from ..pedestrian.poser import WalkerPoser
 from ..pedestrian.skeleton import Vector, directions_from_joints
 from ..prepare.declare import need_prepare
 from ..prepare.pool import running_backend
-from ..seed import check_seed
+from ..seed import check_seed, resolve_seed
 from .base import BaseAction, TickTiming
 
 logger = logging.getLogger(__name__)
@@ -114,7 +114,8 @@ class SmartPedestrianControllerAction(BaseAction):
         keyframes: A JSON file of full-body poses.  A relative path is taken
             from the working directory.
         duration_s: Stop after this many simulated seconds.
-        seed: The seed of the generator's draws.
+        seed: The seed of the generator's draws; ``None`` (the default)
+            takes the run's seed (:func:`~autoware_carla_scenario.seed.resolve_seed`).
         overrides: Take over a control domain of the pedestrian another
             action holds (:attr:`~BaseAction.overrides`).
 
@@ -162,7 +163,7 @@ class SmartPedestrianControllerAction(BaseAction):
         speed_ms: float = 1.3,
         keyframes: Optional[str] = None,
         duration_s: Optional[float] = None,
-        seed: int = 0,
+        seed: Optional[int] = None,
         overrides: bool = False,
     ) -> None:
         # NaN passes `<= 0` and `< 0`: it would fail int() at start, or never
@@ -177,7 +178,8 @@ class SmartPedestrianControllerAction(BaseAction):
             )
         # Checked as TrafficSourceAction's seed is: int() alone would read
         # 2.5 or True as a seed, and take a negative one (#1495).
-        seed = check_seed("seed", seed)
+        if seed is not None:
+            seed = check_seed("seed", seed)
         texts = [(0.0, prompt)] if prompt else []
         for timed in prompts:
             if not math.isfinite(timed.time_s) or timed.time_s < 0:
@@ -210,7 +212,9 @@ class SmartPedestrianControllerAction(BaseAction):
         self._speed_ms = float(speed_ms)
         self._keyframes = () if keyframes is None else _read_keyframes(keyframes)
         self._duration_s = duration_s
-        self._seed = seed
+        # None takes the run's seed, as the other actions that draw do
+        # (:mod:`~autoware_carla_scenario.seed`, #1835).
+        self._seed = resolve_seed(seed)
         self._poser = WalkerPoser(self._entity_name, "SmartPedestrianControllerAction")
         self._client = None
         self._session = ""

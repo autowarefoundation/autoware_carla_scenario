@@ -624,6 +624,7 @@ It is the seed of:
 | CARLA's pedestrian navigation (`World.set_pedestrians_seed`) | -- (the scenario's) |
 | Background traffic | `background_traffic.seed` |
 | The adversarial actions, `AdversarialTrafficAction`, `AdversityFeasibleCondition`, `TrafficSourceAction` | their `seed` argument (`Seed` in the editor) |
+| The smart pedestrian's motion generator (`SmartPedestrianControllerAction`) | its `seed` argument |
 | The driver policy's session (`DriveSessionRequest.random_seed`) | `driver.random_seed` |
 | A LiDAR's weather noise | `driver.lidars[].noise_seed` |
 

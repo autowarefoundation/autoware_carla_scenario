@@ -1594,8 +1594,10 @@ register_action_spec(
                 kind="int",
                 minimum=0,
                 maximum=MAX_SEED,
-                default=0,
-                help="The motion generator's draws.",
+                default=None,
+                required=False,
+                help="The motion generator's draws. Leave empty to follow the "
+                "run's seed.",
             ),
         ),
         description=(
