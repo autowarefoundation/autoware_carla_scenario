@@ -624,8 +624,8 @@ def test_another_site_cannot_make_a_recording_through_the_get(
     refused = client.get(f"/recording/{SESSION}/4.rrd", headers=headers)
     assert refused.status_code == 403
     assert converter.calls == []
-    # One already made is served to any page: the web viewer loading it may
-    # come from a CDN.
+    # One already made is served to any page: a Rerun viewer hosted
+    # elsewhere may load its URL.
     assert client.post(f"/api/recording/{SESSION}/4").status_code == 200
     served = client.get(f"/recording/{SESSION}/4.rrd", headers=headers)
     assert served.status_code == 200

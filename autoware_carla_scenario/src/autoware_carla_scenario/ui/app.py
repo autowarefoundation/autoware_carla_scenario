@@ -659,8 +659,8 @@ async def recording_file(
 ) -> FileResponse:
     """The case's Rerun recording (made on the way if need be).
 
-    A recording already made is served to any page, as before: the web viewer
-    loads it from a script that may come from a CDN.  Making one -- converting
+    A recording already made is served to any page, as before: a Rerun
+    viewer hosted elsewhere may load its URL.  Making one -- converting
     the log and writing the file -- is a request another site may not make,
     so one sent cross-site is refused with 403 when there is none yet (#1850).
     The viewer's own pages make the recording first (``POST /api/recording``),
