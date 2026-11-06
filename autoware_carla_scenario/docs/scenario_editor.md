@@ -837,7 +837,7 @@ wheel the scenario needs:
 ```
 my_cut_in-wheelhouse.zip
 `-- my_cut_in_scenario_wheelhouse/
-    |-- my_cut_in_scenario-0.1.0-py3-none-any.whl     # the scenario itself
+    |-- my_cut_in_scenario-0.1.0-py3-none-any.whl  # the scenario itself
     |-- autoware_carla_scenario-*.whl              # the framework, at the pinned commit
     |-- typesafe_carla-*.whl                       # the CARLA client, CPython package prebuilt
     |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
@@ -907,7 +907,8 @@ it and hand it the built-in's config keys. It is an `id` error, `The id
 
 `export_package` and `names_for_id`, called directly, refuse it too, before
 writing anything. That is why the Cut-in example starts as `my_cut_in`, not
-`cut_in`.
+`cut_in`. A draft saved from the Cut-in example before this change
+has the id `cut_in`: rename it in the Scenario inspector before exporting it.
 
 Ids that differ only by a trailing `_scenario`, or by doubled or trailing
 `_`, export to the same package and so the same directory: `my_cut_in`,
