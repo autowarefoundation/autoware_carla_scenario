@@ -1800,8 +1800,10 @@ def _check_node_ids(out: _Collector, document: ScenarioDocument) -> None:
 
     A node id is a key in more than one place: a sweep writes
     ``scenario.param_overrides.<node id>.<field>``, a lanelet slot is
-    ``<node id>.<field>``, and an ``action_state`` condition finds the node it
-    names by id among the actions and the conditions alike.  So each must be
+    ``<node id>.<field>``, and a run looks the node a ``param_overrides``
+    entry names up among the actions first, then the conditions
+    (``declarative``), so a condition sharing an action's id would never get
+    its override.  So each must be
     an identifier -- the rule entity ids follow, which the editor's own
     ``a_xxxxxxxx`` / ``p_xxxxxxxx`` ids do -- and no two nodes, an action and
     a condition included, may share one.

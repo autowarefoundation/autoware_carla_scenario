@@ -444,9 +444,9 @@ same thing wherever you opened it from — **Fixed** or **Constraint search**:
 | The ego's goal | `ego.goal` | `ego.goal_lanelet_id` |
 | A `lanelet` parameter of an action or a condition | `<node id>.<field>` | `scenario.param_overrides.<node id>.<field>` |
 
-Because a node id is part of these keys -- and an Action state card finds the
-node it waits on by id among the actions and the conditions alike -- the
-validator refuses an action or condition id that is not lower_snake_case
+Because a node id is part of these keys -- and a run looks the node a
+`param_overrides` entry names up among the actions first, then the conditions
+-- the validator refuses an action or condition id that is not lower_snake_case
 starting with a letter (`npc.in_lane` would split the Hydra key), and one used
 by two nodes, an action and a condition included. The ids the editor makes
 (`a_1f2e3d4c`, `p_5b6a7988`) always pass; only a hand-edited document can trip
