@@ -2946,3 +2946,183 @@ def test_a_run_ends_on_a_broken_reply_from_the_bridge() -> None:
     bridge.conn.sendall(b"[" * 100000 + b"\n")
     assert _ticked(entity, lambda: entity.termination_requested)
     assert "not a message" in entity.termination_reason
+
+
+# -- a send that fails ends the link (#1792) ---------------------------------------
+
+
+def _not_reading_peer(port: int) -> Any:
+    """A run that is greeted, then reads nothing: its receive buffer fills."""
+    import socket
+
+    sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+    sock.settimeout(5.0)
+    sock.connect(("127.0.0.1", port))
+    return sock
+
+
+def test_a_failed_send_ends_the_link_rather_than_leave_a_partial_line(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import queue as queue_module
+
+    from autoware_carla_scenario.hils import link as link_module
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    monkeypatch.setattr(link_module, "SEND_TIMEOUT_S", 1.0)
+    events: "queue_module.Queue[Any]" = queue_module.Queue()
+    link = link_module.RunnerLink("127.0.0.1:0", events)
+    link.start()
+    try:
+        peer = _not_reading_peer(link.address[1])
+        with peer:
+            assert _until(lambda: link.connected)
+            big = {"type": "command", "pad": "x" * 65536}
+            deadline = time.monotonic() + 30.0
+            took = 0.0
+            while time.monotonic() < deadline:
+                started = time.monotonic()
+                if not link.send(big):
+                    took = time.monotonic() - started
+                    break
+            else:
+                pytest.fail("the send never failed")
+            # The send waited its own timeout, not the reader's 0.2 s poll.
+            assert took >= 0.9
+            assert not link.connected
+            # Nothing more goes on the connection after the partial line.
+            assert not link.send({"type": "ready"})
+            seen: List[str] = []
+
+            def gone() -> bool:
+                while not events.empty():
+                    seen.append(events.get_nowait()[0])
+                return "gone" in seen
+
+            assert _until(gone)
+            # The run reads what came (whole lines, then at most part of one)
+            # and then the end of the link: never a corrupt line.
+            reader = LineReader(peer)
+            deadline = time.monotonic() + 10.0
+            while not reader.closed and time.monotonic() < deadline:
+                for message in reader.read(timeout=0.5):
+                    assert message["type"] in ("hello", "command")
+            assert reader.closed
+            assert b"\n" not in reader._buffer
+    finally:
+        started = time.monotonic()
+        link.close()
+        assert time.monotonic() - started < 3.0
+
+
+def test_sends_go_through_while_the_link_polls_for_the_run() -> None:
+    import queue as queue_module
+
+    from autoware_carla_scenario.hils.link import RunnerLink
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    events: "queue_module.Queue[Any]" = queue_module.Queue()
+    link = RunnerLink("127.0.0.1:0", events)
+    link.start()
+    try:
+        peer = _greeted(link.address[1])
+        with peer:
+            assert _until(lambda: link.connected)
+            reader = LineReader(peer)
+            got: List[dict[str, Any]] = []
+            for i in range(20):
+                assert link.send({"type": "command", "i": i})
+                # The link's reader polls (0.2 s) meanwhile, and the run talks.
+                peer.sendall(b'{"type": "end"}\n')
+                time.sleep(0.02)
+            deadline = time.monotonic() + 5.0
+            while len(got) < 20 and time.monotonic() < deadline:
+                got += reader.read(timeout=0.5)
+            assert [m["i"] for m in got] == list(range(20))
+            ends = 0
+
+            def heard() -> bool:
+                nonlocal ends
+                while not events.empty():
+                    ends += events.get_nowait()[0] == "end"
+                return ends == 20
+
+            assert _until(heard)
+            assert link.connected
+    finally:
+        link.close()
+
+
+def test_a_line_reader_polls_without_touching_the_sockets_timeout() -> None:
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    a, b = socket.socketpair()
+    with a, b:
+        b.settimeout(7.0)
+        reader = LineReader(b)
+        started = time.monotonic()
+        assert reader.read(timeout=0.2) == []
+        assert 0.15 <= time.monotonic() - started < 2.0
+        started = time.monotonic()
+        assert reader.read(timeout=0.0) == []
+        assert time.monotonic() - started < 0.5
+        assert b.gettimeout() == 7.0
+
+        def later() -> None:
+            time.sleep(0.1)
+            a.sendall(b'{"type": "ready"}\n')
+
+        sender = _start(later)
+        started = time.monotonic()
+        assert reader.read(timeout=5.0) == [{"type": "ready"}]
+        assert time.monotonic() - started < 2.0
+        sender.join(5.0)
+        assert b.gettimeout() == 7.0
+        a.close()
+        assert reader.read(timeout=1.0) == []
+        assert reader.closed
+
+
+def test_a_run_whose_send_fails_closes_its_link(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import socket
+
+    from autoware_carla_scenario.entity import hils_entity
+    from autoware_carla_scenario.hils.protocol import encode
+
+    monkeypatch.setattr(hils_entity, "_SEND_TIMEOUT_S", 0.5)
+    server = socket.create_server(("127.0.0.1", 0))
+    accepted: List[Any] = []
+
+    def greet_and_never_read() -> None:
+        conn, _ = server.accept()
+        conn.setsockopt(socket.SOL_SOCKET, socket.SO_RCVBUF, 4096)
+        accepted.append(conn)
+        conn.sendall(encode({"type": "hello", "protocol": 1}))
+
+    serving = _start(greet_and_never_read)
+    try:
+        entity = _entity(server.getsockname()[1])
+        assert not entity.termination_requested
+        sock = entity._sock
+        assert sock is not None and sock.gettimeout() == 0.5
+        entity.on_tick(None, 0.0)  # type: ignore[arg-type]
+        # Reading did not change the timeout the sends have.
+        assert sock.gettimeout() == 0.5
+        big = {"type": "reconnect", "id": "x" * 65536}
+        deadline = time.monotonic() + 30.0
+        while time.monotonic() < deadline and entity._send(big):
+            pass
+        assert entity.termination_requested
+        assert "link failed" in entity.termination_reason
+        assert entity._sock is None and sock.fileno() == -1
+        assert not entity._send({"type": "end"})
+    finally:
+        serving.join(5.0)
+        for conn in accepted:
+            conn.close()
+        server.close()

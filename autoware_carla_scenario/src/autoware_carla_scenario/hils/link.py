@@ -6,6 +6,14 @@ events on a queue the bridge's loop takes them from, so lifecycle steps run on
 the bridge's own thread, in order with its ticks; :meth:`RunnerLink.send`
 answers (from any thread: the ECUs' commands are forwarded from the threads
 receiving them).
+
+Threads and the connection: the serving thread alone reads it (a
+:class:`~.protocol.LineReader`, which waits with a select and leaves the
+socket's timeout alone) and alone closes it; senders write it one at a time,
+under the link's lock, bounded by the socket's own timeout
+(:data:`SEND_TIMEOUT_S`).  A send that fails may have written part of its line,
+so the link shuts the connection down rather than send after it: the serving
+thread then sees the run gone (#1792).
 """
 
 from __future__ import annotations
@@ -25,7 +33,7 @@ from .protocol import (
     parse_address,
 )
 
-__all__ = ["RunnerLink"]
+__all__ = ["SEND_TIMEOUT_S", "RunnerLink"]
 
 logger = logging.getLogger(__name__)
 
@@ -35,6 +43,11 @@ Event = Tuple[str, Dict[str, Any]]
 
 #: How often the threads look at whether the link is closing, seconds.
 _POLL_S = 0.2
+
+#: How long a send may wait for a run that does not read, seconds; past it the
+#: run counts as gone.  The connection's own timeout: the reader does not set
+#: one.
+SEND_TIMEOUT_S = 10.0
 
 
 class RunnerLink:
@@ -86,7 +99,13 @@ class RunnerLink:
         logger.info("waiting for scenario runs on %s", format_address(*self.address))
 
     def send(self, message: Mapping[str, Any]) -> bool:
-        """Send *message* to the connected run; whether there was one to send to."""
+        """Send *message* to the connected run; whether it went.
+
+        A send that fails (the run gone, or not reading for
+        :data:`SEND_TIMEOUT_S`) may have left part of its line on the
+        connection, so it ends the connection: nothing more is sent on it, and
+        the serving thread reports the run gone.
+        """
         data = encode(message)
         with self._lock:
             conn = self._conn
@@ -95,7 +114,14 @@ class RunnerLink:
             try:
                 conn.sendall(data)
             except OSError as exc:
-                logger.debug("the run's link failed: %s", exc)
+                logger.warning("the link with the scenario run failed: %s", exc)
+                # Not closed here: the serving thread may be reading it, and
+                # closes it itself once the shutdown wakes it.
+                self._conn = None
+                try:
+                    conn.shutdown(socket.SHUT_RDWR)
+                except OSError:
+                    pass
                 return False
         return True
 
@@ -126,6 +152,9 @@ class RunnerLink:
                 "scenario run connected from %s",
                 format_address(str(peer[0]), int(peer[1])),
             )
+            # Blocking, but no send waits past SEND_TIMEOUT_S; the reader
+            # waits with a select and leaves this alone.
+            conn.settimeout(SEND_TIMEOUT_S)
             with self._lock:
                 self._conn = conn
             self.send({"type": "hello", "protocol": PROTOCOL_VERSION})

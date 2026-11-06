@@ -55,6 +55,13 @@ A scenario's life, with `ego.entity=hils`:
    `scenario_end` steps, stops the periodic messages, removes its sensors and
    answers `ended`. A run that goes away mid-scenario ends it as well.
 
+A message that cannot be sent on the link ends the link: either side gives a
+peer that does not read 10 s to take it, and a send that fails or times out
+may have written part of its line, so nothing is sent after it. The bridge
+then shuts the connection down and counts the run as gone (ending its
+scenario, as above), and the run fails with "The HILS bridge's link failed".
+Waiting for what the peer sends never shortens or lengthens that 10 s.
+
 Without a run connected (any other `ego.entity`), the bridge streams the ego to
 the ECUs all the same, and the ego appearing and disappearing start and end the
 scenario; the ECUs' commands then go nowhere. The ego of a run that went away

@@ -58,6 +58,11 @@ ON_STALE_ACTIONS: Tuple[str, ...] = ("brake", "hold")
 #: many (a command comes every ECU cycle).
 _NON_FINITE_LOG_EVERY = 100
 
+#: How long a message to the bridge may wait for a bridge that does not read,
+#: seconds (the socket's own timeout: the link's reader waits with a select
+#: and leaves it alone, #1792).  A send that fails ends the run.
+_SEND_TIMEOUT_S = 10.0
+
 #: The gears CARLA's ``VehicleControl`` can hold (a 32-bit int).
 _GEAR_MIN = float(-(2**31))
 _GEAR_MAX = float(2**31 - 1)
@@ -239,6 +244,7 @@ class HilsEgoEntity(ExternallyDrivenEgo):
                 "is scenario-hils running?"
             )
             return
+        sock.settimeout(_SEND_TIMEOUT_S)
         self._sock = sock
         self._reader = LineReader(sock)
         try:
@@ -433,6 +439,9 @@ class HilsEgoEntity(ExternallyDrivenEgo):
         return values
 
     def _send(self, message: Mapping[str, Any]) -> bool:
+        # Every send is on the run's thread, as every read is.  One that fails
+        # may have written part of its line: the link is closed, never sent on
+        # after it.
         sock = self._sock
         if sock is None:
             return False
