@@ -140,6 +140,11 @@ Python version, and the viewer's Run form reads it the same way.
   (`server.world_reset`): an attempt that raised never reached the reset at
   the end of its run, so the world is reset before the retry, and the weather
   or frozen traffic lights the failed attempt set do not carry into it
+- A CARLA server the batch started that dies mid-batch is restarted before the
+  next attempt (a retry, or the next case), with the map loaded again, so the
+  cases after the crash run rather than spend their attempts on a server that
+  is gone. A restart that fails is that attempt's failure. A server the batch
+  reused (already running when it started) is never restarted
 - A scenario with a `sweep:` section runs once, as configured; add `--multirun`
   to run every case of it (see [Running every sweep case in a batch](#running-every-sweep-case-in-a-batch))
 

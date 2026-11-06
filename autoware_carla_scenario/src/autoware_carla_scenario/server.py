@@ -318,6 +318,12 @@ class CarlaServerManager:
         self._process = None
         atexit.unregister(self.stop)
 
+    @property
+    def reused(self) -> bool:
+        """Whether :meth:`start` reused a server already running, rather than
+        launching one: a reused server is not this manager's to stop."""
+        return self._reused
+
     def is_alive(self) -> bool:
         """Return True if the server is reachable (regardless of who started it)."""
         if not self._reused and (
