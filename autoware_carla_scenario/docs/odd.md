@@ -246,7 +246,8 @@ What they read off a lanelet is public too, for code that has to judge a
 lanelet exactly as the ODD does: `lanelet_in_junction(lanelet)` (a
 `turn_direction` tag, `scenery.junction`), `lanelet_road_type(lanelet)` (the
 `subtype` tag, `scenery.road_type`) and `lanelet_speed_limit(lanelet)` (the
-`speed_limit` tag, km/h). The adversities' location gate reads them
+`speed_limit` tag, km/h; None for a tag that is not a finite number above 0,
+as for a missing one). The adversities' location gate reads them
 (`autoware_carla_scenario.adversity.location`).
 
 Import them from `autoware_carla_scenario.odd` itself
@@ -1557,7 +1558,7 @@ What the lanelet forms read, and where that differs from the run:
 |---|---|---|
 | `in_junction` | The lanelet has a `turn_direction` tag (Autoware tags every lanelet in an intersection with one; the sweeper's `is_junction` reads it the same way) | The same, on the ego's lanelet; without a Lanelet2 map, CARLA waypoint `is_junction` |
 | `lane_count` | The lanelet and every same-direction neighbour, walked left and right in the routing graph (`left`/`right`, else `adjacentLeft`/`adjacentRight`, so lanes behind a solid line count too); nothing in a junction | The same, on the ego's lanelet; without a Lanelet2 map, the driving lanes of the same sign on the CARLA waypoint's OpenDRIVE road |
-| `speed_limit_kph` | The `speed_limit` tag, else (no tag, or not a number) undecided | The tag, else CARLA's `get_speed_limit()` |
+| `speed_limit_kph` | The `speed_limit` tag, else (no tag, or not a finite number above 0: `nan`, `inf`, `0`, `-30`) undecided | The tag, else (the same) CARLA's `get_speed_limit()` |
 | `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph` | The tag | The tag of the lanelet the ego is on |
 
 A run with a Lanelet2 map reads the junction and the lane count off the
