@@ -147,7 +147,12 @@ and each value is used once, so a node that publishes one of each per cycle driv
 per cycle. The halves are matched by the DDS source timestamp of each sample (when the
 publisher wrote it), not by when a tick happens to read it, so a tick that reads two
 cycles at once, or one half of a cycle before the tick and the other after it, still
-pairs every cycle with itself.
+pairs every cycle with itself. Like `carla_control_publisher`, which turns each
+message into its target speed once, the target speed of a command is computed once,
+from the speed at the tick it is first applied: re-applying it on later ticks, or
+holding it once its source is stale, keeps that target rather than recomputing it
+from the ego's current speed. A new command recomputes it, even one with the same
+values.
 
 Two halves pair only if they were written at most a window apart. By default the window
 is half the publisher's cycle, measured from the timestamps themselves (the median of

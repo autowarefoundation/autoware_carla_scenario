@@ -241,6 +241,53 @@ def test_steer_accel_goes_to_the_ackermann_controller_as_visionpilot_hands_it() 
     assert control.jerk == pytest.approx(10.0)
 
 
+def _set_speed(actor: MagicMock, speed_mps: float) -> None:
+    actor.get_velocity.return_value = SimpleNamespace(x=speed_mps, y=0.0, z=0.0)
+
+
+def test_a_steer_accel_target_is_computed_once_per_command() -> None:
+    # carla_control_publisher turns each message into v + a * h once and CARLA
+    # holds it (#1871): re-applying the command on later ticks, fresh or held,
+    # must not climb with the ego's own speed.
+    entity, transport, actor, clock = _started(actor=_actor(speed_mps=5.0))
+    transport.deliver("vp", SteerAccelCommand(steering_rad=0.0, acceleration_mps2=2.0))
+    _tick(entity, clock)
+    assert _last_ackermann(actor).speed == pytest.approx(9.0)
+
+    speed = 5.0
+    for _ in range(3):  # still fresh
+        speed += 1.0
+        _set_speed(actor, speed)
+        _tick(entity, clock)
+        assert entity.active_source == "vp"
+        assert _last_ackermann(actor).speed == pytest.approx(9.0)
+
+    for _ in range(10):  # stale, held
+        speed += 1.0
+        _set_speed(actor, speed)
+        _tick(entity, clock)
+    assert entity.active_source == "vp"
+    actor.apply_control.assert_not_called()
+    assert _last_ackermann(actor).speed == pytest.approx(9.0)
+    assert _last_ackermann(actor).acceleration == pytest.approx(2.0)
+
+
+def test_a_new_steer_accel_command_with_the_same_values_recomputes() -> None:
+    entity, transport, actor, clock = _started(actor=_actor(speed_mps=5.0))
+    transport.deliver("vp", SteerAccelCommand(0.0, 2.0))
+    _tick(entity, clock)
+    assert _last_ackermann(actor).speed == pytest.approx(9.0)
+
+    _set_speed(actor, 8.0)
+    transport.deliver("vp", SteerAccelCommand(0.0, 2.0))
+    _tick(entity, clock)
+    assert _last_ackermann(actor).speed == pytest.approx(12.0)
+
+    _set_speed(actor, 10.0)
+    _tick(entity, clock)
+    assert _last_ackermann(actor).speed == pytest.approx(12.0)
+
+
 def test_a_negative_target_speed_is_clamped_to_zero() -> None:
     entity, transport, actor, clock = _started(actor=_actor(speed_mps=1.0))
     transport.deliver("vp", SteerAccelCommand(0.0, -3.0))

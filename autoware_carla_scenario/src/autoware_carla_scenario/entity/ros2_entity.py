@@ -52,7 +52,7 @@ from ..ros2.commands import (
     SteerAccelCommand,
     TrajectoryCommand,
 )
-from ..ros2.config import Ros2EgoConfig
+from ..ros2.config import CommandSourceConfig, Ros2EgoConfig
 from ..ros2.transport import CameraFrame, Ros2EgoTransport
 from ..sensor.carla_camera import CarlaCameraSensor
 from ..utils.powertrain import ChaosPowertrain
@@ -159,6 +159,10 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
     #: The last finite Ackermann command applied: ``(steer_rad, speed_mps,
     #: acceleration_mps2, jerk_mps3)``, CARLA's sign; ``None`` before any.
     _last_ackermann: Optional[Tuple[float, float, float, float]]
+    #: The steer_accel command last applied and its Ackermann tuple, computed
+    #: from the speed at the tick it was first applied: a held or repeated
+    #: command keeps its target, as a relay node's does.
+    _steer_accel: Optional[Tuple[SteerAccelCommand, Tuple[float, float, float, float]]]
     #: Non-finite commands refused so far (the log's rate limit).
     _non_finite: int
     #: Whether a control command's negative jerk has been logged.
@@ -187,6 +191,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._plan_steps = 0
         self._tracking = False
         self._last_ackermann = None
+        self._steer_accel = None
         self._non_finite = 0
         self._negative_jerk_logged = False
 
@@ -262,6 +267,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         self._plan_steps = 0
         self._tracking = False
         self._last_ackermann = None
+        self._steer_accel = None
         self._negative_jerk_logged = False
         self._transport.publish_state(self._state(world, actor)[0])
         # The actor, not narrowed by the check above for the camera's attach().
@@ -422,6 +428,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             # A refused command falls back on the source's own last good one.
             self._planned = None
             self._last_ackermann = None
+            self._steer_accel = None
         elif self._active_fresh and not fresh:
             logger.warning(
                 "Command source %r went stale; %s",
@@ -482,13 +489,9 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             return
         if isinstance(command, SteerAccelCommand):
             steer_accel: SteerAccelCommand = command
-            steer_rad = source.steering_sign * steer_accel.steering_rad
-            speed_mps = (
-                observation.speed_mps
-                + steer_accel.acceleration_mps2 * source.speed_horizon_s
+            steer_rad, speed_mps, acceleration_mps2, jerk_mps3 = (
+                self._steer_accel_target(steer_accel, source, observation.speed_mps)
             )
-            acceleration_mps2 = steer_accel.acceleration_mps2
-            jerk_mps3 = source.jerk_mps3
         else:
             control: ControlCommand = command
             # Autoware steers positive to the left; CARLA's Ackermann
@@ -532,6 +535,35 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
                 jerk=float(jerk_mps3),
             )
         )
+
+    def _steer_accel_target(
+        self,
+        command: SteerAccelCommand,
+        source: CommandSourceConfig,
+        speed_mps: float,
+    ) -> Tuple[float, float, float, float]:
+        """The Ackermann tuple of *command*, computed once while it is the one
+        applied.
+
+        VisionPilot's ``carla_control_publisher`` turns each message into the
+        target speed ``speed + acceleration * speed_horizon_s`` once, and CARLA
+        holds it: the entity does the same, from the speed at the tick the
+        command is first applied, so that re-applying it (on a later tick, or
+        holding it once its source is stale) does not climb by
+        ``acceleration * speed_horizon_s`` a tick.  The cache is keyed on the
+        command object, so a new command with the same values recomputes.
+        """
+        cached = self._steer_accel
+        if cached is None or cached[0] is not command:
+            target = (
+                source.steering_sign * command.steering_rad,
+                speed_mps + command.acceleration_mps2 * source.speed_horizon_s,
+                command.acceleration_mps2,
+                source.jerk_mps3,
+            )
+            self._steer_accel = (command, target)
+            return target
+        return cached[1]
 
     def _note_negative_jerk(self, jerk_mps3: float) -> None:
         """Log, once a session, that a negative jerk was taken as its magnitude."""
