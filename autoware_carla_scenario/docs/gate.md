@@ -247,7 +247,7 @@ Newly failing cases:
 |-----------|---------|
 | `0` | Every gate judged passed (two sets: on the candidate; with `--fail-on-regression`, and nothing regressed) |
 | `1` | A gate failed, or (two sets, `--fail-on-regression`) something regressed |
-| `2` | Nothing to judge, a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, or `--document` has no gate |
+| `2` | Nothing to judge, a record could not be read (not JSON, or malformed), a coverage file a record names could not be read, more than two sets, `--fail-on-regression` with one set, `--document` has no gate, or the `--markdown` or `--json` file could not be written (each such path is named on stderr; the verdict printed to stdout is unchanged) |
 
 The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 `passed`, `runs`, `passed_runs`, the `gate` judged, each criterion (`name`,

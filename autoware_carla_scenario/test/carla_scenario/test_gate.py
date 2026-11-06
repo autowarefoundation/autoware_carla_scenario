@@ -510,6 +510,59 @@ class TestCli:
     def test_nothing_to_judge_exits_2(self, tmp_path: Path) -> None:
         assert main([str(tmp_path)]) == EXIT_ERROR
 
+    def test_a_missing_markdown_directory_exits_2(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        runs = tmp_path / "runs"
+        runs.mkdir()
+        _write(runs, "a", _record())
+        markdown = tmp_path / "missing" / "gate.md"
+        verdict = tmp_path / "v.json"
+        argv = [str(runs), "--markdown", str(markdown), "--json", str(verdict)]
+        assert main(argv) == EXIT_ERROR
+        err = capsys.readouterr().err
+        assert err.splitlines() == [
+            f"scenario-gate: cannot write {markdown}: No such file or directory"
+        ]
+        assert "Traceback" not in err
+        # The JSON is still written.
+        assert json.loads(verdict.read_text())["verdicts"][0]["passed"] is True
+
+    def test_a_json_path_that_is_a_directory_exits_2(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        runs = tmp_path / "runs"
+        runs.mkdir()
+        _write(runs, "a", _record())
+        verdict = tmp_path / "v.json"
+        verdict.mkdir()
+        assert main([str(runs), "--json", str(verdict)]) == EXIT_ERROR
+        out, err = capsys.readouterr()
+        assert "PASSED" in out
+        lines = err.splitlines()
+        assert len(lines) == 1
+        assert lines[0].startswith(f"scenario-gate: cannot write {verdict}: ")
+        assert "Traceback" not in err
+
+    def test_both_outputs_unwritable_name_both(
+        self, tmp_path: Path, capsys: Any
+    ) -> None:
+        runs = tmp_path / "runs"
+        runs.mkdir()
+        _write(runs, "a", _record(passed=False))
+        markdown = tmp_path / "missing" / "gate.md"
+        verdict = tmp_path / "v.json"
+        verdict.mkdir()
+        argv = [str(runs), "--markdown", str(markdown), "--json", str(verdict)]
+        assert main(argv) == EXIT_ERROR
+        out, err = capsys.readouterr()
+        assert out == ""
+        lines = err.splitlines()
+        assert len(lines) == 2
+        assert lines[0].startswith(f"scenario-gate: cannot write {markdown}: ")
+        assert lines[1].startswith(f"scenario-gate: cannot write {verdict}: ")
+        assert "Traceback" not in err
+
     def test_an_unreadable_record_exits_2(self, tmp_path: Path) -> None:
         _write(tmp_path, "a", _record())
         (tmp_path / "b_gate.json").write_text("{")
