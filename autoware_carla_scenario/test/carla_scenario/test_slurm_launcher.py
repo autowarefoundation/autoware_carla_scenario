@@ -780,12 +780,15 @@ def test_a_null_timeout_is_refused_by_the_config_not_the_run_timeout(
     TypeError.  A scenario whose config needs a number refuses it, naming the
     key, before the batch is submitted (#1818): every case would otherwise
     die in its builder with an error naming no key."""
-    from autoware_carla_scenario.run_timeout import run_timeout_seconds
+    from autoware_carla_scenario.run_timeout import (
+        DEFAULT_RUN_TIMEOUT_SECONDS,
+        run_timeout_seconds,
+    )
 
     run = fake_slurm.run
     cfg = run._compose_config(_CONCRETE, ["scenario.timeout_seconds=null"])
     assert cfg.scenario.timeout_seconds is None
-    run_timeout_seconds(cfg)
+    assert run_timeout_seconds(cfg) == DEFAULT_RUN_TIMEOUT_SECONDS
     with pytest.raises(
         run.RunConfigError,
         match=r"^scenario\.timeout_seconds must be a number, got None$",

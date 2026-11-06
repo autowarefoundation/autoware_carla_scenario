@@ -969,7 +969,7 @@ Each of these numbers must be a number: an int (Hydra reads
 as 1 or 0, a quoted string (`'10'`) or a `null` where no check is optional is
 refused, naming the key (`Error: scenario.timeout_seconds must be a number,
 got None`, #1818); `max_steering_reversals` and `max_turn_indicator_changes`
-must be whole numbers. So are the words a scenario reads: `cut_in`'s `side`
+must be whole numbers. The scenario's word settings are checked too: `cut_in`'s `side`
 must be `left` or `right`, and `intersection_passing`'s `turn_direction`
 `left`, `right`, `straight` or `null` (straight through, with no turn
 action). The check builds the scenario's config class with the keys it
