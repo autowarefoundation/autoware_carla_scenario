@@ -8,9 +8,11 @@ only way to catch a template that renders but shows the wrong thing.
 
 from __future__ import annotations
 
+import errno
 import html
 import io
 import math
+import os
 import re
 import threading
 import zipfile
@@ -1956,6 +1958,165 @@ class TestFilesThatAreNotDrafts:
         with pytest.raises(ValueError, match="not a draft"):
             store.delete("notes")
         assert (tmp_path / "notes.yaml").is_file()
+
+
+_AS_ROOT = hasattr(os, "geteuid") and os.geteuid() == 0
+
+
+def _refuse_writes(monkeypatch: pytest.MonkeyPatch, code: int = errno.EACCES) -> None:
+    """Make every draft write fail as a drafts directory refusing it would.
+
+    A monkeypatch rather than ``chmod``, so it also holds as root.  The store
+    writes a temporary ``.partial`` file first, so refusing that refuses the
+    write, before anything reaches the draft itself.
+    """
+    open_ = Path.open
+
+    def _open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        if self.name.endswith(".partial"):
+            raise OSError(code, os.strerror(code), str(self))
+        return open_(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "open", _open)
+
+
+def _assert_storage_page(response: Any, drafts: Path, status: int = 500) -> None:
+    assert response.status_code == status
+    assert "Cannot save drafts" in response.text
+    assert str(drafts) in html.unescape(response.text)
+    assert "Traceback" not in response.text
+
+
+class TestADraftsDirectoryTheEditorCannotUse:
+    """An unreadable draft or an unwritable drafts directory is no 500 traceback (#1747)."""
+
+    def test_the_list_skips_an_unreadable_draft(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        other = client.post("/new", data={"title": "Other"}, follow_redirects=False)
+        other_id = other.headers["location"].rsplit("/", 1)[-1]
+        refused = tmp_path / "drafts" / f"{draft_id}.yaml"
+        read_text = Path.read_text
+
+        def _read_text(self: Path, *args: Any, **kwargs: Any) -> str:
+            if self == refused:
+                raise PermissionError(13, "Permission denied", str(self))
+            return read_text(self, *args, **kwargs)
+
+        monkeypatch.setattr(Path, "read_text", _read_text)
+        response = client.get("/")
+        assert response.status_code == 200
+        assert other_id in response.text
+        assert draft_id not in response.text
+        opened = client.get(f"/draft/{draft_id}")
+        assert opened.status_code == 404
+        assert "cannot be read" in opened.text
+
+    @pytest.mark.skipif(_AS_ROOT, reason="root reads files whatever their mode")
+    def test_a_draft_without_read_permission_is_skipped_and_a_404(
+        self, client: TestClient, tmp_path: Path, draft_id: str
+    ) -> None:
+        path = tmp_path / "drafts" / f"{draft_id}.yaml"
+        path.chmod(0)
+        try:
+            assert client.get("/").status_code == 200
+            assert client.get(f"/draft/{draft_id}").status_code == 404
+        finally:
+            path.chmod(0o644)
+
+    def test_a_new_draft_that_cannot_be_written_names_the_directory(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        _refuse_writes(monkeypatch)
+        response = client.post("/new", data={"kind": "cut_in"}, follow_redirects=False)
+        _assert_storage_page(response, tmp_path / "drafts")
+        assert "Permission denied" in response.text
+        assert not list((tmp_path / "drafts").glob("*"))
+
+    def test_saving_into_an_unwritable_directory_keeps_the_draft(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        drafts = tmp_path / "drafts"
+        before = (drafts / f"{draft_id}.yaml").read_text(encoding="utf-8")
+        _refuse_writes(monkeypatch)
+        response = client.post(f"/draft/{draft_id}/save", data={"title": "Renamed"})
+        _assert_storage_page(response, drafts)
+        assert (drafts / f"{draft_id}.yaml").read_text(encoding="utf-8") == before
+        assert sorted(p.name for p in drafts.iterdir()) == [f"{draft_id}.yaml"]
+
+    def test_an_edit_that_cannot_be_saved_is_the_storage_error(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        # The inspector's edits save through the same path; the storage error
+        # is not shown as a notice beside the form, as an EditorError is.
+        _refuse_writes(monkeypatch)
+        response = client.post(f"/draft/{draft_id}/entity", data={"kind": "vehicle"})
+        _assert_storage_page(response, tmp_path / "drafts")
+
+    def test_a_full_disk_is_a_507(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        _refuse_writes(monkeypatch, errno.ENOSPC)
+        response = client.post(f"/draft/{draft_id}/save", data={"title": "Renamed"})
+        _assert_storage_page(response, tmp_path / "drafts", status=507)
+
+    def test_a_new_draft_on_a_map_that_cannot_be_written(
+        self, client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(EditorService, "use_map", lambda self, document, uri: None)
+        _refuse_writes(monkeypatch)
+        response = client.post(
+            "/maps/new",
+            data={"uri": "https://example.com/maps.git#town", "title": "On a map"},
+            follow_redirects=False,
+        )
+        _assert_storage_page(response, tmp_path / "drafts")
+
+    def test_a_delete_the_directory_refuses_is_the_storage_error(
+        self,
+        client: TestClient,
+        tmp_path: Path,
+        draft_id: str,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        def _unlink(self: Path, missing_ok: bool = False) -> None:
+            raise PermissionError(13, "Permission denied", str(self))
+
+        monkeypatch.setattr(Path, "unlink", _unlink)
+        response = client.post(f"/draft/{draft_id}/delete", follow_redirects=False)
+        _assert_storage_page(response, tmp_path / "drafts")
+        assert "could not be removed from" in response.text
+
+    @pytest.mark.skipif(_AS_ROOT, reason="root writes whatever the mode")
+    def test_a_read_only_drafts_directory(
+        self, client: TestClient, tmp_path: Path, draft_id: str
+    ) -> None:
+        drafts = tmp_path / "drafts"
+        drafts.chmod(0o555)
+        try:
+            saved = client.post(f"/draft/{draft_id}/save", data={"title": "Renamed"})
+            _assert_storage_page(saved, drafts)
+            created = client.post("/new", data={"kind": "cut_in"})
+            _assert_storage_page(created, drafts)
+        finally:
+            drafts.chmod(0o755)
+        assert sorted(p.name for p in drafts.iterdir()) == [f"{draft_id}.yaml"]
 
 
 class TestADraftWhoseStoredIdIsNotItsFileName:

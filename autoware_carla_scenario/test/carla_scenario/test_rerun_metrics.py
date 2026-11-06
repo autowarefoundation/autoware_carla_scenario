@@ -8,8 +8,15 @@ from pathlib import Path
 
 import pytest
 
-from autoware_carla_scenario import rerun_metrics
+from autoware_carla_scenario import rerun_metrics, run_outputs
 from autoware_carla_scenario.rerun_metrics import merge_metrics, metric_records
+
+
+def test_the_scratch_recording_is_a_run_output() -> None:
+    # Named in the checked run_outputs, so a run killed during the merge
+    # leaves nothing a case run again does not remove (#1748).
+    assert rerun_metrics.METRICS_SUFFIX is run_outputs.METRICS_SUFFIX
+    assert rerun_metrics.METRICS_SUFFIX in run_outputs.RUN_FILE_SUFFIXES
 
 
 def _log(path: Path, metrics: bool = True) -> Path:

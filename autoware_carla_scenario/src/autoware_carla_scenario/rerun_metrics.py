@@ -26,6 +26,10 @@ import math
 from pathlib import Path
 from typing import Any, Optional
 
+# The scratch recording's name is the checked run_outputs's, so that a run's
+# outputs list it (#1748); the name it had here stays importable from here.
+from .run_outputs import METRICS_SUFFIX as METRICS_SUFFIX
+
 __all__ = [
     "METRICS_ENTITY",
     "METRICS_SUFFIX",
@@ -38,8 +42,6 @@ logger = logging.getLogger(__name__)
 
 #: The entity the metrics are recorded under: ``metrics/<key>``.
 METRICS_ENTITY = "metrics"
-#: The scratch recording the metrics are written to before the merge.
-METRICS_SUFFIX = ".metrics.rrd"
 
 
 def metric_records(trajectory: Path) -> list[dict[str, Any]]:
