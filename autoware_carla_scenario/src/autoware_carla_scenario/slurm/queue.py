@@ -26,6 +26,8 @@ from .settings import DEFAULT_MAX_ARRAY_SIZE, parse_max_array_size, require_sbat
 __all__ = [
     "ACTIVE_STATES",
     "CANCEL_WAIT_SECONDS",
+    "SBATCH_TIMEOUT_SECONDS",
+    "SCANCEL_TIMEOUT_SECONDS",
     "availability",
     "cancel_jobs",
     "max_array_size",
@@ -58,18 +60,47 @@ ACTIVE_STATES = frozenset(
 #: collects.
 CANCEL_WAIT_SECONDS = 60.0
 
+#: How long ``sbatch`` may take before it is given up on (#1786): a submit
+#: host whose controller does not answer would otherwise block
+#: ``launcher=slurm`` and ``scenario-slurm resubmit`` for good.  Well under
+#: ``manifest.SBATCH_IN_FLIGHT_SECONDS`` (600 s), so a record is not taken for
+#: a dead submitter's while its sbatch still runs.
+SBATCH_TIMEOUT_SECONDS = 120.0
+
+#: How long ``scancel`` may take before ``cancel_jobs`` gives up (#1786).
+SCANCEL_TIMEOUT_SECONDS = 60.0
+
 
 def _chunks(indices: list[int], size: int) -> list[list[int]]:
     return [indices[i : i + size] for i in range(0, len(indices), size)]
 
 
 def _run_sbatch(command: list[str]) -> str:
-    """Run *command* (an ``sbatch --parsable``); the job id it printed."""
+    """Run *command* (an ``sbatch --parsable``); the job id it printed.
+
+    Raises:
+        RuntimeError: sbatch failed, printed no job id, or did not end within
+            :data:`SBATCH_TIMEOUT_SECONDS` (#1786).
+    """
     command = [require_sbatch(), *command[1:]]
     logger.info("Submitting: %s", shlex.join(command))
-    completed = subprocess.run(
-        command, capture_output=True, encoding="utf-8", errors="replace", check=False
-    )
+    try:
+        completed = subprocess.run(
+            command,
+            capture_output=True,
+            encoding="utf-8",
+            errors="replace",
+            check=False,
+            timeout=SBATCH_TIMEOUT_SECONDS,
+        )
+    except subprocess.TimeoutExpired as exc:
+        # run() killed sbatch.  Whether the controller took the job before
+        # that cannot be told from here: say where to look.
+        raise RuntimeError(
+            f"sbatch timed out after {SBATCH_TIMEOUT_SECONDS} s; the SLURM "
+            "controller may not be answering (check `squeue --me` for a job "
+            "it may have submitted all the same)"
+        ) from exc
     if completed.returncode != 0:
         raise RuntimeError(
             f"sbatch failed ({completed.returncode}): "
@@ -184,9 +215,17 @@ def cancel_jobs(jobs: Sequence[str]) -> bool:
             encoding="utf-8",
             errors="replace",
             check=False,
+            timeout=SCANCEL_TIMEOUT_SECONDS,
         )
     except OSError as exc:
         print(f"[slurm] could not run scancel: {exc}", file=sys.stderr)  # noqa: T201
+        return False
+    except subprocess.TimeoutExpired:
+        print(  # noqa: T201
+            f"[slurm] scancel {' '.join(names)} timed out after "
+            f"{SCANCEL_TIMEOUT_SECONDS} s",
+            file=sys.stderr,
+        )
         return False
     if completed.returncode != 0:
         print(  # noqa: T201

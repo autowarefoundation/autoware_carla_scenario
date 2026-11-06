@@ -36,7 +36,11 @@ On the machine you run `scenario` on (a SLURM submit host):
    (`slurm/manifest.json`): every case's scenario and overrides, its resolved
    config, and the file stem it is to be named by.
 3. `sbatch --array=0-(N-1)%K` submits the cases, `launcher.cases_per_task` to a
-   task, at most `launcher.array_parallelism` tasks at once.
+   task, at most `launcher.array_parallelism` tasks at once. An `sbatch` that
+   has not returned after 120 s (a controller that does not answer) is
+   stopped, and the submit fails with `sbatch timed out after 120.0 s`; check
+   `squeue --me` before submitting again, as the controller may have taken the
+   job all the same.
 4. By default `scenario` follows the array (`squeue`, and the outcome each task
    records) until it ends, then prints the summary and writes
    `batch_results.json`, as a local batch does, and exits 0 when every case
@@ -92,6 +96,10 @@ scenario-slurm collect  outputs/2026-10-18/12-00-00   # summary, batch_results.j
 scenario-slurm resubmit outputs/2026-10-18/12-00-00   # the cases with no result
 scenario-slurm cancel   outputs/2026-10-18/12-00-00   # scancel the batch's jobs
 ```
+
+`cancel` gives `scancel` 60 s; one that has not returned by then is
+stopped, `cancel` says so on one line and exits 1. The same 120 s limit on
+`sbatch` as above holds for `resubmit`.
 
 `status`, `collect` and `cancel` take nothing but the batch directory. The
 options of the others (`scenario-slurm <command> --help` says the same):

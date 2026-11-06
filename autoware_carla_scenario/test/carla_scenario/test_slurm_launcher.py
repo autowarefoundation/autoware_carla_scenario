@@ -2723,6 +2723,48 @@ def test_sbatch_that_prints_no_job_id_is_a_runtime_error(
     assert queue._run_sbatch(["sbatch", "--parsable", "job.sh"]) == "4242"
 
 
+def _hanging_tool(bin_dir: Path, name: str) -> Path:
+    """A fake SLURM tool *name* that hangs (one process: run() kills it)."""
+    bin_dir.mkdir(parents=True, exist_ok=True)
+    tool = bin_dir / name
+    tool.write_text(f"#!{sys.executable}\nimport time\ntime.sleep(30)\n")
+    tool.chmod(0o755)
+    return tool
+
+
+def test_an_sbatch_that_hangs_is_a_runtime_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1786: a hung sbatch is given up on, as the RuntimeError callers
+    report, not waited for."""
+    from autoware_carla_scenario.slurm import queue
+
+    sbatch = _hanging_tool(tmp_path / "bin", "sbatch")
+    monkeypatch.setattr(queue, "require_sbatch", lambda: str(sbatch))
+    monkeypatch.setattr(queue, "SBATCH_TIMEOUT_SECONDS", 0.5)
+    started = time.monotonic()
+    with pytest.raises(RuntimeError, match=r"sbatch timed out after 0\.5 s"):
+        queue._run_sbatch(["sbatch", "--parsable", "job.sh"])
+    assert time.monotonic() - started < 10.0
+
+
+def test_a_scancel_that_hangs_is_reported_and_not_waited_for(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#1786: a hung scancel ends cancel_jobs with one line and False."""
+    from autoware_carla_scenario.slurm import queue
+
+    bin_dir = tmp_path / "bin"
+    _hanging_tool(bin_dir, "scancel")
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ.get('PATH', '')}")
+    monkeypatch.setattr(queue, "SCANCEL_TIMEOUT_SECONDS", 0.5)
+    started = time.monotonic()
+    assert queue.cancel_jobs(["41", "42"]) is False
+    assert time.monotonic() - started < 10.0
+    err = capsys.readouterr().err
+    assert err == "[slurm] scancel 41 42 timed out after 0.5 s\n"
+
+
 @pytest.mark.parametrize("stale", [False, True], ids=["in-flight", "stale"])
 def test_wait_neither_follows_nor_collects_a_submission_with_no_job(
     tmp_path: Path,
