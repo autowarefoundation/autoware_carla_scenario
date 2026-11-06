@@ -4027,3 +4027,41 @@ def test_a_remote_batch_collected_on_a_node_names_the_submit_host_s_path(
     out = capsys.readouterr().out
     assert "scenario-slurm resubmit /home/alice/mnt/node/OnePlanner/outputs/d/t" in out
     assert f"resubmit {layout.batch_dir}" not in out
+
+
+@pytest.mark.parametrize("dry_run", [False, True])
+def test_resubmit_with_nothing_to_resubmit_collects_only_without_dry_run(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    dry_run: bool,
+) -> None:
+    """``resubmit --wait`` with nothing to resubmit collects at once; with
+    ``--dry-run`` too it collects nothing and writes nothing (#1768)."""
+    from autoware_carla_scenario.slurm import cli
+    from autoware_carla_scenario.slurm.manifest import MANIFEST_VERSION
+
+    tmp_path = tmp_path.resolve()
+    layout = BatchLayout(tmp_path)
+    layout.manifest.parent.mkdir(parents=True)
+    layout.manifest.write_text(
+        json.dumps({"version": MANIFEST_VERSION, "cases": [], "launcher": {}})
+    )
+    collected: list[Path] = []
+
+    def fake_collect(target: BatchLayout, **_: Any) -> int:
+        collected.append(target.batch_dir)
+        return 1
+
+    monkeypatch.setattr(cli, "collect", fake_collect)
+    argv = ["resubmit", str(tmp_path), "--wait", *(["--dry-run"] if dry_run else [])]
+    code = cli.main(argv)
+    assert "Nothing to resubmit" in capsys.readouterr().out
+    if dry_run:
+        assert code == 0
+        assert collected == []
+        assert not (tmp_path / "batch_results.json").exists()
+        assert not (layout.root / "collected.json").exists()
+    else:
+        assert code == 1
+        assert collected == [tmp_path]
