@@ -155,6 +155,43 @@ def test_the_log_goes_to_rerun_once_the_result_is_written(tmp_path: Path) -> Non
     assert written[0].rerun_recording == str(tmp_path / "S.rrd")
 
 
+def test_the_coverage_and_gate_record_are_written_before_the_result(
+    tmp_path: Path,
+) -> None:
+    # A job killed after writing its result then holds its gate record too:
+    # a result without a record is a scenario without a gate (#1840).
+    order: list[str] = []
+
+    def write_result(*_: Any) -> None:
+        order.append("result")
+
+    with patch(
+        "autoware_carla_scenario.scenario_runner._write_gate_record",
+        new=MagicMock(side_effect=lambda *_, **kw: order.append(f"gate {kw}")),
+    ):
+        _run(tmp_path, MagicMock(active=False), write_result=write_result)
+    assert order == ["gate {'result_follows': True}", "result"]
+
+
+def test_a_result_that_cannot_be_written_leaves_the_gate_record(
+    tmp_path: Path,
+) -> None:
+    write_gate_record = MagicMock()
+    with (
+        patch(
+            "autoware_carla_scenario.scenario_runner._write_gate_record",
+            new=write_gate_record,
+        ),
+        pytest.raises(OSError),
+    ):
+        _run(
+            tmp_path,
+            MagicMock(active=False),
+            write_result=MagicMock(side_effect=OSError("disk full")),
+        )
+    write_gate_record.assert_called_once()
+
+
 def test_the_log_goes_to_rerun_when_the_result_cannot_be_written(
     tmp_path: Path,
 ) -> None:
