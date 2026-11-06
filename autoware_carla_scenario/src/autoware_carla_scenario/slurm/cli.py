@@ -389,8 +389,10 @@ def _parser() -> argparse.ArgumentParser:
     resubmit.add_argument(
         "--dry-run",
         action="store_true",
-        help="print the cases it would resubmit and exit 0, submitting "
-        "and collecting nothing (even with --wait)",
+        help="print the cases it would resubmit, submitting and collecting "
+        "nothing (even with --wait), and exit 0; it still exits 1 where a "
+        "resubmit would refuse (a busy batch without --force, an unknown "
+        "--cases entry, an out-of-range option)",
     )
 
     cancel = commands.add_parser("cancel", help="scancel the batch's jobs")
