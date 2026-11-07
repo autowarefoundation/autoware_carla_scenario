@@ -1762,6 +1762,74 @@ class TestScenarioMetadata:
         assert document.map == before
         assert document.title == "Cut in"
 
+    def test_a_map_directory_that_cannot_be_stat_ed_leaves_the_draft_usable(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        # Before Python 3.14 stat-ing a name this long raises ENAMETOOLONG (an
+        # unreadable directory or a stale NFS mount raises the same way).
+        # Naming the map in the same form skipped the directory check, so the
+        # draft was saved and its every page answered 500 from then on (#1963).
+        directory = "9" * 300
+        response = client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"map_directory": directory, "map_name": "Foo"},
+        )
+        assert response.status_code == 200
+        assert _document(store, draft_id).map.directory == directory
+        for page in (f"/draft/{draft_id}", f"/draft/{draft_id}/canvas"):
+            response = client.get(page)
+            assert response.status_code == 200, page
+        # The form that fixes it is on the page, holding the bad directory,
+        # and the fix is taken.
+        inspector = client.get(f"/draft/{draft_id}/inspector/scenario").text
+        assert 'name="map_directory"' in inspector and directory in inspector
+        client.post(f"/draft/{draft_id}/scenario", data={"map_directory": ""})
+        assert _document(store, draft_id).map.directory is None
+        # Without a name in the form the directory is adopted the same way.
+        response = client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"map_directory": "8" * 300},
+        )
+        assert response.status_code == 200
+        assert client.get(f"/draft/{draft_id}").status_code == 200
+
+    @pytest.mark.parametrize(
+        "route",
+        [
+            # Past Python's integer string limit: YAML's ValueError (#1963).
+            "9" * 5000,
+            "segments: [{kind: junction, turn: " + "9" * 5000 + "}]",
+            # Not a date, though it reads as one: also a ValueError.
+            "segments: 2001-13-45",
+        ],
+    )
+    def test_a_route_yaml_python_cannot_build_is_reported_not_stored(
+        self, client: TestClient, store: DraftStore, draft_id: str, route: str
+    ) -> None:
+        before = _document(store, draft_id).route
+        response = client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"route_yaml": route, "title": "Renamed"},
+        )
+        assert response.status_code == 200
+        assert "Route search: not YAML" in html.unescape(response.text)
+        document = _document(store, draft_id)
+        assert document.route == before
+        assert document.title != "Renamed"
+
+    def test_a_draft_file_python_cannot_build_is_not_a_500(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        path = store.path_for(draft_id)
+        path.write_text(
+            path.read_text(encoding="utf-8") + "huge: " + "9" * 5000 + "\n",
+            encoding="utf-8",
+        )
+        with pytest.raises(ValueError, match="not a draft"):
+            store.get(draft_id)
+        assert client.get(f"/draft/{draft_id}").status_code == 404
+        assert client.get("/").status_code == 200
+
     def test_an_invalid_value_a_model_refuses_is_reported(
         self,
         client: TestClient,
