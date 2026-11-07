@@ -194,10 +194,11 @@ sequenceDiagram
             SR->>W: stop_recorder()
             SR->>TB: close()
             TB->>TM: shut_down()
-            SR->>W: reset_world() (map reload, or soft reset)
         end
 
         SR-->>SQ: ScenarioResult
+        Note over SQ: Before the next attempt (then its cooldown)
+        SQ->>SR: reset_world() (map reload, or soft reset)
     end
 
     CLI->>SQ: __exit__() / stop()

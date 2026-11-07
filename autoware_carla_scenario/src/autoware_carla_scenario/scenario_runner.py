@@ -1631,9 +1631,10 @@ class ScenarioRunner:
         )
 
         # Enable synchronous mode so we control the simulation tick rate.
-        # Original settings are not saved because the reset at the end of
-        # this method (a map reload, or a soft reset to the settings the map
-        # was loaded with) puts them back.
+        # Original settings are not saved because the reset after the run
+        # (this method's, or the queue's before the next attempt: a map
+        # reload, or a soft reset to the settings the map was loaded with)
+        # puts them back.
         settings = world.get_settings()
         settings.synchronous_mode = True
         settings.fixed_delta_seconds = FIXED_DELTA_SECONDS
