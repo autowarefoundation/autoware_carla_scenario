@@ -2579,25 +2579,38 @@ record:</p>
   too, still lists the case it was running and the ones after it. Both
   count. A batch refused before any case runs (its pre-run checks: a backend
   the host has no room for, an Autoware workspace that cannot run, CARLA not
-  coming up) writes no summary: it ran nothing. The entries name
-  no stem, so an errored case is counted even in the rare event that its run
-  did write a record (its last attempt raised only once the run had ended,
-  resetting the world): the refusal errs on the side of the runs that
-  survived.</li>
-<li>A <strong>SLURM batch</strong> is read from its tasks' outcomes (<code>slurm/results/</code>),
+  coming up) writes no summary: it ran nothing. Each entry names its case's
+  file stem (<code>stem</code>), and an errored case with a gate record at its stem is
+  not counted -- its last attempt raised only once the run had ended
+  (resetting the world), and that record is judged, as a SLURM batch's is. A
+  pending case counts whatever is at its stem, and so does every errored
+  case of a summary written before batches recorded their stems: the
+  refusal errs on the side of the runs that survived.</li>
+</ul>
+<p>A batch resumed with <code>--resume-from</code> alone runs its remaining cases in a
+  new directory, and the directory of the batch it resumes keeps them
+  pending, so the two are refused as a set -- and with <code>--allow-unrecorded</code>
+  the case that was running when the batch was killed would be judged twice
+  if it had written its gate record. To gate a resumed batch as a whole,
+  resume it into the same directory with <code>--resume-into DIR</code>: its summary is
+  rewritten from the entries of the cases it keeps and the cases it runs,
+  and before those run, the outputs they left there (result, gate record,
+  coverage file, ...) are removed by the stems the summary records for them,
+  so each case is judged once, on its new run
+  (<a href="../usage/#resume-from-a-specific-scenario">Resume from a Specific Scenario</a>).
+- A <strong>SLURM batch</strong> is read from its tasks' outcomes (<code>slurm/results/</code>),
   collected or not: a case that errored, has no outcome (its task was killed,
   or is still running) or one with no verdict counts, unless a gate record is
   at its stem -- its run wrote one before the task failed, and that record is
-  judged.</li>
-<li>A <strong><code>--multirun</code> sweep</strong> has no summary, so each job given up -- the
+  judged.
+- A <strong><code>--multirun</code> sweep</strong> has no summary, so each job given up -- the
   lanelet sweeper's, once it raised, timed out, crashed or was refused on every attempt
   (<code>server.cooldown_max_retries</code>), and Hydra's basic sweeper's, once its run
   raised -- leaves <code>case_errored.json</code> in its job directory, with its
   overrides, last exit code, attempts and why. Each counts, unless the job's
   directory holds a gate record (its run wrote one before the job failed).
   A job that ran and failed leaves no marker (its record is judged), nor does
-  one a retry passed.</li>
-</ul>
+  one a retry passed.</p>
 <p>The marker is also written <strong>before each attempt</strong>, saying the job did not
   finish (<code>"unfinished": true</code>, reason <code>did not finish ...</code>), and removed
   once the job ends with a verdict (passed or failed) or replaced by the
@@ -2851,7 +2864,7 @@ whatever its <code>gate_record(result, file_stem)</code> method returns (a
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 19:47:26 UTC"><span class="timeago" datetime="2026-11-07T19:47:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 19:47:26 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 21:17:45 UTC"><span class="timeago" datetime="2026-11-07T21:17:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 21:17:45 UTC">2026-11-07</span>
   </span>
 
     
