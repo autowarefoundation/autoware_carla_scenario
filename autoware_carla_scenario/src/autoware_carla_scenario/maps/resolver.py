@@ -386,9 +386,26 @@ def resolve_directory(
             shared one.
 
     Raises:
-        MapResolutionError: If *directory* does not exist or holds no Lanelet2
-            map.
+        MapResolutionError: If *directory* does not exist, cannot be read or
+            holds no Lanelet2 map.
     """
+    try:
+        return _resolve_directory(directory, cache)
+    except OSError as exc:
+        # Before Python 3.14 ``is_file()`` / ``is_dir()`` raise for a name too
+        # long (ENAMETOOLONG), a permission the process lacks (EACCES), an
+        # I/O error or a stale NFS handle instead of answering False.  That is
+        # this directory's problem, said as one: the editor renders a draft
+        # naming it with a map error rather than a 500 (#1963).
+        raise MapResolutionError(
+            f"Map directory {Path(directory).expanduser()} cannot be read: {exc}"
+        ) from exc
+
+
+def _resolve_directory(
+    directory: str | Path, cache: Optional[GitMapCache]
+) -> ResolvedMap:
+    """:func:`resolve_directory`, letting an ``OSError`` escape."""
     path = Path(directory).expanduser().absolute()
     named = ""
     if path.suffix.lower() == ".osm":

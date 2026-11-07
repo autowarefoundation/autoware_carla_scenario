@@ -68,9 +68,18 @@ def load_yaml(text: str) -> Any:
     See :class:`DocumentLoader`: only ``true`` / ``false`` are booleans.
 
     Raises:
-        yaml.YAMLError: If *text* is not YAML.
+        yaml.YAMLError: If *text* is not YAML, or holds a value Python cannot
+            build: an integer longer than ``sys.get_int_max_str_digits()``
+            allows, a date that is no date, nesting deeper than the recursion
+            limit.  The constructors raise ``ValueError`` (or
+            ``RecursionError``) for those, which every caller here -- the
+            editor's forms, the draft store -- would otherwise let escape as a
+            500 (#1963).
     """
-    return yaml.load(text, Loader=DocumentLoader)  # noqa: S506 - a SafeLoader
+    try:
+        return yaml.load(text, Loader=DocumentLoader)  # noqa: S506 - a SafeLoader
+    except (ValueError, RecursionError) as exc:
+        raise yaml.YAMLError(f"cannot be read: {exc}") from exc
 
 
 logger = logging.getLogger(__name__)

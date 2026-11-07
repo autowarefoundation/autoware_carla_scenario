@@ -9,6 +9,7 @@ mock-based test could establish.
 
 from __future__ import annotations
 
+import errno
 import json
 import os
 import socket
@@ -1594,6 +1595,41 @@ class TestResolveDirectory:
     ) -> None:
         with pytest.raises(MapResolutionError, match="does not exist"):
             resolve_directory(tmp_path / "nowhere", cache=cache)
+
+    def test_a_name_too_long_to_stat_is_a_map_error(
+        self, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        # Before Python 3.14 is_dir() raises ENAMETOOLONG for this rather than
+        # answering False; either way it is the map's error, not an OSError
+        # escaping to the editor as a 500 (#1963).
+        with pytest.raises(MapResolutionError, match="9" * 300):
+            resolve_directory(tmp_path / ("9" * 300), cache=cache)
+        with pytest.raises(MapResolutionError, match="9" * 300):
+            resolve_directory(tmp_path / ("9" * 300 + ".osm"), cache=cache)
+
+    @pytest.mark.parametrize(
+        "error",
+        [
+            PermissionError(errno.EACCES, "Permission denied"),
+            OSError(errno.ESTALE, "Stale file handle"),
+        ],
+    )
+    def test_a_directory_that_cannot_be_read_is_a_map_error(
+        self,
+        local_map: Path,
+        cache: GitMapCache,
+        monkeypatch: pytest.MonkeyPatch,
+        error: OSError,
+    ) -> None:
+        def _refuse(self: Path) -> bool:
+            raise error
+
+        monkeypatch.setattr(Path, "is_dir", _refuse)
+        with pytest.raises(MapResolutionError, match="cannot be read") as caught:
+            resolve_directory(local_map, cache=cache)
+        assert str(local_map) in str(caught.value)
+        assert str(error.strerror) in str(caught.value)
+        assert caught.value.__cause__ is error
 
     def test_a_directory_with_no_map_is_reported(
         self, tmp_path: Path, cache: GitMapCache
