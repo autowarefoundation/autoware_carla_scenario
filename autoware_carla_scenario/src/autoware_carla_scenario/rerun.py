@@ -27,6 +27,7 @@ from __future__ import annotations
 
 import errno
 import logging
+import math
 import os
 import shutil
 import tempfile
@@ -618,6 +619,16 @@ def main(argv: Optional[list[str]] = None) -> int:
         # The converter's pool refuses it with an OverflowError (-1) for the
         # first PATH, which is not a PATH that cannot be converted.
         parser.error(f"argument --jobs: must be at least 1, got {args.jobs}")
+    if args.draw_radius_m is not None and not (
+        math.isfinite(args.draw_radius_m) and args.draw_radius_m >= 0.0
+    ):
+        # The converter refuses it with a ValueError, which is not a PATH
+        # that cannot be converted either, so it ended the run with a
+        # traceback (#1928).
+        parser.error(
+            "argument --draw-radius-m: must be a finite distance (0 or more), "
+            f"got {args.draw_radius_m}"
+        )
     logging.basicConfig(
         level=logging.INFO, format="%(levelname)s %(name)s: %(message)s"
     )

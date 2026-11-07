@@ -749,6 +749,27 @@ def test_the_command_line_refuses_jobs_below_one(
     assert not (good / "A.rrd").exists()
 
 
+@pytest.mark.parametrize("radius", ["-1", "nan", "inf", "-inf", "1e400"])
+def test_the_command_line_refuses_a_draw_radius_that_is_no_distance(
+    tmp_path: Path,
+    no_sdk_cli: _FakeModule,
+    capsys: pytest.CaptureFixture[str],
+    radius: str,
+) -> None:
+    """#1928: ``--draw-radius-m -1`` (or nan, inf) reached the converter,
+    whose ValueError ended the run with a traceback."""
+    good = tmp_path / "good"
+    good.mkdir()
+    (good / "A.trajectory.jsonl").write_text("{}\n")
+    with pytest.raises(SystemExit) as exited:
+        main([f"--draw-radius-m={radius}", str(good)])
+    assert exited.value.code == 2
+    err = capsys.readouterr().err
+    assert "argument --draw-radius-m: must be a finite distance (0 or more)" in err
+    assert "Traceback" not in err
+    assert not (good / "A.rrd").exists()
+
+
 def test_a_bad_path_does_not_stop_the_others(
     tmp_path: Path, no_sdk_cli: _FakeModule, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1140,6 +1161,42 @@ def test_a_draw_radius_that_is_no_distance_is_refused(value: str) -> None:
         pytest.raises(ValueError, match="draw_radius_m"),
     ):
         run.build_rerun_converter(case)
+
+
+@pytest.mark.parametrize(
+    "value", ["-1", ".inf", "nan", "wide", "true", "1" + "0" * 400]
+)
+def test_a_draw_radius_that_is_no_distance_is_refused_before_anything_runs(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """#1928: the run's config checks never read ``rerun.draw_radius_m``, so
+    a bad one passed them and the converter refused it with a plain
+    ValueError (a traceback, not an ``Error:`` line); an int past the float
+    range raised an OverflowError instead."""
+    import re
+
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    monkeypatch.setattr(run, "check_batch_map", lambda *args, **kwargs: None)
+    monkeypatch.setattr(run, "check_scenario_maps", lambda *args, **kwargs: None)
+    good = _shipped(["rerun.enabled=true"])
+    bad = _shipped(["rerun.enabled=true", f"rerun.draw_radius_m={value}"])
+    given = bad.rerun.draw_radius_m
+    message = (
+        rf"^rerun\.draw_radius_m must be a finite distance, got "
+        rf"{re.escape(repr(given))}$"
+    )
+    with pytest.raises(ValueError, match=message):
+        run._check_batch_writer_settings([good, bad])
+    with pytest.raises(run.RunConfigError, match=message):
+        run.check_batch_configs([good, bad], ["first", "second"])
+    with pytest.raises(run.RunConfigError, match=message):
+        run.check_run_config(bad)
+    # Read only of a case asking for recordings, as the converter reads it.
+    off = _shipped(["rerun.enabled=false", f"rerun.draw_radius_m={value}"])
+    run._check_batch_writer_settings([off])
 
 
 def test_the_converter_gets_the_radius_only_when_there_is_one(tmp_path: Path) -> None:

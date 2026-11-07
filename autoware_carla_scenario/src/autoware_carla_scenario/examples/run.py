@@ -1309,6 +1309,10 @@ def _rerun_settings(cfg: DictConfig) -> tuple[bool, bool]:
 def _rerun_draw_radius(cfg: DictConfig) -> float | None:
     """``rerun.draw_radius_m``: ``None`` when unset.
 
+    An int too big for a float (``10**400``) is no finite distance either
+    (:func:`_finite_number`, #1652), refused with the same message rather
+    than the ``OverflowError`` of ``math.isfinite()`` (#1928).
+
     Raises:
         ValueError: It is not a finite distance.
     """
@@ -1316,12 +1320,7 @@ def _rerun_draw_radius(cfg: DictConfig) -> float | None:
     value = settings.get("draw_radius_m", None)
     if value is None:
         return None
-    if (
-        isinstance(value, (bool, str))
-        or not isinstance(value, (int, float))
-        or not math.isfinite(value)
-        or value < 0.0
-    ):
+    if not _finite_number(value) or value < 0.0:
         raise ValueError(
             f"rerun.draw_radius_m must be a finite distance, got {value!r}"
         )
@@ -1376,11 +1375,14 @@ def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
 
     Called before anything runs, so a run asking for recordings without the
     ``rerun`` extra installed, or with a ``rerun.lidar_max_points`` that is not
-    a non-negative integer in any of its cases, is refused at once.
+    a non-negative integer or a ``rerun.draw_radius_m`` that is not a finite
+    distance in any of its cases, is refused at once.
 
     Raises:
         ValueError: A case asking for LiDAR sweeps sets a
-            ``rerun.lidar_max_points`` that is not a non-negative integer.
+            ``rerun.lidar_max_points`` that is not a non-negative integer, or
+            a case asking for recordings a ``rerun.draw_radius_m`` that is not
+            a finite distance.
         RerunUnavailableError: The extra is not installed.
         LidarRerunUnavailableError: ``rerun.lidar`` is set and the Rerun SDK
             is not installed.
@@ -2088,10 +2090,11 @@ def _check_batch_writer_settings(configs: list[DictConfig]) -> None:
     """Refuse what :func:`build_rerun_converter`, :func:`build_t4_recorder`
     and :func:`build_t4scene_exporter` refuse of a batch's *configs*, read as
     they read them -- ``rerun.lidar_max_points`` of every case asking for
-    recordings, the ``t4`` and ``driver`` settings and the ``t4scene``
-    settings of the first case enabling each -- without the extras those
-    need, which :func:`check_run_extras` asks for.  And every case's
-    switches (``rerun.enabled``, ``.strict``, ``.lidar`` and ``.cameras``,
+    recordings and their ``rerun.draw_radius_m`` (#1928), the ``t4`` and
+    ``driver`` settings and the ``t4scene`` settings of the first case
+    enabling each -- without the extras those need, which
+    :func:`check_run_extras` asks for.  And every case's switches
+    (``rerun.enabled``, ``.strict``, ``.lidar`` and ``.cameras``,
     ``t4.enabled``, ``t4scene.enabled``): true or false, or a spelling of
     either (:func:`_switch`), so that ``rerun.enabled=ture`` is refused in
     one line before anything runs, whichever case of the batch sets it
@@ -2103,6 +2106,7 @@ def _check_batch_writer_settings(configs: list[DictConfig]) -> None:
     for cfg in configs:
         if _rerun_settings(cfg)[0]:
             _rerun_lidar_max_points(cfg)
+            _rerun_draw_radius(cfg)
         _switch(cfg, "rerun", "lidar")
         _switch(cfg, "rerun", "cameras")
         _switch(cfg, "t4", "enabled")
