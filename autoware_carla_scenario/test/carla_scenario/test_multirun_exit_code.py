@@ -1496,13 +1496,15 @@ def test_a_job_resumed_into_its_directory_replaces_the_earlier_runs_outputs(
 
 
 def test_jobs_sharing_a_directory_keep_each_others_outputs(tmp_path: Path) -> None:
-    """Only what an earlier sweep left goes: a later job of the same sweep in
-    the same directory (one ``hydra.sweep.subdir``) keeps the earlier job's
-    run, and takes the next stem."""
+    """A directory several jobs of the sweep share (one
+    ``hydra.sweep.subdir``) is not cleaned: a later job keeps the earlier
+    job's run and takes the next stem, and an earlier sweep's run there
+    stays, as before #1956."""
     _gate_template(tmp_path)
     session = tmp_path / "multirun"
     (session / "shared").mkdir(parents=True)
-    (session / "shared" / "Old_result.json").write_text('{"passed": false}')
+    # Sorting before App: the sweeper's verdict reads the last stem.
+    (session / "shared" / "Aaa_result.json").write_text('{"passed": false}')
     proc = _run(
         _SWEEPER_APP,
         tmp_path,
@@ -1514,9 +1516,86 @@ def test_jobs_sharing_a_directory_keep_each_others_outputs(tmp_path: Path) -> No
     )
     assert proc.returncode == 0, proc.stdout + proc.stderr
     assert sorted(p.name for p in (session / "shared").glob("*_result.json")) == [
+        "Aaa_result.json",
         "App-1_result.json",
         "App_result.json",
     ]
+
+
+def test_resuming_into_a_shared_directory_keeps_the_skipped_jobs_runs(
+    tmp_path: Path,
+) -> None:
+    """A directory every job maps to (one ``hydra.sweep.subdir``) holds the
+    run of the job a ``--resume-from`` skips too: it is not cleaned, so that
+    run stays (#1956)."""
+    _gate_template(tmp_path)
+    session = tmp_path / "multirun"
+    common = (
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+gated=true",
+        "hydra.sweep.subdir=shared",
+    )
+    proc = _run(_SWEEPER_APP, tmp_path, *common, sweep_dir=session)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = _run(_SWEEPER_APP, tmp_path, *common, resume_from=2, sweep_dir=session)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Removing the outputs" not in proc.stdout + proc.stderr
+    # Job 1's run (App) and both of job 2's: nothing removed.
+    assert sorted(p.name for p in (session / "shared").glob("*_gate.json")) == [
+        "App-1_gate.json",
+        "App-2_gate.json",
+        "App_gate.json",
+    ]
+
+
+def test_an_earlier_sweeps_service_logs_are_not_removed(tmp_path: Path) -> None:
+    """The logs services write into a job directory (a containerised
+    backend's, Autoware's) are not a run, though ``run_output_stems`` reads
+    them as a CARLA recorder log's stem; a CARLA recorder log, or anything
+    of a run, is."""
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        _remove_earlier_outputs,
+    )
+
+    kept = [
+        "backend_carla.log",
+        "autoware-000-ego.log",
+        "autoware-build.log",
+        "autoware-deps.log",
+        "raw_output.log",
+        "run.log",
+        "app.log",  # Hydra's job log
+        "notes.txt",
+    ]
+    removed = ["Old.log", "Old_result.json", "autoware-x_result.json"]
+    for name in kept + removed:
+        (tmp_path / name).write_text("")
+    (tmp_path / "Old.t4").mkdir()
+    _remove_earlier_outputs((tmp_path, "app.log"), "1/1")
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(kept)
+
+
+def test_only_a_directory_one_job_of_the_sweep_maps_to_is_owned(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        _owned_dirs,
+    )
+
+    a, b, c = tmp_path / "a", tmp_path / "b", tmp_path / "c"
+    running: list[tuple[Path, str | None] | None] = [
+        (a, "x.log"),
+        (b, "x.log"),
+        (b, "x.log"),
+    ]
+    assert _owned_dirs(running, []) == {a}
+    # A job the resume skips shares a's directory.
+    assert _owned_dirs(running, [(tmp_path, a, "x.log")]) == set()
+    assert _owned_dirs(running, [(tmp_path, c, "x.log")]) == {a, c}
+    # A job whose directory cannot be told may share any.
+    assert _owned_dirs(running, [None]) == set()
+    assert _owned_dirs([(a, None), None], []) == set()
 
 
 def test_a_sweep_resumed_into_a_new_directory_plans_only_what_it_runs(
