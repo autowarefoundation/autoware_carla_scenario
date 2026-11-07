@@ -653,11 +653,9 @@ def _excluded_overrides(sweep: Mapping[Any, Any]) -> dict[str, frozenset[str]]:
     """``sweep.exclude``, each key's values rendered as the case's overrides
     hold them (:func:`_override_value`), so a case is checked on what it runs.
 
-    Raises:
-        ValueError: If ``sweep.exclude`` is not a mapping of lists
-            (:func:`check_constraint_keys`).
+    Its shape -- a mapping of lists -- is checked by :func:`check_constraint_keys`,
+    which :func:`_expand_lanelets` runs first.
     """
-    check_constraint_keys(sweep)
     return {
         str(key): frozenset(_override_value(v) for v in (values or ()))
         for key, values in (sweep.get("exclude") or {}).items()

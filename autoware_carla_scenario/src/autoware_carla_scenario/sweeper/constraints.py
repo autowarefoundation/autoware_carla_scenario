@@ -950,7 +950,7 @@ def parse_constraint(cfg: dict[str, Any]) -> Constraint:
             or a leaf is given a key it does not take, lacks one it needs or
             refuses a value (#1951).
     """
-    from collections.abc import Mapping  # noqa: PLC0415 -- run time only
+    from collections.abc import Mapping, Sequence  # noqa: PLC0415 -- run time only
 
     if not isinstance(cfg, Mapping):
         raise ValueError(
@@ -963,9 +963,32 @@ def parse_constraint(cfg: dict[str, Any]) -> Constraint:
         raise ValueError(
             f"A constraint's 'type' must be a string, got {shown(constraint_type)}"
         )
-    if constraint_type in ("and", "or", "previous_of", "following_of"):
-        children_cfg = cfg.get("constraints")
-        if children_cfg and not isinstance(children_cfg, (list, tuple)):
+    composite_keys = {
+        "and": "constraints",
+        "or": "constraints",
+        "previous_of": "constraints",
+        "following_of": "constraints",
+        "not": "constraint",
+    }
+    if constraint_type in composite_keys:
+        child_key = composite_keys[constraint_type]
+        unknown = [k for k in cfg if k not in ("type", child_key)]
+        if unknown:
+            raise ValueError(
+                f"{constraint_type} constraint: unknown key(s) {unknown}; it "
+                f"takes ['{child_key}']"
+            )
+        children_cfg = cfg.get(child_key)
+        # A list as YAML or a Hydra node (ListConfig) holds one; a string is
+        # no list of constraints.
+        if (
+            child_key == "constraints"
+            and children_cfg
+            and (
+                isinstance(children_cfg, (str, bytes, Mapping))
+                or not isinstance(children_cfg, Sequence)
+            )
+        ):
             raise ValueError(
                 f"'{constraint_type}' constraint requires a 'constraints' list, "
                 f"got {shown(children_cfg)}"

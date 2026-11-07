@@ -206,3 +206,18 @@ class TestStackedRegion:
         sink.set_traffic_backend(backend)
         sink.execute(None)  # type: ignore[arg-type]
         assert backend.removed == ["over"]
+
+
+def test_a_region_of_hydra_nodes_with_composites_matches_as_plain_dicts() -> None:
+    # A run hands the sink its config as Hydra nodes: a composite's children
+    # are a ListConfig, which the parser must take as a list (#1951).
+    from omegaconf import OmegaConf
+
+    plain = _defaults()["sink"]["constraints"]
+    nodes = OmegaConf.create({"constraints": plain}).constraints
+    assert any(c.get("type") == "not" for c in plain), "no composite to exercise"
+    expected = LaneletRegion(plain).lanelet_ids
+    assert expected
+    assert LaneletRegion(list(nodes)).lanelet_ids == expected
+    sink = TrafficSinkAction(nodes)
+    assert sink._region.lanelet_ids == expected

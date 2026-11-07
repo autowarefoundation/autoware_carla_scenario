@@ -187,6 +187,43 @@ def test_valid_constraints_still_parse() -> None:
     assert type(parsed).__name__ == "AndConstraint"
 
 
+@pytest.mark.parametrize("composite", ["and", "or", "previous_of", "following_of"])
+def test_a_composite_of_hydra_nodes_parses(composite: str) -> None:
+    # A ListConfig of children is a list (background traffic regions hand the
+    # parser Hydra nodes), nested inside a not too.
+    children = [{"type": "has_stop_line"}, {"type": "is_junction"}]
+    node: Any = OmegaConf.create({"type": composite, "constraints": children})
+    assert parse_constraint(node) == parse_constraint(
+        {"type": composite, "constraints": children}
+    )
+    wrapped: Any = OmegaConf.create(
+        {"type": "not", "constraint": {"type": composite, "constraints": children}}
+    )
+    assert type(parse_constraint(wrapped)).__name__ == "NotConstraint"
+
+
+@pytest.mark.parametrize(
+    ("cfg", "message"),
+    [
+        (
+            {"type": "and", "constraints": [{"type": "is_junction"}], "value": 3},
+            r"and constraint: unknown key\(s\) \['value'\]; it takes \['constraints'\]",
+        ),
+        (
+            {"type": "not", "constraints": [{"type": "is_junction"}]},
+            r"not constraint: unknown key\(s\) \['constraints'\]; it takes \['constraint'\]",
+        ),
+        (
+            {"type": "following_of", "constraint": {"type": "is_junction"}},
+            r"following_of constraint: unknown key\(s\) \['constraint'\]",
+        ),
+    ],
+)
+def test_a_composite_with_an_unknown_key_is_refused(cfg: Any, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        parse_constraint(cfg)
+
+
 # -- #1951: bindings of the wrong shape ---------------------------------------
 
 
