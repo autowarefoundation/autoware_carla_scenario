@@ -152,6 +152,13 @@ class BaseScenario(ABC):
     #: (#1936).  No registration: a retry or a re-run keeps them.
     _weather_rules_default: Optional[str]
     _weather_rules_vehicles: List[tuple[str, str]]
+    #: The effects a case draws for the scenario and the measure each is
+    #: measured by: quantity -> measure key, from the config's ``controls``
+    #: (a control names its measure and the ``quantity`` it writes), which
+    #: the runner's ``add_effect_measures`` sets.  A run of a drawn case
+    #: measures them beside the ODD (``effects.samples``), for the drift
+    #: view (openodd's docs/drift.md, "Effects: what a scenario sets up").
+    _effect_measures: Dict[str, str]
 
     def __init__(
         self,
@@ -239,6 +246,7 @@ class BaseScenario(ABC):
         # The default rules, unless the runner's config names others.
         self._weather_rules_default = None
         self._weather_rules_vehicles = []
+        self._effect_measures = {}
 
     # ------------------------------------------------------------------
     # Ego construction

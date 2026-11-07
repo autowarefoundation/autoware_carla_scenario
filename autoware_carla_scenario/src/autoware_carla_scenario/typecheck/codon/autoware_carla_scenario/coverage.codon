@@ -309,8 +309,9 @@ class CoverageCollector:
                       "(required: items)")
 
     def __init__(self, items: List[CoverItem], crosses: Optional[List[CrossItem]] = None,
-                 odd = None, *_kw, backend = None, generator = None):
-        _keyword_only(_kw, "CoverageCollector(): backend and generator")
+                 odd = None, *_kw, backend = None, generator = None,
+                 effect_measures: Optional[Dict[str, str]] = None):
+        _keyword_only(_kw, "CoverageCollector(): backend, generator and effect_measures")
         if not (isinstance(backend, None) or isinstance(backend, Optional[NoneType])):
             compile_error("CoverageCollector(): openodd's Backend is not declared")
         if not (isinstance(generator, None) or isinstance(generator, Optional[NoneType])):

@@ -7,7 +7,7 @@ import math
 import shutil
 import time
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Collection, Optional, Union
+from typing import TYPE_CHECKING, Any, Collection, Dict, Optional, Union
 
 import typesafe_carla.carla as carla
 
@@ -712,6 +712,15 @@ def _write_gate_record(
         logger.warning("could not write the gate record %s", path, exc_info=True)
         return
     logger.info("Gate record written to: %s", path)
+
+
+def _effect_measures(scenario: BaseScenario, case: Optional[OddCase]) -> Dict[str, str]:
+    """The effects *case* drew that *scenario* measures (quantity -> measure
+    key, :attr:`BaseScenario._effect_measures`); none for a run no sweep drew."""
+    if case is None:
+        return {}
+    drawn = case[0].quantities
+    return {q: k for q, k in scenario._effect_measures.items() if q in drawn}
 
 
 def _record_run(
@@ -1933,8 +1942,18 @@ class ScenarioRunner:
             # Walkers measured outside a run (or by a run that never reached
             # its cleanup) are not this run's.
             forget_walkers()
+            # A drawn case's effects -- what the scenario stages, which the
+            # case drew -- are measured too, for the drift view.
+            effect_measures: Dict[str, str] = {}
+            if TYPE_CHECKING:
+                pass
+            else:
+                effect_measures = _effect_measures(scenario, case)
             coverage = CoverageCollector(
-                scenario._cover_items, scenario._cross_items, odd=self.odd
+                scenario._cover_items,
+                scenario._cross_items,
+                odd=self.odd,
+                effect_measures=effect_measures,
             )
             coverage.start(world, clock.simulated)
 

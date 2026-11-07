@@ -166,8 +166,16 @@ class CoverageCollector(_CoverageCollector):
         *,
         backend: Optional[Backend] = None,
         generator: Optional[Mapping[str, Optional[str]]] = None,
+        effect_measures: Optional[Mapping[str, str]] = None,
     ) -> None:
+        """*effect_measures* maps an effect -- a quantity of the rules a case
+        draws (``case.quantities``) -- to the scenario measure that reads it
+        (:attr:`BaseScenario._effect_measures`): the run measures each over
+        its first seconds, beside the ODD and counting toward no grade
+        (openodd's ``effects``, written as ``effects.samples``), so the drift
+        view can set what the run staged against what the case drew."""
         from ..odd.backend import CARLA_BACKEND  # noqa: PLC0415 - odd imports coverage
+        from ..odd.scenario_measure import scenario_measure  # noqa: PLC0415
 
         super().__init__(
             items,
@@ -175,6 +183,9 @@ class CoverageCollector(_CoverageCollector):
             odd,
             backend=backend or CARLA_BACKEND,
             generator=_framework() if generator is None else generator,
+            effects={
+                q: scenario_measure(k) for q, k in (effect_measures or {}).items()
+            },
         )
         self._measured_items = _measured_items(odd) if odd is not None else {}
         self._definitions: dict[str, int] = {}
