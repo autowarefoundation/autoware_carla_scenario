@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.15"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'emscripten'",
@@ -256,7 +256,7 @@ requires-dist = [
     { name = "numpy", specifier = ">=1.21" },
     { name = "omegaconf", specifier = ">=2.3.0" },
     { name = "opencv-python-headless", specifier = ">=4.8" },
-    { name = "openodd-py", specifier = ">=0.44.0" },
+    { name = "openodd-py", specifier = ">=0.46.1" },
     { name = "orjson", specifier = ">=3.13.0" },
     { name = "packaging", specifier = ">=23.0" },
     { name = "protobuf", specifier = ">=4.25.0,<8" },
@@ -2900,14 +2900,14 @@ wheels = [
 
 [[package]]
 name = "openodd-py"
-version = "0.44.0"
+version = "0.46.1"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/43/53/0653277f85fd8d3585c2f4498585d934e36001ed6e94fa3d6f3090900275/openodd_py-0.44.0.tar.gz", hash = "sha256:ff496abde14dc23fe0d0989ab1a8a0c2789a5ec4dc5139d3de95b85b18e1bd55", size = 563524, upload-time = "2026-11-07T05:45:08.054Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/69/0f/8ba1344f24b46bc8deb68f8935d74505678f1272db8eff1d830d0a95f5d4/openodd_py-0.46.1.tar.gz", hash = "sha256:198b63a3d747538de3addb8141fc0205c811ba64af34b27a9130b7c8c70bc8d5", size = 574995, upload-time = "2026-11-07T11:45:18.071Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/05/b0/5bf11015dd4c84d45ff0c3bc531deede542952aebc8bb5fe3def82e46449/openodd_py-0.44.0-cp310-abi3-macosx_10_12_universal2.macosx_10_12_x86_64.macosx_11_0_arm64.whl", hash = "sha256:6ee8ecfdd00f044989fab8ca40534759119fd3a667b47509dfa31b6f0a05eb52", size = 5381975, upload-time = "2026-11-07T05:45:01.347Z" },
-    { url = "https://files.pythonhosted.org/packages/fe/44/0ecc3945f95e7531a704a44f7642f40a55a083419ff82900250b3df55c0a/openodd_py-0.44.0-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:aaafa2136d54eb7695c41d02896b8075984dc5b56da243a3eabb32bd6348f64b", size = 2932970, upload-time = "2026-11-07T05:45:03.3Z" },
-    { url = "https://files.pythonhosted.org/packages/8c/a6/38a7381f37fedf6c1478aaa35d0aa83607217380aa4e9a480462fbc5e272/openodd_py-0.44.0-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:989f2f22b3e83790f6dcf2bcf98e091258451baa2b8a16b95b37459ba7ec354f", size = 3034069, upload-time = "2026-11-07T05:45:04.822Z" },
-    { url = "https://files.pythonhosted.org/packages/41/87/482afd9a2eef57f3bc71ddc10d2e3c00804423bbb01dffcfeef033cb9e43/openodd_py-0.44.0-cp310-abi3-win_amd64.whl", hash = "sha256:eaa7cb5b21f3a828a557f5e82005ede3577626a0b736beb8491c818c548051e1", size = 2741247, upload-time = "2026-11-07T05:45:06.572Z" },
+    { url = "https://files.pythonhosted.org/packages/94/1b/2cfdafbf103d6b5a9e1bc12e8359efba08037fa62c39aa6fec1663f6bc82/openodd_py-0.46.1-cp310-abi3-macosx_10_12_universal2.macosx_10_12_x86_64.macosx_11_0_arm64.whl", hash = "sha256:e09575cea854f9a6f476aafcbb052bc78b1be7b8fc44e624b80e6875c5011a2f", size = 5394735, upload-time = "2026-11-07T11:45:10.435Z" },
+    { url = "https://files.pythonhosted.org/packages/38/b7/bbe8f3234c3610e98e47de112799e9c409a9647e243a24e138487ea7b259/openodd_py-0.46.1-cp310-abi3-manylinux2014_aarch64.manylinux_2_17_aarch64.whl", hash = "sha256:5a074d94032ecf2a7bf572f033619dc7bcf5a68f47b94aee43cd6229ac2c6977", size = 2941833, upload-time = "2026-11-07T11:45:12.591Z" },
+    { url = "https://files.pythonhosted.org/packages/66/4b/694747d93d6efa980eb1705a1510242c7599abcbe81a7e8f84acbefa07f9/openodd_py-0.46.1-cp310-abi3-manylinux2014_x86_64.manylinux_2_17_x86_64.whl", hash = "sha256:a3cae6cde1cec1517f93fa42644feaada4f68f2361fcf79be1aadf58815b058d", size = 3044986, upload-time = "2026-11-07T11:45:14.546Z" },
+    { url = "https://files.pythonhosted.org/packages/9c/9c/f083de816e19b3fd25bf645959d1d1c2514d4964f5a1ee5b52ecc1aae15a/openodd_py-0.46.1-cp310-abi3-win_amd64.whl", hash = "sha256:7bd8d624ef295e4d63a7ac0e502eee1dcfc8af281e431d1b4b66435120106fe6", size = 2750477, upload-time = "2026-11-07T11:45:16.379Z" },
 ]
 
 [[package]]

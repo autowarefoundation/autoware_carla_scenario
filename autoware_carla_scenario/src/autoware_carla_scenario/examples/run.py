@@ -3016,6 +3016,7 @@ def build_scenario(
         _apply_ego_config(cfg, scenario)
         add_background_traffic(cfg, scenario)
         add_environment(cfg, scenario)
+        add_effect_measures(cfg, scenario)
         return ego, scenario
 
     # Validate the name before doing any expensive work.
@@ -3045,7 +3046,31 @@ def build_scenario(
         scenario.ego_entity = ego_entity
     add_background_traffic(cfg, scenario)
     add_environment(cfg, scenario)
+    add_effect_measures(cfg, scenario)
     return ego, scenario
+
+
+def add_effect_measures(cfg: DictConfig, scenario: BaseScenario) -> None:
+    """Keep on *scenario* the measure of each effect its ``controls`` write.
+
+    A control is keyed by the scenario measure it sets; one with a
+    ``quantity`` writes that quantity of the rules -- an effect a sweep draws
+    per case (docs/odd.md, "A scenario's nodes") -- so the measure is what
+    reads, in the run, what the case drew: quantity -> measure key
+    (:attr:`BaseScenario._effect_measures`).  A run of a drawn case measures
+    them beside the ODD, for the drift view.  Nothing when the config has no
+    ``controls`` or none writes a quantity.
+    """
+    node = cfg.get("controls")
+    # Unresolved: only each control's quantity, a name, is read here, and its
+    # other fields may interpolate keys a check of the config has not built.
+    raw = None if node is None else OmegaConf.to_container(node, resolve=False)
+    controls = raw if isinstance(raw, dict) else {}
+    scenario._effect_measures = {
+        str(spec["quantity"]): str(measure)
+        for measure, spec in controls.items()
+        if isinstance(spec, dict) and spec.get("quantity")
+    }
 
 
 def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
