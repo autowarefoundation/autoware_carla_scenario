@@ -20,6 +20,16 @@ def _make_runner(max_tick_rate_hz: float | None) -> ScenarioRunner:
         return ScenarioRunner(MagicMock(), max_tick_rate_hz=max_tick_rate_hz)
 
 
+def _mock_scenario() -> MagicMock:
+    """A stand-in scenario, built with no ``environment.rules``: the runner
+    follows the rules a scenario was built with (#1936), which a bare
+    ``MagicMock`` would hand it as mocks."""
+    scenario = MagicMock()
+    scenario._weather_rules_default = None
+    scenario._weather_rules_vehicles = []
+    return scenario
+
+
 class _FakeClock:
     """A clock the test moves by hand, and the sleeps taken from it."""
 
@@ -438,7 +448,7 @@ class TestTheEgoStartsOnTheInitPhasesWorld:
         runner._world = world_mock
         runner._pace_tick = lambda: None  # type: ignore[method-assign]
 
-        scenario = MagicMock()
+        scenario = _mock_scenario()
         scenario.STABILIZE_TICKS = 2
         scenario.run_init.side_effect = run_init
         ego = scenario.create_ego.return_value
@@ -672,7 +682,7 @@ def test_what_the_odds_measures_read_is_built_before_the_first_tick(
     world = MagicMock()
     world.tick.side_effect = lambda *a, **k: calls.append("tick")
     runner._world = world
-    scenario = MagicMock()
+    scenario = _mock_scenario()
     scenario.setup.side_effect = lambda: calls.append("setup")
 
     def prepare(odd: object, measured: object) -> None:
@@ -754,7 +764,7 @@ def _set_up_once(runner: ScenarioRunner) -> None:
 
     That is right after the runner has settled which world the run is on.
     """
-    scenario = MagicMock()
+    scenario = _mock_scenario()
     scenario.create_ego.side_effect = _Stop
     with pytest.raises(_Stop):
         runner.run_scenario(scenario, reset_world=False)
@@ -776,7 +786,7 @@ class TestTheRunsSeed:
         built = list(client.mock_calls)  # type: ignore[attr-defined]
         world = MagicMock()
         runner._world = world
-        scenario = MagicMock()
+        scenario = _mock_scenario()
         scenario.random_seed = seed
         before = run_seed()
 
@@ -794,7 +804,7 @@ class TestTheRunsSeed:
 
     def test_a_seed_on_the_bound_runs_on(self) -> None:
         runner = _make_runner(None)
-        scenario = MagicMock()
+        scenario = _mock_scenario()
         scenario.random_seed = 2**31 - 1
         scenario.create_ego.side_effect = _Stop
 
@@ -1328,7 +1338,7 @@ class TestRunScenarioRegistersTheDefaultTimeout:
     @staticmethod
     def _scenario(*own):
         """A stand-in scenario whose fail conditions are a real list."""
-        scenario = MagicMock()
+        scenario = _mock_scenario()
         scenario.STABILIZE_TICKS = 0
         scenario._fail_conditions = []
         scenario.register_fail_condition.side_effect = scenario._fail_conditions.append
@@ -1402,7 +1412,7 @@ class TestRunScenarioForgetsTheLastRunsWeather:
         runner = _make_runner(None)
         runner.output_dir = tmp_path
         runner._world = MagicMock()
-        scenario = MagicMock()
+        scenario = _mock_scenario()
         scenario.STABILIZE_TICKS = 0
         scenario.setup.side_effect = _Stop
         with (
@@ -1413,6 +1423,40 @@ class TestRunScenarioForgetsTheLastRunsWeather:
 
         assert world_visibility(795) is None
         assert world_tire_friction(795) is None
+
+    def test_the_run_follows_its_scenarios_rules_not_the_last_built(self, tmp_path):
+        """A batch builds every case before any runs (#1936): the run
+        follows the rules its scenario was built with before setup()."""
+        from autoware_carla_scenario.actions.environment import tire_friction_range
+        from autoware_carla_scenario.weather_rules import use_weather_rules
+
+        from .test_weather_rules import _grip_file
+
+        grip = _grip_file(tmp_path / "grip_low.yaml", (0.30, 0.40))
+        runner = _make_runner(None)
+        runner.output_dir = tmp_path
+        runner._world = MagicMock()
+        seen: list = []
+
+        def setup() -> None:
+            seen.append(tire_friction_range(100.0))
+            raise _Stop
+
+        scenario = _mock_scenario()
+        scenario.STABILIZE_TICKS = 0
+        scenario._weather_rules_default = str(grip)
+        scenario.setup.side_effect = setup
+        # The last case built named none.
+        use_weather_rules(None)
+        try:
+            with (
+                patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
+                pytest.raises(_Stop),
+            ):
+                runner.run_scenario(scenario, reset_world=False)
+        finally:
+            use_weather_rules(None)
+        assert seen == [pytest.approx((0.30, 0.40))]
 
 
 class TestRunScenarioNamesTheTrafficBackendsRun:
@@ -1435,7 +1479,7 @@ class TestRunScenarioNamesTheTrafficBackendsRun:
         runner._world = MagicMock()
         runner._traffic_backend = MagicMock()
         runner._traffic_backend.prepare.side_effect = prepare
-        scenario = MagicMock()
+        scenario = _mock_scenario()
         scenario.STABILIZE_TICKS = 0
         with (
             patch("autoware_carla_scenario.scenario_runner.prepare_measures"),

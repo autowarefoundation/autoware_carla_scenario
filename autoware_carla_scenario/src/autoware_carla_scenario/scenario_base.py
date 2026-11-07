@@ -142,6 +142,16 @@ class BaseScenario(ABC):
     _cross_items: List[CrossItem]
     _measures: dict[str, Measure]
     _initial_registrations: Optional[_Registrations]
+    #: The weather rules the scenario's runs follow (the config's
+    #: ``environment.rules``, which the runner's ``add_environment`` sets):
+    #: the file the default rules are read over (``None``: the packaged ones
+    #: alone) and each ``vehicles`` entry's ``(pattern, file)``, in order.
+    #: The runner follows them at the start of every run
+    #: (:func:`~autoware_carla_scenario.weather_rules.use_weather_rules`), so a
+    #: batch, which builds every case before any runs, runs each under its own
+    #: (#1936).  No registration: a retry or a re-run keeps them.
+    _weather_rules_default: Optional[str]
+    _weather_rules_vehicles: List[tuple[str, str]]
 
     def __init__(
         self,
@@ -226,6 +236,9 @@ class BaseScenario(ABC):
         # Taken when the first run starts, after a subclass's __init__ has
         # registered what it registers there (_reset_registrations).
         self._initial_registrations = None
+        # The default rules, unless the runner's config names others.
+        self._weather_rules_default = None
+        self._weather_rules_vehicles = []
 
     # ------------------------------------------------------------------
     # Ego construction

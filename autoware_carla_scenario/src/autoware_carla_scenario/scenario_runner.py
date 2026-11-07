@@ -602,6 +602,34 @@ def _traffic_record(backend: TrafficBackend, scenario_name: str) -> Optional[Any
     return record
 
 
+def _follow_weather_rules(scenario: "BaseScenario") -> None:
+    """Follow the weather rules *scenario* was built with from now on: its
+    ``environment.rules`` (:attr:`BaseScenario._weather_rules_default` and
+    ``_weather_rules_vehicles``), or the default rules when it names none.
+
+    Called at the start of every run, with the other per-run resets: building
+    a scenario follows its rules, and a batch builds every case before any
+    runs, so a run must not inherit the rules of the last case built (#1936)
+    -- not its grip, its visibility, nor the ``rules`` its coverage file
+    records.  :func:`~.weather_rules.use_weather_rules` reads rule files with
+    openodd (a Rust extension) and takes ``environment.rules`` as
+    ``Mapping[str, Any]``, which Codon cannot express: the check
+    (docs/typecheck.md) does not compile it.
+
+    Raises:
+        RulesError: When a rule file can no longer be read, or its rules are
+            not well formed.
+    """
+    from .weather_rules import use_weather_rules  # noqa: PLC0415
+
+    use_weather_rules(
+        {
+            "default": scenario._weather_rules_default,
+            "vehicles": dict(scenario._weather_rules_vehicles),
+        }
+    )
+
+
 def _write_result(
     json_path: Path,
     output_dir: Path,
@@ -1652,6 +1680,18 @@ class ScenarioRunner:
             forget_visibility()
             forget_tire_friction(world)
             forget_weather_conditions()
+            # The weather rules too: the scenario's own, or the default ones.
+            # A batch builds every case before any runs, and building one
+            # follows its rules, so without this every case would run under
+            # the rules of the last one built (#1936).
+            if TYPE_CHECKING:
+                # use_weather_rules() reads rule files with openodd (a Rust
+                # extension) and takes `environment.rules` as
+                # `Mapping[str, Any]`, which Codon cannot express
+                # (weather_rules is EXCLUDED in typecheck/library.py).
+                pass
+            else:
+                _follow_weather_rules(scenario)
             # CARLA's pedestrian navigation (the AI walker controllers' choice
             # of where to go) from the run's seed, before any walker is spawned.
             world.set_pedestrians_seed(seed)

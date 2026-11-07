@@ -536,6 +536,78 @@ def test_the_run_config_names_the_rules_and_a_run_without_resets_them(
     assert CARLA_BACKEND.active_rules is CARLA_BACKEND.rules
 
 
+def test_in_a_batch_each_case_runs_under_its_own_rules(tmp_path, monkeypatch) -> None:
+    """A batch builds every case before any runs, and building one follows
+    its rules; each run follows its own case's again when it starts, not the
+    last case built's (#1936): the grip, the rules by vehicle, and the rules
+    its coverage file records."""
+    from autoware_carla_scenario.coverage.collector import CoverageCollector
+    from autoware_carla_scenario.examples.run import add_environment
+    from autoware_carla_scenario.scenario_runner import _follow_weather_rules
+
+    monkeypatch.chdir(tmp_path)
+    _grip_file(tmp_path / "grip_low.yaml", (0.30, 0.40))
+    _grip_file(tmp_path / "mini.yaml", (0.20, 0.30))
+
+    def build(environment: dict) -> SimpleNamespace:
+        scenario = SimpleNamespace(register_init=lambda _action: None)
+        add_environment(OmegaConf.create({"environment": environment}), scenario)  # type: ignore[arg-type]
+        return scenario
+
+    def files() -> list[str]:
+        return [Path(p).name for p, _ in weather_rule_files()]
+
+    def recorded() -> list[str]:
+        coverage = CoverageCollector([]).to_dict("case")
+        return [Path(p).name for p, _ in coverage["rules"]["files"]]
+
+    a = build({"rules": "grip_low.yaml", "rainfall_rate_mm_h": 10.0})
+    by_vehicle = build({"rules": {"vehicles": {"vehicle.mini.*": "mini.yaml"}}})
+    b = build({"rules": None})
+    # B, built last, left the default rules.
+    assert tire_friction_range(100.0) == pytest.approx((0.45, 0.65))
+
+    _follow_weather_rules(a)  # type: ignore[arg-type]
+    assert tire_friction_range(100.0) == pytest.approx((0.30, 0.40))
+    assert not vehicle_rules_in_use()
+    assert files() == ["weather_rules.yaml", "grip_low.yaml"]
+    assert recorded() == ["weather_rules.yaml", "grip_low.yaml"]
+
+    _follow_weather_rules(by_vehicle)  # type: ignore[arg-type]
+    assert vehicle_rules_in_use()
+    assert tire_friction_range(100.0) == pytest.approx((0.45, 0.65))
+    assert files() == ["weather_rules.yaml", "mini.yaml"]
+
+    _follow_weather_rules(b)  # type: ignore[arg-type]
+    assert not vehicle_rules_in_use()
+    assert CARLA_BACKEND.active_rules is CARLA_BACKEND.rules
+    assert recorded() == ["weather_rules.yaml"]
+
+
+def test_a_scenario_built_without_the_config_runs_under_the_default_rules(
+    tmp_path,
+) -> None:
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario import BaseScenario, EgoConfig, SpawnTransform
+    from autoware_carla_scenario.scenario_runner import _follow_weather_rules
+
+    class _Scenario(BaseScenario):
+        def setup(self) -> None:
+            pass
+
+        def is_done(self) -> bool:
+            return True
+
+    scenario = _Scenario(
+        EgoConfig(spawn_location=SpawnTransform(carla.Transform(carla.Location())))
+    )
+    use_weather_rules(str(_grip_file(tmp_path / "left.yaml", (0.30, 0.40))))
+    _follow_weather_rules(scenario)
+    assert CARLA_BACKEND.active_rules is CARLA_BACKEND.rules
+    assert tire_friction_range(100.0) == pytest.approx((0.45, 0.65))
+
+
 def _composed(rules: object) -> object:
     from omegaconf import open_dict
 
