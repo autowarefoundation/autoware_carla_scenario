@@ -4327,17 +4327,38 @@ same water, and a dry road's is centred on CARLA's own grip, so a dry run
 drives as it did before.</p>
 <p>The grip is the one quantity the action reads off the rules, during the run:
 it may differ by vehicle (<a href="#weather-rules">Rules by vehicle</a>), and a vehicle
-spawned later gets its own. It reads the water the action sets, which the
-run's conditions gave before it started.</p>
+spawned later gets its own. It reads every CARLA field of the weather the
+action leaves -- the water the run's conditions gave before it started --
+and the conditions themselves, as the ODD's probes read them: the rainfall
+rate, the visibility through the fog and the wind speed the run was set to,
+the cloud cover it was set to (else the one CARLA's clouds render), the time
+of day CARLA's sun renders, and how far drivers see. So a <code>tire_friction</code>
+part may read a cause or any other quantity; a rainfall rate, fog
+visibility or wind speed the run does not name reads its <code>default</code>, as it
+does before the run, while the time of day and the cloudiness are always
+read off CARLA's sun and clouds (the cloud cover the run names wins).</p>
+<p>Under rules other than the default ones -- a rule file of the run's
+(<code>environment.rules</code>) or rules by vehicle -- the grip may differ from
+CARLA's on any road, so every <code>EnvironmentAction</code> sets it, whatever else it
+sets, and the config's <code>environment</code> registers one even when it names only
+<code>rules</code>. One that names no grip, quantile or water (a scenario's own that
+sets the sun, say) reads the grip again at the quantile the run's grip is
+at, and keeps a grip named outright (<code>tire_friction</code>). A grip named
+outright also ends the quantile: water set after it reads the grip at the
+median. Under the default rules, a run that sets no road water, no quantile
+and no grip keeps CARLA's grip (1.0, whatever water CARLA renders).</p>
 <p>Where in the range a run's grip is, is <code>environment.tire_friction_quantile</code>:
 the quantile of the grip's distribution (0 its low end, 1 its high end; the
-median when not set). A
+median when not set). A later action in the run that names none -- rain
+starting mid-run -- reads the grip at the same quantile. A
 <code>sweep.odd_sample</code> draws it for every case (<code>environment.tire_friction_quantile=0.412</code>
 among the case's overrides, recorded in its coverage file), from the sweep's
 <code>seed</code> and the case, so the same sweep draws the same grip. The weather comes
 from the ODD and the grip from the range that weather allows: a heavy-rain
 case never runs on a dry road's grip. <code>tire_friction: false</code> in the
-<code>odd_sample</code> leaves every case at the median (<code>true</code> or <code>false</code>, or one of
+<code>odd_sample</code> leaves every case at the median -- of the rules' grip where the
+case sets it, as above; the dry road's, CARLA's own, where it does not --
+(<code>true</code> or <code>false</code>, or one of
 their spellings, as <a href="../usage/#the-switches">the run's switches</a> take: <code>"off"</code>,
 <code>"no"</code> and <code>0</code> are false; a missing or null one is true; anything else, such
 as <code>ture</code> or <code>2</code>, is refused, naming <code>sweep.odd_sample.tire_friction</code>, before
@@ -4603,10 +4624,11 @@ every <code>vehicles</code> entry name one file each -- a path or an <code>https
 alone, so a file to pin goes in one that <code>extends</code> it. Anything else (a
 number, a mapping, a list, an unknown key) is refused before the batch runs
 (<code>openodd.RulesError</code>, naming the key; <code>weather_rules.check_weather_rules</code>).
-An <code>EnvironmentAction</code> that sets the road's water gives each vehicle the grip of
-its own rules, all at the same <code>tire_friction_quantile</code> (a case draws one),
-and a vehicle spawned later its own too; the ODD's <code>tire_friction</code> probe
-reads the ego's. <code>tire_friction</code>, the grip named outright, is every
+Every <code>EnvironmentAction</code> (the config's <code>environment</code>, even one naming only
+<code>rules</code>, registers one) gives each vehicle the grip of its own rules, all at
+the same <code>tire_friction_quantile</code> (a case draws one; the median when none is
+set), and a vehicle spawned later its own too; the ODD's <code>tire_friction</code>
+probe reads the ego's. <code>tire_friction</code>, the grip named outright, is every
 vehicle's. Everything else -- CARLA's weather, the visibility -- is the
 default rules'.</p>
 <p><code>weather_rules.weather_rule_files()</code> lists every rule file a run follows,
@@ -5167,7 +5189,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 09:57:25 UTC"><span class="timeago" datetime="2026-11-07T09:57:25+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 09:57:25 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 10:47:02 UTC"><span class="timeago" datetime="2026-11-07T10:47:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 10:47:02 UTC">2026-11-07</span>
   </span>
 
     
