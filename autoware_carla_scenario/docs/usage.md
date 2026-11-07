@@ -2010,8 +2010,8 @@ The viewer also provides API endpoints for programmatic use and the web UI's int
 |--------|----------|-------------|
 | `POST` | `/api/refresh` | Clear result cache and return updated session table HTML |
 | `GET` | `/api/scenarios` | List all available scenario config names |
-| `POST` | `/api/run/preview` | Preview the CLI command that would be executed |
-| `POST` | `/api/run` | Start a scenario execution in the background (409 `{"status": "busy"}` while a local run is still in progress) |
+| `POST` | `/api/run/preview` | Preview the CLI command that would be executed (400 for an invalid SLURM option value) |
+| `POST` | `/api/run` | Start a scenario execution in the background (400 `{"status": "error"}` for a refused or unmatched pattern, a sweep that cannot be resolved or an invalid SLURM option value; 409 while a local run or a SLURM submission is still in progress; 503 when SLURM is not available) |
 | `GET` | `/api/run/status` | Get current run status (non-streaming) |
 | `GET` | `/api/run/progress` | SSE (Server-Sent Events) stream for real-time progress |
 | `GET` | `/api/launchers` | The launchers a run can use here (`slurm` only where `sbatch` is, with the partitions) |
