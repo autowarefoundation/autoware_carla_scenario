@@ -55,6 +55,12 @@ class ExternallyDrivenEgo(EgoVehicle):
     #: Autoware stack", "the driver policy stack".
     stack_name: str = "external"
 
+    #: Whether the stack is told of the other road users by the framework
+    #: (CARLA's ground truth) rather than perceiving them itself: what a
+    #: :class:`~autoware_carla_scenario.actions.PerceptionFaultInjectionAction`
+    #: alters, and refuses to act on when it is not.
+    road_users_from_framework: bool = False
+
     _termination_requested: bool
     _termination_reason: Optional[str]
 

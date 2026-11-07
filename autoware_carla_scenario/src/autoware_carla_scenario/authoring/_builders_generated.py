@@ -91,6 +91,7 @@ __all__ = [
     "build_play_motion_action",
     "build_smart_pedestrian_action",
     "build_walk_straight_action",
+    "build_perception_fault_injection_action",
     "build_traffic_parameters_action",
     "build_communication_loss_action",
     "build_emergency_action",
@@ -153,6 +154,7 @@ ONCE_ACTIONS: frozenset[str] = frozenset(
         "play_motion",
         "smart_pedestrian",
         "walk_straight",
+        "perception_fault_injection",
         "traffic_parameters",
         "communication_loss",
         "emergency",
@@ -1616,6 +1618,32 @@ def build_walk_straight_action(
         turn_back_ttc_s=params["turn_back_ttc_s"],
         turn_back_distance_m=params["turn_back_distance_m"],
         turn_back_within_m=params["turn_back_within_m"],
+    )
+
+
+def build_perception_fault_injection_action(
+    compiled: "CompiledAction",
+    condition: "BaseCondition | None",
+    timing: Any,
+    ctx: "BuildContext",
+) -> "BaseAction":
+    """Build a :class:`PerceptionFaultInjectionAction`."""
+    from ..actions import PerceptionFaultInjectionAction  # noqa: PLC0415
+    from ..perception_fault import PerceivedCategory  # noqa: PLC0415
+
+    assert compiled.actor_role is not None  # noqa: S101 -- required by the spec
+    params = compiled.params
+    return PerceptionFaultInjectionAction(
+        entity_name=compiled.actor_role,
+        category=PerceivedCategory[str(params["category"])],
+        length_m=params["length_m"],
+        width_m=params["width_m"],
+        height_m=params["height_m"],
+        visible=params["visible"],
+        condition=condition,
+        timing=timing,
+        label=compiled.label,
+        once=compiled.node.once,
     )
 
 

@@ -33,6 +33,7 @@ import numpy as np
 
 from ..coordinate.map_manager import run_carla_map
 from ..kinematics.walker_motion import WalkerVelocities, is_walker
+from ..perception_fault import PerceivedCategory, perception_fault, renderer_type_id
 from ..utils.clearance import _HIDDEN_BELOW_M
 from ..utils.traffic_light import traffic_light_state_name
 from carla_driver_interface.protocol import carla_driver_pb2, common_pb2
@@ -400,20 +401,30 @@ class RendererDataBuilder:
             )
             if float(np.linalg.norm(pose.position - ego_position)) > horizon:
                 continue
+            # What a PerceptionFaultInjectionAction has the policy told of it.
+            fault = perception_fault(int(actor.id))
+            if fault is not None and not fault.visible:
+                continue
 
             velocity = (
                 walker_velocity if walker_velocity is not None else actor.get_velocity()
             )
             extent = box.extent
+            size = (2.0 * float(extent.x), 2.0 * float(extent.y), 2.0 * float(extent.z))
+            type_id = str(actor.type_id)
+            if fault is not None:
+                size = fault.size(*size)
+                if fault.category is not PerceivedCategory.ACTUAL:
+                    type_id = renderer_type_id(fault.category)
             states.append(
                 carla_driver_pb2.CarlaActorState(
                     track_id=str(actor.id),
-                    type_id=str(actor.type_id),
+                    type_id=type_id,
                     pose_local_to_aabb=pose.to_proto(),
                     aabb=common_pb2.AABB(
-                        size_x=2.0 * extent.x,
-                        size_y=2.0 * extent.y,
-                        size_z=2.0 * extent.z,
+                        size_x=size[0],
+                        size_y=size[1],
+                        size_z=size[2],
                     ),
                     dynamic_state=common_pb2.DynamicState(
                         # Resolved in the local frame, not the actor's own: a

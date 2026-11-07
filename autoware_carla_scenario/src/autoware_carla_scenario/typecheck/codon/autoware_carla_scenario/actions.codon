@@ -330,6 +330,109 @@ class EnvironmentAction(BaseAction):
         raise NotImplementedError()
 
 
+@tuple
+class PerceivedCategory:
+    value: str
+    ACTUAL: ClassVar[PerceivedCategory] = PerceivedCategory("actual")
+    UNKNOWN: ClassVar[PerceivedCategory] = PerceivedCategory("unknown")
+    VEHICLE: ClassVar[PerceivedCategory] = PerceivedCategory("vehicle")
+    CAR: ClassVar[PerceivedCategory] = PerceivedCategory("car")
+    TRUCK: ClassVar[PerceivedCategory] = PerceivedCategory("truck")
+    BUS: ClassVar[PerceivedCategory] = PerceivedCategory("bus")
+    MOTORCYCLE: ClassVar[PerceivedCategory] = PerceivedCategory("motorcycle")
+    BICYCLE: ClassVar[PerceivedCategory] = PerceivedCategory("bicycle")
+    PEDESTRIAN: ClassVar[PerceivedCategory] = PerceivedCategory("pedestrian")
+    TRAILER: ClassVar[PerceivedCategory] = PerceivedCategory("trailer")
+    ANIMAL: ClassVar[PerceivedCategory] = PerceivedCategory("animal")
+    HAZARD: ClassVar[PerceivedCategory] = PerceivedCategory("hazard")
+    OVER_DRIVABLE: ClassVar[PerceivedCategory] = PerceivedCategory("over_drivable")
+    UNDER_DRIVABLE: ClassVar[PerceivedCategory] = PerceivedCategory("under_drivable")
+
+    # Enum's name (#307): Codon has no Enum to give a framework enum one.
+    @property
+    def name(self) -> str:
+        if self == PerceivedCategory.ACTUAL:
+            return "ACTUAL"
+        if self == PerceivedCategory.UNKNOWN:
+            return "UNKNOWN"
+        if self == PerceivedCategory.VEHICLE:
+            return "VEHICLE"
+        if self == PerceivedCategory.CAR:
+            return "CAR"
+        if self == PerceivedCategory.TRUCK:
+            return "TRUCK"
+        if self == PerceivedCategory.BUS:
+            return "BUS"
+        if self == PerceivedCategory.MOTORCYCLE:
+            return "MOTORCYCLE"
+        if self == PerceivedCategory.BICYCLE:
+            return "BICYCLE"
+        if self == PerceivedCategory.PEDESTRIAN:
+            return "PEDESTRIAN"
+        if self == PerceivedCategory.TRAILER:
+            return "TRAILER"
+        if self == PerceivedCategory.ANIMAL:
+            return "ANIMAL"
+        if self == PerceivedCategory.HAZARD:
+            return "HAZARD"
+        if self == PerceivedCategory.OVER_DRIVABLE:
+            return "OVER_DRIVABLE"
+        if self == PerceivedCategory.UNDER_DRIVABLE:
+            return "UNDER_DRIVABLE"
+        raise ValueError("not a member of PerceivedCategory")
+
+    # What `for m in E`, `list(E)` and `E["A"]` read: the checker rewrites
+    # them (#437). Declared in Python's order, as the test checks.
+    @staticmethod
+    def _acs_members() -> List[PerceivedCategory]:
+        return [PerceivedCategory.ACTUAL, PerceivedCategory.UNKNOWN, PerceivedCategory.VEHICLE, PerceivedCategory.CAR, PerceivedCategory.TRUCK, PerceivedCategory.BUS, PerceivedCategory.MOTORCYCLE, PerceivedCategory.BICYCLE, PerceivedCategory.PEDESTRIAN, PerceivedCategory.TRAILER, PerceivedCategory.ANIMAL, PerceivedCategory.HAZARD, PerceivedCategory.OVER_DRIVABLE, PerceivedCategory.UNDER_DRIVABLE]
+
+    @staticmethod
+    def _acs_by_name(name: str) -> PerceivedCategory:
+        if name == "ACTUAL":
+            return PerceivedCategory.ACTUAL
+        if name == "UNKNOWN":
+            return PerceivedCategory.UNKNOWN
+        if name == "VEHICLE":
+            return PerceivedCategory.VEHICLE
+        if name == "CAR":
+            return PerceivedCategory.CAR
+        if name == "TRUCK":
+            return PerceivedCategory.TRUCK
+        if name == "BUS":
+            return PerceivedCategory.BUS
+        if name == "MOTORCYCLE":
+            return PerceivedCategory.MOTORCYCLE
+        if name == "BICYCLE":
+            return PerceivedCategory.BICYCLE
+        if name == "PEDESTRIAN":
+            return PerceivedCategory.PEDESTRIAN
+        if name == "TRAILER":
+            return PerceivedCategory.TRAILER
+        if name == "ANIMAL":
+            return PerceivedCategory.ANIMAL
+        if name == "HAZARD":
+            return PerceivedCategory.HAZARD
+        if name == "OVER_DRIVABLE":
+            return PerceivedCategory.OVER_DRIVABLE
+        if name == "UNDER_DRIVABLE":
+            return PerceivedCategory.UNDER_DRIVABLE
+        raise KeyError(name)
+
+
+class PerceptionFaultInjectionAction(BaseAction):
+    def __init__(self, label):
+        compile_error("PerceptionFaultInjectionAction(): no constructor takes these arguments "
+                      "(required: entity_name)")
+
+    def __init__(self, entity_name, category: PerceivedCategory = PerceivedCategory("actual"), length_m: float = 0.0,
+                 width_m: float = 0.0, height_m: float = 0.0, visible: bool = True,
+                 condition = None, timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 label: str = "perception_fault", once: bool = True):
+        _keyword_only(_kw, "PerceptionFaultInjectionAction(): label and once")
+        _expect_role(entity_name)
+        super().__init__(label, condition, timing, once=once)
+
 class LaneChangeAction(BaseAction):
     def __init__(self, label):
         compile_error("LaneChangeAction(): no constructor takes these arguments "

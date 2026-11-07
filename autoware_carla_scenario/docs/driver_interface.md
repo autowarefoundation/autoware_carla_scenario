@@ -664,6 +664,68 @@ signals_left = TurnIndicatorCondition(
 npc_signals_right = TurnIndicatorAction(EntityRole.npc(1), TurnIndicatorState.RIGHT)
 ```
 
+## Perception faults
+
+A perception stack gets road users wrong: it calls a pedestrian a car, it
+draws the box too small, it misses one. `PerceptionFaultInjectionAction` has
+the policy told so of one road user, from the tick the action fires on, while
+every other road user is reported as it is:
+
+```python
+from autoware_carla_scenario import (
+    EGO_ROLE_NAME,
+    EntityDistanceCondition,
+    PerceivedCategory,
+    PerceptionFaultInjectionAction,
+)
+
+# The pedestrian is reported as a car of a car's size once the ego is 30 m off.
+self.register_pre_tick(
+    PerceptionFaultInjectionAction(
+        "pedestrian1",
+        PerceivedCategory.CAR,
+        length_m=4.5,
+        width_m=1.8,
+        condition=EntityDistanceCondition(
+            EGO_ROLE_NAME, "pedestrian1", 30.0, label="ego_near_pedestrian"
+        ),
+    )
+)
+```
+
+| Argument | Reports | Default: as it is |
+|---|---|---|
+| `category` | the category: a T4Scene `ObjectCategory` (`CAR`, `PEDESTRIAN`, `BICYCLE`, ...) | `PerceivedCategory.ACTUAL` |
+| `length_m`, `width_m`, `height_m` | the box's size, each on its own, m | 0 |
+| `visible` | `False`: nothing at all of it | `True` |
+
+Where the policy is told of the road users, each takes the fault:
+
+* **`renderer_data`'s `actors`.** A road user not seen is left out; the box's
+  size is the fault's, about the same centre; the category is reported in
+  `type_id`, under the prefix a policy tells road users apart by:
+  `walker.perception_fault.pedestrian`, `vehicle.perception_fault.car`, and
+  `static.prop.perception_fault.<category>` for `UNKNOWN`, `ANIMAL`,
+  `HAZARD`, `OVER_DRIVABLE` and `UNDER_DRIVABLE`.
+* **The live T4Scene's boxes** (`driver.t4_scene`). The category is the
+  box's label, and each row keeps what was reported on it, as a perception
+  stack's history would: the rows before the fault show the road user as it
+  was.
+
+It stays so until another `PerceptionFaultInjectionAction` sets that road
+user again -- one with every argument at its default reports it as it is --
+or the run ends; each run starts with no fault. The ego cannot be faulted
+(a `ValueError`): it is not reported to its own policy.
+
+Nothing else changes. The world is not touched, and the trajectory log, the
+T4 dataset, the metrics and the conditions keep CARLA's ground truth: a
+collision with a road user the policy was told is not there is a collision.
+
+An ego driven by a stack that perceives the road users itself -- Autoware
+(`ego.entity=autoware`), a ROS 2 stack, a HILS ECU -- is not told of them by
+the framework, so there is no report to alter. The action raises
+`NotImplementedError` as it fires: it is not implemented yet for those egos.
+
 ## Coordinate frames
 
 Two conversions sit between CARLA and the contract, both handled in

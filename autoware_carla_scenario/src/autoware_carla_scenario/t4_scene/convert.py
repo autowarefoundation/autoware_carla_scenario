@@ -41,6 +41,7 @@ import numpy.typing as npt
 import orjson
 
 from ..constants import FIXED_DELTA_SECONDS
+from ..perception_fault import PerceivedCategory, PerceptionFault, t4_label
 from ..rerun import TRAJECTORY_SUFFIX
 from ..run_outputs import T4SCENE_MAP_SUFFIX, T4SCENE_SUFFIX
 from ..utils.clearance import _HIDDEN_BELOW_M
@@ -118,6 +119,8 @@ _DTYPES = {
 #: and all, is not imported for it; a test keeps the two equal).
 _FLIP_AXIAL = np.array([-1.0, 1.0, -1.0])
 _NO_STATES = np.zeros((0, 10))
+#: A road user no fault touches: seen, as it is.
+_SEEN = PerceptionFault()
 
 
 @dataclass(frozen=True)
@@ -174,6 +177,10 @@ class _Log:
     step_frames: int = 1
     #: Every light's state as of the last tick fed, folded from the deltas.
     current_lights: dict[int, str] = field(default_factory=dict)
+    #: How a road user was reported to the policy on a grid frame, where a
+    #: ``PerceptionFaultInjectionAction`` had it differ, by frame and actor
+    #: id: only a live scene's (:mod:`~autoware_carla_scenario.t4_scene.live`).
+    faults: dict[int, dict[int, PerceptionFault]] = field(default_factory=dict)
 
     def feed(self, record: Mapping[str, Any]) -> None:
         """Take one trajectory-log record, as the log holds it, in order."""
@@ -234,6 +241,7 @@ class _Log:
         for old in [f for f in self.rows if f < frame]:
             del self.rows[old]
             self.angular_velocities.pop(old, None)
+            self.faults.pop(old, None)
 
     def states(self, frame: int) -> npt.NDArray[np.float64]:
         """The (N, 10) actor states of the tick on *frame*; none without one."""
@@ -651,6 +659,12 @@ def _fill_annotations(
         centre = ego_origins[row]
         if max_distance_m is not None and centre is not None:
             keep &= np.hypot(*(origins[:, :2] - centre).T) <= max_distance_m
+        # One a fault had the policy not see is out of its scene.
+        faults = log.faults.get(carla_frame, {})
+        if faults:
+            keep &= np.array(
+                [faults.get(int(i), _SEEN).visible for i in ids], dtype=bool
+            )
         states, ids, origins = states[keep], ids[keep], origins[keep]
         actors = [others[int(i)] for i in ids]
         angles = _MapFrame.angles(states[:, 4:7])
@@ -658,19 +672,30 @@ def _fill_annotations(
         # The box's centre is given in CARLA's (left-handed) actor frame.
         centres = np.array([a.center for a in actors]).reshape(-1, 3) * _FLIP_Y
         extents = np.array([a.extent for a in actors]).reshape(-1, 3)
+        dimensions = 2.0 * extents[:, [1, 0, 2]]  # (width, length, height)
+        labels = np.array(
+            [
+                _PEDESTRIAN if a.type_id.startswith("walker.") else _VEHICLE
+                for a in actors
+            ],
+            dtype=np.int64,
+        )
+        for n, actor_id in enumerate(ids):
+            fault = faults.get(int(actor_id))
+            if fault is None:
+                continue
+            width, length, height = dimensions[n]
+            length, width, height = fault.size(length, width, height)
+            dimensions[n] = (width, length, height)
+            if fault.category is not PerceivedCategory.ACTUAL:
+                labels[n] = t4_label(fault.category)
         rows.append(
             (
                 origins + np.einsum("nij,nj->ni", rotations, centres),
-                2.0 * extents[:, [1, 0, 2]],  # (width, length, height)
+                dimensions,
                 np.arctan2(rotations[:, 1, 0], rotations[:, 0, 0]),
                 states[:, 7:9] * _FLIP_Y[:2],
-                np.array(
-                    [
-                        _PEDESTRIAN if a.type_id.startswith("walker.") else _VEHICLE
-                        for a in actors
-                    ],
-                    dtype=np.int64,
-                ),
+                labels,
                 ids,
                 _quaternions(angles),
             )

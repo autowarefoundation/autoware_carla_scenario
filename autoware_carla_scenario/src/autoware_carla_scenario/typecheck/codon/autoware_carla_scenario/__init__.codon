@@ -11,6 +11,7 @@ from .actions import (ConstructionSettings, ConstructionZoneAction, URBAN_CONSTR
                       CommunicationLossAction,
                       DespawnAction, EmergencyAction, SpawnAction, EnvironmentAction, HeadOnAction, IgnoreLeaderAction,
                       JaywalkAction, LaneChangeAbortAction, LaneChangeAction, PedestrianRunRedLightAction,
+                      PerceivedCategory, PerceptionFaultInjectionAction,
                       RunTrafficRuleAction, StopCrossingAction, RoutingAction, RoutingMode,
                       SetSpeedAction, StalledObjectAction, TickTiming, collision_objects, TrafficLightTarget, TrafficSignalAction,
                       TrafficSignalControllerAction, TurnAction, TurnIndicatorAction,
