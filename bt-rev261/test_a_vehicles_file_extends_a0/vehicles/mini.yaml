@@ -1,3 +1,0 @@
-version: 2
-extends: ../shared.yaml
-quantities: {}

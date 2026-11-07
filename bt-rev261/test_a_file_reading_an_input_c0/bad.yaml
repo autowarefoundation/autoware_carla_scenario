@@ -1,7 +1,0 @@
-version: 2
-quantities:
-  tire_friction:
-    parts:
-      t:
-        at: {temperature: [-20, 40]}
-        uniform: {low: 1, high: 1}
