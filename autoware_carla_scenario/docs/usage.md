@@ -9,14 +9,19 @@ The package provides these CLI commands:
 | Command | Framework | Purpose |
 |---------|-----------|---------|
 | [`scenario`](#scenario-scenario-runner) | Hydra | Run autonomous driving scenario tests in CARLA |
+| [`scenario-expand`](logical_scenarios.md) | Hydra compose | Print the concrete scenarios of a scenario as JSON, without running anything |
 | `scenario-new` | argparse | Scaffold a standalone scenario package |
+| [`scenario-setup`](installation.md) | argparse | Download a CARLA server (the nightly build by default) for the runner to launch |
 | [`scenario-check`](typecheck.md) | Hydra compose | Compile scenarios with Codon without running them (the static check the runner makes before a run) |
 | [`scenario-slurm`](slurm.md#following-collecting-resubmitting) | argparse | Follow, collect, resubmit or cancel a batch run as SLURM array jobs (`launcher=slurm`) |
 | [`scenario-gate`](gate.md#judging-scenario-gate) | argparse | Judge logical scenarios' gates (runs, success rate, coverage, trajectory consistency) from their runs' gate records, or compare a baseline's runs with a candidate's for regressions |
 | [`scenario-odd`](odd.md#checking-an-odd) | argparse | Check an ODD and show its buckets; `scenario-odd route` checks scenarios' planned routes against it on the Lanelet2 map |
+| [`scenario-coverage`](coverage.md) | argparse | Merge the coverage files of scenario runs into an ODD/scenario coverage report |
 | [`detect-no-3d-model`](#detect-no-3d-model-3d-model-detection) | argparse | Detect lanelets without a matching 3D ground model in CARLA |
 | [`viewer`](#viewer-scenario-result-viewer) | FastAPI + Uvicorn | Web UI for browsing and monitoring scenario test results |
 | [`scenario-editor`](scenario_editor.md) | FastAPI + Uvicorn | Web UI for authoring scenarios and exporting reproducible packages |
+| [`scenario-hils`](hils.md) | argparse | Stream a run's ego to devices under test (CAN, GNSS, LiDAR, cameras); needs the `hils` extra |
+| [`scenario-t4scene`](t4_scene.md) | argparse | Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit |
 
 `viewer` and `scenario-editor` are separate applications on separate ports, and
 neither starts the other.

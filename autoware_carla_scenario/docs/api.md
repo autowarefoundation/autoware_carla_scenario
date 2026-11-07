@@ -68,7 +68,7 @@ See [ODD](odd.md).
 | `register_odd(name, builder)`, `resolve_odd(spec)` | Name an ODD; turn a name, `.yaml` path or `module:function` into one. Packages register through the `autoware_carla_scenario.odds` entry point group (a function calling `register_odd`). |
 | `load_odd_file(path)`, `load_odd_binding(path)`, `load_openodd(*sources, bindings, name, text, situations)` | Read ASAM OpenODD 1.0 YAML (`IMPORT`, `TAXONOMY`, `MODULES`, `ODD`), with a binding file naming the probes. |
 | `GitSource(url, rev, path)`, `GitSourceError` | An OpenODD file in a git repository at a revision, for `load_openodd()` or a binding file's `openodd` list. |
-| `ego_speed_kph`, `speed_limit_kph`, `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph`, `road_type`, `drivable_area_type`, `in_junction`, `lane_count`, `rainfall_rate_mm_h`, `fog_visibility_range_m`, `time_of_day`, `illumination`, `rain`, `fog`, `traffic_density`, `nearby_vehicle_count`, `pedestrian_nearby` | Built-in probes. |
+| `ego_speed_kph`, `speed_limit_kph`, `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph`, `road_type`, `drivable_area_type`, `in_junction`, `lane_count`, `rainfall_rate_mm_h`, `fog_visibility_range_m`, `wind_speed_kmh`, `cloud_cover`, `road_surface_condition`, `visibility`, `time_of_day`, `illumination`, `rain`, `fog`, `tire_friction`, `road_wetness`, `wind`, `cloudiness`, `traffic_density`, `nearby_vehicle_count`, `pedestrian_nearby` | Built-in probes. A binding file can also name the generated traffic probes `vehicle_<field>_mean`/`_std`, `pedestrian_<field>_mean`/`_std` and `bicycle_<field>_mean`/`_std` (`odd.traffic_probes`); `odd.backend.BUILT_IN_PROBES` maps every name to its probe and unit. See [Built-in probes](odd.md#built-in-probes). |
 | `lanelet_in_junction(lanelet)`, `lanelet_road_type(lanelet)`, `lanelet_speed_limit(lanelet)` | What the Lanelet2 probes read off one lanelet: its junction, road type (`subtype`) and speed limit (km/h). |
 | `scenario_measure(key)`, `ScenarioMeasure` | The probe mapping an attribute onto the running scenario's measure *key* (`measure:` in a binding file). See [Scenario measures](odd.md#scenario-measures). |
 | `typecheck.typecheck_odd(builder)` | Compile a Python ODD with Codon. |
@@ -77,7 +77,7 @@ See [ODD](odd.md).
 | `plan_route(route, lanelet_map, routing_graph)` | The lanelets of a `PlannedRoute`, with the metres driven on each. |
 | `UNDECIDED` | What a probe's `on_lanelet` returns for a value only the run can tell. |
 | `OddSampler(odd, knobs, *, controls, seed, strategy, coverage, max_tries, weights)` | Draws concrete cases inside the ODD: `.sample(count)` gives `OddSample(index, overrides, buckets, values, situation)`. `strategy="coverage"` draws the least covered buckets and the uncovered situations first; `weights={module: share}` (`strategy="weighted"`) puts that share of the cases in each module. See [Sampling scenarios from the ODD](odd.md#sampling-scenarios-from-the-odd). |
-| `OddKnob(key, *, values, scale, offset, integer, range)`, `knobs_from_mapping(raw)`, `DEFAULT_KNOBS` | A control: the config key that sets a measure (or, as a sweep knob, an attribute), and what it can stage. Scenarios declare theirs under `controls` in their config, by measure key. |
+| `OddKnob(key, values, scale, offset, integer, range, limits, quantity)`, `knobs_from_mapping(raw)`, `DEFAULT_KNOBS` | A control: the config key that sets a measure (or, as a sweep knob, an attribute), and what it can stage. Scenarios declare theirs under `controls` in their config, by measure key. |
 
 ## Conditions (`autoware_carla_scenario.conditions`)
 
@@ -413,14 +413,14 @@ Defined in `pyproject.toml`'s `[project.scripts]`, in that order:
 | `scenario-hils` | `autoware_carla_scenario.hils.cli:main` | Stream a run's ego to devices under test (CAN, GNSS, LiDAR, cameras); needs the `hils` extra. See [HILS Bridge](hils.md). |
 | `scenario-t4scene` | `autoware_carla_scenario.t4_scene.__main__:main` | Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit. See [T4 Scene](t4_scene.md). |
 
-The `scenario` command also exposes Python-level helpers in
-`autoware_carla_scenario.examples.run` for downstream packages:
+The `scenario` command also exposes Python-level helpers for downstream
+packages, in `autoware_carla_scenario.examples.run` unless noted:
 
 | Symbol | Description |
 |--------|-------------|
 | `register_scenario(name, scenario_cls, config_cls)` | Register a built-in-style scenario class under a Hydra `scenario.name`. |
-| `register_scenario_builder(name, builder)` | Register a custom builder when the constructor signature differs. |
-| `register_scenario_document(name, loader)` / `get_scenario_document(name)` | Register (after its builder) how to load the Scenario IR document a declarative scenario runs, and load it; a run checks its map against the document's before anything starts. |
+| `register_scenario_builder(name, builder)` | Register a custom builder when the constructor signature differs. Lives in `autoware_carla_scenario.registry` (and the top-level package), not `examples.run`. |
+| `register_scenario_document(name, loader)` / `get_scenario_document(name)` | Register (after its builder) how to load the Scenario IR document a declarative scenario runs, and load it; a run checks its map against the document's before anything starts. Live in `autoware_carla_scenario.registry` (and the top-level package), not `examples.run`. |
 | `get_scenario_registry()` | Return a copy of the registry. |
 | `build_ego_and_spawn(cfg)` | Build `(EgoConfig, Lanelet2Pose, GroundProjectionConfig)` from a resolved Hydra config. |
 | `build_scenario(cfg, *, build_scenario_fn=None)` | Look up the registered builder and instantiate the scenario. |

@@ -6,6 +6,7 @@ import ast
 import inspect
 import json
 import os
+import re
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -34,6 +35,7 @@ from autoware_carla_scenario.odd import (
     resolve_odd,
 )
 from autoware_carla_scenario.odd import registry as odd_registry
+from autoware_carla_scenario.odd.backend import BUILT_IN_PROBES
 from autoware_carla_scenario.odd.cli import main as odd_main
 from autoware_carla_scenario.odd.openodd import (
     OpenOddError,
@@ -46,6 +48,8 @@ from autoware_carla_scenario.odd.probes import (
     traffic_density_level,
 )
 from autoware_carla_scenario.odd.registry import odd_builder
+from autoware_carla_scenario.odd.traffic_probes import TRAFFIC_PROBES
+from autoware_carla_scenario.odd.traffic_ranges import _PREFIX
 from autoware_carla_scenario.odd.units import UnitError, convert
 from autoware_carla_scenario.typecheck import model_dir
 
@@ -1786,3 +1790,39 @@ def test_carlas_water_reads_as_the_road_surface(
     wetness: float, deposits: float, level: str
 ) -> None:
     assert probes.road_surface_level(wetness, deposits) == level
+
+
+def _documented_probe(name: str) -> str:
+    """How the docs write a built-in probe: as itself, or, for a generated
+    traffic probe, as its ``<prefix>_<field>_<statistic>`` pattern."""
+    if name not in TRAFFIC_PROBES:
+        return name
+    statistic = name.rsplit("_", 1)[1]
+    prefix = next(p for p in _PREFIX.values() if name.startswith(f"{p}_"))
+    return f"{prefix}_<field>_{statistic}"
+
+
+def test_docs_odd_built_in_probes_table_lists_every_probe() -> None:
+    """docs/odd.md's "Built-in probes" table names every built-in probe
+    (#1934: it had fallen behind ``BUILT_IN_PROBES``)."""
+    text = (Path(__file__).resolve().parents[2] / "docs" / "odd.md").read_text()
+    section = text.split("### Built-in probes", 1)[1].split("\n#", 1)[0]
+    table = "\n".join(line for line in section.splitlines() if line.startswith("|"))
+    missing = sorted(
+        {_documented_probe(n) for n in BUILT_IN_PROBES}
+        - set(re.findall(r"`([^`]+)`", table))
+    )
+    assert not missing, f"docs/odd.md's Built-in probes table lacks {missing}"
+
+
+def test_docs_api_lists_every_built_in_probe() -> None:
+    """docs/api.md's ODD section names every built-in probe (#1934)."""
+    text = (Path(__file__).resolve().parents[2] / "docs" / "api.md").read_text()
+    section = text.split("## ODD (`autoware_carla_scenario.odd`)", 1)[1]
+    section = section.split("\n## ", 1)[0]
+    row = next(line for line in section.splitlines() if "| Built-in probes." in line)
+    named = set(re.findall(r"`([^`]+)`", row))
+    # The traffic probes are written `vehicle_<field>_mean`/`_std`.
+    named |= {m.replace("_mean", "_std") for m in named if m.endswith("<field>_mean")}
+    missing = sorted({_documented_probe(n) for n in BUILT_IN_PROBES} - named)
+    assert not missing, f"docs/api.md's ODD section lacks the probes {missing}"

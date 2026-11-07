@@ -19,7 +19,7 @@ stops it when the queue stops.
 
 ## When a backend starts
 
-The queue has a preparer, `prepare.pool.BackendPool`, which `scenario-run`
+The queue has a preparer, `prepare.pool.BackendPool`, which `scenario`
 builds from `backends`. The preparer looks at each scenario before it runs:
 
 - **When the queue starts**, before the CARLA server, it starts what the queue's
@@ -116,7 +116,7 @@ backends:
   ardy:
     image: ghcr.io/hakuturu583/carla_ardy_backend:0.1.0
     model: soma             # the ARDY checkpoint
-    acceleration: none      # none, compile
+    acceleration: none      # none, compile, trt
     gpus: auto              # the GPU the preparer chose; or all, device=N
     hf_home: ~/.cache/huggingface
     gpu_memory_mb: 24000
@@ -128,7 +128,7 @@ backends:
 ```
 
 ```bash
-scenario-run scenario=... backends.ardy.image=ghcr.io/hakuturu583/carla_ardy_backend:0.2.0
+scenario scenario=... backends.ardy.image=ghcr.io/hakuturu583/carla_ardy_backend:0.2.0
 ```
 
 The settings every container backend shares are checked when the backend is

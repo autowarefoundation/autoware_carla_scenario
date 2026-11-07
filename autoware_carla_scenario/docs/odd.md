@@ -234,12 +234,15 @@ These live in `autoware_carla_scenario.odd`:
 | `cloud_cover` | `CLOUD_COVERS` | The cloud cover the run was set to (`environment.cloud_cover`), whatever the rain adds to CARLA's cloudiness; when it named none, CARLA's cloudiness: `clear` below 20, `overcast` from 70, `partly_cloudy` between |
 | `road_surface_condition` | `ROAD_SURFACE_CONDITIONS` | CARLA's water: `standing_water` from 50 standing water, `wet` from 10 of either, else `dry` |
 | `illumination` | `ILLUMINATION_LEVELS` | Sun altitude |
-| `rain`, `fog` | `INTENSITY_LEVELS` | CARLA weather (0-100) |
+| `rain`, `fog`, `wind`, `cloudiness` | `INTENSITY_LEVELS` | CARLA weather (0-100): `precipitation`, `fog_density`, `wind_intensity`, `cloudiness` |
+| `road_wetness` | `INTENSITY_LEVELS` | CARLA's `wetness` (0-100) alone: the standing water the rain brings is the rain's |
+| `tire_friction` | float, share of the dry road's grip (1.0) | The wheel friction the run's weather left the vehicles; nothing when nothing set it |
 | `visibility` | float, m | How far drivers see, as the run's weather left it ([Visibility follows the weather](#visibility-follows-the-weather)); nothing when the run set none |
 | `traffic_density` | `TRAFFIC_DENSITY_LEVELS` | Other vehicles within `NEARBY_RADIUS_M` |
 | `nearby_vehicle_count` | int | Other vehicles within `NEARBY_RADIUS_M` |
 | `pedestrian_nearby` | bool | A walker within `NEARBY_RADIUS_M` |
-| `vehicle_<field>_mean`, `vehicle_<field>_std`, `pedestrian_<field>_mean`, `pedestrian_<field>_std` | float | The mean and std of a traffic parameter's spread, as the run set it ([Traffic parameters from the ODD](#traffic-parameters-from-the-odd)); nothing when the run set none |
+| `vehicle_<field>_mean`, `vehicle_<field>_std`, `pedestrian_<field>_mean`, `pedestrian_<field>_std`, `bicycle_<field>_mean`, `bicycle_<field>_std` | float | The mean and std of a traffic parameter's spread, as the run set it ([Traffic parameters from the ODD](#traffic-parameters-from-the-odd)); nothing when the run set none |
+
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
 Without one they return nothing, except `in_junction` and `lane_count`, which
 then read the CARLA waypoint.
@@ -981,9 +984,9 @@ fast `s` changes.)
 The weather and the sun are set for every scenario, through the
 `environment` config, which sets them before the run starts
 (`EnvironmentAction`). The default ODD names the **conditions** -- the
-rainfall rate, the visibility through the fog and the time of day, the
-taxonomy's -- and the built-in probes reading them have controls of their
-own:
+rainfall rate, the visibility through the fog, the time of day, the wind
+speed and the cloud cover, the taxonomy's -- and the built-in probes
+reading them have controls of their own:
 
 | Probe | Key | Range |
 |---|---|---|
