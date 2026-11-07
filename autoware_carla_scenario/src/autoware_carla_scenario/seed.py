@@ -98,7 +98,8 @@ def check_whole_number(key: str, value: int) -> int:
     if TYPE_CHECKING:
         pass
     elif getattr(getattr(value, "dtype", None), "kind", None) == "b" or (
-        getattr(value, "ndim", 0) != 0
+        # numpy's ndim is an int; a stand-in's (a mock's) is not (#1906).
+        isinstance(getattr(value, "ndim", 0), int) and getattr(value, "ndim", 0) != 0
     ):
         # numpy's bool_ (or a 0-d bool array), which float() takes as 0 or
         # 1 (#1900); and an array of one element, which the numpy on Python
