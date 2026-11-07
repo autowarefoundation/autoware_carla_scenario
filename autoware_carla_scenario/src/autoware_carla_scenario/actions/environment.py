@@ -600,11 +600,14 @@ class EnvironmentAction(BaseAction):
     vehicle's wheel friction to the share of the dry road's grip the
     resulting weather leaves (:func:`tire_friction`): *tire_friction* if
     given, else the value at *tire_friction_quantile* of its distribution,
-    which spans :func:`tire_friction_range` -- its median by default, so a
-    dry road keeps the dry grip -- read off each vehicle's rules where they
+    which spans :func:`tire_friction_range` -- by default the quantile an
+    earlier action in the run read the grip at, else its median, so a dry
+    road keeps the dry grip -- read off each vehicle's rules where they
     differ by vehicle.  Under rules other than the default ones (a rule file
     of the run's, or rules by vehicle) every action does, whatever it sets,
-    since their grip may differ from CARLA's on any road (#1937).  The rules
+    since their grip may differ from CARLA's on any road (#1937) -- but one
+    that names no grip, quantile or water keeps a grip named outright
+    earlier in the run.  The rules
     read every CARLA field of the weather it leaves and the conditions the
     run was set to -- the rainfall rate, the visibility through the fog, the
     wind speed, the cloud cover, the time of day CARLA's sun renders, how far
@@ -635,8 +638,9 @@ class EnvironmentAction(BaseAction):
             (1.0): fixed, whatever the weather.  Keyword-only.
         tire_friction_quantile: The quantile of the distribution of grip the
             weather leaves (:func:`tire_friction_range`) the vehicles' is at,
-            0 (its low end) to 1 (its high end); 0.5 when the action sets
-            the grip (:attr:`sets_tire_friction`) and this is not given.  *tire_friction* wins over it.  An ODD sweep
+            0 (its low end) to 1 (its high end); when the action sets
+            the grip (:attr:`sets_tire_friction`) and this is not given,
+            the one an earlier action in the run read it at, else 0.5.  *tire_friction* wins over it.  An ODD sweep
             draws it per case.  Keyword-only.
         visibility_m: How far drivers see, metres.  Keyword-only.
         condition: Trigger condition (see :class:`BaseCondition`).
@@ -744,6 +748,16 @@ class EnvironmentAction(BaseAction):
         """The values this action will apply, by attribute name."""
         return dict(self._settings)
 
+    def _names_grip(self) -> bool:
+        """Whether the action names a tire friction or its quantile, or sets
+        the road's water."""
+        return (
+            self._tire_friction is not None
+            or self._tire_friction_quantile is not None
+            or "wetness" in self._settings
+            or "precipitation_deposits" in self._settings
+        )
+
     @property
     def sets_tire_friction(self) -> bool:
         """Whether the action sets the vehicles' grip: it names a tire
@@ -751,13 +765,7 @@ class EnvironmentAction(BaseAction):
         than the default ones
         (:func:`~autoware_carla_scenario.weather_rules.custom_rules_in_use`),
         whose grip may differ from CARLA's whatever the action sets."""
-        return (
-            self._tire_friction is not None
-            or self._tire_friction_quantile is not None
-            or "wetness" in self._settings
-            or "precipitation_deposits" in self._settings
-            or custom_rules_in_use()
-        )
+        return self._names_grip() or custom_rules_in_use()
 
     @property
     def sets_visibility(self) -> bool:
@@ -818,13 +826,26 @@ class EnvironmentAction(BaseAction):
             set_world_visibility(world.id, seen)
             logger.info("Drivers see %.0f m", seen)
         if self.sets_tire_friction:
+            world_id = world.id
+            quantile = self._tire_friction_quantile
+            if quantile is None and world_id in _TIRE_WEATHER:
+                # The quantile the run's grip is at holds: a later action
+                # reads the grip off its weather at it (a case draws one).
+                quantile = _TIRE_WEATHER[world_id][2]
             if self._tire_friction is not None:
                 apply_tire_friction(world, self._tire_friction)
+            elif (
+                quantile is None
+                and world_id in _TIRE_FACTORS
+                and not self._names_grip()
+            ):
+                # A grip named outright holds against an action that sets
+                # the grip only because the run's rules are its own.
+                pass
             else:
-                quantile = self._tire_friction_quantile
                 apply_weather_grip(
                     world,
-                    _weather_inputs(world.id, weather),
+                    _weather_inputs(world_id, weather),
                     0.5 if quantile is None else quantile,
-                    _weather_labels(world.id, weather),
+                    _weather_labels(world_id, weather),
                 )

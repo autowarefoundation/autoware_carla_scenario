@@ -1109,20 +1109,25 @@ and the conditions themselves, as the ODD's probes read them: the rainfall
 rate, the visibility through the fog and the wind speed the run was set to,
 the cloud cover it was set to (else the one CARLA's clouds render), the time
 of day CARLA's sun renders, and how far drivers see. So a `tire_friction`
-part may read a cause or any other quantity; a cause the run does not name
-reads its `default`, as it does before the run.
+part may read a cause or any other quantity; a rainfall rate, fog
+visibility or wind speed the run does not name reads its `default`, as it
+does before the run, while the time of day and the cloudiness are always
+read off CARLA's sun and clouds (the cloud cover the run names wins).
 
 Under rules other than the default ones -- a rule file of the run's
 (`environment.rules`) or rules by vehicle -- the grip may differ from
 CARLA's on any road, so every `EnvironmentAction` sets it, whatever else it
 sets, and the config's `environment` registers one even when it names only
-`rules`. Under the default rules, a run that sets no road water, no
+`rules`. One that names no grip, quantile or water (a scenario's own that
+sets the sun, say) reads the grip again at the quantile the run's grip is
+at, and keeps a grip named outright (`tire_friction`). Under the default rules, a run that sets no road water, no
 quantile and no grip keeps CARLA's (the default rules' dry grip at its
 median).
 
 Where in the range a run's grip is, is `environment.tire_friction_quantile`:
 the quantile of the grip's distribution (0 its low end, 1 its high end; the
-median when not set). A
+median when not set). A later action in the run that names none -- rain
+starting mid-run -- reads the grip at the same quantile. A
 `sweep.odd_sample` draws it for every case (`environment.tire_friction_quantile=0.412`
 among the case's overrides, recorded in its coverage file), from the sweep's
 `seed` and the case, so the same sweep draws the same grip. The weather comes

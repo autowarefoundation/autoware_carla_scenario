@@ -654,6 +654,86 @@ class TestTheRunsGrip:
         assert run.fleet[0].frictions == pytest.approx(case.fleet[0].frictions)
 
 
+class TestALaterAction:
+    """Under the run's own rules every EnvironmentAction sets the grip; one
+    that names no grip, quantile or water (a scenario's own that sets the
+    sun) keeps the run's quantile, and a grip named outright."""
+
+    @pytest.fixture(autouse=True)
+    def _rules(self, tmp_path) -> None:
+        use_weather_rules(str(_flat_grip_file(tmp_path / "flat.yaml", 0.30, 0.40)))
+
+    @pytest.mark.parametrize(
+        ("first", "grip"),
+        [
+            ({"tire_friction_quantile": 0.0}, 0.30),
+            ({"tire_friction": 0.5}, 0.50),
+            ({"wetness": 80.0, "tire_friction_quantile": 1.0}, 0.40),
+        ],
+    )
+    def test_a_sun_only_action_keeps_the_runs_grip(self, first, grip) -> None:
+        ego = _Vehicle(1, "vehicle.lincoln.mkz", "Ego")
+        world = _world(ego)
+        EnvironmentAction(**first).execute(world)
+        assert world_tire_friction(world.id) == pytest.approx(grip)
+        later = EnvironmentAction(sun_altitude_angle=-10.0)
+        assert later.sets_tire_friction
+        later.execute(world)
+        assert world_tire_friction(world.id) == pytest.approx(grip)
+        assert ego.frictions == pytest.approx([3.5 * grip] * 4)
+
+    def test_a_first_action_naming_no_quantile_gets_the_median(self) -> None:
+        ego = _Vehicle(1, "vehicle.lincoln.mkz", "Ego")
+        world = _world(ego)
+        EnvironmentAction(sun_altitude_angle=-10.0).execute(world)
+        assert world_tire_friction(world.id) == pytest.approx(0.35)
+
+    def test_rain_starting_later_reads_the_grip_at_the_runs_quantile(self) -> None:
+        use_weather_rules(None)
+        ego = _Vehicle(1, "vehicle.lincoln.mkz", "Ego")
+        world = _world(ego)
+        EnvironmentAction(wetness=0.0, tire_friction_quantile=0.0).execute(world)
+        assert world_tire_friction(world.id) == pytest.approx(0.90)
+        EnvironmentAction(wetness=100.0).execute(world)
+        assert world_tire_friction(world.id) == pytest.approx(0.45)
+
+
+def test_a_vehicles_rules_read_causes_and_labels(tmp_path) -> None:
+    """vehicle_at reads a vehicle's file with the causes among the numbers
+    and the labels apart, as the checked environment action gives them."""
+    rain = _rules_v3(
+        tmp_path / "rain.yaml",
+        "rain_film",
+        "{rainfall_rate: [0, 25]}",
+        "[0.9, 0.3]",
+        "[1.1, 0.4]",
+    )
+    dark = _rules_v3(
+        tmp_path / "dark.yaml",
+        "dark",
+        "{time_of_day: [day, dusk, night, dawn]}",
+        "[0.9, 0.9, 0.5, 0.9]",
+        "[1.1, 1.1, 0.6, 1.1]",
+    )
+    use_weather_rules({"vehicles": {"ego": str(rain), "vehicle.mini.*": str(dark)}})
+    labels = {"time_of_day": "night", "cloudiness": "clear"}
+    numbers = {
+        "carla_wetness": 0.0,
+        "carla_precipitation_deposits": 0.0,
+        "rainfall_rate": 25.0,
+    }
+    assert vehicle_at(
+        "tire_friction", numbers, 0.5, "vehicle.lincoln.mkz", "Ego", labels
+    ) == pytest.approx(0.35)
+    assert vehicle_at(
+        "tire_friction", numbers, 0.5, "vehicle.mini.cooper", "", labels
+    ) == pytest.approx(0.55)
+    # Neither entry: the default rules, which read neither.
+    assert vehicle_at(
+        "tire_friction", numbers, 0.5, "vehicle.tesla.model3", "", labels
+    ) == pytest.approx(1.0)
+
+
 def test_the_run_config_names_the_rules_and_a_run_without_resets_them(
     tmp_path, monkeypatch
 ) -> None:
