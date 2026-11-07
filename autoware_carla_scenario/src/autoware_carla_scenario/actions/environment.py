@@ -647,7 +647,8 @@ class EnvironmentAction(BaseAction):
                     raise ValueError(f"EnvironmentAction: {name} {refusal}")
         self._rainfall_rate_mm_h = rainfall_rate_mm_h
         self._fog_visibility_range_m = fog_visibility_range_m
-        if cloud_cover is not None and cloud_cover not in _CLOUD_COVERS:
+        # str(): Codon's Optional[str] `in` a tuple is always False.
+        if cloud_cover is not None and str(cloud_cover) not in _CLOUD_COVERS:
             raise ValueError(
                 f"EnvironmentAction: cloud_cover must be one of "
                 f"{list(_CLOUD_COVERS)}, got {cloud_cover!r}"
