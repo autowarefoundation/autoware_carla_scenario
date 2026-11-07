@@ -53,11 +53,11 @@ def test_hydra_full_error_shows_the_traceback(
 # by the expansion, never as a traceback.
 _BAD_CONTROLS = [
     (
-        "controls.vehicle_ahead_gap_m.range=abc",
+        "+controls.vehicle_ahead_gap_m.range=abc",
         "controls.vehicle_ahead_gap_m.range: expected [low, high]",
     ),
     (
-        "controls.vehicle_ahead_gap_m.range=[30,2]",
+        "+controls.vehicle_ahead_gap_m.range=[30,2]",
         "controls.vehicle_ahead_gap_m.range: expected [low, high] with low <= high",
     ),
     (
@@ -67,6 +67,10 @@ _BAD_CONTROLS = [
     (
         "controls.vehicle_ahead_gap_m.key=scenario.nonexistent",
         "controls.vehicle_ahead_gap_m.key: 'scenario.nonexistent' is not a key",
+    ),
+    (
+        "controls.vehicle_ahead_gap_m.quantity=5",
+        "controls.vehicle_ahead_gap_m.quantity: expected the name of a quantity",
     ),
     (
         "controls.vehicle_ahead_gap_m=5",

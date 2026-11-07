@@ -828,7 +828,7 @@ def test_a_bad_scenario_in_a_glob_prints_no_listing(
         [
             "scenario=cut_in/*",
             "+sweep.odd_sample.count=2",
-            "controls.vehicle_ahead_gap_m.range=[30,2]",
+            "+controls.vehicle_ahead_gap_m.range=[30,2]",
         ]
     )
     captured = capsys.readouterr()

@@ -285,14 +285,15 @@ class EnvironmentAction(BaseAction):
     def __init__(self, cloudiness = None, precipitation = None, precipitation_deposits = None,
                  wetness = None, wind_intensity = None, fog_density = None, fog_distance = None,
                  sun_altitude_angle = None, sun_azimuth_angle = None, condition = None,
-                 timing: TickTiming = TickTiming("pre_tick"), *_kw, rain = None,
+                 timing: TickTiming = TickTiming("pre_tick"), *_kw,
+                 rainfall_rate_mm_h = None, fog_visibility_range_m = None,
                  tire_friction = None, tire_friction_quantile = None,
-                 visibility_m = None, visibility_quantile = None,
+                 visibility_m = None,
                  label: str = "environment",
                  once: bool = True):
-        _keyword_only(_kw, "EnvironmentAction(): rain, tire_friction, "
-                      "tire_friction_quantile, visibility_m, visibility_quantile, "
-                      "label and once")
+        _keyword_only(_kw, "EnvironmentAction(): rainfall_rate_mm_h, "
+                      "fog_visibility_range_m, tire_friction, "
+                      "tire_friction_quantile, visibility_m, label and once")
         _expect_optional_float(cloudiness)
         _expect_optional_float(precipitation)
         _expect_optional_float(precipitation_deposits)
@@ -302,11 +303,11 @@ class EnvironmentAction(BaseAction):
         _expect_optional_float(fog_distance)
         _expect_optional_float(sun_altitude_angle)
         _expect_optional_float(sun_azimuth_angle)
-        _expect_optional_float(rain)
+        _expect_optional_float(rainfall_rate_mm_h)
+        _expect_optional_float(fog_visibility_range_m)
         _expect_optional_float(tire_friction)
         _expect_optional_float(tire_friction_quantile)
         _expect_optional_float(visibility_m)
-        _expect_optional_float(visibility_quantile)
         super().__init__(label, condition, timing, once=once)
 
     @property
@@ -319,6 +320,10 @@ class EnvironmentAction(BaseAction):
 
     @property
     def sets_visibility(self) -> bool:
+        raise NotImplementedError()
+
+    @property
+    def sets_conditions(self) -> bool:
         raise NotImplementedError()
 
 

@@ -72,7 +72,7 @@ dependencies = [
     # from its mean or mode (0.18 could read NaN there), and fits rules to
     # measured data (`Rules.fit`); 0.19.2's type stub parses (0.19.1's
     # stopped mypy, and with it scenario-check's None check).
-    "openodd-py>=0.19.2",
+    "openodd-py>=0.42.0",
     # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
     # to choose the interpreters its wheelhouse is built for.
     "packaging>=23.0",

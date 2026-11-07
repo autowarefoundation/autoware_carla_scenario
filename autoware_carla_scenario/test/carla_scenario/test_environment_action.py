@@ -20,7 +20,7 @@ from autoware_carla_scenario import BaseScenario, EnvironmentAction
 from autoware_carla_scenario.actions.environment import (
     apply_tire_friction,
     follow_tire_friction,
-    rain_weather,
+    forget_weather_conditions,
     tire_friction,
     tire_friction_range,
 )
@@ -106,49 +106,52 @@ class TestIntrospection:
         assert action.settings == {"precipitation": 60.0}
 
 
-class TestRain:
-    def test_rain_brings_the_clouds_and_the_wet_road_of_carlas_presets(self) -> None:
-        """HardRain: precipitation 100, cloudiness 100, deposits 90, wetness 100."""
+class TestConditions:
+    """The conditions a run is set to are recorded, not applied: CARLA's
+    fields render them, worked out before the run (resolve_environment)."""
+
+    @pytest.fixture(autouse=True)
+    def _forget(self) -> None:
+        forget_weather_conditions()
+
+    def test_they_are_recorded_for_the_odds_probes(self) -> None:
+        from autoware_carla_scenario.odd import probes
+
         world = _world()
-        EnvironmentAction(rain=100.0).execute(world)
+        world.id = 7
+        assert probes.rainfall_rate_mm_h(world) is None
+        action = EnvironmentAction(rainfall_rate_mm_h=3.0, fog_visibility_range_m=400.0)
+        assert action.sets_conditions and action.settings == {}
+        action.execute(world)
+        world.set_weather.assert_not_called()
+        assert probes.rainfall_rate_mm_h(world) == 3.0
+        assert probes.fog_visibility_range_m(world) == 400.0
+        forget_weather_conditions()
+        assert probes.rainfall_rate_mm_h(world) is None
+        assert probes.fog_visibility_range_m(world) is None
 
+    def test_carlas_fields_alone_record_none(self) -> None:
+        from autoware_carla_scenario.odd import probes
+
+        world = _world()
+        world.id = 7
+        EnvironmentAction(precipitation=80.0).execute(world)
+        assert probes.rainfall_rate_mm_h(world) is None
+
+    def test_what_resolve_environment_works_out_is_applied(self) -> None:
+        from autoware_carla_scenario.weather_rules import resolve_environment
+
+        world = _world()
+        settings = resolve_environment({"rainfall_rate_mm_h": 25.0})
+        EnvironmentAction(**settings).execute(world)
         weather = _applied(world)
-        assert math.isclose(weather.precipitation, 100.0)
-        assert math.isclose(weather.cloudiness, 100.0)
-        assert math.isclose(weather.precipitation_deposits, 90.0)
-        assert math.isclose(weather.wetness, 100.0)
+        # Heavy rain: what CARLA's HardRain preset pairs with it.
+        assert weather.precipitation == pytest.approx(97.5)
+        assert weather.cloudiness == pytest.approx(97.5, abs=3.0)
+        assert weather.wetness == pytest.approx(97.5, abs=3.0)
 
-    def test_between_presets_it_is_interpolated(self) -> None:
-        settings = EnvironmentAction(rain=45.0).settings
-        assert settings["precipitation"] == pytest.approx(45.0)
-        assert settings["cloudiness"] == pytest.approx(70.0)
-        assert settings["precipitation_deposits"] == pytest.approx(55.0)
-        assert settings["wetness"] == pytest.approx(45.0)
-
-    def test_no_rain_is_a_dry_clear_sky(self) -> None:
-        settings = EnvironmentAction(rain=0.0).settings
-        assert settings == {
-            "precipitation": 0.0,
-            "cloudiness": 0.0,
-            "precipitation_deposits": 0.0,
-            "wetness": 0.0,
-        }
-
-    def test_a_field_given_beside_rain_wins(self) -> None:
-        settings = EnvironmentAction(rain=100.0, cloudiness=20.0).settings
-        assert settings["cloudiness"] == pytest.approx(20.0)
-        assert settings["wetness"] == pytest.approx(100.0)
-
-    def test_rain_is_clamped_to_its_range(self) -> None:
-        assert EnvironmentAction(rain=150.0).settings["precipitation"] == 100.0
-        assert EnvironmentAction(rain=-5.0).settings["precipitation"] == 0.0
-
-    def test_rain_and_precipitation_together_is_an_error(self) -> None:
-        with pytest.raises(ValueError, match="rain or precipitation"):
-            EnvironmentAction(rain=50.0, precipitation=10.0)
-
-    def test_rain_is_keyword_only(self) -> None:
-        """A twelfth positional argument has nowhere to go: rain is keyword-only."""
+    def test_they_are_keyword_only(self) -> None:
+        """A twelfth positional argument has nowhere to go."""
         positional: list = [None] * 11
         with pytest.raises(TypeError):
             EnvironmentAction(*positional, 50.0)  # type: ignore[call-arg]
@@ -165,11 +168,11 @@ _NUMERIC_ARGUMENTS = (
     "fog_distance",
     "sun_altitude_angle",
     "sun_azimuth_angle",
-    "rain",
+    "rainfall_rate_mm_h",
+    "fog_visibility_range_m",
     "tire_friction",
     "tire_friction_quantile",
     "visibility_m",
-    "visibility_quantile",
 )
 _PERCENT_ARGUMENTS = (
     "cloudiness",
@@ -217,9 +220,11 @@ class TestRefusedValues:
             "sun_azimuth_angle": 720.0,
         }
 
-    def test_rain_weather_refuses_nan_rather_than_reaching_unreachable(self) -> None:
-        with pytest.raises(ValueError, match="rain must be finite"):
-            rain_weather(math.nan)
+    def test_a_negative_rainfall_rate_or_no_fog_visibility_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="rainfall_rate_mm_h must not be negative"):
+            EnvironmentAction(rainfall_rate_mm_h=-1.0)
+        with pytest.raises(ValueError, match="fog_visibility_range_m must be positive"):
+            EnvironmentAction(fog_visibility_range_m=0.0)
 
 
 class TestTheEnvironmentConfig:
@@ -237,7 +242,14 @@ class TestTheEnvironmentConfig:
         return registered
 
     @pytest.mark.parametrize(
-        "key", ["rain", "wetness", "fog_density", "tire_friction", "visibility_m"]
+        "key",
+        [
+            "rainfall_rate_mm_h",
+            "wetness",
+            "fog_density",
+            "tire_friction",
+            "visibility_m",
+        ],
     )
     @pytest.mark.parametrize("value", ["nan", "inf", "-inf"])
     def test_a_non_finite_value_names_the_key(self, key: str, value: str) -> None:
@@ -288,9 +300,22 @@ class TestTheEnvironmentConfig:
             run.check_run_config(cfg)
 
     def test_finite_values_are_taken(self) -> None:
-        (action,) = self._add({"rain": 150, "wetness": 40, "tire_friction": 0.8})
-        assert action.settings["precipitation"] == 100.0
+        (action,) = self._add(
+            {"rainfall_rate_mm_h": 25, "wetness": 40, "tire_friction": 0.8}
+        )
+        # Worked out from the rainfall rate, before the run.
+        assert action.settings["precipitation"] == pytest.approx(97.5)
+        # Set by the config: kept.
         assert action.settings["wetness"] == 40.0
+
+    def test_a_time_of_day_is_one_of_the_taxonomys(self) -> None:
+        (action,) = self._add({"time_of_day": "night"})
+        assert action.settings["sun_altitude_angle"] < -6.0
+        assert action.sets_visibility
+        with pytest.raises(
+            ValueError, match=r"environment\.time_of_day must be one of"
+        ):
+            self._add({"time_of_day": "noon"})
 
 
 class _Vehicle:
@@ -359,22 +384,22 @@ class TestTireFrictionRange:
 
 
 class TestTireFriction:
-    def test_rain_scales_every_vehicles_wheels(self) -> None:
+    def test_a_wet_road_scales_every_vehicles_wheels(self) -> None:
         world = _world_with(_Vehicle(1), _Vehicle(2, friction=2.0))
-        EnvironmentAction(rain=100.0, tire_friction_quantile=0.0).execute(world)
+        EnvironmentAction(wetness=100.0, tire_friction_quantile=0.0).execute(world)
 
-        # rain=100: wetness 100, so the low end of a flooded road's range.
+        # Wetness 100: the low end of a flooded road's range.
         assert world.fleet[0].frictions == pytest.approx([3.5 * 0.45] * 4)
         assert world.fleet[1].frictions == pytest.approx([2.0 * 0.45] * 4)
 
     def test_the_middle_of_the_range_by_default(self) -> None:
         world = _world_with(_Vehicle(1))
-        EnvironmentAction(rain=100.0).execute(world)
+        EnvironmentAction(wetness=100.0).execute(world)
         assert world.fleet[0].frictions == pytest.approx([3.5 * 0.55] * 4)
 
     def test_a_dry_road_at_its_middle_leaves_the_vehicles_alone(self) -> None:
         world = _world_with(_Vehicle(1))
-        EnvironmentAction(rain=0.0).execute(world)
+        EnvironmentAction(wetness=0.0, precipitation_deposits=0.0).execute(world)
         assert world.fleet[0].applied == 0
 
     def test_weather_off_the_road_does_not_touch_the_grip(self) -> None:
@@ -387,7 +412,7 @@ class TestTireFriction:
     def test_a_fixed_friction_wins_over_the_weather(self) -> None:
         world = _world_with(_Vehicle(1))
         EnvironmentAction(
-            rain=100.0, tire_friction=0.3, tire_friction_quantile=1.0
+            wetness=100.0, tire_friction=0.3, tire_friction_quantile=1.0
         ).execute(world)
         assert world.fleet[0].frictions == pytest.approx([3.5 * 0.3] * 4)
 
@@ -525,7 +550,7 @@ class TestFollowingTheGrip:
 
     def test_a_wet_road_is_followed_once(self) -> None:
         scenario = self._scenario()
-        scenario.register_init(EnvironmentAction(rain=80.0))
+        scenario.register_init(EnvironmentAction(wetness=80.0))
         scenario.register_pre_tick(EnvironmentAction(tire_friction=0.5))
         assert scenario._post_tick_callbacks.count(follow_tire_friction) == 1
 
@@ -536,7 +561,8 @@ class TestFollowingTheGrip:
 
 
 class TestVisibility:
-    """How far drivers see follows the weather the action leaves."""
+    """How far drivers see is the number the action is given: worked out from
+    the conditions before the run (resolve_environment), not by the action."""
 
     @pytest.fixture(autouse=True)
     def _forget(self) -> None:
@@ -549,51 +575,32 @@ class TestVisibility:
 
         return world_visibility(world.id)
 
-    def test_fog_shortens_it_to_the_middle_of_its_range(self) -> None:
+    def test_the_visibility_given_is_recorded(self) -> None:
         world = _world()
         world.id = 5
-        EnvironmentAction(fog_density=100.0).execute(world)
-        assert self._seen(world) == pytest.approx(27.5)
-
-    def test_night_comes_from_the_sun(self) -> None:
-        world = _world()
-        world.id = 5
-        EnvironmentAction(sun_altitude_angle=-30.0, visibility_quantile=0.0).execute(
-            world
-        )
-        assert self._seen(world) == pytest.approx(50.0)
-
-    def test_rain_counts_the_weather_the_world_already_has(self) -> None:
-        world = _world(sun_altitude_angle=-30.0)
-        world.id = 5
-        EnvironmentAction(rain=100.0, visibility_quantile=1.0).execute(world)
-        # Heavy rain at night: the rain's and the night's 150 m.
-        assert self._seen(world) == pytest.approx(150.0)
-
-    def test_a_fixed_visibility_wins_over_the_weather(self) -> None:
-        world = _world()
-        world.id = 5
-        EnvironmentAction(
-            fog_density=100.0, visibility_m=200.0, visibility_quantile=0.0
-        ).execute(world)
-        assert self._seen(world) == 200.0
-
-    def test_the_visibility_alone_needs_no_weather(self) -> None:
-        world = _world(sun_altitude_angle=-30.0)
-        world.id = 5
-        action = EnvironmentAction(visibility_quantile=1.0)
+        action = EnvironmentAction(visibility_m=80.0)
         assert action.sets_visibility and not action.sets_tire_friction
         action.execute(world)
         world.set_weather.assert_not_called()
-        assert self._seen(world) == pytest.approx(150.0)
+        assert self._seen(world) == 80.0
 
-    def test_weather_that_does_not_hide_the_road_sets_none(self) -> None:
+    def test_carlas_weather_alone_sets_none(self) -> None:
         world = _world()
         world.id = 5
-        action = EnvironmentAction(cloudiness=80.0, wetness=40.0)
+        action = EnvironmentAction(fog_density=100.0, sun_altitude_angle=-30.0)
         assert not action.sets_visibility
         action.execute(world)
         assert self._seen(world) is None
+
+    def test_the_conditions_give_it_before_the_run(self) -> None:
+        from autoware_carla_scenario.weather_rules import resolve_environment
+
+        world = _world()
+        world.id = 5
+        settings = resolve_environment({"fog_visibility_range_m": 15.0})
+        EnvironmentAction(**settings).execute(world)
+        # Thick fog: 12-18 m, at its median.
+        assert self._seen(world) == pytest.approx(15.0)
 
     def test_the_probe_reads_it(self) -> None:
         from autoware_carla_scenario.odd import probes
@@ -608,7 +615,7 @@ class TestVisibility:
         "kwargs, message",
         [
             ({"visibility_m": 0.0}, "positive"),
-            ({"visibility_quantile": -0.1}, r"\[0, 1\]"),
+            ({"tire_friction_quantile": -0.1}, r"\[0, 1\]"),
         ],
     )
     def test_out_of_range_is_refused(self, kwargs: dict, message: str) -> None:

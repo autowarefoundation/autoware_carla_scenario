@@ -68,7 +68,7 @@ See [ODD](odd.md).
 | `register_odd(name, builder)`, `resolve_odd(spec)` | Name an ODD; turn a name, `.yaml` path or `module:function` into one. Packages register through the `autoware_carla_scenario.odds` entry point group (a function calling `register_odd`). |
 | `load_odd_file(path)`, `load_odd_binding(path)`, `load_openodd(*sources, bindings, name, text, situations)` | Read ASAM OpenODD 1.0 YAML (`IMPORT`, `TAXONOMY`, `MODULES`, `ODD`), with a binding file naming the probes. |
 | `GitSource(url, rev, path)`, `GitSourceError` | An OpenODD file in a git repository at a revision, for `load_openodd()` or a binding file's `openodd` list. |
-| `ego_speed_kph`, `speed_limit_kph`, `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph`, `in_junction`, `lane_count`, `illumination`, `rain`, `fog`, `traffic_density`, `pedestrian_nearby` | Built-in probes. |
+| `ego_speed_kph`, `speed_limit_kph`, `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph`, `road_type`, `drivable_area_type`, `in_junction`, `lane_count`, `rainfall_rate_mm_h`, `fog_visibility_range_m`, `time_of_day`, `illumination`, `rain`, `fog`, `traffic_density`, `nearby_vehicle_count`, `pedestrian_nearby` | Built-in probes. |
 | `lanelet_in_junction(lanelet)`, `lanelet_road_type(lanelet)`, `lanelet_speed_limit(lanelet)` | What the Lanelet2 probes read off one lanelet: its junction, road type (`subtype`) and speed limit (km/h). |
 | `scenario_measure(key)`, `ScenarioMeasure` | The probe mapping an attribute onto the running scenario's measure *key* (`measure:` in a binding file). See [Scenario measures](odd.md#scenario-measures). |
 | `typecheck.typecheck_odd(builder)` | Compile a Python ODD with Codon. |

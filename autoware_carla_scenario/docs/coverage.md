@@ -162,27 +162,30 @@ whether the tick was inside the ODD. [ODD](odd.md) explains how to write one
 in Python or OpenODD YAML.
 
 The built-in `default` ODD has no modules, so every condition is inside it.
-Its attributes are a first subset of the
-[ISO 34503](https://www.iso.org/standard/78952.html) taxonomy, from each of its
-three top-level categories:
+Its attributes are a subset of tier4/taxonomy, under its ids (`SE` below is
+`scenery_elements.scenery_elements.scenery_element`, `EC`
+`environment_conditions.environment_conditions`), after
+[ISO 34503](https://www.iso.org/standard/78952.html)'s three top-level
+categories; what tier4/taxonomy does not declare yet keeps an id of its own
+(`scenery.*`, `dynamic.*`):
 
 | Item | Buckets | Read from |
 |---|---|---|
 | `odd.scenery.junction` | false, true | Lanelet2 `turn_direction` tag of the ego's lanelet, else the ego's CARLA waypoint |
 | `odd.scenery.location` ² | urban, nonurban, private | Lanelet2 `location` tag of the ego's lanelet |
-| `odd.scenery.road_type` ² | road, highway, road_shoulder, play_street, parking | Lanelet2 `subtype` tag of the ego's lanelet |
-| `odd.scenery.speed_limit` ² | 0-30-40-50-60-80-100-130 km/h | Lanelet2 `speed_limit` tag, else `vehicle.get_speed_limit()` |
-| `odd.scenery.lane_count` ² | 1, 2, 3, 4 | Driving lanes in the ego's direction, outside junctions (Lanelet2 routing graph, else the CARLA waypoint) |
-| `odd.environment.illumination` | day, low_sun, twilight, night | Sun altitude: day from 15°, low sun from 0°, civil twilight to -6° |
-| `odd.environment.rain` | none, light, moderate, heavy | CARLA precipitation (0-100): 1, 30, 70 |
-| `odd.environment.fog` | none, light, moderate, heavy | CARLA fog density (0-100): 1, 30, 70 |
-| `odd.dynamic.ego_speed` ³ | 0-5, then 10 km/h wide centred on 10, 20, ... 120 (5-15, 15-25, ...) | Ego velocity |
-| `odd.dynamic.traffic_density` | none, low (1-2), medium (3-5), high (6+) | Other vehicles within 50 m |
+| `odd.SE.road_infrastructure.road_type` ² | local_road, primary_road, highway | Lanelet2 `subtype` `highway`; Lanelet2 tells no local road from a primary one, so those are not measured |
+| `odd.SE.zones_and_areas.area.drivable_area_type` ² | lane, shoulder, parking_space, mixed_pedestrian_and_vehicular_traffic | Lanelet2 `subtype` tag of the ego's lanelet |
+| `odd.SE.road_infrastructure.speed_limit` ² | 0-30-40-50-60-80-100-130 km/h | Lanelet2 `speed_limit` tag, else `vehicle.get_speed_limit()` |
+| `odd.SE.lane_infrastructure.detailed_lane_structure.through_lanes.lane_count` ² | 1, 2, 3, 4 | Driving lanes in the ego's direction, outside junctions (Lanelet2 routing graph, else the CARLA waypoint) |
+| `odd.EC.weather.rain.rainfall_rate`, `...rain_intensity` | no_rain, light_rain (0.1-2.5 mm/h), moderate_rain (2.5-7.6), heavy_rain | The rainfall rate the run was set to |
+| `odd.EC.weather.fog.fog_visibility_range`, `...fog_level` | fog_thick (under 50 m), fog_heavy (50-450), fog_medium (450-800), fog_mist (800-1600), fog_not_detectable | The visibility through the fog the run was set to |
+| `odd.EC.illumination.time_of_day` | day, dusk, night, dawn | The sun: day above the horizon, dusk or dawn (setting or rising) down to -6°, night under it |
+| `odd.ego_vehicle.ego_vehicle.velocity` ³ | 0-5, then 10 km/h wide centred on 10, 20, ... 120 (5-15, 15-25, ...) | Ego velocity |
+| `odd.dynamic.nearby_vehicle_count` | 0, 1-2, 3-5, 6+ | Other vehicles within 50 m |
 | `odd.dynamic.pedestrian_nearby` | false, true | A walker within 50 m |
-| `odd.dynamic.vehicle_ahead_gap@v2` ⁴ ⁵ | 0-10-20-30-50-100 m | Scenario measure `vehicle_ahead_gap_m`: bumper to bumper, along the ego's lane, to the nearest vehicle ahead on its lane or a lane beside it |
-| `odd.dynamic.vehicle_ahead_relative_speed@v2` ⁴ ⁵ | -30, -15, -5, 5, 15, 30 km/h | Scenario measure `vehicle_ahead_relative_speed_kph`, along the ego's lane |
-| `odd.dynamic.crossing_pedestrian_gap` | 0-10-20-30-50 m | Scenario measure `crossing_pedestrian_gap_m`: how far ahead a pedestrian crossing ahead set off |
-| `odd.dynamic.crossing_pedestrian_speed` | 0.5, 1, 1.5, 2.5, 4 m/s | Scenario measure `crossing_pedestrian_speed_ms` |
+
+What a scenario sets up -- the vehicle ahead, a pedestrian crossing -- is no
+attribute of it: the rules draw it, and a case records the value it drew.
 
 ² Covered by a stay of 2 s or more (`cover_by="entries", min_stay=2`).
 Clipping a section while merging or changing lanes does not cover it.
@@ -195,11 +198,9 @@ centred on the multiples of 10 km/h, where speed limits are, so an ego
 cruising at 50 km/h stays in `[45, 55)` instead of flickering between two
 buckets whose edge is at 50.
 
-⁴ Covered by a stay of 1 s or more (`min_stay=1`): a gap the ego only closes through is not covered.
-
-⁵ The item of a measure past its first definition is named for its version
-(`@v2`), so it is never merged with the same attribute measured the old way
-([Measure versions](odd.md#measure-versions)).
+An ODD's item of a measure past its first definition is named for its
+version (`@v2`), so it is never merged with the same attribute measured the
+old way ([Measure versions](odd.md#measure-versions)).
 
 A reading the simulator does not support returns nothing. The item then has
 no samples, the report says so, and the run is not affected. Examples are the

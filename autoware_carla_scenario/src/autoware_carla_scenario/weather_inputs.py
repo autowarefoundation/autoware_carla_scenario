@@ -3,9 +3,10 @@
 The weather rules (:mod:`autoware_carla_scenario.weather_rules`) are read
 with openodd; this is the plain part behind them, in plain Python so that
 modules checked with Codon can use it: the quantities the framework reads
-(:data:`QUANTITIES`), the weather's fields a rule may read
-(:data:`WEATHER_INPUTS`), the values a rule reads of the weather
-(:func:`rule_values`), and which ``vehicles`` entry of ``environment.rules``
+(:data:`QUANTITIES`), the causes a rule may read (:data:`WEATHER_INPUTS`)
+and the settings that give them (:data:`CAUSE_SETTINGS`), the quantity each
+of CARLA's weather fields is (:data:`CARLA_QUANTITIES`), the values a rule
+reads (:func:`rule_values`), and which ``vehicles`` entry of ``environment.rules``
 a vehicle follows (:func:`vehicle_entry`).
 """
 
@@ -15,6 +16,8 @@ import fnmatch
 from collections.abc import Mapping
 
 __all__ = [
+    "CARLA_QUANTITIES",
+    "CAUSE_SETTINGS",
     "EGO_KEY",
     "QUANTITIES",
     "WEATHER_INPUTS",
@@ -22,24 +25,50 @@ __all__ = [
     "vehicle_entry",
 ]
 
-#: The quantities the framework reads.
-QUANTITIES: tuple[str, ...] = ("tire_friction", "visibility", "sight_speed")
-
-#: The weather's fields a part may read, as CARLA's ``WeatherParameters``
-#: name them, and ``water``: the larger of ``wetness`` and
-#: ``precipitation_deposits``, which the road's grip follows.
-WEATHER_INPUTS: tuple[str, ...] = (
-    "cloudiness",
-    "precipitation",
-    "precipitation_deposits",
-    "wetness",
-    "wind_intensity",
-    "fog_density",
-    "fog_distance",
-    "sun_altitude_angle",
-    "sun_azimuth_angle",
-    "water",
+#: The quantities the framework reads: CARLA's weather settings, which
+#: render the conditions a run is given, and what those do to the road and
+#: the drivers.
+QUANTITIES: tuple[str, ...] = (
+    "carla_precipitation",
+    "carla_cloudiness",
+    "carla_precipitation_deposits",
+    "carla_wetness",
+    "carla_fog_density",
+    "carla_sun_altitude",
+    "carla_sun_azimuth",
+    "tire_friction",
+    "visibility",
+    "sight_speed",
 )
+
+#: The causes a part may read: concepts of the taxonomy the rules name
+#: (openodd's bundled default, a subset of tier4/taxonomy) -- the rainfall
+#: rate (mm/h), the visibility through the fog (m) and the time of day.
+WEATHER_INPUTS: tuple[str, ...] = (
+    "rainfall_rate",
+    "fog_visibility_range",
+    "time_of_day",
+)
+
+#: The ``environment`` setting that gives each cause, in the unit its name
+#: says: what a run's config, and the sampler, write.
+CAUSE_SETTINGS: dict[str, str] = {
+    "rainfall_rate_mm_h": "rainfall_rate",
+    "fog_visibility_range_m": "fog_visibility_range",
+    "time_of_day": "time_of_day",
+}
+
+#: The quantity that is each of CARLA's weather fields, by the field's name
+#: (``carla.WeatherParameters``).
+CARLA_QUANTITIES: dict[str, str] = {
+    "precipitation": "carla_precipitation",
+    "cloudiness": "carla_cloudiness",
+    "precipitation_deposits": "carla_precipitation_deposits",
+    "wetness": "carla_wetness",
+    "fog_density": "carla_fog_density",
+    "sun_altitude_angle": "carla_sun_altitude",
+    "sun_azimuth_angle": "carla_sun_azimuth",
+}
 
 #: The ``vehicles`` key naming the ego (``role_name`` ``Ego``).
 EGO_KEY: str = "ego"
@@ -47,14 +76,8 @@ _EGO_ROLE: str = "Ego"
 
 
 def rule_values(values: Mapping[str, float]) -> dict[str, float]:
-    """What the rules read of the weather *values*: those, and ``water``
-    from ``wetness`` and ``precipitation_deposits`` when not given."""
-    out = {str(k): float(v) for k, v in values.items()}
-    if "water" not in out and ("wetness" in out or "precipitation_deposits" in out):
-        out["water"] = max(
-            out.get("wetness", 0.0), out.get("precipitation_deposits", 0.0)
-        )
-    return out
+    """What the rules read of *values*: each as a float."""
+    return {str(k): float(v) for k, v in values.items()}
 
 
 def vehicle_entry(patterns: list[str], type_id: str, role: str) -> int:

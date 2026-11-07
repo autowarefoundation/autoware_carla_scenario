@@ -3,10 +3,12 @@
 CARLA's weather is drawn, never seen by its traffic: the TrafficManager's
 vehicles know where every other actor is whatever the fog.  A driver does
 not, and drives so that they can stop within the road they can see.  So the
-visibility is a quantity of the run of its own, in metres, which the weather
-bounds (:func:`visibility_range`, by the weather rules of
-:mod:`autoware_carla_scenario.weather_rules`) and a traffic backend that models drivers'
-sight follows -- the ``sumo`` backend holds its traffic to the speed its
+visibility is a quantity of the run of its own, in metres, which the
+conditions the run is given bound (the weather rules' ``visibility``, by
+the rainfall rate, the visibility through the fog and the time of day:
+:mod:`autoware_carla_scenario.weather_rules`), worked out before the run
+(:func:`~autoware_carla_scenario.weather_rules.resolve_environment`), and a
+traffic backend that models drivers' sight follows -- the ``sumo`` backend holds its traffic to the speed its
 drivers keep in it (:func:`sight_speed_at`: the rules' ``sight_speed``, which
 reads the visibility, never above the speed a car stops from within it,
 :func:`sight_speed`).  The TrafficManager has no such
@@ -14,8 +16,8 @@ notion of its own: the ``traffic_manager`` backend holds its vehicles to it
 with ``follow_visibility: true``, and otherwise logs what it would hold them
 to.
 
-:class:`~autoware_carla_scenario.EnvironmentAction` sets it, when it sets the
-fog, the rain or the sun (or names a visibility), for the world it acts on
+:class:`~autoware_carla_scenario.EnvironmentAction` sets it, when it names a
+visibility, for the world it acts on
 (:func:`set_world_visibility`); a backend reads it there every tick
 (:func:`world_visibility`), so a weather that changes during a run changes it
 too.  The runner forgets it at the start of every run
@@ -31,7 +33,7 @@ from __future__ import annotations
 import math
 from typing import Optional
 
-from .weather_rules import weather_at, weather_range
+from .weather_rules import weather_at
 
 __all__ = [
     "DEFAULT_DECEL",
@@ -42,8 +44,6 @@ __all__ = [
     "set_world_visibility",
     "sight_speed",
     "sight_speed_at",
-    "visibility",
-    "visibility_range",
     "world_visibility",
 ]
 
@@ -53,63 +53,10 @@ DEFAULT_DECEL: float = 4.5
 DEFAULT_REACTION_S: float = 1.0
 
 
-def visibility_range(
-    fog_density: float = 0.0,
-    precipitation: float = 0.0,
-    sun_altitude_angle: float = 90.0,
-) -> tuple[float, float]:
-    """The ``(low, high)`` distance a driver sees in this weather, metres.
-
-    The weather rules' ``visibility``
-    (:mod:`autoware_carla_scenario.weather_rules`): by default, the fog, the
-    rain and the light each bound it, and the shortest bound holds -- fog at
-    night is seen through no further than either.  Each range spans what
-    eyes, windscreens, headlights and the road's own lighting make of the same
-    weather.
-
-    Args:
-        fog_density: The weather's ``fog_density``, 0-100.
-        precipitation: Its ``precipitation``, 0-100.
-        sun_altitude_angle: Its ``sun_altitude_angle``, degrees above the
-            horizon.
-    """
-    return weather_range(
-        "visibility",
-        {
-            "fog_density": float(fog_density),
-            "precipitation": float(precipitation),
-            "sun_altitude_angle": float(sun_altitude_angle),
-        },
-    )
-
-
-def visibility(
-    fog_density: float = 0.0,
-    precipitation: float = 0.0,
-    sun_altitude_angle: float = 90.0,
-    quantile: float = 0.5,
-) -> float:
-    """The distance at *quantile* (0-1) of the distribution of
-    :func:`visibility_range`, metres.
-
-    0.5, the default, is its median.  Each of the fog, the rain and the light
-    gives its distance at *quantile*, and the shortest holds.
-    """
-    return weather_at(
-        "visibility",
-        {
-            "fog_density": float(fog_density),
-            "precipitation": float(precipitation),
-            "sun_altitude_angle": float(sun_altitude_angle),
-        },
-        quantile,
-    )
-
-
 def at_quantile(low: float, high: float, quantile: float) -> float:
     """The point *quantile* (clamped to 0-1) of the way from *low* to *high*:
     the quantile of a uniform distribution.  The weather rules' quantities
-    take theirs from their own distributions (:func:`visibility`)."""
+    take theirs from their own distributions."""
     q = min(max(float(quantile), 0.0), 1.0)
     return low + q * (high - low)
 

@@ -60,13 +60,16 @@ _registry.add_entry_point_group(ENTRY_POINT_GROUP)
 def default_odd() -> OddDefinition:
     """The built-in ODD: openodd's bundled ``default``, measured in CARLA.
 
-    Every attribute the framework measures, after ISO 34503, and no modules:
-    scenery (junction, speed limit, lane count, the Lanelet2 ``location`` and
-    ``subtype`` tags), environmental conditions (illumination, rain, fog) and
-    dynamic elements (ego speed, traffic density, pedestrians nearby, and --
-    mapped onto the running scenario's measures -- the vehicle ahead and a
-    pedestrian crossing ahead). Its files ship with openodd, so its revision
-    changes only when they do. See ``docs/odd.md``.
+    Every attribute the framework measures, after ISO 34503, and no modules,
+    under tier4/taxonomy's ids where it has them: scenery (road type,
+    drivable area type, speed limit, lane count; the junction and the
+    Lanelet2 ``location`` tag), environmental conditions (the rainfall rate
+    and rain intensity, the visibility through the fog and fog level, the
+    time of day) and dynamic elements (ego speed, the vehicles and
+    pedestrians nearby). What a scenario sets up -- the vehicle ahead, a
+    pedestrian crossing -- is no attribute: the rules draw it. Its files
+    ship with openodd, so its revision changes only when they do. See
+    ``docs/odd.md``.
     """
     from openodd import bundled_odd  # noqa: PLC0415
 
