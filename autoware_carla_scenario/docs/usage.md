@@ -809,6 +809,7 @@ rerun outputs/2026-10-18/08-48-12/CutInScenario-3.rrd     # the Rerun viewer
 |-----------|------|---------|-------------|
 | `rerun.enabled` | bool | `false` | Convert each run's trajectory log into `{ScenarioName}.rrd` as soon as the run ends |
 | `rerun.strict` | bool | `false` | Fail the conversion of a log with a record type or a field the converter does not know, rather than skip it with a warning |
+| `rerun.draw_radius_m` | float | `null` | Write only what comes this near the ego's trajectory, in metres: the map, the traffic lights and other actors (`autoware-carla-scenario-rerun` 0.3 or newer). `null` writes all of it |
 | `rerun.lidar` | bool | `false` | Put the LiDAR sweeps the ego's driver policy gets into the recording too ([Sensors](#sensors-in-the-recording)) |
 | `rerun.lidar_max_points` | int | `65536` | At most this many points of a sweep (an even subsample); `0` keeps them all |
 | `rerun.cameras` | bool | `false` | Put the camera frames the ego's driver policy gets into the recording too ([Sensors](#sensors-in-the-recording)) |

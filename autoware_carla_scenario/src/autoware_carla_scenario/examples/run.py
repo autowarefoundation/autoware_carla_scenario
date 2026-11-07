@@ -1306,6 +1306,28 @@ def _rerun_settings(cfg: DictConfig) -> tuple[bool, bool]:
     return _switch(cfg, "rerun", "enabled"), _switch(cfg, "rerun", "strict")
 
 
+def _rerun_draw_radius(cfg: DictConfig) -> float | None:
+    """``rerun.draw_radius_m``: ``None`` when unset.
+
+    Raises:
+        ValueError: It is not a finite distance.
+    """
+    settings = cfg.get("rerun") or {}
+    value = settings.get("draw_radius_m", None)
+    if value is None:
+        return None
+    if (
+        isinstance(value, (bool, str))
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0.0
+    ):
+        raise ValueError(
+            f"rerun.draw_radius_m must be a finite distance, got {value!r}"
+        )
+    return float(value)
+
+
 def _rerun_lidar_max_points(cfg: DictConfig) -> int | None:
     """``rerun.lidar_max_points`` when ``rerun.lidar`` is set; ``None`` otherwise.
 
@@ -1349,6 +1371,8 @@ def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
     ``rerun.strict``); ``None`` otherwise.  With ``rerun.lidar`` it records
     each run's LiDAR sweeps too (the largest ``rerun.lidar_max_points`` of
     those asking, 0 being all), and with ``rerun.cameras`` its camera frames.
+    ``rerun.draw_radius_m`` is the largest of those asking for recordings; one
+    of them without it means no limit, since one converter serves the batch.
 
     Called before anything runs, so a run asking for recordings without the
     ``rerun`` extra installed, or with a ``rerun.lidar_max_points`` that is not
@@ -1379,6 +1403,12 @@ def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
         sensors["lidar_max_points"] = 0 if 0 in lidar else max(lidar)
     if cameras:
         sensors["cameras"] = True
+    radii = [
+        _rerun_draw_radius(cfg) for cfg, (enabled, _) in zip(cfgs, settings) if enabled
+    ]
+    limits = [radius for radius in radii if radius is not None]
+    if len(limits) == len(radii):
+        sensors["draw_radius_m"] = max(limits)
     return RerunConverter(strict=strict, **sensors)
 
 
