@@ -332,8 +332,9 @@ already a FAIL condition. The two transition states are each held for exactly
 one tick, so a condition watching `startTransition` sees it.
 
 `runningState` and `endTransition` are only reached by an action that *runs
-on*: one with an `until` condition, or one that re-sends its command every
-tick. An action with neither -- a traffic light set, say -- is over the moment
+on*: one whose completion criteria the world takes time to meet (a lane change
+settling, a trajectory being followed), or one that re-sends its command every tick.
+An action with neither -- a traffic light set, say -- is over the moment
 it is commanded: on the tick after `startTransition` it goes straight to
 `completeState` (back to `standbyState` when it repeats), so waiting on
 *Running* or *End* for it never holds. Wait on *Complete* instead
@@ -712,16 +713,29 @@ register_action_spec(
         title="Lane Change",
         category="Vehicle / Motion",
         builder="build_lane_change_action",
+        target="..actions:LaneChangeAction",
         visual_kind="instant",
         fields=(FieldSpec("direction", "Direction", "select", "left", _DIRECTIONS),),
     )
 )
 ```
 
-plus a matching factory in `authoring.builders` that returns the framework's own
-class. The inspector, the canvas, validation and the compiler all pick it up
-with no template edit. `test_authoring_registry.py` fails if a spec names a
-builder that does not exist, or a visual that names a field the primitive lacks.
+`target` names the framework's own class the card builds, and the builder
+named by `builder` is *generated* from that class's constructor signature into
+`authoring._builders_generated` by `authoring.codegen` -- no factory is written
+by hand. A field whose name differs from the constructor keyword is mapped with
+`argmap`, and an argument assembled from several fields is described with
+`builds`. After adding or changing a spec, regenerate the builders:
+
+```bash
+uv run python -m autoware_carla_scenario.authoring.codegen          # write
+uv run python -m autoware_carla_scenario.authoring.codegen --check  # verify
+```
+
+The inspector, the canvas, validation and the compiler all pick it up with no
+template edit. `test_authoring_registry.py` fails if the committed generated
+module is not what the specs generate, if a spec names a builder that does not
+exist, or a visual that names a field the primitive lacks.
 
 ### A field with no value yet
 

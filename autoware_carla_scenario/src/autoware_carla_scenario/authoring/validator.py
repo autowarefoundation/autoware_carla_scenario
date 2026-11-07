@@ -750,7 +750,8 @@ def _check_advance_conditions(
                 f"Vertex {gate.vertex}'s condition waits for its own action to "
                 f"reach {state or 'another state'}, which it cannot while the "
                 "entity waits at the vertex: the action is running all that "
-                "time. Wait on another action, or end the run with until.",
+                "time. Wait on another action, or on the world (a time, a "
+                "distance, a speed) instead.",
                 child.id,
             )
 

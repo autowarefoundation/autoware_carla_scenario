@@ -4,8 +4,8 @@ Actions, conditions, spawn constraints and bindings all grow over time.  If the
 editor's templates branched on ``type`` the HTML would have to grow with them,
 so instead every primitive is described *here*, in Python, by a small spec
 object.  The templates render specs, not types: adding a primitive means adding
-one entry below (and a builder in :mod:`autoware_carla_scenario.authoring.builders`),
-with no template change at all.
+one entry below (and regenerating the builders with
+:mod:`autoware_carla_scenario.authoring.codegen`), with no template change at all.
 
 Each spec carries three things:
 
@@ -14,9 +14,9 @@ Each spec carries three things:
   *metric* and *value* so the swimlane can render ``NPC1 -> Ego | Distance | < 20 m``;
 * how to **edit** it -- an ordered tuple of :class:`FieldSpec` the inspector
   turns into form controls;
-* how to **build** it -- the name of a factory in
-  :mod:`autoware_carla_scenario.authoring.builders` that returns the *existing*
-  runtime object.
+* how to **build** it -- the *existing* runtime class it builds (``target``)
+  and the name of the builder :mod:`autoware_carla_scenario.authoring.codegen`
+  generates for it from that class's constructor.
 
 Importing this module must stay free of CARLA and lanelet2: it is imported by
 the editor process, which never talks to a simulator.
@@ -401,11 +401,10 @@ class ActionSpec:
     title: str
     category: str
     builder: str
-    #: Runtime class this builds, as ``<relative module>:<name>``.  When it is
-    #: set the builder named above is *generated* from the constructor's
-    #: signature; when it is empty the builder is hand-written in
-    #: :mod:`autoware_carla_scenario.authoring.builders`.  Exactly one of the
-    #: two, which ``test_authoring_registry`` enforces.
+    #: Runtime class this builds, as ``<relative module>:<name>``.  Every spec
+    #: names one, and the builder named above is *generated* from the
+    #: constructor's signature by :mod:`autoware_carla_scenario.authoring.codegen`
+    #: (``test_authoring_registry`` enforces both).
     target: str = ""
     #: Field name -> constructor keyword, for the pairs that differ.  Fields
     #: whose name already matches the constructor need no entry.  A field
@@ -1345,7 +1344,7 @@ register_action_spec(
         description=(
             "Background traffic, as OpenSCENARIO's TrafficSourceAction, placed "
             "on the lanelets the constraints match.  The traffic backend drives "
-            "it.  Runs until its end condition fires, or the scenario ends."
+            "it.  Runs until the scenario ends."
         ),
     )
 )
@@ -1377,8 +1376,7 @@ register_action_spec(
         ),
         description=(
             "Removes background traffic on the lanelets the constraints match, "
-            "as OpenSCENARIO's TrafficSinkAction.  Runs until its end condition "
-            "fires, or the scenario ends."
+            "as OpenSCENARIO's TrafficSinkAction.  Runs until the scenario ends."
         ),
     )
 )
@@ -5109,11 +5107,12 @@ register_condition_spec(
                     "change is only complete once the vehicle has settled onto "
                     "the next lane, not when the command was issued.  Running "
                     "and End are only reached by an action that runs on -- one "
-                    "with an until condition, or one that re-sends its command "
-                    "every tick.  An action that is over the moment it is "
-                    "commanded (a traffic light set, say) goes from Start "
-                    "straight to Complete (or back to Standby when it repeats), "
-                    "so waiting on Running or End for it never holds: wait on "
+                    "whose completion criteria the world takes time to meet (a "
+                    "lane change settling, a trajectory being followed), or one "
+                    "that re-sends its command every tick.  An action that is "
+                    "over the moment it is commanded (a traffic light set, say) "
+                    "goes from Start straight to Complete (or back to Standby "
+                    "when it repeats), so waiting on Running or End for it never holds: wait on "
                     "Complete."
                 ),
             ),
