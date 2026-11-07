@@ -1068,10 +1068,13 @@ sequenceDiagram
         A->>A: sweep_resolver.resolve_sweep()
         Note over A: expand_config, as the CLI: constraints,<br/>route searches, ODD draws
         opt A scenario fails to expand
-            A-->>B: {"status": "error", "message": ...}
+            A-->>B: 400 {"status": "error", "message": ...}
         end
     else Without sweeper
         A->>A: Expand glob to scenario names
+    end
+    opt The pattern is refused or matches no scenario
+        A-->>B: 400 {"status": "error", "message": ...}
     end
 
     A->>R: start_run(overrides_list, extra_overrides)
@@ -1111,7 +1114,7 @@ sequenceDiagram
 
 - **Process isolation**: Each scenario runs in a separate `uv run scenario` subprocess. This prevents CARLA's C++ extension from crashing the web server.
 - **Thread-safe progress**: A global `RunProgress` object protected by `threading.Lock` provides progress state. `start_run()` checks for a run in progress and claims the run under that lock, so two runs never start at once and the stream never replays the previous run's `done`.
-- **Checked run bodies**: `/api/run` and `/api/run/preview` read their body through one parser (`app.parse_run_body`): it must be a JSON object, `scenario` a string, `extra_overrides` a list of strings (null or absent: none), `sweeper` a string or null, `launcher` `local`, `slurm` or null, and `slurm` an object of text or number options. Anything else is answered with 400 before a run starts or a batch is submitted, so a string of overrides is never run one character per argument (#1500). The SLURM `resubmit` action refuses a body that is not an object, or a `failed` that is not a boolean, the same way.
+- **Checked run bodies**: `/api/run` and `/api/run/preview` read their body through one parser (`app.parse_run_body`): it must be a JSON object, `scenario` a string, `extra_overrides` a list of strings (null or absent: none), `sweeper` a string or null, `launcher` `local`, `slurm` or null, and `slurm` an object of text or number options. Anything else is answered with 400 before a run starts or a batch is submitted, so a string of overrides is never run one character per argument (#1500). So is a request the body is read from but that cannot run: a scenario pattern that is refused or matches nothing, a sweep that fails to expand, or a SLURM option value that is not valid (`/api/run/preview` too), each with the same JSON body as before; a SLURM submission is refused with 503 where SLURM is not available and 409 while another is still being made (#1964). The SLURM `resubmit` action refuses a body that is not an object, or a `failed` that is not a boolean, the same way.
 - **SSE streaming**: The `/api/run/progress` endpoint uses Server-Sent Events for real-time progress updates (polled at 0.5 s intervals).
 - **Multirun grouping**: When running multiple scenarios, jobs share a timestamped `multirun/` directory with numbered subdirectories. The directory is the run's alone: one started in the same second as another run or a CLI sweep gets `HH-MM-SS-1`, then `HH-MM-SS-2`, ...
 
@@ -1143,7 +1146,7 @@ The `_build_condition_tree()` function in `scanner.py` recursively parses:
 
 ### Caching Strategy
 
-The scanner uses a module-level dictionary cache (`_cache`) keyed by path and session identifiers. The cache is cleared explicitly via the `/api/refresh` endpoint (triggered by the "Update" button in the UI). A batch's session and case pages are also kept only while the batch's files stay the same (`cases.batch_stamp`: the times of `batch_results.json`, the SLURM manifest, `collected.json`, and the `slurm/submissions/` and `slurm/results/` directories), so a SLURM batch resubmitted and collected again shows its new results on a reload; until it is collected again, its summary is older than its last submission or case outcome, and its cases are read from `slurm/results/` instead. This avoids repeated filesystem scans while keeping results fresh on demand.
+The scanner uses a module-level dictionary cache (`_cache`) keyed by path and session identifiers. The cache is cleared explicitly via the `/api/refresh` endpoint (triggered by the "Update" button in the UI). A batch's session and case pages are also kept only while the batch's files stay the same (`cases.batch_stamp`: the times of `batch_results.json`, the SLURM manifest, `collected.json`, and the `slurm/submissions/` and `slurm/results/` directories), so a SLURM batch resubmitted and collected again shows its new results on a reload; until it is collected again, its summary is older than its last submission or case outcome, and its cases are read from `slurm/results/` instead. A multirun or single session is stamped too, since a run still in progress writes its files after its pages were first read (#1964): a multirun session's page by the modification times of its directory and of each job directory (one `scandir` and a `stat` per job, not per file: a job added, or a result, log or other file created, removed or renamed in a job changes one), and it is kept only once every job has a result that could be read (a result written in place changes no directory's time); a case page of a multirun job, and a single run's session and case pages, by the name, time and size of every entry of the run's directory (a handful of `stat` calls). This avoids repeated filesystem scans while keeping results fresh on demand.
 
 ---
 

@@ -21,11 +21,12 @@ from fastapi.responses import (
 )
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from starlette.convertors import Convertor, register_url_convertor
 
 from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
 from ..web_guard import HostAllowlist, RequestGuard, refuse_cross_site
 from . import cases, recordings, results, runner, scanner, slurm_launch
-from .case_paths import session_order
+from .case_paths import INDEX_DIGITS, is_index, session_order
 from .models import RunProgress, SessionSummary
 
 logger = logging.getLogger(__name__)
@@ -60,6 +61,24 @@ async def _lifespan(_app: FastAPI) -> AsyncIterator[None]:
         await asyncio.to_thread(runner.stop_run)
     finally:
         _shutting_down = False
+
+
+class _IndexConvertor(Convertor[int]):
+    """A case index in a URL (``{index:index}``): at most
+    :data:`~.case_paths.INDEX_DIGITS` digits, so a longer one matches no
+    route (404) rather than reaching a file name longer than NAME_MAX or an
+    integer longer than Python converts (#1964)."""
+
+    regex = f"[0-9]{{1,{INDEX_DIGITS}}}"
+
+    def convert(self, value: str) -> int:
+        return int(value)
+
+    def to_string(self, value: int) -> str:
+        return str(value)
+
+
+register_url_convertor("index", _IndexConvertor())
 
 
 #: The ``Host`` names the viewer answers to: the loopback ones and the host it
@@ -269,11 +288,17 @@ async def _run_body(request: Request) -> RunBody:
     return parse_run_body(await _json_object(request))
 
 
+def _refused(message: str) -> JSONResponse:
+    """A run request refused before anything runs or is submitted: 400 with
+    ``{"status": "error"}`` and why (#1964)."""
+    return JSONResponse(
+        status_code=400, content={"status": "error", "message": message}
+    )
+
+
 def _run_body_error(exc: BodyError) -> JSONResponse:
     """The 400 answer to a run body refused (``/api/run``'s error shape)."""
-    return JSONResponse(
-        status_code=400, content={"status": "error", "message": str(exc)}
-    )
+    return _refused(str(exc))
 
 
 # ── Page routes ──────────────────────────────────────────────────────────
@@ -323,8 +348,8 @@ async def session_detail(
 
 
 @app.get(
-    # :int, so /session/.../odd is the ODD view's.
-    "/session/{session_type}/{date}/{time}/{index:int}",
+    # :index (digits), so /session/.../odd is the ODD view's.
+    "/session/{session_type}/{date}/{time}/{index:index}",
     response_class=HTMLResponse,
 )
 async def scenario_detail(
@@ -409,8 +434,9 @@ async def run_preview(request: Request) -> dict[str, str] | JSONResponse:
     Every argument is shell-quoted (:func:`shlex.quote`), so the preview can
     be pasted into a shell as it is.
 
-    A body :func:`parse_run_body` refuses is answered with 400 and the
-    reason as the command's comment (``{"command": "# ..."}``).
+    A body :func:`parse_run_body` refuses, or a SLURM option value that is
+    not valid, is answered with 400 and the reason as the command's comment
+    (``{"command": "# ..."}``).
     """
     try:
         body = await _run_body(request)
@@ -425,7 +451,7 @@ async def run_preview(request: Request) -> dict[str, str] | JSONResponse:
         try:
             options = slurm_launch.SlurmOptions.from_request(body.slurm)
         except ValueError as exc:
-            return {"command": f"# {exc}"}
+            return JSONResponse(status_code=400, content={"command": f"# {exc}"})
         cmd = slurm_launch.build_command(scenario, extra_overrides, sweeper, options)
         return {"command": " ".join(shlex.quote(c) for c in cmd)}
 
@@ -485,7 +511,10 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
     explicitly from the Run Options panel.  A local run is refused with
     409 (``{"status": "busy"}``) while another is in progress.  A body
     :func:`parse_run_body` refuses is answered with 400
-    (``{"status": "error"}``) before anything runs or is submitted.
+    (``{"status": "error"}``) before anything runs or is submitted, and so
+    is a request that cannot run: a pattern refused or matching nothing, a
+    sweep that fails to expand, a SLURM option value that is not valid
+    (#1964).
     """
     try:
         body = await _run_body(request)
@@ -508,9 +537,9 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
     try:
         scenario_names = _resolve_scenario_names(scenario)
     except ValueError as exc:
-        return {"status": "error", "message": str(exc)}
+        return _refused(str(exc))
     if not scenario_names:
-        return {"status": "error", "message": f"No scenarios match '{scenario}'"}
+        return _refused(f"No scenarios match '{scenario}'")
 
     if sweeper:
         # Expand each scenario's sweep in-process (no CARLA), as
@@ -526,10 +555,7 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
         if errors:
             # Nothing runs: a run missing some of the scenarios asked for
             # would look like a complete one.
-            return {
-                "status": "error",
-                "message": "Sweep resolution failed: " + "; ".join(errors),
-            }
+            return _refused("Sweep resolution failed: " + "; ".join(errors))
         # A scenario whose sweep expands to no case is one of the errors
         # (resolve_sweep refuses it, #1407), so every scenario gave a job.
 
@@ -623,7 +649,7 @@ async def _recording_of(trajectory: Path) -> Path:
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
 
-@app.post("/api/recording/{session_type}/{date}/{time}/{index}")
+@app.post("/api/recording/{session_type}/{date}/{time}/{index:index}")
 async def make_recording(
     session_type: str, date: str, time: str, index: int
 ) -> JSONResponse:
@@ -653,7 +679,7 @@ async def make_recording(
     )
 
 
-@app.get("/recording/{session_type}/{date}/{time}/{index}.rrd")
+@app.get("/recording/{session_type}/{date}/{time}/{index:index}.rrd")
 async def recording_file(
     request: Request, session_type: str, date: str, time: str, index: int
 ) -> FileResponse:
@@ -900,8 +926,10 @@ async def compare_runs(request: Request) -> HTMLResponse:
     for value in request.query_params.getlist("run")[:4]:
         ref, _, index = value.strip("/").rpartition("/")
         parsed = _parse_ref(ref)
-        # isascii(): "²".isdigit() is true, and int() refuses it.
-        if parsed is None or not (index.isascii() and index.isdigit()):
+        # is_index(): ASCII digits ("²".isdigit() is true, and int() refuses
+        # it), not too many to be a case (#1964); a ref that is none is
+        # skipped, as an unknown session is.
+        if parsed is None or not is_index(index):
             continue
         found = await asyncio.to_thread(
             results.load_results, _base_path(), *parsed, metrics=False
@@ -933,21 +961,31 @@ async def compare_runs(request: Request) -> HTMLResponse:
 
 def _submit_slurm(
     scenario: str, extra_overrides: list[str], sweeper: str, raw: dict[str, Any]
-) -> dict[str, str]:
+) -> dict[str, str] | JSONResponse:
     """Submit the batch through SLURM (``launcher=slurm --no-wait``); *raw*
-    is the ``slurm`` field, its types checked (:func:`parse_run_body`)."""
+    is the ``slurm`` field, its types checked (:func:`parse_run_body`).
+
+    Refused with 400 for an option value that is not valid, 503 where SLURM
+    is not available, 409 while another submission is being made, each with
+    ``{"status": "error"}`` and why (#1964)."""
     available, reason = slurm_launch.availability()
     if not available:
-        return {"status": "error", "message": reason}
+        # Not here (no sbatch): 503, as the batch actions answer it.
+        return JSONResponse(
+            status_code=503, content={"status": "error", "message": reason}
+        )
     try:
         options = slurm_launch.SlurmOptions.from_request(raw)
     except ValueError as exc:
-        return {"status": "error", "message": str(exc)}
+        return _refused(str(exc))
     command = slurm_launch.build_command(scenario, extra_overrides, sweeper, options)
     try:
         slurm_launch.start_submit(command, _base_path())
     except RuntimeError as exc:
-        return {"status": "error", "message": str(exc)}
+        # Another submission is still being made: 409, as a busy local run.
+        return JSONResponse(
+            status_code=409, content={"status": "error", "message": str(exc)}
+        )
     return {"status": "submitting"}
 
 
@@ -1067,7 +1105,8 @@ async def slurm_action(
                 )
             if value not in (None, ""):
                 text = str(value)
-                if not (text.isascii() and text.isdigit()) or int(text) < 1:
+                # is_index() first: int() refuses more than 4300 digits.
+                if not is_index(text) or int(text) < 1:
                     return JSONResponse(
                         status_code=400,
                         content={
@@ -1075,7 +1114,7 @@ async def slurm_action(
                             "output": f"{key} must be a positive integer",
                         },
                     )
-                args.extend([f"--{key.replace('_', '-')}", str(int(value))])
+                args.extend([f"--{key.replace('_', '-')}", str(int(text))])
         args.append("--no-wait")
     if action == "collect":
         # Exit 1 is "collected, a case failed" only when collect wrote its

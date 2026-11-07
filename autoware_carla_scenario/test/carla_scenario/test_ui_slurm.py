@@ -415,9 +415,12 @@ def test_without_sbatch_slurm_is_offered_disabled_with_why(
     assert launchers["local"]["available"]
     assert not launchers["slurm"]["available"]
     assert "sbatch" in launchers["slurm"]["reason"]
-    run = client.post(
+    response = client.post(
         "/api/run", json={"scenario": "x", "launcher": "slurm", "slurm": {}}
-    ).json()
+    )
+    # Refused as the batch actions refuse it (#1964).
+    assert response.status_code == 503
+    run = response.json()
     assert run["status"] == "error" and "sbatch" in run["message"]
     # The page offers it, disabled until /api/launchers says otherwise.
     page = client.get("/").text

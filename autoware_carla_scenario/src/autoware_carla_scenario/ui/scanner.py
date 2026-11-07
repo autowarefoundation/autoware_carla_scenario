@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 from pathlib import Path
 from typing import Any
 
@@ -13,7 +14,7 @@ from ..registry import get_conf_dirs, load_scenario_plugins
 from ..run_outputs import RESULT_SUFFIX
 from ..scenario_glob import scenario_names
 from . import cases
-from .case_paths import result_path, session_order
+from .case_paths import MAX_INDEX, _stat, result_path, session_order
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
 from .runner import _RAW_LOG_MAX_BYTES as _RAW_LOG_MAX_BYTES
@@ -26,12 +27,64 @@ logger = logging.getLogger(__name__)
 _cache: dict[str, Any] = {}
 
 
+def _entries_stamp(directory: Path) -> tuple[Any, ...]:
+    """The name, modification time (ns) and size of every entry of
+    *directory*, and its own: what a directory that holds one run (a
+    multirun job, a single run) is read from.  One ``scandir`` and a ``stat``
+    per entry, of which such a directory has a handful; a file created,
+    removed, renamed over or written to changes it."""
+    try:
+        with os.scandir(directory) as found:
+            entries = sorted(found, key=lambda e: e.name)
+            return (
+                _stat(directory),
+                tuple((e.name, *_stat_entry(e)) for e in entries),
+            )
+    except OSError:
+        return (_stat(directory),)
+
+
+def _stat_entry(entry: os.DirEntry[str]) -> tuple[int, int]:
+    try:
+        info = entry.stat()
+    except OSError:
+        return (0, -1)
+    return (info.st_mtime_ns, info.st_size)
+
+
+def _jobs_stamp(directory: Path) -> tuple[Any, ...]:
+    """The modification time (ns) of a multirun session's directory and of
+    each of its job directories: a job added changes the first, a file
+    created, removed or renamed in a job (its result, its log) the job's.
+    One ``scandir`` and a ``stat`` per job, not per file: a result still
+    being written in place changes no directory's time, which is why
+    :func:`load_session` keeps a session only once every job has a result
+    it could read."""
+    try:
+        with os.scandir(directory) as found:
+            jobs = sorted(
+                (e for e in found if e.name.isascii() and e.name.isdigit()),
+                key=lambda e: e.name,
+            )
+            return (
+                _stat(directory),
+                tuple((e.name, _stat_entry(e)[0]) for e in jobs),
+            )
+    except OSError:
+        return (_stat(directory),)
+
+
 def _stamp(directory: Path, session_type: str) -> tuple[Any, ...]:
-    """What a cached page of the session in *directory* is kept for: a
-    batch's :func:`~autoware_carla_scenario.ui.cases.batch_stamp` (a SLURM
-    batch resubmitted and collected again changes it), nothing for the
-    others, whose results a run writes once."""
-    return cases.batch_stamp(directory) if session_type == "batch" else ()
+    """What a cached session page of the session in *directory* is kept for:
+    a batch's :func:`~autoware_carla_scenario.ui.cases.batch_stamp` (a SLURM
+    batch resubmitted and collected again changes it), a multirun session's
+    :func:`_jobs_stamp`, a single run's :func:`_entries_stamp`.  A run still
+    in progress writes its files after the page was first read (#1964)."""
+    if session_type == "batch":
+        return cases.batch_stamp(directory)
+    if session_type == "multirun":
+        return _jobs_stamp(directory)
+    return _entries_stamp(directory)
 
 
 def _cached(cache_key: str, stamp: tuple[Any, ...]) -> tuple[bool, Any]:
@@ -352,6 +405,7 @@ def load_session(
                         )
                     )
                 else:
+                    final = False
                     items.append(
                         SessionItem(
                             index=index,
@@ -363,6 +417,7 @@ def load_session(
                         )
                     )
             else:
+                final = False
                 items.append(
                     SessionItem(
                         index=index,
@@ -414,8 +469,10 @@ def load_session(
                 )
 
     # A SLURM batch still running is read again each time; a final one is
-    # kept until its files change (a resubmission, a new collect).
-    if session_type != "batch" or final:
+    # kept until its files change (a resubmission, a new collect).  So is a
+    # multirun session with a job that has no result it could read yet (a
+    # result being written in place changes no directory's time, #1964).
+    if final:
         _cache[cache_key] = (stamp, items)
     return items
 
@@ -483,10 +540,16 @@ def load_scenario(
     when the names do not make a session under *base_path*,
     :func:`~autoware_carla_scenario.ui.cases.session_dir`)."""
     directory = cases.session_dir(base_path, session_type, date, time)
-    if directory is None or index < 0:
+    # No case has an index above MAX_INDEX, which a cache key can spell (#1964).
+    if directory is None or not 0 <= index <= MAX_INDEX:
         return None
     cache_key = f"scenario:{base_path}:{session_type}:{date}:{time}:{index}"
-    stamp = _stamp(directory, session_type)
+    if session_type == "multirun":
+        # The case's own directory: the job's files, not its siblings'.
+        job = cases.job_dir(base_path, date, time, index)
+        stamp = _entries_stamp(job) if job is not None else ()
+    else:
+        stamp = _stamp(directory, session_type)
     hit, value = _cached(cache_key, stamp)
     if hit:
         return value  # type: ignore[no-any-return]

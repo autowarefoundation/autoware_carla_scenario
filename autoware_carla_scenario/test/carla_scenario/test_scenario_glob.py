@@ -339,8 +339,8 @@ def test_the_viewer_resolver_raises_value_error(star_star_conf: Path) -> None:
 def test_the_viewer_answers_a_malformed_pattern_with_an_error(
     star_star_conf: Path, monkeypatch: pytest.MonkeyPatch, sweeper: str
 ) -> None:
-    """``/api/run`` answers an invalid pattern with an error, not a 500, and
-    starts nothing."""
+    """``/api/run`` answers an invalid pattern with an error (400), not a
+    500, and starts nothing."""
 
     def no_run(*args: Any, **kwargs: Any) -> bool:
         raise AssertionError("nothing should run")
@@ -352,7 +352,8 @@ def test_the_viewer_answers_a_malformed_pattern_with_an_error(
         "/api/run",
         json={"scenario": "x/**a", "extra_overrides": [], "sweeper": sweeper},
     )
-    assert response.status_code == 200
+    # Refused with 400 before anything runs (#1964).
+    assert response.status_code == 400
     body = response.json()
     assert body["status"] == "error"
     assert "invalid scenario pattern 'x/**a'" in body["message"]
@@ -446,7 +447,7 @@ def test_the_viewer_answers_a_pattern_outside_scenario_with_an_error(
     monkeypatch.setattr(scanner, "scenario_conf_dirs", lambda: [star_star_conf])
     client = TestClient(app_module.app, base_url="http://127.0.0.1")
     response = client.post("/api/run", json={"scenario": pattern})
-    assert response.status_code == 200
+    assert response.status_code == 400
     body = response.json()
     assert body["status"] == "error"
     assert f"invalid scenario pattern {pattern!r}" in body["message"]
