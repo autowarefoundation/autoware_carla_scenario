@@ -2595,11 +2595,17 @@ class TestScenarioMap:
             runs.append((str(spawn.lanelet_id), spawn.detail))
 
         assert dropped and walked_back, "the fixture no longer exercises #1524"
-        assert dropped == count - len(cases)
-        assert [lanelet for lanelet, _ in runs] == [case[key] for case in cases]
-        assert [detail.split(" m ", 1)[0] for _, detail in runs] == [
-            f"{float(case['scenario.spawn_overrides.npc1.s']):.1f}" for case in cases
+        # Patterns are the matches; picks whose spawns walk back to the same
+        # place are one case of the sweep, which runs it once (#1950).  The
+        # panel shows s to 0.1 m, so both sides are compared as it shows them.
+        shown_runs = [(lanelet, detail.split(" m ", 1)[0]) for lanelet, detail in runs]
+        shown_cases = [
+            (case[key], f"{float(case['scenario.spawn_overrides.npc1.s']):.1f}")
+            for case in cases
         ]
+        assert len(cases) <= len(runs)
+        assert set(shown_runs) == set(shown_cases)
+        assert list(dict.fromkeys(shown_runs)) == list(dict.fromkeys(shown_cases))
 
     def test_a_pattern_the_sweep_drops_says_so(
         self, client: TestClient, store: DraftStore, draft_id: str

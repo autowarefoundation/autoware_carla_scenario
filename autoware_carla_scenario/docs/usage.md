@@ -331,7 +331,8 @@ See [HD Maps from a Git Repository](maps.md).
 The package ships a Hydra `Sweeper` plugin
 (`hydra/sweeper=lanelet_constraint`) that expands a single scenario
 config into one job per lanelet that matches a set of constraints,
-optionally deriving per-job parameters via "bindings". Each scenario
+optionally deriving per-job parameters via "bindings" (picks that end as
+the same case once their bindings are applied give one job). Each scenario
 YAML may declare its own `sweep:` section (see
 `traffic_light_compliance.yaml` for an example).
 
@@ -340,6 +341,15 @@ YAML may declare its own `sweep:` section (see
 parameter a case needs is derived from the matched lanelet by
 `sweep.bindings`. A `sweep.constraints` with a second key is refused with an
 error when the sweep is expanded, rather than searched together with the first.
+So is a section of the wrong shape: `sweep.constraints` that is not a mapping
+of its key to a list of constraints, `sweep.bindings` that is not a mapping of
+keys to bindings (`{type: ...}`), and `sweep.exclude` that is not a mapping of
+keys to lists. A constraint or binding with an unknown `type`, a key it does
+not take (`has_adjacent` takes `value`, not `side`), a missing key it needs
+or a value it refuses (a `route_through` `depth` that is not a whole number of
+at least 1) is refused the same way, naming its type and the key. Each is the
+one line `Error: <scenario>: ...` that the sweeper, `scenario-expand` and a
+batch print for an invalid sweep.
 
 A `stop_line_offset` binding places a spawn `offset` metres before the pick's
 stop line. When that does not fit on the pick, it walks back through
@@ -365,6 +375,14 @@ sweep:
     scenario.spawn_overrides.npc1.s: {type: stop_line_offset, offset: 300}
     scenario.spawn_overrides.npc1.lanelet_id: {type: stop_line_approach, offset: 300}
 ```
+
+The `offset` of `stop_line_offset` and `stop_line_approach` is a finite number
+of metres, at least 0; a string (`"15"`), `.nan`, a bool or a negative offset
+is refused with an error naming the binding. Since a walk-back of the swept
+key's own spawn (`ego.spawn_s` when the sweep picks `ego.spawn_lanelet_id`)
+replaces the pick, several picks that walk back to the same predecessor can
+end as the same case. Each distinct case runs once, as the first of those
+picks gives it, and the log names the picks that were merged.
 
 A constraint sees the pick, not where a walk-back puts the spawn. Use
 `sweep.exclude` to drop a case by the values it ends up with once its bindings

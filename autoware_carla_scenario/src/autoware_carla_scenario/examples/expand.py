@@ -8,9 +8,10 @@ overrides, e.g. ``map=<group>`` -- composes the config exactly as a run would
 
 Each case is the overrides that, added to the same arguments, run one concrete
 scenario. A logical scenario (one with ``sweep.constraints``) expands to one
-case per matching lanelet, in a fixed order; a concrete one to a single empty
-case. Nothing is run and no CARLA server is needed -- only the Lanelet2 map,
-which is fetched on demand like a run would. Logs go to stderr, so stdout is
+case per matching lanelet (picks that end as the same case give it once),
+in a fixed order; a concrete one to a single empty case. Nothing is run and
+no CARLA server is needed -- only the Lanelet2 map, which is fetched on demand
+like a run would. Logs go to stderr, so stdout is
 the JSON alone.
 
     scenario-expand scenario=traffic_light_compliance/traffic_light_compliance
