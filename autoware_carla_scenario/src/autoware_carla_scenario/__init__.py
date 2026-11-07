@@ -105,8 +105,10 @@ if TYPE_CHECKING:
         TrafficSinkAction as TrafficSinkAction,
         TrafficSourceAction as TrafficSourceAction,
         WalkStraightAction as WalkStraightAction,
+        PerceptionFaultInjectionAction as PerceptionFaultInjectionAction,
         PlayMotionAction as PlayMotionAction,
     )
+    from .perception_fault import PerceivedCategory as PerceivedCategory
     from .actions.stalled_object import (
         StalledObjectAction as StalledObjectAction,
         collision_objects as collision_objects,
@@ -563,6 +565,8 @@ __all__ = [
     "TrafficSinkAction",
     "TrafficSourceAction",
     "WalkStraightAction",
+    "PerceptionFaultInjectionAction",
+    "PerceivedCategory",
     "PlayMotionAction",
     # Adversarial actions (#393) and NADE (#395)
     "AdversarialTrafficAction",
@@ -666,6 +670,8 @@ _LAZY_IMPORTS: dict[str, tuple[str, str]] = {
     ),
     "TurnAction": (".actions", "TurnAction"),
     "WalkStraightAction": (".actions", "WalkStraightAction"),
+    "PerceptionFaultInjectionAction": (".actions", "PerceptionFaultInjectionAction"),
+    "PerceivedCategory": (".perception_fault", "PerceivedCategory"),
     "PlayMotionAction": (".actions", "PlayMotionAction"),
     "TrafficSourceAction": (".actions", "TrafficSourceAction"),
     "TrafficParametersAction": (".actions", "TrafficParametersAction"),

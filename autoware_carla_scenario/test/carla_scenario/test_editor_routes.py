@@ -2256,7 +2256,9 @@ class TestEnvironmentTrack:
             "stop_crossing",
             "walk_straight",
         }
-        assert offers["walker1"] == {"despawn", "routing", "spawn"} | pedestrian_only
+        # Misreported to the ego's driver, as a vehicle can be.
+        shared = {"despawn", "perception_fault_injection", "routing", "spawn"}
+        assert offers["walker1"] == shared | pedestrian_only
         assert not pedestrian_only & offers["ego"]
 
     def test_an_environment_action_needs_no_actor(

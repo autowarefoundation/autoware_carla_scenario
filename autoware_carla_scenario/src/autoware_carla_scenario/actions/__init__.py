@@ -7,6 +7,7 @@ from .emergency import EmergencyAction
 from .spawn import SpawnAction
 from .environment import EnvironmentAction
 from .lane_change import LaneChangeAction, LaneChangeDirection
+from .perception_fault import PerceptionFaultInjectionAction
 from .play_motion import PlayMotionAction
 from .routing import RoutingAction, RoutingMode
 from .set_speed import SetSpeedAction
@@ -32,6 +33,7 @@ __all__ = [
     "EnvironmentAction",
     "LaneChangeAction",
     "LaneChangeDirection",
+    "PerceptionFaultInjectionAction",
     "PlayMotionAction",
     "RoutingAction",
     "RoutingMode",

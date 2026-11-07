@@ -42,6 +42,7 @@ from typing import IO, Any, Optional, Sequence
 import numpy as np
 import numpy.typing as npt
 
+from ..perception_fault import perception_faults
 from ..trajectory_recorder import TrajectoryRecorder
 from ._proto import t4_scene_pb2 as pb
 from .convert import (
@@ -196,6 +197,12 @@ class LiveT4Scene:
         log = self._log
         if log.last_frame < 0:
             return
+        # How the policy is told of the road users on this row, where a
+        # PerceptionFaultInjectionAction has it differ: a row keeps what was
+        # reported on it, as a perception stack's history would.
+        faults = perception_faults()
+        if faults and log.last_frame in log.rows:
+            log.faults[log.last_frame] = faults
         # Any tick may be a scene's row: the rows are counted back from the
         # tick a scene is asked for on.
         if extras is not None:
