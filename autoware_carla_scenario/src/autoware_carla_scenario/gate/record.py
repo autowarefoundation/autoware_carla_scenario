@@ -28,6 +28,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Mapping, Optional  # noqa: UP035
 
+from ..atomic_file import write_text_atomically
+
 __all__ = [
     "GATE_RECORD_SCHEMA",
     "GATE_RECORD_SUFFIX",
@@ -287,12 +289,13 @@ class GateRecord:
 
 
 def write_gate_record(path: Path, record: GateRecord) -> None:
-    """Write *record* to *path* (its directory made if need be)."""
+    """Write *record* to *path* (its directory made if need be), in one
+    rename (:func:`~autoware_carla_scenario.atomic_file.write_text_atomically`)."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    # Compact: a row a tick, and one per line would double the file.
-    path.write_text(
-        json.dumps(record.to_dict(), separators=(",", ":")), encoding="utf-8"
-    )
+    # Compact: a row a tick, and one per line would double the file.  In one
+    # rename: a run killed while writing it leaves no truncated record, which
+    # the gate would refuse as unreadable (#1956).
+    write_text_atomically(path, json.dumps(record.to_dict(), separators=(",", ":")))
 
 
 def read_gate_record(path: Path) -> GateRecord:

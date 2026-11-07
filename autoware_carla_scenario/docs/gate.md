@@ -266,9 +266,13 @@ scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no ou
   is refused before it runs writes no plan; a sweep planned again into the
   same directory (`hydra.sweep.dir=` naming it again, a `--resume-from`
   rerun) replaces the entries of the jobs it runs and keeps the others, whose
-  outputs are still there. A plan lists only the jobs its own run launches,
-  so a sweep resumed into a new directory plans only the jobs from the resume
-  point; the directory of the run it resumes keeps its plan and the marker of
+  outputs are still there. A job it runs replaces the earlier run's outputs
+  too: before the job's first attempt the sweeper removes the run outputs
+  (result, gate record, coverage file, ...) the earlier sweep left in its job
+  directory, so each job is judged on its new run alone, not counted twice
+  ([Lanelet Constraint Sweeping](usage.md#lanelet-constraint-sweeping)). A
+  plan lists only the jobs its own run launches, so a sweep resumed into a
+  new directory plans only the jobs from the resume point; the directory of the run it resumes keeps its plan and the marker of
   the job it was killed in, and is refused on its own. To gate a resumed
   sweep as a whole, resume it into the same `hydra.sweep.dir`.
 

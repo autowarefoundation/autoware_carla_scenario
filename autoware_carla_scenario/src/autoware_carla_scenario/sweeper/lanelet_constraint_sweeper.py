@@ -31,7 +31,10 @@ wrote no gate record.  The marker is written before each attempt too, saying
 the case did not finish, and removed once the case ends with a verdict, so a
 case whose sweep was killed with it (a segfault, the OOM killer, ``SIGKILL``)
 leaves it as well; none is left for a case that passed, a retry included, or
-failed.  Before the first case is launched, the sweep writes its plan
+failed.  Before a case's first attempt, the run outputs an earlier sweep
+left in its job directory (one ``hydra.sweep.dir`` names again, a
+``--resume-from`` rerun) are removed: the case replaces that run (#1956).
+Before the first case is launched, the sweep writes its plan
 (``sweep_plan.json``, :mod:`..gate.sweep_plan`) into its sweep directory: the
 directory and overrides of every case it is about to run, so that
 ``scenario-gate`` also sees the cases a killed sweep never started (#1833).
@@ -225,10 +228,12 @@ def _read_verdict(output_dir: Path) -> bool | None:
     (:func:`..ui.case_paths.last_result_path`).  A retry
     (``server.cooldown_max_retries``) runs the case again in the same job
     directory; the sweeper removes the failed attempt's outputs first (#1373),
-    so the retry takes the same stem, but a directory that held a run before
-    the case started (one ``hydra.sweep.dir`` names again) keeps it, and the
-    case takes the next stem (``X-1`` after ``X``): its verdict is the one
-    that counts.
+    so the retry takes the same stem, and before the case's first attempt it
+    removes those of a run an earlier sweep left there (one
+    ``hydra.sweep.dir`` names again, #1956).  Should a run still be there
+    (its outputs could not be removed, or an earlier job of this sweep shares
+    the directory), the case takes the next stem (``X-1`` after ``X``): its
+    verdict is the one that counts.
 
     Returns:
         ``True`` if the scenario passed, ``False`` if it ran and failed, or
@@ -828,6 +833,10 @@ class LaneletConstraintSweeper(Sweeper):
         failed_count = 0
         timed_out_count = 0
         first_job = True
+        # The job directories a job of this run has started in: the run
+        # outputs an earlier sweep left in one go before its first job
+        # starts, never those of a job of this run that shares it.
+        started_dirs: set[Path] = set()
 
         for local_idx, batch in enumerate(batches):
             idx = local_idx + idx_offset
@@ -835,12 +844,23 @@ class LaneletConstraintSweeper(Sweeper):
 
             succeeded = False
             exit_code: int | None = None
-            # The job's directory and the stems already in it before its
-            # first attempt (none, unless hydra.sweep.dir names a directory
-            # an earlier sweep wrote in): a retry removes only what the
-            # failed attempts of this job left (#1373).  The directory is
-            # also where a job given up leaves its marker (#1830).
+            # The job's directory, where a job given up leaves its marker
+            # (#1830).  A job run again into it (hydra.sweep.dir naming a
+            # directory an earlier sweep wrote in, a --resume-from rerun)
+            # replaces the earlier run, as its plan entry does: what that run
+            # left (its result, gate record, coverage file ...) goes before
+            # the first attempt, so that the gate, the coverage merge, the
+            # viewer and the verdict read this run's alone (#1956).
             job_dir = job_dirs[local_idx]
+            if job_dir is not None and job_dir[0] not in started_dirs:
+                started_dirs.add(job_dir[0])
+                _remove_earlier_outputs(
+                    job_dir, f"{idx + 1}/{idx_offset + len(batches)}"
+                )
+            # The stems already in it before its first attempt (none, unless
+            # an earlier job of this run shares the directory, or the
+            # outputs above could not be removed): a retry removes only what
+            # the failed attempts of this job left (#1373).
             stems_before = (
                 _run_output_stems(job_dir[0], job_dir[1])
                 if job_dir is not None and max_attempts > 1
@@ -1018,6 +1038,36 @@ def _marker_reason(exit_code: int | None, timeout: int | None = None) -> str:
     if exit_code == _REFUSED_EXIT_CODE:
         return f"refused (exit code {exit_code})"
     return f"exit code {exit_code}"
+
+
+def _remove_earlier_outputs(job_dir: tuple[Path, str | None], label: str) -> None:
+    """Remove the run outputs an earlier sweep left in *job_dir* (its
+    directory and Hydra's job log), before the job's first attempt in this
+    sweep: every stem :func:`..run_outputs.run_output_stems` finds there,
+    with :func:`..run_outputs.remove_run_outputs`, as a retry removes the
+    failed attempt's (#1956).  Hydra's job log, its ``.hydra`` directory, the
+    job's marker (``case_errored.json``, replaced as the attempt starts) and
+    any other file that is not a run's output are left alone.  Logged, never
+    raised, when one cannot be removed: the job runs anyway, under the next
+    free stem."""
+    directory, job_log = job_dir
+    for stem in sorted(_run_output_stems(directory, job_log)):
+        logger.info(
+            "[%s] Removing the outputs of the earlier run %s in %s: the job "
+            "runs again and replaces it.",
+            label,
+            stem,
+            directory,
+        )
+        try:
+            remove_run_outputs(directory, stem)
+        except OSError as exc:
+            logger.warning(
+                "Cannot remove the outputs of the earlier run %s in %s (%s).",
+                stem,
+                directory,
+                exc,
+            )
 
 
 def _remove_marker(directory: Path) -> None:
