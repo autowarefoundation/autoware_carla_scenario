@@ -27,8 +27,9 @@ backend's own (:attr:`~.odd.backend.CarlaBackend.rules`).
 the causes a config names, and any CARLA field it sets itself, give every
 CARLA field and the visibility the run then applies as numbers.  The sampler
 does the same for the cases it draws.  Only what depends on a vehicle is
-worked out during the run: its grip, from the water already set
-(:func:`vehicle_at`), and the speed each traffic driver keeps.
+worked out during the run: its grip, from the conditions and the CARLA
+weather already set (:func:`vehicle_at`), and the speed each traffic driver
+keeps.
 
 A run reads other rules with ``environment.rules`` (:func:`use_weather_rules`):
 a file -- a path or an ``https://`` URL -- merged over the default rules (it
@@ -78,6 +79,7 @@ __all__ = [
     "WEATHER_INPUTS",
     "RulesError",
     "check_weather_rules",
+    "custom_rules_in_use",
     "default_rules",
     "resolve_environment",
     "rule_values",
@@ -97,6 +99,9 @@ DEFAULT_RULES: Path = Path(__file__).resolve().parent / "weather_rules.yaml"
 _DEFAULT: Optional[Rules] = None
 #: Blueprint pattern (or :data:`EGO_KEY`) -> its rules, for the run.
 _VEHICLE_RULES: list[tuple[str, Rules]] = []
+#: Whether the run follows a rule file of its own over the default rules
+#: (``environment.rules``, or its ``default``).
+_RULE_FILE: bool = False
 
 
 def default_rules() -> Rules:
@@ -172,11 +177,14 @@ def use_weather_rules(spec: Union[str, Path, Mapping[str, Any], None] = None) ->
             or *spec* is neither a file nor ``{default, vehicles}`` of files
             (:func:`check_weather_rules`).
     """
+    global _RULE_FILE
     backend = _backend()
     # Its form first, so a malformed spec changes nothing.
     default, vehicles = check_weather_rules(spec)
     _VEHICLE_RULES.clear()
+    _RULE_FILE = False
     followed = backend.use_rules(None if default is None else str(default))
+    _RULE_FILE = default is not None
     base = followed if followed is not None else default_rules()
     for pattern, location in vehicles:
         rules = base.read_over(str(location))
@@ -192,6 +200,24 @@ def use_weather_rules(spec: Union[str, Path, Mapping[str, Any], None] = None) ->
 def vehicle_rules_in_use() -> bool:
     """Whether the run's rules differ by vehicle."""
     return len(_VEHICLE_RULES) > 0
+
+
+def custom_rules_in_use() -> bool:
+    """Whether the run follows rules other than the default ones -- a rule
+    file of its own (``environment.rules``), or rules by vehicle -- so its
+    grip may differ from the one the default rules give a dry road
+    (CARLA's own): an ``EnvironmentAction`` then gives every vehicle its
+    rules' grip whatever it sets (#1937)."""
+    return _RULE_FILE or len(_VEHICLE_RULES) > 0
+
+
+def _with_labels(
+    inputs: Mapping[str, Any], labels: Optional[Mapping[str, str]]
+) -> dict[str, Any]:
+    values: dict[str, Any] = dict(inputs)
+    if labels is not None:
+        values.update(labels)
+    return values
 
 
 def weather_rule_files() -> list[tuple[str, str]]:
@@ -215,11 +241,21 @@ def weather_range(quantity: str, inputs: Mapping[str, Any]) -> tuple[float, floa
     return _backend().derived_range(quantity, inputs)
 
 
-def weather_at(quantity: str, inputs: Mapping[str, Any], quantile: float) -> float:
+def weather_at(
+    quantity: str,
+    inputs: Mapping[str, Any],
+    quantile: float,
+    labels: Optional[Mapping[str, str]] = None,
+) -> float:
     """The value of *quantity* at *quantile* (0-1, clamped) of its
     distribution at *inputs* (as :func:`weather_range` reads them), by the
-    rules the run follows (every vehicle's but those ``vehicles`` names)."""
-    return _backend().derived_at(quantity, inputs, quantile)
+    rules the run follows (every vehicle's but those ``vehicles`` names).
+
+    *labels* are more inputs, the categorical ones (the time of day's
+    label): what a caller that keeps numbers and labels apart (the checked
+    ``actions.environment``) gives them as.
+    """
+    return _backend().derived_at(quantity, _with_labels(inputs, labels), quantile)
 
 
 def _rules_for(type_id: str, role: str) -> Optional[Rules]:
@@ -242,16 +278,23 @@ def vehicle_range(
 
 
 def vehicle_at(
-    quantity: str, inputs: dict[str, float], quantile: float, type_id: str, role: str
+    quantity: str,
+    inputs: Mapping[str, Any],
+    quantile: float,
+    type_id: str,
+    role: str,
+    labels: Optional[Mapping[str, str]] = None,
 ) -> float:
     """The value of *quantity* at *quantile* (0-1, clamped) in the weather
-    *inputs* for the vehicle of blueprint *type_id* and ``role_name`` *role*
-    (``""``: none): by the rules of the first ``vehicles`` entry it matches,
-    else :func:`weather_at`'s."""
+    *inputs* (and *labels*, as :func:`weather_at` reads them) for the
+    vehicle of blueprint *type_id* and ``role_name`` *role* (``""``: none):
+    by the rules of the first ``vehicles`` entry it matches, else
+    :func:`weather_at`'s."""
     rules = _rules_for(type_id, role)
     if rules is None:
-        return weather_at(quantity, inputs, quantile)
-    return rules.quantile(quantity, rule_values(inputs), quantile)
+        return weather_at(quantity, inputs, quantile, labels)
+    values = _backend().rule_values(_with_labels(inputs, labels))
+    return rules.quantile(quantity, values, quantile)
 
 
 #: The quantities worked out before a run (:func:`resolve_environment`):

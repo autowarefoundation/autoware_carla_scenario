@@ -6,7 +6,9 @@ modules checked with Codon can use it: the quantities the framework reads
 (:data:`QUANTITIES`), the causes a rule may read (:data:`WEATHER_INPUTS`)
 and the settings that give them (:data:`CAUSE_SETTINGS`), the quantity each
 of CARLA's weather fields is (:data:`CARLA_QUANTITIES`), the values a rule
-reads (:func:`rule_values`), and which ``vehicles`` entry of ``environment.rules``
+reads (:func:`rule_values`), the labels of the time of day and the cloud
+cover CARLA's sun and clouds render (:func:`time_of_day_level`,
+:func:`cloud_cover_level`), and which ``vehicles`` entry of ``environment.rules``
 a vehicle follows (:func:`vehicle_entry`).
 """
 
@@ -21,7 +23,9 @@ __all__ = [
     "EGO_KEY",
     "QUANTITIES",
     "WEATHER_INPUTS",
+    "cloud_cover_level",
     "rule_values",
+    "time_of_day_level",
     "vehicle_entry",
 ]
 
@@ -80,6 +84,34 @@ CARLA_QUANTITIES: dict[str, str] = {
 #: The ``vehicles`` key naming the ego (``role_name`` ``Ego``).
 EGO_KEY: str = "ego"
 _EGO_ROLE: str = "Ego"
+
+
+def time_of_day_level(sun_altitude_deg: float, sun_azimuth_deg: float) -> str:
+    """The time of day for a sun at *sun_altitude_deg* above the horizon and
+    *sun_azimuth_deg*.
+
+    The day with the sun above the horizon; the civil twilight down to 6
+    degrees below it, dawn with the sun rising (azimuth 0-180 degrees) and
+    dusk with it setting (180-360); the night under that.  What the weather
+    rules' ``carla_sun_altitude`` and ``carla_sun_azimuth`` draw for each.
+    """
+    if sun_altitude_deg >= 0.0:
+        return "day"
+    if sun_altitude_deg >= -6.0:
+        azimuth = sun_azimuth_deg % 360.0
+        return "dawn" if azimuth < 180.0 else "dusk"
+    return "night"
+
+
+def cloud_cover_level(cloudiness: float) -> str:
+    """The taxonomy's cloudiness for CARLA's 0-100 *cloudiness*: clear below
+    20, overcast from 70, partly cloudy between -- what the weather rules'
+    ``carla_cloudiness`` draws for each."""
+    if cloudiness < 20.0:
+        return "clear"
+    if cloudiness < 70.0:
+        return "partly_cloudy"
+    return "overcast"
 
 
 def rule_values(values: Mapping[str, float]) -> dict[str, float]:

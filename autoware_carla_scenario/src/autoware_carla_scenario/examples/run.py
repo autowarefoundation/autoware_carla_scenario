@@ -2936,7 +2936,8 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     initialization, so the world is in it before the run starts.  It is
     registered before the scenario's own ``setup()`` runs, so a scenario that
     sets the weather itself has the last word.  Nothing is registered when
-    every field is ``null`` (the default).
+    every field is ``null`` (the default); one is when ``rules`` alone is
+    set, so the run gives its vehicles the grip of its rules (#1937).
 
     The conditions it names -- ``rainfall_rate_mm_h``,
     ``fog_visibility_range_m``, ``time_of_day``, ``wind_speed_kmh``,
@@ -2979,7 +2980,7 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     default, vehicles = check_weather_rules(rules)
     scenario._weather_rules_default = None if default is None else str(default)
     scenario._weather_rules_vehicles = [(p, str(f)) for p, f in vehicles]
-    if not settings:
+    if not settings and default is None and not vehicles:
         return
     # Once, before the run: the action applies numbers. The time of day and
     # the visibility quantile are the rules' alone; the cloud cover is
