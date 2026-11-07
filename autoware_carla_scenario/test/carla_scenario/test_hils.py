@@ -89,6 +89,40 @@ def test_turning_right_is_a_negative_yaw_rate() -> None:
     assert s["yaw_rate_rad"] == pytest.approx(math.radians(-10.0))
 
 
+def test_a_pitched_vehicle_resolves_its_velocity_along_its_own_axes() -> None:
+    # Nose up 30 degrees, climbing along the nose: all forward, none vertical.
+    cos30 = math.cos(math.radians(30.0))
+    s = ego_signals(
+        _state(rotation=(30.0, 0.0, 0.0), velocity=(10.0 * cos30, 0.0, 5.0))
+    )
+    assert s["pitch"] == pytest.approx(30.0)
+    assert s["longitudinal_velocity"] == pytest.approx(10.0)
+    assert s["vertical_velocity"] == pytest.approx(0.0, abs=1e-9)
+    assert s["velocity_up"] == pytest.approx(5.0)
+
+
+def test_a_rolled_vehicle_reads_world_up_as_lateral() -> None:
+    # Rolled 90 degrees onto its side: world up is the body's left.
+    s = ego_signals(_state(rotation=(0.0, 0.0, 90.0), velocity=(0.0, 0.0, 1.0)))
+    assert s["roll"] == pytest.approx(90.0)
+    assert s["lateral_velocity"] == pytest.approx(1.0)
+    assert s["vertical_velocity"] == pytest.approx(0.0, abs=1e-9)
+
+
+def test_roll_and_pitch_rates_are_right_handed() -> None:
+    assert ego_signals(_state(angular_velocity=(5.0, 0.0, 0.0)))[
+        "roll_rate"
+    ] == pytest.approx(-5.0)
+    assert ego_signals(_state(angular_velocity=(0.0, 5.0, 0.0)))[
+        "pitch_rate"
+    ] == pytest.approx(5.0)
+
+
+def test_the_heading_wraps_into_0_to_360() -> None:
+    s = ego_signals(_state(rotation=(0.0, 300.0, 0.0)))
+    assert s["heading"] == pytest.approx(30.0)
+
+
 def test_geolocation_and_controls() -> None:
     s = ego_signals(
         _state(geolocation=(35.5, 139.5, 40.0), throttle=0.3, reverse=True, gear=2)

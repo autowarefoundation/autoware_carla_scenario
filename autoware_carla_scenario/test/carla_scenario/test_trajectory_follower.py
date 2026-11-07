@@ -1052,3 +1052,45 @@ def test_controller_state_is_never_updated_with_a_non_finite_value() -> None:
     ):
         value = getattr(follower, name)
         assert value is not None and math.isfinite(value), name
+
+
+def test_a_plan_stopping_just_behind_is_stopped_into_not_an_emergency() -> None:
+    """1 m past the stop point is within the 1.5 m overshoot allowance."""
+    follower = _follower()
+    _run(follower, _accelerating_from_rest(0.5), 0.0, 2)
+    assert follower.control_state == DRIVE
+    _run(
+        follower,
+        _timed_plan([-1.0 + 0.5 * index for index in range(9)]),
+        3.0,
+        1,
+        velocities=[0.0] * 9,
+    )
+    assert follower.stop_distance_m == pytest.approx(-1.0)
+    assert follower.control_state == STOPPING
+
+
+def test_a_stop_point_ahead_is_braked_into() -> None:
+    """From 2 m/s braking evenly to a stop 1.5 m ahead: the lookahead reaches the
+    stop point, whose own acceleration is nothing, yet the follower brakes."""
+    deceleration = 4.0 / 3.0
+    stop_s = 1.5
+    xs = []
+    for index in range(40):
+        t = min((index + 1) * 0.1, stop_s)
+        xs.append(2.0 * t - 0.5 * deceleration * t * t)
+    follower = _follower()
+    command = _run(follower, _timed_plan(xs), 2.0, 60)
+    assert follower.control_state == DRIVE
+    assert command.acceleration_mps2 < -1.4
+
+
+def test_smooth_stop_brakes_weakly_just_past_the_stop_point() -> None:
+    """Between the weak (-0.3 m) and strong (-0.5 m) overshoot distances."""
+    config = ControlConfig()
+    assert (
+        config.smooth_stop_strong_stop_dist < -0.4 < config.smooth_stop_weak_stop_dist
+    )
+    follower = _follower(config)
+    acc = follower._smooth_stop(-0.4, 0.0, 0.0)  # noqa: SLF001
+    assert acc == config.smooth_stop_weak_stop_acc == -0.8

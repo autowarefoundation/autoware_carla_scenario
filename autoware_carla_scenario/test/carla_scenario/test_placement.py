@@ -60,6 +60,13 @@ def test_the_solver_skips_where_nothing_is_read() -> None:
     assert s == pytest.approx(7.25, abs=1e-3)
 
 
+def test_the_solver_reads_the_high_end_of_the_interval() -> None:
+    # Samples at 0, 1, ..., 10, then high itself: 10.4 is only read at 10.5.
+    s = solve_along(lambda s: s, 10.4, 0.0, 10.5, step=1.0)
+
+    assert s == pytest.approx(10.4, abs=1e-3)
+
+
 def _step(s: float) -> float:
     # 5 before s = 10, where it jumps to 50 and falls 1.5 per metre after.
     if s < 10.0:
