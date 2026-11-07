@@ -2939,10 +2939,13 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     every field is ``null`` (the default).
 
     The conditions it names -- ``rainfall_rate_mm_h``,
-    ``fog_visibility_range_m``, ``time_of_day`` -- are worked out by the
-    weather rules into CARLA's weather fields and the visibility, once,
-    here (:func:`~autoware_carla_scenario.weather_rules.resolve_environment`):
-    the action applies numbers.  A CARLA field the config sets itself is kept.
+    ``fog_visibility_range_m``, ``time_of_day``, ``wind_speed_kmh``,
+    ``cloud_cover`` -- are worked out by the weather rules into CARLA's
+    weather fields and the visibility, once, here
+    (:func:`~autoware_carla_scenario.weather_rules.resolve_environment`):
+    the action applies numbers, and records the conditions but the time of
+    day as what the run was set to, which the ODD measures.  A CARLA field
+    the config sets itself is kept.
 
     ``environment.rules`` names the weather rules the run follows: CARLA's
     weather, the grip and the visibility the conditions leave
@@ -2971,10 +2974,11 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     if not settings:
         return
     # Once, before the run: the action applies numbers. The time of day and
-    # the visibility quantile are the rules' alone.
+    # the visibility quantile are the rules' alone; the cloud cover is
+    # recorded as the run's, which the ODD measures (rain may render the sky
+    # cloudier, #1930).
     settings = resolve_environment(settings)
     settings.pop("time_of_day", None)
-    settings.pop("cloud_cover", None)
     settings.pop("visibility_quantile", None)
     from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415
 

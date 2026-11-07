@@ -181,7 +181,7 @@ categories; what tier4/taxonomy does not declare yet keeps an id of its own
 | `odd.EC.weather.fog.fog_visibility_range`, `...fog_level` | fog_thick (under 50 m), fog_heavy (50-450), fog_medium (450-800), fog_mist (800-1600), fog_not_detectable | The visibility through the fog the run was set to |
 | `odd.EC.illumination.time_of_day` | day, dusk, night, dawn | The sun: day above the horizon, dusk or dawn (setting or rising) down to -6°, night under it |
 | `odd.EC.weather.wind.wind_speed`, `...wind_intensity` | no_wind (under 5 km/h), light_wind (5-20), moderate_wind (20-50), strong_wind | The wind speed the run was set to |
-| `odd.EC.illumination.cloudiness` | clear, partly_cloudy, overcast | CARLA's cloudiness: clear below 20, overcast from 70 |
+| `odd.EC.illumination.cloudiness` | clear, partly_cloudy, overcast | The cloud cover the run was set to, however much its rain clouds CARLA's sky; when it named none, CARLA's cloudiness: clear below 20, overcast from 70 |
 | `odd.SE.drivable_area_surface.road_surface_condition` ² | dry, wet, standing_water (of tier4/taxonomy's twelve, what CARLA renders) | CARLA's water: standing water from 50, wet from 10 |
 | `odd.ego_vehicle.ego_vehicle.velocity` ³ | 0-5, then 10 km/h wide centred on 10, 20, ... 120 (5-15, 15-25, ...) | Ego velocity |
 | `odd.dynamic.nearby_vehicle_count` | 0, 1-2, 3-5, 6+ | Other vehicles within 50 m |

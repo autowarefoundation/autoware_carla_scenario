@@ -231,7 +231,7 @@ These live in `autoware_carla_scenario.odd`:
 | `fog_visibility_range_m` | float, m | The visibility through the fog the run was set to (`environment.fog_visibility_range_m`); nothing when it named none |
 | `time_of_day` | `TIMES_OF_DAY` | The sun: `day` above the horizon, `dawn` (rising, azimuth 0-180) or `dusk` (setting, 180-360) down to 6 degrees below it, `night` under that |
 | `wind_speed_kmh` | float, km/h | The wind speed the run was set to (`environment.wind_speed_kmh`); nothing when it named none |
-| `cloud_cover` | `CLOUD_COVERS` | CARLA's cloudiness: `clear` below 20, `overcast` from 70, `partly_cloudy` between |
+| `cloud_cover` | `CLOUD_COVERS` | The cloud cover the run was set to (`environment.cloud_cover`), whatever the rain adds to CARLA's cloudiness; when it named none, CARLA's cloudiness: `clear` below 20, `overcast` from 70, `partly_cloudy` between |
 | `road_surface_condition` | `ROAD_SURFACE_CONDITIONS` | CARLA's water: `standing_water` from 50 standing water, `wet` from 10 of either, else `dry` |
 | `illumination` | `ILLUMINATION_LEVELS` | Sun altitude |
 | `rain`, `fog` | `INTENSITY_LEVELS` | CARLA weather (0-100) |
@@ -1014,8 +1014,13 @@ case's `quantities`, which the flaky search moves); a config that names a
 condition gets the rest at its median
 (`weather_rules.resolve_environment`). A CARLA field the config sets itself
 is kept, and what follows from it in the rules reads it. The probes read the
-conditions back: the rainfall rate and the fog visibility as the run was set
-to them, the time of day off the sun.
+conditions back: the rainfall rate, the fog visibility, the wind speed and
+the cloud cover as the run was set to them, the time of day off the sun.
+The cloud cover is the sky's: rain clouds CARLA's sky past it (the rules'
+`carla_cloudiness` is the cloudier of the sky and the rain's clouds), so a
+case drawn `clear` in moderate rain renders a cloudy sky and is measured
+`clear`, the cell it was drawn for. A run that names no cloud cover is
+measured off CARLA's cloudiness.
 
 A config that sets CARLA's fields alone names no condition: the ODD's
 weather is not measured, and drivers see as they always did (a warning says
@@ -1045,7 +1050,8 @@ and `cloudiness` read CARLA's 0-100 intensities as levels, as `rain` and
 
 Every `environment.*` value must be a finite number -- an integer or a
 float, not a boolean or a string (`true` and `"15"` are refused, not read as
-1 and 15) -- but `time_of_day`, one of `day`, `dusk`, `night`, `dawn`: any
+1 and 15) -- but `time_of_day`, one of `day`, `dusk`, `night`, `dawn`, and
+`cloud_cover`, one of `clear`, `partly_cloudy`, `overcast`: any
 other value, NaN or infinity is refused before the run starts, naming the key
 (`environment.rainfall_rate_mm_h must be finite, got nan`). `cloudiness`,
 `precipitation`, `precipitation_deposits`, `wetness`, `wind_intensity` and

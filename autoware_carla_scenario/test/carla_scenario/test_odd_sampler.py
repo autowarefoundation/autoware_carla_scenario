@@ -156,6 +156,52 @@ def test_carlas_own_levels_read_back_as_their_buckets() -> None:
         assert illumination_level(sun) == case.buckets["environment.illumination"]
 
 
+def test_the_cloud_cover_drawn_is_the_one_measured() -> None:
+    """A case's cloud cover is what the ODD measures for it, rain or not
+    (#1930): rain clouds CARLA's sky past the drawn label, which the run
+    records as its own, as it does the rainfall rate."""
+    from unittest.mock import MagicMock
+
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.actions.environment import (
+        forget_weather_conditions,
+    )
+    from autoware_carla_scenario.examples.run import add_environment
+    from autoware_carla_scenario.odd import probes
+
+    rendered_otherwise = 0
+    for case in OddSampler(default_odd(), seed=7).sample(60):
+        environment: dict[str, Any] = {}
+        for override in case.overrides:
+            name, _, value = override.partition("=")
+            key = name.removeprefix("environment.")
+            if key in ("time_of_day", "cloud_cover"):
+                environment[key] = value
+            else:
+                environment[key] = float(value)
+        registered: list = []
+        add_environment(
+            OmegaConf.create({"environment": environment}),
+            SimpleNamespace(register_init=registered.append),  # type: ignore[arg-type]
+        )
+        (action,) = registered
+        world = MagicMock()
+        world.id = 100 + case.index
+        world.get_weather.return_value = carla.WeatherParameters()
+        forget_weather_conditions()
+        probes.reset_probes()
+        action.execute(world)
+        drawn = case.buckets[_CLOUD]
+        assert probes.cloud_cover(world) == drawn, case.overrides
+        if probes.cloud_cover_level(environment["cloudiness"]) != drawn:
+            rendered_otherwise += 1
+    forget_weather_conditions()
+    probes.reset_probes()
+    # The rain does cloud the sky past the label in some of them.
+    assert rendered_otherwise > 0
+
+
 def test_the_same_seed_draws_the_same_cases() -> None:
     first = [c.overrides for c in OddSampler(default_odd(), seed=11).sample(10)]
     again = [c.overrides for c in OddSampler(default_odd(), seed=11).sample(10)]
