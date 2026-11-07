@@ -288,6 +288,12 @@ class DockerBackend:
             # Not --rm: one that exits while starting keeps its logs for the
             # error; close() removes it.
             "--detach",
+            # Never a pull of its own (#1960): _ensure_image() has pulled what
+            # `pull` asks for, with no timeout, and `never` means the image is
+            # the host's.  docker run's own default (`missing`) would pull a
+            # missing image under _docker()'s 120 s timeout.
+            "--pull",
+            "never",
             "--name",
             name,
             "--label",
@@ -308,7 +314,14 @@ class DockerBackend:
             argv += ["--volume", f"{os.path.expanduser(host)}:{rest}"]
         argv += [*settings.docker_args, settings.image]
         logger.info("Starting backend '%s': %s", self.name, " ".join(argv))
-        out = _docker(argv, f"start the '{self.name}' backend")
+        # docker run often creates the container and then fails to start it
+        # (a port taken since _free_port(), a GPU error, its timeout, Ctrl-C):
+        # the container is removed by name whatever stops the call (#1960).
+        try:
+            out = _docker(argv, f"start the '{self.name}' backend")
+        except BaseException:
+            self._remove(name)
+            raise
         self._container = out.strip() or name
         self._follow(log_dir)
         self._wait_ready()
@@ -318,21 +331,17 @@ class DockerBackend:
         self._container = None
         if container is not None:
             try:
-                docker = self._settings.docker
                 subprocess.run(
-                    [docker, "stop", "--time", "10", container],
-                    capture_output=True,
-                    timeout=60,
-                    check=False,
-                )
-                subprocess.run(
-                    [docker, "rm", "--force", container],
+                    [self._settings.docker, "stop", "--time", "10", container],
                     capture_output=True,
                     timeout=60,
                     check=False,
                 )
             except (OSError, subprocess.SubprocessError):
                 logger.warning("Could not stop backend container %s", container)
+            # Whatever the stop did (#1960): a stop that timed out leaves the
+            # container running, and rm --force kills it.
+            self._remove(container)
         follower = self._follower
         self._follower = None
         if follower is not None:
@@ -353,6 +362,20 @@ class DockerBackend:
             log.close()
 
     # ------------------------------------------------------------------
+
+    def _remove(self, container: str) -> None:
+        """``docker rm --force`` *container*, at most :data:`_CALL_TIMEOUT_S`;
+        a failure is logged, never raised -- it must not stand in for the
+        error that made the caller remove it."""
+        try:
+            subprocess.run(
+                [self._settings.docker, "rm", "--force", container],
+                capture_output=True,
+                timeout=_CALL_TIMEOUT_S,
+                check=False,
+            )
+        except (OSError, subprocess.SubprocessError):
+            logger.warning("Could not remove backend container %s", container)
 
     def _check_docker(self) -> None:
         try:

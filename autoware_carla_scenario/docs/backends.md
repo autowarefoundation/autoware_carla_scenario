@@ -91,7 +91,8 @@ what others are about to take:
 
 - checks that docker is usable, and warns when it has no nvidia runtime;
 - pulls the image if the host lacks it (`pull: missing`, the default; also
-  `always` or `never`);
+  `always` or `never`). `docker run` itself never pulls (`--pull never`), so
+  with `pull: never` an image the host lacks fails the start at once;
 - runs the container on its GPU, with its port published on `127.0.0.1` at a
   free port;
 - follows the container's log into the run's output directory
@@ -99,7 +100,10 @@ what others are about to take:
 - waits until the service answers, for up to `startup_timeout_s`.
 
 A container that exits while starting is kept until its logs are read into the
-error, and then removed; every container is removed when its run ends.
+error, and then removed; every container is removed when its run ends. So is
+one `docker run` created but failed to start (a port taken in the meantime, a
+GPU error, a timeout, Ctrl-C), and one whose `docker stop` timed out
+(`docker rm --force`).
 
 It labels each container with the host and process that started it. A container
 left behind by a killed run is removed the next time a backend of its name
