@@ -38,7 +38,7 @@ from pydantic import (
 )
 
 from ..scaffold.names import SCENARIO_NAME_PATTERN
-from .registry import LaneletPlace, get_action_spec
+from .registry import FieldSpec, LaneletPlace, get_action_spec, read_bool
 
 __all__ = [
     "ActionNode",
@@ -199,6 +199,37 @@ class _Node(BaseModel):
 # ---------------------------------------------------------------------------
 
 
+def _sweep_params(
+    fields: tuple[FieldSpec, ...], params: dict[str, Any]
+) -> dict[str, Any]:
+    """*params* as the sweeper takes them: each ``bool`` field a real bool.
+
+    A constraint's and a binding's parameters go to the sweep config as
+    written -- the compiler's :func:`coerce_params` never sees them -- and the
+    sweeper reads a flag by its truth, so a ``no`` or an ``off`` kept as text
+    (a document reads them as text, #1946) would turn the flag on.  Each is
+    read as the validator reads it
+    (:func:`~autoware_carla_scenario.authoring.registry.read_bool`); a blank
+    one stands for the field's default.  A spelling that is neither is left
+    as written: the validator names it, and the sweeper refuses it.
+    """
+    out = dict(params)
+    for spec in fields:
+        if spec.kind != "bool" or spec.name not in out:
+            continue
+        value = out[spec.name]
+        if value is None or (isinstance(value, str) and not value.strip()):
+            if spec.default is None:
+                del out[spec.name]
+            else:
+                out[spec.name] = spec.default
+            continue
+        flag = read_bool(value)
+        if flag is not None:
+            out[spec.name] = flag
+    return out
+
+
 class ConstraintNode(_Node):
     """One node of a lanelet spawn-constraint tree.
 
@@ -228,11 +259,11 @@ class ConstraintNode(_Node):
         """Return this subtree in ``sweep.constraints`` YAML form."""
         from .registry import get_constraint_spec
 
+        spec = get_constraint_spec(self.type)
         out: dict[str, Any] = {"type": self.type}
-        out.update(self.params)
+        out.update(_sweep_params(spec.fields if spec else (), self.params))
         if not self.constraints:
             return out
-        spec = get_constraint_spec(self.type)
         if spec is not None and spec.kind == "wrapper":
             out["constraint"] = self.constraints[0].to_sweep_dict()
         else:
@@ -277,7 +308,8 @@ class BindingRef(_Node):
 
         spec = get_binding_spec(self.type)
         fixed = dict(spec.fixed) if spec else {}
-        return {"type": self.type, **self.params, **fixed}
+        params = _sweep_params(spec.fields if spec else (), self.params)
+        return {"type": self.type, **params, **fixed}
 
 
 class SValue(_Node):

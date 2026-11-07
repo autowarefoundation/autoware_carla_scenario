@@ -321,6 +321,16 @@ class RouteThroughBinding:
     through_junction: bool = False
 
     def __post_init__(self) -> None:
+        # Read by their truth, so the text "off" would turn one on (#1946).
+        if not isinstance(self.last_only, bool):
+            raise ValueError(
+                f"route_through last_only must be true or false, got {self.last_only!r}"
+            )
+        if not isinstance(self.through_junction, bool):
+            raise ValueError(
+                "route_through through_junction must be true or false, "
+                f"got {self.through_junction!r}"
+            )
         if self.depth < 1:
             raise ValueError(f"route_through depth must be >= 1, got {self.depth}")
 

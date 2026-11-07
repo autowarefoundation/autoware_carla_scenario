@@ -14,8 +14,12 @@ import pytest
 import yaml
 
 from autoware_carla_scenario.authoring.compiler import compile_document
+from autoware_carla_scenario.authoring.hydra_config import build_scenario_config
 from autoware_carla_scenario.authoring.models import (
     ActionNode,
+    BindingRef,
+    ConstraintNode,
+    GoalSpec,
     JunctionSegment,
     LaneSegment,
     ScenarioDocument,
@@ -33,6 +37,15 @@ from autoware_carla_scenario.authoring.persistence import (
 from autoware_carla_scenario.authoring.starter import new_document
 from autoware_carla_scenario.authoring.validator import validate_document
 from autoware_carla_scenario.editor.service import parse_route_yaml
+from autoware_carla_scenario.sweeper.bindings import (
+    RouteThroughBinding,
+    parse_binding,
+)
+from autoware_carla_scenario.sweeper.constraints import (
+    AndConstraint,
+    HasAdjacentConstraint,
+    parse_constraint,
+)
 
 
 def _hand_written(document: ScenarioDocument, *words: str) -> str:
@@ -233,3 +246,85 @@ class TestBoolFields:
         assert (lane.opposite_lane, lane.stop_line) == ("yes", "no")
         # The spellings YAML 1.1 read as a boolean still mean what they did.
         assert (junction.traffic_light, junction.crossing_from_left) == ("yes", "no")
+
+
+class TestSweepFlags:
+    """A constraint's and a binding's flags reach the sweeper as real bools.
+
+    Their parameters skip the compiler, and the sweeper reads a flag by its
+    truth: a ``no`` kept as text would turn it on.
+    """
+
+    @staticmethod
+    def _swept() -> ScenarioDocument:
+        document = new_document()
+        npc = document.entity("npc1")
+        assert npc is not None
+        adjacent = next(
+            c
+            for root in npc.spawn.constraints
+            for c in root.walk()
+            if c.type == "has_adjacent"
+        )
+        adjacent.params["include_forks"] = "__FORKS__"
+        ego = document.ego
+        assert ego is not None
+        ego.goal = GoalSpec(
+            lanelet_id=141,
+            mode="derived",
+            binding=BindingRef(
+                type="route_through",
+                params={"depth": 1, "through_junction": "__JUNCTION__"},
+            ),
+        )
+        return document
+
+    @pytest.mark.parametrize(
+        ("word", "expected"),
+        [("no", False), ("off", False), ("false", False)]
+        + [("yes", True), ("on", True), ("true", True)],
+    )
+    def test_a_hand_written_flag_is_read_as_it_says(
+        self, tmp_path: Path, word: str, expected: bool
+    ) -> None:
+        text = dump_document_yaml(self._swept())
+        text = text.replace("__FORKS__", word).replace("__JUNCTION__", word)
+        loaded = _load(tmp_path, text)
+        assert _errors(loaded) == []
+        sweep = build_scenario_config(loaded)["sweep"]
+        (root,) = sweep["constraints"]["scenario.spawn_overrides.npc1.lanelet_id"]
+        constraint = parse_constraint(root)
+        assert isinstance(constraint, AndConstraint)
+        adjacent = next(
+            c for c in constraint.constraints if isinstance(c, HasAdjacentConstraint)
+        )
+        assert adjacent.include_forks is expected
+        key = "ego.goal_lanelet_id"
+        binding = parse_binding(key, sweep["bindings"][key])
+        assert isinstance(binding, RouteThroughBinding)
+        assert binding.through_junction is expected
+
+    def test_a_blank_flag_is_its_default(self) -> None:
+        node = ConstraintNode(
+            type="has_adjacent", params={"value": "left", "include_forks": None}
+        )
+        assert node.to_sweep_dict()["include_forks"] is False
+        binding = BindingRef(type="route_through", params={"through_junction": " "})
+        assert binding.to_sweep_dict()["through_junction"] is False
+
+    def test_a_misspelt_flag_is_left_for_the_validator(self) -> None:
+        node = ConstraintNode(
+            type="has_adjacent", params={"value": "left", "include_forks": "maybe"}
+        )
+        assert node.to_sweep_dict()["include_forks"] == "maybe"
+
+    @pytest.mark.parametrize("value", ["no", "yes", 0, 1, None])
+    def test_the_sweeper_refuses_a_flag_that_is_not_a_bool(self, value: object) -> None:
+        with pytest.raises(ValueError, match="include_forks must be true or false"):
+            parse_constraint(
+                {"type": "has_adjacent", "value": "left", "include_forks": value}
+            )
+        with pytest.raises(ValueError, match="through_junction must be true or false"):
+            parse_binding("k", {"type": "route_through", "through_junction": value})
+        with pytest.raises(ValueError, match="last_only must be true or false"):
+            parse_binding("k", {"type": "route_through", "last_only": value})
