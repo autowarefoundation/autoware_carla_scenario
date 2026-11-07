@@ -454,6 +454,16 @@ def test_a_run_judging_one_needs_the_workers(opendrive: str, tmp_path: Path) -> 
             "request_timeout_s must be positive and finite, got nan",
         ),
         ("start_timeout_s", -1, "start_timeout_s must be positive and finite, got -1"),
+        (
+            "request_timeout_s",
+            True,
+            "request_timeout_s must be positive and finite, or None, got True",
+        ),
+        (
+            "start_timeout_s",
+            False,
+            "start_timeout_s must be positive and finite, or None, got False",
+        ),
         # Too big for a float (#1652).
         pytest.param(
             "dt",
@@ -2052,3 +2062,21 @@ def test_an_answer_written_in_pieces_is_read_whole(tmp_path: Path) -> None:
         assert values == {CRIME_TTC_S: 2.5} and errors == {}
     finally:
         worker.close()
+
+
+def test_a_timeout_longer_than_poll_waits_at_once_is_fine(
+    opendrive: str, tmp_path: Path
+) -> None:
+    """A timeout meant as "forever" (past poll()'s C int of milliseconds)
+    passes the settings' check, and a normal answer is read under it."""
+    _answering(
+        tmp_path,
+        [CRIME_TTC_S],
+        {"values": {CRIME_TTC_S: 1.0}, "errors": {}},
+        delay=0.2,
+        request_timeout_s=1e9,
+        start_timeout_s=1e12,
+    )
+    world = _following(opendrive)
+    series = evaluate_metrics(_recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S])
+    assert series[CRIME_TTC_S].values == [1.0]

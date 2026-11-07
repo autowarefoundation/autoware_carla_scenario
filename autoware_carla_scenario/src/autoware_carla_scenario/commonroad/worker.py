@@ -72,6 +72,9 @@ _PIPE_RELEASE_S = 1.0
 #: once, in bytes.
 _READ_CHUNK = 65536
 
+#: The longest wait one ``poll()`` takes, in milliseconds (a C ``int``).
+_MAX_POLL_MS = 2**31 - 1
+
 
 def _excerpt(line: str) -> str:
     """*line*, stripped and cut to :data:`_EXCERPT_CHARS`, quoted."""
@@ -293,8 +296,10 @@ class CommonRoadWorker:
                 if left <= 0:
                     return None
                 # Ready: data, the end of the output, or an error, which the
-                # read below then reads or raises.
-                if not poller.poll(max(1, int(left * 1000) + 1)):
+                # read below then reads or raises.  poll() takes a C int of
+                # milliseconds: a longer wait is polled in pieces.
+                wait_ms = min(max(1, int(left * 1000) + 1), _MAX_POLL_MS)
+                if not poller.poll(wait_ms):
                     continue
             chunk = os.read(fd, _READ_CHUNK)
             if not chunk:

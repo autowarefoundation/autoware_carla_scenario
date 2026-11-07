@@ -458,7 +458,10 @@ def _judge_metrics(
 
     Raises:
         ~autoware_carla_scenario.commonroad.CommonRoadWorkerError: A CommonRoad
-            metric is judged and its workers cannot be started.
+            metric is judged and its workers cannot be started or do not know
+            it, one of them fails (exits, answers out of protocol, or does not
+            answer in time), or the metric fails in every frame evaluated: a
+            metric that read nothing does not pass the run.
     """
     if recorder is None:
         return result

@@ -73,10 +73,16 @@ def _default_workers() -> int:
 
 
 def _check_timeout(name: str, timeout: Any) -> Optional[float]:
-    """*timeout*, ``None`` or a period (:func:`_check_period`), as a
-    ``float``."""
+    """*timeout*, ``None`` or a period (:func:`_check_period`; not a
+    bool), as a ``float``."""
     if timeout is None:
         return None
+    if isinstance(timeout, bool) or (
+        getattr(getattr(timeout, "dtype", None), "kind", None) == "b"
+    ):
+        raise ValueError(
+            f"{name} must be positive and finite, or None, got {timeout!r}"
+        )
     _check_period(name, timeout)
     return float(timeout)
 

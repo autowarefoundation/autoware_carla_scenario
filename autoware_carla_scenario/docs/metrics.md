@@ -271,7 +271,11 @@ does a run whose workers do not know a metric it judges on (a
 `init` answer lists the metrics it knows), and a run on which a metric fails
 in every frame evaluated: a fail condition on it would otherwise pass without
 having judged anything. A metric that fails only in some frames reads nothing
-in those, with a warning, as one with no one to measure from does. A worker
+in those, with a warning, as one with no one to measure from does. "Every
+frame" counts each frame a worker was asked: one in which the ego is on no
+lanelet reads nothing without failing, which the worker's answer does not
+tell apart from a frame with no one to measure from, so a metric that fails
+in every frame on the map but reads nothing off it is not caught. A worker
 that fails during a run (exits, answers out of protocol -- an answer that
 leaves a metric out, or calls it unknown, included -- or does not answer in
 time) fails that run the same way, and takes the pool down with it: the next
@@ -295,8 +299,10 @@ wait as long as it takes.
 least 1), the time step (`dt`), the horizon (`horizon_s`), the radius
 (`radius_m`), CommonRoad-Reach's settings, the command and the timeouts
 (`request_timeout_s`, `start_timeout_s`). The periods, `dt`, `horizon_s`,
-`radius_m` and the timeouts (unless `None`) must be positive and finite: a
-bad value raises `ValueError` when the settings are built, not later in a run.
+`radius_m` and the timeouts (unless `None`; a bool is refused) must be
+positive and finite: a bad value raises `ValueError` when the settings are
+built, not later in a run. A timeout far past what `poll()` waits at once
+(about 25 days) is waited in pieces.
 
 AlpaSim's other metrics need more than the world, and are not metrics here:
 
