@@ -33,7 +33,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ...utils.opendrive import sanitize_opendrive
 from ..base import TrafficBackendError, TrafficBackendUnavailable
@@ -116,6 +116,21 @@ class SignalTable:
         return sorted(links)
 
 
+def _sumo_package_homes() -> list[Path]:
+    """Where the ``eclipse-sumo`` package says SUMO is, and where it lies; none
+    when it is not installed.
+
+    Its own function so that the library check (docs/typecheck.md) leaves the
+    import out: :func:`sumo_home` calls it in the ``else`` branch of
+    ``if TYPE_CHECKING:``.
+    """
+    try:
+        import sumo  # noqa: PLC0415 - the eclipse-sumo package
+    except ImportError:
+        return []
+    return [Path(sumo.SUMO_HOME), Path(sumo.__file__).parent]
+
+
 def sumo_home() -> Path:
     """The SUMO installation: the first of ``$SUMO_HOME`` and the ``eclipse-sumo``
     package that holds SUMO's binaries and tools.
@@ -123,15 +138,13 @@ def sumo_home() -> Path:
     ``$SUMO_HOME`` alone is not trusted: importing libsumo points it at the
     ``sumo-data`` package, which holds neither.
     """
-    candidates = []
+    candidates: list[Path] = []
     if os.environ.get("SUMO_HOME"):
         candidates.append(Path(os.environ["SUMO_HOME"]))
-    try:
-        import sumo  # noqa: PLC0415 - the eclipse-sumo package
-    except ImportError:
+    if TYPE_CHECKING:
         pass
     else:
-        candidates += [Path(sumo.SUMO_HOME), Path(sumo.__file__).parent]
+        candidates += _sumo_package_homes()
     for home in candidates:
         if (home / "tools" / "randomTrips.py").is_file() and (home / "bin").is_dir():
             return home
@@ -294,7 +307,9 @@ def _random_trips(
         prefix,
         options,
     )
-    env = dict(os.environ, SUMO_HOME=str(sumo_home()))
+    home = str(sumo_home())
+    env = os.environ.copy()
+    env["SUMO_HOME"] = home
     proc = subprocess.run(  # noqa: S603
         cmd,
         capture_output=True,
