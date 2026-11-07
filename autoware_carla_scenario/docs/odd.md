@@ -1120,9 +1120,10 @@ CARLA's on any road, so every `EnvironmentAction` sets it, whatever else it
 sets, and the config's `environment` registers one even when it names only
 `rules`. One that names no grip, quantile or water (a scenario's own that
 sets the sun, say) reads the grip again at the quantile the run's grip is
-at, and keeps a grip named outright (`tire_friction`). Under the default rules, a run that sets no road water, no
-quantile and no grip keeps CARLA's (the default rules' dry grip at its
-median).
+at, and keeps a grip named outright (`tire_friction`). A grip named
+outright also ends the quantile: water set after it reads the grip at the
+median. Under the default rules, a run that sets no road water, no quantile
+and no grip keeps CARLA's grip (1.0, whatever water CARLA renders).
 
 Where in the range a run's grip is, is `environment.tire_friction_quantile`:
 the quantile of the grip's distribution (0 its low end, 1 its high end; the
