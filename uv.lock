@@ -1,5 +1,5 @@
 version = 1
-revision = 5
+revision = 3
 requires-python = ">=3.10, <3.15"
 resolution-markers = [
     "python_full_version >= '3.13' and sys_platform == 'emscripten'",
@@ -29,7 +29,7 @@ members = [
 
 [manifest.dependency-groups]
 dev = [
-    { name = "autoware-carla-scenario-rerun", specifier = ">=0.2,<0.3" },
+    { name = "autoware-carla-scenario-rerun", specifier = ">=0.3,<0.4" },
     { name = "autoware-carla-scenario-t4", specifier = ">=0.1,<0.2" },
     { name = "black", specifier = ">=25.11.0" },
     { name = "colorama", marker = "python_full_version < '3.13'", specifier = ">=0.4.6" },
@@ -239,9 +239,9 @@ viewer = [
 
 [package.metadata]
 requires-dist = [
-    { name = "autoware-carla-scenario-rerun", marker = "extra == 'rerun'", specifier = ">=0.2,<0.3" },
-    { name = "autoware-carla-scenario-rerun", marker = "extra == 'rerun-lidar'", specifier = ">=0.2,<0.3" },
-    { name = "autoware-carla-scenario-rerun", extras = ["viewer"], marker = "extra == 'viewer'", specifier = ">=0.2,<0.3" },
+    { name = "autoware-carla-scenario-rerun", marker = "extra == 'rerun'", specifier = ">=0.3,<0.4" },
+    { name = "autoware-carla-scenario-rerun", marker = "extra == 'rerun-lidar'", specifier = ">=0.3,<0.4" },
+    { name = "autoware-carla-scenario-rerun", extras = ["viewer"], marker = "extra == 'viewer'", specifier = ">=0.3,<0.4" },
     { name = "autoware-carla-scenario-t4", marker = "extra == 't4'", specifier = ">=0.1,<0.2" },
     { name = "carla-driver-interface", specifier = ">=2.4.2,<3" },
     { name = "cyclonedds", marker = "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'ros2'", specifier = ">=11.0.1" },
@@ -282,12 +282,12 @@ provides-extras = ["sumo", "map", "ros2", "rerun", "rerun-lidar", "t4", "hils", 
 
 [[package]]
 name = "autoware-carla-scenario-rerun"
-version = "0.2.0"
+version = "0.3.0"
 source = { registry = "https://pypi.org/simple" }
-sdist = { url = "https://files.pythonhosted.org/packages/82/5b/2860334f21076163ebdd1c5b1bed3c9b6885dde2a3c6f3831519fb86554c/autoware_carla_scenario_rerun-0.2.0.tar.gz", hash = "sha256:f4fe9a39689d8e408e259976e2181279352351692048f681988d99fdbc691c33", size = 166940, upload-time = "2026-11-02T13:06:47.735Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/9d/24/88aac7616dbea0f07d323a9305f1990e48f8b1b98a0afe01f67ac611ad8f/autoware_carla_scenario_rerun-0.3.0.tar.gz", hash = "sha256:52395705df3e265d4342380759749829f86742472f5af7404d02fef670026ca7", size = 169420, upload-time = "2026-11-07T05:22:19.301Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/58/e2/1d4af0729389b7a85d8214069f67728d690aba8fa3393760d3908f64e119/autoware_carla_scenario_rerun-0.2.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:c78d168eebfa14f46111b12b79692b1b419738a9a253e315785b32e107746b7f", size = 2602108, upload-time = "2026-11-02T13:06:44.267Z" },
-    { url = "https://files.pythonhosted.org/packages/99/04/77cf75960b4c16255c6b73eaf8a9f9d5bdd704934014e677a906e339b573/autoware_carla_scenario_rerun-0.2.0-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:fd21b268ba4cf65bf824a5282f70410fe881cfc5642e0629d7df12e4b0720734", size = 2747457, upload-time = "2026-11-02T13:06:46.172Z" },
+    { url = "https://files.pythonhosted.org/packages/04/16/759b8bf4634b0eaa08dd146998f9bd1565ce51629f25e7b777c4267fb79a/autoware_carla_scenario_rerun-0.3.0-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:f73e6d4b956cea4d752380921a4c9cbf999a171693cb26ba77ade12c2ae748dc", size = 2609097, upload-time = "2026-11-07T05:22:15.425Z" },
+    { url = "https://files.pythonhosted.org/packages/26/7b/5066a4600577c315a5a1c9e0e6651483f8dd454204e2692e5c98682b7ce8/autoware_carla_scenario_rerun-0.3.0-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:3aff54a7487a68b6c11356b8e2f968110f6fdc077d17e60b93df83a362362593", size = 2754373, upload-time = "2026-11-07T05:22:17.558Z" },
 ]
 
 [package.optional-dependencies]
