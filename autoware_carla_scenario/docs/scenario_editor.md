@@ -332,7 +332,7 @@ already a FAIL condition. The two transition states are each held for exactly
 one tick, so a condition watching `startTransition` sees it.
 
 `runningState` and `endTransition` are only reached by an action that *runs
-on*: one whose completion criteria take the world time to meet (a lane change
+on*: one whose completion criteria the world takes time to meet (a lane change
 settling, a trajectory being followed), or one that re-sends its command every tick.
 An action with neither -- a traffic light set, say -- is over the moment
 it is commanded: on the tick after `startTransition` it goes straight to

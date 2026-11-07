@@ -401,11 +401,10 @@ class ActionSpec:
     title: str
     category: str
     builder: str
-    #: Runtime class this builds, as ``<relative module>:<name>``.  When it is
-    #: set the builder named above is *generated* from the constructor's
-    #: signature; when it is empty the builder is hand-written in
-    #: :mod:`autoware_carla_scenario.authoring.builders`.  Exactly one of the
-    #: two, which ``test_authoring_registry`` enforces.
+    #: Runtime class this builds, as ``<relative module>:<name>``.  Every spec
+    #: names one, and the builder named above is *generated* from the
+    #: constructor's signature by :mod:`autoware_carla_scenario.authoring.codegen`
+    #: (``test_authoring_registry`` enforces both).
     target: str = ""
     #: Field name -> constructor keyword, for the pairs that differ.  Fields
     #: whose name already matches the constructor need no entry.  A field
@@ -5108,12 +5107,12 @@ register_condition_spec(
                     "change is only complete once the vehicle has settled onto "
                     "the next lane, not when the command was issued.  Running "
                     "and End are only reached by an action that runs on -- one "
-                    "whose completion criteria take the world time to meet (a "
+                    "whose completion criteria the world takes time to meet (a "
                     "lane change settling, a trajectory being followed), or one "
                     "that re-sends its command every tick.  An action that is "
                     "over the moment it is commanded (a traffic light set, say) "
-                    "goes from Start straight to Complete (or back to Standby when it repeats), "
-                    "so waiting on Running or End for it never holds: wait on "
+                    "goes from Start straight to Complete (or back to Standby "
+                    "when it repeats), so waiting on Running or End for it never holds: wait on "
                     "Complete."
                 ),
             ),
