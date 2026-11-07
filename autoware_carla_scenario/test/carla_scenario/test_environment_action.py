@@ -645,7 +645,7 @@ def test_the_wind_speed_is_recorded_and_the_cloud_cover_named() -> None:
     )
     (action,) = registered
     assert action.settings["cloudiness"] >= 70.0
-    assert 20.0 <= action.settings["wind_intensity"] <= 50.0
+    assert probes.intensity_level(action.settings["wind_intensity"]) == "moderate"
     world = _world()
     world.id = 9
     action.execute(world)

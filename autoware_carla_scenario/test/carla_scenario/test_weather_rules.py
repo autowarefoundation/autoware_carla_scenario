@@ -806,10 +806,40 @@ def test_a_sweep_is_not_drawn_by_the_rules_an_earlier_run_left(tmp_path) -> None
 class TestWindAndClouds:
     def test_the_wind_speed_gives_carlas_wind_intensity(self) -> None:
         assert weather_range("carla_wind_intensity", {"wind_speed": 20.0}) == (
-            pytest.approx((20.0, 50.0))
+            pytest.approx((30.0, 30.0))
+        )
+        assert weather_range("carla_wind_intensity", {"wind_speed": 12.5}) == (
+            pytest.approx((8.0, 25.0))
         )
         out = resolve_environment({"wind_speed_kmh": 0.0})
         assert out["wind_intensity"] == 0.0
+
+    # The taxonomy's wind buckets, km/h, and the level the `wind` probe reads
+    # each one's CARLA wind intensity back as.
+    _WIND_BUCKETS = (
+        (0.0, 5.0, "none"),  # no_wind
+        (5.0, 20.0, "light"),  # light_wind
+        (20.0, 50.0, "moderate"),  # moderate_wind
+        (50.0, 100.0, "heavy"),  # strong_wind (the knob's range ends at 100)
+    )
+
+    @pytest.mark.parametrize(("low", "high", "level"), _WIND_BUCKETS)
+    def test_every_wind_speed_reads_back_as_its_bucket(
+        self, low: float, high: float, level: str
+    ) -> None:
+        # Speeds across the bucket, its lower edge and just under its upper
+        # one (the last bucket includes 100 km/h and what is held beyond).
+        steps = 40
+        speeds = [low + (high - low) * i / steps for i in range(steps)]
+        speeds += [high - 1e-6, high - 1e-3]
+        if level == "heavy":
+            speeds += [high, 150.0]
+        for speed in speeds:
+            for q in (0.0, 0.5, 1.0):
+                intensity = weather_at("carla_wind_intensity", {"wind_speed": speed}, q)
+                assert (
+                    probes.intensity_level(intensity) == level
+                ), f"{speed} km/h at quantile {q} draws intensity {intensity}"
 
     @pytest.mark.parametrize("sky", ["clear", "partly_cloudy", "overcast"])
     def test_the_sky_drawn_reads_back_as_it(self, sky: str) -> None:
