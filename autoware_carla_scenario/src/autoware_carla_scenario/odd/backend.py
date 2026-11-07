@@ -47,6 +47,7 @@ __all__ = [
     "CACHE_ENV",
     "CARLA_BACKEND",
     "DEFAULT_KNOBS",
+    "UNSUPPORTED_CONCEPTS",
     "CarlaBackend",
     "sync_cache_env",
     "weather_effects",
@@ -60,6 +61,7 @@ _PROBE_UNITS: dict[str, str] = {
     "visibility": "m",
     "rainfall_rate_mm_h": "mm/h",
     "fog_visibility_range_m": "m",
+    "wind_speed_kmh": "km/h",
     **{
         name: ""
         for name in (
@@ -70,6 +72,8 @@ _PROBE_UNITS: dict[str, str] = {
             "road_type",
             "drivable_area_type",
             "time_of_day",
+            "cloud_cover",
+            "road_surface_condition",
             "nearby_vehicle_count",
             "illumination",
             "rain",
@@ -153,6 +157,11 @@ DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
         "environment.time_of_day",
         values={label: label for label in probes.TIMES_OF_DAY},
     ),
+    probes.wind_speed_kmh: OddKnob("environment.wind_speed_kmh", range=(0.0, 100.0)),
+    probes.cloud_cover: OddKnob(
+        "environment.cloud_cover",
+        values={label: label for label in probes.CLOUD_COVERS},
+    ),
     # CARLA's own fields.
     probes.rain: OddKnob(
         "environment.precipitation",
@@ -207,8 +216,25 @@ _RULE_INPUT_KNOBS: dict[str, str] = {
 #: CARLA's weather fields given as a share, 0-100: what an effect writing
 #: one is held to.
 _PERCENT_FIELDS: frozenset[str] = frozenset(
-    {"precipitation", "cloudiness", "precipitation_deposits", "wetness", "fog_density"}
+    {
+        "precipitation",
+        "cloudiness",
+        "precipitation_deposits",
+        "wetness",
+        "wind_intensity",
+        "fog_density",
+    }
 )
+
+_EC = "environment_conditions.environment_conditions"
+
+#: What CARLA cannot bring about or measure: an ODD that measures one, or a
+#: module that restricts one (or a concept defined by one, the snow
+#: intensity), is refused (openodd's ``Backend.unsupported``).
+UNSUPPORTED_CONCEPTS: dict[str, str] = {
+    f"{_EC}.weather.snow.snowfall_rate": "CARLA renders no snow",
+    f"{_EC}.temperature": "CARLA has no temperature",
+}
 
 
 def weather_effects(odd: Any, rules: Optional[Rules] = None) -> list[OddKnob]:
@@ -284,6 +310,10 @@ class CarlaBackend(Backend):
     # ODD attribute through its knob to the rules (Backend.manifest).
     rule_input_knobs: Mapping[str, str] = field(
         default_factory=lambda: dict(_RULE_INPUT_KNOBS)
+    )
+    # What CARLA cannot bring about (snow, the temperature).
+    unsupported: Mapping[str, str] = field(
+        default_factory=lambda: dict(UNSUPPORTED_CONCEPTS)
     )
 
     def position(self, context: Any) -> Optional[tuple[float, float, float]]:

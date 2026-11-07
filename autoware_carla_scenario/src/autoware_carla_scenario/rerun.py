@@ -165,6 +165,7 @@ class RerunConverter:
         lidar_max_points: Optional[int] = None,
         lidar_sdk: Any = None,
         cameras: bool = False,
+        draw_radius_m: Optional[float] = None,
     ) -> None:
         """Args:
         strict: Refuse a log with a record type or a field the converter
@@ -179,6 +180,8 @@ class RerunConverter:
         lidar_sdk: The Rerun SDK the sensors are written with; ``rerun``
             when ``None``.
         cameras: Also record each run's camera frames (``rerun.cameras``).
+        draw_radius_m: Write only what comes this near the ego's trajectory, m
+            (``rerun.draw_radius_m``); ``None`` writes all of it.
 
         Raises:
             RerunUnavailableError: *converter* is ``None`` and the package
@@ -188,6 +191,7 @@ class RerunConverter:
         """
         self._module = converter if converter is not None else require_converter()
         self._strict = strict
+        self._draw_radius = _draw_radius_argument(draw_radius_m)
         self._lidar_max_points = lidar_max_points
         self._cameras = bool(cameras)
         self._lidar_sdk = None
@@ -269,7 +273,7 @@ class RerunConverter:
         self, trajectory: Path, recording: Path, lidar: Optional[Path] = None
     ) -> Any:
         stats = self._module.convert(
-            str(trajectory), str(recording), strict=self._strict
+            str(trajectory), str(recording), strict=self._strict, **self._draw_radius
         )
         if lidar is not None and lidar.is_file():
             from .rerun_lidar import merge_into  # noqa: PLC0415
@@ -458,6 +462,12 @@ def _installed(
         return _failed(label, trajectory, f"{type(exc).__name__}: {exc}")
 
 
+def _draw_radius_argument(draw_radius_m: Optional[float]) -> dict[str, float]:
+    """The converter's keyword for *draw_radius_m*; none when ``None``, so that
+    what does not ask for it goes on as it did."""
+    return {} if draw_radius_m is None else {"draw_radius_m": draw_radius_m}
+
+
 def _failed(label: str, trajectory: Path, error: str) -> RerunConversion:
     logger.error("[%s] Rerun recording of %s failed: %s", label, trajectory, error)
     return RerunConversion(label, trajectory, recording_path(trajectory), error=error)
@@ -469,6 +479,7 @@ def convert_outputs(
     strict: bool = False,
     jobs: Optional[int] = None,
     overwrite: bool = False,
+    draw_radius_m: Optional[float] = None,
 ) -> list[RerunConversion]:
     """Convert every trajectory log under *output_dir* (recursively) into a
     recording beside it, *jobs* at a time (all cores when ``None``); or, when
@@ -509,7 +520,12 @@ def convert_outputs(
             label = _label(path)
             converted = scratch / (label + RECORDING_SUFFIX)
             try:
-                stats = module.convert(str(path), str(converted), strict=strict)
+                stats = module.convert(
+                    str(path),
+                    str(converted),
+                    strict=strict,
+                    **_draw_radius_argument(draw_radius_m),
+                )
             except Exception as exc:  # noqa: BLE001 - reported, not raised
                 conversions.append(_failed(label, path, f"{type(exc).__name__}: {exc}"))
             else:
@@ -524,7 +540,11 @@ def convert_outputs(
                 )
             return conversions
         entries = module.convert_dir(
-            str(path), jobs=jobs, strict=strict, out_dir=str(scratch)
+            str(path),
+            jobs=jobs,
+            strict=strict,
+            out_dir=str(scratch),
+            **_draw_radius_argument(draw_radius_m),
         )
         for entry in entries:
             trajectory = Path(entry["input"])
@@ -582,6 +602,12 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--jobs", type=int, default=None, help="logs at a time (all cores by default)"
     )
     parser.add_argument(
+        "--draw-radius-m",
+        type=float,
+        default=None,
+        help="write only what comes this near the ego's trajectory (all by default)",
+    )
+    parser.add_argument(
         "--overwrite",
         action="store_true",
         help="replace a recording holding sensor data (LiDAR, cameras) even "
@@ -610,6 +636,7 @@ def main(argv: Optional[list[str]] = None) -> int:
                         strict=args.strict,
                         jobs=args.jobs,
                         overwrite=args.overwrite,
+                        draw_radius_m=args.draw_radius_m,
                     )
                 )
             except unconvertible as exc:  # reported with the PATH, not raised

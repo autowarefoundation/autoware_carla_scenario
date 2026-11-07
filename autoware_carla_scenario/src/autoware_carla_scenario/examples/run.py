@@ -1306,6 +1306,28 @@ def _rerun_settings(cfg: DictConfig) -> tuple[bool, bool]:
     return _switch(cfg, "rerun", "enabled"), _switch(cfg, "rerun", "strict")
 
 
+def _rerun_draw_radius(cfg: DictConfig) -> float | None:
+    """``rerun.draw_radius_m``: ``None`` when unset.
+
+    Raises:
+        ValueError: It is not a finite distance.
+    """
+    settings = cfg.get("rerun") or {}
+    value = settings.get("draw_radius_m", None)
+    if value is None:
+        return None
+    if (
+        isinstance(value, (bool, str))
+        or not isinstance(value, (int, float))
+        or not math.isfinite(value)
+        or value < 0.0
+    ):
+        raise ValueError(
+            f"rerun.draw_radius_m must be a finite distance, got {value!r}"
+        )
+    return float(value)
+
+
 def _rerun_lidar_max_points(cfg: DictConfig) -> int | None:
     """``rerun.lidar_max_points`` when ``rerun.lidar`` is set; ``None`` otherwise.
 
@@ -1349,6 +1371,8 @@ def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
     ``rerun.strict``); ``None`` otherwise.  With ``rerun.lidar`` it records
     each run's LiDAR sweeps too (the largest ``rerun.lidar_max_points`` of
     those asking, 0 being all), and with ``rerun.cameras`` its camera frames.
+    ``rerun.draw_radius_m`` is the largest of those asking for recordings; one
+    of them without it means no limit, since one converter serves the batch.
 
     Called before anything runs, so a run asking for recordings without the
     ``rerun`` extra installed, or with a ``rerun.lidar_max_points`` that is not
@@ -1379,6 +1403,12 @@ def build_rerun_converter(*cfgs: DictConfig) -> RerunConverter | None:
         sensors["lidar_max_points"] = 0 if 0 in lidar else max(lidar)
     if cameras:
         sensors["cameras"] = True
+    radii = [
+        _rerun_draw_radius(cfg) for cfg, (enabled, _) in zip(cfgs, settings) if enabled
+    ]
+    limits = [radius for radius in radii if radius is not None]
+    if len(limits) == len(radii):
+        sensors["draw_radius_m"] = max(limits)
     return RerunConverter(strict=strict, **sensors)
 
 
@@ -2940,6 +2970,7 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     # the visibility quantile are the rules' alone.
     settings = resolve_environment(settings)
     settings.pop("time_of_day", None)
+    settings.pop("cloud_cover", None)
     settings.pop("visibility_quantile", None)
     from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415
 
@@ -2951,8 +2982,9 @@ def environment_settings(cfg: DictConfig) -> dict[str, Any]:
     set, by name, each a number (an int or a float; not a boolean or a
     string, which ``float()`` would read) that
     :class:`~autoware_carla_scenario.EnvironmentAction` takes, or that the
-    weather rules read (``visibility_quantile``) -- but ``time_of_day``, one
-    of the taxonomy's times of day (``day``, ``dusk``, ``night``, ``dawn``).
+    weather rules read (``visibility_quantile``) -- but ``time_of_day`` and
+    ``cloud_cover``, one of the taxonomy's labels (``day``, ``dusk``,
+    ``night``, ``dawn``; ``clear``, ``partly_cloudy``, ``overcast``).
 
     Raises:
         ValueError: naming the key, as :func:`add_environment` documents.
@@ -2960,7 +2992,13 @@ def environment_settings(cfg: DictConfig) -> dict[str, Any]:
     from autoware_carla_scenario.actions.environment import (  # noqa: PLC0415
         _refusal,
     )
-    from autoware_carla_scenario.odd.probes import TIMES_OF_DAY  # noqa: PLC0415
+    from autoware_carla_scenario.odd.probes import (  # noqa: PLC0415
+        CLOUD_COVERS,
+        TIMES_OF_DAY,
+    )
+
+    # The settings that take one of the taxonomy's labels, not a number.
+    label_settings = {"time_of_day": TIMES_OF_DAY, "cloud_cover": CLOUD_COVERS}
 
     env_cfg = cfg.get("environment")
     raw = {} if env_cfg is None else _to_dict(env_cfg)
@@ -2969,11 +3007,11 @@ def environment_settings(cfg: DictConfig) -> dict[str, Any]:
     for key, value in raw.items():
         if value is None:
             continue
-        if key == "time_of_day":
-            if value not in TIMES_OF_DAY:
+        if key in label_settings:
+            labels = label_settings[key]
+            if value not in labels:
                 raise ValueError(
-                    f"environment.time_of_day must be one of {list(TIMES_OF_DAY)}, "
-                    f"got {value!r}"
+                    f"environment.{key} must be one of {list(labels)}, got {value!r}"
                 )
             settings[key] = str(value)
             continue

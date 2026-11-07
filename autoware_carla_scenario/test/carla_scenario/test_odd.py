@@ -504,6 +504,9 @@ def _odd_world(weather: Any = "default") -> _OddWorld:
             sun_azimuth_angle=90.0,
             precipitation=50.0,
             fog_density=0.0,
+            cloudiness=75.0,
+            wetness=30.0,
+            precipitation_deposits=0.0,
         )
     return _OddWorld(actors, own, weather)
 
@@ -562,6 +565,11 @@ class TestProbes:
             f"{EC}.weather.rain.rain_intensity": [],
             f"{EC}.weather.fog.fog_visibility_range": [],
             f"{EC}.weather.fog.fog_level": [],
+            f"{EC}.weather.wind.wind_speed": [],
+            f"{EC}.weather.wind.wind_intensity": [],
+            # Off CARLA's clouds and the road's water.
+            f"{EC}.illumination.cloudiness": ["overcast"],
+            f"{SE}.drivable_area_surface.road_surface_condition": ["wet"],
             "odd.ego_vehicle.ego_vehicle.velocity": ["[35, 45)"],
             "odd.dynamic.nearby_vehicle_count": ["[1, 3)"],
             "odd.dynamic.pedestrian_nearby": ["true"],
@@ -575,6 +583,17 @@ class TestProbes:
         sidewalk.lane_type = int(carla.LaneType.Sidewalk)
         world._waypoint._right._right = sidewalk
         assert probes.lane_count(world) == 2  # type: ignore[arg-type]
+
+    def test_what_carla_cannot_bring_about_is_declared_and_not_measured(self) -> None:
+        names = {a.name: a.source[0] for a in default_odd().attributes}
+        ec = EC.removeprefix("odd.")
+        for concept in (
+            f"{ec}.weather.snow.snowfall_rate",
+            f"{ec}.weather.snow.snow_intensity",
+            f"{ec}.temperature",
+        ):
+            assert names[concept] == "missing", concept
+        assert f"{EC}.temperature" not in _hits(_odd_world())
 
     def test_lanelet_tags_come_first_when_a_map_is_loaded(
         self, monkeypatch: pytest.MonkeyPatch
@@ -1100,7 +1119,9 @@ def test_the_model_declares_the_probes_as_python_does() -> None:
     probe_names = {n for n in probes.__all__ if n not in ("reset_probes",)}
     probe_functions = {n for n in probe_names if inspect.isfunction(getattr(probes, n))}
     probe_functions -= {
+        "cloud_cover_level",
         "drivable_area_of_subtype",
+        "road_surface_level",
         "illumination_level",
         "intensity_level",
         "road_type_of_subtype",
@@ -1696,3 +1717,72 @@ def test_the_hint_is_silent_when_two_parameters_hold_non_lists(
     out = capsys.readouterr().out
     assert "bad_odd_both.py:7: " in out
     assert "hint" not in out
+
+
+class TestWhatCarlaCannotBringAbout:
+    _SNOWY = (
+        "TAXONOMY:\n"
+        "  environment_conditions:\n"
+        "    environment_conditions:\n"
+        "      temperature: float temperature\n"
+        "      weather:\n"
+        "        snow:\n"
+        "          snowfall_rate: float precipitation_rate\n"
+        "          snow_intensity:\n"
+        '            no_snow: {snowfall_rate: "< 0.1 mm/h"}\n'
+        '            heavy_snow: {snowfall_rate: ">= 0.1 mm/h"}\n'
+    )
+
+    def test_an_odd_restricting_snow_is_refused_before_anything_runs(
+        self, tmp_path: Any
+    ) -> None:
+        import openodd
+
+        path = tmp_path / "snowy.yaml"
+        path.write_text(
+            self._SNOWY
+            + "MODULES:\n  no_snow:\n    EXCLUDE_OR:\n"
+            + f"      {EC.removeprefix('odd.')}.weather.snow.snow_intensity: heavy_snow\n"
+        )
+        with pytest.raises(
+            openodd.UnsupportedConceptError, match="CARLA renders no snow"
+        ):
+            load_openodd(path)
+
+    def test_a_taxonomy_declaring_them_alone_reads(self, tmp_path: Any) -> None:
+        path = tmp_path / "snowy.yaml"
+        path.write_text(self._SNOWY)
+        load_openodd(path)
+
+
+@pytest.mark.parametrize(
+    ("cloudiness", "level"),
+    [
+        (0.0, "clear"),
+        (19.9, "clear"),
+        (20.0, "partly_cloudy"),
+        (69.9, "partly_cloudy"),
+        (70.0, "overcast"),
+    ],
+)
+def test_carlas_cloudiness_reads_as_the_taxonomys(
+    cloudiness: float, level: str
+) -> None:
+    assert probes.cloud_cover_level(cloudiness) == level
+
+
+@pytest.mark.parametrize(
+    ("wetness", "deposits", "level"),
+    [
+        (0.0, 0.0, "dry"),
+        (9.9, 9.9, "dry"),
+        (10.0, 0.0, "wet"),
+        (0.0, 10.0, "wet"),
+        (100.0, 49.9, "wet"),
+        (0.0, 50.0, "standing_water"),
+    ],
+)
+def test_carlas_water_reads_as_the_road_surface(
+    wetness: float, deposits: float, level: str
+) -> None:
+    assert probes.road_surface_level(wetness, deposits) == level

@@ -64,12 +64,16 @@ if TYPE_CHECKING:
     from .model import Undecided
 
 __all__ = [
+    "CLOUD_COVERS",
     "DRIVABLE_AREA_TYPES",
+    "ROAD_SURFACE_CONDITIONS",
     "ILLUMINATION_LEVELS",
     "INTENSITY_LEVELS",
     "NEARBY_RADIUS_M",
     "TRAFFIC_DENSITY_LEVELS",
     "TIMES_OF_DAY",
+    "cloud_cover",
+    "cloud_cover_level",
     "cloudiness",
     "drivable_area_of_subtype",
     "drivable_area_type",
@@ -92,6 +96,8 @@ __all__ = [
     "rain",
     "rainfall_rate_mm_h",
     "reset_probes",
+    "road_surface_condition",
+    "road_surface_level",
     "road_type",
     "road_type_of_subtype",
     "road_wetness",
@@ -103,6 +109,7 @@ __all__ = [
     "traffic_density_level",
     "visibility",
     "wind",
+    "wind_speed_kmh",
 ]
 
 #: Radius around the ego in which other road users count as near it, in metres.
@@ -113,6 +120,13 @@ ILLUMINATION_LEVELS = ["day", "low_sun", "twilight", "night"]
 
 #: The taxonomy's times of day (its ``time_of_day``).
 TIMES_OF_DAY = ["day", "dusk", "night", "dawn"]
+
+#: The taxonomy's cloudiness (its ``illumination.cloudiness``).
+CLOUD_COVERS = ["clear", "partly_cloudy", "overcast"]
+
+#: What CARLA renders of the taxonomy's road surface conditions (its
+#: ``road_surface_condition``): the road's water alone.
+ROAD_SURFACE_CONDITIONS = ["dry", "wet", "standing_water"]
 
 #: The taxonomy's drivable area types (its ``drivable_area_type``).
 DRIVABLE_AREA_TYPES = [
@@ -161,6 +175,27 @@ def time_of_day_level(sun_altitude_deg: float, sun_azimuth_deg: float) -> str:
         azimuth = sun_azimuth_deg % 360.0
         return "dawn" if azimuth < 180.0 else "dusk"
     return "night"
+
+
+def cloud_cover_level(cloudiness: float) -> str:
+    """The taxonomy's cloudiness for CARLA's 0-100 *cloudiness*: clear below
+    20, overcast from 70, partly cloudy between -- what the weather rules'
+    ``carla_cloudiness`` draws for each."""
+    if cloudiness < 20.0:
+        return "clear"
+    if cloudiness < 70.0:
+        return "partly_cloudy"
+    return "overcast"
+
+
+def road_surface_level(wetness: float, precipitation_deposits: float) -> str:
+    """The taxonomy's road surface condition for CARLA's 0-100 *wetness* and
+    standing water: standing water from 50, wet from 10 of either, else dry."""
+    if precipitation_deposits >= 50.0:
+        return "standing_water"
+    if wetness >= 10.0 or precipitation_deposits >= 10.0:
+        return "wet"
+    return "dry"
 
 
 def road_type_of_subtype(subtype: Optional[str]) -> Optional[str]:
@@ -665,6 +700,34 @@ def fog_visibility_range_m(world: carla.World) -> Optional[float]:
     from ..actions.environment import world_fog_visibility_range  # noqa: PLC0415
 
     return world_fog_visibility_range(episode_of(world))
+
+
+def wind_speed_kmh(world: carla.World) -> Optional[float]:
+    """The wind speed the run was set to, km/h
+    (:func:`~autoware_carla_scenario.actions.environment.world_wind_speed`);
+    ``None`` when the run named none."""
+    from ..actions.environment import world_wind_speed  # noqa: PLC0415
+
+    return world_wind_speed(episode_of(world))
+
+
+def cloud_cover(world: carla.World) -> Optional[str]:
+    """The taxonomy's cloudiness, from CARLA's (:func:`cloud_cover_level`)."""
+    weather = _weather(world)
+    if weather is None:
+        return None
+    return cloud_cover_level(float(weather.cloudiness))
+
+
+def road_surface_condition(world: carla.World) -> Optional[str]:
+    """The taxonomy's road surface condition, from CARLA's water
+    (:func:`road_surface_level`)."""
+    weather = _weather(world)
+    if weather is None:
+        return None
+    return road_surface_level(
+        float(weather.wetness), float(weather.precipitation_deposits)
+    )
 
 
 def illumination(world: carla.World) -> Optional[str]:

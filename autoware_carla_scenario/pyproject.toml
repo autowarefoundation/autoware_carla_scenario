@@ -1,6 +1,6 @@
 [project]
 name = "autoware-carla-scenario"
-version = "26.0.1"
+version = "26.2.0"
 description = "CARLA scenario testing framework for Autoware"
 readme = "README.md"
 license = "Apache-2.0"
@@ -72,7 +72,7 @@ dependencies = [
     # from its mean or mode (0.18 could read NaN there), and fits rules to
     # measured data (`Rules.fit`); 0.19.2's type stub parses (0.19.1's
     # stopped mypy, and with it scenario-check's None check).
-    "openodd-py>=0.42.0",
+    "openodd-py>=0.44.0",
     # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
     # to choose the interpreters its wheelhouse is built for.
     "packaging>=23.0",
@@ -147,14 +147,14 @@ ros2 = [
 # SDK of the minor version its recordings are written with, which puts the
 # metrics a run computed into its recording (rerun_metrics.py).
 rerun = [
-    "autoware-carla-scenario-rerun>=0.2,<0.3",
+    "autoware-carla-scenario-rerun>=0.3,<0.4",
     "rerun-sdk>=0.38.1,<0.39",
 ]
 # The LiDAR sweeps of each run as a Rerun recording too (`rerun.lidar=true`):
 # the converter, and the Rerun SDK of the minor version its recordings are
 # written with, which writes the sweeps.
 rerun-lidar = [
-    "autoware-carla-scenario-rerun>=0.2,<0.3",
+    "autoware-carla-scenario-rerun>=0.3,<0.4",
     "rerun-sdk>=0.38.1,<0.39",
 ]
 # A T4 dataset of each run (`t4.enabled=true`, docs/t4_dataset.md): the
@@ -176,7 +176,7 @@ hils = [
 # converter's own `viewer` extra, which pins the Rerun minor version its
 # recordings are written with.
 viewer = [
-    "autoware-carla-scenario-rerun[viewer]>=0.2,<0.3",
+    "autoware-carla-scenario-rerun[viewer]>=0.3,<0.4",
 ]
 
 [build-system]
