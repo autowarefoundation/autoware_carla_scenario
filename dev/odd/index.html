@@ -3224,6 +3224,21 @@ make it a bound too, refer to it from a root, or name it in <code>roots</code>.<
 <td>The sun: <code>day</code> above the horizon, <code>dawn</code> (rising, azimuth 0-180) or <code>dusk</code> (setting, 180-360) down to 6 degrees below it, <code>night</code> under that</td>
 </tr>
 <tr>
+<td><code>wind_speed_kmh</code></td>
+<td>float, km/h</td>
+<td>The wind speed the run was set to (<code>environment.wind_speed_kmh</code>); nothing when it named none</td>
+</tr>
+<tr>
+<td><code>cloud_cover</code></td>
+<td><code>CLOUD_COVERS</code></td>
+<td>CARLA's cloudiness: <code>clear</code> below 20, <code>overcast</code> from 70, <code>partly_cloudy</code> between</td>
+</tr>
+<tr>
+<td><code>road_surface_condition</code></td>
+<td><code>ROAD_SURFACE_CONDITIONS</code></td>
+<td>CARLA's water: <code>standing_water</code> from 50 standing water, <code>wet</code> from 10 of either, else <code>dry</code></td>
+</tr>
+<tr>
 <td><code>illumination</code></td>
 <td><code>ILLUMINATION_LEVELS</code></td>
 <td>Sun altitude</td>
@@ -4146,8 +4161,25 @@ own:</p>
 <td><code>environment.time_of_day</code></td>
 <td>the label drawn: <code>day</code>, <code>dusk</code>, <code>night</code>, <code>dawn</code></td>
 </tr>
+<tr>
+<td><code>wind_speed_kmh</code></td>
+<td><code>environment.wind_speed_kmh</code></td>
+<td>0-100 km/h, within the bucket drawn (the wind intensity's: light 5-20, moderate 20-50, strong above)</td>
+</tr>
+<tr>
+<td><code>cloud_cover</code></td>
+<td><code>environment.cloud_cover</code></td>
+<td>the label drawn: <code>clear</code>, <code>partly_cloudy</code>, <code>overcast</code></td>
+</tr>
 </tbody>
 </table>
+<p><strong>What CARLA cannot bring about</strong> -- snow and the temperature, which the
+default ODD's taxonomy declares -- the CARLA backend names
+(<code>CarlaBackend.unsupported</code>, <code>odd.backend.UNSUPPORTED_CONCEPTS</code>): an ODD that
+measures one, or whose modules restrict one or a concept defined by one (the
+snow intensity), is refused as it is read, before anything runs
+(<code>openodd.UnsupportedConceptError</code>), rather than covered by runs that never
+rendered it. The default ODD declares them and measures neither.</p>
 <p>CARLA does not take these: it renders them by its own weather fields, and
 which fields render a condition is what the <a href="#weather-rules">weather rules</a>
 say -- a Bayesian network from the conditions to CARLA's <code>precipitation</code>,
@@ -4439,13 +4471,14 @@ have the file format in full). It is a version 3 file:</p>
 <ul>
 <li>its <strong>causes</strong> are its inputs, concepts of the taxonomy it names
   (<code>taxonomy: {bundled: default}</code>, openodd's bundled subset of
-  tier4/taxonomy): <code>rainfall_rate</code> (mm/h), <code>fog_visibility_range</code> (m) and
-  <code>time_of_day</code> (a label) -- <code>weather_rules.WEATHER_INPUTS</code>, which the
-  <code>environment</code> keys <code>rainfall_rate_mm_h</code>, <code>fog_visibility_range_m</code> and
-  <code>time_of_day</code> give (<code>weather_rules.CAUSE_SETTINGS</code>);</li>
+  tier4/taxonomy): <code>rainfall_rate</code> (mm/h), <code>fog_visibility_range</code> (m),
+  <code>time_of_day</code> (a label), <code>wind_speed</code> (km/h) and <code>cloudiness</code> (a label) --
+  <code>weather_rules.WEATHER_INPUTS</code>, which the <code>environment</code> keys
+  <code>rainfall_rate_mm_h</code>, <code>fog_visibility_range_m</code>, <code>time_of_day</code>,
+  <code>wind_speed_kmh</code> and <code>cloud_cover</code> give (<code>weather_rules.CAUSE_SETTINGS</code>);</li>
 <li>its <strong>effects</strong> are its quantities, in no taxonomy: CARLA's weather fields
   (<code>carla_precipitation</code>, <code>carla_cloudiness</code>, <code>carla_precipitation_deposits</code>,
-  <code>carla_wetness</code>, <code>carla_fog_density</code>, <code>carla_sun_altitude</code>,
+  <code>carla_wetness</code>, <code>carla_wind_intensity</code>, <code>carla_fog_density</code>, <code>carla_sun_altitude</code>,
   <code>carla_sun_azimuth</code>: <code>weather_rules.CARLA_QUANTITIES</code>), the grip
   (<code>tire_friction</code>), the visibility and the speed a driver keeps
   (<code>sight_speed</code>);</li>
@@ -4498,7 +4531,8 @@ quantities and gives the quantity's distribution at points of them:</p>
 </ul>
 <p><strong>Chains.</strong> A part may read another quantity, so the rules chain: the
 rainfall rate gives CARLA's precipitation, which gives its wetness and
-standing water, which give the grip; and <code>sight_speed</code>, the speed (m/s) a
+standing water, which give the grip, and its cloudiness -- the cloudier of
+the sky the run names and what the rain brings (<code>combine: max</code>); and <code>sight_speed</code>, the speed (m/s) a
 driver keeps, reads the <code>visibility</code>. Its distribution is triangular at each
 visibility: at most the speed SUMO's default car (braking at 4.5 m/s² a
 second after it sees) stops from within it, <code>v * tau + v² / (2 * decel)</code> =
@@ -5127,7 +5161,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 05:10:47 UTC"><span class="timeago" datetime="2026-11-07T05:10:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 05:10:47 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 06:32:39 UTC"><span class="timeago" datetime="2026-11-07T06:32:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 06:32:39 UTC">2026-11-07</span>
   </span>
 
     
