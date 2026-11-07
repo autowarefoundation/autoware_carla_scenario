@@ -29,6 +29,7 @@ from autoware_carla_scenario import (
     TrajectoryVertex,
 )
 from autoware_carla_scenario.action_state import ActionState
+from autoware_carla_scenario.actions import _trajectory_run
 from autoware_carla_scenario.actions._trajectory_run import (
     TrajectoryRun,
     _entity_actor,
@@ -679,6 +680,23 @@ class TestFollow:
         _run(action, entity.actor, 5.0, driven=True)
         assert entity.actor.speed == pytest.approx(5.0, abs=0.5)
         assert entity.actor.teleports == 0
+
+    def test_it_brakes_for_a_walker_in_its_way(
+        self, entity: _Entity, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # A walker in its way stops it, as the TrafficManager would: full
+        # brake, no throttle, whatever the plan asks for (#1925).
+        monkeypatch.setattr(_trajectory_run, "_walker_in_way", lambda *a: True)
+        entity.actor.vx = entity.actor.speed = 5.0
+        action = _route(
+            "npc1",
+            _line(length=200.0, duration=None),
+            mode=RoutingMode.FOLLOW,
+        )
+        _run(action, entity.actor, 10 * _DT, driven=True)
+        assert entity.actor.control.brake == 1.0
+        assert entity.actor.control.throttle == 0.0
+        assert entity.actor.speed < 5.0
 
 
 # ---------------------------------------------------------------------------

@@ -113,6 +113,27 @@ def stand_ins(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
     return ego_lights
 
 
+@pytest.mark.parametrize(
+    ("state", "side"),
+    [
+        (TurnIndicatorState.LEFT, "left"),
+        (TurnIndicatorState.RIGHT, "right"),
+        (TurnIndicatorState.OFF, ""),
+    ],
+)
+def test_the_ego_s_indicator_side_is_read_for_nade(
+    stand_ins: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+    state: TurnIndicatorState,
+    side: str,
+) -> None:
+    # The side NADE is told the ego signals: left for left, right for right,
+    # none with the indicators off (#1925).
+    monkeypatch.setattr(adversarial_traffic, "is_vehicle", lambda actor: True)
+    stand_ins["state"] = state
+    assert adversarial_traffic._indicator(_world()) == side
+
+
 def _leading(frame: int, *, npc: str = "npc1", box_x: float = 0.0) -> Any:
     # npc1 15 m ahead of the ego, both at 10 m/s: it may brake-check the ego.
     return _world(
