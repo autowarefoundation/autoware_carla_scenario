@@ -1026,9 +1026,9 @@ def run_task(manifest_path: Path, submission_index: int, task_index: int) -> int
                 )
                 started = time.time()
                 (result,) = queue.run_all(release=True, continue_on_error=True)
-                # The case's recording is a few milliseconds' work, done while
-                # the world was reset: wait for it, so its outcome is in the
-                # case's record for `collect`.
+                # The case's recording is a few milliseconds' work, done in the
+                # background: wait for it, so its outcome is in the case's
+                # record for `collect`.
                 rerun_error = (
                     run.rerun_errors([result], rerun.wait()).get(0)
                     if rerun is not None

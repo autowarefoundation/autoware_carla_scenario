@@ -1378,6 +1378,9 @@ def test_a_batch_lets_go_of_each_scenario_once_it_has_run(
         def load_map_by_name(self, _name: str) -> None:
             pass
 
+        def reset_world(self, scenario_name: str = "") -> None:
+            pass
+
         def run_scenario(self, scenario: object, **_: object) -> ScenarioResult:
             gc.collect()
             index = next(k for k, ref in enumerate(built) if ref() is scenario)
@@ -1495,3 +1498,83 @@ def test_a_batch_goes_on_past_a_case_that_cannot_run(
     entries = json.loads((tmp_path / "batch_results.json").read_text())
     assert [e.get("error", False) for e in entries] == [False, True, False]
     assert [e["passed"] for e in entries] == [True, False, True]
+
+
+def test_a_batch_goes_on_past_a_reset_that_fails_after_an_errored_case(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """#1941: the reset after an errored case that fails is the failure of
+    the next case's attempt: the errored case is reported, and the batch's
+    summary lists every case, none pending."""
+    import json
+    from types import SimpleNamespace
+
+    from autoware_carla_scenario import ScenarioResult, scenario_queue
+    from autoware_carla_scenario.examples import run
+
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    built: list[object] = []
+
+    def fake_build(cfg: object, **_: object) -> tuple[None, object]:
+        built.append(object())
+        return None, built[-1]
+
+    ran: list[int] = []
+    resets: list[str] = []
+
+    class FakeRunner:
+        def __init__(self, *_: object, **__: object) -> None:
+            self.xodr_path = None
+
+        def load_map_by_name(self, _name: str) -> None:
+            pass
+
+        def reset_world(self, scenario_name: str = "") -> None:
+            resets.append(scenario_name)
+            if len(resets) == 2:
+                raise RuntimeError("load_world timed out")
+
+        def run_scenario(self, scenario: object, **_: object) -> ScenarioResult:
+            index = next(k for k, b in enumerate(built) if b is scenario)
+            ran.append(index)
+            if index == 1:
+                raise RuntimeError("ground_projection returned no hit")
+            return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
+
+    monkeypatch.setattr(run, "build_scenario", fake_build)
+    monkeypatch.setattr(scenario_queue, "CarlaServerManager", MagicMock())
+    monkeypatch.setattr(scenario_queue, "ScenarioRunner", FakeRunner)
+    monkeypatch.setattr(
+        run,
+        "resolve_map_paths",
+        lambda _m: SimpleNamespace(
+            install_xodr=None,
+            overwrite_xodr=False,
+            opendrive_path=None,
+            lanelet2_path=None,
+            name="M",
+            projector_type=None,
+        ),
+    )
+    monkeypatch.setattr(run, "build_traffic_backend", lambda _cfg: None)
+    monkeypatch.setattr(run, "_make_batch_output_dir", lambda: tmp_path)
+    monkeypatch.setattr(scenario_queue, "_wait_with_progress", lambda *_, **__: None)
+
+    with pytest.raises(SystemExit) as exited:
+        run.run_batch(
+            ["lane_change/left", "lane_change_fail/right", "lane_change/left"], []
+        )
+
+    assert exited.value.code == 1
+    # The third case's only attempt was the failed reset: it never ran.
+    assert ran == [0, 1]
+    out = capsys.readouterr().out
+    assert "[ERROR] lane_change_fail/right" in out
+    assert "ground_projection returned no hit" in out
+    assert "load_world timed out" in out
+    entries = json.loads((tmp_path / "batch_results.json").read_text())
+    assert not any(e.get("pending", False) for e in entries)
+    assert [e.get("error", False) for e in entries] == [False, True, True]
+    assert [e["passed"] for e in entries] == [True, False, False]
