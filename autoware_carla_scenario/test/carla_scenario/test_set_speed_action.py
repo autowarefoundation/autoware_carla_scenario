@@ -197,7 +197,7 @@ class TestRateLimitedChange:
 
     def test_a_deceleration_stops_on_the_target(self) -> None:
         # 2 km/h over the target, short of one 3.6 km/h step (36 km/h/s over
-        # the 0.1 s tick): the target, not 8.4 under it.
+        # the 0.1 s tick): the target, not the 8.4 a full step would give.
         entity = _RecordingVehicle(speed_kmh=12.0)
         register_entity("npc1", entity)
         try:
