@@ -429,3 +429,14 @@ def test_check_whole_number_names_its_key_for_a_number_too_big_for_a_float() -> 
 
     with pytest.raises(ValueError, match=r"^x\.n must be a whole number"):
         check_whole_number("x.n", Fraction(10**400))  # type: ignore[arg-type]
+
+
+def test_check_whole_number_refuses_an_array_of_one_element() -> None:
+    """The numpy on Python 3.10 still converts one to a float (#1904)."""
+    import numpy as np
+
+    from autoware_carla_scenario.seed import check_whole_number
+
+    for value in (np.array([5]), np.array([[7.0]])):
+        with pytest.raises(ValueError, match=r"^x\.n must be a whole number"):
+            check_whole_number("x.n", value)  # type: ignore[arg-type]
