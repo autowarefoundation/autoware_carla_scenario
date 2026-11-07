@@ -740,6 +740,69 @@ def test_vehicle_entry_is_the_first_pattern_the_vehicle_matches(
     assert before == expected
 
 
+#: Rules under which no rain shows: CARLA's precipitation is 0 at any rate.
+_DRY_RULES = """\
+version: 3
+quantities:
+  carla_precipitation:
+    parts:
+      rain:
+        uniform:
+          low:  [0, 0, 0, 0, 0]
+          high: [0, 0, 0, 0, 0]
+"""
+
+
+def _sweep_precipitation(rules: object = None) -> list[tuple[float, float]]:
+    """``(rainfall rate, CARLA precipitation)`` of each case an ODD sweep
+    draws, with ``environment.rules`` set to *rules*."""
+    from autoware_carla_scenario.sweeper.expand import expand_config
+
+    cfg = OmegaConf.create(
+        {
+            "seed": 0,
+            "environment": {"rules": rules},
+            "sweep": {"odd_sample": {"count": 5, "seed": 1}},
+        }
+    )
+    found = []
+    for case in expand_config(cfg):
+        settings = dict(o.split("=", 1) for o in case)
+        found.append(
+            (
+                float(settings["environment.rainfall_rate_mm_h"]),
+                float(settings["environment.precipitation"]),
+            )
+        )
+    return found
+
+
+def test_a_sweep_draws_carla_weather_by_the_configs_rules(tmp_path) -> None:
+    """The CARLA weather a case is given follows the rules its run follows
+    (``environment.rules``), not the default ones (#1924)."""
+    path = tmp_path / "dry.yaml"
+    path.write_text(_DRY_RULES)
+    drawn = _sweep_precipitation(str(path))
+    # The default rules give rain past 0.1 mm/h some precipitation.
+    assert any(rate > 0.1 for rate, _ in drawn)
+    assert all(p > 0.0 for rate, p in _sweep_precipitation() if rate > 0.1)
+    for rate, precipitation in drawn:
+        if rate > 0.1:
+            assert precipitation == 0.0
+    # Its vehicles' rules give a grip alone: the default rules decide here.
+    assert _sweep_precipitation({"default": str(path)}) == drawn
+
+
+def test_a_sweep_is_not_drawn_by_the_rules_an_earlier_run_left(tmp_path) -> None:
+    """A run's rules stay on the process's backend after it; the next sweep
+    draws by its own config's, not by them (#1924)."""
+    path = tmp_path / "dry.yaml"
+    path.write_text(_DRY_RULES)
+    expected = _sweep_precipitation()
+    use_weather_rules(str(path))
+    assert _sweep_precipitation() == expected
+
+
 class TestWindAndClouds:
     def test_the_wind_speed_gives_carlas_wind_intensity(self) -> None:
         assert weather_range("carla_wind_intensity", {"wind_speed": 20.0}) == (
