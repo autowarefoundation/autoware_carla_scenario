@@ -8,6 +8,7 @@ and plays a container, and a stack is a plain process group.
 from __future__ import annotations
 
 import json
+import logging
 import os
 import signal
 import socket
@@ -319,6 +320,28 @@ def test_process_group_child_starts_with_no_signal_ignored(tmp_path: Path) -> No
         assert not ignored & (1 << (sig - 1)), sig.name
 
 
+def test_process_group_runs_beside_a_module_that_shadows_the_stdlib(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The wrapper imports nothing from the run's directory or ``PYTHONPATH``
+    (#1961): a scenario package's ``signal.py`` would have it exit 1."""
+    shadows = tmp_path / "pkg"
+    (shadows / "ctypes").mkdir(parents=True)
+    for module in (shadows / "signal.py", shadows / "ctypes" / "__init__.py"):
+        module.write_text("raise ImportError('the shadowing module was imported')\n")
+    monkeypatch.chdir(shadows)
+    monkeypatch.setenv("PYTHONPATH", str(shadows))
+    log = tmp_path / "out.log"
+    group = ProcessGroup(
+        ["bash", "-c", 'echo "ran with PYTHONPATH=$PYTHONPATH"'], log_path=log
+    )
+    _wait_for(lambda: group.poll() is not None)
+    assert group.poll() == 0, log.read_text()
+    group.stop()
+    # The command it execs keeps the environment.
+    assert log.read_text().strip() == f"ran with PYTHONPATH={shadows}"
+
+
 def test_process_group_logs_output(tmp_path: Path) -> None:
     log = tmp_path / "logs" / "out.log"
     group = ProcessGroup(["bash", "-c", "echo hello"], log_path=log)
@@ -461,6 +484,16 @@ import json, os, signal, sys, time
 args = sys.argv[1:]
 with open(os.environ["FAKE_DOCKER_LOG"], "a") as log:
     log.write(json.dumps(args) + "\\n")
+# What reaches a container of each variable passed by name (--env KEY): the
+# value this CLI process has, as docker reads it.
+if args[0] == "run" and os.environ.get("FAKE_DOCKER_ENV_LOG"):
+    named = dict(
+        (value, os.environ.get(value))
+        for flag, value in zip(args, args[1:])
+        if flag == "--env" and "=" not in value
+    )
+    with open(os.environ["FAKE_DOCKER_ENV_LOG"], "a") as log:
+        log.write(json.dumps([args[-1], named]) + "\\n")
 
 # A daemon that stops answering (#1790): the commands that start with one of
 # FAKE_DOCKER_HANGS (comma-separated) sleep here, in this process, for a
@@ -945,7 +978,9 @@ def test_docker_launcher_starts_and_removes_a_container_per_scenario(
         assert f"{ws}:/home/aw/autoware" in run
         assert "--gpus" not in run
         assert f"ROS_DOMAIN_ID={expected_domain}" in run
-        assert "FOO=bar" in run
+        # Passed by name, its value in the CLI's environment (#1961).
+        assert run[run.index("FOO") - 1] == "--env"
+        assert "FOO=bar" not in run
         assert f"HOST_UID={os.getuid()}" in run
         assert "AUTOWARE_BRIDGE_ADDRESS=localhost:50052" in run
         assert run[-3:-1] == ["bash", "-c"]
@@ -968,6 +1003,56 @@ def test_docker_launcher_starts_and_removes_a_container_per_scenario(
 
     assert len(set(names)) == 3
     assert launcher.poll() is None
+
+
+def test_launcher_env_values_reach_the_container_but_not_the_command_line(
+    tmp_path: Path,
+    fake_docker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``env`` is passed by name, its values in the CLI's environment: on the
+    command line any user of the host could read them in ``ps`` (#1961)."""
+    caplog.set_level(logging.DEBUG)
+    docker, calls = fake_docker
+    env_log = tmp_path / "docker-env.log"
+    monkeypatch.setenv("FAKE_DOCKER_ENV_LOG", str(env_log))
+    ws = _workspace(tmp_path)
+    monkeypatch.setenv("FAKE_DOCKER_WS", str(ws))
+    monkeypatch.setenv("FAKE_DOCKER_SCENARIO", "1")
+    launcher = _docker_launcher(
+        ws,
+        docker,
+        env={
+            "API_TOKEN": "s3cret-token",
+            "DEBIAN_FRONTEND": "readline",
+            "HTTPS_PROXY": "http://proxy:3128",
+        },
+        gpus=None,
+    )
+    launcher.prepare(log_dir=tmp_path / "out")
+    launcher.start(name="x", bridge_address="localhost:1")
+    # The fake CLI writes what it was handed before it waits to be stopped.
+    _wait_for(lambda: len(env_log.read_text().splitlines()) == 3)
+    launcher.stop()
+    launcher.close()
+
+    runs = [c for c in calls() if c[0] == "run"]
+    named = [json.loads(line) for line in env_log.read_text().splitlines()]
+    # The dependency image, the build and the stack.
+    assert len(runs) == len(named) == 3
+    for run, (script, by_name) in zip(runs, named):
+        assert script == run[-1]
+        assert "s3cret-token" not in " ".join(run)
+        assert run[run.index("API_TOKEN") - 1] == "--env"
+        assert by_name["API_TOKEN"] == "s3cret-token"
+        # One the CLI would heed itself stays on the command line.
+        assert "HTTPS_PROXY=http://proxy:3128" in run
+        assert "HTTPS_PROXY" not in by_name
+    # A variable the launcher sets over the config's keeps its own value.
+    deps = next(c for c in runs if "apt-get install" in c[-1])
+    assert "DEBIAN_FRONTEND=noninteractive" in deps
+    assert "s3cret-token" not in caplog.text
 
 
 def test_a_docker_rm_that_hangs_does_not_hang_stop(
@@ -1068,7 +1153,7 @@ def test_the_dependency_image_commit_gets_the_longer_timeout(
         return subprocess.CompletedProcess(argv, code, "sha256:x\n", "")
 
     monkeypatch.setattr(docker_module.subprocess, "run", run)
-    monkeypatch.setattr(launcher, "_stream", lambda argv, log_name: 0)
+    monkeypatch.setattr(launcher, "_stream", lambda argv, log_name, env=None: 0)
     launcher._container = launcher._resolve_container()
     launcher._dependency_image("img:1")
     assert timeouts["commit"] == docker_module._DOCKER_COMMIT_TIMEOUT_S

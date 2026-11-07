@@ -140,6 +140,24 @@ _BUILD_LOCK_TIMEOUT_S = 4 * 3600.0
 _BUILD_LOCK_POLL_S = 2.0
 
 
+def _shapes_the_cli(key: str) -> bool:
+    """Whether variable *key* changes what the Docker CLI process does.
+
+    ``autoware.launcher.env`` is passed by name (#1961), its value in the CLI's
+    environment; one of these would reach the CLI (or the wrapper that starts
+    it) as well as the container, so it stays on the command line.
+    """
+    upper = key.upper()
+    return (
+        key in ("PATH", "HOME", "TMPDIR", "SHELL")
+        or key.startswith("DOCKER_")
+        or key.startswith("LD_")
+        or key.startswith("PYTHON")
+        or upper.endswith("_PROXY")
+        or upper.startswith("SSL_")
+    )
+
+
 def _label_value() -> str:
     """The value of :data:`STACK_LABEL` on this user's containers."""
     return f"uid-{os.getuid()}"
@@ -204,6 +222,9 @@ class DockerAutowareConfig:
             that does not exist is skipped with a warning (Docker would create
             it, owned by root).
         env: Variables set in the container, over the dev container's own.
+            Passed to ``docker run`` by name, their values in the CLI's
+            environment, so they do not show in ``ps`` (but one the CLI reads
+            itself, ``PATH`` or ``DOCKER_HOST`` say, does).
         ros_domain_ids: ``ROS_DOMAIN_ID`` for each scenario in turn, cycling;
             empty keeps the dev container's.  Moving to another domain keeps a
             stack from discovering what is left of the last one before its
@@ -436,6 +457,7 @@ class DockerAutowareLauncher:
         # whatever happened.
         self._process = ProcessGroup(
             argv,
+            env=self._run_env(extra_env),
             log_path=episode_log_path(self._log_dir, episode),
             stop_timeout_s=self._config.stop_timeout_s,
         )
@@ -738,7 +760,11 @@ class DockerAutowareLauncher:
             tag,
         )
         try:
-            code = self._stream(argv, "autoware-deps.log")
+            code = self._stream(
+                argv,
+                "autoware-deps.log",
+                self._run_env({"DEBIAN_FRONTEND": "noninteractive"}),
+            )
             if code != 0:
                 raise AutowareStackError(
                     f"Installing the dependencies of {self._workspace} failed "
@@ -763,8 +789,16 @@ class DockerAutowareLauncher:
         assert self._container is not None  # noqa: S101 - set by _resolve_container()
         return self._container.workspace_mount
 
-    def _stream(self, argv: Sequence[str], log_name: str) -> int:
-        """Run *argv*, its output to this process's and to *log_name* in the log dir."""
+    def _stream(
+        self,
+        argv: Sequence[str],
+        log_name: str,
+        env: Optional[dict[str, str]] = None,
+    ) -> int:
+        """Run *argv*, its output to this process's and to *log_name* in the log dir.
+
+        *env* is its environment (:meth:`_run_env`); ``None`` is this process's.
+        """
         log_path: Optional[Path] = None
         if self._log_dir is not None:
             log_path = self._log_dir / log_name
@@ -777,6 +811,7 @@ class DockerAutowareLauncher:
         try:
             process: subprocess.Popen[str] = subprocess.Popen(  # noqa: S603 - argv comes from the user's own config
                 argv,
+                env=env,
                 stdin=subprocess.DEVNULL,
                 stdout=subprocess.PIPE,
                 stderr=subprocess.STDOUT,
@@ -815,7 +850,7 @@ class DockerAutowareLauncher:
             shlex.join(self._config.colcon_args),
         )
         try:
-            code = self._stream(argv, "autoware-build.log")
+            code = self._stream(argv, "autoware-build.log", self._run_env({}))
         finally:
             self._docker("rm", "--force", name, check=False)
         if code != 0:
@@ -839,7 +874,9 @@ class DockerAutowareLauncher:
         """``docker run`` up to the image, for a container named *name*.
 
         *remove* is ``--rm``; *image* replaces the one the stack runs in;
-        *volumes* are further ``host: container[:options]`` mounts.
+        *volumes* are further ``host: container[:options]`` mounts.  The
+        ``autoware.launcher.env`` variables of :meth:`_named_env` are passed
+        by name: the CLI is run with :meth:`_run_env` (*extra_env* the same).
         """
         assert self._container is not None  # noqa: S101 - set by prepare()
         config = self._config
@@ -888,14 +925,43 @@ class DockerAutowareLauncher:
             argv += ["--gpus", config.gpus]
         if config.user is not None:
             argv += ["--user", config.user]
+        named = self._named_env(extra_env)
         for key, value in env.items():
-            argv += ["--env", f"{key}={value}"]
+            if key in named:
+                argv += ["--env", key]
+            else:
+                argv += ["--env", f"{key}={value}"]
         argv += list(config.docker_args)
         if image:
             argv.append(image)
         else:
             argv.append(self._container.image)
         return argv
+
+    def _named_env(self, extra_env: dict[str, str]) -> dict[str, str]:
+        """The ``autoware.launcher.env`` variables passed to ``docker run`` by
+        name, their values in the CLI's environment (#1961): on its command
+        line, any user of the host could read them (``ps``).
+
+        Not one *extra_env* overrides, nor one the CLI would heed itself
+        (:func:`_shapes_the_cli`).
+        """
+        named: dict[str, str] = {}
+        for key, value in self._config.env.items():
+            if key not in extra_env and not _shapes_the_cli(key):
+                named[key] = value
+        return named
+
+    def _run_env(self, extra_env: dict[str, str]) -> Optional[dict[str, str]]:
+        """The environment of the CLI running :meth:`_run_argv`'s command,
+        with the same *extra_env*: this process's, with the variables passed
+        by name; ``None`` (this process's) when there are none."""
+        named = self._named_env(extra_env)
+        if len(named) == 0:
+            return None
+        env = os.environ.copy()
+        env.update(named)
+        return env
 
     def _docker(
         self,

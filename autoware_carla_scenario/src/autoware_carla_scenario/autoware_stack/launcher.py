@@ -202,8 +202,13 @@ def _dying_with_parent(argv: Sequence[str]) -> list[str]:
 
     On every platform it starts with ``SIGINT``, ``SIGQUIT``, ``SIGPIPE`` and
     ``SIGXFSZ`` at their defaults, whatever this process has them at (#759).
+
+    ``-I``: the wrapper imports nothing from the run's directory or
+    ``PYTHONPATH`` -- a scenario package's ``signal.py`` must not stand in for
+    the standard library's (#1961).  It only uses the standard library, and
+    the command it ``exec``s keeps the environment, ``PYTHONPATH`` included.
     """
-    return [sys.executable, "-c", _DIE_WITH_PARENT, str(os.getpid()), *argv]
+    return [sys.executable, "-I", "-c", _DIE_WITH_PARENT, str(os.getpid()), *argv]
 
 
 def _check_stop_timeout_s(stop_timeout_s: float) -> None:

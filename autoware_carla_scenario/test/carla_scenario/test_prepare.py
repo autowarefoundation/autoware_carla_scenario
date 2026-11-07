@@ -474,6 +474,101 @@ class TestDockerBackend:
         assert removed == ["dead"]
 
 
+class TestDockerBackendLeavesNoContainer:
+    """A container docker created is removed whatever went wrong (#1960)."""
+
+    @staticmethod
+    def _failing(recorded: _Docker, command: str, failure: Any) -> Any:
+        def run(argv: list[str], **kwargs: Any) -> Any:
+            if argv[1] == command:
+                recorded.calls.append(list(argv))
+                if isinstance(failure, BaseException):
+                    raise failure
+                return subprocess.CompletedProcess(argv, 125, "", failure)
+            return recorded(argv, **kwargs)
+
+        return run
+
+    @pytest.mark.parametrize(
+        "failure",
+        [
+            "docker: Error response from daemon: Bind for 127.0.0.1:5 failed: "
+            "port is already allocated.",
+            subprocess.TimeoutExpired(["docker", "run"], 120.0),
+            KeyboardInterrupt(),
+        ],
+        ids=["port-allocated", "timeout", "ctrl-c"],
+    )
+    def test_a_run_that_fails_removes_the_container_by_name(
+        self, monkeypatch: pytest.MonkeyPatch, failure: Any
+    ) -> None:
+        recorded = _Docker()
+        monkeypatch.setattr(
+            docker_module.subprocess,
+            "run",
+            self._failing(recorded, "run", failure),
+        )
+        backend = _Answering.from_settings({})
+        expected: type[BaseException] = (
+            KeyboardInterrupt
+            if isinstance(failure, KeyboardInterrupt)
+            else docker_module.BackendError
+        )
+        with pytest.raises(expected):
+            backend.start()
+        (run,) = [c for c in recorded.calls if c[1] == "run"]
+        name = run[run.index("--name") + 1]
+        assert ["docker", "rm", "--force", name] in recorded.calls
+        assert backend._container is None
+        backend.close()
+
+    def test_a_failed_removal_does_not_hide_why_the_run_failed(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        recorded = _Docker()
+        failing = self._failing(recorded, "run", "port is already allocated")
+
+        def run(argv: list[str], **kwargs: Any) -> Any:
+            if argv[1] == "rm":
+                raise subprocess.TimeoutExpired(argv, 60.0)
+            return failing(argv, **kwargs)
+
+        monkeypatch.setattr(docker_module.subprocess, "run", run)
+        with pytest.raises(docker_module.BackendError, match="already allocated"):
+            _Answering.from_settings({}).start()
+        assert "Could not remove backend container acs-ardy-" in caplog.text
+
+    def test_a_stop_that_times_out_still_removes_the_container(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        recorded = _Docker()
+        monkeypatch.setattr(
+            docker_module.subprocess,
+            "run",
+            self._failing(
+                recorded, "stop", subprocess.TimeoutExpired(["docker", "stop"], 60)
+            ),
+        )
+        backend = _Answering.from_settings({})
+        backend.start()
+        backend.close()
+        assert ["docker", "stop", "--time", "10", "c0ffee"] in recorded.calls
+        assert ["docker", "rm", "--force", "c0ffee"] in recorded.calls
+
+    @pytest.mark.parametrize("pull", ["never", "missing", "always"])
+    def test_docker_run_never_pulls_itself(
+        self, monkeypatch: pytest.MonkeyPatch, pull: str
+    ) -> None:
+        recorded = _Docker(image_present=False)
+        monkeypatch.setattr(docker_module.subprocess, "run", recorded)
+        _Answering.from_settings({"pull": pull}).start()
+        (run,) = [c for c in recorded.calls if c[1] == "run"]
+        assert run[run.index("--pull") + 1] == "never"
+        assert run.index("--pull") < run.index(DEFAULT_IMAGE)
+        pulled = ["docker", "pull", DEFAULT_IMAGE] in recorded.calls
+        assert pulled == (pull != "never")
+
+
 class TestDockerSettingsAreChecked:
     """A backend's settings are refused, naming their key, before any image
     is pulled or container started (#1486)."""
