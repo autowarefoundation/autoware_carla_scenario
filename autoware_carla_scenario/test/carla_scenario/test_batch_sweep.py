@@ -66,6 +66,7 @@ def batch(monkeypatch: pytest.MonkeyPatch) -> _Batch:
         overrides: list[list[str]] | None = None,
         errored: object = (),
         rerun_errors: object = None,
+        stems: list[str] | None = None,
     ) -> bool:
         seen.labels = names
         seen.overrides = overrides

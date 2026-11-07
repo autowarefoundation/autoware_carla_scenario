@@ -6,7 +6,8 @@ A run names every file it writes after one stem (``scenario_runner``'s
 A multirun job directory and a single run's directory hold one case; a batch
 directory holds all of its cases side by side (``CutInScenario``,
 ``CutInScenario-1``, ...), and ``batch_results.json`` lists their results
-without naming the stems.  A SLURM batch's manifest names them
+(a batch written since #1957 names each case's stem too, which this does not
+read yet: an older summary names none).  A SLURM batch's manifest names them
 (``slurm/manifest.json``); for a local batch they are matched here: each entry
 takes the first stem, in the order the runner hands them out, whose result is
 the entry's (the same verdict, elapsed time and message) and whose recorded

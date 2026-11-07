@@ -134,7 +134,13 @@ Python version, and the viewer's Run form reads it the same way.
   as a batch with its cases pending. A batch refused before any case runs
   (a backend or an Autoware workspace that cannot run, CARLA not coming up)
   writes no summary. The summary written when the batch ends lists no
-  pending case
+  pending case. Each entry names the file stem of its case's outputs
+  (`"stem": "CutInScenario-1"`): a batch gives each case its stem before it
+  runs, the scenario's class and then `-1`, `-2`, ... in the batch's order,
+  so a case that raised before writing anything keeps its stem rather than
+  hand it to the next case. A batch resumed into its own directory
+  (`--resume-into`, [Resume from a Specific Scenario](#resume-from-a-specific-scenario))
+  replaces the outputs of the cases it runs again by these stems
 - A summary table is printed at the end with per-scenario pass/fail status
 - A case that cannot run at all -- its run raises on every attempt
   (`server.cooldown_max_retries`), e.g. a spawn point with no ground under it --
@@ -621,6 +627,59 @@ scenario:
 # Resume from the 3rd scenario
 uv run scenario scenario='intersection_passing/*' --resume-from 3
 ```
+
+The resumed batch runs in a directory of its own, and the directory of the
+batch it resumes still lists the cases it never finished as pending, so
+[`scenario-gate`](gate.md#cases-that-raised-no-record-so-the-set-is-refused)
+refuses the two as a set (exit 2), and with `--allow-unrecorded` would judge
+a case killed after writing its gate record twice. To gate the batch as a
+whole, resume it **into its own directory** with `--resume-into DIR`:
+
+```bash
+# Resume the batch in outputs/2026-11-07/12-00-00 at its first case without
+# a result, in that directory
+uv run scenario scenario='intersection_passing/*' \
+  --resume-into outputs/2026-11-07/12-00-00
+
+# Or from its 3rd case, running a finished case again
+uv run scenario scenario='intersection_passing/*' \
+  --resume-into outputs/2026-11-07/12-00-00 --resume-from 3
+```
+
+- Without `--resume-from`, it resumes at the first case the directory's
+  `batch_results.json` has no result for (its first `"pending": true`
+  entry); a batch with a result for every case is refused, since there is
+  nothing left to run -- pass `--resume-from N` to run cases again.
+- The cases before the resume point keep their entries and outputs. The
+  summary is rewritten (in one rename, as every summary is) from their
+  entries and the cases run now, the cases still to run pending, so the
+  directory reads as one batch at every point, and once the resumed batch
+  ends it lists no pending case. Its table and exit code are the whole
+  batch's.
+- Once the batch's pre-run checks have passed and the summary lists the
+  cases to run as pending, the outputs those cases left in the directory --
+  the result, gate record, coverage file, trajectory log, recordings, T4
+  dataset, ... under each one's `stem` -- are removed, so each case is
+  judged on its new run alone: the case that was running when the batch was
+  killed is counted once, not once for its killed run and once more for the
+  new one. Only the stems the summary records for the cases run again are
+  touched.
+- `DIR` must hold the summary of a local batch of the **same cases**: the
+  same scenarios, `--multirun` or not, and the same sweep cases, in the same
+  order, each with its stem. Anything else is refused with
+  `Error: --resume-into DIR: ...` and exit 2, before anything is built or
+  removed: a directory that does not exist or holds no `batch_results.json`,
+  a summary that cannot be read or lists other cases, a SLURM batch's
+  directory, a `--resume-from` past a case it has no result for, a case
+  whose stem is not its scenario class's, and a summary written before
+  batches recorded their cases' stems (resume such a batch into a new
+  directory, without `--resume-into`: which of its outputs belong to the
+  cases run again cannot be told, so nothing is removed). The summary does
+  not record the command line's overrides: give the ones the batch ran with.
+- `--resume-into` is for a local batch: with `launcher=slurm`, or on a
+  single run or a Hydra sweep (which resumes into its own directory with
+  `hydra.sweep.dir=`, [Lanelet Constraint Sweeping](#lanelet-constraint-sweeping)),
+  it is refused with exit 2.
 
 ### Overriding Configuration Parameters
 
@@ -1446,7 +1505,7 @@ driver ending the run is `driver`, and a case that raised on every attempt is
 |------|---------|
 | 0 | All scenarios passed |
 | 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <case>: <key> ...` before anything is built) |
-| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`) is not installed, a `--resume-from` that is not a whole number of at least 1, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
+| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`) is not installed, a `--resume-from` that is not a whole number of at least 1, a `--resume-into` directory the batch cannot resume into, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
 | 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
 
 The same codes hold however the cases run: a single run, a glob batch, a
@@ -2057,12 +2116,28 @@ uv run viewer
 ### Use Case 6: Resume a Failed Batch
 
 ```bash
-# Original batch run (5 scenarios, stopped at the 4th, e.g. by Ctrl+C)
+# Original batch run (5 scenarios, stopped at the 4th, e.g. by Ctrl+C), in
+# outputs/2026-11-07/12-00-00
 uv run scenario scenario='intersection_passing/*'
 
-# Resume from the 4th scenario
+# Resume it in its own directory, at its first case without a result (the
+# 4th), so that scenario-gate judges the five cases as one batch
+uv run scenario scenario='intersection_passing/*' \
+  --resume-into outputs/2026-11-07/12-00-00
+scenario-gate outputs/2026-11-07/12-00-00
+
+# Or resume from the 4th scenario in a new directory
 uv run scenario scenario='intersection_passing/*' --resume-from 4
 ```
+
+Resumed in a new directory, the batch cannot be gated as a whole: the
+original directory still lists the 4th and 5th cases as pending, and
+`scenario-gate` refuses it (exit 2); `--allow-unrecorded` would judge the
+4th case twice if it was killed after writing its gate record. Resume into
+the original directory (`--resume-into`) to gate it, with the same scenarios
+and overrides: the summary is rewritten from the cases it keeps and the ones
+it runs, and the outputs the cases it runs again left there are replaced
+([Resume from a Specific Scenario](#resume-from-a-specific-scenario)).
 
 ---
 

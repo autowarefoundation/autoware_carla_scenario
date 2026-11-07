@@ -446,7 +446,7 @@ def unrecorded_cases(path: Path) -> list[str]:
     SLURM batch (``slurm/manifest.json``) is read from its tasks' outcomes,
     collected or not, and a case with a record at its stem is not counted; a
     local batch is read from its ``batch_results.json``, whose errored and
-    pending entries count (its entries name no stem, so an errored case that
+    pending entries count (their stems are not looked up, so an errored case that
     did write a record is counted too); a sweep is read from its jobs'
     markers (``case_errored.json``).  A job whose directory holds a gate
     record is not counted.  Nor is one whose marker says it did not finish

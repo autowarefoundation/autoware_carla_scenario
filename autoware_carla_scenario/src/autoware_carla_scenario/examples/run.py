@@ -72,6 +72,12 @@ import autoware_carla_scenario.hydra_compat  # noqa: F401  (Python 3.14 argparse
 from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
 from autoware_carla_scenario.batch_report import print_summary as _print_summary
 from autoware_carla_scenario.batch_report import write_batch_result_json
+from autoware_carla_scenario.batch_resume import (
+    KeptResult,
+    ResumedBatch,
+    ResumeIntoError,
+    read_resumed_batch,
+)
 from autoware_carla_scenario.canvas import use_canvas
 from autoware_carla_scenario.conditions import ScenarioResult
 from autoware_carla_scenario.config_flags import check_flag
@@ -106,7 +112,7 @@ from autoware_carla_scenario.run_dirs import (
     reserve_timestamped_dir,
     sets_hydra_key as _sets_hydra_key,
 )
-from autoware_carla_scenario.run_outputs import RESULT_SUFFIX
+from autoware_carla_scenario.run_outputs import RESULT_SUFFIX, remove_run_outputs
 from autoware_carla_scenario.run_timeout import run_timeout_seconds
 from autoware_carla_scenario.scenario_config import EntityConfig
 from autoware_carla_scenario.seed import DEFAULT_SEED, MAX_SEED, set_run_seed
@@ -139,6 +145,7 @@ from autoware_carla_scenario.registry import (
 )
 from autoware_carla_scenario.scenario_glob import resolve_scenario_glob, scenario_dirs
 from autoware_carla_scenario.scenario_runner import _run_file_stem
+from autoware_carla_scenario.slurm.stems import sequential_stems
 from autoware_carla_scenario.value_text import shown
 
 from .argv import (
@@ -146,6 +153,7 @@ from .argv import (
     _arena_max_set_by_user,
     _case_labels,
     _extract_resume_from,
+    _extract_resume_into,
     _extract_scenario_override,
     _is_glob_pattern,
 )
@@ -2401,12 +2409,28 @@ def run_batch(
     resume_from: int = 0,
     build_scenario_fn: BuildScenarioFn | None = None,
     wait: bool | None = None,
+    resume_into: Path | None = None,
 ) -> None:
     """Compose configs, build scenarios, and run them in a single queue.
 
     With *expand* (``--multirun``) each scenario's sweep is expanded and every
     case is run; without it a scenario runs once, as configured. *resume_from*
     is the 1-based case to start at, as for the lanelet sweeper.
+
+    With *resume_into* (``--resume-into DIR``) the remaining cases run in
+    that directory, the killed batch's, rather than a new one, so that the
+    batch is gated as a whole (#1957): *resume_from* defaults to its first
+    case without a result, its ``batch_results.json`` is rewritten from the
+    entries of the cases before that and the cases run now, and the outputs
+    the cases run again left there (under the stems the summary records for
+    them) are removed before they run
+    (:mod:`~autoware_carla_scenario.batch_resume`).  A directory that is not
+    such a batch's, or lists other cases, is refused (exit 2) before
+    anything is built or removed.  A local batch only.
+
+    Every case of a local batch is named by a stem given before it runs, a
+    local batch's sequential stems (``slurm.stems.sequential_stems``), which
+    its summary records (``stem``).
 
     With ``launcher=slurm`` the cases run as SLURM array tasks instead
     (docs/slurm.md); *wait* overrides ``launcher.wait`` (``--no-wait``).
@@ -2440,6 +2464,32 @@ def run_batch(
     labels = _case_labels(cases)
     # What each case runs with beyond the command line: its sweep case.
     case_overrides = [case[: len(case) - len(overrides)] for _, case in cases]
+    # The batch resumed into its own directory: checked before anything is
+    # built, and its first case without a result is where it resumes unless
+    # --resume-from says otherwise (#1957).
+    resumed: ResumedBatch | None = None
+    if resume_into is not None:
+        try:
+            resumed = read_resumed_batch(
+                resume_into.resolve(), labels, case_overrides if expand else None
+            )
+            if resume_from == 0:
+                first = resumed.first_pending()
+                if first is None:
+                    raise ResumeIntoError(
+                        f"{resumed.directory}: every case of the batch has a "
+                        "result; pass --resume-from N to run its cases from N "
+                        "again"
+                    )
+                resume_from = first + 1
+            resumed.check_kept(min(max(resume_from - 1, 0), len(cases)), labels)
+        except ResumeIntoError as exc:
+            print(f"Error: --resume-into {exc}", file=sys.stderr)  # noqa: T201
+            sys.exit(2)
+    # The whole batch's cases, for the summary of a batch resumed into its
+    # own directory, which lists the cases it keeps too.
+    all_labels, all_case_overrides = list(labels), list(case_overrides)
+    skip = 0
     if resume_from > 1:
         skip = min(resume_from - 1, len(cases))
         logger.info(
@@ -2510,6 +2560,13 @@ def run_batch(
         sys.exit(1)
 
     launcher = _batch_launcher(configs)
+    if resumed is not None and launcher == "slurm":
+        print(  # noqa: T201
+            "Error: --resume-into is for a local batch; a SLURM batch's cases "
+            "are run again with scenario-slurm",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if wait is not None and launcher != "slurm":
         print("Error: --no-wait is for launcher=slurm only", file=sys.stderr)  # noqa: T201
         sys.exit(1)
@@ -2567,9 +2624,30 @@ def run_batch(
 
     map_paths = resolve_map_paths(first_cfg.map)
 
-    # Batch mode bypasses @hydra.main, so we create the output directory
-    # ourselves following Hydra's timestamped convention.
-    output_dir = _make_batch_output_dir()
+    # Each case's file stem, given before it runs and recorded in the summary
+    # (#1957): a batch resumed into its own directory keeps those of the
+    # batch it resumes, so that it replaces the outputs of the cases it runs
+    # again and of no other.
+    scenario_classes = [type(s).__name__ for s in scenarios]
+    kept: list[KeptResult] = []
+    if resumed is not None:
+        try:
+            resumed.check_stems(skip, scenario_classes)
+        except ResumeIntoError as exc:
+            print(f"Error: --resume-into {exc}", file=sys.stderr)  # noqa: T201
+            sys.exit(2)
+        all_stems = resumed.stems
+        kept = [KeptResult(entry) for entry in resumed.entries[:skip]]
+        # The batch's own directory, not a new one.
+        output_dir = resumed.directory
+    else:
+        all_stems = sequential_stems(scenario_classes)
+        all_labels, all_case_overrides = list(labels), list(case_overrides)
+        # Batch mode bypasses @hydra.main, so we create the output directory
+        # ourselves following Hydra's timestamped convention.
+        output_dir = _make_batch_output_dir()
+    run_stems = all_stems[len(kept) :]
+    kept_errored = [i for i, result in enumerate(kept) if result.errored]
 
     if launcher == "slurm":
         # The cases run as SLURM array tasks, each on a CARLA of its own, and
@@ -2577,7 +2655,6 @@ def run_batch(
         # (docs/slurm.md).
         from ..slurm.submit import submit_batch  # noqa: PLC0415
 
-        scenario_classes = [type(s).__name__ for s in scenarios]
         del scenarios
         sys.exit(
             submit_batch(
@@ -2600,7 +2677,7 @@ def run_batch(
 
     queue = _batch_queue(first_cfg, map_paths, output_dir, rerun=rerun)
 
-    for cfg, scenario in zip(configs, scenarios):
+    for cfg, scenario, stem in zip(configs, scenarios, run_stems):
         # The runner's own fail-safe, each scenario's own: without it the
         # queue default (60 s) caps every run, which is shorter than an
         # Autoware stack needs to localize, route and engage.
@@ -2608,6 +2685,7 @@ def run_batch(
             scenario,
             timeout_seconds=run_timeout_seconds(cfg),
             case=_odd_case(cfg),
+            file_stem=stem,
         )
     # From here the queue alone holds the scenarios, and lets each go once it
     # has run: a batch reports results, and a finished scenario kept to the
@@ -2626,17 +2704,23 @@ def run_batch(
     # It is first written before the first case runs, every case pending, so
     # that a batch that dies in its first case leaves it too (#1833).
     # The summary below writes it once more, whole, when the batch ends.
-    done: list[ScenarioResult] = []
+    # A batch resumed into its own directory writes the cases it keeps first,
+    # as they were, and the cases it runs after them (#1957).
+    done: list[Any] = list(kept)
+
+    def errored_cases(errored: list[int]) -> list[int]:
+        return kept_errored + [len(kept) + i for i in errored]
 
     def write_done() -> None:
         try:
             write_batch_result_json(
-                labels,
+                all_labels,
                 done,
                 output_dir,
-                case_overrides if expand else None,
-                errored=queue.errored_indices(),
+                all_case_overrides if expand else None,
+                errored=errored_cases(queue.errored_indices()),
                 pending=True,
+                stems=all_stems,
             )
         except Exception:
             # The batch goes on: its summary is written again at the end.
@@ -2657,6 +2741,13 @@ def run_batch(
             # case it did not finish, and scenario-gate refuses it rather than
             # skip it (#1833).
             write_done()
+            if resumed is not None:
+                # Once the summary lists the cases run again as pending: the
+                # outputs their earlier run left under their stems (its
+                # result, gate record, coverage file, ...) go, so that each
+                # case is judged on its new run alone, not counted twice.
+                for stem in run_stems:
+                    remove_run_outputs(output_dir, stem)
             # A case that cannot run (a spawn point without ground, say) is
             # recorded as errored, and the rest of the batch still runs.
             results = queue.run_all(
@@ -2665,7 +2756,7 @@ def run_batch(
             errored = queue.errored_indices()
         finished = True
     finally:
-        if not finished and done:
+        if not finished and len(done) > len(kept):
             # Cut short: the cases it ran, as the last case's end wrote them.
             # (One cut short before any case ended keeps the summary written
             # before the first, every case pending.)
@@ -2674,12 +2765,15 @@ def run_batch(
         conversions = rerun.close() if rerun is not None else []
 
     all_passed = _print_summary(
-        labels,
-        results,
+        all_labels,
+        [*kept, *results],
         output_dir=output_dir,
-        overrides=case_overrides if expand else None,
-        errored=errored,
-        rerun_errors=rerun_errors(results, conversions),
+        overrides=all_case_overrides if expand else None,
+        errored=errored_cases(errored),
+        rerun_errors={
+            len(kept) + i: why for i, why in rerun_errors(results, conversions).items()
+        },
+        stems=all_stems,
     )
     sys.exit(0 if all_passed else 1)
 
@@ -3692,8 +3786,9 @@ def _main() -> None:
     # conf dirs are available to both the glob and single-run code paths.
     load_scenario_plugins()
 
-    # Extract --resume-from before Hydra sees the argv.
+    # Extract --resume-from and --resume-into before Hydra sees the argv.
     resume_from, cleaned_argv = _extract_resume_from(sys.argv)
+    resume_into, cleaned_argv = _extract_resume_into(cleaned_argv)
     sys.argv = cleaned_argv
 
     # Pass via environment variable so the sweeper can read it without
@@ -3703,12 +3798,14 @@ def _main() -> None:
     with _environ_for_run(
         RESUME_FROM_ENV, str(resume_from) if resume_from > 0 else None
     ):
-        _dispatch(resume_from)
+        _dispatch(resume_from, resume_into)
 
 
-def _dispatch(resume_from: int) -> None:
-    """Run what ``sys.argv`` (``--resume-from`` taken off) selects: a batch
-    of the scenarios a glob or a SLURM launcher names, or one through Hydra."""
+def _dispatch(resume_from: int, resume_into: str | None = None) -> None:
+    """Run what ``sys.argv`` (``--resume-from`` and ``--resume-into`` taken
+    off) selects: a batch of the scenarios a glob or a SLURM launcher names,
+    or one through Hydra.  ``--resume-into`` is a local batch's alone: a run
+    through Hydra refuses it (exit 2)."""
     # --no-wait: a launcher=slurm batch is submitted, and this exits.
     no_wait = "--no-wait" in sys.argv
     if no_wait:
@@ -3745,19 +3842,20 @@ def _dispatch(resume_from: int) -> None:
             )
         else:
             scenario_names = [scenario_value]
+        # Each only when given.
+        extra: dict[str, Any] = {}
+        if no_wait:
+            extra["wait"] = False
+        if resume_into is not None:
+            extra["resume_into"] = Path(resume_into)
         try:
-            if no_wait:
-                run_batch(
-                    scenario_names,
-                    remaining,
-                    expand=expand,
-                    resume_from=resume_from,
-                    wait=False,
-                )
-            else:
-                run_batch(
-                    scenario_names, remaining, expand=expand, resume_from=resume_from
-                )
+            run_batch(
+                scenario_names,
+                remaining,
+                expand=expand,
+                resume_from=resume_from,
+                **extra,
+            )
         except (ScenarioTypeError, RerunUnavailableError, T4UnavailableError) as exc:
             print(exc, file=sys.stderr)  # noqa: T201
             sys.exit(2)
@@ -3774,6 +3872,13 @@ def _dispatch(resume_from: int) -> None:
         if no_wait:
             print("Error: --no-wait is for launcher=slurm only", file=sys.stderr)  # noqa: T201
             sys.exit(1)
+        if resume_into is not None:
+            print(  # noqa: T201
+                "Error: --resume-into resumes a local batch (a scenario glob); "
+                "a sweep resumes into its own directory with hydra.sweep.dir=",
+                file=sys.stderr,
+            )
+            sys.exit(2)
         # Single run goes through @hydra.main.  External conf dirs are added to
         # the search path by AutowareScenarioSearchPathPlugin (discovered via
         # the hydra_plugins namespace), so nothing needs threading here.
