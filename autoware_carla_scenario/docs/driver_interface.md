@@ -518,8 +518,9 @@ random) from 0 to 1, `weather_noise` not negative, `noise_seed` a whole number
 
 CARLA's ray-cast LiDAR ignores the weather, so the sweep sent has the world's rain
 (`precipitation`) and fog (`fog_density`, beyond `fog_distance`) put on it, read when the
-sweep is taken -- the ODD's `rain` and `fog` knobs (`environment.rain`,
-`environment.fog_density`) and an `EnvironmentAction` mid-run set it alike
+sweep is taken -- what the weather rules render a run's rainfall rate and fog
+visibility as, `environment.precipitation` and `environment.fog_density`, and
+an `EnvironmentAction` mid-run set it alike
 (`sensor/lidar_weather.py`):
 
 * **attenuation**: a return at range `r` keeps `exp(-2 alpha r)` of its intensity and

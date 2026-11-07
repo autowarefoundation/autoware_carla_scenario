@@ -2,9 +2,10 @@
 
 The server casts every ray through clear air whatever ``carla.WeatherParameters``
 says, so a sweep in heavy rain or thick fog is a dry day's.  This adds to a raw
-sweep, from the weather's ``precipitation`` and ``fog_density`` (0-100, what the
-ODD's ``rain`` and ``fog`` knobs, ``environment.rain`` and
-``environment.fog_density``, set), the three things a real sensor suffers:
+sweep, from the weather's ``precipitation`` and ``fog_density`` (0-100: what the
+weather rules render a run's rainfall rate and fog visibility as, or what
+``environment.precipitation`` and ``environment.fog_density`` set), the three
+things a real sensor suffers:
 
 * **attenuation** -- the beam is scattered both ways, so a return at range ``r``
   keeps ``T = exp(-2 * alpha * r)`` of its power: its intensity is scaled by

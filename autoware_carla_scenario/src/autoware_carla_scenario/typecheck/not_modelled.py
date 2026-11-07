@@ -222,7 +222,15 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             "through)",
         ),
         **_each(
-            "EGO_KEY QUANTITIES WEATHER_INPUTS rule_values",
+            "RESOLVED_QUANTITIES resolve_environment",
+            "works the rules out before a run with openodd (a Rust "
+            "extension), over the config's `environment` as "
+            "`Mapping[str, Any]` (a label for the time of day beside "
+            "numbers), the runner's; a scenario sets numbers "
+            "(EnvironmentAction)",
+        ),
+        **_each(
+            "CARLA_QUANTITIES CAUSE_SETTINGS EGO_KEY QUANTITIES WEATHER_INPUTS rule_values",
             "re-exported from weather_inputs, which the library check "
             "compiles from its source; a scenario sets the weather, not the "
             "rules (weather_rules.codon models what visibility and "
@@ -580,7 +588,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "CoverageCollector": {"to_dict": _AS_DICT},
     "CoverageReport": {
         **_members(
-            "cases cell_flakiness entries entry flaky_cells odds weighted_outcomes",
+            "assumptions cases cell_flakiness entries entry flaky_cells odds weighted_outcomes",
             _REPORT_ROWS,
         ),
         "to_dict": _AS_DICT,
@@ -624,7 +632,14 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
     "MapSource": _members(
         "at directory name parse pinned repo_name uri with_path", _MAP_CACHE
     ),
-    "OddAttribute": {"probe": _PROBE},
+    "OddAttribute": {
+        "probe": _PROBE,
+        "concept": (
+            "the taxonomy's description of the attribute's concept "
+            "(`dict[str, Any]`: its kind, primitive, unit type and literals), "
+            "which the taxonomy tools read, not a scenario"
+        ),
+    },
     "OddCondition": {"evaluate": _ODD_RUN_VALUES},
     "OddDefinition": {
         **_members("complete evaluate sample", _ODD_RUN_VALUES),

@@ -1,5 +1,6 @@
-"""The weather rules: the CARLA backend's conditional distributions for the
-grip and the visibility, a run's over them, and rules that differ by vehicle."""
+"""The weather rules: the CARLA backend's Bayesian network from the conditions
+a run is given to CARLA's weather, the grip and the visibility, worked out
+before a run; a run's rules over them, and rules that differ by vehicle."""
 
 from __future__ import annotations
 
@@ -22,15 +23,16 @@ from autoware_carla_scenario.actions.environment import (
 )
 from autoware_carla_scenario.odd import probes
 from autoware_carla_scenario.odd.backend import CARLA_BACKEND
-from autoware_carla_scenario.visibility import visibility, visibility_range
 from autoware_carla_scenario.weather_rules import (
     DEFAULT_RULES,
     RulesError,
     check_weather_rules,
+    resolve_environment,
     use_weather_rules,
     vehicle_at,
     vehicle_range,
     vehicle_rules_in_use,
+    weather_at,
     weather_range,
     weather_rule_files,
 )
@@ -55,37 +57,51 @@ def _interpolate(rows: tuple[tuple[float, float, float], ...], at: float):
 
 
 _GRIP = ((0.0, 0.90, 1.10), (50.0, 0.65, 0.85), (100.0, 0.45, 0.65))
+# The visibility's parts, by the cause each reads.
 _FOG = (
-    (0.0, 250.0, 400.0),
-    (30.0, 120.0, 250.0),
-    (70.0, 40.0, 100.0),
-    (100.0, 15.0, 40.0),
+    (15.0, 12.0, 18.0),
+    (50.0, 40.0, 60.0),
+    (150.0, 120.0, 180.0),
+    (400.0, 250.0, 400.0),
+    (1000.0, 250.0, 400.0),
 )
 _RAIN = (
     (0.0, 250.0, 400.0),
-    (30.0, 180.0, 320.0),
-    (70.0, 100.0, 220.0),
-    (100.0, 60.0, 150.0),
+    (2.5, 180.0, 320.0),
+    (7.6, 100.0, 220.0),
+    (25.0, 60.0, 150.0),
 )
-_LIGHT = (
-    (-90.0, 50.0, 150.0),
-    (-6.0, 50.0, 150.0),
-    (0.0, 250.0, 400.0),
-    (90.0, 250.0, 400.0),
-)
+_LIGHT = {
+    "day": (250.0, 400.0),
+    "dusk": (150.0, 275.0),
+    "night": (50.0, 150.0),
+    "dawn": (150.0, 275.0),
+}
 
 
 def _grip_file(path: Path, flooded: tuple[float, float], extends: str = "") -> Path:
-    """A rule file naming only the grip's distribution: its points are the
-    default's."""
+    """A rule file naming only the grip's distributions (by the wetness and
+    by the standing water): their points are the default's."""
+    parts = "".join(
+        f"      {part}:\n        uniform:\n"
+        f"          low: [0.90, 0.65, {flooded[0]}]\n"
+        f"          high: [1.10, 0.85, {flooded[1]}]\n"
+        for part in ("wetness", "standing_water")
+    )
     path.write_text(
         "version: 2\n"
         + (f"extends: {extends}\n" if extends else "")
-        + "quantities:\n  tire_friction:\n    parts:\n      water:\n        uniform:\n"
-        f"          low: [0.90, 0.65, {flooded[0]}]\n"
-        f"          high: [1.10, 0.85, {flooded[1]}]\n"
+        + "quantities:\n  tire_friction:\n    parts:\n"
+        + parts
     )
     return path
+
+
+def _visibility_range(fog: float = 10000.0, rain: float = 0.0, time: str = "day"):
+    return weather_range(
+        "visibility",
+        {"fog_visibility_range": fog, "rainfall_rate": rain, "time_of_day": time},
+    )
 
 
 class TestDefaultRules:
@@ -97,26 +113,65 @@ class TestDefaultRules:
         expected = _interpolate(_GRIP, max(wetness, deposits))
         assert tire_friction_range(wetness, deposits) == pytest.approx(expected)
 
-    @pytest.mark.parametrize("fog", [0.0, 15.0, 50.0, 85.0, 100.0])
-    @pytest.mark.parametrize("rain", [0.0, 40.0, 100.0])
-    @pytest.mark.parametrize("sun", [-90.0, -6.0, -3.0, 0.0, 45.0])
-    def test_the_visibility_is_the_shortest_bound_as_before(
-        self, fog, rain, sun
+    @pytest.mark.parametrize("fog", [10.0, 15.0, 30.0, 300.0, 1000.0, 10000.0])
+    @pytest.mark.parametrize("rain", [0.0, 1.0, 7.6, 40.0])
+    @pytest.mark.parametrize("time", ["day", "dusk", "night", "dawn"])
+    def test_the_visibility_is_the_shortest_bound_of_the_causes(
+        self, fog, rain, time
     ) -> None:
-        bounds = [
-            _interpolate(_FOG, fog),
-            _interpolate(_RAIN, rain),
-            _interpolate(_LIGHT, sun),
-        ]
+        bounds = [_interpolate(_FOG, fog), _interpolate(_RAIN, rain), _LIGHT[time]]
         expected = (min(b[0] for b in bounds), min(b[1] for b in bounds))
-        assert visibility_range(fog, rain, sun) == pytest.approx(expected)
+        assert _visibility_range(fog, rain, time) == pytest.approx(expected)
 
-    def test_they_are_the_carla_backends_and_water_is_derived(self) -> None:
+    def test_they_are_the_carla_backends_over_the_taxonomys_causes(self) -> None:
         assert CARLA_BACKEND.rules is not None
         assert CARLA_BACKEND.rules.files[0][0] == str(DEFAULT_RULES)
+        assert CARLA_BACKEND.rules.version == 3
+        assert set(CARLA_BACKEND.rules.input_concepts) == {
+            "rainfall_rate",
+            "fog_visibility_range",
+            "time_of_day",
+        }
+        # The grip follows the wetter of the wetness and the standing water.
         assert weather_range(
-            "tire_friction", {"wetness": 10.0, "precipitation_deposits": 50.0}
-        ) == pytest.approx(weather_range("tire_friction", {"water": 50.0}))
+            "tire_friction",
+            {"carla_wetness": 10.0, "carla_precipitation_deposits": 50.0},
+        ) == pytest.approx(weather_range("tire_friction", {"carla_wetness": 50.0}))
+
+    @pytest.mark.parametrize(
+        ("rain", "low", "high"),
+        [(0.0, 0.0, 0.0), (2.5, 25.0, 35.0), (7.6, 60.0, 75.0), (25.0, 95.0, 100.0)],
+    )
+    def test_the_rainfall_rate_gives_carlas_precipitation(
+        self, rain, low, high
+    ) -> None:
+        assert weather_range(
+            "carla_precipitation", {"rainfall_rate": rain}
+        ) == pytest.approx((low, high))
+
+    @pytest.mark.parametrize(
+        ("time", "altitude", "azimuth"),
+        [
+            ("day", (0, 90), (0, 360)),
+            ("dusk", (-6, -0.01), (180, 359.99)),
+            ("night", (-90, -6.01), (0, 360)),
+            ("dawn", (-6, -0.01), (0, 179.99)),
+        ],
+    )
+    def test_the_time_of_day_gives_a_sun_that_reads_back_as_it(
+        self, time, altitude, azimuth
+    ) -> None:
+        inputs = {"time_of_day": time}
+        assert weather_range("carla_sun_altitude", inputs) == pytest.approx(altitude)
+        assert weather_range("carla_sun_azimuth", inputs) == pytest.approx(azimuth)
+        for q in (0.0, 0.3, 0.7, 1.0):
+            assert (
+                probes.time_of_day_level(
+                    weather_at("carla_sun_altitude", inputs, q),
+                    weather_at("carla_sun_azimuth", inputs, q),
+                )
+                == time
+            )
 
     @pytest.mark.parametrize("q", [0.0, 0.25, 0.5, 0.9, 1.0])
     def test_the_grip_at_a_quantile_is_its_uniform_distributions(self, q) -> None:
@@ -124,15 +179,25 @@ class TestDefaultRules:
         assert tire_friction(70.0, quantile=q) == pytest.approx(low + q * (high - low))
 
     def test_the_visibilitys_parts_move_together_at_one_quantile(self) -> None:
-        # fog 80: 31.7-80 m; rain 30: 180-320 m; day: 250-400 m.  At the
+        def at(fog: float, rain: float, time: str, q: float) -> float:
+            return weather_at(
+                "visibility",
+                {
+                    "fog_visibility_range": fog,
+                    "rainfall_rate": rain,
+                    "time_of_day": time,
+                },
+                q,
+            )
+
+        # Fog of 100 m: 80-120 m; light rain and the day are longer.  At the
         # quantile 0.5 each part is at its median, and the shortest holds.
-        fog = _interpolate(_FOG, 80.0)
-        assert visibility(80.0, 30.0, 45.0, 0.5) == pytest.approx((fog[0] + fog[1]) / 2)
-        # Night and light rain: the light's 50-150 m and the rain's 180-320 m.
-        assert visibility(0.0, 30.0, -10.0, 0.25) == pytest.approx(75.0)
-        assert visibility(0.0, 30.0, -10.0, 1.0) == pytest.approx(150.0)
+        assert at(100.0, 1.0, "day", 0.5) == pytest.approx(100.0)
+        # Night and light rain: the light's 50-150 m and the rain's.
+        assert at(10000.0, 2.5, "night", 0.25) == pytest.approx(75.0)
+        assert at(10000.0, 2.5, "night", 1.0) == pytest.approx(150.0)
         # The quantile is clamped.
-        assert visibility(0.0, 30.0, -10.0, 7.0) == pytest.approx(150.0)
+        assert at(10000.0, 2.5, "night", 7.0) == pytest.approx(150.0)
 
     def test_an_old_fuzzy_rule_file_is_refused(self, tmp_path) -> None:
         path = tmp_path / "v1.yaml"
@@ -142,9 +207,11 @@ class TestDefaultRules:
 
     def test_the_manifest_follows_a_knob_to_the_rules(self) -> None:
         inputs = CARLA_BACKEND.manifest()["rule_inputs"]
-        assert inputs["precipitation"]["knob"] == "environment.rain"
-        assert inputs["fog_density"]["knob"] == "environment.fog_density"
-        assert "wetness" in inputs["water"]["text"]
+        assert inputs["rainfall_rate"]["knob"] == "environment.rainfall_rate_mm_h"
+        assert inputs["fog_visibility_range"]["knob"] == (
+            "environment.fog_visibility_range_m"
+        )
+        assert inputs["time_of_day"]["knob"] == "environment.time_of_day"
 
     def test_an_unknown_quantity_is_refused(self) -> None:
         with pytest.raises(RulesError, match="unknown quantity 'grip'"):
@@ -159,7 +226,7 @@ class TestARunsRules:
         use_weather_rules(str(path))
         assert tire_friction_range(100.0) == pytest.approx((0.30, 0.50))
         # The visibility keeps the default rules.
-        assert visibility_range(fog_density=100.0) == pytest.approx((15.0, 40.0))
+        assert _visibility_range(fog=15.0) == pytest.approx((12.0, 18.0))
         assert [Path(p).name for p, _ in weather_rule_files()] == [
             "weather_rules.yaml",
             "measured.yaml",
@@ -189,7 +256,7 @@ class TestARunsRules:
             "        at: {temperature: [-20, 40]}\n"
             "        uniform: {low: 1, high: 1}\n"
         )
-        with pytest.raises(RulesError, match="unknown input 'temperature'"):
+        with pytest.raises(RulesError, match="stands for no taxonomy concept"):
             use_weather_rules(str(path))
 
 
@@ -207,7 +274,7 @@ class TestRulesByVehicle:
             }
         )
         assert vehicle_rules_in_use()
-        flooded = {"wetness": 100.0}
+        flooded = {"carla_wetness": 100.0}
         assert vehicle_range(
             "tire_friction", flooded, "vehicle.mini.cooper", "Ego"
         ) == pytest.approx((0.30, 0.50))
@@ -224,7 +291,7 @@ class TestRulesByVehicle:
             "tire_friction", flooded, 0.5, "vehicle.tesla.model3", ""
         ) == pytest.approx(0.50)
         # The visibility is the default rules'.
-        assert visibility_range(fog_density=100.0) == pytest.approx((15.0, 40.0))
+        assert _visibility_range(fog=15.0) == pytest.approx((12.0, 18.0))
 
     def test_a_vehicles_file_extends_and_is_read_over_the_runs_default(
         self, tmp_path
@@ -235,7 +302,7 @@ class TestRulesByVehicle:
         mini.write_text("version: 2\nextends: ../shared.yaml\nquantities: {}\n")
         use_weather_rules({"vehicles": {"vehicle.mini.*": str(mini)}})
         assert vehicle_range(
-            "tire_friction", {"wetness": 100.0}, "vehicle.mini.cooper", ""
+            "tire_friction", {"carla_wetness": 100.0}, "vehicle.mini.cooper", ""
         ) == pytest.approx((0.35, 0.55))
 
     def test_malformed_settings_are_refused(self, tmp_path) -> None:
@@ -301,7 +368,7 @@ class TestRulesByVehicle:
     def test_without_vehicles_every_vehicle_reads_the_default(self) -> None:
         assert not vehicle_rules_in_use()
         assert vehicle_range(
-            "tire_friction", {"wetness": 100.0}, "vehicle.mini.cooper", "Ego"
+            "tire_friction", {"carla_wetness": 100.0}, "vehicle.mini.cooper", "Ego"
         ) == pytest.approx((0.45, 0.65))
 
 
@@ -425,7 +492,7 @@ class TestGripByVehicle:
     def test_without_vehicle_rules_the_world_has_one_grip(self) -> None:
         ego = _Vehicle(1, "vehicle.lincoln.mkz", "Ego")
         world = _world(ego)
-        apply_weather_grip(world, {"wetness": 100.0}, 1.0)
+        apply_weather_grip(world, {"carla_wetness": 100.0}, 1.0)
         assert ego.frictions == pytest.approx([3.5 * 0.65] * 4)
         assert world_tire_friction(world.id) == pytest.approx(0.65)
 
@@ -513,7 +580,15 @@ def test_well_formed_rules_pass_the_batch_check_unread() -> None:
 
 
 @pytest.mark.parametrize(
-    "name", ["EGO_KEY", "QUANTITIES", "WEATHER_INPUTS", "rule_values"]
+    "name",
+    [
+        "CARLA_QUANTITIES",
+        "CAUSE_SETTINGS",
+        "EGO_KEY",
+        "QUANTITIES",
+        "WEATHER_INPUTS",
+        "rule_values",
+    ],
 )
 def test_weather_rules_re_exports_the_checked_weather_inputs(name: str) -> None:
     # #1732: the plain part moved to the checked weather_inputs; weather_rules
@@ -525,17 +600,90 @@ def test_weather_rules_re_exports_the_checked_weather_inputs(name: str) -> None:
     assert CARLA_BACKEND.rule_inputs is weather_inputs.WEATHER_INPUTS
 
 
-def test_rule_values_adds_water_from_the_wetter_of_wetness_and_deposits() -> None:
+def test_rule_values_reads_each_as_a_float() -> None:
     from autoware_carla_scenario.weather_inputs import rule_values
 
-    assert rule_values({"wetness": 30, "precipitation_deposits": 70}) == {
-        "wetness": 30.0,
-        "precipitation_deposits": 70.0,
-        "water": 70.0,
+    assert rule_values({"carla_wetness": 30, "rainfall_rate": 2.5}) == {
+        "carla_wetness": 30.0,
+        "rainfall_rate": 2.5,
     }
-    assert rule_values({"wetness": 20.0, "water": 5.0})["water"] == 5.0
-    assert rule_values({"fog_density": 10.0}) == {"fog_density": 10.0}
-    assert rule_values({"precipitation_deposits": 60.0})["water"] == 60.0
+
+
+def test_the_quantities_are_the_rules_and_every_carla_field_is_one() -> None:
+    from autoware_carla_scenario.weather_inputs import CARLA_QUANTITIES, QUANTITIES
+
+    assert CARLA_BACKEND.rules is not None
+    assert set(QUANTITIES) == set(CARLA_BACKEND.rules.quantities)
+    assert set(CARLA_QUANTITIES.values()) <= set(QUANTITIES)
+
+
+class TestResolveEnvironment:
+    def test_the_causes_give_carlas_weather_and_the_visibility_at_the_median(
+        self,
+    ) -> None:
+        out = resolve_environment(
+            {
+                "rainfall_rate_mm_h": 2.5,
+                "fog_visibility_range_m": 300.0,
+                "time_of_day": "dusk",
+            }
+        )
+        assert out["rainfall_rate_mm_h"] == 2.5 and out["time_of_day"] == "dusk"
+        assert out["precipitation"] == pytest.approx(30.0)
+        # What CARLA's rain presets pair with it, from the precipitation.
+        assert out["cloudiness"] == pytest.approx(60.0)
+        assert out["precipitation_deposits"] == pytest.approx(50.0)
+        assert out["wetness"] == pytest.approx(30.0)
+        assert 50.0 < out["fog_density"] < 95.0
+        assert -6.0 <= out["sun_altitude_angle"] < 0.0
+        assert 180.0 <= out["sun_azimuth_angle"] < 360.0
+        # The visibility at its median, the least of its parts'.
+        assert out["visibility_m"] == pytest.approx(
+            weather_at(
+                "visibility",
+                {
+                    "rainfall_rate": 2.5,
+                    "fog_visibility_range": 300.0,
+                    "time_of_day": "dusk",
+                },
+                0.5,
+            )
+        )
+
+    def test_a_cause_not_named_leaves_its_fields_to_the_world(self) -> None:
+        out = resolve_environment({"time_of_day": "night"})
+        assert set(out) == {
+            "time_of_day",
+            "sun_altitude_angle",
+            "sun_azimuth_angle",
+            "visibility_m",
+        }
+        # The night's light bounds it; no rain, no fog.
+        assert out["visibility_m"] == pytest.approx(100.0)
+
+    def test_a_field_given_is_kept_and_what_follows_reads_it(self) -> None:
+        out = resolve_environment({"rainfall_rate_mm_h": 25.0, "precipitation": 30.0})
+        assert out["precipitation"] == 30.0
+        assert out["wetness"] == pytest.approx(30.0)
+        out = resolve_environment({"time_of_day": "day", "visibility_m": 42.0})
+        assert out["visibility_m"] == 42.0
+
+    def test_the_quantiles_drawn_are_the_ones_read(self) -> None:
+        out = resolve_environment(
+            {"time_of_day": "night", "visibility_quantile": 1.0},
+            {"carla_sun_altitude": 0.0},
+        )
+        assert out["visibility_m"] == pytest.approx(150.0)
+        assert out["sun_altitude_angle"] == pytest.approx(-90.0)
+
+    def test_carlas_fields_alone_name_no_condition_and_get_no_visibility(
+        self, caplog
+    ) -> None:
+        out = resolve_environment({"precipitation": 60.0, "fog_density": 80.0})
+        assert "visibility_m" not in out
+        # What follows from the precipitation in the rules still does.
+        assert out["wetness"] == pytest.approx(60.0)
+        assert "names no condition" in caplog.text
 
 
 @pytest.mark.parametrize(

@@ -113,6 +113,7 @@ def expand_sweep(
     controls: Mapping[str, Any] | None = None,
     drawn: OddDraws | None = None,
     seed: int | None = None,
+    rules: Mapping[str, Any] | None = None,
 ) -> list[list[str]]:
     """The override list of every concrete scenario ``sweep`` describes on ``lanelet_map``.
 
@@ -123,7 +124,9 @@ def expand_sweep(
     (``odd_sample.odd``, else *odd*, the run's) and each is given the next
     lanelet case or route match in turn -- or none, when the sweep has
     neither. Without a ``count``, one case is drawn per lanelet case or match.  *controls* are
-    the scenario's (its config's ``controls``): what its parameters set.
+    the scenario's (its config's ``controls``): what its parameters set; *rules*
+    are the nodes it adds to the rules (its ``scenario_rules``), which a
+    control with a ``quantity`` writes.
     *drawn*, in a batch, holds the cases earlier scenarios drew from the ODD:
     the sampler goes on from them, and the cases drawn here are added to it.
     *seed* is the run's (the config's ``seed``): the
@@ -169,6 +172,7 @@ def expand_sweep(
             controls,
             drawn,
             lanelet_map=lanelet_map if base_cases != [[]] else None,
+            rules=rules,
         )
     if index is not None:
         if not 0 <= index < len(base_cases):
@@ -308,6 +312,7 @@ def _with_odd_samples(
     drawn: OddDraws | None = None,
     *,
     lanelet_map: Any = None,
+    rules: Mapping[str, Any] | None = None,
 ) -> list[list[str]]:
     """``odd_sample.count`` cases (as many as base cases by default), each a
     base case -- a lanelet or a route match -- and settings drawn from the ODD.
@@ -351,6 +356,7 @@ def _with_odd_samples(
         odd=odd,
         controls=controls,
         drawn=drawn,
+        rules=rules,
     )
     wanted = len(base_cases) if count is None else count
     if search is not None:
@@ -668,6 +674,7 @@ def expand_config(
     # Checked before anything else, a concrete config's too: the check needs
     # only the config, no map, ODD or CARLA.
     controls = scenario_controls(cfg)
+    rules = scenario_rules(cfg)
     # And the run's seed, which every case runs with (a run refuses it too).
     seed = _config_seed(cfg)
     sweep_cfg = OmegaConf.select(cfg, "sweep")
@@ -690,7 +697,14 @@ def expand_config(
     if not (sweep.get("constraints") or sweep.get("route")):
         # Drawing from the ODD alone needs no map.
         return expand_sweep(
-            sweep, None, arguments, odd=odd, controls=controls, drawn=drawn, seed=seed
+            sweep,
+            None,
+            arguments,
+            odd=odd,
+            controls=controls,
+            drawn=drawn,
+            seed=seed,
+            rules=rules,
         )
 
     lanelet_map = load_sweep_map(OmegaConf.select(cfg, "map"))
@@ -702,6 +716,7 @@ def expand_config(
         controls=controls,
         drawn=drawn,
         seed=seed,
+        rules=rules,
     )
 
 
@@ -800,6 +815,23 @@ def scenario_controls(cfg: DictConfig) -> dict[str, Any]:
     return {str(k): v for k, v in controls.items()}  # type: ignore[union-attr]
 
 
+def scenario_rules(cfg: DictConfig) -> dict[str, Any] | None:
+    """The config's ``scenario_rules``, resolved: the nodes the scenario adds
+    to the rules (a rule document, openodd's docs/rules.md, "A scenario's
+    nodes"), or ``None`` when it adds none.
+
+    Raises:
+        ValueError: When it is not a mapping.
+    """
+    node = OmegaConf.select(cfg, "scenario_rules")
+    if node is None:
+        return None
+    rules = OmegaConf.to_container(node, resolve=True)
+    if not isinstance(rules, dict):
+        raise ValueError(f"scenario_rules must be a rule document, got {rules!r}")
+    return {str(k): v for k, v in rules.items()}
+
+
 __all__ = [
     "EMPTY_SWEEP_MESSAGE",
     "check_constraint_keys",
@@ -807,4 +839,5 @@ __all__ = [
     "expand_route",
     "expand_sweep",
     "scenario_controls",
+    "scenario_rules",
 ]

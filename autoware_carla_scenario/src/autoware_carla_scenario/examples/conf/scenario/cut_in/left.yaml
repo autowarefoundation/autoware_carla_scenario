@@ -37,26 +37,48 @@ ego:
   spawn_lanelet_id: 20
   spawn_s: 5.0
 
-# What this scenario's parameters set, by scenario measure (measures.py), for
-# a sweep that draws them from an ODD (sweep.odd_sample, docs/odd.md). The
-# gap is drawn as the measure itself (target: measure): npc_gap_m is the gap
-# the built-in vehicle_ahead_gap_m reads at the start, bumper to bumper along
-# the ego's lane, and the scenario solves the NPC's placement for it with the
-# vehicles' own sizes, so it is exact wherever the case is placed. The
-# relative speed is a raw setting, exact by definition: both start along their
-# lanes at their speeds, and the measure is the NPC's speed along the ego's
-# lane less the ego's. The ranges are what the scenario can stage: closer than
-# 2 m bumper to bumper leaves the NPC no room to cut in. Which ODD attribute
-# these are is the ODD's to say, by mapping its taxonomy onto the measures.
+# What this scenario sets up is no condition of the ODD but an effect the
+# rules draw (docs/odd.md, "A scenario's nodes"): the nodes it adds to the
+# shared network, each a distribution a sweep (sweep.odd_sample) draws per
+# case at a quantile of its own, which the flaky search can move. Neither
+# reads a condition yet: they are roots, spread over what the scenario can
+# stage -- closer than 2 m bumper to bumper leaves the NPC no room to cut in.
+scenario_rules:
+  version: 3
+  taxonomy: {bundled: default}
+  basis:
+    kind: expert
+    by: autoware_carla_scenario
+    text: What the cut-in scenario can stage, spread evenly; not measured.
+  quantities:
+    vehicle_ahead_gap:
+      text: Gap to the cut-in vehicle at the start, bumper to bumper, m.
+      parts:
+        staged:
+          uniform: {low: 2.0, high: 30.0}
+    vehicle_ahead_relative_speed:
+      text: The cut-in vehicle's speed less the ego's at the start, km/h.
+      parts:
+        staged:
+          uniform: {low: -15.0, high: 15.0}
+
+# Which parameter writes each node, by scenario measure (measures.py). The
+# gap is written as the measure itself (target: measure): npc_gap_m is the
+# gap the built-in vehicle_ahead_gap_m reads at the start, bumper to bumper
+# along the ego's lane, and the scenario solves the NPC's placement for it
+# with the vehicles' own sizes, so it is exact wherever the case is placed.
+# The relative speed is a raw setting, exact by definition: both start along
+# their lanes at their speeds, and the measure is the NPC's speed along the
+# ego's lane less the ego's, so it is written offset by the ego's speed.
 controls:
   vehicle_ahead_gap_m:
     key: scenario.npc_gap_m
     target: measure
-    range: [2.0, 30.0]
+    quantity: vehicle_ahead_gap
   vehicle_ahead_relative_speed_kph:
     key: scenario.npc_initial_speed_kmh
+    quantity: vehicle_ahead_relative_speed
     offset: ${ego.initial_speed_kmh}
-    range: [-15.0, 15.0]
     # A speed, whatever the ego's: a slow ego leaves the slower leads out.
     limits: [0.0, null]
 

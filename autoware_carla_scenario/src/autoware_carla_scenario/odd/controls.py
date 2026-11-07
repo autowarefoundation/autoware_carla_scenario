@@ -171,6 +171,15 @@ def _check_control(
             )
     if _is_number(spec.get("scale")) and spec["scale"] == 0:
         out.append(ControlDiagnostic(f"{base}.scale", "must not be zero"))
+    if "quantity" in spec and (
+        not isinstance(spec["quantity"], str) or not spec["quantity"]
+    ):
+        out.append(
+            ControlDiagnostic(
+                f"{base}.quantity",
+                f"expected the name of a quantity of the rules, got {spec['quantity']!r}",
+            )
+        )
     if "integer" in spec and not isinstance(spec["integer"], bool):
         out.append(
             ControlDiagnostic(

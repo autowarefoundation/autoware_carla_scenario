@@ -393,17 +393,50 @@ def test_the_vehicle_ahead_measures_are_version_2() -> None:
     assert measure_version("a_scenario_s_own") == 1
 
 
+def _measured_odd() -> Any:
+    """An ODD that maps the built-in measures, as the default ODD did before
+    what a scenario sets up became the rules' to draw."""
+    from autoware_carla_scenario.odd import (
+        OddAttribute,
+        OddDefinition,
+        scenario_measure,
+    )
+
+    return OddDefinition(
+        "measured",
+        [
+            OddAttribute(
+                "dynamic.vehicle_ahead_gap",
+                scenario_measure(VEHICLE_AHEAD_GAP_M),
+                unit="m",
+                buckets=[0, 10, 20, 30, 50, 100],
+            ),
+            OddAttribute(
+                "dynamic.vehicle_ahead_relative_speed",
+                scenario_measure(VEHICLE_AHEAD_RELATIVE_SPEED_KPH),
+                unit="km/h",
+                buckets=[-30, -15, -5, 5, 15, 30],
+            ),
+            OddAttribute(
+                "dynamic.crossing_pedestrian_gap",
+                scenario_measure("crossing_pedestrian_gap_m"),
+                unit="m",
+                buckets=[0, 10, 20, 30, 50],
+            ),
+        ],
+    )
+
+
 def test_coverage_keeps_the_versions_apart(straight_road: LaneMap) -> None:
     """A coverage file names the vehicle-ahead items for their version and
     says what the measures meant; merged with a file of version 1, the two
     are reported apart rather than added up."""
     from autoware_carla_scenario.coverage import merge_coverage
     from autoware_carla_scenario.coverage.collector import CoverageCollector
-    from autoware_carla_scenario.odd import default_odd
 
     ego = _ego(_on(straight_road, "ego", 0, 50.0))
     lead = _vehicle(2, _on(straight_road, "left", 0, 70.0))
-    collector = CoverageCollector([], odd=default_odd())
+    collector = CoverageCollector([], odd=_measured_odd())
     world = _World([ego, lead])
     collector.start(world, 0.0)
     collector.tick(world, 0.05)
@@ -453,7 +486,6 @@ def test_a_sampler_reads_only_the_current_version() -> None:
     """Version 1's hits are neither aimed past nor added to version 2's: the
     sampler reads the @v2 item, under the attribute's own name, alone."""
     from autoware_carla_scenario.coverage.collector import current_measure_coverage
-    from autoware_carla_scenario.odd import default_odd
 
     def entry(name: str, hits: float) -> Any:
         return SimpleNamespace(
@@ -465,7 +497,7 @@ def test_a_sampler_reads_only_the_current_version() -> None:
         )
 
     gap = "odd.dynamic.vehicle_ahead_gap"
-    other = "odd.environment.rain"
+    other = "odd.scenery.junction"
     coverage = SimpleNamespace(
         entries=[
             entry(gap, 9.0),
@@ -477,14 +509,14 @@ def test_a_sampler_reads_only_the_current_version() -> None:
         ]
     )
 
-    read = current_measure_coverage(coverage, default_odd())
+    read = current_measure_coverage(coverage, _measured_odd())
 
     assert [(e.name, e.amount("near")) for e in read.entries] == [
         (gap, 1.0),
         (f"{gap}#2", 2.0),
         (other, 5.0),
     ]
-    assert current_measure_coverage(None, default_odd()) is None
+    assert current_measure_coverage(None, _measured_odd()) is None
 
 
 # ---------------------------------------------------------------------------
@@ -819,14 +851,14 @@ def test_a_reading_takes_milliseconds_on_a_long_road() -> None:
 def test_the_routing_graph_is_built_before_the_run(straight_road: LaneMap) -> None:
     from autoware_carla_scenario.coordinate.map_manager import MapManager
     from autoware_carla_scenario.coverage.collector import prepare_measures
-    from autoware_carla_scenario.odd import OddDefinition, default_odd
+    from autoware_carla_scenario.odd import OddDefinition
 
     manager = MapManager.get_instance()
     manager._routing_graph = None
     prepare_measures(OddDefinition("nothing_measured", []))
     assert manager._routing_graph is None
 
-    prepare_measures(default_odd())  # maps vehicle_ahead_gap_m
+    prepare_measures(_measured_odd())  # maps vehicle_ahead_gap_m
     assert manager._routing_graph is not None
     # And the lanelets' boxes the lane's rivals are found among.
     from autoware_carla_scenario import measures
@@ -844,7 +876,6 @@ def test_no_routing_graph_for_measures_the_scenario_replaced(
     from autoware_carla_scenario.coordinate.map_manager import MapManager
     from autoware_carla_scenario.coverage.collector import prepare_measures
     from autoware_carla_scenario.measures import Measure
-    from autoware_carla_scenario.odd import default_odd
 
     def replaced(*keys: str) -> SimpleNamespace:
         own = dict(BUILT_IN_MEASURES)
@@ -855,12 +886,12 @@ def test_no_routing_graph_for_measures_the_scenario_replaced(
     manager = MapManager.get_instance()
     manager._routing_graph = None
     prepare_measures(
-        default_odd(), replaced(VEHICLE_AHEAD_GAP_M, VEHICLE_AHEAD_RELATIVE_SPEED_KPH)
+        _measured_odd(), replaced(VEHICLE_AHEAD_GAP_M, VEHICLE_AHEAD_RELATIVE_SPEED_KPH)
     )
     assert manager._routing_graph is None
 
     # One of them still the built-in one: that one reads the graph.
-    prepare_measures(default_odd(), replaced(VEHICLE_AHEAD_GAP_M))
+    prepare_measures(_measured_odd(), replaced(VEHICLE_AHEAD_GAP_M))
     assert manager._routing_graph is not None
 
 

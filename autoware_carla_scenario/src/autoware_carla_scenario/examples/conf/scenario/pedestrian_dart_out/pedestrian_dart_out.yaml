@@ -35,20 +35,43 @@ ego:
   spawn_lanelet_id: 19
   spawn_s: 5.0
 
-# What this scenario's parameters set, by scenario measure (measures.py), for
-# a sweep that draws them from an ODD (sweep.odd_sample, docs/odd.md). The
+# What this scenario sets up is no condition of the ODD but an effect the
+# rules draw (docs/odd.md, "A scenario's nodes"): the nodes it adds to the
+# shared network, each a distribution a sweep (sweep.odd_sample) draws per
+# case at a quantile of its own, which the flaky search can move. Neither
+# reads a condition yet: they are roots, spread over what the scenario can
+# stage -- it stands pedestrian_ahead_m ahead, so it cannot set off further
+# away than that.
+scenario_rules:
+  version: 3
+  taxonomy: {bundled: default}
+  basis:
+    kind: expert
+    by: autoware_carla_scenario
+    text: What the dart-out scenario can stage, spread evenly; not measured.
+  quantities:
+    crossing_pedestrian_gap:
+      text: How far ahead of the ego the pedestrian sets off, m.
+      parts:
+        staged:
+          uniform: {low: 8.0, high: 30.0}
+    crossing_pedestrian_speed:
+      text: How fast the pedestrian runs, m/s.
+      parts:
+        staged:
+          uniform: {low: 0.8, high: 3.0}
+
+# Which parameter writes each node, by scenario measure (measures.py). The
 # pedestrian sets off when the ego is trigger_distance_m away -- the gap the
 # built-in crossing_pedestrian_gap_m first reads (a little less, as it stands
-# off to the side) -- and runs at walk_speed_ms. The ranges are what the
-# scenario can stage: it stands pedestrian_ahead_m ahead, so it cannot set off
-# further away than that.
+# off to the side) -- and runs at walk_speed_ms.
 controls:
   crossing_pedestrian_gap_m:
     key: scenario.trigger_distance_m
-    range: [8.0, 30.0]
+    quantity: crossing_pedestrian_gap
   crossing_pedestrian_speed_ms:
     key: scenario.walk_speed_ms
-    range: [0.8, 3.0]
+    quantity: crossing_pedestrian_speed
 
 sweep:
   constraints:

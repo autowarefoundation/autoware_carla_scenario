@@ -1,5 +1,5 @@
-"""How far drivers see: the range the weather leaves, the speed it allows,
-and the record a traffic backend reads it from."""
+"""How far drivers see: the range the conditions leave (the weather rules'),
+the speed it allows, and the record a traffic backend reads it from."""
 
 from __future__ import annotations
 
@@ -11,10 +11,25 @@ from autoware_carla_scenario.visibility import (
     set_world_visibility,
     sight_speed,
     sight_speed_at,
-    visibility,
-    visibility_range,
     world_visibility,
 )
+from autoware_carla_scenario.weather_rules import weather_at, weather_range
+
+
+def visibility_range(
+    fog: float = 10000.0, rain: float = 0.0, time: str = "day"
+) -> tuple[float, float]:
+    return weather_range("visibility", _causes(fog, rain, time))
+
+
+def visibility(
+    fog: float = 10000.0, rain: float = 0.0, time: str = "day", quantile: float = 0.5
+) -> float:
+    return weather_at("visibility", _causes(fog, rain, time), quantile)
+
+
+def _causes(fog: float, rain: float, time: str) -> dict:
+    return {"fog_visibility_range": fog, "rainfall_rate": rain, "time_of_day": time}
 
 
 @pytest.fixture(autouse=True)
@@ -28,36 +43,27 @@ class TestVisibilityRange:
         assert visibility() == pytest.approx(325.0)
 
     def test_night_rain_and_fog_each_shorten_it(self) -> None:
-        assert visibility_range(sun_altitude_angle=-30.0) == pytest.approx(
-            (50.0, 150.0)
-        )
-        assert visibility_range(precipitation=100.0) == pytest.approx((60.0, 150.0))
-        assert visibility_range(fog_density=100.0) == pytest.approx((15.0, 40.0))
+        assert visibility_range(time="night") == pytest.approx((50.0, 150.0))
+        assert visibility_range(rain=25.0) == pytest.approx((60.0, 150.0))
+        assert visibility_range(fog=15.0) == pytest.approx((12.0, 18.0))
 
-    def test_between_the_rows_it_is_interpolated(self) -> None:
-        assert visibility_range(fog_density=50.0) == pytest.approx((80.0, 175.0))
-        # Halfway through civil twilight.
-        assert visibility_range(sun_altitude_angle=-3.0) == pytest.approx(
-            (150.0, 275.0)
-        )
+    def test_between_the_points_it_is_interpolated(self) -> None:
+        assert visibility_range(fog=100.0) == pytest.approx((80.0, 120.0))
+        assert visibility_range(time="dusk") == pytest.approx((150.0, 275.0))
 
     def test_the_shortest_bound_holds(self) -> None:
-        # Light fog at night: the night's low end, the fog's high end.
-        assert visibility_range(
-            fog_density=30.0, sun_altitude_angle=-30.0
-        ) == pytest.approx((50.0, 150.0))
-        assert visibility_range(
-            fog_density=70.0, sun_altitude_angle=-30.0
-        ) == pytest.approx((40.0, 100.0))
+        # Light fog at night: the night's.
+        assert visibility_range(fog=400.0, time="night") == pytest.approx((50.0, 150.0))
+        assert visibility_range(fog=50.0, time="night") == pytest.approx((40.0, 60.0))
 
-    def test_out_of_range_weather_is_clamped(self) -> None:
-        assert visibility_range(fog_density=150.0) == visibility_range(100.0)
-        assert visibility_range(fog_density=-5.0) == visibility_range()
+    def test_beyond_the_points_it_is_held(self) -> None:
+        assert visibility_range(fog=5.0) == visibility_range(fog=15.0)
+        assert visibility_range(rain=100.0) == visibility_range(rain=25.0)
 
     def test_the_quantile_picks_a_point_in_the_range(self) -> None:
-        assert visibility(100.0, 0.0, 90.0, 0.0) == pytest.approx(15.0)
-        assert visibility(100.0, 0.0, 90.0, 1.0) == pytest.approx(40.0)
-        assert visibility(100.0, 0.0, 90.0, 2.0) == pytest.approx(40.0)
+        assert visibility(15.0, quantile=0.0) == pytest.approx(12.0)
+        assert visibility(15.0, quantile=1.0) == pytest.approx(18.0)
+        assert visibility(15.0, quantile=2.0) == pytest.approx(18.0)
 
 
 class TestSightSpeed:
@@ -100,20 +106,15 @@ class TestSightSpeedAt:
             50.0, 3.0, 2.0
         )
 
-    def test_the_rules_chain_from_the_weather(self) -> None:
+    def test_the_rules_chain_from_the_conditions(self) -> None:
         from autoware_carla_scenario.weather_rules import default_rules
 
         rules = default_rules()
         assert rules.upstream("sight_speed") == ["visibility"]
         assert rules.order.index("visibility") < rules.order.index("sight_speed")
         # Thick fog: the visibility's median, then the speed kept in it.
-        weather = {
-            "fog_density": 100.0,
-            "precipitation": 0.0,
-            "sun_altitude_angle": 45.0,
-        }
-        values = rules.sample({**weather, "water": 0.0})
-        assert values["visibility"] == pytest.approx(27.5)
+        values = rules.sample({"fog_visibility_range": 15.0})
+        assert values["visibility"] == pytest.approx(15.0)
         assert values["sight_speed"] == pytest.approx(
             sight_speed_at(values["visibility"])
         )
