@@ -455,6 +455,28 @@ class TestTheConditionsInLaneFrame:
         assert ttc(1.0).check(world, 1.0) is None
         assert ttc(5.0).check(world, 1.0) is not None
 
+    def test_lane_headway_fires_on_the_lane_gap(self, loaded_map: MapManager) -> None:
+        """The lane frame does fire, and on the gap along the lane.
+
+        20 m of lane at 10 m/s is about 2 s of headway: a "< 3 s" rule must
+        fire and a "< 1 s" one stay quiet.  Without the first half a lane
+        frame that never measured anything would pass every test here.
+        """
+        world, _, _ = _on_the_bend(speed=10.0)
+
+        def headway(threshold: float) -> TimeHeadwayCondition:
+            return TimeHeadwayCondition(
+                source="Ego",
+                target="npc1",
+                value=threshold,
+                rule=ComparisonRule.LESS_THAN,
+                coordinate_system=DistanceCoordinateSystem.LANE,
+                label=f"headway_{threshold}",
+            )
+
+        assert headway(3.0).check(world, 1.0) is not None
+        assert headway(1.0).check(world, 1.0) is None
+
     def test_lane_ttc_answers_for_the_same_pairs_as_the_entity_frame(
         self, loaded_map: MapManager
     ) -> None:

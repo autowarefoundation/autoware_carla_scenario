@@ -200,6 +200,16 @@ class TestLaneChangeTarget:
         result = _first_result(lane_change_target(6, "left"), 5)
         assert result is not None and result.passed
 
+    def test_a_lane_beside_on_the_right_across_a_line_not_to_cross_counts(
+        self, nishishinjuku: None
+    ) -> None:
+        # Lanelet 3002160 may not change into lanelet 3002161 on its right:
+        # the lane beside falls back to the adjacent lanelet on that side too.
+        graph = MapManager.get_instance().routing_graph
+        layer = MapManager.get_instance().lanelet_map.laneletLayer
+        assert graph.right(layer[3002160]) is None
+        assert lane_beside(3002160, "right") == 3002161
+
     def test_no_lane_beside_never_holds(self, nishishinjuku: None) -> None:
         # Lanelet 9 has no lane on its left in its direction
         # (``lane_change_fail/left``'s sweep picks it).

@@ -525,6 +525,23 @@ class TestJudge:
         assert case.value == pytest.approx(1.0)
         assert case.detail == "2 of 2 case(s) on 1 map(s)"
 
+    def test_an_old_and_a_new_record_of_one_match_count_once_below_the_cap(
+        self,
+    ) -> None:
+        # With three cases the two distinct ones are not hidden by the clamp
+        # to the case count: counting the old record too would read 3 of 3.
+        gate = {"min_case_coverage": 1.0}
+        verdict = judge(
+            [
+                _record(gate=gate, case_count=3),  # no split: written before
+                _record(gate=gate, case_count=3, split=(1, 1, 1)),
+                _record(gate=gate, lanelets=(7, 8, 9), case_count=3),
+            ]
+        )
+        (_, case) = verdict.criteria
+        assert case.value == pytest.approx(2 / 3)
+        assert case.detail == "2 of 3 case(s) on 1 map(s)"
+
     def test_an_unknown_case_count_fails_the_case_coverage(self) -> None:
         verdict = judge([_record(gate={"min_case_coverage": 0.1}, case_count=0)])
         assert verdict.criteria[-1].value is None
