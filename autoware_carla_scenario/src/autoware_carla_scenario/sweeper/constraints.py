@@ -584,6 +584,12 @@ class HasAdjacentConstraint(Constraint):
                 f"HasAdjacentConstraint value must be 'left' or 'right', "
                 f"got {self.value!r}"
             )
+        # Read by its truth below, so the text "no" would turn it on (#1946).
+        if not isinstance(self.include_forks, bool):
+            raise ValueError(
+                f"HasAdjacentConstraint include_forks must be true or false, "
+                f"got {self.include_forks!r}"
+            )
 
     #: The IDs :meth:`find_matching_ids` found, which
     #: :func:`_bind_set_level_constraints` caches before :meth:`evaluate`.

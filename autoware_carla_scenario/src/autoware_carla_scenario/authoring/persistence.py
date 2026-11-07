@@ -28,15 +28,62 @@ except ImportError:  # pragma: no cover -- depends on the installed PyYAML
 
 from .models import ScenarioDocument, new_object_id
 
+#: The tag PyYAML resolves a plain boolean scalar to.
+_BOOL_TAG = "tag:yaml.org,2002:bool"
+
+
+class DocumentLoader(_SafeLoader):  # type: ignore[misc,valid-type]
+    """PyYAML's safe loader with YAML 1.2's booleans: only ``true`` / ``false``.
+
+    YAML 1.1, which PyYAML implements, also reads a plain ``yes`` / ``no`` /
+    ``on`` / ``off`` (in any of three casings) as a boolean, and several
+    documented options are exactly those words: a ``traffic_signal`` state
+    ``Off``, a ``turn_indicator`` ``OFF``, a signal phase's ``off``, a route
+    segment's ``yes`` / ``no``.  Unquoted, they were loaded as ``False`` /
+    ``True`` and refused (#1946).  Here they stay text, and a ``bool`` field
+    still reads them: a parameter through
+    :func:`~autoware_carla_scenario.authoring.registry.read_bool`, a model
+    field through pydantic, both of which take ``yes`` / ``no`` / ``on`` /
+    ``off``.  Everything else (nulls, numbers, timestamps) resolves as before,
+    and an explicit ``!!bool`` tag still makes a boolean.
+
+    Writing needs no counterpart: the dumper quotes a string YAML 1.1 would
+    read as a boolean, so what this package writes reads the same here, in
+    PyYAML's own loader and in OmegaConf's.
+    """
+
+
+DocumentLoader.yaml_implicit_resolvers = {
+    first: [(tag, regexp) for tag, regexp in resolvers if tag != _BOOL_TAG]
+    for first, resolvers in _SafeLoader.yaml_implicit_resolvers.items()
+}
+DocumentLoader.add_implicit_resolver(
+    _BOOL_TAG, re.compile(r"^(?:true|True|TRUE|false|False|FALSE)$"), list("tTfF")
+)
+
+
+def load_yaml(text: str) -> Any:
+    """Return the YAML *text* as Python data, read as a document is read.
+
+    See :class:`DocumentLoader`: only ``true`` / ``false`` are booleans.
+
+    Raises:
+        yaml.YAMLError: If *text* is not YAML.
+    """
+    return yaml.load(text, Loader=DocumentLoader)  # noqa: S506 - a SafeLoader
+
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "DocumentLoader",
     "Draft",
     "DraftStore",
     "default_draft_dir",
     "dump_document_yaml",
     "dump_yaml",
     "load_document",
+    "load_yaml",
     "save_document",
     "utc_timestamp",
 ]
@@ -89,7 +136,7 @@ def load_document(path: str | Path) -> ScenarioDocument:
         ValueError: If the file is empty or not a mapping.
     """
     file_path = Path(path)
-    raw = yaml.load(file_path.read_text(encoding="utf-8"), Loader=_SafeLoader)
+    raw = load_yaml(file_path.read_text(encoding="utf-8"))
     if not isinstance(raw, dict):
         raise ValueError(f"{file_path} does not contain a scenario document mapping.")
     if "document" in raw and isinstance(raw["document"], dict):
@@ -190,7 +237,7 @@ class DraftStore:
             # problem, not a 500 for the request that named it (#1747).
             raise ValueError(f"{path}: cannot be read ({exc})") from exc
         try:
-            raw = yaml.load(text, Loader=_SafeLoader) or {}
+            raw = load_yaml(text) or {}
         except yaml.YAMLError as exc:
             # A ValueError like the rest, so the editor answers a draft id
             # naming a broken file with "not found" rather than a 500.

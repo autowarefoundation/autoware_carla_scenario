@@ -858,6 +858,12 @@ a network you trust.
 
 **Save Draft** writes the working document to `scenario_drafts/<id>.yaml`.
 
+A document -- a draft, an exported `scenario/document.yaml`, one written by
+hand -- is read with YAML 1.2's booleans: only `true` and `false` are booleans,
+so a documented option such as a signal state `Off`, a turn indicator `OFF` or
+a phase's `off` may be written unquoted. A `bool` field still takes `yes` /
+`no` / `on` / `off`, and a route segment's `yes` / `no` reads as written.
+
 **Export Wheelhouse** produces a `.zip` **the browser downloads**, holding every
 wheel the scenario needs:
 
