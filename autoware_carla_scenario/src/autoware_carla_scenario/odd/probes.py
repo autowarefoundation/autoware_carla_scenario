@@ -24,11 +24,15 @@ them.  Without a Lanelet2 map, the junction and the lane count come from the
 CARLA waypoint, and the speed limit from ``get_speed_limit()`` (also the
 fallback for a lanelet without a ``speed_limit`` tag).
 
-Weather values are CARLA's 0-100 intensities, not physical units such as mm/h,
-so rain, fog, the road's water, the wind and the clouds are named levels.  How
-far drivers see, which the weather bounds, is in metres (:func:`visibility`),
-and how well the road grips, which its water bounds, a share of the dry
-road's grip (:func:`tire_friction`).
+The conditions the default ODD names are the ones the run was set to: the
+rainfall rate (:func:`rainfall_rate_mm_h`) and the visibility through the fog
+(:func:`fog_visibility_range_m`), which CARLA's weather renders but does not
+measure, as the ``environment`` named them; the time of day is read off the
+sun (:func:`time_of_day`).  CARLA's own 0-100 intensities are not physical
+units, so its rain, fog, road water, wind and clouds are named levels
+(:func:`rain`, :func:`fog`, ...).  How far drivers see is in metres
+(:func:`visibility`), and how well the road grips a share of the dry road's
+grip (:func:`tire_friction`).
 
 The probes whose value the Lanelet2 map alone decides also read it off a
 lanelet, without a world: ``probe.on_lanelet(lanelet, lanelet_map,
@@ -60,13 +64,18 @@ if TYPE_CHECKING:
     from .model import Undecided
 
 __all__ = [
+    "DRIVABLE_AREA_TYPES",
     "ILLUMINATION_LEVELS",
     "INTENSITY_LEVELS",
     "NEARBY_RADIUS_M",
     "TRAFFIC_DENSITY_LEVELS",
+    "TIMES_OF_DAY",
     "cloudiness",
+    "drivable_area_of_subtype",
+    "drivable_area_type",
     "ego_speed_kph",
     "fog",
+    "fog_visibility_range_m",
     "illumination",
     "illumination_level",
     "in_junction",
@@ -78,11 +87,17 @@ __all__ = [
     "lanelet_speed_limit",
     "lanelet_speed_limit_kph",
     "lanelet_subtype",
+    "nearby_vehicle_count",
     "pedestrian_nearby",
     "rain",
+    "rainfall_rate_mm_h",
     "reset_probes",
+    "road_type",
+    "road_type_of_subtype",
     "road_wetness",
     "speed_limit_kph",
+    "time_of_day",
+    "time_of_day_level",
     "tire_friction",
     "traffic_density",
     "traffic_density_level",
@@ -95,6 +110,17 @@ NEARBY_RADIUS_M = 50.0
 
 #: Illumination levels, brightest first.
 ILLUMINATION_LEVELS = ["day", "low_sun", "twilight", "night"]
+
+#: The taxonomy's times of day (its ``time_of_day``).
+TIMES_OF_DAY = ["day", "dusk", "night", "dawn"]
+
+#: The taxonomy's drivable area types (its ``drivable_area_type``).
+DRIVABLE_AREA_TYPES = [
+    "lane",
+    "shoulder",
+    "parking_space",
+    "mixed_pedestrian_and_vehicular_traffic",
+]
 
 #: Rain, fog, road water, wind and cloud levels, from CARLA's 0-100 intensity.
 INTENSITY_LEVELS = ["none", "light", "moderate", "heavy"]
@@ -118,6 +144,48 @@ def illumination_level(sun_altitude_deg: float) -> str:
     if sun_altitude_deg >= -6.0:
         return "twilight"
     return "night"
+
+
+def time_of_day_level(sun_altitude_deg: float, sun_azimuth_deg: float) -> str:
+    """The time of day for a sun at *sun_altitude_deg* above the horizon and
+    *sun_azimuth_deg*.
+
+    The day with the sun above the horizon; the civil twilight down to 6
+    degrees below it, dawn with the sun rising (azimuth 0-180 degrees) and
+    dusk with it setting (180-360); the night under that.  What the weather
+    rules' ``carla_sun_altitude`` and ``carla_sun_azimuth`` draw for each.
+    """
+    if sun_altitude_deg >= 0.0:
+        return "day"
+    if sun_altitude_deg >= -6.0:
+        azimuth = sun_azimuth_deg % 360.0
+        return "dawn" if azimuth < 180.0 else "dusk"
+    return "night"
+
+
+def road_type_of_subtype(subtype: Optional[str]) -> Optional[str]:
+    """The taxonomy's road type for a Lanelet2 ``subtype``: ``highway`` for a
+    highway, else ``None`` -- Lanelet2 has no tag telling a local road from a
+    primary one."""
+    if subtype == "highway":
+        return "highway"
+    return None
+
+
+def drivable_area_of_subtype(subtype: Optional[str]) -> Optional[str]:
+    """The taxonomy's drivable area type for a Lanelet2 ``subtype``: a road or
+    a highway is a lane, a road shoulder a shoulder, a parking a parking
+    space, a play street mixed pedestrian and vehicular traffic; anything
+    else ``None``."""
+    if subtype == "road" or subtype == "highway":
+        return "lane"
+    if subtype == "road_shoulder":
+        return "shoulder"
+    if subtype == "parking":
+        return "parking_space"
+    if subtype == "play_street":
+        return "mixed_pedestrian_and_vehicular_traffic"
+    return None
 
 
 def intensity_level(intensity: float) -> str:
@@ -559,6 +627,46 @@ def lanelet_subtype(world: carla.World) -> Optional[str]:
     return tags.get("subtype")
 
 
+def road_type(world: carla.World) -> Optional[str]:
+    """The taxonomy's road type of the ego's lanelet (:func:`road_type_of_subtype`)."""
+    return road_type_of_subtype(lanelet_subtype(world))
+
+
+def drivable_area_type(world: carla.World) -> Optional[str]:
+    """The taxonomy's drivable area type of the ego's lanelet
+    (:func:`drivable_area_of_subtype`)."""
+    return drivable_area_of_subtype(lanelet_subtype(world))
+
+
+def time_of_day(world: carla.World) -> Optional[str]:
+    """The time of day, from the sun's altitude and azimuth (:func:`time_of_day_level`)."""
+    weather = _weather(world)
+    if weather is None:
+        return None
+    return time_of_day_level(
+        float(weather.sun_altitude_angle), float(weather.sun_azimuth_angle)
+    )
+
+
+def rainfall_rate_mm_h(world: carla.World) -> Optional[float]:
+    """The rainfall rate the run was set to, mm/h
+    (:func:`~autoware_carla_scenario.actions.environment.world_rainfall_rate`);
+    ``None`` when the run named none."""
+    # Imported here: the actions package is heavier than a probe module.
+    from ..actions.environment import world_rainfall_rate  # noqa: PLC0415
+
+    return world_rainfall_rate(episode_of(world))
+
+
+def fog_visibility_range_m(world: carla.World) -> Optional[float]:
+    """The visibility through the fog the run was set to, metres
+    (:func:`~autoware_carla_scenario.actions.environment.world_fog_visibility_range`);
+    ``None`` when the run named none."""
+    from ..actions.environment import world_fog_visibility_range  # noqa: PLC0415
+
+    return world_fog_visibility_range(episode_of(world))
+
+
 def illumination(world: carla.World) -> Optional[str]:
     """The illumination level, from the sun's altitude (:func:`illumination_level`)."""
     weather = _weather(world)
@@ -638,6 +746,14 @@ def traffic_density(world: carla.World) -> Optional[str]:
     return traffic_density_level(nearby[0])
 
 
+def nearby_vehicle_count(world: carla.World) -> Optional[int]:
+    """How many other vehicles are within :data:`NEARBY_RADIUS_M` of the ego."""
+    nearby = _nearby(world)
+    if nearby is None:
+        return None
+    return nearby[0]
+
+
 def pedestrian_nearby(world: carla.World) -> Optional[bool]:
     """Whether a pedestrian is within :data:`NEARBY_RADIUS_M` of the ego."""
     nearby = _nearby(world)
@@ -700,8 +816,8 @@ def lanelet_speed_limit(lanelet: ConstLanelet) -> Optional[float]:
 def lanelet_road_type(lanelet: ConstLanelet) -> Optional[str]:
     """*lanelet*'s ``subtype`` tag (road, highway, ...), or None.
 
-    What ``lanelet_subtype`` reads off a lanelet (``scenery.road_type`` of
-    the default ODD).
+    What ``lanelet_subtype`` reads off a lanelet; the default ODD's road
+    type and drivable area type follow from it.
     """
     return _tag(lanelet, "subtype")
 
@@ -774,6 +890,18 @@ def _subtype_on_lanelet(
     return lanelet_road_type(lanelet)
 
 
+def _road_type_on_lanelet(
+    lanelet: ConstLanelet, lanelet_map: LaneletMap, routing_graph: RoutingGraph
+) -> Optional[str]:
+    return road_type_of_subtype(lanelet_road_type(lanelet))
+
+
+def _drivable_area_on_lanelet(
+    lanelet: ConstLanelet, lanelet_map: LaneletMap, routing_graph: RoutingGraph
+) -> Optional[str]:
+    return drivable_area_of_subtype(lanelet_road_type(lanelet))
+
+
 # Each probe the map decides has the function reading it off a lanelet as its
 # ``on_lanelet`` attribute, which odd.route looks for.  A function attribute
 # is Python's alone (Codon has none), so the check compiles each reader on its
@@ -785,3 +913,5 @@ if not TYPE_CHECKING:
     lane_count.on_lanelet = _lane_count_on_lanelet
     lanelet_location.on_lanelet = _location_on_lanelet
     lanelet_subtype.on_lanelet = _subtype_on_lanelet
+    road_type.on_lanelet = _road_type_on_lanelet
+    drivable_area_type.on_lanelet = _drivable_area_on_lanelet

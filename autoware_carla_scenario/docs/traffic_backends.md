@@ -891,14 +891,14 @@ friction scales every vehicle's wheels, the TrafficManager's as well); the
 sight speed above does not read it.
 
 ```bash
-uv run scenario ... environment.fog_density=80 environment.rain=60 \
-    traffic.vehicles.follow_visibility=true
+uv run scenario ... environment.fog_visibility_range_m=100 \
+    environment.rainfall_rate_mm_h=8 traffic.vehicles.follow_visibility=true
 ```
 
-The visibility comes from the ODD as any other attribute: its `visibility`,
-`rain`, `fog` and `illumination` knobs ([The weather and the sun](odd.md))
-set what the run's weather leaves, and the backend -- this one or `sumo` --
-follows.
+The visibility comes from the ODD's conditions: the rainfall rate, the fog
+visibility and the time of day ([The weather and the sun](odd.md)) give what
+drivers see, worked out before the run, or its `visibility` knob names it,
+and the backend -- this one or `sumo` -- follows.
 
 ## Vehicles the TrafficManager must not destroy
 

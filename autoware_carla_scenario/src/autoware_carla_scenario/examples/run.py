@@ -2934,8 +2934,14 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     sets the weather itself has the last word.  Nothing is registered when
     every field is ``null`` (the default).
 
-    ``environment.rules`` names the weather rules the run follows: the grip
-    and the visibility its weather leaves
+    The conditions it names -- ``rainfall_rate_mm_h``,
+    ``fog_visibility_range_m``, ``time_of_day`` -- are worked out by the
+    weather rules into CARLA's weather fields and the visibility, once,
+    here (:func:`~autoware_carla_scenario.weather_rules.resolve_environment`):
+    the action applies numbers.  A CARLA field the config sets itself is kept.
+
+    ``environment.rules`` names the weather rules the run follows: CARLA's
+    weather, the grip and the visibility the conditions leave
     (:mod:`autoware_carla_scenario.weather_rules`) -- a file (a path, relative
     to the directory the run was started in, or an ``https://`` URL) merged
     over the default rules, or ``{default, vehicles}`` for rules that differ
@@ -2949,6 +2955,7 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
             names the key.
     """
     from autoware_carla_scenario.weather_rules import (  # noqa: PLC0415
+        resolve_environment,
         use_weather_rules,
     )
 
@@ -2959,16 +2966,23 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     use_weather_rules(_rules_locations(raw.get("rules")))
     if not settings:
         return
+    # Once, before the run: the action applies numbers. The time of day and
+    # the visibility quantile are the rules' alone.
+    settings = resolve_environment(settings)
+    settings.pop("time_of_day", None)
+    settings.pop("visibility_quantile", None)
     from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415
 
     scenario.register_init(EnvironmentAction(**settings, label="config.environment"))
 
 
-def environment_settings(cfg: DictConfig) -> dict[str, float]:
+def environment_settings(cfg: DictConfig) -> dict[str, Any]:
     """The config's ``environment`` settings but ``rules``, checked: the ones
     set, by name, each a number (an int or a float; not a boolean or a
     string, which ``float()`` would read) that
-    :class:`~autoware_carla_scenario.EnvironmentAction` takes.
+    :class:`~autoware_carla_scenario.EnvironmentAction` takes, or that the
+    weather rules read (``visibility_quantile``) -- but ``time_of_day``, one
+    of the taxonomy's times of day (``day``, ``dusk``, ``night``, ``dawn``).
 
     Raises:
         ValueError: naming the key, as :func:`add_environment` documents.
@@ -2976,13 +2990,22 @@ def environment_settings(cfg: DictConfig) -> dict[str, float]:
     from autoware_carla_scenario.actions.environment import (  # noqa: PLC0415
         _refusal,
     )
+    from autoware_carla_scenario.odd.probes import TIMES_OF_DAY  # noqa: PLC0415
 
     env_cfg = cfg.get("environment")
     raw = {} if env_cfg is None else _to_dict(env_cfg)
     raw.pop("rules", None)
-    settings: dict[str, float] = {}
+    settings: dict[str, Any] = {}
     for key, value in raw.items():
         if value is None:
+            continue
+        if key == "time_of_day":
+            if value not in TIMES_OF_DAY:
+                raise ValueError(
+                    f"environment.time_of_day must be one of {list(TIMES_OF_DAY)}, "
+                    f"got {value!r}"
+                )
+            settings[key] = str(value)
             continue
         # A bool is an int to Python, and ``float("15")`` would read a string.
         if isinstance(value, bool) or not isinstance(value, (int, float)):

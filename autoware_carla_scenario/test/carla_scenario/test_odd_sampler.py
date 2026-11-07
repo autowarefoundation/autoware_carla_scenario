@@ -31,7 +31,11 @@ from autoware_carla_scenario.odd import (
 )
 from autoware_carla_scenario.measures import VEHICLE_AHEAD_GAP_M
 from autoware_carla_scenario.odd import scenario_measure
-from autoware_carla_scenario.odd.probes import illumination_level, intensity_level
+from autoware_carla_scenario.odd.probes import (
+    illumination_level,
+    intensity_level,
+    time_of_day_level,
+)
 from autoware_carla_scenario.odd.sampler import (
     controls_from_mapping,
     check_sample_settings,
@@ -44,7 +48,30 @@ from autoware_carla_scenario.odd.sampler import (
     weights_from_config,
 )
 from autoware_carla_scenario.seed import DEFAULT_SEED
-from autoware_carla_scenario.sweeper.expand import expand_config, expand_sweep
+from autoware_carla_scenario.sweeper.expand import (
+    expand_config,
+    expand_sweep,
+    scenario_rules,
+)
+
+_EC = "environment_conditions.environment_conditions"
+_RAINFALL = f"{_EC}.weather.rain.rainfall_rate"
+_FOG = f"{_EC}.weather.fog.fog_visibility_range"
+_TIME = f"{_EC}.illumination.time_of_day"
+#: What a case drawn from the default ODD sets: its conditions, and the CARLA
+#: weather that follows from them (the rules' effects).
+_DEFAULT_SETTINGS = {
+    "environment.rainfall_rate_mm_h",
+    "environment.fog_visibility_range_m",
+    "environment.time_of_day",
+    "environment.precipitation",
+    "environment.cloudiness",
+    "environment.precipitation_deposits",
+    "environment.wetness",
+    "environment.fog_density",
+    "environment.sun_altitude_angle",
+    "environment.sun_azimuth_angle",
+}
 
 
 def _value(overrides: list[str], key: str) -> float:
@@ -84,21 +111,42 @@ def _weather_odd() -> OddDefinition:
 def test_built_in_probes_need_no_knob() -> None:
     sampler = OddSampler(default_odd(), seed=3)
 
-    assert sampler.attributes == [
-        "environment.illumination",
-        "environment.rain",
-        "environment.fog",
+    assert sampler.attributes == [_RAINFALL, _FOG, _TIME]
+    # And CARLA's weather follows from them, drawn with each case.
+    assert sampler.effects == [
+        "carla_precipitation",
+        "carla_cloudiness",
+        "carla_precipitation_deposits",
+        "carla_wetness",
+        "carla_fog_density",
+        "carla_sun_altitude",
+        "carla_sun_azimuth",
     ]
 
 
 def test_a_drawn_value_reads_back_as_its_bucket() -> None:
-    """The knob's ranges are the probes' own levels, read backwards."""
+    """The conditions are written as drawn, and the sun the rules draw for a
+    time of day reads back as it."""
     for case in OddSampler(default_odd(), seed=7).sample(50):
-        precipitation = _value(case.overrides, "environment.rain")
-        fog_density = _value(case.overrides, "environment.fog_density")
+        assert _value(case.overrides, "environment.rainfall_rate_mm_h") == (
+            pytest.approx(case.values[_RAINFALL])
+        )
+        assert (
+            case.overrides.count(f"environment.time_of_day={case.buckets[_TIME]}") == 1
+        )
+        sun = _value(case.overrides, "environment.sun_altitude_angle")
+        azimuth = _value(case.overrides, "environment.sun_azimuth_angle")
+        assert time_of_day_level(sun, azimuth) == case.buckets[_TIME]
+        assert case.quantities["carla_sun_altitude"] == pytest.approx(sun)
+
+
+def test_carlas_own_levels_read_back_as_their_buckets() -> None:
+    """An ODD of CARLA's fields: the knob's ranges are the probes' own
+    levels, read backwards."""
+    for case in OddSampler(_weather_odd(), seed=7).sample(50):
+        precipitation = _value(case.overrides, "environment.precipitation")
         sun = _value(case.overrides, "environment.sun_altitude_angle")
         assert intensity_level(precipitation) == case.buckets["environment.rain"]
-        assert intensity_level(fog_density) == case.buckets["environment.fog"]
         assert illumination_level(sun) == case.buckets["environment.illumination"]
 
 
@@ -637,9 +685,7 @@ def test_a_sweep_of_samples_alone_needs_no_map() -> None:
         # The settings, then the case itself for the run to record.
         assert case[-2].startswith("++odd_case=")
         assert {o.split("=")[0] for o in case[:-2]} == {
-            "environment.sun_altitude_angle",
-            "environment.rain",
-            "environment.fog_density",
+            *_DEFAULT_SETTINGS,
             # Where the case's grip is in the range its rain leaves.
             "environment.tire_friction_quantile",
             # And how far its drivers see, in the range its weather leaves.
@@ -668,7 +714,11 @@ def test_drawn_cases_take_the_lanelet_cases_in_turn(monkeypatch) -> None:
         "ego.spawn_lanelet_id=2",
         "ego.spawn_lanelet_id=1",
     ]
-    assert all(c[-1] == "x=1" and len(c) == 8 for c in cases)
+    # The lanelet case, the settings, the grip's and the visibility's
+    # quantiles, the case itself and the arguments.
+    assert all(
+        c[-1] == "x=1" and len(c) == 1 + len(_DEFAULT_SETTINGS) + 4 for c in cases
+    )
 
     # Without a count, one drawn case per lanelet case.
     del odd_sample["count"]
@@ -695,7 +745,18 @@ def test_the_environment_config_sets_the_weather_before_the_run() -> None:
 
     (action,) = registered
     assert isinstance(action, EnvironmentAction)
-    assert action.settings == {"precipitation": 80.0, "sun_altitude_angle": -10.0}
+    settings = action.settings
+    assert settings["precipitation"] == 80.0 and settings["sun_altitude_angle"] == -10.0
+    # What follows from the precipitation by the rules, worked out before the
+    # run: the cloudiness, standing water and wetness CARLA's presets pair
+    # with it.
+    assert set(settings) == {
+        "precipitation",
+        "sun_altitude_angle",
+        "cloudiness",
+        "precipitation_deposits",
+        "wetness",
+    }
 
     registered.clear()
     add_environment(OmegaConf.create({"environment": {"fog_density": None}}), scenario)  # type: ignore[arg-type]
@@ -1115,8 +1176,8 @@ def test_rounding_does_not_carry_a_value_into_another_bucket() -> None:
 
 def test_what_is_written_reads_back_exactly() -> None:
     """Rendered in full: 29.9999 must not come back as 30, a level up."""
-    for case in OddSampler(default_odd(), seed=21).sample(300):
-        precipitation = _value(case.overrides, "environment.rain")
+    for case in OddSampler(_weather_odd(), seed=21).sample(300):
+        precipitation = _value(case.overrides, "environment.precipitation")
         assert intensity_level(precipitation) == case.buckets["environment.rain"]
 
 
@@ -1338,15 +1399,20 @@ def test_a_slow_ego_draws_no_negative_cut_in_speed() -> None:
     from autoware_carla_scenario.examples.run import _compose_config
     from autoware_carla_scenario.sweeper.expand import scenario_controls
 
-    controls = scenario_controls(
-        _compose_config("cut_in/left", ["ego.initial_speed_kmh=5.0"])
-    )
+    cfg = _compose_config("cut_in/left", ["ego.initial_speed_kmh=5.0"])
     sampler, _ = sampler_from_config(
-        {"count": 40, "seed": 1}, odd=_relative_speed_odd(), controls=controls
+        {"count": 40, "seed": 1},
+        odd=_relative_speed_odd(),
+        controls=scenario_controls(cfg),
+        rules=scenario_rules(cfg),
     )
 
     for case in sampler.sample(40):
-        assert float(case.overrides[0].split("=")[1]) >= 0.0
+        speed = _value(case.overrides, "scenario.npc_initial_speed_kmh")
+        assert speed >= 0.0
+        # The relative speed drawn, written as the absolute one.
+        relative = case.quantities["vehicle_ahead_relative_speed"]
+        assert speed == pytest.approx(max(relative + 5.0, 0.0))
 
 
 def _relative_speed_odd() -> OddDefinition:
@@ -1479,11 +1545,21 @@ def test_a_scenarios_controls_are_drawn_without_naming_them_in_the_sweep() -> No
             "odd": "default",
             "ego": {"initial_speed_kmh": 30.0},
             "scenario": {"npc_initial_speed_kmh": 0.0},
+            "scenario_rules": {
+                "version": 3,
+                "taxonomy": {"bundled": "default"},
+                "basis": {"kind": "expert"},
+                "quantities": {
+                    "vehicle_ahead_relative_speed": {
+                        "parts": {"staged": {"uniform": {"low": -15, "high": 15}}}
+                    }
+                },
+            },
             "controls": {
                 "vehicle_ahead_relative_speed_kph": {
                     "key": "scenario.npc_initial_speed_kmh",
                     "offset": "${ego.initial_speed_kmh}",
-                    "range": [-15, 15],
+                    "quantity": "vehicle_ahead_relative_speed",
                 }
             },
             "sweep": {"odd_sample": {"count": 20, "seed": 3}},
@@ -1626,7 +1702,7 @@ def test_the_flaky_search_learns_from_the_runs_recorded_before(tmp_path: Path) -
         sample, space = _decoded(case)
         collector = CoverageCollector([])
         collector.record_case(sample, space)
-        collector.record_outcome(sample.values["environment.fog"] != "heavy")
+        collector.record_outcome(sample.values[_FOG] >= 450.0)
         (tmp_path / f"run{i}").mkdir()
         collector.write(tmp_path / f"run{i}" / "S_coverage.json", "S")
 

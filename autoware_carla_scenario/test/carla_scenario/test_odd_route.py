@@ -86,11 +86,23 @@ def _abreast_of(
     return _arc(layer[beside_id], x, y)[0]
 
 
+_SE = "scenery_elements.scenery_elements.scenery_element"
+SPEED_LIMIT = f"{_SE}.road_infrastructure.speed_limit"
+LANE_COUNT = (
+    f"{_SE}.lane_infrastructure.detailed_lane_structure.through_lanes.lane_count"
+)
+TIME_OF_DAY = "environment_conditions.environment_conditions.illumination.time_of_day"
+
+
 def _map_odd(
     *modules: OddModule, extra: tuple[OddAttribute, ...] = ()
 ) -> OddDefinition:
     """The default ODD's map attributes, plus *extra*, under *modules*."""
-    attributes = [a for a in default_odd().attributes if a.name.startswith("scenery.")]
+    attributes = [
+        a
+        for a in default_odd().attributes
+        if a.name.startswith(("scenery.", "scenery_elements."))
+    ]
     return OddDefinition("t", [*attributes, *extra], list(modules))
 
 
@@ -546,7 +558,7 @@ class TestVerdict:
         self, nishishinjuku: tuple[Any, Any]
     ) -> None:
         odd = _map_odd()
-        limit = _attribute(odd, "scenery.speed_limit")
+        limit = _attribute(odd, SPEED_LIMIT)
         odd = _map_odd(OddModule("slow_roads", include_and=[limit.at_most(50)]))
         coverage = _cover(odd, LEFT_TURN, nishishinjuku)
         assert coverage.leaves_odd
@@ -559,7 +571,7 @@ class TestVerdict:
     def test_a_situation_not_driven_is_no_reason_to_be_outside(
         self, nishishinjuku: tuple[Any, Any]
     ) -> None:
-        limit = _attribute(_map_odd(), "scenery.speed_limit")
+        limit = _attribute(_map_odd(), SPEED_LIMIT)
         odd = _map_odd(
             OddModule("roads", include_and=[limit.at_most(100)]),
             OddModule("crawl", include_and=[limit.at_most(10)], situation=True),
@@ -611,7 +623,7 @@ class TestVerdict:
         self, nishishinjuku: tuple[Any, Any]
     ) -> None:
         odd = _map_odd()
-        limit = _attribute(odd, "scenery.speed_limit")
+        limit = _attribute(odd, SPEED_LIMIT)
         rain = OddAttribute("environment.rain", probes.rain, values=["none", "heavy"])
 
         class Derived:
@@ -711,7 +723,7 @@ class TestExpectedCoverage:
     def test_metres_per_bucket(self, nishishinjuku: tuple[Any, Any]) -> None:
         coverage = _cover(default_odd(), LEFT_TURN, nishishinjuku)
         metres = dict(plan_route(LEFT_TURN, *nishishinjuku))
-        speed = coverage.expected_m["scenery.speed_limit"]
+        speed = coverage.expected_m[SPEED_LIMIT]
         assert speed == {
             "[50, 60)": pytest.approx(metres[411] + metres[207]),
             "[60, 80)": pytest.approx(metres[203]),
@@ -722,11 +734,11 @@ class TestExpectedCoverage:
             "true": pytest.approx(metres[411]),
         }
         # No lane count inside a junction, as at run time.
-        assert coverage.expected_m["scenery.lane_count"][
-            MISSING_BUCKET
-        ] == pytest.approx(metres[411])
+        assert coverage.expected_m[LANE_COUNT][MISSING_BUCKET] == pytest.approx(
+            metres[411]
+        )
         # What only the run can tell is not expected in any bucket.
-        assert coverage.expected_m["environment.rain"] == {
+        assert coverage.expected_m[TIME_OF_DAY] == {
             UNDECIDED_BUCKET: pytest.approx(coverage.length_m)
         }
 
@@ -756,8 +768,8 @@ class TestExpectedCoverage:
         }
         # "private" is outside the ODD: not a target, so not unreached.
         assert summary.unreached["scenery.location"] == ["nonurban"]
-        assert "[60, 80)" not in summary.unreached["scenery.speed_limit"]
-        assert "[0, 30)" in summary.unreached["scenery.speed_limit"]
+        assert "[60, 80)" not in summary.unreached[SPEED_LIMIT]
+        assert "[0, 30)" in summary.unreached[SPEED_LIMIT]
         assert summary.leaving == []
         json.dumps(summary.describe())
 
@@ -788,8 +800,8 @@ class TestExpectedCoverage:
         summary = combine_route_coverage(
             default_odd(), [_cover(default_odd(), LEFT_TURN, nishishinjuku)]
         )
-        assert "environment.rain" not in summary.unreached
-        assert "dynamic.ego_speed" not in summary.unreached
+        assert TIME_OF_DAY not in summary.unreached
+        assert "ego_vehicle.ego_vehicle.velocity" not in summary.unreached
 
 
 # ---------------------------------------------------------------------------
@@ -799,7 +811,7 @@ class TestExpectedCoverage:
 
 def _speed_odd() -> OddDefinition:
     odd = _map_odd()
-    limit = _attribute(odd, "scenery.speed_limit")
+    limit = _attribute(odd, SPEED_LIMIT)
     return _map_odd(OddModule("slow_roads", include_and=[limit.at_most(50)]))
 
 

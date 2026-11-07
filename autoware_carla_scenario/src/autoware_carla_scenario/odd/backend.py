@@ -8,16 +8,18 @@ attributes are measured and set. Here:
   speed_limit_kph``), each reading the CARLA world (:mod:`.probes`);
 * **readers** -- ``measure: <key>``: the running scenario's measure *key*
   (:func:`~.scenario_measure.scenario_measure`);
-* **knobs** -- how a run sets an attribute: the weather, the sun and how far
-  drivers see, through the ``environment`` config, and the mean and spread
+* **knobs** -- how a run sets an attribute: the conditions (the rainfall
+  rate, the visibility through the fog, the time of day), CARLA's weather
+  and how far drivers see, through the ``environment`` config, and the mean and spread
   of each traffic parameter, through the ``traffic`` config
   (:mod:`.traffic_probes`), for the built-in probes that read them
   (:data:`DEFAULT_KNOBS`), and a scenario's ``controls`` for the measures its
   parameters set;
 * **where the ego is** -- in the world (the metres a tick stands for in
   coverage) and on Earth (the positions of an exported COD);
-* **rules** -- the grip and the visibility the weather leaves, conditional
-  distributions openodd reads (:mod:`autoware_carla_scenario.weather_rules`).
+* **rules** -- what the conditions do: CARLA's weather, the grip and the
+  visibility, a Bayesian network openodd reads
+  (:mod:`autoware_carla_scenario.weather_rules`).
 
 :class:`CarlaBackend` derives openodd's :class:`~openodd.Backend` for these;
 everything else -- the model, the reader, coverage, the sampler -- is
@@ -47,6 +49,7 @@ __all__ = [
     "DEFAULT_KNOBS",
     "CarlaBackend",
     "sync_cache_env",
+    "weather_effects",
 ]
 
 #: Built-in probe name -> the unit it returns.
@@ -55,6 +58,8 @@ _PROBE_UNITS: dict[str, str] = {
     "speed_limit_kph": "km/h",
     "lanelet_speed_limit_kph": "km/h",
     "visibility": "m",
+    "rainfall_rate_mm_h": "mm/h",
+    "fog_visibility_range_m": "m",
     **{
         name: ""
         for name in (
@@ -62,6 +67,10 @@ _PROBE_UNITS: dict[str, str] = {
             "lane_count",
             "lanelet_location",
             "lanelet_subtype",
+            "road_type",
+            "drivable_area_type",
+            "time_of_day",
+            "nearby_vehicle_count",
             "illumination",
             "rain",
             "fog",
@@ -100,19 +109,28 @@ class _BuiltInProbes(Mapping[str, tuple[Callable[[Any], Any], str]]):
 BUILT_IN_PROBES: Mapping[str, tuple[Callable[[Any], Any], str]] = _BuiltInProbes()
 
 #: Knobs for the built-in probes a run can set, through the ``environment``
-#: config (:class:`~autoware_carla_scenario.EnvironmentAction`).  The ranges
-#: are the probes' own levels (:func:`~.probes.intensity_level`,
-#: :func:`~.probes.illumination_level`), read backwards.  The rain and fog
-#: knobs set the LiDARs' noise too
-#: (:mod:`autoware_carla_scenario.sensor.lidar_weather`).  The rain, fog and
-#: illumination knobs set how far drivers see as well: the visibility follows
-#: the weather (:func:`~autoware_carla_scenario.visibility.visibility_range`),
-#: and a traffic backend that models drivers' sight (``sumo``) holds its
-#: traffic to it.  The visibility knob names it outright, in metres, whatever
-#: the weather.  The road-wetness knob sets the road's water, which the
-#: vehicles' grip follows (:func:`~autoware_carla_scenario.actions.environment.tire_friction_range`),
-#: and the tire-friction knob names the grip outright, whatever the water:
-#: the vehicles' wheel friction, which CARLA's physics alone reads.
+#: config (:class:`~autoware_carla_scenario.EnvironmentAction`).
+#:
+#: * The conditions -- :func:`~.probes.rainfall_rate_mm_h`,
+#:   :func:`~.probes.fog_visibility_range_m`, :func:`~.probes.time_of_day`:
+#:   the default ODD's -- are written as they are drawn
+#:   (``environment.rainfall_rate_mm_h``, ...); CARLA's weather and how far
+#:   drivers see follow from them by the weather rules, which the sampler
+#:   draws with each case (:func:`weather_effects`) and the runner works out
+#:   for anything the case leaves
+#:   (:func:`~autoware_carla_scenario.weather_rules.resolve_environment`).
+#: * CARLA's own intensities -- :func:`~.probes.rain`, :func:`~.probes.fog`,
+#:   :func:`~.probes.road_wetness`, ... -- are written to CARLA's fields, by
+#:   level (:func:`~.probes.intensity_level`, read backwards); what follows
+#:   from them in the rules (the cloudiness and standing water that come
+#:   with the precipitation, the grip that follows the water) is worked out
+#:   the same way.  The rain and fog knobs set the LiDARs' noise too
+#:   (:mod:`autoware_carla_scenario.sensor.lidar_weather`).
+#: * The visibility knob names how far drivers see outright, in metres,
+#:   whatever the weather; the tire-friction knob names the grip outright,
+#:   whatever the water: the vehicles' wheel friction, which CARLA's physics
+#:   alone reads.
+#:
 #: The value a weather intensity knob draws for each of
 #: :func:`~.probes.intensity_level`'s levels, so a drawn value reads back as
 #: its bucket.
@@ -124,11 +142,20 @@ _INTENSITY_VALUES: dict[str, Any] = {
 }
 
 DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
-    # environment.rain rather than environment.precipitation: precipitation
-    # alone barely shows in a camera image, so a "heavy rain" case would look
-    # like a dry day (EnvironmentAction's ``rain``).
+    # The conditions, as the taxonomy names them (the default ODD's).
+    probes.rainfall_rate_mm_h: OddKnob(
+        "environment.rainfall_rate_mm_h", range=(0.0, 30.0)
+    ),
+    probes.fog_visibility_range_m: OddKnob(
+        "environment.fog_visibility_range_m", range=(15.0, 5000.0)
+    ),
+    probes.time_of_day: OddKnob(
+        "environment.time_of_day",
+        values={label: label for label in probes.TIMES_OF_DAY},
+    ),
+    # CARLA's own fields.
     probes.rain: OddKnob(
-        "environment.rain",
+        "environment.precipitation",
         values=_INTENSITY_VALUES,
     ),
     probes.fog: OddKnob(
@@ -148,8 +175,8 @@ DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
         "environment.visibility_m",
         range=(15.0, 400.0),
     ),
-    # The wetness, which the grip follows (with rain's standing water, the
-    # larger of the two).
+    # The wetness, which the grip follows (with the standing water, the
+    # wetter of the two).
     probes.road_wetness: OddKnob(
         "environment.wetness",
         values=_INTENSITY_VALUES,
@@ -171,17 +198,50 @@ DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
 }
 
 
-#: Rule input -> the knob (of :data:`DEFAULT_KNOBS`) that writes it.
-#: ``environment.rain`` writes ``precipitation`` (and the ``wetness`` and
-#: standing water CARLA's rain presets pair with it).
+#: Rule input (a cause) -> the knob (of :data:`DEFAULT_KNOBS`) that writes it.
 _RULE_INPUT_KNOBS: dict[str, str] = {
-    "precipitation": "environment.rain",
-    "fog_density": "environment.fog_density",
-    "sun_altitude_angle": "environment.sun_altitude_angle",
-    "wetness": "environment.wetness",
-    "wind_intensity": "environment.wind_intensity",
-    "cloudiness": "environment.cloudiness",
+    cause: f"environment.{setting}"
+    for setting, cause in weather_rules.CAUSE_SETTINGS.items()
 }
+
+#: CARLA's weather fields given as a share, 0-100: what an effect writing
+#: one is held to.
+_PERCENT_FIELDS: frozenset[str] = frozenset(
+    {"precipitation", "cloudiness", "precipitation_deposits", "wetness", "fog_density"}
+)
+
+
+def weather_effects(odd: Any, rules: Optional[Rules] = None) -> list[OddKnob]:
+    """The CARLA weather fields a case drawn from *odd* sets through the
+    weather *rules* (the backend's): an effect (``OddKnob(quantity=...)``) for
+    each field that follows from a condition *odd* names -- an attribute that
+    is a cause's concept -- so the sampler draws it with the case, at a
+    quantile of its own the flaky search can move.  A field nothing *odd*
+    names leads to is left to the world."""
+    rules = rules if rules is not None else CARLA_BACKEND.active_rules
+    if rules is None:
+        return []
+    names = {a.name for a in odd.attributes}
+    causes = {
+        name
+        for name, (concept, _unit) in rules.input_concepts.items()
+        if concept in names
+    }
+    if not causes:
+        return []
+    led: set[str] = set()
+    for quantity in rules.order:
+        reads = set(rules.inputs(quantity))
+        if reads & (causes | led):
+            led.add(quantity)
+    effects: list[OddKnob] = []
+    for setting, quantity in weather_rules.CARLA_QUANTITIES.items():
+        if quantity in led and quantity in rules.quantities:
+            limits = (0.0, 100.0) if setting in _PERCENT_FIELDS else None
+            effects.append(
+                OddKnob(f"environment.{setting}", quantity=quantity, limits=limits)
+            )
+    return effects
 
 
 def _measure(key: str) -> tuple[ScenarioMeasure, str]:
@@ -190,10 +250,14 @@ def _measure(key: str) -> tuple[ScenarioMeasure, str]:
 
 
 def _knob_for(attribute: Any, controls: Mapping[str, OddKnob]) -> Optional[OddKnob]:
-    """A scenario measure is set by the scenario's control of that measure."""
+    """A scenario measure is set by the scenario's control of that measure --
+    but for one that writes a node of the rules (``quantity``), which is the
+    scenario's effect, drawn with every case whatever the ODD names."""
     probe = getattr(attribute, "probe", None)
     if isinstance(probe, ScenarioMeasure):
-        return controls.get(probe.key)
+        control = controls.get(probe.key)
+        if control is not None and control.quantity is None:
+            return control
     return None
 
 
@@ -212,7 +276,8 @@ class CarlaBackend(Backend):
     knob_for: Optional[Callable[[Any, Mapping[str, OddKnob]], Optional[OddKnob]]] = (
         _knob_for
     )
-    # The grip and the visibility the weather leaves (:mod:`..weather_rules`).
+    # What the conditions do: CARLA's weather, the grip and the visibility
+    # (:mod:`..weather_rules`).
     rules: Optional[Rules] = field(default_factory=weather_rules.default_rules)
     rule_inputs: Sequence[str] = weather_rules.WEATHER_INPUTS
     # The knob whose written value each input is, so a tool can follow an
@@ -220,16 +285,6 @@ class CarlaBackend(Backend):
     rule_input_knobs: Mapping[str, str] = field(
         default_factory=lambda: dict(_RULE_INPUT_KNOBS)
     )
-    rule_input_text: Mapping[str, str] = field(
-        default_factory=lambda: {
-            "water": "The larger of wetness and precipitation_deposits: the "
-            "road's water, which the grip follows.",
-        }
-    )
-
-    def rule_values(self, values: Mapping[str, float]) -> dict[str, float]:
-        """The weather's fields, and ``water``, which the grip follows."""
-        return weather_rules.rule_values(values)
 
     def position(self, context: Any) -> Optional[tuple[float, float, float]]:
         """The ego's location in the CARLA world, in metres."""

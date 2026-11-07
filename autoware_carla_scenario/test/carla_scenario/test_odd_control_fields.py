@@ -24,6 +24,8 @@ _ORIGINAL = {
         "integer",
         "range",
         "limits",
+        # Added since the move: a control that writes a node of the rules.
+        "quantity",
     ),
     "CONTROL_TARGETS": ("setting", "measure"),
     "MAPPING_FIELDS": ("scale", "offset", "integer", "values"),
