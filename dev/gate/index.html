@@ -2626,11 +2626,21 @@ record:</p>
   is refused before it runs writes no plan; a sweep planned again into the
   same directory (<code>hydra.sweep.dir=</code> naming it again, a <code>--resume-from</code>
   rerun) replaces the entries of the jobs it runs and keeps the others, whose
-  outputs are still there. A plan lists only the jobs its own run launches,
-  so a sweep resumed into a new directory plans only the jobs from the resume
-  point; the directory of the run it resumes keeps its plan and the marker of
-  the job it was killed in, and is refused on its own. To gate a resumed
-  sweep as a whole, resume it into the same <code>hydra.sweep.dir</code>.</li>
+  outputs are still there. A job it runs replaces the earlier run's outputs
+  too: before the job's first attempt the sweeper removes the run outputs
+  (result, gate record, coverage file, ...) the earlier sweep left in its job
+  directory, so each job is judged on its new run alone, not counted twice
+  (<a href="../usage/#lanelet-constraint-sweeping">Lanelet Constraint Sweeping</a>).
+  Only in a directory that no other job of the sweep maps to: in one several
+  jobs share (one <code>hydra.sweep.subdir</code> for all) nothing is removed, so the
+  runs of the jobs the rerun skips stay -- and so does the earlier run of a
+  job it runs again, which is then judged beside the new one. Give each job a
+  directory of its own (the default, <code>${hydra.job.num}</code>) to gate a rerun. A
+  plan lists only the jobs its own run launches, so a sweep resumed into a
+  new directory plans only the jobs from the resume point; the directory of
+  the run it resumes keeps its plan and the marker of the job it was killed
+  in, and is refused on its own. To gate a resumed sweep as a whole, resume
+  it into the same <code>hydra.sweep.dir</code>.</li>
 </ul>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>scenario-gate: multirun/2026-11-06/12-00-00: 12 of 20 planned job(s) of the sweep never ran, and left no gate record (8, 9, 10, 11, 12, and 7 more); the gate would be judged over the runs that survived. Run them again, or pass --allow-unrecorded to judge the records there are
 </code></pre></div>
@@ -2841,7 +2851,7 @@ whatever its <code>gate_record(result, file_stem)</code> method returns (a
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 13:14:21 UTC"><span class="timeago" datetime="2026-11-06T13:14:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 13:14:21 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 19:47:26 UTC"><span class="timeago" datetime="2026-11-07T19:47:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 19:47:26 UTC">2026-11-07</span>
   </span>
 
     
