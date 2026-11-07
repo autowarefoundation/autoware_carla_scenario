@@ -287,12 +287,12 @@ class EnvironmentAction(BaseAction):
                  sun_altitude_angle = None, sun_azimuth_angle = None, condition = None,
                  timing: TickTiming = TickTiming("pre_tick"), *_kw,
                  rainfall_rate_mm_h = None, fog_visibility_range_m = None,
-                 tire_friction = None, tire_friction_quantile = None,
+                 wind_speed_kmh = None, tire_friction = None, tire_friction_quantile = None,
                  visibility_m = None,
                  label: str = "environment",
                  once: bool = True):
         _keyword_only(_kw, "EnvironmentAction(): rainfall_rate_mm_h, "
-                      "fog_visibility_range_m, tire_friction, "
+                      "fog_visibility_range_m, wind_speed_kmh, tire_friction, "
                       "tire_friction_quantile, visibility_m, label and once")
         _expect_optional_float(cloudiness)
         _expect_optional_float(precipitation)
@@ -305,6 +305,7 @@ class EnvironmentAction(BaseAction):
         _expect_optional_float(sun_azimuth_angle)
         _expect_optional_float(rainfall_rate_mm_h)
         _expect_optional_float(fog_visibility_range_m)
+        _expect_optional_float(wind_speed_kmh)
         _expect_optional_float(tire_friction)
         _expect_optional_float(tire_friction_quantile)
         _expect_optional_float(visibility_m)

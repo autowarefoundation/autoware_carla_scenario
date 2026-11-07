@@ -2940,6 +2940,7 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     # the visibility quantile are the rules' alone.
     settings = resolve_environment(settings)
     settings.pop("time_of_day", None)
+    settings.pop("cloud_cover", None)
     settings.pop("visibility_quantile", None)
     from autoware_carla_scenario import EnvironmentAction  # noqa: PLC0415
 
@@ -2951,8 +2952,9 @@ def environment_settings(cfg: DictConfig) -> dict[str, Any]:
     set, by name, each a number (an int or a float; not a boolean or a
     string, which ``float()`` would read) that
     :class:`~autoware_carla_scenario.EnvironmentAction` takes, or that the
-    weather rules read (``visibility_quantile``) -- but ``time_of_day``, one
-    of the taxonomy's times of day (``day``, ``dusk``, ``night``, ``dawn``).
+    weather rules read (``visibility_quantile``) -- but ``time_of_day`` and
+    ``cloud_cover``, one of the taxonomy's labels (``day``, ``dusk``,
+    ``night``, ``dawn``; ``clear``, ``partly_cloudy``, ``overcast``).
 
     Raises:
         ValueError: naming the key, as :func:`add_environment` documents.
@@ -2960,7 +2962,13 @@ def environment_settings(cfg: DictConfig) -> dict[str, Any]:
     from autoware_carla_scenario.actions.environment import (  # noqa: PLC0415
         _refusal,
     )
-    from autoware_carla_scenario.odd.probes import TIMES_OF_DAY  # noqa: PLC0415
+    from autoware_carla_scenario.odd.probes import (  # noqa: PLC0415
+        CLOUD_COVERS,
+        TIMES_OF_DAY,
+    )
+
+    # The settings that take one of the taxonomy's labels, not a number.
+    label_settings = {"time_of_day": TIMES_OF_DAY, "cloud_cover": CLOUD_COVERS}
 
     env_cfg = cfg.get("environment")
     raw = {} if env_cfg is None else _to_dict(env_cfg)
@@ -2969,11 +2977,11 @@ def environment_settings(cfg: DictConfig) -> dict[str, Any]:
     for key, value in raw.items():
         if value is None:
             continue
-        if key == "time_of_day":
-            if value not in TIMES_OF_DAY:
+        if key in label_settings:
+            labels = label_settings[key]
+            if value not in labels:
                 raise ValueError(
-                    f"environment.time_of_day must be one of {list(TIMES_OF_DAY)}, "
-                    f"got {value!r}"
+                    f"environment.{key} must be one of {list(labels)}, got {value!r}"
                 )
             settings[key] = str(value)
             continue

@@ -4,8 +4,9 @@
 #
 # * The causes are the inputs: concepts of the taxonomy (`taxonomy:`), the
 #   vocabulary an ODD is written in -- the rainfall rate, the visibility
-#   through the fog, the time of day.  A run gives them in its `environment`
-#   config (`rainfall_rate_mm_h`, `fog_visibility_range_m`, `time_of_day`).
+#   through the fog, the time of day, the wind speed, the cloudiness.  A run
+#   gives them in its `environment` config (`rainfall_rate_mm_h`,
+#   `fog_visibility_range_m`, `time_of_day`, `wind_speed_kmh`, `cloud_cover`).
 # * The effects are the quantities: CARLA's own weather settings
 #   (`carla_*`), which render the conditions, and what the conditions do to
 #   the road and the drivers -- the grip, how far drivers see, the speed they
@@ -53,6 +54,15 @@ inputs:
     concept: environment_conditions.environment_conditions.illumination.time_of_day
     default: day
     text: The time of day the run is set to.
+  wind_speed:
+    concept: environment_conditions.environment_conditions.weather.wind.wind_speed
+    unit: km/h
+    default: 0
+    text: The wind speed the run is set to.
+  cloudiness:
+    concept: environment_conditions.environment_conditions.illumination.cloudiness
+    default: clear
+    text: How cloudy the sky is.
 
 quantities:
   # CARLA's precipitation, 0-100, for a rainfall rate, mm/h: the taxonomy's
@@ -66,17 +76,28 @@ quantities:
           low:  [0, 1, 25, 60, 95]
           high: [0, 10, 35, 75, 100]
 
-  # The cloudiness, standing water and wetness CARLA's rain presets pair with
-  # its precipitation (SoftRain, MidRainy, HardRain; LibCarla's
-  # WeatherParameters.cpp): precipitation alone barely shows in a camera
-  # image -- a few drops on a dry road under a clear sky.
+  # CARLA's cloudiness, 0-100: the sky the run is set to, and at least what
+  # CARLA's rain presets pair with its precipitation (SoftRain, MidRainy,
+  # HardRain; LibCarla's WeatherParameters.cpp) -- precipitation alone barely
+  # shows in a camera image, a few drops on a dry road under a clear sky.  The
+  # cloudier of the two holds (`combine: max`): rain clouds the sky, and a sky
+  # may be cloudy without rain.  The cloudiness bands are what the
+  # `cloud_cover` probe reads back: clear below 20, overcast from 70.
   carla_cloudiness:
+    combine: max
     parts:
+      sky:
+        at: {cloudiness: [clear, partly_cloudy, overcast]}
+        uniform:
+          low:  [0, 20, 70]
+          high: [19.99, 69.99, 100]
       rain:
         at: {carla_precipitation: [0, 30, 60, 100]}
         uniform:
           low:  [0, 55, 75, 95]
           high: [5, 65, 85, 100]
+  # The standing water and wetness CARLA's rain presets pair with its
+  # precipitation.
   carla_precipitation_deposits:
     parts:
       rain:
@@ -91,6 +112,17 @@ quantities:
         uniform:
           low:  [0, 25, 55, 95]
           high: [0, 35, 65, 100]
+
+  # CARLA's wind intensity, 0-100, for the wind speed, km/h: the taxonomy's
+  # light wind (5-20 km/h) up to about 20, moderate (20-50) up to about 50,
+  # strong above.
+  carla_wind_intensity:
+    parts:
+      wind:
+        at: {wind_speed: [0, 5, 20, 50, 100]}
+        uniform:
+          low:  [0, 5, 20, 50, 90]
+          high: [0, 20, 50, 90, 100]
 
   # CARLA's fog density, 0-100, for the visibility through the fog, metres:
   # the taxonomy's thick fog (under 50 m) near 100, no detectable fog (over

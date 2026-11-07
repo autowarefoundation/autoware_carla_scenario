@@ -18,6 +18,8 @@ from .coverage import (CoverItem, _expect_cover_expression, _expect_optional_ran
 
 NEARBY_RADIUS_M: float = 50.0
 TIMES_OF_DAY: List[str] = ["day", "dusk", "night", "dawn"]
+CLOUD_COVERS: List[str] = ["clear", "partly_cloudy", "overcast"]
+ROAD_SURFACE_CONDITIONS: List[str] = ["dry", "wet", "standing_water"]
 DRIVABLE_AREA_TYPES: List[str] = [
     "lane", "shoulder", "parking_space", "mixed_pedestrian_and_vehicular_traffic"
 ]
@@ -538,6 +540,18 @@ def rainfall_rate_mm_h(world: carla.World) -> Optional[float]:
 
 
 def fog_visibility_range_m(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def wind_speed_kmh(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def cloud_cover(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def road_surface_condition(world: carla.World) -> Optional[str]:
     raise NotImplementedError()
 
 

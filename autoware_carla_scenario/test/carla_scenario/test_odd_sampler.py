@@ -58,16 +58,21 @@ _EC = "environment_conditions.environment_conditions"
 _RAINFALL = f"{_EC}.weather.rain.rainfall_rate"
 _FOG = f"{_EC}.weather.fog.fog_visibility_range"
 _TIME = f"{_EC}.illumination.time_of_day"
+_WIND = f"{_EC}.weather.wind.wind_speed"
+_CLOUD = f"{_EC}.illumination.cloudiness"
 #: What a case drawn from the default ODD sets: its conditions, and the CARLA
 #: weather that follows from them (the rules' effects).
 _DEFAULT_SETTINGS = {
     "environment.rainfall_rate_mm_h",
     "environment.fog_visibility_range_m",
     "environment.time_of_day",
+    "environment.wind_speed_kmh",
+    "environment.cloud_cover",
     "environment.precipitation",
     "environment.cloudiness",
     "environment.precipitation_deposits",
     "environment.wetness",
+    "environment.wind_intensity",
     "environment.fog_density",
     "environment.sun_altitude_angle",
     "environment.sun_azimuth_angle",
@@ -111,13 +116,14 @@ def _weather_odd() -> OddDefinition:
 def test_built_in_probes_need_no_knob() -> None:
     sampler = OddSampler(default_odd(), seed=3)
 
-    assert sampler.attributes == [_RAINFALL, _FOG, _TIME]
+    assert sampler.attributes == [_RAINFALL, _WIND, _FOG, _TIME, _CLOUD]
     # And CARLA's weather follows from them, drawn with each case.
     assert sampler.effects == [
         "carla_precipitation",
         "carla_cloudiness",
         "carla_precipitation_deposits",
         "carla_wetness",
+        "carla_wind_intensity",
         "carla_fog_density",
         "carla_sun_altitude",
         "carla_sun_azimuth",

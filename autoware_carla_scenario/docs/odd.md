@@ -230,6 +230,9 @@ These live in `autoware_carla_scenario.odd`:
 | `rainfall_rate_mm_h` | float, mm/h | The rainfall rate the run was set to (`environment.rainfall_rate_mm_h`); nothing when it named none |
 | `fog_visibility_range_m` | float, m | The visibility through the fog the run was set to (`environment.fog_visibility_range_m`); nothing when it named none |
 | `time_of_day` | `TIMES_OF_DAY` | The sun: `day` above the horizon, `dawn` (rising, azimuth 0-180) or `dusk` (setting, 180-360) down to 6 degrees below it, `night` under that |
+| `wind_speed_kmh` | float, km/h | The wind speed the run was set to (`environment.wind_speed_kmh`); nothing when it named none |
+| `cloud_cover` | `CLOUD_COVERS` | CARLA's cloudiness: `clear` below 20, `overcast` from 70, `partly_cloudy` between |
+| `road_surface_condition` | `ROAD_SURFACE_CONDITIONS` | CARLA's water: `standing_water` from 50 standing water, `wet` from 10 of either, else `dry` |
 | `illumination` | `ILLUMINATION_LEVELS` | Sun altitude |
 | `rain`, `fog` | `INTENSITY_LEVELS` | CARLA weather (0-100) |
 | `visibility` | float, m | How far drivers see, as the run's weather left it ([Visibility follows the weather](#visibility-follows-the-weather)); nothing when the run set none |
@@ -987,6 +990,16 @@ own:
 | `rainfall_rate_mm_h` | `environment.rainfall_rate_mm_h` | 0-30 mm/h, within the bucket drawn (the rain intensity's: light 0.1-2.5, moderate 2.5-7.6, heavy above) |
 | `fog_visibility_range_m` | `environment.fog_visibility_range_m` | 15-5000 m, within the bucket drawn (the fog level's: thick under 50, heavy 50-450, medium 450-800, mist 800-1600) |
 | `time_of_day` | `environment.time_of_day` | the label drawn: `day`, `dusk`, `night`, `dawn` |
+| `wind_speed_kmh` | `environment.wind_speed_kmh` | 0-100 km/h, within the bucket drawn (the wind intensity's: light 5-20, moderate 20-50, strong above) |
+| `cloud_cover` | `environment.cloud_cover` | the label drawn: `clear`, `partly_cloudy`, `overcast` |
+
+**What CARLA cannot bring about** -- snow and the temperature, which the
+default ODD's taxonomy declares -- the CARLA backend names
+(`CarlaBackend.unsupported`, `odd.backend.UNSUPPORTED_CONCEPTS`): an ODD that
+measures one, or whose modules restrict one or a concept defined by one (the
+snow intensity), is refused as it is read, before anything runs
+(`openodd.UnsupportedConceptError`), rather than covered by runs that never
+rendered it. The default ODD declares them and measures neither.
 
 CARLA does not take these: it renders them by its own weather fields, and
 which fields render a condition is what the [weather rules](#weather-rules)
@@ -1190,13 +1203,14 @@ have the file format in full). It is a version 3 file:
 
 - its **causes** are its inputs, concepts of the taxonomy it names
   (`taxonomy: {bundled: default}`, openodd's bundled subset of
-  tier4/taxonomy): `rainfall_rate` (mm/h), `fog_visibility_range` (m) and
-  `time_of_day` (a label) -- `weather_rules.WEATHER_INPUTS`, which the
-  `environment` keys `rainfall_rate_mm_h`, `fog_visibility_range_m` and
-  `time_of_day` give (`weather_rules.CAUSE_SETTINGS`);
+  tier4/taxonomy): `rainfall_rate` (mm/h), `fog_visibility_range` (m),
+  `time_of_day` (a label), `wind_speed` (km/h) and `cloudiness` (a label) --
+  `weather_rules.WEATHER_INPUTS`, which the `environment` keys
+  `rainfall_rate_mm_h`, `fog_visibility_range_m`, `time_of_day`,
+  `wind_speed_kmh` and `cloud_cover` give (`weather_rules.CAUSE_SETTINGS`);
 - its **effects** are its quantities, in no taxonomy: CARLA's weather fields
   (`carla_precipitation`, `carla_cloudiness`, `carla_precipitation_deposits`,
-  `carla_wetness`, `carla_fog_density`, `carla_sun_altitude`,
+  `carla_wetness`, `carla_wind_intensity`, `carla_fog_density`, `carla_sun_altitude`,
   `carla_sun_azimuth`: `weather_rules.CARLA_QUANTITIES`), the grip
   (`tire_friction`), the visibility and the speed a driver keeps
   (`sight_speed`);
@@ -1251,7 +1265,8 @@ quantities:
 
 **Chains.** A part may read another quantity, so the rules chain: the
 rainfall rate gives CARLA's precipitation, which gives its wetness and
-standing water, which give the grip; and `sight_speed`, the speed (m/s) a
+standing water, which give the grip, and its cloudiness -- the cloudier of
+the sky the run names and what the rain brings (`combine: max`); and `sight_speed`, the speed (m/s) a
 driver keeps, reads the `visibility`. Its distribution is triangular at each
 visibility: at most the speed SUMO's default car (braking at 4.5 m/s² a
 second after it sees) stops from within it, `v * tau + v² / (2 * decel)` =
