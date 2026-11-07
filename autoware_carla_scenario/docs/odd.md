@@ -857,6 +857,19 @@ grip -- and may not redefine one: the join refuses a node both define, so a
 scenario can never change what another's cases follow. Each scenario's nodes
 are its own: the cases of one never draw another's.
 
+**What the run staged.** A control is keyed by the measure it sets, so that
+measure reads, in the run, the node the case drew: a run of a drawn case
+measures each node its case drew by its control's measure -- the
+`vehicle_ahead_gap` by `vehicle_ahead_gap_m`, the `crossing_pedestrian_speed`
+by `crossing_pedestrian_speed_ms` -- on every tick of its first 10 s, beside
+the ODD and counting toward no grade (openodd's `CoverageCollector(effects=...)`,
+written as `effects.samples` in the coverage file). openodd's drift view then
+sets what the case drew against what the run staged, run by run: a gap placed
+2 m off, or a relative speed the ego's first tick of acceleration moved, shows
+as drift, and its correction is the control's `scale` and `offset` (openodd's
+docs/drift.md, "Effects: what a scenario sets up"). A run no sweep drew
+measures none.
+
 ### Controls
 
 A **control** (an `OddKnob`) ties a measure to the config key that sets it.
