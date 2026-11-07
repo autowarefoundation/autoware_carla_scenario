@@ -236,3 +236,37 @@ def test_workers_started_together_import_reach_one_at_a_time(tmp_path: Path) -> 
     ]
     outputs = [worker.communicate(timeout=600)[0] for worker in workers]
     assert [worker.returncode for worker in workers] == [0] * len(workers), outputs
+
+
+#: Runs the worker's main() with a handler that, before answering, writes to
+#: descriptor 1 as C or C++ code would, and to sys.stdout as print() does.
+_NOISY_MAIN = """
+import os, sys
+from commonroad_metrics import worker
+
+def handle(self, request):
+    os.write(1, b"from C++ on descriptor 1\\n")
+    print("from print()")
+    return {"ok": True, "op": request.get("op")}
+
+worker.Worker.handle = handle
+raise SystemExit(worker.main([]))
+"""
+
+
+def test_writes_to_descriptor_1_do_not_break_into_the_answers() -> None:
+    """#1954: the answers go to a duplicate of the output, and descriptor 1
+    to the standard error, so a C++ write to it cannot corrupt an answer."""
+    requests = [{"op": "evaluate"}, {"op": "close"}]
+    done = subprocess.run(
+        [sys.executable, "-c", _NOISY_MAIN],
+        input="".join(json.dumps(r) + "\n" for r in requests),
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=True,
+    )
+    answers = [json.loads(line) for line in done.stdout.splitlines()]
+    assert answers == [{"ok": True, "op": "evaluate"}, {"ok": True, "op": "close"}]
+    assert done.stderr.count("from C++ on descriptor 1") == 2
+    assert done.stderr.count("from print()") == 2

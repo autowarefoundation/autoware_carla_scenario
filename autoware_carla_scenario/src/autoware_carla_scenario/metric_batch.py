@@ -179,7 +179,11 @@ def evaluate_metrics(
     Raises:
         ValueError: A key is not a built-in metric's.
         ~autoware_carla_scenario.commonroad.CommonRoadWorkerError: A
-            CommonRoad metric is asked for and its workers cannot be started.
+            CommonRoad metric is asked for and its workers cannot be started
+            or do not know it, one of them fails (exits, answers out of
+            protocol, or does not answer in time), or the metric fails in
+            every frame evaluated
+            (:func:`~autoware_carla_scenario.commonroad.session.evaluate_commonroad`).
     """
     unknown = [key for key in keys if key not in BUILT_IN_METRICS]
     if unknown:

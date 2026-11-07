@@ -95,7 +95,10 @@ is left even now; the worker reads `0`, as for WTTR.
 ## Protocol
 
 One JSON request a line on the standard input, one answer a line on the
-output; logs go to the standard error.
+output; logs go to the standard error. So does anything else written to the
+output: the worker answers on a duplicate of descriptor 1 and points
+descriptor 1 at the standard error, so that a `print()` or a write from C++
+code cannot break into an answer.
 
 ```json
 {"op": "init", "map": "/path/map.commonroad.xml", "settings": {"dt": 0.1, "horizon_steps": 30, "radius_m": 150.0}}
@@ -114,6 +117,14 @@ The worker exits after answering `close`, and at the end of its input too.
 The framework does not wait for the answer to `close`: it sends the request,
 closes the worker's input, and kills a worker that has not exited within five
 seconds (one deep in an evaluation).
+
+The framework fails a run whose worker does not know a measure it asks for
+(the `init` answer lists those it knows), answers `"unknown measure"` for one,
+or leaves one out of an answer (neither a value nor an error); so it does a
+run on which a measure fails in every frame. It waits for an answer
+`request_timeout_s` (120 s by default) for an `evaluate`, and
+`start_timeout_s` (1800 s) for the `init`; a worker that has not answered by
+then is killed and the run fails.
 
 The worker runs in a session and process group of its own, so the kill reaches
 all of it: the worker started by `uv run` too, not only `uv`. The terminal's

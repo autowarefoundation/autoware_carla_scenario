@@ -264,12 +264,14 @@ def test_the_map_is_converted_once(opendrive: str, tmp_path: Path) -> None:
 # ---------------------------------------------------------------------------
 
 #: A worker speaking the protocol: TTC from the gap to the first road user in
-#: front in the ego's lane, HW refused, and every request logged.
+#: front in the ego's lane, HW failing on its first frame and reading nothing
+#: on the others, and every request logged.
 _STAND_IN = textwrap.dedent(
     """
     import json, math, os, sys
 
     log = open(sys.argv[1], "a")
+    evaluated = 0
     for line in sys.stdin:
         request = json.loads(line)
         log.write(json.dumps({**request, "pid": os.getpid()}) + "\\n")
@@ -292,7 +294,9 @@ _STAND_IN = textwrap.dedent(
                 if closing > 0:
                     best = min(best, gap / closing)
             values = {"crime_ttc_s": best, "crime_hw_m": None}
-            answer = {"ok": True, "values": values, "errors": {"crime_hw_m": "undefined here"}}
+            errors = {"crime_hw_m": "undefined here"} if evaluated == 0 else {}
+            evaluated += 1
+            answer = {"ok": True, "values": values, "errors": errors}
         elif op == "close":
             answer = {"ok": True}
         else:
@@ -439,6 +443,27 @@ def test_a_run_judging_one_needs_the_workers(opendrive: str, tmp_path: Path) -> 
         ("radius_m", -1.0, "radius_m must be positive and finite, got -1.0"),
         ("radius_m", math.nan, "radius_m must be positive and finite, got nan"),
         ("radius_m", math.inf, "radius_m must be positive and finite, got inf"),
+        (
+            "request_timeout_s",
+            0.0,
+            "request_timeout_s must be positive and finite, got 0.0",
+        ),
+        (
+            "request_timeout_s",
+            math.nan,
+            "request_timeout_s must be positive and finite, got nan",
+        ),
+        ("start_timeout_s", -1, "start_timeout_s must be positive and finite, got -1"),
+        (
+            "request_timeout_s",
+            True,
+            "request_timeout_s must be positive and finite, or None, got True",
+        ),
+        (
+            "start_timeout_s",
+            False,
+            "start_timeout_s must be positive and finite, or None, got False",
+        ),
         # Too big for a float (#1652).
         pytest.param(
             "dt",
@@ -465,6 +490,19 @@ def test_the_settings_take_good_values() -> None:
     assert settings.worker_settings()["horizon_steps"] == 1
 
 
+def test_the_timeouts_may_be_none_and_are_floats() -> None:
+    """#1954: a worker is given wall-clock time, by default generous enough
+    for TTR's 2 s a frame; ``None`` waits as long as it takes."""
+    default = cr_session.CommonRoadSettings()
+    assert default.request_timeout_s is not None
+    assert default.request_timeout_s >= 60
+    assert default.start_timeout_s is not None
+    assert default.start_timeout_s >= default.request_timeout_s
+    settings = cr_session.CommonRoadSettings(request_timeout_s=None, start_timeout_s=2)
+    assert settings.request_timeout_s is None
+    assert settings.start_timeout_s == 2.0 and type(settings.start_timeout_s) is float
+
+
 def test_the_workers_may_be_any_integer() -> None:
     np = pytest.importorskip("numpy")
     settings = cr_session.CommonRoadSettings(workers=np.int64(2))
@@ -487,7 +525,7 @@ _DIES_ONCE = textwrap.dedent(
         if op == "evaluate":
             open(marker, "w").close()
             sys.exit(3)
-        sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+        sys.stdout.write(json.dumps({"ok": True, "measures": ["crime_ttc_s", "crime_hw_m"]}) + "\\n")
         sys.stdout.flush()
         if op == "close":
             break
@@ -554,7 +592,7 @@ def test_a_worker_that_cannot_be_closed_does_not_mask_the_failure(
     def cannot_close() -> None:
         raise BrokenPipeError("cannot close")
 
-    def fails(*_: Any) -> Any:
+    def fails(*_: Any, **__: Any) -> Any:
         raise cr_worker.CommonRoadWorkerError("the worker failed: boom")
 
     monkeypatch.setattr(stuck, "close", cannot_close)
@@ -1117,7 +1155,7 @@ _ANSWERS_OUT_OF_PROTOCOL = textwrap.dedent(
         if op == "close":
             break
         if op == "init" and when != "init":
-            sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+            sys.stdout.write(json.dumps({"ok": True, "measures": ["crime_ttc_s", "crime_hw_m"]}) + "\\n")
         else:
             sys.stdout.write(answer + "\\n")
         sys.stdout.flush()
@@ -1200,7 +1238,7 @@ _STUCK = textwrap.dedent(
     import json, sys, time
 
     json.loads(sys.stdin.readline())
-    sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+    sys.stdout.write(json.dumps({"ok": True, "measures": ["crime_ttc_s", "crime_hw_m"]}) + "\\n")
     sys.stdout.flush()
     while True:
         time.sleep(60)
@@ -1214,7 +1252,7 @@ _EXITS_AT_EOF = textwrap.dedent(
     import json, sys
 
     json.loads(sys.stdin.readline())
-    sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+    sys.stdout.write(json.dumps({"ok": True, "measures": ["crime_ttc_s", "crime_hw_m"]}) + "\\n")
     sys.stdout.flush()
     for line in sys.stdin:
         pass
@@ -1355,7 +1393,7 @@ _IGNORES_EOF = textwrap.dedent(
     with open(sys.argv[1] + ".tmp", "w") as f:
         f.write(str(os.getpid()))
     os.replace(sys.argv[1] + ".tmp", sys.argv[1])
-    sys.stdout.write(json.dumps({"ok": True, "measures": []}) + "\\n")
+    sys.stdout.write(json.dumps({"ok": True, "measures": ["crime_ttc_s", "crime_hw_m"]}) + "\\n")
     sys.stdout.flush()
     for line in sys.stdin:
         pass
@@ -1768,3 +1806,277 @@ def test_the_batch_check_refuses_a_bad_metrics_heavy_in_any_case(
         run.RunConfigError, match=r"^b: metrics\.heavy must be true or false"
     ):
         run.check_batch_configs([falsy, bad], ["a", "b"])
+
+
+# ---------------------------------------------------------------------------
+# A metric the worker cannot read (#1953), a worker out of time (#1954)
+# ---------------------------------------------------------------------------
+
+#: A worker that knows the measures ``sys.argv[1]`` (a JSON list), answers
+#: each ``evaluate`` with ``sys.argv[2]`` (a JSON object, ``ok`` added) after
+#: sleeping ``sys.argv[3]`` seconds, and logs every request to ``sys.argv[4]``.
+_ANSWERS_WITH = textwrap.dedent(
+    """
+    import json, sys, time
+
+    measures, answer = json.loads(sys.argv[1]), json.loads(sys.argv[2])
+    delay, log = float(sys.argv[3]), open(sys.argv[4], "a")
+    for line in sys.stdin:
+        request = json.loads(line)
+        log.write(line)
+        log.flush()
+        op = request["op"]
+        if op == "init":
+            reply = {"ok": True, "measures": measures}
+        elif op == "evaluate":
+            time.sleep(delay)
+            reply = {"ok": True, **answer}
+        else:
+            reply = {"ok": True}
+        sys.stdout.write(json.dumps(reply) + "\\n")
+        sys.stdout.flush()
+        if op == "close":
+            break
+    """
+)
+
+
+def _answering(
+    tmp_path: Path,
+    measures: list[str],
+    answer: dict[str, Any],
+    delay: float = 0.0,
+    **settings: Any,
+) -> Path:
+    """Configure the workers to run :data:`_ANSWERS_WITH`; its request log."""
+    script = tmp_path / "answers_with.py"
+    script.write_text(_ANSWERS_WITH)
+    log = tmp_path / "requests.jsonl"
+    cr_session.configure_commonroad_metrics(
+        command=(
+            sys.executable,
+            str(script),
+            json.dumps(measures),
+            json.dumps(answer),
+            str(delay),
+            str(log),
+        ),
+        cache_dir=tmp_path / "maps",
+        **{"workers": 1, **settings},
+    )
+    return log
+
+
+def test_a_worker_that_does_not_know_a_metric_fails_the_run(
+    opendrive: str, tmp_path: Path
+) -> None:
+    """#1953: an older worker (on the PATH) that does not know a metric fails
+    the run, rather than read nothing in every frame and pass it."""
+    log = _answering(
+        tmp_path,
+        [CRIME_TTC_S],
+        {"values": {CRIME_TTC_S: 1.0}, "errors": {CRIME_HW_M: "unknown measure"}},
+    )
+    world = _following(opendrive)
+    with pytest.raises(
+        cr_worker.CommonRoadWorkerError,
+        match="does not know the metrics crime_hw_m",
+    ):
+        evaluate_metrics(
+            _recorded(world, TIMES), world.get_map(), [CRIME_TTC_S, CRIME_HW_M]
+        )
+    # Refused before a frame is sent.
+    assert [r["op"] for r in _requests(log)] == ["init"]
+
+
+@pytest.mark.parametrize(
+    ("answer", "message"),
+    [
+        (
+            {"values": {CRIME_TTC_S: 1.0}, "errors": {CRIME_HW_M: "unknown measure"}},
+            "crime_hw_m unknown",
+        ),
+        (
+            {"values": {CRIME_TTC_S: 1.0}, "errors": {}},
+            "no value nor error for crime_hw_m",
+        ),
+    ],
+)
+def test_an_answer_leaving_a_metric_out_is_out_of_protocol(
+    opendrive: str, tmp_path: Path, answer: dict[str, Any], message: str
+) -> None:
+    """#1953: an answer that calls a metric unknown, or has neither a value
+    nor an error for it, is out of protocol, and the pool is reset."""
+    _answering(tmp_path, [CRIME_TTC_S, CRIME_HW_M], answer)
+    world = _following(opendrive)
+    (worker,) = cr_session._workers_for(world.get_map())
+    with pytest.raises(cr_worker.CommonRoadWorkerError) as raised:
+        evaluate_metrics(
+            _recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S, CRIME_HW_M]
+        )
+    assert "'evaluate' out of protocol" in str(raised.value)
+    assert message in str(raised.value)
+    assert cr_session._POOL.workers == []
+    assert not worker.running()
+
+
+def test_a_metric_failing_in_every_frame_fails_the_run(
+    opendrive: str, tmp_path: Path
+) -> None:
+    """#1953: a metric that failed in every frame read nothing at all, and a
+    fail condition on it would pass the run unjudged: the run fails."""
+    _answering(
+        tmp_path,
+        [CRIME_TTC_S, CRIME_HW_M],
+        {
+            "values": {CRIME_TTC_S: 1.0, CRIME_HW_M: None},
+            "errors": {CRIME_HW_M: "RuntimeError: boom"},
+        },
+        workers=2,
+        period_s=0.5,
+    )
+    world = _following(opendrive)
+    frames = _recorded(world, TIMES)
+    with pytest.raises(
+        cr_worker.CommonRoadWorkerError,
+        match=re.escape(
+            "crime_hw_m (failed: RuntimeError: boom) failed in every frame "
+            "evaluated (3)"
+        ),
+    ):
+        evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S, CRIME_HW_M])
+    # The workers are fine, and kept: the metric is the failure, not they.
+    workers = cr_session._POOL.workers
+    assert len(workers) == 2 and all(worker.running() for worker in workers)
+    # The metric that reads is read.
+    series = evaluate_metrics(frames, world.get_map(), [CRIME_TTC_S])
+    assert series[CRIME_TTC_S].values == [1.0, 1.0, 1.0]
+
+
+def test_a_metric_reading_nothing_with_no_one_to_measure_from_passes(
+    opendrive: str, tmp_path: Path
+) -> None:
+    """A metric reading ``null`` without an error (no one ahead) in every
+    frame is no failure: it reads nothing, and is not NG."""
+    _answering(
+        tmp_path,
+        [CRIME_TTC_S],
+        {"values": {CRIME_TTC_S: None}, "errors": {}},
+    )
+    world = _following(opendrive)
+    series = evaluate_metrics(_recorded(world, TIMES), world.get_map(), [CRIME_TTC_S])
+    assert set(series[CRIME_TTC_S].values) == {None}
+
+
+def test_a_worker_out_of_time_is_killed_and_fails_the_run(
+    opendrive: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#1954: a worker stuck on a frame does not hold up the run (and the
+    batch after it) forever: it is killed, and the run fails."""
+    _answering(
+        tmp_path,
+        [CRIME_TTC_S],
+        {"values": {CRIME_TTC_S: 1.0}, "errors": {}},
+        delay=60.0,
+        request_timeout_s=0.5,
+    )
+    world = _following(opendrive)
+    started = _recording_popen(monkeypatch)
+    carla_map = world.get_map()
+    cr_session._workers_for(carla_map)
+    frames = _recorded(world, TIMES)
+    try:
+        raised, took = _bounded(
+            lambda: cr_session.evaluate_commonroad(frames, carla_map, [CRIME_TTC_S]),
+            30,
+        )
+        assert isinstance(raised, cr_worker.CommonRoadWorkerError)
+        assert "did not answer 'evaluate' within 0.5 s" in str(raised)
+        # Killed at once, not asked to exit and given the close timeout.
+        assert took < cr_worker._CLOSE_TIMEOUT_S
+        (process,) = started
+        assert process.poll() is not None
+        assert cr_session._POOL.workers == []
+    finally:
+        for process in started:
+            _kill(process)
+
+
+def test_a_worker_that_does_not_start_in_time_is_killed(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    script = tmp_path / "worker.py"
+    script.write_text(_NEVER_ANSWERS)
+    started = _recording_popen(monkeypatch)
+    try:
+        raised, took = _bounded(
+            lambda: cr_worker.CommonRoadWorker(
+                [sys.executable, str(script)], tmp_path / "map.xml", timeout=0.3
+            ),
+            30,
+        )
+        assert isinstance(raised, cr_worker.CommonRoadWorkerError)
+        assert "did not answer 'init' within 0.3 s" in str(raised)
+        assert took < cr_worker._CLOSE_TIMEOUT_S
+        (process,) = started
+        assert process.poll() is not None
+    finally:
+        for process in started:
+            _kill(process)
+
+
+#: A worker that answers each request in two writes a while apart, and its
+#: ``init`` together with a line of the next answer's.
+_ANSWERS_IN_PIECES = textwrap.dedent(
+    """
+    import json, sys, time
+
+    for line in sys.stdin:
+        op = json.loads(line)["op"]
+        if op == "close":
+            break
+        if op == "init":
+            init = json.dumps({"ok": True, "measures": ["crime_ttc_s"]})
+            sys.stdout.write(init + "\\n" + '{"ok": true, ')
+            sys.stdout.flush()
+            continue
+        time.sleep(0.3)
+        sys.stdout.write('"values": {"crime_ttc_s": 2.5}, "errors": {}}\\n')
+        sys.stdout.flush()
+    """
+)
+
+
+def test_an_answer_written_in_pieces_is_read_whole(tmp_path: Path) -> None:
+    """The output is read a chunk at a time, to wait with a deadline: a line
+    that comes in pieces is read whole, and what comes past a line is kept
+    for the next."""
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_IN_PIECES)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script)], tmp_path / "map.xml", timeout=30
+    )
+    try:
+        assert worker.measures == [CRIME_TTC_S]
+        values, errors = worker.evaluate([CRIME_TTC_S], {}, [], timeout=30)
+        assert values == {CRIME_TTC_S: 2.5} and errors == {}
+    finally:
+        worker.close()
+
+
+def test_a_timeout_longer_than_poll_waits_at_once_is_fine(
+    opendrive: str, tmp_path: Path
+) -> None:
+    """A timeout meant as "forever" (past poll()'s C int of milliseconds)
+    passes the settings' check, and a normal answer is read under it."""
+    _answering(
+        tmp_path,
+        [CRIME_TTC_S],
+        {"values": {CRIME_TTC_S: 1.0}, "errors": {}},
+        delay=0.2,
+        request_timeout_s=1e9,
+        start_timeout_s=1e12,
+    )
+    world = _following(opendrive)
+    series = evaluate_metrics(_recorded(world, [0.0]), world.get_map(), [CRIME_TTC_S])
+    assert series[CRIME_TTC_S].values == [1.0]
