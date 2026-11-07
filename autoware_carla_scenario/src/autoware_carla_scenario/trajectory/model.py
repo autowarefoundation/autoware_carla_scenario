@@ -197,11 +197,9 @@ class RelativeLanePose:
         self.__post_init__()
 
     def __post_init__(self) -> None:
-        if isinstance(self.d_lane, bool) or int(self.d_lane) != self.d_lane:
-            raise ValueError(
-                f"RelativeLanePose.d_lane must be a whole number, got {self.d_lane!r}"
-            )
-        object.__setattr__(self, "d_lane", int(self.d_lane))
+        object.__setattr__(
+            self, "d_lane", _whole("RelativeLanePose", "d_lane", self.d_lane)
+        )
         _finite("RelativeLanePose", "ds", self.ds)
         _finite("RelativeLanePose", "offset", self.offset)
         _finite_or_none("RelativeLanePose", "yaw", self.yaw)
@@ -215,7 +213,19 @@ def _one_of(owner: str, name: str, value: str, allowed: Sequence[str]) -> None:
 
 
 def _whole(owner: str, name: str, value: Any) -> int:
-    if isinstance(value, bool) or int(value) != value:
+    if isinstance(value, bool):
+        raise ValueError(f"{owner}.{name} must be a whole number, got {value!r}")
+    if TYPE_CHECKING:
+        pass
+    elif getattr(getattr(value, "dtype", None), "kind", None) == "b" or (
+        # numpy's ndim is an int; a stand-in's (a mock's) is not (#1906).
+        isinstance(getattr(value, "ndim", 0), int) and getattr(value, "ndim", 0) != 0
+    ):
+        # numpy's bool_, which int() takes as 0 or 1, and an array of one
+        # element, which the numpy on Python 3.10 (2.2) still converts
+        # (#1906), as seed.check_whole_number refuses them.
+        raise ValueError(f"{owner}.{name} must be a whole number, got {value!r}")
+    if int(value) != value:
         raise ValueError(f"{owner}.{name} must be a whole number, got {value!r}")
     return int(value)
 

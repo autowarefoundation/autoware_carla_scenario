@@ -570,6 +570,16 @@ def _whole_number(name: str, value: Any) -> Optional[int]:
         raise ValueError(f"{name} must be a whole number, got {value!r}")
     if isinstance(value, int):
         return value
+    if TYPE_CHECKING:
+        pass
+    elif getattr(getattr(value, "dtype", None), "kind", None) == "b" or (
+        # numpy's ndim is an int; a stand-in's (a mock's) is not (#1906).
+        isinstance(getattr(value, "ndim", 0), int) and getattr(value, "ndim", 0) != 0
+    ):
+        # numpy's bool_ (or a 0-d bool array), which float() takes as 0 or
+        # 1 (#1902); and an array of one element, which the numpy on Python
+        # 3.10 (2.2) still converts (#1904).
+        raise ValueError(f"{name} must be a whole number, got {value!r}")
     if isinstance(value, str):
         try:
             return int(value.strip())

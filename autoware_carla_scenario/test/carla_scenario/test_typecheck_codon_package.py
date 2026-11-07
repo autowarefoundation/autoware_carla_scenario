@@ -166,12 +166,17 @@ def test_a_batch_refuses_a_value_only_the_static_check_finds_before_reading_the_
         raise AssertionError("the map was resolved before the scenarios were checked")
 
     monkeypatch.setattr(run, "resolve_map_paths", must_not_run)
-    # temporary_stop's s_margin is read by no run-side check, so the static
-    # check is what refuses it, still before the map is resolved.
-    with pytest.raises(ScenarioTypeError, match=re.escape("scenario.s_margin")):
+    # pedestrian_dart_out's pedestrian_offset_m is read by no run-side check, so
+    # the static check is what refuses it, still before the map is resolved.
+    with pytest.raises(
+        ScenarioTypeError, match=re.escape("scenario.pedestrian_offset_m")
+    ):
         run.run_batch(
-            ["temporary_stop/temporary_stop", "temporary_stop/temporary_stop"],
-            ["scenario.s_margin=wide"],
+            [
+                "pedestrian_dart_out/pedestrian_dart_out",
+                "pedestrian_dart_out/pedestrian_dart_out",
+            ],
+            ["scenario.pedestrian_offset_m=wide"],
         )
 
 
