@@ -195,6 +195,20 @@ class TestRateLimitedChange:
 
         assert [round(value, 6) for value in entity.commanded] == [32.4, 28.8, 25.2]
 
+    def test_a_deceleration_stops_on_the_target(self) -> None:
+        # 2 km/h over the target, short of one 3.6 km/h step (36 km/h/s over
+        # the 0.1 s tick): the target, not the 8.4 a full step would give.
+        entity = _RecordingVehicle(speed_kmh=12.0)
+        register_entity("npc1", entity)
+        try:
+            SetSpeedAction(
+                entity_name="npc1", target_speed_kmh=10.0, rate_kmh_s=36.0
+            ).tick(_FakeWorld(entity), 0.0)
+        finally:
+            unregister_entity("npc1")
+
+        assert entity.commanded == [10.0]
+
     def test_the_walk_ends_exactly_on_the_target(
         self, vehicle: _RecordingVehicle
     ) -> None:
