@@ -3231,7 +3231,7 @@ make it a bound too, refer to it from a root, or name it in <code>roots</code>.<
 <tr>
 <td><code>cloud_cover</code></td>
 <td><code>CLOUD_COVERS</code></td>
-<td>CARLA's cloudiness: <code>clear</code> below 20, <code>overcast</code> from 70, <code>partly_cloudy</code> between</td>
+<td>The cloud cover the run was set to (<code>environment.cloud_cover</code>), whatever the rain adds to CARLA's cloudiness; when it named none, CARLA's cloudiness: <code>clear</code> below 20, <code>overcast</code> from 70, <code>partly_cloudy</code> between</td>
 </tr>
 <tr>
 <td><code>road_surface_condition</code></td>
@@ -4193,8 +4193,13 @@ case's <code>quantities</code>, which the flaky search moves); a config that nam
 condition gets the rest at its median
 (<code>weather_rules.resolve_environment</code>). A CARLA field the config sets itself
 is kept, and what follows from it in the rules reads it. The probes read the
-conditions back: the rainfall rate and the fog visibility as the run was set
-to them, the time of day off the sun.</p>
+conditions back: the rainfall rate, the fog visibility, the wind speed and
+the cloud cover as the run was set to them, the time of day off the sun.
+The cloud cover is the sky's: rain clouds CARLA's sky past it (the rules'
+<code>carla_cloudiness</code> is the cloudier of the sky and the rain's clouds), so a
+case drawn <code>clear</code> in moderate rain renders a cloudy sky and is measured
+<code>clear</code>, the cell it was drawn for. A run that names no cloud cover is
+measured off CARLA's cloudiness.</p>
 <p>A config that sets CARLA's fields alone names no condition: the ODD's
 weather is not measured, and drivers see as they always did (a warning says
 so). CARLA's own fields have controls too, for an ODD that names them:</p>
@@ -4261,7 +4266,8 @@ and <code>cloudiness</code> read CARLA's 0-100 intensities as levels, as <code>r
 <code>fog</code> do.</p>
 <p>Every <code>environment.*</code> value must be a finite number -- an integer or a
 float, not a boolean or a string (<code>true</code> and <code>"15"</code> are refused, not read as
-1 and 15) -- but <code>time_of_day</code>, one of <code>day</code>, <code>dusk</code>, <code>night</code>, <code>dawn</code>: any
+1 and 15) -- but <code>time_of_day</code>, one of <code>day</code>, <code>dusk</code>, <code>night</code>, <code>dawn</code>, and
+<code>cloud_cover</code>, one of <code>clear</code>, <code>partly_cloudy</code>, <code>overcast</code>: any
 other value, NaN or infinity is refused before the run starts, naming the key
 (<code>environment.rainfall_rate_mm_h must be finite, got nan</code>). <code>cloudiness</code>,
 <code>precipitation</code>, <code>precipitation_deposits</code>, <code>wetness</code>, <code>wind_intensity</code> and
@@ -5161,7 +5167,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 06:32:39 UTC"><span class="timeago" datetime="2026-11-07T06:32:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 06:32:39 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 08:41:14 UTC"><span class="timeago" datetime="2026-11-07T08:41:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 08:41:14 UTC">2026-11-07</span>
   </span>
 
     
