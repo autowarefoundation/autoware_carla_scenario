@@ -607,6 +607,24 @@ _TURN_INDICATOR_STATES: tuple[SelectOption, ...] = (
     SelectOption("HAZARD", "Hazard (both)"),
 )
 
+#: Mirrors ``perception_fault.PerceivedCategory``.
+_PERCEIVED_CATEGORIES: tuple[SelectOption, ...] = (
+    SelectOption("ACTUAL", "Actual"),
+    SelectOption("UNKNOWN", "Unknown"),
+    SelectOption("VEHICLE", "Vehicle"),
+    SelectOption("CAR", "Car"),
+    SelectOption("TRUCK", "Truck"),
+    SelectOption("BUS", "Bus"),
+    SelectOption("MOTORCYCLE", "Motorcycle"),
+    SelectOption("BICYCLE", "Bicycle"),
+    SelectOption("PEDESTRIAN", "Pedestrian"),
+    SelectOption("TRAILER", "Trailer"),
+    SelectOption("ANIMAL", "Animal"),
+    SelectOption("HAZARD", "Hazard"),
+    SelectOption("OVER_DRIVABLE", "Over drivable"),
+    SelectOption("UNDER_DRIVABLE", "Under drivable"),
+)
+
 #: Mirrors ``carla.TrafficLightState`` (same reason as above).
 TRAFFIC_LIGHT_STATES: tuple[SelectOption, ...] = (
     SelectOption("Green", "Green"),
@@ -1133,6 +1151,72 @@ register_action_spec(
         description=(
             "Light the vehicle's turn indicators (or hazard lights, or neither); "
             "they stay so until set again."
+        ),
+    )
+)
+
+register_action_spec(
+    ActionSpec(
+        type_id="perception_fault_injection",
+        title="Perception Fault Injection",
+        category="Perception",
+        builder="build_perception_fault_injection_action",
+        target="..actions:PerceptionFaultInjectionAction",
+        actor_kinds=("vehicle", "pedestrian"),
+        visual_kind="instant",
+        fields=(
+            FieldSpec(
+                name="category",
+                label="Reported as",
+                kind="select",
+                default="ACTUAL",
+                options=_PERCEIVED_CATEGORIES,
+                help="The category the ego's driver is told; Actual keeps its own.",
+            ),
+            FieldSpec(
+                name="length_m",
+                label="Length",
+                kind="number",
+                minimum=0.0,
+                default=0.0,
+                unit="m",
+                required=False,
+                help="The box length the ego's driver is told; 0 keeps its own.",
+            ),
+            FieldSpec(
+                name="width_m",
+                label="Width",
+                kind="number",
+                minimum=0.0,
+                default=0.0,
+                unit="m",
+                required=False,
+                help="The box width the ego's driver is told; 0 keeps its own.",
+            ),
+            FieldSpec(
+                name="height_m",
+                label="Height",
+                kind="number",
+                minimum=0.0,
+                default=0.0,
+                unit="m",
+                required=False,
+                help="The box height the ego's driver is told; 0 keeps its own.",
+            ),
+            FieldSpec(
+                name="visible",
+                label="Seen",
+                kind="bool",
+                default=True,
+                required=False,
+                help="Unchecked: the ego's driver is not told of it at all.",
+            ),
+        ),
+        description=(
+            "Report this road user to the ego's driver policy as another "
+            "category, another size, or not at all, from now on; every other "
+            "road user, and what the run records, stay as they are.  Not yet "
+            "for an ego driven by Autoware, which perceives for itself."
         ),
     )
 )

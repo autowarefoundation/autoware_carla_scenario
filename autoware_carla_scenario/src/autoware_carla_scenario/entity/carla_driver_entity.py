@@ -132,6 +132,10 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
 
     stack_name: str = "driver policy"
 
+    #: The policy is told of the other road users by the framework: the
+    #: ``renderer_data`` actors and the T4Scene's boxes.
+    road_users_from_framework: bool = True
+
     def __init__(
         self,
         config: Optional[DriverClientConfig] = None,

@@ -578,7 +578,8 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "forget_lane_change "
         "handshake is_initialized lane_change_finished on_scenario_end "
         "on_scenario_start on_tick release_from_traffic require_microscopic "
-        "requires_goal resume_traffic route_to set_client set_desired_speed "
+        "requires_goal resume_traffic road_users_from_framework route_to "
+        "set_client set_desired_speed "
         "set_emergency set_initial_speeds set_traffic_backend simulation_fidelity "
         "spawn stack_name termination_reason termination_requested "
         "turn_at_junction turn_indicator use_autopilot",
@@ -620,7 +621,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "config debug_markers destroy end_route finish_at follow_route forget_lane_change "
         "is_initialized lane_change_finished on_scenario_end on_scenario_start "
         "on_tick release_from_traffic require_microscopic requires_goal "
-        "resume_traffic route_to set_client set_desired_speed set_emergency "
+        "resume_traffic road_users_from_framework route_to set_client set_desired_speed set_emergency "
         "set_initial_speeds simulation_fidelity spawn stack_name termination_reason "
         "termination_requested turn_at_junction use_autopilot",
         "the model declares only what the checked CommunicationLossAction "

@@ -35,6 +35,7 @@ from .conditions.base import (
     is_post_run,
 )
 from .actions.base import reset_control_slots
+from .perception_fault import reset_perception_faults
 from .constants import DEFAULT_TM_PORT, EGO_ROLE_NAME, FIXED_DELTA_SECONDS
 from .debug_markers import DebugMarkers
 from .failure import Failure, FailureCategory, progress_detail
@@ -1750,6 +1751,9 @@ class ScenarioRunner:
             # Who controls which entity is process-wide too: an action of the
             # previous scenario that never finished holds nothing in this one.
             reset_control_slots()
+            # So is how a road user is reported to the policy: a fault the
+            # previous scenario injected misreports nothing in this one.
+            reset_perception_faults()
             scenario.setup()
             # What setup() registered may need a backend the queue could not
             # see before (a Python scenario's actions): started now, before
