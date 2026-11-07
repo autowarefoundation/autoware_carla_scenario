@@ -216,11 +216,13 @@ scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no ou
   too, still lists the case it was running and the ones after it. Both
   count. A batch refused before any case runs (its pre-run checks: a backend
   the host has no room for, an Autoware workspace that cannot run, CARLA not
-  coming up) writes no summary: it ran nothing. The gate does not look up
-  the entries' stems, so an errored case is counted even in the rare event
-  that its run did write a record (its last attempt raised only once the run
-  had ended, resetting the world): the refusal errs on the side of the runs
-  that survived.
+  coming up) writes no summary: it ran nothing. Each entry names its case's
+  file stem (`stem`), and an errored case with a gate record at its stem is
+  not counted -- its last attempt raised only once the run had ended
+  (resetting the world), and that record is judged, as a SLURM batch's is. A
+  pending case counts whatever is at its stem, and so does every errored
+  case of a summary written before batches recorded their stems: the
+  refusal errs on the side of the runs that survived.
 
   A batch resumed with `--resume-from` alone runs its remaining cases in a
   new directory, and the directory of the batch it resumes keeps them

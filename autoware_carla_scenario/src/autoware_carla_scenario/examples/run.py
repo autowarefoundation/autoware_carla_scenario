@@ -2711,17 +2711,20 @@ def run_batch(
     def errored_cases(errored: list[int]) -> list[int]:
         return kept_errored + [len(kept) + i for i in errored]
 
+    def write_summary() -> None:
+        write_batch_result_json(
+            all_labels,
+            done,
+            output_dir,
+            all_case_overrides if expand else None,
+            errored=errored_cases(queue.errored_indices()),
+            pending=True,
+            stems=all_stems,
+        )
+
     def write_done() -> None:
         try:
-            write_batch_result_json(
-                all_labels,
-                done,
-                output_dir,
-                all_case_overrides if expand else None,
-                errored=errored_cases(queue.errored_indices()),
-                pending=True,
-                stems=all_stems,
-            )
+            write_summary()
         except Exception:
             # The batch goes on: its summary is written again at the end.
             logger.warning("Could not write the batch's results so far", exc_info=True)
@@ -2740,12 +2743,29 @@ def run_batch(
             # that dies from here on -- in its first case too -- lists every
             # case it did not finish, and scenario-gate refuses it rather than
             # skip it (#1833).
-            write_done()
-            if resumed is not None:
-                # Once the summary lists the cases run again as pending: the
-                # outputs their earlier run left under their stems (its
-                # result, gate record, coverage file, ...) go, so that each
-                # case is judged on its new run alone, not counted twice.
+            if resumed is None:
+                write_done()
+            else:
+                # Only once the summary lists the cases run again as pending
+                # do the outputs their earlier run left under their stems
+                # (its result, gate record, coverage file, ...) go, so that
+                # each case is judged on its new run alone, not counted
+                # twice.  A summary that cannot be rewritten (a full disk)
+                # still lists them as they were: nothing is removed, and the
+                # batch stops (exit 2), rather than leave a summary claiming
+                # results whose outputs are gone.  From here on a summary
+                # that cannot be written leaves the last one written, whose
+                # cases not finished since are pending: never a result
+                # without its outputs.
+                try:
+                    write_summary()
+                except Exception as exc:  # noqa: BLE001 -- reported, exit 2
+                    print(  # noqa: T201
+                        f"Error: --resume-into {output_dir}: the batch summary "
+                        f"cannot be rewritten ({exc}); nothing was removed or run",
+                        file=sys.stderr,
+                    )
+                    sys.exit(2)
                 for stem in run_stems:
                     remove_run_outputs(output_dir, stem)
             # A case that cannot run (a spawn point without ground, say) is
@@ -2771,7 +2791,12 @@ def run_batch(
         overrides=all_case_overrides if expand else None,
         errored=errored_cases(errored),
         rerun_errors={
-            len(kept) + i: why for i, why in rerun_errors(results, conversions).items()
+            # The kept cases' recordings that failed, as their entries say.
+            **{i: r.rerun_error for i, r in enumerate(kept) if r.rerun_error},
+            **{
+                len(kept) + i: why
+                for i, why in rerun_errors(results, conversions).items()
+            },
         },
         stems=all_stems,
     )

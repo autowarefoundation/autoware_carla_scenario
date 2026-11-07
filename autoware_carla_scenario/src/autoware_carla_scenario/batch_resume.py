@@ -26,6 +26,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from .failure import Failure
+
 __all__ = [
     "BATCH_RESULTS",
     "KeptResult",
@@ -199,10 +201,14 @@ class KeptResult:
     back without what the summary writes of its own (the case's name, sweep
     case, stem and whether it errored)."""
 
-    failure = None
-
     def __init__(self, entry: dict[str, Any]) -> None:
         self._entry = entry
+
+    @property
+    def failure(self) -> Failure | None:
+        """Why the case failed, as its entry recorded it."""
+        failure = self._entry.get("failure")
+        return Failure.from_dict(failure) if isinstance(failure, dict) else None
 
     @property
     def passed(self) -> bool:
@@ -239,6 +245,12 @@ class KeptResult:
     def rerun_recording(self) -> str | None:
         recording = self._entry.get("rerun_recording")
         return recording if isinstance(recording, str) else None
+
+    @property
+    def rerun_error(self) -> str | None:
+        """Why its Rerun recording failed to convert, if the entry says."""
+        why = self._entry.get("rerun_error")
+        return why if isinstance(why, str) and why else None
 
     @property
     def errored(self) -> bool:

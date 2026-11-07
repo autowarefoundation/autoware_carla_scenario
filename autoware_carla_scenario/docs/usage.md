@@ -676,6 +676,20 @@ uv run scenario scenario='intersection_passing/*' \
   directory, without `--resume-into`: which of its outputs belong to the
   cases run again cannot be told, so nothing is removed). The summary does
   not record the command line's overrides: give the ones the batch ran with.
+- If the summary cannot be rewritten before the outputs are removed (a full
+  disk, an I/O error), nothing is removed or run: the batch stops with
+  `Error: --resume-into DIR: the batch summary cannot be rewritten ...` and
+  exit 2, and the directory is as it was.
+- Nothing tells a batch that is still running from one that was killed:
+  resume only a batch whose process has ended (stopped with Ctrl-C, killed,
+  or stopped from the viewer), since a running one would go on writing the
+  same directory.
+- The batch's own logs in the directory are not replaced: the Autoware
+  stack's episode logs (`autoware-NNN-<name>.log`), numbered from `000` by
+  each batch, are appended to, so the resumed batch's episodes follow the
+  killed batch's first episodes in the same files, and a Docker stack's
+  dependency and build logs (`autoware-deps.log`, `autoware-build.log`) are
+  written over.
 - `--resume-into` is for a local batch: with `launcher=slurm`, or on a
   single run or a Hydra sweep (which resumes into its own directory with
   `hydra.sweep.dir=`, [Lanelet Constraint Sweeping](#lanelet-constraint-sweeping)),

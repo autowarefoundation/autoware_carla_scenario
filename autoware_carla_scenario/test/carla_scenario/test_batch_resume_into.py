@@ -460,3 +460,54 @@ def test_a_single_run_refuses_resume_into(
         run.main()
     assert raised.value.code == 2
     assert "--resume-into resumes a local batch" in capsys.readouterr().err
+
+
+def test_a_summary_that_cannot_be_rewritten_removes_nothing(
+    batch: _Batch, capsys: Any, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A full disk when the summary is rewritten before the outputs go: the
+    summary still says the cases run again passed, so their outputs stay and
+    the batch stops (exit 2); it never leaves results without outputs, which
+    scenario-gate would judge as they are."""
+    batch([True, True, True, True], new_dir="12-00-00")
+    directory = batch.first
+    before = _listing(directory)
+
+    def full(*_: object, **__: object) -> None:
+        raise OSError(28, "No space left on device")
+
+    monkeypatch.setattr(batch.run, "write_batch_result_json", full)
+    capsys.readouterr()
+    batch([True, True, True], resume_into=directory, resume_from=2, kill_at=0)
+    assert isinstance(batch.exit, SystemExit) and batch.exit.code == 2
+    err = capsys.readouterr().err
+    assert "the batch summary cannot be rewritten" in err
+    assert "nothing was removed" in err
+    assert _listing(directory) == before
+    assert len(find_gate_records([batch.root])) == 4
+    assert gate_main([str(batch.root)]) == EXIT_PASSED
+
+
+def test_a_kept_case_keeps_its_failure_and_failed_recording(
+    batch: _Batch, capsys: Any
+) -> None:
+    """The summary's table lists a kept failed case's category, and counts a
+    kept recording that failed to convert."""
+    directory = _killed_batch(batch)
+    entries = _entries(directory)
+    entries[1].update(
+        passed=False,
+        failure={"category": "collision", "message": "hit", "at": 1.0},
+        rerun_recording="object-1.rrd",
+        rerun_error="conversion failed",
+    )
+    (directory / "batch_results.json").write_text(json.dumps(entries))
+    capsys.readouterr()
+    batch([True, True], resume_into=directory)
+    assert isinstance(batch.exit, SystemExit) and batch.exit.code == 1
+    out = capsys.readouterr().out
+    assert "[collision]" in out
+    assert "[FAILED] intersection_passing/straight_3npc#2: conversion failed" in out
+    kept = _entries(directory)[1]
+    assert kept["rerun_error"] == "conversion failed"
+    assert kept["failure"]["category"] == "collision"

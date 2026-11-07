@@ -338,11 +338,8 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
     )
     # Each case's file stem, as a local batch's summary names it (#1957); a
     # manifest that names none for a case gives the summary no stems.
-    stems: list[str] | None = [
-        str(case.get("stem") or "") for case in manifest["cases"]
-    ]
-    if stems is not None and not all(stems):
-        stems = None
+    named = [str(case.get("stem") or "") for case in manifest["cases"]]
+    stems = named if all(named) else None
     all_passed = print_summary(
         labels,
         results,
