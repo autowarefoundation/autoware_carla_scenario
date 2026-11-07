@@ -250,9 +250,12 @@ def test_a_stale_recording_with_sensors_beside_the_log_is_never_replaced(
     log = tmp_path / "Case.trajectory.jsonl"
     rrd = tmp_path / "Case.rrd"
     rrd.write_bytes(b"trajectory + LiDAR + cameras")
+    # Both in the past: a file written now is stamped by the kernel's coarse
+    # clock, up to a tick behind time.time(), so a log stamped time.time()
+    # would look newer than the recording made right after it.
     now = time.time()
-    os.utime(rrd, (now - 5, now - 5))
-    os.utime(log, (now, now))
+    os.utime(rrd, (now - 10, now - 10))
+    os.utime(log, (now - 5, now - 5))
     made = recordings.ensure_recording(log)
     assert made.parent == _cache / "recordings"
     assert made.read_bytes() == b"RRF2fake"
