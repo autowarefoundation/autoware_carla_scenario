@@ -1,6 +1,7 @@
 """What the ``scenario`` command reads off its command line and environment.
 
-The ``--resume-from N`` flag (:func:`_extract_resume_from`), the
+The ``--resume-from N`` and ``--resume-into DIR`` flags
+(:func:`_extract_resume_from`, :func:`_extract_resume_into`), the
 ``scenario=`` override and whether it is a glob pattern
 (:func:`_extract_scenario_override`, :func:`_is_glob_pattern`), the name each
 case of a batch goes by in the summary (:func:`_case_labels`), and whether
@@ -24,6 +25,7 @@ __all__ = [
     "_arena_max_set_by_user",
     "_case_labels",
     "_extract_resume_from",
+    "_extract_resume_into",
     "_extract_scenario_override",
     "_is_glob_pattern",
 ]
@@ -140,3 +142,46 @@ def _extract_resume_from(argv: list[str]) -> tuple[int, list[str]]:
         else:
             remaining.append(arg)
     return resume_from, remaining
+
+
+def _extract_resume_into(argv: list[str]) -> tuple[str | None, list[str]]:
+    """Extract ``--resume-into DIR`` from *argv* and return the directory and
+    cleaned argv.
+
+    ``--resume-into DIR`` runs a local batch's remaining cases in *DIR*, the
+    directory of the batch it resumes, rather than a new one, so that the
+    batch is judged as a whole (``examples.run.run_batch``, docs/usage.md
+    "Resume from a Specific Scenario").  The last one given wins, as for
+    ``--resume-from``.  A flag without a value (or with an empty one) is a
+    usage error: an ``Error:`` line and exit 2.
+
+    Returns:
+        A 2-tuple of ``(directory, remaining_argv)``.  *directory* is
+        ``None`` when the flag is absent.
+    """
+    directory: str | None = None
+    remaining: list[str] = []
+    skip_next = False
+    for i, arg in enumerate(argv):
+        if skip_next:
+            skip_next = False
+            continue
+        value = ""
+        if arg == "--resume-into":
+            if i + 1 < len(argv):
+                value = argv[i + 1]
+                skip_next = True
+        elif arg.startswith("--resume-into="):
+            value = arg.split("=", 1)[1]
+        else:
+            remaining.append(arg)
+            continue
+        if not value:
+            print(  # noqa: T201
+                "Error: --resume-into requires a value (the directory of the "
+                "batch to resume)",
+                file=sys.stderr,
+            )
+            sys.exit(_USAGE_EXIT_CODE)
+        directory = value
+    return directory, remaining

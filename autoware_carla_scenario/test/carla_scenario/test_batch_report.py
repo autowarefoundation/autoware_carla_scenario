@@ -231,3 +231,24 @@ def test_pending_without_overrides_or_with_every_case_run(tmp_path: Path) -> Non
 def test_names_past_the_results_are_left_out_without_pending(tmp_path: Path) -> None:
     path = write_batch_result_json(["a", "b"], [_Result({"passed": True})], tmp_path)
     assert [e["scenario"] for e in json.loads(path.read_text())] == ["a"]
+
+
+def test_stems_are_written_in_every_entry_pending_ones_too(tmp_path: Path) -> None:
+    """Each entry names its case's file stem, by which a batch resumed into
+    its own directory removes the outputs of the cases it runs again (#1957);
+    the batch's stem wins over one in the result."""
+    path = write_batch_result_json(
+        ["a", "b", "c"],
+        [_Result({"passed": True, "stem": "ignored"}), _Result({"passed": False})],
+        tmp_path,
+        overrides=[["x=1"], ["x=2"], ["x=3"]],
+        pending=True,
+        stems=["S", "S-1", "S-2"],
+    )
+    entries = json.loads(path.read_text(encoding="utf-8"))
+    assert [list(e)[:3] for e in entries] == [["scenario", "overrides", "stem"]] * 3
+    assert [e["stem"] for e in entries] == ["S", "S-1", "S-2"]
+    assert entries[2]["pending"] is True
+    # Without stems, none is written.
+    plain = write_batch_result_json(["a"], [_Result({"passed": True})], tmp_path / "p")
+    assert "stem" not in json.loads(plain.read_text())[0]

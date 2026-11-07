@@ -111,11 +111,16 @@ def _member(member_json: str) -> str:
 PENDING_MESSAGE = "No result yet (the batch has not run this case)"
 
 
-def _pending_entry(name: str, overrides: list[list[str]] | None, index: int) -> str:
+def _pending_entry(
+    name: str,
+    overrides: list[list[str]] | None,
+    index: int,
+    stems: list[str] | None = None,
+) -> str:
     """The entry of case *index*, *name*, which the batch has not run: as
     ``json.dumps`` lays out ``{"scenario": name, "overrides": ...,
-    "passed": None, "message": PENDING_MESSAGE, "elapsed_seconds": None,
-    "pending": True}`` at an entry's depth."""
+    "stem": ..., "passed": None, "message": PENDING_MESSAGE,
+    "elapsed_seconds": None, "pending": True}`` at an entry's depth."""
     members = [_member(json.dumps({"scenario": name}, indent=2, ensure_ascii=False))]
     if overrides is not None:
         members.append(
@@ -124,6 +129,10 @@ def _pending_entry(name: str, overrides: list[list[str]] | None, index: int) -> 
                     {"overrides": overrides[index]}, indent=2, ensure_ascii=False
                 )
             )
+        )
+    if stems is not None:
+        members.append(
+            _member(json.dumps({"stem": stems[index]}, indent=2, ensure_ascii=False))
         )
     members.append('    "passed": null')
     members.append(
@@ -142,6 +151,7 @@ def write_batch_result_json(
     errored: Collection[int] = (),
     rerun_errors: Mapping[int, str] | None = None,
     pending: bool = False,
+    stems: list[str] | None = None,
 ) -> Path:
     """Write a machine-readable JSON summary to *output_dir* and return the path.
 
@@ -157,6 +167,12 @@ def write_batch_result_json(
     an outcome are (``ui.cases``): ``"passed": null``, ``"pending": true``,
     its *overrides* when they are given.  Without it those names are left
     out.
+
+    *stems*, one per name, are the file stems each case's outputs are named
+    by (its result, gate record, coverage file, ...), written as each
+    entry's ``stem``, after its *overrides*: a batch resumed into its own
+    directory (``--resume-into``) removes the outputs of the cases it runs
+    again by them, and those of no other case.
 
     The file is what ``json.dumps(entries, indent=2, ensure_ascii=False)``
     gives, laid out as text a member at a time, since an entry's values (a
@@ -188,6 +204,10 @@ def write_batch_result_json(
             own["overrides"] = _member(
                 json.dumps({"overrides": overrides[i]}, indent=2, ensure_ascii=False)
             )
+        if stems is not None:
+            own["stem"] = _member(
+                json.dumps({"stem": stems[i]}, indent=2, ensure_ascii=False)
+            )
         if i in errored:
             own["error"] = _member(
                 json.dumps({"error": True}, indent=2, ensure_ascii=False)
@@ -207,8 +227,11 @@ def write_batch_result_json(
                 )
             elif key in own:
                 members.append(own[key])
+        # The stem the batch gave the case, whatever the result says.
+        if "stem" in own:
+            members.append(own["stem"])
         for key, value in data.items():
-            if key in ("scenario", "overrides") and key in own:
+            if key in ("scenario", "overrides", "stem") and key in own:
                 continue
             if key in ("error", "rerun_error") and key in own:
                 members.append(own[key])
@@ -222,7 +245,7 @@ def write_batch_result_json(
         entries.append("  {\n" + ",\n".join(members) + "\n  }")
     if pending:
         for i in range(len(results), len(names)):
-            entries.append(_pending_entry(names[i], overrides, i))
+            entries.append(_pending_entry(names[i], overrides, i, stems))
     text = "[\n" + ",\n".join(entries) + "\n]" if entries else "[]"
     write_text_atomically(json_path, text)
     return json_path
@@ -235,12 +258,15 @@ def print_summary(
     overrides: list[list[str]] | None = None,
     errored: Collection[int] = (),
     rerun_errors: Mapping[int, str] | None = None,
+    stems: list[str] | None = None,
 ) -> bool:
     """Print a formatted result table and return ``True`` if all passed.
 
     A case in *errored* (indices into *results*) raised on every attempt
     rather than ran: it is tagged ``ERROR``, not ``FAIL``, and counts as not
-    passed.  A machine-readable JSON file is also written to *output_dir*.
+    passed.  A machine-readable JSON file is also written to *output_dir*,
+    each entry with its file stem when *stems* are given
+    (:func:`write_batch_result_json`).
     A case's Rerun recording (``rerun.enabled``) is listed under it, and when
     any case has one, how many were written and each that failed
     (*rerun_errors*, index -> why).  They do not change whether the batch
@@ -289,6 +315,7 @@ def print_summary(
             overrides,
             errored=errored,
             rerun_errors=failed_recordings,
+            stems=stems,
         )
         print(thin)  # noqa: T201
         print(f"Result JSON: {json_path}")  # noqa: T201

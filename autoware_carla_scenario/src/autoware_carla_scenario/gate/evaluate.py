@@ -256,12 +256,29 @@ def _slurm_unrecorded(directory: Path) -> tuple[list[str], int] | str:
     return unrecorded, len(cases)
 
 
+def _recorded_at_stem(directory: Path, entry: dict[str, Any]) -> bool:
+    """Whether a gate record is at the stem *entry* names in *directory*: a
+    file stem of its own (no separator), as a batch writes it since #1957."""
+    stem = entry.get("stem")
+    if not isinstance(stem, str) or stem in ("", ".", "..") or "/" in stem:
+        return False
+    if "\\" in stem or "\0" in stem:
+        return False
+    return (directory / f"{stem}{GATE_RECORD_SUFFIX}").is_file()
+
+
 def _summary_unrecorded(directory: Path) -> tuple[list[str], int] | str:
     """The names of a local batch's errored cases (``"error": true`` in its
     ``batch_results.json``), which raised and so, but for one that raised
     only once its run had ended, wrote no gate record, and of its pending
     ones (``"pending": true``: a batch cut short never finished them); and
-    how many cases it has.  Why the summary cannot be read, instead."""
+    how many cases it has.  Why the summary cannot be read, instead.
+
+    An errored case whose entry names its stem (``stem``, written since
+    #1957) and has a gate record there is not counted: its run wrote one
+    before it raised, and that record is judged, as a SLURM batch's is.  A
+    pending case is counted whatever is at its stem: the batch never
+    finished it."""
     path = directory / BATCH_RESULTS
     try:
         entries = json.loads(path.read_text(encoding="utf-8"))
@@ -273,7 +290,7 @@ def _summary_unrecorded(directory: Path) -> tuple[list[str], int] | str:
         str(entry.get("scenario") or i)
         for i, entry in enumerate(entries)
         if not isinstance(entry, dict)
-        or entry.get("error") is True
+        or (entry.get("error") is True and not _recorded_at_stem(directory, entry))
         or entry.get("pending") is True
     ]
     return unrecorded, len(entries)
@@ -446,8 +463,9 @@ def unrecorded_cases(path: Path) -> list[str]:
     SLURM batch (``slurm/manifest.json``) is read from its tasks' outcomes,
     collected or not, and a case with a record at its stem is not counted; a
     local batch is read from its ``batch_results.json``, whose errored and
-    pending entries count (its entries name no stem, so an errored case that
-    did write a record is counted too); a sweep is read from its jobs'
+    pending entries count, but an errored one with a gate record at the stem
+    its entry names (an entry of a summary written before #1957 names none,
+    and is counted); a sweep is read from its jobs'
     markers (``case_errored.json``).  A job whose directory holds a gate
     record is not counted.  Nor is one whose marker says it did not finish
     (``"unfinished": true``) beside a result (``*_result.json``) written no

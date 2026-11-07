@@ -20,13 +20,17 @@ _MOVED = (
 )
 
 
-@pytest.mark.parametrize("name", _MOVED)
+#: What examples.argv has gained since, which examples.run imports too.
+_ADDED = ("_extract_resume_into",)
+
+
+@pytest.mark.parametrize("name", _MOVED + _ADDED)
 def test_run_re_exports_each_moved_name(name: str) -> None:
     assert getattr(run, name) is getattr(argv, name)
 
 
 def test_argv_exports_exactly_the_moved_names() -> None:
-    assert sorted(argv.__all__) == sorted(_MOVED)
+    assert sorted(argv.__all__) == sorted(_MOVED + _ADDED)
 
 
 # ---------------------------------------------------------------------------
@@ -231,3 +235,44 @@ def test_arena_max_set_by_user(environ: dict[str, str], expected: bool) -> None:
 )
 def test_case_labels(cases: list[argv.BatchCase], expected: list[str]) -> None:
     assert argv._case_labels(cases) == expected
+
+
+# ---------------------------------------------------------------------------
+# --resume-into (#1957)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("given", "expected"),
+    [
+        (["scenario"], (None, ["scenario"])),
+        (
+            ["scenario", "--resume-into", "out/d", "a=1"],
+            ("out/d", ["scenario", "a=1"]),
+        ),
+        (["scenario", "--resume-into=out/d", "x"], ("out/d", ["scenario", "x"])),
+        # Repeated: the last one wins.
+        (["scenario", "--resume-into", "a", "--resume-into=b"], ("b", ["scenario"])),
+        # Only the exact flag; --resume-from is left for its own parser.
+        (
+            ["scenario", "--resume-intox=1", "--resume-from", "2"],
+            (None, ["scenario", "--resume-intox=1", "--resume-from", "2"]),
+        ),
+    ],
+)
+def test_extract_resume_into(
+    given: list[str], expected: tuple[str | None, list[str]]
+) -> None:
+    assert argv._extract_resume_into(given) == expected
+
+
+@pytest.mark.parametrize(
+    "given", [["scenario", "--resume-into"], ["scenario", "--resume-into="]]
+)
+def test_resume_into_without_a_value_is_a_usage_error(
+    given: list[str], capsys: pytest.CaptureFixture[str]
+) -> None:
+    with pytest.raises(SystemExit) as raised:
+        argv._extract_resume_into(given)
+    assert raised.value.code == 2
+    assert capsys.readouterr().err.startswith("Error: --resume-into requires a value")

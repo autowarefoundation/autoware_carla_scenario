@@ -216,11 +216,25 @@ scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no ou
   too, still lists the case it was running and the ones after it. Both
   count. A batch refused before any case runs (its pre-run checks: a backend
   the host has no room for, an Autoware workspace that cannot run, CARLA not
-  coming up) writes no summary: it ran nothing. The entries name
-  no stem, so an errored case is counted even in the rare event that its run
-  did write a record (its last attempt raised only once the run had ended,
-  resetting the world): the refusal errs on the side of the runs that
-  survived.
+  coming up) writes no summary: it ran nothing. Each entry names its case's
+  file stem (`stem`), and an errored case with a gate record at its stem is
+  not counted -- its last attempt raised only once the run had ended
+  (resetting the world), and that record is judged, as a SLURM batch's is. A
+  pending case counts whatever is at its stem, and so does every errored
+  case of a summary written before batches recorded their stems: the
+  refusal errs on the side of the runs that survived.
+
+  A batch resumed with `--resume-from` alone runs its remaining cases in a
+  new directory, and the directory of the batch it resumes keeps them
+  pending, so the two are refused as a set -- and with `--allow-unrecorded`
+  the case that was running when the batch was killed would be judged twice
+  if it had written its gate record. To gate a resumed batch as a whole,
+  resume it into the same directory with `--resume-into DIR`: its summary is
+  rewritten from the entries of the cases it keeps and the cases it runs,
+  and before those run, the outputs they left there (result, gate record,
+  coverage file, ...) are removed by the stems the summary records for them,
+  so each case is judged once, on its new run
+  ([Resume from a Specific Scenario](usage.md#resume-from-a-specific-scenario)).
 - A **SLURM batch** is read from its tasks' outcomes (`slurm/results/`),
   collected or not: a case that errored, has no outcome (its task was killed,
   or is still running) or one with no verdict counts, unless a gate record is

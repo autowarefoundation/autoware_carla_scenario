@@ -336,6 +336,10 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         if manifest.get("expand")
         else None
     )
+    # Each case's file stem, as a local batch's summary names it (#1957); a
+    # manifest that names none for a case gives the summary no stems.
+    named = [str(case.get("stem") or "") for case in manifest["cases"]]
+    stems = named if all(named) else None
     all_passed = print_summary(
         labels,
         results,
@@ -343,6 +347,7 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         overrides=overrides,
         errored=sorted({*errored, *missing, *unreadable}),
         rerun_errors=rerun_errors,
+        stems=stems,
     )
     if unreadable and not quiet_hint:
         print(  # noqa: T201

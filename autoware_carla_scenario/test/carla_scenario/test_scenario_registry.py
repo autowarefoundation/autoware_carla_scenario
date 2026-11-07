@@ -1302,6 +1302,7 @@ def test_run_batch_gives_each_scenario_its_own_timeout(
             *,
             timeout_seconds: float | None = None,
             case: object = None,
+            file_stem: str | None = None,
         ) -> None:
             added.append((scenario, timeout_seconds))
 

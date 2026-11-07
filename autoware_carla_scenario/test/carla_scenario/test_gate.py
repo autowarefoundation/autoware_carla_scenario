@@ -1245,6 +1245,46 @@ class TestUnrecordedCases:
         assert main([str(tmp_path)]) == EXIT_ERROR
         assert main([str(tmp_path), "--allow-unrecorded"]) == EXIT_PASSED
 
+    def test_an_errored_local_case_with_a_record_at_its_stem_is_not_counted(
+        self, tmp_path: Path
+    ) -> None:
+        # Its last attempt raised once its run had ended: the record it wrote
+        # is judged, as a SLURM case's is (#1957).  A pending case counts
+        # whatever is at its stem, and a summary naming no stem counts the
+        # errored case as before.
+        from autoware_carla_scenario.batch_report import write_batch_result_json
+        from autoware_carla_scenario.conditions import ScenarioResult
+
+        self._three_passed(tmp_path)
+        names = [f"left_turn-{i}" for i in range(4)]
+        stems = [f"left_turn-{i}" for i in range(4)]
+        done = [ScenarioResult(passed=True, message="", elapsed_seconds=1.0)] * 3
+        write_batch_result_json(names[:3], done, tmp_path, errored=[2], stems=stems)
+        assert unrecorded_cases(tmp_path) == []
+        assert main([str(tmp_path)]) == EXIT_PASSED
+        # No record at the errored case's stem: counted.
+        write_batch_result_json(
+            names[:3], done, tmp_path, errored=[2], stems=["a", "b", "c"]
+        )
+        (line,) = unrecorded_cases(tmp_path)
+        assert "1 of 3 case(s)" in line and "left_turn-2" in line
+        # No stems: counted.
+        write_batch_result_json(names[:3], done, tmp_path, errored=[2])
+        assert len(unrecorded_cases(tmp_path)) == 1
+        # An unsafe stem is not followed.
+        write_batch_result_json(
+            names[:3], done, tmp_path, errored=[2], stems=["a", "b", "../x"]
+        )
+        assert len(unrecorded_cases(tmp_path)) == 1
+        # Pending, with a record at its stem (a case killed after writing
+        # it): counted.
+        write_batch_result_json(names, done, tmp_path, pending=True, stems=stems)
+        (tmp_path / "left_turn-3_gate.json").write_bytes(
+            (tmp_path / "left_turn-0_gate.json").read_bytes()
+        )
+        (line,) = unrecorded_cases(tmp_path)
+        assert "1 of 4 case(s)" in line and "left_turn-3" in line
+
     def test_a_slurm_batch_counts_errored_and_missing_cases(
         self, tmp_path: Path
     ) -> None:
