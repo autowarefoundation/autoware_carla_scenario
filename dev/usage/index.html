@@ -4096,14 +4096,24 @@ nothing:</p>
 <p>The package ships a Hydra <code>Sweeper</code> plugin
 (<code>hydra/sweeper=lanelet_constraint</code>) that expands a single scenario
 config into one job per lanelet that matches a set of constraints,
-optionally deriving per-job parameters via "bindings". Each scenario
+optionally deriving per-job parameters via "bindings" (picks that end as
+the same case once their bindings are applied give one job). Each scenario
 YAML may declare its own <code>sweep:</code> section (see
 <code>traffic_light_compliance.yaml</code> for an example).</p>
 <p><code>sweep.constraints</code> sweeps <strong>one</strong> parameter: it holds a single target key
 (such as <code>ego.spawn_lanelet_id</code>) with its list of constraints, and every other
 parameter a case needs is derived from the matched lanelet by
 <code>sweep.bindings</code>. A <code>sweep.constraints</code> with a second key is refused with an
-error when the sweep is expanded, rather than searched together with the first.</p>
+error when the sweep is expanded, rather than searched together with the first.
+So is a section of the wrong shape: <code>sweep.constraints</code> that is not a mapping
+of its key to a list of constraints, <code>sweep.bindings</code> that is not a mapping of
+keys to bindings (<code>{type: ...}</code>), and <code>sweep.exclude</code> that is not a mapping of
+keys to lists. A constraint or binding with an unknown <code>type</code>, a key it does
+not take (<code>has_adjacent</code> takes <code>value</code>, not <code>side</code>), a missing key it needs
+or a value it refuses (a <code>route_through</code> <code>depth</code> that is not a whole number of
+at least 1) is refused the same way, naming its type and the key. Each is the
+one line <code>Error: &lt;scenario&gt;: ...</code> that the sweeper, <code>scenario-expand</code> and a
+batch print for an invalid sweep.</p>
 <p>A <code>stop_line_offset</code> binding places a spawn <code>offset</code> metres before the pick's
 stop line. When that does not fit on the pick, it walks back through
 predecessor lanelets, and moves <strong>its own spawn's</strong> lanelet with it: the
@@ -4126,6 +4136,13 @@ say) are refused with an error rather than one silently winning:</p>
 <a id="__codelineno-6-7" name="__codelineno-6-7" href="#__codelineno-6-7"></a><span class="w">    </span><span class="nt">scenario.spawn_overrides.npc1.s</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">stop_line_offset</span><span class="p p-Indicator">,</span><span class="nt"> offset</span><span class="p">:</span><span class="w"> </span><span class="nv">300</span><span class="p p-Indicator">}</span>
 <a id="__codelineno-6-8" name="__codelineno-6-8" href="#__codelineno-6-8"></a><span class="w">    </span><span class="nt">scenario.spawn_overrides.npc1.lanelet_id</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">{</span><span class="nt">type</span><span class="p">:</span><span class="w"> </span><span class="nv">stop_line_approach</span><span class="p p-Indicator">,</span><span class="nt"> offset</span><span class="p">:</span><span class="w"> </span><span class="nv">300</span><span class="p p-Indicator">}</span>
 </code></pre></div>
+<p>The <code>offset</code> of <code>stop_line_offset</code> and <code>stop_line_approach</code> is a finite number
+of metres, at least 0; a string (<code>"15"</code>), <code>.nan</code>, a bool or a negative offset
+is refused with an error naming the binding. Since a walk-back of the swept
+key's own spawn (<code>ego.spawn_s</code> when the sweep picks <code>ego.spawn_lanelet_id</code>)
+replaces the pick, several picks that walk back to the same predecessor can
+end as the same case. Each distinct case runs once, as the first of those
+picks gives it, and the log names the picks that were merged.</p>
 <p>A constraint sees the pick, not where a walk-back puts the spawn. Use
 <code>sweep.exclude</code> to drop a case by the values it ends up with once its bindings
 are applied. Each key lists the values a case may not hold there. For example,
@@ -6655,7 +6672,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 12:06:51 UTC"><span class="timeago" datetime="2026-11-07T12:06:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 12:06:51 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 17:29:50 UTC"><span class="timeago" datetime="2026-11-07T17:29:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 17:29:50 UTC">2026-11-07</span>
   </span>
 
     
