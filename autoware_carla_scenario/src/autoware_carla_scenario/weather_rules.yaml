@@ -118,7 +118,8 @@ quantities:
   # 1, light wind (5-20) 1-30, moderate (20-50) 30-70, strong (from 50) from
   # 70.  The band narrows to the level's edge at each bucket's edge and
   # widens inside it, so a speed in a bucket draws, at any quantile, an
-  # intensity of that bucket's level.
+  # intensity of that bucket's level.  50 km/h itself is strong, as in the
+  # sampler's and the coverage's [50, inf] bucket.
   carla_wind_intensity:
     parts:
       wind:
