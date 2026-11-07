@@ -15,7 +15,12 @@ worker evaluating its share in turn while the others do theirs.
 
 A run that reads a CommonRoad metric needs the workers: when they cannot be
 started, :func:`evaluate_commonroad` raises rather than let a fail condition
-on a metric that reads nothing pass the run.
+on a metric that reads nothing pass the run.  So it does when the workers do
+not know a metric (a worker older than the framework, #1953), when one of
+them does not answer a frame within :attr:`CommonRoadSettings.request_timeout_s`
+(#1954), and when a metric fails in every frame it is evaluated on: a metric
+that fails only now and then reads nothing in those frames, as one with no
+one to measure from does.
 """
 
 from __future__ import annotations
@@ -46,7 +51,7 @@ from ..heavy_metrics import (  # noqa: F401
 from ..metrics import COMMONROAD_METRICS
 from .frame import read_frame
 from .map import commonroad_map
-from .worker import CommonRoadWorker, CommonRoadWorkerError, worker_command
+from .worker import WORKER_ENV, CommonRoadWorker, CommonRoadWorkerError, worker_command
 
 
 if TYPE_CHECKING:
@@ -65,6 +70,15 @@ logger = logging.getLogger(__name__)
 
 def _default_workers() -> int:
     return max(1, min(4, os.cpu_count() or 1))
+
+
+def _check_timeout(name: str, timeout: Any) -> Optional[float]:
+    """*timeout*, ``None`` or a period (:func:`_check_period`), as a
+    ``float``."""
+    if timeout is None:
+        return None
+    _check_period(name, timeout)
+    return float(timeout)
 
 
 def _check_workers(workers: Any) -> int:
@@ -111,6 +125,14 @@ class CommonRoadSettings:
             :func:`~.map.default_cache_dir`.
         command: The command starting a worker; ``None`` finds it
             (:func:`~.worker.worker_command`).
+        request_timeout_s: How long a worker may take to answer a frame (all
+            the metrics due on it), in wall-clock seconds; one that has not
+            answered by then is killed and the run fails with
+            :class:`~.worker.CommonRoadWorkerError`.  ``None`` waits as long
+            as it takes.  The default leaves a frame many times the 2 s TTR
+            takes on one with a collision ahead.
+        start_timeout_s: The same, for a worker to start and read the map
+            (the first ``uv run`` builds its environment meanwhile).
     """
 
     period_s: float = 0.1
@@ -125,6 +147,8 @@ class CommonRoadSettings:
     reach_settings: dict[str, dict[str, Any]] = field(default_factory=dict)
     cache_dir: Optional[Path] = None
     command: Optional[tuple[str, ...]] = None
+    request_timeout_s: Optional[float] = 120.0
+    start_timeout_s: Optional[float] = 1800.0
 
     def __post_init__(self) -> None:
         _check_period("period_s", self.period_s)
@@ -139,6 +163,16 @@ class CommonRoadSettings:
         _check_period("dt", self.dt)
         _check_period("horizon_s", self.horizon_s)
         _check_period("radius_m", self.radius_m)
+        object.__setattr__(
+            self,
+            "request_timeout_s",
+            _check_timeout("request_timeout_s", self.request_timeout_s),
+        )
+        object.__setattr__(
+            self,
+            "start_timeout_s",
+            _check_timeout("start_timeout_s", self.start_timeout_s),
+        )
 
     def evaluates(self, key: str) -> bool:
         """Whether the metric *key* is evaluated: not when it is heavy and the
@@ -280,6 +314,7 @@ def _start_workers(carla_map: Any, name: str) -> list[CommonRoadWorker]:
             map_path,
             settings.worker_settings(),
             on_start=on_start,
+            timeout=settings.start_timeout_s,
         )
         for _ in range(settings.workers)
     ]
@@ -312,7 +347,10 @@ def evaluate_commonroad(
     nothing).
 
     Raises:
-        CommonRoadWorkerError: The workers cannot be started, or one failed.
+        CommonRoadWorkerError: The workers cannot be started, do not know a
+            key, or one failed (exited, answered out of protocol, or did not
+            answer a frame within :attr:`CommonRoadSettings.request_timeout_s`);
+            or a key failed in every frame evaluated.
     """
     from ..metric_batch import ReplayWorld  # noqa: PLC0415
 
@@ -323,6 +361,8 @@ def evaluate_commonroad(
         return values
     workers = _workers_for(carla_map)
     settings = _POOL.settings
+    for worker in workers:
+        _check_measures(worker, keys)
     world = ReplayWorld(carla_map)
     requests: list[Optional[tuple[dict[str, Any], list[dict[str, Any]]]]] = []
     for frame in frames:
@@ -343,7 +383,10 @@ def evaluate_commonroad(
             request = requests[i]
             if request is None:
                 continue
-            got, errors = worker.evaluate(keys, request[0], request[1])
+            got, errors = worker.evaluate(
+                keys, request[0], request[1], timeout=settings.request_timeout_s
+            )
+            _check_answer(worker, keys, got, errors)
             done.append((i, got, errors))
         return done
 
@@ -375,15 +418,73 @@ def evaluate_commonroad(
         )
         raise
     pool.shutdown()
+    evaluated = 0
+    failed: dict[str, int] = {}
+    first_error: dict[str, str] = {}
     for done in shares:
         for i, got, errors in done:
+            evaluated += 1
             for key in keys:
                 values[key][i] = got.get(key)
             for key, error in errors.items():
+                failed[key] = failed.get(key, 0) + 1
+                first_error.setdefault(key, error)
                 if key not in reported:
                     reported.add(key)
                     logger.warning("CommonRoad metric %s reads nothing: %s", key, error)
+    # A metric that failed in every frame read nothing at all: a fail
+    # condition on it would pass the run without having judged it.
+    always = [key for key in keys if evaluated and failed.get(key, 0) == evaluated]
+    if always:
+        raise CommonRoadWorkerError(
+            "the CommonRoad metrics "
+            + ", ".join(f"{key} (failed: {first_error[key]})" for key in always)
+            + f" failed in every frame evaluated ({evaluated}), so read nothing"
+        )
     return values
+
+
+def _check_measures(worker: CommonRoadWorker, keys: list[str]) -> None:
+    """Raise when *worker* does not know one of *keys* (its ``init`` answer
+    says which it knows): an older worker than the framework, found on the
+    ``PATH``, would read nothing in every frame."""
+    unknown = [key for key in keys if key not in worker.measures]
+    if unknown:
+        raise CommonRoadWorkerError(
+            f"the CommonRoad worker {worker.command} does not know the metrics "
+            f"{', '.join(unknown)} (it knows {', '.join(worker.measures) or 'none'}): "
+            "update the commonroad_metrics project it runs, or name another "
+            f"command in ${WORKER_ENV}"
+        )
+
+
+def _check_answer(
+    worker: CommonRoadWorker,
+    keys: list[str],
+    got: dict[str, Optional[float]],
+    errors: dict[str, str],
+) -> None:
+    """Raise when *worker*'s answer to a frame asked *keys* leaves one out
+    (neither a value nor an error) or calls it unknown: out of protocol."""
+    missing = [key for key in keys if key not in got and key not in errors]
+    unknown = [key for key in keys if errors.get(key) == _UNKNOWN_MEASURE]
+    if missing or unknown:
+        raise CommonRoadWorkerError(
+            f"the CommonRoad worker {worker.command} answered 'evaluate' out "
+            "of protocol: "
+            + "; ".join(
+                part
+                for part in (
+                    f"no value nor error for {', '.join(missing)}" if missing else "",
+                    f"{', '.join(unknown)} unknown" if unknown else "",
+                )
+                if part
+            )
+        )
+
+
+#: The error the worker gives a measure it does not know.
+_UNKNOWN_MEASURE = "unknown measure"
 
 
 #: How long :func:`evaluate_commonroad`, given up, waits for its shares to

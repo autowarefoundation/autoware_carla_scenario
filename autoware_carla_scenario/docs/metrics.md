@@ -265,18 +265,38 @@ The workers are started with, in order, the command in
 the `PATH`, or, in a checkout, `uv run --project commonroad_metrics
 commonroad-metrics-worker` (which builds its environment the first time). A run
 judged on a CommonRoad metric whose workers cannot be started fails with
-`CommonRoadWorkerError` rather than pass on a metric that read nothing. A
-worker that fails during a run (exits, or answers out of protocol) fails that
-run the same way, and takes the pool down with it: the next run starts fresh
-workers rather than reuse a dead one, as does a run that finds a pooled worker
-has exited. When one of the workers cannot be started, those that did are
-stopped. `configure_commonroad_metrics()` (in
+`CommonRoadWorkerError` rather than pass on a metric that read nothing. So
+does a run whose workers do not know a metric it judges on (a
+`commonroad-metrics-worker` on the `PATH` older than the framework: its
+`init` answer lists the metrics it knows), and a run on which a metric fails
+in every frame evaluated: a fail condition on it would otherwise pass without
+having judged anything. A metric that fails only in some frames reads nothing
+in those, with a warning, as one with no one to measure from does. A worker
+that fails during a run (exits, answers out of protocol -- an answer that
+leaves a metric out, or calls it unknown, included -- or does not answer in
+time) fails that run the same way, and takes the pool down with it: the next
+run starts fresh workers rather than reuse a dead one, as does a run that
+finds a pooled worker has exited. When one of the workers cannot be started,
+those that did are stopped.
+
+The metrics are evaluated once the run is over, outside the run's
+simulated-time limits, so a worker is given wall-clock time instead: one that
+has not answered a frame (all the metrics due on it) within
+`request_timeout_s`, 120 s by default, is killed and the run fails with
+`CommonRoadWorkerError`, rather than hold up the batch after it forever. That
+is many times what the slowest metric takes on a frame (TTR, about 2 s). A
+worker has `start_timeout_s`, 1800 s by default, to start and read the map:
+the first `uv run` builds its environment meanwhile. Either can be `None` to
+wait as long as it takes.
+
+`configure_commonroad_metrics()` (in
 `autoware_carla_scenario.commonroad`) changes the period (`period_s`, and
 `metric_periods_s` for each metric), the number of workers (`workers`, at
 least 1), the time step (`dt`), the horizon (`horizon_s`), the radius
-(`radius_m`), CommonRoad-Reach's settings and the command. The periods, `dt`,
-`horizon_s` and `radius_m` must be positive and finite: a bad value raises
-`ValueError` when the settings are built, not later in a run.
+(`radius_m`), CommonRoad-Reach's settings, the command and the timeouts
+(`request_timeout_s`, `start_timeout_s`). The periods, `dt`, `horizon_s`,
+`radius_m` and the timeouts (unless `None`) must be positive and finite: a
+bad value raises `ValueError` when the settings are built, not later in a run.
 
 AlpaSim's other metrics need more than the world, and are not metrics here:
 

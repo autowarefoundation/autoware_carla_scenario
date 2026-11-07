@@ -21,7 +21,10 @@ and speaks to it one line at a time, each request answered by one line:
 
 A request that cannot be served is answered ``{"ok": false, "error": "..."}``.
 Logging goes to the standard error, never the output, which carries the
-answers alone.
+answers alone: :func:`main` writes them on a duplicate of descriptor 1 and
+points descriptor 1 itself at the standard error, so that what CriMe,
+CommonRoad-Reach or their C++ print, ``print()`` or not, cannot break into an
+answer.
 """
 
 from __future__ import annotations
@@ -29,6 +32,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
+import os
 import sys
 from typing import IO, Any
 
@@ -89,13 +93,20 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--log-level", default="WARNING")
     args = parser.parse_args(argv)
     logging.basicConfig(level=args.log_level.upper(), stream=sys.stderr)
-    # CriMe and Reach print progress; the output carries the answers alone.
+    # CriMe and Reach print progress, and C++ code may write to descriptor 1
+    # directly; the output carries the answers alone (#1954).  The answers go
+    # to a duplicate of the output, and descriptor 1 -- sys.stdout's and the
+    # C++ code's -- to the standard error.
+    sys.stdout.flush()
+    answers = os.fdopen(os.dup(1), "w", encoding="utf-8")
+    os.dup2(2, 1)
     stdout = sys.stdout
     sys.stdout = sys.stderr
     try:
-        serve(sys.stdin, stdout)
+        serve(sys.stdin, answers)
     finally:
         sys.stdout = stdout
+        answers.close()
     return 0
 
 
