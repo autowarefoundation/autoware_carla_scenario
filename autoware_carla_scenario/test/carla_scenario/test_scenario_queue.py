@@ -744,9 +744,58 @@ class TestScenarioQueueUnit:
             "run 1 passed",
         ]
 
-    def test_a_retry_after_a_failed_cooldown_resets_once(self) -> None:
-        """An attempt that fails in its cooldown never got to reset the world
-        the case before left, nor ran on it: its retry resets it, once."""
+    def test_between_cases_the_world_is_reset_then_the_server_cools_down(
+        self,
+    ) -> None:
+        """#1941 review: as when the runner reset at the end of a run, the
+        cooldown between two cases follows the reset, so the server settles
+        after the reload; a retry waits first, then resets."""
+        queue = ScenarioQueue(
+            server=MagicMock(), cooldown_seconds=1.0, cooldown_max_retries=1
+        )
+        runner = _RaisesThenRuns(run_failures=0)
+        queue._runner = runner  # type: ignore[assignment]
+        queue.add(_NullScenario(_make_ego_config()))
+        queue.add(_NullScenario(_make_ego_config()))
+        queue.add(_NullScenario(_make_ego_config()))
+        events = runner.events
+
+        def wait(_seconds: float, *, desc: str) -> None:
+            events.append(("wait", desc))
+
+        with patch("autoware_carla_scenario.scenario_queue._wait_with_progress", wait):
+            queue.run_all()
+            runner.run_failures = 1
+            queue.run_all()
+
+        assert events == [
+            ("run", (0, False)),
+            ("reset", "_NullScenario"),
+            ("wait", "CARLA cooldown"),
+            ("run", (1, False)),
+            ("reset", "_NullScenario"),
+            ("wait", "CARLA cooldown"),
+            ("run", (2, False)),
+            # A later run_all(): its first case resets the world the last one
+            # left, with no cooldown before it (none before a first case).
+            ("reset", "_NullScenario"),
+            ("run", (0, False)),
+            # ... and its retry waits, then resets.
+            ("wait", "CARLA cooldown (retry)"),
+            ("reset", "_NullScenario"),
+            ("run", (0, False)),
+            ("reset", "_NullScenario"),
+            ("wait", "CARLA cooldown"),
+            ("run", (1, False)),
+            ("reset", "_NullScenario"),
+            ("wait", "CARLA cooldown"),
+            ("run", (2, False)),
+        ]
+
+    def test_a_retry_after_a_failed_cooldown_does_not_reset(self) -> None:
+        """Between cases the world is reset before the cooldown: an attempt
+        that fails in its cooldown never ran on the world it reset, and its
+        retry runs on it as it is."""
         queue = ScenarioQueue(
             server=MagicMock(), cooldown_seconds=1.0, cooldown_max_retries=1
         )

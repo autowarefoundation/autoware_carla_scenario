@@ -450,17 +450,15 @@ class ScenarioQueue:
             last_message = ""
             for attempt in range(max_attempts):
                 try:
-                    # Cooldown: between consecutive scenarios on the first
-                    # attempt, or as a recovery wait on retry attempts.
-                    # Placed inside try/except so that crashes during the
-                    # cooldown phase (e.g. CARLA communication errors) are
-                    # caught and trigger a retry.
-                    if (i > 0 or attempt > 0) and self._cooldown_seconds > 0:
+                    # Recovery wait before a retry, ahead of its restart and
+                    # reset.  (Between consecutive scenarios the cooldown
+                    # comes after the reset instead, below.)  Inside the try:
+                    # a crash during a cooldown (e.g. a CARLA communication
+                    # error) is this attempt's failure, and is retried.
+                    if attempt > 0 and self._cooldown_seconds > 0:
                         _wait_with_progress(
                             self._cooldown_seconds,
-                            desc="CARLA cooldown"
-                            if attempt == 0
-                            else "CARLA cooldown (retry)",
+                            desc="CARLA cooldown (retry)",
                         )
                     # A dead server the queue owns cannot recover by waiting:
                     # it is restarted, on a freshly loaded world.  Inside the
@@ -498,6 +496,14 @@ class ScenarioQueue:
                         # later run_all() resets it or a new queue loads it.
                         self._runner.reset_world(type(scenario).__name__)
                         self._world_dirty = False
+                    # Cooldown between consecutive scenarios, after the reset
+                    # of the world the one before left: the server finishes
+                    # its cleanup (and settles after the reload) before the
+                    # next scenario connects.
+                    if attempt == 0 and i > 0 and self._cooldown_seconds > 0:
+                        _wait_with_progress(
+                            self._cooldown_seconds, desc="CARLA cooldown"
+                        )
                     # Set before the run, not after it: a run that raises
                     # (here, or out of run_all() on Ctrl-C) leaves what it
                     # spawned and set in the world too.
