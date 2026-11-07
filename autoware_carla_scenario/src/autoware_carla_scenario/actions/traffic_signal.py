@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Optional, Sequence, Union
 
 from ..conditions.base import BaseCondition
 from ..coordinate.traffic_light import find_traffic_lights_for_lanelet2_id
+from ..utils.traffic_light import traffic_light_state_name
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -209,7 +210,8 @@ class TrafficSignalAction(BaseAction):
             "TrafficSignalAction [%s]: set %d traffic lights to %s (freeze=%s)",
             self.label,
             count,
-            self._state,
+            # Its name: str() of the IntEnum is "0" from Python 3.11 on.
+            traffic_light_state_name(self._state),
             self._freeze,
         )
 
@@ -260,7 +262,7 @@ class TrafficSignalAction(BaseAction):
             "for Lanelet2 IDs %s (freeze=%s)",
             self.label,
             count,
-            self._state,
+            traffic_light_state_name(self._state),
             list(lanelet2_ids),
             self._freeze,
         )

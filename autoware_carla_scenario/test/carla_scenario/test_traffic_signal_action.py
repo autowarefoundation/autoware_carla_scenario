@@ -446,3 +446,22 @@ class TestTrafficSignalActionRouteJunction:
         )
         assert action._route_junction == 2
         assert type(action._route_junction) is int
+
+
+def test_the_log_names_the_state_on_every_python(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """``%s`` of the IntEnum is "0" from Python 3.11 on, not its name (#1904)."""
+    import logging
+
+    import typesafe_carla.carla as carla
+
+    world = _FakeWorld([_FakeTrafficLight()])
+    action = TrafficSignalAction(
+        state=carla.TrafficLightState.Red,
+        lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
+        label="red",
+    )
+    with caplog.at_level(logging.INFO):
+        action.execute(world)
+    assert "set 1 traffic lights to Red " in caplog.text
