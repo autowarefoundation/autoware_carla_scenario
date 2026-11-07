@@ -25,10 +25,12 @@ CARLA waypoint, and the speed limit from ``get_speed_limit()`` (also the
 fallback for a lanelet without a ``speed_limit`` tag).
 
 The conditions the default ODD names are the ones the run was set to: the
-rainfall rate (:func:`rainfall_rate_mm_h`) and the visibility through the fog
-(:func:`fog_visibility_range_m`), which CARLA's weather renders but does not
-measure, as the ``environment`` named them; the time of day is read off the
-sun (:func:`time_of_day`).  CARLA's own 0-100 intensities are not physical
+rainfall rate (:func:`rainfall_rate_mm_h`), the visibility through the fog
+(:func:`fog_visibility_range_m`), the wind speed (:func:`wind_speed_kmh`)
+and the cloud cover (:func:`cloud_cover`), which CARLA's weather renders but
+does not measure, as the ``environment`` named them (the cloud cover off
+CARLA's cloudiness when it named none); the time of day is read off the sun
+(:func:`time_of_day`).  CARLA's own 0-100 intensities are not physical
 units, so its rain, fog, road water, wind and clouds are named levels
 (:func:`rain`, :func:`fog`, ...).  How far drivers see is in metres
 (:func:`visibility`), and how well the road grips a share of the dry road's
@@ -712,7 +714,23 @@ def wind_speed_kmh(world: carla.World) -> Optional[float]:
 
 
 def cloud_cover(world: carla.World) -> Optional[str]:
-    """The taxonomy's cloudiness, from CARLA's (:func:`cloud_cover_level`)."""
+    """The taxonomy's cloudiness: the cloud cover the run was set to
+    (:func:`~autoware_carla_scenario.actions.environment.world_cloud_cover`),
+    else CARLA's cloudiness (:func:`cloud_cover_level`).
+
+    The set cover, as the rainfall rate and the wind speed are: CARLA's
+    cloudiness renders the sky the run was set to and the clouds its rain
+    brings (the weather rules' ``carla_cloudiness``, the cloudier of the
+    two), so a clear sky in rain renders cloudier than clear -- and is still
+    the clear sky the case was drawn with.  Without a set cover (a run that
+    sets CARLA's cloudiness alone, or names no weather), the cloudiness CARLA
+    renders is read back.
+    """
+    from ..actions.environment import world_cloud_cover  # noqa: PLC0415
+
+    recorded = world_cloud_cover(episode_of(world))
+    if recorded is not None:
+        return recorded
     weather = _weather(world)
     if weather is None:
         return None

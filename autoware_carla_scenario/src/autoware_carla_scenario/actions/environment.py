@@ -13,9 +13,10 @@ see (:mod:`autoware_carla_scenario.visibility`), for a traffic backend that
 models their sight.
 
 The action applies numbers: the CARLA fields, the visibility and the
-conditions they render (the rainfall rate, the visibility through the fog),
-which it records for the ODD's probes (:func:`world_rainfall_rate`,
-:func:`world_fog_visibility_range`).  What follows from the conditions is
+conditions they render (the rainfall rate, the visibility through the fog,
+the wind speed, the cloud cover), which it records for the ODD's probes
+(:func:`world_rainfall_rate`, :func:`world_fog_visibility_range`,
+:func:`world_wind_speed`, :func:`world_cloud_cover`).  What follows from the conditions is
 worked out before the run, once
 (:func:`~autoware_carla_scenario.weather_rules.resolve_environment`); only
 the grip, which may differ by vehicle, is read off the rules here, from the
@@ -54,6 +55,7 @@ __all__ = [
     "forget_weather_conditions",
     "tire_friction",
     "tire_friction_range",
+    "world_cloud_cover",
     "world_fog_visibility_range",
     "world_rainfall_rate",
     "world_wind_speed",
@@ -79,6 +81,10 @@ _POSITIVE_ARGUMENTS: tuple[str, ...] = (
 _NON_NEGATIVE_ARGUMENTS: tuple[str, ...] = ("rainfall_rate_mm_h", "wind_speed_kmh")
 #: The arguments that are quantiles, 0-1.
 _QUANTILE_ARGUMENTS: tuple[str, ...] = ("tire_friction_quantile", "visibility_quantile")
+#: The cloud covers *cloud_cover* takes: the taxonomy's cloudiness
+#: (``odd.probes.CLOUD_COVERS``, which a test holds this to; not imported, so
+#: the action does not load the ODD package).
+_CLOUD_COVERS: tuple[str, ...] = ("clear", "partly_cloudy", "overcast")
 
 
 def _refusal(name: str, value: float) -> str:
@@ -142,11 +148,12 @@ def _water(wetness: float, precipitation_deposits: float) -> dict[str, float]:
 
 
 #: World (episode) id -> the rainfall rate (mm/h), the visibility through the
-#: fog (m) and the wind speed (km/h) the run was set to, where an action
-#: named them.
+#: fog (m), the wind speed (km/h) and the cloud cover (a label) the run was
+#: set to, where an action named them.
 _RAINFALL: dict[int, float] = {}
 _FOG_VISIBILITY: dict[int, float] = {}
 _WIND_SPEED: dict[int, float] = {}
+_CLOUD_COVER: dict[int, str] = {}
 
 
 def _record_condition(store: dict[int, float], world_id: int, value: float) -> None:
@@ -154,6 +161,13 @@ def _record_condition(store: dict[int, float], world_id: int, value: float) -> N
     for old in [w for w in store if w != world_id]:
         del store[old]
     store[world_id] = value
+
+
+def _record_label(store: dict[int, str], world_id: int, label: str) -> None:
+    """Record *label* for the world; another world's is dropped."""
+    for old in [w for w in store if w != world_id]:
+        del store[old]
+    store[world_id] = label
 
 
 def world_rainfall_rate(world_id: Optional[int]) -> Optional[float]:
@@ -181,12 +195,25 @@ def world_wind_speed(world_id: Optional[int]) -> Optional[float]:
     return _WIND_SPEED[world_id]
 
 
+def world_cloud_cover(world_id: Optional[int]) -> Optional[str]:
+    """The cloud cover (``clear``, ``partly_cloudy``, ``overcast``) an action
+    set the world *world_id* to, or ``None``: what the ODD's ``cloud_cover``
+    probe reads.  The cloudiness CARLA renders may be more than it -- rain
+    clouds the sky (the weather rules' ``carla_cloudiness``) -- but the
+    condition the run was set to is the sky's.  A run that sets CARLA's
+    cloudiness alone names no cloud cover."""
+    if world_id is None or world_id not in _CLOUD_COVER:
+        return None
+    return _CLOUD_COVER[world_id]
+
+
 def forget_weather_conditions() -> None:
     """Forget every world's conditions; the runner calls this for every run,
     so a run that names none does not read the last run's."""
     _RAINFALL.clear()
     _FOG_VISIBILITY.clear()
     _WIND_SPEED.clear()
+    _CLOUD_COVER.clear()
 
 
 #: World (episode) id -> the grip share last applied in it.
@@ -493,11 +520,12 @@ class EnvironmentAction(BaseAction):
 
         EnvironmentAction(**resolve_environment({"rainfall_rate_mm_h": 5.0}))
 
-    *rainfall_rate_mm_h*, *fog_visibility_range_m* and *wind_speed_kmh* are
-    recorded as what the run was set to, which the ODD's probes read
-    (:func:`world_rainfall_rate`, :func:`world_fog_visibility_range`,
-    :func:`world_wind_speed`); the time of day and the cloudiness are read
-    off CARLA's sun and clouds.
+    *rainfall_rate_mm_h*, *fog_visibility_range_m*, *wind_speed_kmh* and
+    *cloud_cover* are recorded as what the run was set to, which the ODD's
+    probes read (:func:`world_rainfall_rate`,
+    :func:`world_fog_visibility_range`, :func:`world_wind_speed`,
+    :func:`world_cloud_cover`); the time of day is read off CARLA's sun, and
+    the cloud cover off CARLA's clouds when no action named one.
 
     The default phase is ``init``: most scenarios set the weather once, before
     anything moves.  Registering it on the tick loop instead is what makes the
@@ -534,6 +562,10 @@ class EnvironmentAction(BaseAction):
             to, metres: recorded, not applied.  Keyword-only.
         wind_speed_kmh: The wind speed the run is set to, km/h: recorded, not
             applied.  Keyword-only.
+        cloud_cover: The cloud cover the run is set to, ``clear``,
+            ``partly_cloudy`` or ``overcast``: recorded, not applied (the
+            *cloudiness* that renders it may be more: rain clouds the sky).
+            Keyword-only.
         tire_friction: The vehicles' grip, as a share of the dry road's
             (1.0): fixed, whatever the weather.  Keyword-only.
         tire_friction_quantile: The quantile of the distribution of grip the
@@ -553,14 +585,16 @@ class EnvironmentAction(BaseAction):
             *precipitation_deposits*, *wetness*, *wind_intensity*,
             *fog_density*) is outside it; *tire_friction*, *visibility_m* or
             *fog_visibility_range_m* is not positive; *rainfall_rate_mm_h* or
-            *wind_speed_kmh* is negative; or *tire_friction_quantile* is outside [0, 1].  The
-            message names the argument.
+            *wind_speed_kmh* is negative; *tire_friction_quantile* is outside
+            [0, 1]; or *cloud_cover* is none of its labels.  The message names
+            the argument.
     """
 
     _settings: dict[str, float]
     _rainfall_rate_mm_h: Optional[float]
     _fog_visibility_range_m: Optional[float]
     _wind_speed_kmh: Optional[float]
+    _cloud_cover: Optional[str]
     _tire_friction: Optional[float]
     _tire_friction_quantile: Optional[float]
     _visibility_m: Optional[float]
@@ -582,6 +616,7 @@ class EnvironmentAction(BaseAction):
         rainfall_rate_mm_h: Optional[float] = None,
         fog_visibility_range_m: Optional[float] = None,
         wind_speed_kmh: Optional[float] = None,
+        cloud_cover: Optional[str] = None,
         tire_friction: Optional[float] = None,
         tire_friction_quantile: Optional[float] = None,
         visibility_m: Optional[float] = None,
@@ -612,7 +647,13 @@ class EnvironmentAction(BaseAction):
                     raise ValueError(f"EnvironmentAction: {name} {refusal}")
         self._rainfall_rate_mm_h = rainfall_rate_mm_h
         self._fog_visibility_range_m = fog_visibility_range_m
+        if cloud_cover is not None and cloud_cover not in _CLOUD_COVERS:
+            raise ValueError(
+                f"EnvironmentAction: cloud_cover must be one of "
+                f"{list(_CLOUD_COVERS)}, got {cloud_cover!r}"
+            )
         self._wind_speed_kmh = wind_speed_kmh
+        self._cloud_cover = cloud_cover
         self._tire_friction = tire_friction
         self._tire_friction_quantile = tire_friction_quantile
         self._visibility_m = visibility_m
@@ -660,6 +701,7 @@ class EnvironmentAction(BaseAction):
             self._rainfall_rate_mm_h is not None
             or self._fog_visibility_range_m is not None
             or self._wind_speed_kmh is not None
+            or self._cloud_cover is not None
         )
 
     def execute(self, world: "carla.World") -> None:
@@ -697,6 +739,9 @@ class EnvironmentAction(BaseAction):
         wind = self._wind_speed_kmh
         if wind is not None:
             _record_condition(_WIND_SPEED, world.id, wind)
+        sky = self._cloud_cover
+        if sky is not None:
+            _record_label(_CLOUD_COVER, world.id, sky)
         if self.sets_tire_friction:
             if self._tire_friction is not None:
                 apply_tire_friction(world, self._tire_friction)

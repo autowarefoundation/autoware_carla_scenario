@@ -324,10 +324,12 @@ controls: {}
 # follow from them by the weather rules (autoware_carla_scenario/
 # weather_rules.yaml, docs/odd.md "Weather rules"), worked out once, before
 # the run, each at its median: rain brings the cloudiness, standing water and
-# wetness CARLA's rain presets pair with it. A CARLA field set here is kept as
-# it is, and what follows from it in the rules reads it. A config that sets
-# CARLA's fields alone names no condition: drivers see as they always did, and
-# the ODD's weather is not measured.
+# wetness CARLA's rain presets pair with it (so cloud_cover: clear in rain
+# renders a cloudier sky, and is still measured clear: the sky's cover, not
+# the rain's clouds; with no cloud_cover, CARLA's cloudiness is measured). A
+# CARLA field set here is kept as it is, and what follows from it in the rules
+# reads it. A config that sets CARLA's fields alone names no condition:
+# drivers see as they always did, and the ODD's weather is not measured.
 #
 # Every value must be a finite number (NaN or infinity fails the run at its
 # start, naming the key); cloudiness, precipitation, precipitation_deposits,

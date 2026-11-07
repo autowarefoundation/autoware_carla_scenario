@@ -82,7 +82,9 @@ quantities:
   # shows in a camera image, a few drops on a dry road under a clear sky.  The
   # cloudier of the two holds (`combine: max`): rain clouds the sky, and a sky
   # may be cloudy without rain.  The cloudiness bands are what the
-  # `cloud_cover` probe reads back: clear below 20, overcast from 70.
+  # `cloud_cover` probe reads back when the run names no cloud cover: clear
+  # below 20, overcast from 70.  A run that names one is measured as it, the
+  # sky's, whatever the rain adds here.
   carla_cloudiness:
     combine: max
     parts:

@@ -656,3 +656,77 @@ def test_the_wind_speed_is_recorded_and_the_cloud_cover_named() -> None:
             scenario,  # type: ignore[arg-type]
         )
     forget_weather_conditions()
+
+
+class TestCloudCover:
+    """The cloud cover a run is set to is what the ODD measures (#1930)."""
+
+    def _add(self, environment: dict) -> EnvironmentAction:
+        from types import SimpleNamespace
+
+        from omegaconf import OmegaConf
+
+        from autoware_carla_scenario.examples.run import add_environment
+
+        registered: list = []
+        add_environment(
+            OmegaConf.create({"environment": environment}),
+            SimpleNamespace(register_init=registered.append),  # type: ignore[arg-type]
+        )
+        (action,) = registered
+        return action
+
+    def _measured(self, action: EnvironmentAction) -> Any:
+        from autoware_carla_scenario.odd import probes
+
+        world = _world()
+        world.id = 11
+        forget_weather_conditions()
+        probes.reset_probes()
+        action.execute(world)
+        try:
+            return probes.cloud_cover(world), world.get_weather().cloudiness
+        finally:
+            forget_weather_conditions()
+            probes.reset_probes()
+
+    @pytest.mark.parametrize("sky", ["clear", "partly_cloudy"])
+    def test_a_sky_drawn_in_rain_is_measured_as_drawn(self, sky: str) -> None:
+        from autoware_carla_scenario.odd import probes
+
+        action = self._add({"rainfall_rate_mm_h": 5.0, "cloud_cover": sky})
+        measured, cloudiness = self._measured(action)
+        # The rain clouds CARLA's sky past the label...
+        assert probes.cloud_cover_level(cloudiness) != sky
+        # ...and the run is still measured as the sky it was set to.
+        assert measured == sky
+
+    def test_without_a_cloud_cover_carlas_cloudiness_is_measured(self) -> None:
+        measured, _ = self._measured(EnvironmentAction(cloudiness=80.0))
+        assert measured == "overcast"
+        # Rain without a cloud cover: CARLA's cloudiness, which the rain sets.
+        measured, cloudiness = self._measured(self._add({"rainfall_rate_mm_h": 5.0}))
+        assert cloudiness >= 70.0 and measured == "overcast"
+
+    def test_another_world_does_not_read_it(self) -> None:
+        from autoware_carla_scenario.actions.environment import world_cloud_cover
+
+        forget_weather_conditions()
+        world = _world()
+        world.id = 12
+        action = EnvironmentAction(cloud_cover="clear")
+        assert action.sets_conditions and action.settings == {}
+        action.execute(world)
+        world.set_weather.assert_not_called()
+        assert world_cloud_cover(12) == "clear"
+        assert world_cloud_cover(13) is None and world_cloud_cover(None) is None
+        forget_weather_conditions()
+        assert world_cloud_cover(12) is None
+
+    def test_a_cover_not_in_the_taxonomy_is_refused(self) -> None:
+        from autoware_carla_scenario.actions import environment
+        from autoware_carla_scenario.odd import probes
+
+        assert list(environment._CLOUD_COVERS) == probes.CLOUD_COVERS
+        with pytest.raises(ValueError, match=r"cloud_cover must be one of"):
+            EnvironmentAction(cloud_cover="stormy")
