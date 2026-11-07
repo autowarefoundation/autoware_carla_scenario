@@ -242,6 +242,26 @@ class TestTheCycle:
         assert controller.current_phase is not None
         assert controller.current_phase.name == "go"
 
+    def test_a_zero_length_first_phase_is_shown_on_the_first_tick(
+        self, junction: dict[int, MagicMock]
+    ) -> None:
+        """The first tick enters the cycle and passes the 0 s phase at once:
+        it is not current, but it was shown on that tick."""
+        controller = SignalController(
+            name="c",
+            phases=(
+                Phase("flash", 0.0, (PhaseState(_NORTH, "red"),)),
+                Phase("go", 5.0, (PhaseState(_NORTH, "green"),)),
+            ),
+        )
+        world = _World()
+
+        controller.tick(world)
+
+        assert controller.current_phase is not None
+        assert controller.current_phase.name == "go"
+        assert controller.showed("flash")
+
 
 class TestJumpingToAPhase:
     def test_the_named_phase_shows_at_once(

@@ -922,6 +922,21 @@ class TestPathsOfTheEgosApproach:
         )
         assert (before.lanelet_id, before.s) == (rm.W_IN2, pytest.approx(45.0))  # type: ignore[union-attr]
 
+    def test_a_path_the_junction_lacks_is_no_match(self, road: tuple[Any, Any]) -> None:
+        """No member of the plain crossroads goes straight from the ego's
+        approach, so a path requiring one refuses every match rather than
+        being skipped (which would let all four ways through)."""
+        search = {
+            "segments": [
+                _lane(length={"max": 100}),
+                _junction(
+                    turn="straight",
+                    paths=[{"approach": "same", "turn": "straight"}],
+                ),
+            ]
+        }
+        assert _find(road, **search) == []
+
     def test_a_second_path_is_required_by_its_number(
         self, road: tuple[Any, Any], side: tuple[Any, Any]
     ) -> None:
