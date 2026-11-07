@@ -2989,6 +2989,10 @@ tree internally:</p>
 <td>Light a vehicle's turn indicators (<code>TurnIndicatorState</code>: <code>OFF</code> / <code>LEFT</code> / <code>RIGHT</code> / <code>HAZARD</code>), its other lights as they are; they stay so until set again.</td>
 </tr>
 <tr>
+<td><code>PerceptionFaultInjectionAction</code>, <code>PerceivedCategory</code></td>
+<td>Report one road user to the ego's driver policy as another category, with another box size, or not at all (<code>visible=False</code>), from the tick it fires on; whatever is left at its default (<code>PerceivedCategory.ACTUAL</code>, a size of 0) stays as it is, and every other road user is reported as it is. Only what the policy is told changes: the world, the trajectory log, the T4 dataset, the metrics and the conditions keep CARLA's ground truth. Not implemented yet for an ego that perceives the road users itself (Autoware, ROS 2, HILS): it raises <code>NotImplementedError</code> as it fires. See <a href="../driver_interface/#perception-faults">Perception faults</a>.</td>
+</tr>
+<tr>
 <td><code>EmergencyAction</code></td>
 <td>Put an <code>EmergencyVehicleEntity</code> on a call (<code>active=True</code>, the default: siren lights on, driven as an emergency vehicle by the traffic backend) or off duty (<code>active=False</code>); it stays so until set again. A vehicle that is not an emergency vehicle is left as it is, with a warning.</td>
 </tr>
@@ -3851,7 +3855,7 @@ packages, in <code>autoware_carla_scenario.examples.run</code> unless noted:</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 09:16:17 UTC"><span class="timeago" datetime="2026-11-07T09:16:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 09:16:17 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 23:24:34 UTC"><span class="timeago" datetime="2026-11-07T23:24:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 23:24:34 UTC">2026-11-07</span>
   </span>
 
     
