@@ -1103,18 +1103,40 @@ drives as it did before.
 
 The grip is the one quantity the action reads off the rules, during the run:
 it may differ by vehicle ([Rules by vehicle](#weather-rules)), and a vehicle
-spawned later gets its own. It reads the water the action sets, which the
-run's conditions gave before it started.
+spawned later gets its own. It reads every CARLA field of the weather the
+action leaves -- the water the run's conditions gave before it started --
+and the conditions themselves, as the ODD's probes read them: the rainfall
+rate, the visibility through the fog and the wind speed the run was set to,
+the cloud cover it was set to (else the one CARLA's clouds render), the time
+of day CARLA's sun renders, and how far drivers see. So a `tire_friction`
+part may read a cause or any other quantity; a rainfall rate, fog
+visibility or wind speed the run does not name reads its `default`, as it
+does before the run, while the time of day and the cloudiness are always
+read off CARLA's sun and clouds (the cloud cover the run names wins).
+
+Under rules other than the default ones -- a rule file of the run's
+(`environment.rules`) or rules by vehicle -- the grip may differ from
+CARLA's on any road, so every `EnvironmentAction` sets it, whatever else it
+sets, and the config's `environment` registers one even when it names only
+`rules`. One that names no grip, quantile or water (a scenario's own that
+sets the sun, say) reads the grip again at the quantile the run's grip is
+at, and keeps a grip named outright (`tire_friction`). A grip named
+outright also ends the quantile: water set after it reads the grip at the
+median. Under the default rules, a run that sets no road water, no quantile
+and no grip keeps CARLA's grip (1.0, whatever water CARLA renders).
 
 Where in the range a run's grip is, is `environment.tire_friction_quantile`:
 the quantile of the grip's distribution (0 its low end, 1 its high end; the
-median when not set). A
+median when not set). A later action in the run that names none -- rain
+starting mid-run -- reads the grip at the same quantile. A
 `sweep.odd_sample` draws it for every case (`environment.tire_friction_quantile=0.412`
 among the case's overrides, recorded in its coverage file), from the sweep's
 `seed` and the case, so the same sweep draws the same grip. The weather comes
 from the ODD and the grip from the range that weather allows: a heavy-rain
 case never runs on a dry road's grip. `tire_friction: false` in the
-`odd_sample` leaves every case at the median (`true` or `false`, or one of
+`odd_sample` leaves every case at the median -- of the rules' grip where the
+case sets it, as above; the dry road's, CARLA's own, where it does not --
+(`true` or `false`, or one of
 their spellings, as [the run's switches](usage.md#the-switches) take: `"off"`,
 `"no"` and `0` are false; a missing or null one is true; anything else, such
 as `ture` or `2`, is refused, naming `sweep.odd_sample.tire_friction`, before
@@ -1331,10 +1353,11 @@ every `vehicles` entry name one file each -- a path or an `https://` URL, as
 alone, so a file to pin goes in one that `extends` it. Anything else (a
 number, a mapping, a list, an unknown key) is refused before the batch runs
 (`openodd.RulesError`, naming the key; `weather_rules.check_weather_rules`).
-An `EnvironmentAction` that sets the road's water gives each vehicle the grip of
-its own rules, all at the same `tire_friction_quantile` (a case draws one),
-and a vehicle spawned later its own too; the ODD's `tire_friction` probe
-reads the ego's. `tire_friction`, the grip named outright, is every
+Every `EnvironmentAction` (the config's `environment`, even one naming only
+`rules`, registers one) gives each vehicle the grip of its own rules, all at
+the same `tire_friction_quantile` (a case draws one; the median when none is
+set), and a vehicle spawned later its own too; the ODD's `tire_friction`
+probe reads the ego's. `tire_friction`, the grip named outright, is every
 vehicle's. Everything else -- CARLA's weather, the visibility -- is the
 default rules'.
 

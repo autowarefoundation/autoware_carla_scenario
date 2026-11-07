@@ -55,6 +55,10 @@ from ..entity_role import find_actor_in_world
 from ..constants import EGO_ROLE_NAME
 from ..kinematics import Vector3
 from ..visibility import world_visibility
+
+# The levels the weather rules read: the checked weather_inputs's.
+from ..weather_inputs import cloud_cover_level as cloud_cover_level
+from ..weather_inputs import time_of_day_level as time_of_day_level
 from ..world_reset import episode_of
 from .model import UNDECIDED
 
@@ -160,34 +164,6 @@ def illumination_level(sun_altitude_deg: float) -> str:
     if sun_altitude_deg >= -6.0:
         return "twilight"
     return "night"
-
-
-def time_of_day_level(sun_altitude_deg: float, sun_azimuth_deg: float) -> str:
-    """The time of day for a sun at *sun_altitude_deg* above the horizon and
-    *sun_azimuth_deg*.
-
-    The day with the sun above the horizon; the civil twilight down to 6
-    degrees below it, dawn with the sun rising (azimuth 0-180 degrees) and
-    dusk with it setting (180-360); the night under that.  What the weather
-    rules' ``carla_sun_altitude`` and ``carla_sun_azimuth`` draw for each.
-    """
-    if sun_altitude_deg >= 0.0:
-        return "day"
-    if sun_altitude_deg >= -6.0:
-        azimuth = sun_azimuth_deg % 360.0
-        return "dawn" if azimuth < 180.0 else "dusk"
-    return "night"
-
-
-def cloud_cover_level(cloudiness: float) -> str:
-    """The taxonomy's cloudiness for CARLA's 0-100 *cloudiness*: clear below
-    20, overcast from 70, partly cloudy between -- what the weather rules'
-    ``carla_cloudiness`` draws for each."""
-    if cloudiness < 20.0:
-        return "clear"
-    if cloudiness < 70.0:
-        return "partly_cloudy"
-    return "overcast"
 
 
 def road_surface_level(wetness: float, precipitation_deposits: float) -> str:
