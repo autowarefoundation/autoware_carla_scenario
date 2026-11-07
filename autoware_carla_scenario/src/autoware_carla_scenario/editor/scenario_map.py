@@ -20,7 +20,9 @@ screen.  Stepping the pattern index walks the runs a ``--multirun`` sweep would
 perform, one concrete scenario at a time.  That includes the spawn's offset
 when it is derived from the map: the sweeper's binding is resolved for the pick,
 so a spawn a ``stop_line_offset`` walks back onto a predecessor is drawn there,
-and a pick whose binding fails -- one the sweep drops -- says so.
+and a pick whose binding fails -- one the sweep drops -- says so.  Two picks
+whose spawns walk back to the same place are two patterns but one run: the
+sweep runs a case once (#1950).
 
 Everything else keeps the id stored beside it, because that is exactly what a
 run that does not sweep uses: the sweeper enumerates a single target key, so at

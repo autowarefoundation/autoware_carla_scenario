@@ -945,11 +945,54 @@ def parse_constraint(cfg: dict[str, Any]) -> Constraint:
         The corresponding (possibly composite) constraint instance.
 
     Raises:
-        ValueError: If the ``type`` value is not recognised.
+        ValueError: If *cfg* is not a mapping, its ``type`` is not recognised,
+            a composite's children are not a list (or a mapping, for ``not``),
+            or a leaf is given a key it does not take, lacks one it needs or
+            refuses a value (#1951).
     """
+    from collections.abc import Mapping, Sequence  # noqa: PLC0415 -- run time only
+
+    if not isinstance(cfg, Mapping):
+        raise ValueError(
+            f"A constraint must be a mapping with a 'type' (- type: ...), got {shown(cfg)}"
+        )
     constraint_type = cfg.get("type")
     if constraint_type is None:
         raise ValueError(f"Constraint config is missing 'type': {cfg}")
+    if not isinstance(constraint_type, str):
+        raise ValueError(
+            f"A constraint's 'type' must be a string, got {shown(constraint_type)}"
+        )
+    composite_keys = {
+        "and": "constraints",
+        "or": "constraints",
+        "previous_of": "constraints",
+        "following_of": "constraints",
+        "not": "constraint",
+    }
+    if constraint_type in composite_keys:
+        child_key = composite_keys[constraint_type]
+        unknown = [k for k in cfg if k not in ("type", child_key)]
+        if unknown:
+            raise ValueError(
+                f"{constraint_type} constraint: unknown key(s) {unknown}; it "
+                f"takes ['{child_key}']"
+            )
+        children_cfg = cfg.get(child_key)
+        # A list as YAML or a Hydra node (ListConfig) holds one; a string is
+        # no list of constraints.
+        if (
+            child_key == "constraints"
+            and children_cfg
+            and (
+                isinstance(children_cfg, (str, bytes, Mapping))
+                or not isinstance(children_cfg, Sequence)
+            )
+        ):
+            raise ValueError(
+                f"'{constraint_type}' constraint requires a 'constraints' list, "
+                f"got {shown(children_cfg)}"
+            )
 
     # --- composite: and ---
     if constraint_type == "and":
@@ -999,7 +1042,31 @@ def parse_constraint(cfg: dict[str, Any]) -> Constraint:
     for k, v in kwargs.items():
         if isinstance(v, list):
             kwargs[k] = tuple(v)
-    return cls(**kwargs)
+    # A key the constraint does not take, or one it needs left out, is named
+    # here rather than as the constructor's TypeError (#1951).
+    import dataclasses  # noqa: PLC0415 -- run time only
+
+    taken = [f for f in dataclasses.fields(cls) if f.init]
+    names = [f.name for f in taken]
+    unknown = [k for k in kwargs if k not in names]
+    if unknown:
+        raise ValueError(
+            f"{constraint_type} constraint: unknown key(s) {unknown}; it takes "
+            f"{names if names else 'no keys besides type'}"
+        )
+    missing = [
+        f.name
+        for f in taken
+        if f.name not in kwargs
+        and f.default is dataclasses.MISSING
+        and f.default_factory is dataclasses.MISSING
+    ]
+    if missing:
+        raise ValueError(f"{constraint_type} constraint is missing {missing}")
+    try:
+        return cls(**kwargs)
+    except TypeError as exc:
+        raise ValueError(f"{constraint_type} constraint: {exc}") from exc
 
 
 def find_matching_lanelets(
