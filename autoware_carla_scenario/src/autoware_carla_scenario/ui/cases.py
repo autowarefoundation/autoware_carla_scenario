@@ -139,17 +139,52 @@ def match_batch_stems(
     return out
 
 
-def _manifest_stems(directory: Path, count: int) -> list[str | None] | None:
-    """The stems a SLURM batch's manifest gives its cases, if it has one of
-    *count* cases."""
+def _manifest_cases(directory: Path) -> list[dict[str, Any]] | None:
+    """A SLURM batch's manifest cases, by index; ``None`` when it has no
+    manifest or one that is not what the launcher writes: ``cases`` not a
+    list, or a case that is not an object with a whole-number ``index`` of
+    its own (0 or more).  One bad file must not break the session list
+    (#1726, #1964)."""
     manifest = _read_json(directory / "slurm" / "manifest.json")
     if not isinstance(manifest, dict):
         return None
     cases = manifest.get("cases")
-    if not isinstance(cases, list) or len(cases) != count:
+    if not isinstance(cases, list):
         return None
-    ordered = sorted(cases, key=lambda c: int(c.get("index", 0)))
-    return [str(c["stem"]) if c.get("stem") else None for c in ordered]
+    indices: set[int] = set()
+    for case in cases:
+        if not isinstance(case, dict):
+            return None
+        index = case.get("index")
+        if (
+            not isinstance(index, int)
+            or isinstance(index, bool)
+            or index < 0
+            or index in indices
+        ):
+            return None
+        indices.add(index)
+    return sorted(cases, key=lambda c: int(c["index"]))
+
+
+def _manifest_stems(directory: Path, count: int) -> list[str | None] | None:
+    """The stems a SLURM batch's manifest gives its cases, if it has one of
+    *count* cases; ``None`` too when a stem is not a single safe path
+    component (``..``, a separator: :func:`_safe`), which would name files
+    outside the batch's directory, and the stems are matched instead."""
+    cases = _manifest_cases(directory)
+    if cases is None or len(cases) != count:
+        return None
+    stems: list[str | None] = []
+    for case in cases:
+        stem = case.get("stem")
+        if not stem:
+            stems.append(None)
+        elif isinstance(stem, str) and _safe(stem):
+            stems.append(stem)
+        else:
+            return None
+    return stems
 
 
 def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
@@ -159,17 +194,18 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
     ``passed`` ``None`` and ``pending`` true; one whose outcome holds no
     verdict, or a result that cannot be reported (``recorded_verdict``,
     #1718, #1726), did not pass: ``error`` true, as ``collect`` reports it."""
-    manifest = _read_json(directory / "slurm" / "manifest.json")
-    if not isinstance(manifest, dict) or not isinstance(manifest.get("cases"), list):
+    cases = _manifest_cases(directory)
+    if cases is None:
         return None
     entries: list[dict[str, Any]] = []
-    for case in sorted(manifest["cases"], key=lambda c: int(c.get("index", 0))):
+    for case in cases:
+        overrides = case.get("case_overrides")
         record = _read_json(
             directory / "slurm" / "results" / f"{int(case['index'])}.json"
         )
         entry: dict[str, Any] = {
             "scenario": case.get("label") or case.get("scenario") or "unknown",
-            "overrides": list(case.get("case_overrides") or []),
+            "overrides": list(overrides) if isinstance(overrides, list) else [],
         }
         if isinstance(record, dict) and isinstance(record.get("result"), dict):
             entry.update(record["result"])
@@ -181,8 +217,7 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
                     passed=False,
                     error=True,
                     elapsed_seconds=None,
-                    message=f"No verdict: {path} holds no result that can be "
-                    "reported",
+                    message=f"No verdict: {path} holds no result that can be reported",
                 )
         else:
             entry.update(

@@ -220,7 +220,15 @@ def case_metrics(trajectory: Path) -> dict[str, float]:
                     continue
                 try:
                     reader.read(json.loads(line))
-                except (ValueError, TypeError, IndexError, KeyError, AttributeError):
+                except (
+                    ValueError,
+                    TypeError,
+                    IndexError,
+                    KeyError,
+                    AttributeError,
+                    # A number too large for an int or a float (#1964).
+                    OverflowError,
+                ):
                     continue
     except OSError:
         return {}
@@ -468,7 +476,11 @@ def _seconds_in(coverage: dict[str, Any], attribute: str, bucket: str) -> float:
             continue
         seconds = item.get("seconds") or {}
         if isinstance(seconds, dict) and bucket in seconds:
-            return float(seconds[bucket] or 0.0)
+            try:
+                return float(seconds[bucket] or 0.0)
+            except (TypeError, ValueError, OverflowError):
+                # Not a number, or an integer too long for a float (#1964).
+                return 0.0
     return 0.0
 
 
