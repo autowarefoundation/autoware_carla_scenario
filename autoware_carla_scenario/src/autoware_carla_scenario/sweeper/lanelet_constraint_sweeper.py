@@ -90,6 +90,7 @@ from .expand import (
     EMPTY_SWEEP_MESSAGE,
     _config_seed,
     check_constraint_keys,
+    environment_rules,
     expand_sweep,
     load_sweep_map,
     scenario_controls,
@@ -761,6 +762,7 @@ class LaneletConstraintSweeper(Sweeper):
                     controls=controls,
                     seed=seed,
                     rules=scenario_rules(cfg),
+                    environment_rules=environment_rules(cfg),
                 )
             ]
         except ValueError as exc:

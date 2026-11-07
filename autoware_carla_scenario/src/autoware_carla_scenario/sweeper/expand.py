@@ -50,7 +50,7 @@ from __future__ import annotations
 import logging
 from typing import TYPE_CHECKING, Any, Mapping, Sequence
 
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from ..seed import DEFAULT_SEED
 from .bindings import Binding, parse_binding
@@ -114,6 +114,7 @@ def expand_sweep(
     drawn: OddDraws | None = None,
     seed: int | None = None,
     rules: Mapping[str, Any] | None = None,
+    environment_rules: Any = None,
 ) -> list[list[str]]:
     """The override list of every concrete scenario ``sweep`` describes on ``lanelet_map``.
 
@@ -126,7 +127,9 @@ def expand_sweep(
     neither. Without a ``count``, one case is drawn per lanelet case or match.  *controls* are
     the scenario's (its config's ``controls``): what its parameters set; *rules*
     are the nodes it adds to the rules (its ``scenario_rules``), which a
-    control with a ``quantity`` writes.
+    control with a ``quantity`` writes; *environment_rules* are the run's
+    weather rules (its ``environment.rules``), which the CARLA weather a
+    case is given follows, as its run's does.
     *drawn*, in a batch, holds the cases earlier scenarios drew from the ODD:
     the sampler goes on from them, and the cases drawn here are added to it.
     *seed* is the run's (the config's ``seed``): the
@@ -173,6 +176,7 @@ def expand_sweep(
             drawn,
             lanelet_map=lanelet_map if base_cases != [[]] else None,
             rules=rules,
+            environment_rules=environment_rules,
         )
     if index is not None:
         if not 0 <= index < len(base_cases):
@@ -313,6 +317,7 @@ def _with_odd_samples(
     *,
     lanelet_map: Any = None,
     rules: Mapping[str, Any] | None = None,
+    environment_rules: Any = None,
 ) -> list[list[str]]:
     """``odd_sample.count`` cases (as many as base cases by default), each a
     base case -- a lanelet or a route match -- and settings drawn from the ODD.
@@ -357,6 +362,7 @@ def _with_odd_samples(
         controls=controls,
         drawn=drawn,
         rules=rules,
+        environment_rules=environment_rules,
     )
     wanted = len(base_cases) if count is None else count
     if search is not None:
@@ -675,6 +681,7 @@ def expand_config(
     # only the config, no map, ODD or CARLA.
     controls = scenario_controls(cfg)
     rules = scenario_rules(cfg)
+    weather = environment_rules(cfg)
     # And the run's seed, which every case runs with (a run refuses it too).
     seed = _config_seed(cfg)
     sweep_cfg = OmegaConf.select(cfg, "sweep")
@@ -705,6 +712,7 @@ def expand_config(
             drawn=drawn,
             seed=seed,
             rules=rules,
+            environment_rules=weather,
         )
 
     lanelet_map = load_sweep_map(OmegaConf.select(cfg, "map"))
@@ -717,6 +725,7 @@ def expand_config(
         drawn=drawn,
         seed=seed,
         rules=rules,
+        environment_rules=weather,
     )
 
 
@@ -832,9 +841,22 @@ def scenario_rules(cfg: DictConfig) -> dict[str, Any] | None:
     return {str(k): v for k, v in rules.items()}
 
 
+def environment_rules(cfg: DictConfig) -> Any:
+    """The config's ``environment.rules``, resolved: the weather rules its
+    runs follow (a file, or ``{default, vehicles}``), or ``None`` for the
+    default ones.  A sweep draws its cases' CARLA weather by them
+    (:func:`~autoware_carla_scenario.odd.sampler.scenario_backend`), as
+    each run does."""
+    node = OmegaConf.select(cfg, "environment.rules")
+    if isinstance(node, (DictConfig, ListConfig)):
+        return OmegaConf.to_container(node, resolve=True)
+    return node
+
+
 __all__ = [
     "EMPTY_SWEEP_MESSAGE",
     "check_constraint_keys",
+    "environment_rules",
     "expand_config",
     "expand_route",
     "expand_sweep",

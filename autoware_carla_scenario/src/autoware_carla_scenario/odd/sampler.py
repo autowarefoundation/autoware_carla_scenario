@@ -158,23 +158,38 @@ class OddSampler(_OddSampler):
         super().__init__(odd, knobs, **kw)
 
 
-def scenario_backend(rules: Optional[Mapping[str, Any]]) -> CarlaBackend:
+def scenario_backend(
+    rules: Optional[Mapping[str, Any]], environment_rules: Any = None
+) -> CarlaBackend:
     """The CARLA backend a scenario's cases are drawn with: the shared
-    network (:mod:`~autoware_carla_scenario.weather_rules`) and, with
-    *rules* -- the scenario's ``scenario_rules``, a rule document -- the
-    nodes the scenario adds to it (openodd's ``Backend.add_rules``): what it
-    sets up, such as the gap to a vehicle about to cut in, which its
-    ``controls`` write by ``quantity``.  A backend of its own, so one
-    scenario's nodes never reach another's draws.
+    network (:mod:`~autoware_carla_scenario.weather_rules`) -- the default
+    rules, with *environment_rules*, the config's ``environment.rules`` (a
+    file, or ``{default, vehicles}``), followed over them as a run follows
+    them (:func:`~autoware_carla_scenario.weather_rules.use_weather_rules`:
+    its ``default``; the ``vehicles`` entries give a vehicle's grip alone,
+    which no case draws) -- and, with *rules* -- the scenario's
+    ``scenario_rules``, a rule document -- the nodes the scenario adds to it
+    (openodd's ``Backend.add_rules``): what it sets up, such as the gap to a
+    vehicle about to cut in, which its ``controls`` write by ``quantity``.
+    A backend of its own, never the process's
+    :data:`~.backend.CARLA_BACKEND`, so the CARLA weather a case is given
+    follows the rules its run follows, not those an earlier run left, and
+    one scenario's nodes never reach another's draws.
 
     Raises:
         openodd.RulesError: When *rules* is not a rule document, or defines a
-            node the shared network defines.
+            node the shared network defines, or *environment_rules* is not of
+            the form a run reads or its file cannot be read
+            (:func:`~autoware_carla_scenario.weather_rules.check_weather_rules`).
     """
-    if not rules:
-        return CARLA_BACKEND
+    from ..weather_rules import check_weather_rules  # noqa: PLC0415
+
+    default, _vehicles = check_weather_rules(environment_rules)
     backend = CarlaBackend()
-    backend.add_rules(Rules.from_text(yaml.safe_dump(dict(rules), sort_keys=False)))
+    if default is not None:
+        backend.use_rules(str(default))
+    if rules:
+        backend.add_rules(Rules.from_text(yaml.safe_dump(dict(rules), sort_keys=False)))
     return backend
 
 
@@ -276,6 +291,7 @@ def sampler_from_config(
     base_dir: Optional[Path] = None,
     drawn: Optional[OddDraws] = None,
     rules: Optional[Mapping[str, Any]] = None,
+    environment_rules: Any = None,
 ) -> tuple[OddSampler, Optional[int]]:
     """An :class:`OddSampler` and the case count, from a ``sweep.odd_sample``
     mapping without ``flaky`` (see :func:`search_from_config`).
@@ -290,7 +306,13 @@ def sampler_from_config(
     if flaky is not None and flaky is not False:
         raise ValueError("sweep.odd_sample.flaky needs search_from_config()")
     sampler, _, count = search_from_config(
-        raw, odd=odd, controls=controls, base_dir=base_dir, drawn=drawn, rules=rules
+        raw,
+        odd=odd,
+        controls=controls,
+        base_dir=base_dir,
+        drawn=drawn,
+        rules=rules,
+        environment_rules=environment_rules,
     )
     return sampler, count
 
@@ -429,6 +451,7 @@ def search_from_config(
     base_dir: Optional[Path] = None,
     drawn: Optional[OddDraws] = None,
     rules: Optional[Mapping[str, Any]] = None,
+    environment_rules: Any = None,
 ) -> tuple[OddSampler, Optional[FlakySearch], Optional[int]]:
     """An :class:`OddSampler`, the flaky search over it (``None`` without
     ``flaky``), and the case count (``None`` when not given), from a
@@ -447,6 +470,10 @@ def search_from_config(
     the scenario measures its parameters set. *drawn*, in a batch, holds the
     cases the earlier scenarios drew; the sampler goes on from those drawn
     from its ODD. The caller records its own cases in it once drawn.
+    *rules* (the config's ``scenario_rules``) and *environment_rules* (its
+    ``environment.rules``) are the rules the cases are drawn by
+    (:func:`scenario_backend`): the CARLA weather a case is given follows
+    the rules its run follows.
 
     Raises:
         ValueError: On an unknown field, a ``seed`` or ``count`` that is
@@ -492,7 +519,7 @@ def search_from_config(
         coverage=coverage,
         weights=weights_from_config(raw.get("weights"), base_dir),
         drawn=drawn.of(definition) if drawn is not None else (),
-        backend=scenario_backend(rules),
+        backend=scenario_backend(rules, environment_rules),
     )
     search = None
     if flaky is not None and flaky is not False:
