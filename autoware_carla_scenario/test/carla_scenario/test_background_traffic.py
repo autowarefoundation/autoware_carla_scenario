@@ -7,6 +7,8 @@ then drives the vehicles is the backends' business, tested with them.
 from __future__ import annotations
 
 import math
+import sys
+from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any, Optional
 
@@ -22,6 +24,16 @@ from autoware_carla_scenario import (
     TrafficSourceAction,
 )
 from autoware_carla_scenario.actions import background_traffic
+
+# Imported here, before the autouse ``_map`` fixture fakes
+# ``coordinate.to_carla_world`` and ``coordinate.lanelet_length``: the
+# Hydra tests import ``examples.run``, which pulls in the example scenarios
+# and ``placement``, and a module first imported while the fakes are in place
+# binds them by name for the rest of the process (``from
+# autoware_carla_scenario import to_carla_world``, which the package's lazy
+# ``__getattr__`` also caches) -- monkeypatch puts back only the attribute it
+# set (#1916).
+from autoware_carla_scenario.examples import run as _run_module  # noqa: F401
 from autoware_carla_scenario.traffic import TrafficBackend
 
 _NOT_JUNCTION = [{"type": "not", "constraint": {"type": "is_junction"}}]
@@ -75,9 +87,27 @@ class _World:
         return SimpleNamespace(filter=lambda pattern: [])
 
 
+def _modules_holding(fakes: tuple[object, ...]) -> list[str]:
+    """``module.name`` of every module attribute that is one of *fakes*."""
+    held = []
+    for module_name, module in list(sys.modules.items()):
+        namespace = getattr(module, "__dict__", None)
+        if not isinstance(namespace, dict):
+            continue
+        for name, value in list(namespace.items()):
+            if any(value is fake for fake in fakes):
+                held.append(f"{module_name}.{name}")
+    return held
+
+
 @pytest.fixture(autouse=True)
-def _map(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Three 100 m lanelets side by side at y = 0, 10 and 20: lanelet n at y = 10 (n - 1)."""
+def _map(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """Three 100 m lanelets side by side at y = 0, 10 and 20: lanelet n at y = 10 (n - 1).
+
+    Once the test is done the fakes must be gone from every module: one a
+    module bound while they were in place would stand in for the real
+    function in every later test of the process (#1916).
+    """
     import autoware_carla_scenario.coordinate as coordinate
 
     monkeypatch.setattr(
@@ -85,7 +115,11 @@ def _map(monkeypatch: pytest.MonkeyPatch) -> None:
         "lanelet_ids",
         property(lambda self: [1, 2, 3]),
     )
-    monkeypatch.setattr(coordinate, "lanelet_length", lambda lanelet_id: 100.0)
+
+    def lanelet_length(lanelet_id: int) -> float:
+        return 100.0
+
+    monkeypatch.setattr(coordinate, "lanelet_length", lanelet_length)
 
     def to_carla_world(pose: Any) -> Any:
         x, y = pose.s, 10.0 * (pose.lanelet_id - 1)
@@ -103,6 +137,10 @@ def _map(monkeypatch: pytest.MonkeyPatch) -> None:
         "contains",
         lambda self, x, y, z=None: y < 15.0,
     )
+    yield
+    monkeypatch.undo()
+    leaked = _modules_holding((to_carla_world, lanelet_length))
+    assert not leaked, f"the faked map leaked into {leaked}"
 
 
 def _run(action: Any, world: _World, seconds: float, dt: float = 0.05) -> None:
