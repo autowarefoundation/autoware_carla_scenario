@@ -123,13 +123,11 @@ def stand_ins(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
 )
 def test_the_ego_s_indicator_side_is_read_for_nade(
     stand_ins: dict[str, Any],
-    monkeypatch: pytest.MonkeyPatch,
     state: TurnIndicatorState,
     side: str,
 ) -> None:
     # The side NADE is told the ego signals: left for left, right for right,
-    # none with the indicators off (#1925).
-    monkeypatch.setattr(adversarial_traffic, "is_vehicle", lambda actor: True)
+    # none with the indicators off (#1925). The stand-in ego is a vehicle.
     stand_ins["state"] = state
     assert adversarial_traffic._indicator(_world()) == side
 
