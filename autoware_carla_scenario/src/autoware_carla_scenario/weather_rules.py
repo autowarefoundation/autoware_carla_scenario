@@ -267,7 +267,8 @@ def resolve_environment(
     a run applies, as numbers.
 
     The causes *settings* names (:data:`CAUSE_SETTINGS`: ``rainfall_rate_mm_h``,
-    ``fog_visibility_range_m``, ``time_of_day``) and the CARLA fields it sets
+    ``fog_visibility_range_m``, ``time_of_day``, ``wind_speed_kmh``,
+    ``cloud_cover``) and the CARLA fields it sets
     itself (``precipitation``, ``fog_density``, ...) are kept; every other
     CARLA field that follows from them, and ``visibility_m``, are added, each
     at its quantile in *quantiles* (by quantity; ``visibility`` also from

@@ -317,8 +317,9 @@ controls: {}
 #
 #   uv run scenario ... environment.rainfall_rate_mm_h=5 environment.time_of_day=dusk
 #
-# The conditions -- rainfall_rate_mm_h (mm/h), fog_visibility_range_m (m) and
-# time_of_day (day, dusk, night, dawn), the taxonomy's -- are what the run is
+# The conditions -- rainfall_rate_mm_h (mm/h), fog_visibility_range_m (m),
+# time_of_day (day, dusk, night, dawn), wind_speed_kmh (km/h) and cloud_cover
+# (clear, partly_cloudy, overcast), the taxonomy's -- are what the run is
 # set to, and what the ODD measures. CARLA's weather fields render them, and
 # follow from them by the weather rules (autoware_carla_scenario/
 # weather_rules.yaml, docs/odd.md "Weather rules"), worked out once, before
@@ -331,8 +332,9 @@ controls: {}
 # Every value must be a finite number (NaN or infinity fails the run at its
 # start, naming the key); cloudiness, precipitation, precipitation_deposits,
 # wetness, wind_intensity and fog_density are 0-100, tire_friction,
-# visibility_m and fog_visibility_range_m positive, rainfall_rate_mm_h not
-# negative, the quantiles 0-1.
+# visibility_m and fog_visibility_range_m positive, rainfall_rate_mm_h and
+# wind_speed_kmh not negative, the quantiles 0-1. CARLA renders no snow and
+# has no temperature: an ODD that measures or restricts them is refused.
 #
 # The road's grip follows its water (EnvironmentAction, docs/odd.md): a run
 # that sets the wetness or the standing water (rain does both) scales every
@@ -363,6 +365,10 @@ environment:
   fog_visibility_range_m: null
   # day, dusk, night or dawn.
   time_of_day: null
+  # km/h: 5-20 light wind, 20-50 moderate, above that strong.
+  wind_speed_kmh: null
+  # clear, partly_cloudy or overcast.
+  cloud_cover: null
   cloudiness: null
   precipitation: null
   precipitation_deposits: null

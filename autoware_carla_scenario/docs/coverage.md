@@ -180,12 +180,18 @@ categories; what tier4/taxonomy does not declare yet keeps an id of its own
 | `odd.EC.weather.rain.rainfall_rate`, `...rain_intensity` | no_rain, light_rain (0.1-2.5 mm/h), moderate_rain (2.5-7.6), heavy_rain | The rainfall rate the run was set to |
 | `odd.EC.weather.fog.fog_visibility_range`, `...fog_level` | fog_thick (under 50 m), fog_heavy (50-450), fog_medium (450-800), fog_mist (800-1600), fog_not_detectable | The visibility through the fog the run was set to |
 | `odd.EC.illumination.time_of_day` | day, dusk, night, dawn | The sun: day above the horizon, dusk or dawn (setting or rising) down to -6°, night under it |
+| `odd.EC.weather.wind.wind_speed`, `...wind_intensity` | no_wind (under 5 km/h), light_wind (5-20), moderate_wind (20-50), strong_wind | The wind speed the run was set to |
+| `odd.EC.illumination.cloudiness` | clear, partly_cloudy, overcast | CARLA's cloudiness: clear below 20, overcast from 70 |
+| `odd.SE.drivable_area_surface.road_surface_condition` ² | dry, wet, standing_water (of tier4/taxonomy's twelve, what CARLA renders) | CARLA's water: standing water from 50, wet from 10 |
 | `odd.ego_vehicle.ego_vehicle.velocity` ³ | 0-5, then 10 km/h wide centred on 10, 20, ... 120 (5-15, 15-25, ...) | Ego velocity |
 | `odd.dynamic.nearby_vehicle_count` | 0, 1-2, 3-5, 6+ | Other vehicles within 50 m |
 | `odd.dynamic.pedestrian_nearby` | false, true | A walker within 50 m |
 
 What a scenario sets up -- the vehicle ahead, a pedestrian crossing -- is no
 attribute of it: the rules draw it, and a case records the value it drew.
+The snowfall rate, the snow intensity and the temperature are declared and
+not measured: CARLA cannot bring them about, and an ODD that measures or
+restricts them is refused ([ODD](odd.md)).
 
 ² Covered by a stay of 2 s or more (`cover_by="entries", min_stay=2`).
 Clipping a section while merging or changing lanes does not cover it.

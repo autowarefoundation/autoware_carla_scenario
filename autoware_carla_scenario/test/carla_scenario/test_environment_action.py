@@ -624,3 +624,35 @@ class TestVisibility:
     def test_out_of_range_is_refused(self, kwargs: dict, message: str) -> None:
         with pytest.raises(ValueError, match=message):
             EnvironmentAction(**kwargs)
+
+
+def test_the_wind_speed_is_recorded_and_the_cloud_cover_named() -> None:
+    from types import SimpleNamespace
+
+    from omegaconf import OmegaConf
+
+    from autoware_carla_scenario.examples.run import add_environment
+    from autoware_carla_scenario.odd import probes
+
+    forget_weather_conditions()
+    registered: list = []
+    scenario = SimpleNamespace(register_init=registered.append)
+    add_environment(
+        OmegaConf.create(
+            {"environment": {"wind_speed_kmh": 30, "cloud_cover": "overcast"}}
+        ),
+        scenario,  # type: ignore[arg-type]
+    )
+    (action,) = registered
+    assert action.settings["cloudiness"] >= 70.0
+    assert 20.0 <= action.settings["wind_intensity"] <= 50.0
+    world = _world()
+    world.id = 9
+    action.execute(world)
+    assert probes.wind_speed_kmh(world) == 30.0
+    with pytest.raises(ValueError, match=r"environment\.cloud_cover must be one of"):
+        add_environment(
+            OmegaConf.create({"environment": {"cloud_cover": "stormy"}}),
+            scenario,  # type: ignore[arg-type]
+        )
+    forget_weather_conditions()

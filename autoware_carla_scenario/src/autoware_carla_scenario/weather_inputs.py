@@ -33,6 +33,7 @@ QUANTITIES: tuple[str, ...] = (
     "carla_cloudiness",
     "carla_precipitation_deposits",
     "carla_wetness",
+    "carla_wind_intensity",
     "carla_fog_density",
     "carla_sun_altitude",
     "carla_sun_azimuth",
@@ -43,11 +44,14 @@ QUANTITIES: tuple[str, ...] = (
 
 #: The causes a part may read: concepts of the taxonomy the rules name
 #: (openodd's bundled default, a subset of tier4/taxonomy) -- the rainfall
-#: rate (mm/h), the visibility through the fog (m) and the time of day.
+#: rate (mm/h), the visibility through the fog (m), the time of day, the wind
+#: speed (km/h) and the cloudiness.
 WEATHER_INPUTS: tuple[str, ...] = (
     "rainfall_rate",
     "fog_visibility_range",
     "time_of_day",
+    "wind_speed",
+    "cloudiness",
 )
 
 #: The ``environment`` setting that gives each cause, in the unit its name
@@ -56,6 +60,8 @@ CAUSE_SETTINGS: dict[str, str] = {
     "rainfall_rate_mm_h": "rainfall_rate",
     "fog_visibility_range_m": "fog_visibility_range",
     "time_of_day": "time_of_day",
+    "wind_speed_kmh": "wind_speed",
+    "cloud_cover": "cloudiness",
 }
 
 #: The quantity that is each of CARLA's weather fields, by the field's name
@@ -65,6 +71,7 @@ CARLA_QUANTITIES: dict[str, str] = {
     "cloudiness": "carla_cloudiness",
     "precipitation_deposits": "carla_precipitation_deposits",
     "wetness": "carla_wetness",
+    "wind_intensity": "carla_wind_intensity",
     "fog_density": "carla_fog_density",
     "sun_altitude_angle": "carla_sun_altitude",
     "sun_azimuth_angle": "carla_sun_azimuth",

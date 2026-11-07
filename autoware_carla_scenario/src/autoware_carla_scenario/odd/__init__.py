@@ -27,11 +27,14 @@ from .model import (
 )
 from .probes import (
     ILLUMINATION_LEVELS,
+    CLOUD_COVERS,
     DRIVABLE_AREA_TYPES,
     INTENSITY_LEVELS,
     NEARBY_RADIUS_M,
+    ROAD_SURFACE_CONDITIONS,
     TIMES_OF_DAY,
     TRAFFIC_DENSITY_LEVELS,
+    cloud_cover,
     cloudiness,
     drivable_area_type,
     ego_speed_kph,
@@ -51,6 +54,7 @@ from .probes import (
     rain,
     rainfall_rate_mm_h,
     reset_probes,
+    road_surface_condition,
     road_type,
     road_wetness,
     speed_limit_kph,
@@ -59,6 +63,7 @@ from .probes import (
     traffic_density,
     visibility,
     wind,
+    wind_speed_kmh,
 )
 from .scenario_measure import ScenarioMeasure, scenario_measure
 from .route import (
@@ -93,10 +98,12 @@ from .registry import (
 
 __all__ = [
     "backend",
+    "CLOUD_COVERS",
     "DRIVABLE_AREA_TYPES",
     "ILLUMINATION_LEVELS",
     "INTENSITY_LEVELS",
     "NEARBY_RADIUS_M",
+    "ROAD_SURFACE_CONDITIONS",
     "TIMES_OF_DAY",
     "TRAFFIC_DENSITY_LEVELS",
     "DEFAULT_KNOBS",
@@ -124,6 +131,7 @@ __all__ = [
     "all_of",
     "any_of",
     "default_odd",
+    "cloud_cover",
     "cloudiness",
     "drivable_area_type",
     "ego_speed_kph",
@@ -158,6 +166,7 @@ __all__ = [
     "register_odd",
     "reset_probes",
     "resolve_odd",
+    "road_surface_condition",
     "road_type",
     "road_wetness",
     "speed_limit_kph",
@@ -166,6 +175,7 @@ __all__ = [
     "traffic_density",
     "visibility",
     "wind",
+    "wind_speed_kmh",
     "ScenarioMeasure",
     "scenario_measure",
 ]

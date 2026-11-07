@@ -131,6 +131,8 @@ class TestDefaultRules:
             "rainfall_rate",
             "fog_visibility_range",
             "time_of_day",
+            "wind_speed",
+            "cloudiness",
         }
         # The grip follows the wetter of the wetness and the standing water.
         assert weather_range(
@@ -736,3 +738,25 @@ def test_vehicle_entry_is_the_first_pattern_the_vehicle_matches(
             before = index
             break
     assert before == expected
+
+
+class TestWindAndClouds:
+    def test_the_wind_speed_gives_carlas_wind_intensity(self) -> None:
+        assert weather_range("carla_wind_intensity", {"wind_speed": 20.0}) == (
+            pytest.approx((20.0, 50.0))
+        )
+        out = resolve_environment({"wind_speed_kmh": 0.0})
+        assert out["wind_intensity"] == 0.0
+
+    @pytest.mark.parametrize("sky", ["clear", "partly_cloudy", "overcast"])
+    def test_the_sky_drawn_reads_back_as_it(self, sky: str) -> None:
+        for q in (0.0, 0.5, 1.0):
+            cloudiness = weather_at("carla_cloudiness", {"cloudiness": sky}, q)
+            assert probes.cloud_cover_level(cloudiness) == sky
+
+    def test_rain_clouds_the_sky_whatever_the_cloud_cover(self) -> None:
+        out = resolve_environment({"cloud_cover": "clear", "rainfall_rate_mm_h": 25.0})
+        assert out["cloudiness"] > 90.0
+        # A cloud cover alone leaves the rain to the world.
+        out = resolve_environment({"cloud_cover": "partly_cloudy"})
+        assert "precipitation" not in out and 20.0 <= out["cloudiness"] < 70.0

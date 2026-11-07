@@ -56,6 +56,7 @@ __all__ = [
     "tire_friction_range",
     "world_fog_visibility_range",
     "world_rainfall_rate",
+    "world_wind_speed",
     "world_tire_friction",
 ]
 
@@ -75,7 +76,7 @@ _POSITIVE_ARGUMENTS: tuple[str, ...] = (
     "fog_visibility_range_m",
 )
 #: The arguments that must not be negative.
-_NON_NEGATIVE_ARGUMENTS: tuple[str, ...] = ("rainfall_rate_mm_h",)
+_NON_NEGATIVE_ARGUMENTS: tuple[str, ...] = ("rainfall_rate_mm_h", "wind_speed_kmh")
 #: The arguments that are quantiles, 0-1.
 _QUANTILE_ARGUMENTS: tuple[str, ...] = ("tire_friction_quantile", "visibility_quantile")
 
@@ -86,8 +87,8 @@ def _refusal(name: str, value: float) -> str:
 
     Every value must be finite; the weather fields of :data:`_PERCENT_FIELDS`
     within [0, 100], *tire_friction*, *visibility_m* and
-    *fog_visibility_range_m* positive, *rainfall_rate_mm_h* not negative, the
-    quantiles within [0, 1].
+    *fog_visibility_range_m* positive, *rainfall_rate_mm_h* and
+    *wind_speed_kmh* not negative, the quantiles within [0, 1].
     """
     if not math.isfinite(value):
         return f"must be finite, got {value}"
@@ -140,10 +141,12 @@ def _water(wetness: float, precipitation_deposits: float) -> dict[str, float]:
     }
 
 
-#: World (episode) id -> the rainfall rate (mm/h) and the visibility through
-#: the fog (m) the run was set to, where an action named them.
+#: World (episode) id -> the rainfall rate (mm/h), the visibility through the
+#: fog (m) and the wind speed (km/h) the run was set to, where an action
+#: named them.
 _RAINFALL: dict[int, float] = {}
 _FOG_VISIBILITY: dict[int, float] = {}
+_WIND_SPEED: dict[int, float] = {}
 
 
 def _record_condition(store: dict[int, float], world_id: int, value: float) -> None:
@@ -170,11 +173,20 @@ def world_fog_visibility_range(world_id: Optional[int]) -> Optional[float]:
     return _FOG_VISIBILITY[world_id]
 
 
+def world_wind_speed(world_id: Optional[int]) -> Optional[float]:
+    """The wind speed, km/h, an action set the world *world_id* to, or
+    ``None``: what the ODD's ``wind_speed_kmh`` probe reads."""
+    if world_id is None or world_id not in _WIND_SPEED:
+        return None
+    return _WIND_SPEED[world_id]
+
+
 def forget_weather_conditions() -> None:
     """Forget every world's conditions; the runner calls this for every run,
     so a run that names none does not read the last run's."""
     _RAINFALL.clear()
     _FOG_VISIBILITY.clear()
+    _WIND_SPEED.clear()
 
 
 #: World (episode) id -> the grip share last applied in it.
@@ -481,10 +493,11 @@ class EnvironmentAction(BaseAction):
 
         EnvironmentAction(**resolve_environment({"rainfall_rate_mm_h": 5.0}))
 
-    *rainfall_rate_mm_h* and *fog_visibility_range_m* are recorded as what the
-    run was set to, which the ODD's probes read
-    (:func:`world_rainfall_rate`, :func:`world_fog_visibility_range`); the
-    time of day is read off the sun.
+    *rainfall_rate_mm_h*, *fog_visibility_range_m* and *wind_speed_kmh* are
+    recorded as what the run was set to, which the ODD's probes read
+    (:func:`world_rainfall_rate`, :func:`world_fog_visibility_range`,
+    :func:`world_wind_speed`); the time of day and the cloudiness are read
+    off CARLA's sun and clouds.
 
     The default phase is ``init``: most scenarios set the weather once, before
     anything moves.  Registering it on the tick loop instead is what makes the
@@ -519,6 +532,8 @@ class EnvironmentAction(BaseAction):
             recorded, not applied.  Keyword-only.
         fog_visibility_range_m: The visibility through the fog the run is set
             to, metres: recorded, not applied.  Keyword-only.
+        wind_speed_kmh: The wind speed the run is set to, km/h: recorded, not
+            applied.  Keyword-only.
         tire_friction: The vehicles' grip, as a share of the dry road's
             (1.0): fixed, whatever the weather.  Keyword-only.
         tire_friction_quantile: The quantile of the distribution of grip the
@@ -537,14 +552,15 @@ class EnvironmentAction(BaseAction):
             weather field given as 0-100 (*cloudiness*, *precipitation*,
             *precipitation_deposits*, *wetness*, *wind_intensity*,
             *fog_density*) is outside it; *tire_friction*, *visibility_m* or
-            *fog_visibility_range_m* is not positive; *rainfall_rate_mm_h* is
-            negative; or *tire_friction_quantile* is outside [0, 1].  The
+            *fog_visibility_range_m* is not positive; *rainfall_rate_mm_h* or
+            *wind_speed_kmh* is negative; or *tire_friction_quantile* is outside [0, 1].  The
             message names the argument.
     """
 
     _settings: dict[str, float]
     _rainfall_rate_mm_h: Optional[float]
     _fog_visibility_range_m: Optional[float]
+    _wind_speed_kmh: Optional[float]
     _tire_friction: Optional[float]
     _tire_friction_quantile: Optional[float]
     _visibility_m: Optional[float]
@@ -565,6 +581,7 @@ class EnvironmentAction(BaseAction):
         *,
         rainfall_rate_mm_h: Optional[float] = None,
         fog_visibility_range_m: Optional[float] = None,
+        wind_speed_kmh: Optional[float] = None,
         tire_friction: Optional[float] = None,
         tire_friction_quantile: Optional[float] = None,
         visibility_m: Optional[float] = None,
@@ -584,6 +601,7 @@ class EnvironmentAction(BaseAction):
             ("sun_azimuth_angle", sun_azimuth_angle),
             ("rainfall_rate_mm_h", rainfall_rate_mm_h),
             ("fog_visibility_range_m", fog_visibility_range_m),
+            ("wind_speed_kmh", wind_speed_kmh),
             ("tire_friction", tire_friction),
             ("tire_friction_quantile", tire_friction_quantile),
             ("visibility_m", visibility_m),
@@ -594,6 +612,7 @@ class EnvironmentAction(BaseAction):
                     raise ValueError(f"EnvironmentAction: {name} {refusal}")
         self._rainfall_rate_mm_h = rainfall_rate_mm_h
         self._fog_visibility_range_m = fog_visibility_range_m
+        self._wind_speed_kmh = wind_speed_kmh
         self._tire_friction = tire_friction
         self._tire_friction_quantile = tire_friction_quantile
         self._visibility_m = visibility_m
@@ -640,6 +659,7 @@ class EnvironmentAction(BaseAction):
         return (
             self._rainfall_rate_mm_h is not None
             or self._fog_visibility_range_m is not None
+            or self._wind_speed_kmh is not None
         )
 
     def execute(self, world: "carla.World") -> None:
@@ -674,6 +694,9 @@ class EnvironmentAction(BaseAction):
         fog = self._fog_visibility_range_m
         if fog is not None:
             _record_condition(_FOG_VISIBILITY, world.id, fog)
+        wind = self._wind_speed_kmh
+        if wind is not None:
+            _record_condition(_WIND_SPEED, world.id, wind)
         if self.sets_tire_friction:
             if self._tire_friction is not None:
                 apply_tire_friction(world, self._tire_friction)

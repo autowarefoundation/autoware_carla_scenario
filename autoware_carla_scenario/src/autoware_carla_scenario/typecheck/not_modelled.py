@@ -639,6 +639,10 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "(`dict[str, Any]`: its kind, primitive, unit type and literals), "
             "which the taxonomy tools read, not a scenario"
         ),
+        "defined_by": (
+            "the concepts a derived categorical of the taxonomy is defined by, "
+            "which openodd checks against its backend, not a scenario"
+        ),
     },
     "OddCondition": {"evaluate": _ODD_RUN_VALUES},
     "OddDefinition": {
