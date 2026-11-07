@@ -214,6 +214,15 @@ def test_an_adversity_that_challenges_no_one_weighs_nothing(
     assert sampler.weight == 1.0
 
 
+def test_a_vehicle_challenges_a_stopped_ego(features: MapFeatures) -> None:
+    # Only a pedestrian leaves alone what stands still (TeraSim's 1 m/s):
+    # npc1, 12 m behind the stopped ego, may ignore it as its leader.
+    scene = _scene(features, _car("ego", -40.0, speed=0.0), _car("npc1", -52.0))
+    ign = NadeAdversity(AdversityKind.IGNORE_LEADER, AdversityLocation.ANY, 0.01)
+    choice = _step(ImportanceSampler(settings=ALWAYS), scene, adversities=(ign,))
+    assert choice is not None and choice.name == "npc1"
+
+
 def test_the_first_adversity_that_fires_is_the_agent_s(features: MapFeatures) -> None:
     leader = NadeAdversity(AdversityKind.IGNORE_LEADER, AdversityLocation.ANY, 0.5)
     gated = NadeAdversity(AdversityKind.BRAKE_CHECK, AdversityLocation.HIGHWAY, 0.5)
@@ -295,6 +304,25 @@ def test_a_lane_change_abort_challenges_the_ego_beside(features: MapFeatures) ->
     # 6 m behind and faster, the ego cannot brake out of it: unavoidable.
     assert not choice.avoidable
     assert sampler.weight == pytest.approx(0.02 * 3e-4)
+
+
+def test_an_unavoidable_one_not_sampled_weighs_its_unavoidable_q(
+    features: MapFeatures,
+) -> None:
+    # The abort above, left to the draws (seed 0's first is 0.84): an
+    # unavoidable adversity's q takes its IS magnitude times
+    # unavoidable_magnitude, not the plain magnitude, and the weight of not
+    # sampling it says so.
+    scene = _scene(features, _car("ego", -46.0, OUTER, speed=12.0), _car("npc1", -40.0))
+    abort = NadeAdversity(AdversityKind.LANE_CHANGE_ABORT, AdversityLocation.ANY, 0.02)
+    sampler = ImportanceSampler()
+    assert _step(sampler, scene, adversities=(abort,)) is None
+    # p is cut by AvoidanceSettings.unavoidable_factor (3e-4); q is p times
+    # NadeSettings.magnitude (20) times AvoidanceSettings.unavoidable_magnitude
+    # (40), under max_is_probability (0.05).
+    p = 0.02 * 3e-4
+    q = p * 20 * 40
+    assert sampler.weight == pytest.approx((1 - p) / (1 - q))
 
 
 def test_the_draws_are_seeded(features: MapFeatures) -> None:

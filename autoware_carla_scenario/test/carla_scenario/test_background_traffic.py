@@ -320,6 +320,25 @@ class TestSource:
     def test_a_zero_rate_and_gap_are_taken(self) -> None:
         TrafficSourceAction(_NOT_JUNCTION, vehicles_per_minute=0.0, min_gap_m=0.0)
 
+    def test_carla_s_own_vehicles_take_room_too(self) -> None:
+        # Not only the backend's: a CARLA vehicle every 5 m on all three
+        # lanelets leaves no spot min_gap_m clear.
+        def vehicle(x: float, y: float) -> Any:
+            return SimpleNamespace(get_location=lambda: carla.Location(x=x, y=y, z=0.0))
+
+        cars = [
+            vehicle(float(x), y) for x in range(0, 101, 5) for y in (0.0, 10.0, 20.0)
+        ]
+        world = _World()
+        world.get_actors = lambda: SimpleNamespace(  # type: ignore[method-assign]
+            filter=lambda pattern: cars
+        )
+        backend = _Backend()
+        source = TrafficSourceAction(_NOT_JUNCTION, initial_vehicles=3)
+        source.set_traffic_backend(backend)
+        source.tick(world, 0.0)
+        assert backend.vehicles == {}
+
     def test_a_vehicle_parked_under_the_map_takes_no_room(self) -> None:
         # #853: an entity parked 500 m under the map until its spawn.
         def vehicle(x: float, y: float, z: float) -> Any:
