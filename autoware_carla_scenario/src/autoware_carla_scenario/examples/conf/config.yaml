@@ -83,17 +83,18 @@ t4:
   # cameras) while the run goes on.
   workers: 4
 
-# Write each run's trajectory log as a T4Scene, the scene exchange format of
-# tier4/e2e-devkit, as the run ends: {Scenario}.t4scene.pb, and the Lanelet2
-# map it names as {Scenario}.t4scene.map.pb (docs/t4_scene.md). Needs no extra;
-# `scenario-t4scene <output dir>` does the same after a run. Best effort: a log
-# that cannot be converted is logged, the run's verdict stands.
 # The heavy CommonRoad metrics (CriMe's TTR, seconds a frame): off, a metric
 # condition on one is not judged (docs/metrics.md, "CommonRoad metrics").
 # null: as $AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS says (on unless it is 0);
 # true or false here overrides it.
 metrics:
   heavy: null
+
+# Write each run's trajectory log as a T4Scene, the scene exchange format of
+# tier4/e2e-devkit, as the run ends: {Scenario}.t4scene.pb, and the Lanelet2
+# map it names as {Scenario}.t4scene.map.pb (docs/t4_scene.md). Needs no extra;
+# `scenario-t4scene <output dir>` does the same after a run. Best effort: a log
+# that cannot be converted is logged, the run's verdict stands.
 t4scene:
   enabled: false
   # The scene's time step in seconds, a multiple of the 0.05 s tick.
@@ -238,7 +239,7 @@ ego:
   # Where the ego is going; each scenario names it, or derives it in setup().
   goal_lanelet_id: null
   goal_s: 0.0
-  # autopilot | autoware | carla_driver | ros2
+  # autopilot | autoware | carla_driver | ros2 | hils
   entity: autopilot
 
 # Background traffic: vehicles no scenario entity stands for, placed and

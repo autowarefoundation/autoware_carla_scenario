@@ -77,3 +77,15 @@ def test_rows_follow_pyproject_order(
     scripts: dict[str, str], table: dict[str, str]
 ) -> None:
     assert list(table) == list(scripts)
+
+
+def test_usage_overview_lists_every_script(scripts: dict[str, str]) -> None:
+    """docs/usage.md's "CLI Commands Overview" table, which says it lists the
+    commands the package provides, names every console script (#1934)."""
+    text = (_PACKAGE_ROOT / "docs" / "usage.md").read_text()
+    section = text.split("## CLI Commands Overview", 1)[1].split("\n## ", 1)[0]
+    listed = set(re.findall(r"^\| \[?`([^`]+)`", section, re.M))
+    missing = [command for command in scripts if command not in listed]
+    assert not missing, f"docs/usage.md's CLI Commands Overview lacks {missing}"
+    extra = sorted(listed - set(scripts) - {"Command"})
+    assert not extra, f"docs/usage.md lists commands pyproject.toml lacks: {extra}"
