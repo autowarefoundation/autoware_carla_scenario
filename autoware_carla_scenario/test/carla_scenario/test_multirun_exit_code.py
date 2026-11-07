@@ -32,7 +32,10 @@ import pytest
 #: fails.  With ``+hang=true`` every case sleeps past any job timeout, with
 #: ``+die=true`` every case kills itself with ``SIGKILL``, and with
 #: ``+kill_sweep=true`` the first case kills the sweep (its parent) with
-#: ``SIGKILL``, as the OOM killer would.
+#: ``SIGKILL``, as the OOM killer would.  With ``+gated=true`` each case, as
+#: ``ScenarioRunner`` does, takes the first free stem and writes its coverage
+#: file, its gate record (``gate_pass.json`` in the working directory, its
+#: ``STEM`` replaced by the stem) and a passing result under it.
 _SWEEPER_APP = """
 import json
 import os
@@ -89,6 +92,18 @@ def task(cfg: DictConfig) -> None:
         if first:
             raised.write_text("yes")
             raise RuntimeError("the world reset after the result raised")
+        return
+    if cfg.get("gated", False):
+        output_dir = Path(HydraConfig.get().runtime.output_dir)
+        stem, n = "App", 0
+        while run_outputs_exist(output_dir, stem):
+            n += 1
+            stem = f"App-{n}"
+        record = (Path.cwd() / "gate_pass.json").read_text()
+        (output_dir / f"{stem}_coverage.json").write_text("{}")
+        (output_dir / f"{stem}_gate.json").write_text(record.replace("STEM", stem))
+        result = {"passed": True, "message": stem, "elapsed_seconds": 1.0}
+        (output_dir / f"{stem}_result.json").write_text(json.dumps(result))
         return
     if cfg.get("raise_value", False):
         raise ValueError("some distinctive text")
@@ -256,9 +271,11 @@ def test_a_retried_case_keeps_none_of_the_failed_attempts_outputs(
 
     date, time = "2026-11-04", "10-00-00"
     session = tmp_path / "multirun" / date / time
-    # An earlier sweep's output in a directory named again is not touched.
+    # An earlier sweep's run in a directory named again is replaced (#1956);
+    # a file that is not a run's output is not touched.
     (session / "1").mkdir(parents=True)
     (session / "1" / "AnEarlierRun_result.json").write_text('{"passed": true}')
+    (session / "1" / "notes.txt").write_text("mine")
     proc = _run(
         _SWEEPER_APP,
         tmp_path,
@@ -282,9 +299,9 @@ def test_a_retried_case_keeps_none_of_the_failed_attempts_outputs(
     ]
     assert _read_verdict(job) is False
     assert sorted(p.name for p in (session / "1").glob("*_result.json")) == [
-        "AnEarlierRun_result.json",
         "App_result.json",
     ]
+    assert (session / "1" / "notes.txt").read_text() == "mine"
     assert len(list(session.glob("*/*_coverage.json"))) == 2  # one per case
 
     # Job 0, whose directory held nothing before: the viewer reads the retry.
@@ -1376,6 +1393,209 @@ def test_rerunning_a_sweep_into_its_directory_clears_its_markers_and_keeps_its_p
     # A failed verdict is judged: no marker.
     assert _markers(session) == {}
     assert unrecorded_cases(session) == []
+
+
+def _gate_template(tmp_path: Path) -> None:
+    """``gate_pass.json``, the passing gate record ``+gated=true`` writes, its
+    stem left as ``STEM``."""
+    from autoware_carla_scenario.gate.record import GateCase, GateRecord
+    from autoware_carla_scenario.gate.record import write_gate_record
+
+    record = GateRecord(
+        scenario="left_turn",
+        title="Left turn",
+        digest="d" * 64,
+        gate={"min_success_rate": 1.0},
+        case=GateCase(
+            map="Town",
+            index=0,
+            lanelet_ids=(1, 2, 3),
+            case_count=2,
+            segment_kinds=("lane", "junction", "lane"),
+            segment_ends=(40.0, 60.0, 100.0),
+        ),
+        passed=True,
+        message="ok",
+        elapsed_seconds=12.0,
+        failure_category=None,
+        ego=[(i * 0.1, float(i), 0.0, 10.0) for i in range(101)],
+        files={"coverage": "STEM_coverage.json", "result": "STEM_result.json"},
+    )
+    write_gate_record(tmp_path / "gate_pass.json", record)
+
+
+def test_a_job_resumed_into_its_directory_replaces_the_earlier_runs_outputs(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """#1956: a sweep killed in job 1 after the job wrote its (failing) gate
+    record, result and coverage file is resumed at that job into the same
+    ``hydra.sweep.dir``.  The job replaces the earlier run: the gate judges
+    one run a job (2 of 2, not 2 of 3), the coverage merge reads one file a
+    job, and the viewer and the sweeper's verdict read the same result."""
+    import json
+
+    from autoware_carla_scenario.gate.errored import write_case_unfinished
+    from autoware_carla_scenario.gate.evaluate import main
+    from autoware_carla_scenario.gate.record import read_gate_record
+    from autoware_carla_scenario.gate.record import write_gate_record
+    from autoware_carla_scenario.gate.sweep_plan import write_sweep_plan
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        _read_verdict,
+    )
+    from autoware_carla_scenario.ui.case_paths import last_result_path, result_path
+
+    _gate_template(tmp_path)
+    passing = read_gate_record(tmp_path / "gate_pass.json")
+    session = tmp_path / "multirun"
+    jobs = [(session / "0", ["+case=1"]), (session / "1", ["+case=2"])]
+    write_sweep_plan(session, jobs)
+    for (job, overrides), passed in zip(jobs, (True, False)):
+        job.mkdir(parents=True)
+        record = passing
+        record.passed = passed
+        record.message = "ok" if passed else "collision"
+        record.failure_category = None if passed else "collision"
+        record.files = {"coverage": "App_coverage.json", "result": "App_result.json"}
+        write_gate_record(job / "App_gate.json", record)
+        (job / "App_coverage.json").write_text("{}")
+        (job / "App_result.json").write_text(json.dumps({"passed": passed}))
+    # Job 1 was killed after writing them (in the world reset, say).
+    write_case_unfinished(session / "1", overrides=["+case=2"], attempt=1)
+    (session / "1" / "notes.txt").write_text("mine")
+    assert main([str(session)]) == 1
+    assert "1 of 2 run(s) passed" in capsys.readouterr().out
+
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+gated=true",
+        resume_from=2,
+        sweep_dir=session,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    job = session / "1"
+    # The job took the stem again: the earlier run's outputs went first.
+    assert sorted(p.name for p in job.glob("App*")) == [
+        "App_coverage.json",
+        "App_gate.json",
+        "App_result.json",
+    ]
+    assert (job / "notes.txt").read_text() == "mine"
+    assert not (job / "case_errored.json").exists()
+    # Job 0, which this sweep skipped, keeps its run.
+    assert (session / "0" / "App_gate.json").is_file()
+
+    assert main([str(session)]) == 0
+    out = capsys.readouterr().out
+    assert "2 of 2 run(s) passed" in out, out
+    assert len(list(session.glob("*/*_coverage.json"))) == 2  # one per job
+    assert result_path(job) == last_result_path(job) == job / "App_result.json"
+    assert _read_verdict(job) is True
+
+
+def test_jobs_sharing_a_directory_keep_each_others_outputs(tmp_path: Path) -> None:
+    """A directory several jobs of the sweep share (one
+    ``hydra.sweep.subdir``) is not cleaned: a later job keeps the earlier
+    job's run and takes the next stem, and an earlier sweep's run there
+    stays, as before #1956."""
+    _gate_template(tmp_path)
+    session = tmp_path / "multirun"
+    (session / "shared").mkdir(parents=True)
+    # Sorting before App: the sweeper's verdict reads the last stem.
+    (session / "shared" / "Aaa_result.json").write_text('{"passed": false}')
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+gated=true",
+        "hydra.sweep.subdir=shared",
+        sweep_dir=session,
+    )
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert sorted(p.name for p in (session / "shared").glob("*_result.json")) == [
+        "Aaa_result.json",
+        "App-1_result.json",
+        "App_result.json",
+    ]
+
+
+def test_resuming_into_a_shared_directory_keeps_the_skipped_jobs_runs(
+    tmp_path: Path,
+) -> None:
+    """A directory every job maps to (one ``hydra.sweep.subdir``) holds the
+    run of the job a ``--resume-from`` skips too: it is not cleaned, so that
+    run stays (#1956)."""
+    _gate_template(tmp_path)
+    session = tmp_path / "multirun"
+    common = (
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+gated=true",
+        "hydra.sweep.subdir=shared",
+    )
+    proc = _run(_SWEEPER_APP, tmp_path, *common, sweep_dir=session)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    proc = _run(_SWEEPER_APP, tmp_path, *common, resume_from=2, sweep_dir=session)
+    assert proc.returncode == 0, proc.stdout + proc.stderr
+    assert "Removing the outputs" not in proc.stdout + proc.stderr
+    # Job 1's run (App) and both of job 2's: nothing removed.
+    assert sorted(p.name for p in (session / "shared").glob("*_gate.json")) == [
+        "App-1_gate.json",
+        "App-2_gate.json",
+        "App_gate.json",
+    ]
+
+
+def test_an_earlier_sweeps_service_logs_are_not_removed(tmp_path: Path) -> None:
+    """The logs services write into a job directory (a containerised
+    backend's, Autoware's) are not a run, though ``run_output_stems`` reads
+    them as a CARLA recorder log's stem; a CARLA recorder log, or anything
+    of a run, is."""
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        _remove_earlier_outputs,
+    )
+
+    kept = [
+        "backend_carla.log",
+        "autoware-000-ego.log",
+        "autoware-build.log",
+        "autoware-deps.log",
+        "raw_output.log",
+        "run.log",
+        "app.log",  # Hydra's job log
+        "notes.txt",
+    ]
+    removed = ["Old.log", "Old_result.json", "autoware-x_result.json"]
+    for name in kept + removed:
+        (tmp_path / name).write_text("")
+    (tmp_path / "Old.t4").mkdir()
+    _remove_earlier_outputs((tmp_path, "app.log"), "1/1")
+    assert sorted(p.name for p in tmp_path.iterdir()) == sorted(kept)
+
+
+def test_only_a_directory_one_job_of_the_sweep_maps_to_is_owned(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.sweeper.lanelet_constraint_sweeper import (
+        _owned_dirs,
+    )
+
+    a, b, c = tmp_path / "a", tmp_path / "b", tmp_path / "c"
+    running: list[tuple[Path, str | None] | None] = [
+        (a, "x.log"),
+        (b, "x.log"),
+        (b, "x.log"),
+    ]
+    assert _owned_dirs(running, []) == {a}
+    # A job the resume skips shares a's directory.
+    assert _owned_dirs(running, [(tmp_path, a, "x.log")]) == set()
+    assert _owned_dirs(running, [(tmp_path, c, "x.log")]) == {a, c}
+    # A job whose directory cannot be told may share any.
+    assert _owned_dirs(running, [None]) == set()
+    assert _owned_dirs([(a, None), None], []) == set()
 
 
 def test_a_sweep_resumed_into_a_new_directory_plans_only_what_it_runs(

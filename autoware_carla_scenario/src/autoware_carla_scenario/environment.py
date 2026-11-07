@@ -32,6 +32,8 @@ from pathlib import Path
 from typing import Any, Optional
 from urllib.parse import unquote, urlparse
 
+from .atomic_file import write_text_atomically
+
 # Re-exported under the names they had here before environment_pin (#825).
 from .environment_pin import HASH_PREFERENCE as _HASH_PREFERENCE  # noqa: F401
 from .environment_pin import PinSource
@@ -312,11 +314,14 @@ def write(
     try:
         env = capture()
         output_dir.mkdir(parents=True, exist_ok=True)
-        (output_dir / f"{file_stem}{ENVIRONMENT_SUFFIX}").write_text(
-            json.dumps(env.to_dict(scenario), indent=2), encoding="utf-8"
+        # In one rename each, as the result beside them: the viewer reads
+        # them while a sweep runs (#1956).
+        write_text_atomically(
+            output_dir / f"{file_stem}{ENVIRONMENT_SUFFIX}",
+            json.dumps(env.to_dict(scenario), indent=2),
         )
-        (output_dir / f"{file_stem}{LOCK_SUFFIX}").write_text(
-            env.lock(scenario), encoding="utf-8"
+        write_text_atomically(
+            output_dir / f"{file_stem}{LOCK_SUFFIX}", env.lock(scenario)
         )
         return env.summary(scenario)
     except Exception:

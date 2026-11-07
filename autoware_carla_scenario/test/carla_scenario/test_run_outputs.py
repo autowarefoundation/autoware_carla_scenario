@@ -246,3 +246,93 @@ def test_a_rerun_writes_its_t4_dataset_again(tmp_path: Path) -> None:
     _remove_outputs(tmp_path, STEM)
     assert run_case(2)["samples"] == 2
     assert not (tmp_path / f"{STEM}_result.json").exists()
+
+
+# ---------------------------------------------------------------------------
+# A run's result, gate record and environment are written in one rename (#1956)
+# ---------------------------------------------------------------------------
+
+
+def _fail_the_rename(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Make ``atomic_file``'s rename fail, as a run killed while it writes."""
+    from autoware_carla_scenario import atomic_file
+
+    def replace(src: str, dst: str) -> None:
+        raise OSError("killed before the rename")
+
+    monkeypatch.setattr(atomic_file.os, "replace", replace)
+
+
+def test_a_result_is_written_in_one_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A viewer polling a running sweep never reads ``_result.json`` half
+    written, and a run killed while writing it leaves the one before (or
+    none), not a truncated file ``_has_result_since`` would count."""
+    import json
+    from unittest.mock import MagicMock, patch
+
+    from autoware_carla_scenario.conditions.base import ScenarioResult
+    from autoware_carla_scenario.scenario_runner import _write_result
+
+    path = tmp_path / f"X{run_outputs.RESULT_SUFFIX}"
+    path.write_text('{"passed": false}')
+    _fail_the_rename(monkeypatch)
+    with (
+        patch("autoware_carla_scenario.environment.write", return_value=None),
+        pytest.raises(OSError, match="killed"),
+    ):
+        _write_result(
+            path,
+            tmp_path,
+            "X",
+            MagicMock(),
+            ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0),
+        )
+    assert json.loads(path.read_text()) == {"passed": False}
+    assert sorted(p.name for p in tmp_path.iterdir()) == [path.name]
+
+
+def test_a_gate_record_is_written_in_one_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.gate.record import GateCase, GateRecord
+
+    record = GateRecord(
+        scenario="s",
+        title="S",
+        digest="d" * 64,
+        gate={},
+        case=GateCase(map="Town", index=0, lanelet_ids=(1,), case_count=1),
+        passed=True,
+    )
+    path = tmp_path / f"X{gate_record.GATE_RECORD_SUFFIX}"
+    gate_record.write_gate_record(path, record)
+    assert gate_record.read_gate_record(path).passed is True
+    record.passed = False
+    _fail_the_rename(monkeypatch)
+    with pytest.raises(OSError, match="killed"):
+        gate_record.write_gate_record(path, record)
+    # The record before, whole; no scratch file left beside it.
+    assert gate_record.read_gate_record(path).passed is True
+    assert sorted(p.name for p in tmp_path.iterdir()) == [path.name]
+
+
+def test_a_runs_environment_is_written_in_one_rename(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario import atomic_file
+
+    written: list[str] = []
+    real = atomic_file.write_text_atomically
+
+    def spy(path: Path, text: str) -> None:
+        written.append(path.name)
+        real(path, text)
+
+    monkeypatch.setattr(environment, "write_text_atomically", spy)
+    assert environment.write(tmp_path, "X") is not None
+    assert written == [
+        f"X{run_outputs.ENVIRONMENT_SUFFIX}",
+        f"X{run_outputs.LOCK_SUFFIX}",
+    ]

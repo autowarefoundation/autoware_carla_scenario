@@ -458,9 +458,26 @@ A retry runs in the case's job directory, and before it starts the sweeper
 removes what the failed attempt wrote there (its result, coverage file,
 trajectory log, recordings ...), as a batch and a SLURM worker do: the retry
 takes the same file stem, so the viewer and the coverage merge read the
-retry's outputs alone. Only the outputs the case's own attempts wrote are
-removed; Hydra's job log and anything already in the directory before the
-case started (one `hydra.sweep.dir=` names again) are kept.
+retry's outputs alone.
+
+A case run again into a job directory an earlier sweep wrote in
+(`hydra.sweep.dir=` naming it again, a `--resume-from` rerun) replaces that
+run: before its first attempt the sweeper removes the run outputs the earlier
+sweep left there -- every file and directory named after a run's stem, its
+result, gate record, coverage file, trajectory log, recordings, T4 dataset
+... -- so the case takes the same stem again and `scenario-gate`, the
+coverage merge, the viewer and the sweep's verdict read the new run alone,
+not both. Hydra's job log and `.hydra/` directory, the case's
+`case_errored.json` (replaced as the case starts), the logs of the services
+a run starts there (`backend_<name>.log`, `autoware-*.log`) and any other
+file that is not a run's output are kept. A sweep into a new directory has
+nothing to remove. Only a job directory that no other case of the sweep maps
+to is cleaned: one several cases share (a `hydra.sweep.subdir=` that does not
+tell the jobs apart) holds the runs of the cases a `--resume-from` skips,
+and is left as it is -- so an earlier run of a case run again there stays
+beside the new one, and `scenario-gate` and the coverage merge read both.
+(A retry still removes every output its failed attempt left, the services'
+logs among them.)
 
 A case given up -- it raised, timed out or crashed on every attempt, or was
 refused -- leaves `case_errored.json` in its job directory (its overrides,

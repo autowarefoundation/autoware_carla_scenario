@@ -266,11 +266,21 @@ scenario-gate: outputs/2026-11-06/12-00-00: 7 of 10 case(s) raised or have no ou
   is refused before it runs writes no plan; a sweep planned again into the
   same directory (`hydra.sweep.dir=` naming it again, a `--resume-from`
   rerun) replaces the entries of the jobs it runs and keeps the others, whose
-  outputs are still there. A plan lists only the jobs its own run launches,
-  so a sweep resumed into a new directory plans only the jobs from the resume
-  point; the directory of the run it resumes keeps its plan and the marker of
-  the job it was killed in, and is refused on its own. To gate a resumed
-  sweep as a whole, resume it into the same `hydra.sweep.dir`.
+  outputs are still there. A job it runs replaces the earlier run's outputs
+  too: before the job's first attempt the sweeper removes the run outputs
+  (result, gate record, coverage file, ...) the earlier sweep left in its job
+  directory, so each job is judged on its new run alone, not counted twice
+  ([Lanelet Constraint Sweeping](usage.md#lanelet-constraint-sweeping)).
+  Only in a directory that no other job of the sweep maps to: in one several
+  jobs share (one `hydra.sweep.subdir` for all) nothing is removed, so the
+  runs of the jobs the rerun skips stay -- and so does the earlier run of a
+  job it runs again, which is then judged beside the new one. Give each job a
+  directory of its own (the default, `${hydra.job.num}`) to gate a rerun. A
+  plan lists only the jobs its own run launches, so a sweep resumed into a
+  new directory plans only the jobs from the resume point; the directory of
+  the run it resumes keeps its plan and the marker of the job it was killed
+  in, and is refused on its own. To gate a resumed sweep as a whole, resume
+  it into the same `hydra.sweep.dir`.
 
   ```text
   scenario-gate: multirun/2026-11-06/12-00-00: 12 of 20 planned job(s) of the sweep never ran, and left no gate record (8, 9, 10, 11, 12, and 7 more); the gate would be judged over the runs that survived. Run them again, or pass --allow-unrecorded to judge the records there are

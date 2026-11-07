@@ -14,7 +14,9 @@ whole list, and all read it from here:
   again leaves none of its last attempt's behind -- and the T4 writer, which
   refuses a directory already holding a dataset, records the new one;
 * :func:`run_output_stems`, its inverse, which the Hydra sweeper calls to
-  learn which stems its case runs took in a directory.
+  learn which stems its case runs took in a directory -- and, before a job's
+  first attempt, which runs an earlier sweep left in its job directory, which
+  it removes with :func:`remove_run_outputs` (#1956).
 
 The modules that write each output keep their own name for its suffix
 (``rerun.RECORDING_SUFFIX``, ``t4_settings.DATASET_SUFFIX``,
@@ -31,7 +33,8 @@ a trajectory log and its recordings lives here too (:func:`trajectory_stem`,
 re-export it under the names they had.
 
 Free of imports beyond ``pathlib``, ``shutil`` and the gate's record (whose
-:data:`~autoware_carla_scenario.gate.record.GATE_RECORD_SUFFIX` it lists):
+:data:`~autoware_carla_scenario.gate.record.GATE_RECORD_SUFFIX` it lists, and
+which imports only the standard library and the package's ``atomic_file``):
 the SLURM worker and the library check read it.
 """
 

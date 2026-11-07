@@ -653,6 +653,7 @@ def _write_result(
     """
     import json  # noqa: PLC0415
 
+    from .atomic_file import write_text_atomically  # noqa: PLC0415
     from .environment import write as write_environment  # noqa: PLC0415
 
     environment = write_environment(output_dir, file_stem, scenario)
@@ -661,7 +662,9 @@ def _write_result(
         data["environment"] = environment
     if traffic is not None:
         data["traffic"] = traffic
-    json_path.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    # In one rename: a viewer polling a running sweep never reads it half
+    # written, and a run killed while writing it leaves none (#1956).
+    write_text_atomically(json_path, json.dumps(data, indent=2))
 
 
 def _write_gate_record(
