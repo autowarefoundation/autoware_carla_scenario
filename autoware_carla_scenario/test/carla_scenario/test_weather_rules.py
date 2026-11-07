@@ -535,6 +535,7 @@ def test_rule_values_adds_water_from_the_wetter_of_wetness_and_deposits() -> Non
     }
     assert rule_values({"wetness": 20.0, "water": 5.0})["water"] == 5.0
     assert rule_values({"fog_density": 10.0}) == {"fog_density": 10.0}
+    assert rule_values({"precipitation_deposits": 60.0})["water"] == 60.0
 
 
 @pytest.mark.parametrize(

@@ -808,3 +808,55 @@ def test_a_path_whose_corners_would_stand_on_a_sidewalk_is_moved_off_it() -> Non
     assert all(y <= 0.25 + 1e-6 for _x, y, _z in moved)
     clear = [(float(x), -1.0, 0.0) for x in range(2, 21, 2)]
     assert clearance.off_the_kerb(_Map(), clear, 5.5, 1.25, 0.0, -1.0) == clear
+
+
+def _sidewalk_map(on_sidewalk: Any) -> Any:
+    """A map whose lanes are a sidewalk where *on_sidewalk(x, y)* holds."""
+
+    class _Map:
+        def get_waypoint(
+            self, location: Any, project_to_road: bool, lane_type: Any
+        ) -> Any:
+            kind = (
+                carla.LaneType.Sidewalk
+                if on_sidewalk(location.x, location.y)
+                else carla.LaneType.Driving
+            )
+            return SimpleNamespace(lane_type=kind)
+
+    return _Map()
+
+
+def test_a_rear_corner_on_a_sidewalk_moves_the_point_too() -> None:
+    """Only the bus's rear (x < 0) would stand on the sidewalk from y = 1.5:
+    its point still moves off it."""
+    from autoware_carla_scenario.utils import clearance
+
+    kerb = _sidewalk_map(lambda x, y: x < 0.0 and y > 1.5)
+    moved = clearance.off_the_kerb(kerb, [(4.0, 0.5, 0.0)], 5.5, 1.25, 2.0, 0.5)
+    assert moved[0][1] <= 0.25 + 1e-6
+
+
+def test_a_sidewalk_on_the_other_side_moves_the_path_the_other_way() -> None:
+    """A sidewalk from y = -1.5 down: a bus along y = -0.5 has its corners on
+    it, so its points move the other way, up."""
+    from autoware_carla_scenario.utils import clearance
+
+    kerb = _sidewalk_map(lambda x, y: y < -1.5)
+    points = [(float(x), -0.5, 0.0) for x in range(2, 21, 2)]
+    moved = clearance.off_the_kerb(kerb, points, 5.5, 1.25, 0.0, -0.5)
+    assert all(y >= -0.25 - 1e-6 for _x, y, _z in moved)
+
+
+def test_a_point_either_way_would_do_for_moves_the_way_the_last_one_did() -> None:
+    """A kerb at y < -0.9 early on moves the points up (+y); later a strip at
+    y = 1 either way would clear: moved up still, the way the last one was."""
+    from autoware_carla_scenario.utils import clearance
+
+    kerb = _sidewalk_map(
+        lambda x, y: (x < 12.0 and y < -0.9) or (x > 25.0 and 0.9 < y < 1.1)
+    )
+    points = [(float(x), 0.0, 0.0) for x in range(2, 41, 2)]
+    moved = clearance.off_the_kerb(kerb, points, 1.0, 1.0, 0.0, 0.0)
+    assert moved[0][1] == pytest.approx(0.25)
+    assert moved[-1][1] == pytest.approx(0.25)

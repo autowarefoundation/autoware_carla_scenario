@@ -315,6 +315,23 @@ class TestSoftResetOnTheSameMap:
         # The settings go last: the world is ticked in step before them.
         assert world.events[-1] == ("apply_settings", "")
 
+    def test_the_lights_red_and_yellow_times_are_put_back(
+        self, server: _Server
+    ) -> None:
+        runner = _runner(server, world_reset="soft")
+        runner.load_map_by_name("Town10HD_Opt")
+        world = server.world
+        _play_a_case(world)
+        for light in world.lights():
+            light.red = 99.0
+            light.yellow = 98.0
+
+        runner.reset_world("Case0")
+
+        assert [(light.red, light.yellow) for light in world.lights()] == [
+            (2.0, 3.0)
+        ] * 2
+
     def test_a_light_frozen_on_load_is_frozen_again(self, server: _Server) -> None:
         runner = _runner(server, world_reset="soft")
         world = server.load_world("Town10HD_Opt")
