@@ -567,6 +567,15 @@ class TestProbes:
             "odd.dynamic.pedestrian_nearby": ["true"],
         }
 
+    def test_a_sidewalk_beside_the_road_is_not_a_lane(self) -> None:
+        import typesafe_carla.carla as carla
+
+        world = _odd_world()
+        sidewalk = _Lane(-3)
+        sidewalk.lane_type = int(carla.LaneType.Sidewalk)
+        world._waypoint._right._right = sidewalk
+        assert probes.lane_count(world) == 2  # type: ignore[arg-type]
+
     def test_lanelet_tags_come_first_when_a_map_is_loaded(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:

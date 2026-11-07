@@ -402,6 +402,9 @@ class TestTireFriction:
         EnvironmentAction(wetness=0.0, precipitation_deposits=0.0).execute(world)
         assert world.fleet[0].applied == 0
 
+    def test_puddles_alone_set_the_grip(self) -> None:
+        assert EnvironmentAction(precipitation_deposits=80.0).sets_tire_friction
+
     def test_weather_off_the_road_does_not_touch_the_grip(self) -> None:
         action = EnvironmentAction(fog_density=50.0, sun_altitude_angle=-10.0)
         assert not action.sets_tire_friction
