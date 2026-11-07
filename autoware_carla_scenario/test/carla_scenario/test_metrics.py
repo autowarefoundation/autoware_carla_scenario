@@ -390,6 +390,20 @@ def test_a_pedestrian_counts() -> None:
     assert _read(COLLISION_FRONT, _world(walker)) == 1.0
 
 
+def test_a_road_user_wholly_inside_the_ego_s_box_collides() -> None:
+    # A pedestrian well within the ego's footprint: no edge of either box
+    # crosses the other's, so only the one-inside-the-other check finds it.
+    walker = _Actor(2, "walker.pedestrian.1", (0.5, 0.2), extent=(0.3, 0.3))
+    world = _world(walker)
+
+    found = _collisions(world)
+    assert found[COLLISION_LATERAL] == 1.0
+    assert found[COLLISION_FRONT] == 0.0
+    assert found[COLLISION_REAR] == 0.0
+    assert found[COLLISION_ANY] == 1.0
+    assert _read(MIN_DISTANCE_TO_OBSTACLE_M, world) == 0.0
+
+
 def test_a_turned_box_is_turned() -> None:
     # Unturned, it would reach back to x = 1.1 and meet the ego; turned
     # across the lane it is 2 m long, from x = 2.4.
@@ -727,10 +741,11 @@ def _weave(amplitude: float, hz: float) -> Any:
     return lambda t: amplitude * w * math.cos(w * t)
 
 
-def test_a_weave_turns_back_twice_a_cycle() -> None:
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_a_weave_turns_back_twice_a_cycle(sign: float) -> None:
     # 0.3 m each way at 0.5 Hz for 10 s: five cycles, turning back at 0.5,
-    # 1.5, ... 9.5 s.
-    world = _drive(_weave(0.3, 0.5), 10.0)
+    # 1.5, ... 9.5 s -- whether it drifts right first or left first.
+    world = _drive(_weave(sign * 0.3, 0.5), 10.0)
 
     assert _read(LATERAL_REVERSALS, world) == 10.0
     # About a sine's RMS, 0.3 / sqrt(2), over the last two cycles: the line
@@ -788,12 +803,14 @@ def test_following_a_bend_is_not_a_drift() -> None:
     assert _read(LATERAL_REVERSALS, world) == 0.0
 
 
-def test_steering_back_and_forth_is_counted() -> None:
+@pytest.mark.parametrize("sign", [1.0, -1.0])
+def test_steering_back_and_forth_is_counted(sign: float) -> None:
     def sawing(t: float) -> float:
         return 0.05 if int(t) % 2 else -0.05
 
-    world = _drive(lambda t: 0.0, 5.0, steer=sawing)
-    # Turns at 1, 2, 3, 4 and 5 s, the first from where it began.
+    world = _drive(lambda t: 0.0, 5.0, steer=lambda t: sign * sawing(t))
+    # Turns at 1, 2, 3, 4 and 5 s, the first from where it began -- whether
+    # it steers right first or left first.
     assert _read(STEERING_REVERSALS, world) == 4.0
 
     # A controller holding its course moves the steer by a few hundredths.
@@ -832,6 +849,57 @@ def test_left_to_right_and_hazard_are_changes() -> None:
 
     world = _drive(lambda t: 0.0, 3.5, lights=lights)
     assert _read(TURN_INDICATOR_CHANGES, world) == 3.0
+
+
+def _drive_at(speed: Any, seconds: float) -> _World:
+    """Drives the ego along +x at *speed(t)* m/s for *seconds*, every tick;
+    the world of the last tick."""
+    reset_ego_motion()
+    world = _world()
+    ego = world._actors[0]
+    for i in range(round(seconds / _DT) + 1):
+        t = i * _DT
+        ego.velocity = _v(speed(t))
+        world.frame = next(_FRAMES)
+        track_ego_motion(world, t)  # type: ignore[arg-type]
+    return world
+
+
+def test_the_ego_s_progress_is_unknown_before_its_first_frame() -> None:
+    reset_ego_motion()
+
+    assert metrics.ego_progress() is None
+
+
+def test_a_stalled_ego_has_moved_and_stood_still_since_it_stopped() -> None:
+    # 10 m/s for a second, then standing until 6 s: still from 1.05 s.
+    _drive_at(lambda t: 10.0 if t <= 1.0 + 1e-9 else 0.0, 6.0)
+
+    progress = metrics.ego_progress()
+    assert progress is not None
+    assert progress[0] is True
+    assert progress[1] == pytest.approx(6.0 - 1.05)
+    reset_ego_motion()
+
+
+def test_a_moving_ego_has_moved_and_never_stood_still() -> None:
+    _drive_at(lambda t: 10.0, 3.0)
+
+    assert metrics.ego_progress() == (True, 0.0)
+    reset_ego_motion()
+
+
+def test_a_run_out_of_time_with_the_ego_stalled_says_so() -> None:
+    from autoware_carla_scenario.failure import STALLED, FailureCategory
+    from autoware_carla_scenario.scenario_runner import _failure
+
+    _drive_at(lambda t: 10.0 if t <= 1.0 + 1e-9 else 0.0, 6.0)
+    try:
+        failure = _failure("fail[0](late)", FailureCategory.PROGRESS, 6.0, "late", [])
+    finally:
+        reset_ego_motion()
+
+    assert failure.detail == STALLED
 
 
 def test_weaving_reads_nothing_until_the_ego_is_tracked() -> None:
