@@ -2232,7 +2232,7 @@ a part declares on its class the backends it needs, with <code>@need_prepare</co
 <p>The scenario queue then starts what its scenarios need before they run, and
 stops it when the queue stops.</p>
 <h2 id="when-a-backend-starts">When a backend starts<a class="headerlink" href="#when-a-backend-starts" title="Permanent link">&para;</a></h2>
-<p>The queue has a preparer, <code>prepare.pool.BackendPool</code>, which <code>scenario-run</code>
+<p>The queue has a preparer, <code>prepare.pool.BackendPool</code>, which <code>scenario</code>
 builds from <code>backends</code>. The preparer looks at each scenario before it runs:</p>
 <ul>
 <li><strong>When the queue starts</strong>, before the CARLA server, it starts what the queue's
@@ -2316,7 +2316,7 @@ is optional:</p>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="w">  </span><span class="nt">ardy</span><span class="p">:</span>
 <a id="__codelineno-2-3" name="__codelineno-2-3" href="#__codelineno-2-3"></a><span class="w">    </span><span class="nt">image</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">ghcr.io/hakuturu583/carla_ardy_backend:0.1.0</span>
 <a id="__codelineno-2-4" name="__codelineno-2-4" href="#__codelineno-2-4"></a><span class="w">    </span><span class="nt">model</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">soma</span><span class="w">             </span><span class="c1"># the ARDY checkpoint</span>
-<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nt">acceleration</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">none</span><span class="w">      </span><span class="c1"># none, compile</span>
+<a id="__codelineno-2-5" name="__codelineno-2-5" href="#__codelineno-2-5"></a><span class="w">    </span><span class="nt">acceleration</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">none</span><span class="w">      </span><span class="c1"># none, compile, trt</span>
 <a id="__codelineno-2-6" name="__codelineno-2-6" href="#__codelineno-2-6"></a><span class="w">    </span><span class="nt">gpus</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">auto</span><span class="w">              </span><span class="c1"># the GPU the preparer chose; or all, device=N</span>
 <a id="__codelineno-2-7" name="__codelineno-2-7" href="#__codelineno-2-7"></a><span class="w">    </span><span class="nt">hf_home</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">~/.cache/huggingface</span>
 <a id="__codelineno-2-8" name="__codelineno-2-8" href="#__codelineno-2-8"></a><span class="w">    </span><span class="nt">gpu_memory_mb</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">24000</span>
@@ -2326,7 +2326,7 @@ is optional:</p>
 <a id="__codelineno-2-12" name="__codelineno-2-12" href="#__codelineno-2-12"></a><span class="w">    </span><span class="nt">pull</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">missing</span>
 <a id="__codelineno-2-13" name="__codelineno-2-13" href="#__codelineno-2-13"></a><span class="w">    </span><span class="nt">docker_args</span><span class="p">:</span><span class="w"> </span><span class="p p-Indicator">[]</span>
 </code></pre></div>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>scenario-run<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>...<span class="w"> </span>backends.ardy.image<span class="o">=</span>ghcr.io/hakuturu583/carla_ardy_backend:0.2.0
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>...<span class="w"> </span>backends.ardy.image<span class="o">=</span>ghcr.io/hakuturu583/carla_ardy_backend:0.2.0
 </code></pre></div>
 <p>The settings every container backend shares are checked when the backend is
 built, before any image is pulled or container started:</p>
@@ -2381,7 +2381,7 @@ checks the shared keys above (check your own keys with its helpers, such as
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 02:00:33 UTC"><span class="timeago" datetime="2026-11-05T02:00:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 02:00:33 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 09:16:17 UTC"><span class="timeago" datetime="2026-11-07T09:16:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 09:16:17 UTC">2026-11-07</span>
   </span>
 
     

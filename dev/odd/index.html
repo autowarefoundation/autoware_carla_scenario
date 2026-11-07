@@ -3244,9 +3244,19 @@ make it a bound too, refer to it from a root, or name it in <code>roots</code>.<
 <td>Sun altitude</td>
 </tr>
 <tr>
-<td><code>rain</code>, <code>fog</code></td>
+<td><code>rain</code>, <code>fog</code>, <code>wind</code>, <code>cloudiness</code></td>
 <td><code>INTENSITY_LEVELS</code></td>
-<td>CARLA weather (0-100)</td>
+<td>CARLA weather (0-100): <code>precipitation</code>, <code>fog_density</code>, <code>wind_intensity</code>, <code>cloudiness</code></td>
+</tr>
+<tr>
+<td><code>road_wetness</code></td>
+<td><code>INTENSITY_LEVELS</code></td>
+<td>CARLA's <code>wetness</code> (0-100) alone: the standing water the rain brings is the rain's</td>
+</tr>
+<tr>
+<td><code>tire_friction</code></td>
+<td>float, share of the dry road's grip (1.0)</td>
+<td>The wheel friction the run's weather left the vehicles; nothing when nothing set it</td>
 </tr>
 <tr>
 <td><code>visibility</code></td>
@@ -3269,27 +3279,15 @@ make it a bound too, refer to it from a root, or name it in <code>roots</code>.<
 <td>A walker within <code>NEARBY_RADIUS_M</code></td>
 </tr>
 <tr>
-<td><code>vehicle_&lt;field&gt;_mean</code>, <code>vehicle_&lt;field&gt;_std</code>, <code>pedestrian_&lt;field&gt;_mean</code>, <code>pedestrian_&lt;field&gt;_std</code></td>
+<td><code>vehicle_&lt;field&gt;_mean</code>, <code>vehicle_&lt;field&gt;_std</code>, <code>pedestrian_&lt;field&gt;_mean</code>, <code>pedestrian_&lt;field&gt;_std</code>, <code>bicycle_&lt;field&gt;_mean</code>, <code>bicycle_&lt;field&gt;_std</code></td>
 <td>float</td>
 <td>The mean and std of a traffic parameter's spread, as the run set it (<a href="#traffic-parameters-from-the-odd">Traffic parameters from the ODD</a>); nothing when the run set none</td>
 </tr>
-<tr>
-<td>The Lanelet2 probes need the run to have a Lanelet2 map (<code>map.lanelet2_path</code>).</td>
-<td></td>
-<td></td>
-</tr>
-<tr>
-<td>Without one they return nothing, except <code>in_junction</code> and <code>lane_count</code>, which</td>
-<td></td>
-<td></td>
-</tr>
-<tr>
-<td>then read the CARLA waypoint.</td>
-<td></td>
-<td></td>
-</tr>
 </tbody>
 </table>
+<p>The Lanelet2 probes need the run to have a Lanelet2 map (<code>map.lanelet2_path</code>).
+Without one they return nothing, except <code>in_junction</code> and <code>lane_count</code>, which
+then read the CARLA waypoint.</p>
 <p>The probes whose value the map alone decides (<code>speed_limit_kph</code>,
 <code>lanelet_speed_limit_kph</code>, <code>lanelet_location</code>, <code>lanelet_subtype</code>,
 <code>road_type</code>, <code>drivable_area_type</code>, <code>in_junction</code>, <code>lane_count</code>) can also
@@ -4134,9 +4132,9 @@ fast <code>s</code> changes.)</p>
 <p>The weather and the sun are set for every scenario, through the
 <code>environment</code> config, which sets them before the run starts
 (<code>EnvironmentAction</code>). The default ODD names the <strong>conditions</strong> -- the
-rainfall rate, the visibility through the fog and the time of day, the
-taxonomy's -- and the built-in probes reading them have controls of their
-own:</p>
+rainfall rate, the visibility through the fog, the time of day, the wind
+speed and the cloud cover, the taxonomy's -- and the built-in probes
+reading them have controls of their own:</p>
 <table>
 <thead>
 <tr>
@@ -5167,7 +5165,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 08:41:14 UTC"><span class="timeago" datetime="2026-11-07T08:41:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 08:41:14 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 09:16:17 UTC"><span class="timeago" datetime="2026-11-07T09:16:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 09:16:17 UTC">2026-11-07</span>
   </span>
 
     
