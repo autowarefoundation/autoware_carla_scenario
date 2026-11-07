@@ -242,6 +242,7 @@ These live in `autoware_carla_scenario.odd`:
 | `nearby_vehicle_count` | int | Other vehicles within `NEARBY_RADIUS_M` |
 | `pedestrian_nearby` | bool | A walker within `NEARBY_RADIUS_M` |
 | `vehicle_<field>_mean`, `vehicle_<field>_std`, `pedestrian_<field>_mean`, `pedestrian_<field>_std`, `bicycle_<field>_mean`, `bicycle_<field>_std` | float | The mean and std of a traffic parameter's spread, as the run set it ([Traffic parameters from the ODD](#traffic-parameters-from-the-odd)); nothing when the run set none |
+
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
 Without one they return nothing, except `in_junction` and `lane_count`, which
 then read the CARLA waypoint.
@@ -984,8 +985,8 @@ The weather and the sun are set for every scenario, through the
 `environment` config, which sets them before the run starts
 (`EnvironmentAction`). The default ODD names the **conditions** -- the
 rainfall rate, the visibility through the fog, the time of day, the wind
-speed and the cloud cover, the taxonomy's -- and the built-in probes reading them have controls of their
-own:
+speed and the cloud cover, the taxonomy's -- and the built-in probes
+reading them have controls of their own:
 
 | Probe | Key | Range |
 |---|---|---|

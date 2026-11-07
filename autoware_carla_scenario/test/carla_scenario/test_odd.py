@@ -1820,7 +1820,8 @@ def test_docs_api_lists_every_built_in_probe() -> None:
     text = (Path(__file__).resolve().parents[2] / "docs" / "api.md").read_text()
     section = text.split("## ODD (`autoware_carla_scenario.odd`)", 1)[1]
     section = section.split("\n## ", 1)[0]
-    named = set(re.findall(r"`([^`]+)`", section))
+    row = next(line for line in section.splitlines() if "| Built-in probes." in line)
+    named = set(re.findall(r"`([^`]+)`", row))
     # The traffic probes are written `vehicle_<field>_mean`/`_std`.
     named |= {m.replace("_mean", "_std") for m in named if m.endswith("<field>_mean")}
     missing = sorted({_documented_probe(n) for n in BUILT_IN_PROBES} - named)

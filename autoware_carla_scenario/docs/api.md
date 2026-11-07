@@ -413,8 +413,8 @@ Defined in `pyproject.toml`'s `[project.scripts]`, in that order:
 | `scenario-hils` | `autoware_carla_scenario.hils.cli:main` | Stream a run's ego to devices under test (CAN, GNSS, LiDAR, cameras); needs the `hils` extra. See [HILS Bridge](hils.md). |
 | `scenario-t4scene` | `autoware_carla_scenario.t4_scene.__main__:main` | Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit. See [T4 Scene](t4_scene.md). |
 
-The `scenario` command also exposes Python-level helpers in
-`autoware_carla_scenario.examples.run` for downstream packages:
+The `scenario` command also exposes Python-level helpers for downstream
+packages, in `autoware_carla_scenario.examples.run` unless noted:
 
 | Symbol | Description |
 |--------|-------------|
