@@ -224,6 +224,58 @@ def warn_if_mesoscopic(role_name: str) -> bool:
     return True
 
 
+#: Deceleration a crossing vehicle plans to slow at for what is in its way, m/s².
+CROSSING_DECEL_MPS2 = 3.0
+#: Gap kept to what is in the way of a crossing, bumper to bumper, m.
+CROSSING_GAP_M = 3.0
+#: Clearance beyond the two vehicles' widths for one to count as in the way, m.
+CROSSING_LATERAL_MARGIN_M = 0.3
+
+
+def crossing_safe_speed(
+    ahead_m: float,
+    beside_m: float,
+    offset_m: float,
+    half_length_m: float,
+    half_width_m: float,
+    other_half_length_m: float,
+    other_half_width_m: float,
+    other_speed_mps: float,
+) -> float:
+    """The speed (m/s) a vehicle crossing to the next lane can slow from to that
+    of another vehicle, at :data:`CROSSING_DECEL_MPS2`; negative when the other
+    is not in the way of the crossing.
+
+    Neither simulator's following looks along the way a stretched crossing goes:
+    the TrafficManager's looks along the lane it goes to, SUMO's along the width
+    the vehicle takes up now.  What is in the way is what is ahead and overlaps
+    the band between the vehicle and the centre of the lane it goes to.
+
+    Args:
+        ahead_m: From the vehicle's centre to the other's, along the lane.
+        beside_m: From the vehicle's centre to the other's, across the lane,
+            positive to the right.
+        offset_m: How far the vehicle is to the right of the centre of the lane
+            it goes to.
+        half_length_m: The vehicle's half length.
+        half_width_m: The vehicle's half width.
+        other_half_length_m: The other's half length.
+        other_half_width_m: The other's half width.
+        other_speed_mps: The other's speed along the lane.
+    """
+    if ahead_m <= 0.0:
+        return -1.0
+    band_left = min(0.0, -offset_m) - half_width_m - CROSSING_LATERAL_MARGIN_M
+    band_right = max(0.0, -offset_m) + half_width_m + CROSSING_LATERAL_MARGIN_M
+    if (
+        beside_m + other_half_width_m < band_left
+        or beside_m - other_half_width_m > band_right
+    ):
+        return -1.0
+    gap = max(ahead_m - half_length_m - other_half_length_m - CROSSING_GAP_M, 0.0)
+    return math.sqrt(max(other_speed_mps, 0.0) ** 2 + 2.0 * CROSSING_DECEL_MPS2 * gap)
+
+
 @runtime_checkable
 class LaneChanging(Protocol):
     """What :class:`~autoware_carla_scenario.actions.lane_change.LaneChangeAction`
@@ -235,7 +287,11 @@ class LaneChanging(Protocol):
     """
 
     def change_lane(
-        self, world: "carla.World", direction: "LaneChangeDirection"
+        self,
+        world: "carla.World",
+        direction: "LaneChangeDirection",
+        start_after_m: float = 0.0,
+        lane_change_length_m: float = 0.0,
     ) -> None:
         """Move one lane in *direction*."""
         ...
@@ -741,7 +797,12 @@ class TrafficBackend:
     # ------------------------------------------------------------------
 
     def change_lane(
-        self, entity: DrivenEntity, world: "carla.World", direction: LaneChangeDirection
+        self,
+        entity: DrivenEntity,
+        world: "carla.World",
+        direction: LaneChangeDirection,
+        start_after_m: float = 0.0,
+        lane_change_length_m: float = 0.0,
     ) -> None:
         """Move *entity* one lane in *direction*.
 
@@ -749,6 +810,10 @@ class TrafficBackend:
             entity: The entity asking for the manoeuvre.
             world: The CARLA world.
             direction: Which way to go.
+            start_after_m: How far to drive before starting to cross, m;
+                ``0.0``: at once.
+            lane_change_length_m: How far to drive while crossing, m; ``0.0``:
+                as far as the backend takes.
         """
         self._unavailable("change_lane", entity)
 

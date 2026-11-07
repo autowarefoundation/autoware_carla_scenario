@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Optional
+from typing import Optional, Union
 
 # The shared configs are imported because the composite configs in this module
 # (``ScenarioRunConfig`` and ``IntersectionPassingConfig``) reference them.
@@ -65,7 +65,7 @@ CUT_IN_SIDES = ("left", "right")
 TURN_DIRECTIONS = ("left", "right", "straight")
 
 
-def _require_number(key: str, value: float) -> float:
+def _require_number(key: str, value: Union[float, bool, str]) -> float:
     """*value* of ``scenario.<key>``, a number, as a ``float``.
 
     A config dataclass is not coerced, so a field typed ``float`` holds

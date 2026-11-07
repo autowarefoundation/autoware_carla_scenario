@@ -1084,6 +1084,26 @@ register_action_spec(
                 default="left",
                 options=_DIRECTIONS,
             ),
+            FieldSpec(
+                name="start_after_m",
+                label="Start after",
+                kind="number",
+                minimum=0.0,
+                default=0.0,
+                unit="m",
+                required=False,
+                help="How far to drive before starting to cross; 0: at once.",
+            ),
+            FieldSpec(
+                name="lane_change_length_m",
+                label="Lane change length",
+                kind="number",
+                minimum=0.0,
+                default=0.0,
+                unit="m",
+                required=False,
+                help="How far to drive while crossing; 0: as far as the backend takes.",
+            ),
         ),
         description=(
             "Ask a vehicle to change one lane, through the traffic backend "

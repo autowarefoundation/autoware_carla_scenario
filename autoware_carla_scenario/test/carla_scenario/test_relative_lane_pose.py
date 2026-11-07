@@ -161,6 +161,16 @@ class TestThePose:
         with pytest.raises(ValueError, match="d_lane"):
             RelativeLanePose(d_lane=1.5)  # type: ignore[arg-type]
 
+    def test_a_numpy_bool_or_array_is_no_d_lane(self) -> None:
+        """int() takes numpy's bool_, and the numpy on Python 3.10 an array
+        of one element (#1906)."""
+        import numpy as np
+
+        for value in (np.True_, np.array([1]), np.array([[1.0]])):
+            with pytest.raises(ValueError, match=r"d_lane must be a whole number"):
+                RelativeLanePose(d_lane=value)  # type: ignore[arg-type]
+        assert RelativeLanePose(d_lane=np.int64(-1)).d_lane == -1  # type: ignore[arg-type]
+
     def test_a_trajectory_with_one_is_relative(self) -> None:
         mixed = Trajectory(
             "mixed",

@@ -1091,7 +1091,14 @@ class _Recording(TrafficBackend):
     def __init__(self) -> None:
         self.calls: List[Tuple[str, Any]] = []
 
-    def change_lane(self, entity: Any, world: Any, direction: Any) -> None:
+    def change_lane(
+        self,
+        entity: Any,
+        world: Any,
+        direction: Any,
+        start_after_m: float = 0.0,
+        lane_change_length_m: float = 0.0,
+    ) -> None:
         self.calls.append(("change_lane", direction))
 
     def lane_change_finished(self, entity: Any, world: Any) -> bool:

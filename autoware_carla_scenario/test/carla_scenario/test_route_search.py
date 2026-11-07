@@ -922,6 +922,21 @@ class TestPathsOfTheEgosApproach:
         )
         assert (before.lanelet_id, before.s) == (rm.W_IN2, pytest.approx(45.0))  # type: ignore[union-attr]
 
+    def test_a_path_the_junction_lacks_is_no_match(self, road: tuple[Any, Any]) -> None:
+        """No member of the plain crossroads goes straight from the ego's
+        approach, so a path requiring one refuses every match rather than
+        being skipped (which would let all four ways through)."""
+        search = {
+            "segments": [
+                _lane(length={"max": 100}),
+                _junction(
+                    turn="straight",
+                    paths=[{"approach": "same", "turn": "straight"}],
+                ),
+            ]
+        }
+        assert _find(road, **search) == []
+
     def test_a_second_path_is_required_by_its_number(
         self, road: tuple[Any, Any], side: tuple[Any, Any]
     ) -> None:
@@ -1130,3 +1145,13 @@ def test_a_numpy_bool_is_no_whole_number() -> None:
         with pytest.raises(ValueError, match=r"^k must be a whole number"):
             _whole_number("k", value)
     assert _whole_number("k", np.int64(4)) == 4
+
+
+def test_an_array_of_one_element_is_no_whole_number() -> None:
+    """The numpy on Python 3.10 still converts one to a float (#1904)."""
+    import numpy as np
+
+    from autoware_carla_scenario.route.model import _whole_number
+
+    with pytest.raises(ValueError, match=r"^k must be a whole number"):
+        _whole_number("k", np.array([3.0]))

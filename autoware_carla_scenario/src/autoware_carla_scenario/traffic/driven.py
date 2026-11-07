@@ -145,10 +145,18 @@ class BackendDriven(DrivenEntity):
     # DrivenEntity the backend takes: Codon passes a subclass to a method a
     # subclass overrides only once it is that type (docs/typecheck.md).
 
-    def change_lane(self, world: "carla.World", direction: LaneChangeDirection) -> None:
+    def change_lane(
+        self,
+        world: "carla.World",
+        direction: LaneChangeDirection,
+        start_after_m: float = 0.0,
+        lane_change_length_m: float = 0.0,
+    ) -> None:
         """Move one lane in *direction*."""
         entity: DrivenEntity = self
-        self._resolve_backend().change_lane(entity, world, direction)
+        self._resolve_backend().change_lane(
+            entity, world, direction, start_after_m, lane_change_length_m
+        )
 
     def lane_change_finished(self, world: "carla.World") -> bool:
         """Whether the manoeuvre has settled."""

@@ -125,7 +125,8 @@ class VehicleEntity:
     def set_client(self, client: carla.Client, tm_port: int = DEFAULT_TM_PORT) -> None:
         raise NotImplementedError()
 
-    def change_lane(self, world: carla.World, direction: LaneChangeDirection) -> None:
+    def change_lane(self, world: carla.World, direction: LaneChangeDirection,
+                    start_after_m: float = 0.0, lane_change_length_m: float = 0.0) -> None:
         raise NotImplementedError()
 
     def lane_change_finished(self, world: carla.World) -> bool:

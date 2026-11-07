@@ -121,6 +121,7 @@ from ...utils.vehicles import is_emergency_vehicle_type
 from ...visibility import driver_quantile, sight_speed_at, world_visibility
 from ...world_reset import episode_of
 from ..base import (
+    crossing_safe_speed,
     LaneChangeDirection,
     SimulationFidelity,
     TrafficBackend,
@@ -403,6 +404,52 @@ def _runs_along(shape: Any, offset: float, heading: float) -> bool:
     return abs(turn) <= _ROUTE_HEADING_DEG
 
 
+#: Lateral limits of a stretched crossing, m/s and m/s²: high enough that its
+#: length is what sets how fast it crosses (a vehicle's own default to 1 m/s).
+_CROSSING_MAX_LATERAL_SPEED_MPS = 10.0
+_CROSSING_LATERAL_ACCEL_MPS2 = 100.0
+
+
+def _lane_step(direction: LaneChangeDirection) -> int:
+    """The lane index one lane to *direction*: SUMO counts from the right kerb."""
+    return 1 if direction is LaneChangeDirection.LEFT else -1
+
+
+class _LaneChangeRequest:
+    """A lane change asked for at a given place or over a given length, carried
+    out a step at a time by :meth:`SumoTrafficBackend.tick`."""
+
+    def __init__(
+        self,
+        sumo_id: str,
+        direction: LaneChangeDirection,
+        start_after_m: float,
+        length_m: float,
+        from_m: float,
+        lane_change_mode: int,
+    ) -> None:
+        self.sumo_id = sumo_id
+        self.direction = direction
+        self.start_after_m = start_after_m
+        self.length_m = length_m
+        #: The vehicle's odometer when asked; when crossing started, once it has.
+        self.from_m = from_m
+        #: Its own lane-change mode, to be given back.
+        self.lane_change_mode = lane_change_mode
+        self.started = False
+        self.target_lane = -1
+        #: From the centre of the lane it leaves to that of the one it goes to,
+        #: positive to the left, m.
+        self.across_m = 0.0
+        #: Where it started, from the centre of the lane it goes to, to the left, m.
+        self.start_offset_m = 0.0
+        #: Its own lateral limits, to be given back; negative, empty: none kept.
+        self.max_lateral_speed = -1.0
+        self.lateral_accel = ""
+        #: Slowed for something in the way, so to be given its speed back.
+        self.slowed = False
+
+
 class SumoTrafficBackend(TrafficBackend):
     """Traffic driven by SUMO, co-simulated with the CARLA world."""
 
@@ -547,6 +594,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._bicycle_rides: dict[str, list[tuple[int, str, list[int]]]] = {}
         #: SUMO id -> lane index a lane change aims for.
         self._lane_targets: dict[str, int] = {}
+        #: Lane changes asked for at a place or over a length, by vehicle.
+        self._lane_change_requests: dict[str, _LaneChangeRequest] = {}
         #: (tls id, link index) -> the CARLA traffic light controlling it.
         self._signals: dict[tuple[str, int], Any] = {}
         #: tls id -> the indices of the links CARLA's lights switch that are a
@@ -1280,6 +1329,7 @@ class SumoTrafficBackend(TrafficBackend):
             self._drive_approaches(elapsed)
             self._push_external()
             self._push_walkers(world)
+            self._carry_out_lane_changes()
             if self._config.traffic_light_authority == "carla":
                 self._signals_to_sumo()
             self._step_sumo(world)
@@ -1417,6 +1467,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._emergency_ids = {}
         self._bicycle_blueprints = None
         self._lane_targets = {}
+        self._lane_change_requests = {}
         self._signals = {}
         self._permissive_links = {}
         self._crossing_links = {}
@@ -1503,11 +1554,28 @@ class SumoTrafficBackend(TrafficBackend):
     # ------------------------------------------------------------------
 
     def change_lane(
-        self, entity: Any, world: Any, direction: LaneChangeDirection
+        self,
+        entity: Any,
+        world: Any,
+        direction: LaneChangeDirection,
+        start_after_m: float = 0.0,
+        lane_change_length_m: float = 0.0,
     ) -> None:
-        """Ask SUMO for a lane change one lane to *direction*."""
+        """Ask SUMO for a lane change one lane to *direction*.
+
+        With *start_after_m*, it is asked only once the vehicle has driven that
+        far.  With *lane_change_length_m*, the crossing is stretched over that
+        much driving: a sublane model's vehicle is told each step how far across
+        to be (``changeSublane``), with SUMO's own lane changes off, so standing
+        stops the crossing too.  SUMO's following looks along the width the
+        vehicle takes up, so the vehicle also slows for one ahead anywhere
+        between it and the lane's centre.  Vehicles beside and behind it are not
+        looked at, and a marking that forbids the change refuses it.
+        """
         if self._id_of(entity) is None and self._tm_drives_scenario:
-            self._tm.change_lane(entity, world, direction)
+            self._tm.change_lane(
+                entity, world, direction, start_after_m, lane_change_length_m
+            )
             return
         if self._meso_id_of(entity) is not None:
             logger.warning(
@@ -1519,26 +1587,225 @@ class SumoTrafficBackend(TrafficBackend):
         sumo_id = self._driven_id(entity, "change_lane")
         if sumo_id is None:
             return
-        tc = self._traci
         try:
-            lane = tc.vehicle.getLaneIndex(sumo_id)
-            # SUMO counts lanes from the right-hand kerb.
-            step = 1 if direction is LaneChangeDirection.LEFT else -1
-            allowed = tc.lane.getChangePermissions(tc.vehicle.getLaneID(sumo_id), step)
-            if tc.vehicle.getVehicleClass(sumo_id) not in allowed:
-                # SUMO obeys the line (a solid one, as roadgen reads the map),
-                # where CARLA's TrafficManager would cross it.
+            pending = self._lane_change_requests.pop(sumo_id, None)
+            if pending is not None:
+                self._end_lane_change_request(pending)
+            if start_after_m <= 0.0 and lane_change_length_m <= 0.0:
+                self._ask_lane_change(sumo_id, direction)
+                return
+            if lane_change_length_m > 0.0 and self._config.lateral_resolution_m is None:
                 logger.warning(
-                    "SUMO: the marking on %s forbids %s a lane change %s; it will "
-                    "not happen",
-                    tc.vehicle.getLaneID(sumo_id),
+                    "SUMO: lane_change_length_m needs "
+                    "traffic.options.lateral_resolution_m (the sublane model), "
+                    "which is null; %s makes its own lane change",
                     sumo_id,
-                    direction.value,
                 )
-            tc.vehicle.changeLane(sumo_id, lane + step, LANE_CHANGE_DURATION_S)
-            self._lane_targets[sumo_id] = lane + step
+                lane_change_length_m = 0.0
+                if start_after_m <= 0.0:
+                    self._ask_lane_change(sumo_id, direction)
+                    return
+            tc = self._traci
+            request = _LaneChangeRequest(
+                sumo_id,
+                direction,
+                start_after_m,
+                lane_change_length_m,
+                float(tc.vehicle.getDistance(sumo_id)),
+                int(tc.vehicle.getLaneChangeMode(sumo_id)),
+            )
+            # Its own lane changes would have it cross elsewhere, or back.
+            tc.vehicle.setLaneChangeMode(sumo_id, _LANE_CHANGE_MODE_EXTERNAL)
+            self._lane_change_requests[sumo_id] = request
+            if start_after_m <= 0.0:
+                self._start_lane_change_request(request)
         except Exception as exc:  # noqa: BLE001
             logger.warning("SUMO could not change lane for %s: %s", sumo_id, exc)
+
+    def _ask_lane_change(self, sumo_id: str, direction: LaneChangeDirection) -> None:
+        """Ask SUMO for a lane change of its own one lane to *direction*."""
+        tc = self._traci
+        lane = tc.vehicle.getLaneIndex(sumo_id)
+        step = _lane_step(direction)
+        if not self._lane_change_allowed(sumo_id, step):
+            # SUMO obeys the line (a solid one, as roadgen reads the map),
+            # where CARLA's TrafficManager would cross it.
+            logger.warning(
+                "SUMO: the marking on %s forbids %s a lane change %s; it will "
+                "not happen",
+                tc.vehicle.getLaneID(sumo_id),
+                sumo_id,
+                direction.value,
+            )
+        tc.vehicle.changeLane(sumo_id, lane + step, LANE_CHANGE_DURATION_S)
+        self._lane_targets[sumo_id] = lane + step
+
+    def _lane_change_allowed(self, sumo_id: str, step: int) -> bool:
+        """Whether the marking lets *sumo_id* cross *step* lanes from its own."""
+        tc = self._traci
+        allowed = tc.lane.getChangePermissions(tc.vehicle.getLaneID(sumo_id), step)
+        return tc.vehicle.getVehicleClass(sumo_id) in allowed
+
+    def _carry_out_lane_changes(self) -> None:
+        """Start each asked-for lane change once its vehicle has driven far
+        enough, and tell a started one how far across to be."""
+        if len(self._lane_change_requests) == 0:
+            return
+        on_the_road = set(self._traci.vehicle.getIDList())
+        for sumo_id, request in list(self._lane_change_requests.items()):
+            if sumo_id not in on_the_road:
+                del self._lane_change_requests[sumo_id]
+                continue
+            try:
+                self._carry_out_lane_change(request, on_the_road)
+            except Exception as exc:  # noqa: BLE001 - one must not end the run
+                logger.warning("SUMO could not change lane for %s: %s", sumo_id, exc)
+                self._lane_change_requests.pop(sumo_id, None)
+
+    def _carry_out_lane_change(
+        self, request: "_LaneChangeRequest", on_the_road: set[str]
+    ) -> None:
+        tc = self._traci
+        sumo_id = request.sumo_id
+        driven = float(tc.vehicle.getDistance(sumo_id)) - request.from_m
+        if not request.started:
+            if driven < request.start_after_m:
+                return
+            self._start_lane_change_request(request)
+            if sumo_id not in self._lane_change_requests:
+                return
+            driven = 0.0
+        progress = driven / request.length_m
+        if progress >= 1.0:
+            self._end_lane_change_request(request)
+            del self._lane_change_requests[sumo_id]
+            return
+        lateral = float(tc.vehicle.getLateralLanePosition(sumo_id))
+        # To the left of the centre of the lane it goes to: SUMO's lateral
+        # position is of the lane it is on, which changes halfway across.
+        if tc.vehicle.getLaneIndex(sumo_id) != request.target_lane:
+            lateral -= request.across_m
+        wanted = request.start_offset_m * 0.5 * (1.0 + math.cos(math.pi * progress))
+        tc.vehicle.changeSublane(sumo_id, wanted - lateral)
+        self._slow_for_way_ahead(request, lateral, on_the_road)
+
+    def _start_lane_change_request(self, request: "_LaneChangeRequest") -> None:
+        """Start the crossing, or hand it to SUMO without a length to it."""
+        tc = self._traci
+        sumo_id = request.sumo_id
+        request.started = True
+        request.from_m = float(tc.vehicle.getDistance(sumo_id))
+        if request.length_m <= 0.0:
+            self._ask_lane_change(sumo_id, request.direction)
+            self._end_lane_change_request(request)
+            self._lane_change_requests.pop(sumo_id, None)
+            return
+        step = _lane_step(request.direction)
+        lane = tc.vehicle.getLaneIndex(sumo_id)
+        edge = tc.vehicle.getRoadID(sumo_id)
+        if edge.startswith(":") or not self._lane_change_allowed(sumo_id, step):
+            logger.warning(
+                "SUMO: a lane change %s is not allowed for %s on %s; it will not "
+                "happen",
+                request.direction.value,
+                sumo_id,
+                tc.vehicle.getLaneID(sumo_id),
+            )
+            self._end_lane_change_request(request)
+            self._lane_change_requests.pop(sumo_id, None)
+            return
+        width = float(tc.lane.getWidth(tc.vehicle.getLaneID(sumo_id)))
+        target_width = float(tc.lane.getWidth(f"{edge}_{lane + step}"))
+        request.target_lane = lane + step
+        request.across_m = step * 0.5 * (width + target_width)
+        lateral = float(tc.vehicle.getLateralLanePosition(sumo_id))
+        request.start_offset_m = lateral - request.across_m
+        # What limits a crossing here is its length.  Standing still is not
+        # let go of: _no_sidestep_standing.
+        request.max_lateral_speed = float(tc.vehicle.getMaxSpeedLat(sumo_id))
+        request.lateral_accel = tc.vehicle.getParameter(
+            sumo_id, "laneChangeModel.lcAccelLat"
+        )
+        tc.vehicle.setMaxSpeedLat(sumo_id, _CROSSING_MAX_LATERAL_SPEED_MPS)
+        tc.vehicle.setParameter(
+            sumo_id, "laneChangeModel.lcAccelLat", f"{_CROSSING_LATERAL_ACCEL_MPS2:g}"
+        )
+        self._lane_targets[sumo_id] = lane + step
+
+    def _end_lane_change_request(self, request: "_LaneChangeRequest") -> None:
+        """Give the vehicle its own lane changes, lateral limits and speed back."""
+        vehicle = self._traci.vehicle
+        sumo_id = request.sumo_id
+        vehicle.setLaneChangeMode(sumo_id, request.lane_change_mode)
+        if request.max_lateral_speed >= 0.0:
+            vehicle.setMaxSpeedLat(sumo_id, request.max_lateral_speed)
+            request.max_lateral_speed = -1.0
+        if request.lateral_accel:
+            vehicle.setParameter(
+                sumo_id, "laneChangeModel.lcAccelLat", request.lateral_accel
+            )
+            request.lateral_accel = ""
+        if request.slowed:
+            vehicle.setSpeed(sumo_id, self._commanded.get(sumo_id, -1.0))
+            request.slowed = False
+
+    def _slow_for_way_ahead(
+        self, request: "_LaneChangeRequest", lateral: float, on_the_road: set[str]
+    ) -> None:
+        """Hold a crossing vehicle to the speed it can slow to the speed of what
+        is ahead of it from, anywhere between it and the lane's centre.
+
+        *lateral* is how far it is to the left of that centre.
+        """
+        vehicle = self._traci.vehicle
+        sumo_id = request.sumo_id
+        heading = math.radians(
+            float(
+                self._traci.lane.getAngle(
+                    vehicle.getLaneID(sumo_id), vehicle.getLanePosition(sumo_id)
+                )
+            )
+        )
+        # SUMO's angles are a compass's: clockwise from north, y north.
+        forward_x, forward_y = math.sin(heading), math.cos(heading)
+        right_x, right_y = math.cos(heading), -math.sin(heading)
+        x, y = vehicle.getPosition(sumo_id)
+        length = float(vehicle.getLength(sumo_id))
+        width = float(vehicle.getWidth(sumo_id))
+        safest = -1.0
+        for other in on_the_road:
+            if other == sumo_id:
+                continue
+            other_x, other_y = vehicle.getPosition(other)
+            other_length = float(vehicle.getLength(other))
+            # A position is of the front bumper.
+            ahead = (
+                (other_x - x) * forward_x
+                + (other_y - y) * forward_y
+                + 0.5 * (length - other_length)
+            )
+            beside = (other_x - x) * right_x + (other_y - y) * right_y
+            safe = crossing_safe_speed(
+                ahead,
+                beside,
+                -lateral,
+                0.5 * length,
+                0.5 * width,
+                0.5 * other_length,
+                0.5 * float(vehicle.getWidth(other)),
+                float(vehicle.getSpeed(other)),
+            )
+            if safe >= 0.0 and (safest < 0.0 or safe < safest):
+                safest = safe
+        own = self._commanded.get(sumo_id, -1.0)
+        if own < 0.0:
+            own = float(vehicle.getAllowedSpeed(sumo_id))
+        if 0.0 <= safest < own:
+            vehicle.setSpeed(sumo_id, safest)
+            request.slowed = True
+        elif request.slowed:
+            vehicle.setSpeed(sumo_id, self._commanded.get(sumo_id, -1.0))
+            request.slowed = False
 
     def lane_change_finished(self, entity: Any, world: Any) -> bool:
         """Whether *entity* is on its target lane, near the centre."""
