@@ -5234,3 +5234,89 @@ def test_what_a_vehicle_is_told_before_the_run_starts_waits_for_it(
         assert backend._waiting_routes[id(entity)] == ["stop"]
     finally:
         backend.close()
+
+
+@needs_sumo
+def test_a_lane_change_starts_where_it_was_asked_and_takes_the_length_asked(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    sumo_id, entity = next(iter(backend._driven.items()))
+    vehicle = backend._traci.vehicle
+    try:
+        backend.tick(world, 0.0)
+        mode = vehicle.getLaneChangeMode(sumo_id)
+        from_m = vehicle.getDistance(sumo_id)
+        backend.change_lane(entity, world, LaneChangeDirection.LEFT, 5.0, 15.0)
+        assert vehicle.getLaneChangeMode(sumo_id) == 0
+        lane = vehicle.getLaneIndex(sumo_id)
+        crossed_at = None
+        for i in range(400):
+            backend.tick(world, (i + 1) * 0.05)
+            driven = vehicle.getDistance(sumo_id) - from_m
+            lateral = abs(vehicle.getLateralLanePosition(sumo_id))
+            if driven < 5.0:
+                assert lateral < 0.05
+            if crossed_at is None and vehicle.getLaneIndex(sumo_id) == lane + 1:
+                crossed_at = driven
+            if sumo_id not in backend._lane_change_requests:
+                break
+        assert crossed_at == pytest.approx(5.0 + 15.0 / 2.0, abs=2.5)
+        assert sumo_id not in backend._lane_change_requests
+        assert vehicle.getLaneChangeMode(sumo_id) == mode
+        assert vehicle.getMaxSpeedLat(sumo_id) < 10.0
+        for i in range(40):
+            backend.tick(world, (i + 401) * 0.05)
+        assert backend.lane_change_finished(entity, world)
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_stretched_lane_change_slows_for_one_ahead_in_the_lane_it_goes_to(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    sumo_id, entity = next(iter(backend._driven.items()))
+    tc = backend._traci
+    vehicle = tc.vehicle
+    try:
+        backend.tick(world, 0.0)
+        edge = vehicle.getRoadID(sumo_id)
+        lane = vehicle.getLaneIndex(sumo_id)
+        position = vehicle.getLanePosition(sumo_id)
+        route = f"{edge}_blocker"
+        tc.route.add(route, [edge])
+        vehicle.add(
+            "blocker",
+            route,
+            departLane=str(lane + 1),
+            departPos=str(position + 22.0),
+            departSpeed="0",
+        )
+        vehicle.setSpeed("blocker", 0.0)
+        backend.tick(world, 0.05)
+        backend.change_lane(entity, world, LaneChangeDirection.LEFT, 0.0, 30.0)
+        for i in range(200):
+            backend.tick(world, (i + 2) * 0.05)
+            assert tc.simulation.getCollidingVehiclesNumber() == 0
+            if sumo_id in backend._lane_change_requests:
+                assert backend._lane_change_requests[sumo_id].started
+        assert vehicle.getSpeed(sumo_id) < 0.1
+        assert vehicle.getLanePosition("blocker") > vehicle.getLanePosition(sumo_id)
+    finally:
+        backend.close()
+
+
+def test_the_way_ahead_is_the_band_between_it_and_the_lanes_centre() -> None:
+    from autoware_carla_scenario.traffic.base import crossing_safe_speed
+
+    def safe(ahead: float, beside: float) -> float:
+        return crossing_safe_speed(ahead, beside, 3.5, 2.0, 1.0, 2.0, 1.0, 0.0)
+
+    # 3.5 m to the right of the lane it goes to, so what is to its left counts.
+    assert safe(10.0, 0.0) >= 0.0
+    assert safe(10.0, -3.5) >= 0.0
+    assert safe(10.0, 3.5) < 0.0
+    assert safe(-10.0, 0.0) < 0.0
+    assert safe(7.0, 0.0) == 0.0

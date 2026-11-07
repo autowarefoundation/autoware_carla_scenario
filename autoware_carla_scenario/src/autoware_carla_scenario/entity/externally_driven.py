@@ -110,7 +110,11 @@ class ExternallyDrivenEgo(EgoVehicle):
     # ------------------------------------------------------------------
 
     def change_lane(
-        self, world: "carla.World", direction: "LaneChangeDirection"
+        self,
+        world: "carla.World",
+        direction: "LaneChangeDirection",
+        start_after_m: float = 0.0,
+        lane_change_length_m: float = 0.0,
     ) -> None:
         """Refuse a TrafficManager manoeuvre: nothing here is driven by it.
 

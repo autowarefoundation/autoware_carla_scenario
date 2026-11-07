@@ -1808,6 +1808,8 @@ def build_lane_change_action(
         label=compiled.label,
         once=compiled.node.once,
         overrides=compiled.node.overrides,
+        start_after_m=params["start_after_m"],
+        lane_change_length_m=params["lane_change_length_m"],
     )
 
 

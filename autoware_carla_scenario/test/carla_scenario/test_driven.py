@@ -524,7 +524,9 @@ class TestTheActionDelegates:
         asked: list[LaneChangeDirection] = []
 
         class _Recording(_Vehicle):
-            def change_lane(self, world, direction) -> None:  # noqa: ANN001
+            def change_lane(  # noqa: ANN001
+                self, world, direction, start_after_m=0.0, lane_change_length_m=0.0
+            ) -> None:
                 asked.append(direction)
 
             def lane_change_finished(self, world) -> bool:  # noqa: ANN001
