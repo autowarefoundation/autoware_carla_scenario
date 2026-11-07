@@ -93,6 +93,7 @@ from .expand import (
     expand_sweep,
     load_sweep_map,
     scenario_controls,
+    scenario_rules,
 )
 from .isolation import (  # noqa: F401  (SWEEPER_OWNS_RETRIES_ENV: re-exported)
     SWEEPER_OWNS_RETRIES_ENV,
@@ -759,6 +760,7 @@ class LaneletConstraintSweeper(Sweeper):
                     odd=odd,
                     controls=controls,
                     seed=seed,
+                    rules=scenario_rules(cfg),
                 )
             ]
         except ValueError as exc:

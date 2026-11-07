@@ -38,6 +38,7 @@ CONTROL_FIELDS = (
     "integer",
     "range",
     "limits",
+    "quantity",
 )
 #: What a control's ``target`` may say: ``setting`` (the default), a raw
 #: setting the drawn value is mapped onto by ``scale`` and ``offset``; or

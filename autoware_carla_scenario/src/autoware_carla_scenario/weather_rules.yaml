@@ -1,36 +1,147 @@
-# The rules the weather's effects follow: conditional distributions, which
-# openodd reads (its docs/rules.md), that give the distribution of a quantity
-# a run sets in a weather (docs/odd.md, "Weather rules").  A run draws a
-# quantile and sets the value at it.
+# The rules the weather's effects follow: a Bayesian network of conditional
+# distributions, which openodd reads (its docs/rules.md, version 3), from the
+# conditions a run is given to what they do (docs/odd.md, "Weather rules").
 #
-# Each quantity is one or more parts; each part reads some of the weather's
-# fields (`at`, with the points it is written at) and gives a distribution
-# (here `uniform`, from `low` to `high`) at each point, interpolated linearly
-# between them and held beyond them.  With more than one part, every part
-# gives its value at the run's quantile and `combine` (`min` or `max`) joins
-# them.
+# * The causes are the inputs: concepts of the taxonomy (`taxonomy:`), the
+#   vocabulary an ODD is written in -- the rainfall rate, the visibility
+#   through the fog, the time of day.  A run gives them in its `environment`
+#   config (`rainfall_rate_mm_h`, `fog_visibility_range_m`, `time_of_day`).
+# * The effects are the quantities: CARLA's own weather settings
+#   (`carla_*`), which render the conditions, and what the conditions do to
+#   the road and the drivers -- the grip, how far drivers see, the speed they
+#   keep.  None of them is in the taxonomy.
 #
-# The inputs a part may read: the weather's `cloudiness`, `precipitation`,
-# `precipitation_deposits`, `wetness`, `wind_intensity`, `fog_density`,
-# `fog_distance`, `sun_altitude_angle` and `sun_azimuth_angle`, and `water`,
-# the larger of `wetness` and `precipitation_deposits`.
+# Before a run starts, every effect the run does not set itself is worked out
+# once, at a quantile (the median unless the run draws one): the sampler does
+# it for the cases it draws, the runner for a config that names the causes
+# (`weather_rules.resolve_environment`).  What the run then applies are
+# numbers.  The grip alone is worked out again for each vehicle where the
+# rules differ by vehicle, from the CARLA water already set.
+#
+# Each quantity is one or more parts; each part reads some causes or other
+# quantities (`at`, with the points it is written at) and gives a
+# distribution (`uniform`, from `low` to `high`, or `triangular`) at each
+# point, interpolated linearly between number points and held beyond them; a
+# categorical cause is written at its labels.  With more than one part, every
+# part gives its value at the run's quantile and `combine` (`min` or `max`)
+# joins them.
 #
 # A run reads another file with `environment.rules` in its config, merged
 # over these: it names only what it changes, may `extends` other files (by
 # path, https:// URL or git source), and may differ by vehicle.
-version: 2
+version: 3
+taxonomy: {bundled: default}
+basis:
+  kind: expert
+  by: autoware_carla_scenario
+  text: >-
+    Set from CARLA's own weather presets and published ranges of tyre-road
+    friction and visibility; not fitted to measured runs.
+
+inputs:
+  rainfall_rate:
+    concept: environment_conditions.environment_conditions.weather.rain.rainfall_rate
+    unit: mm/h
+    default: 0
+    text: The rainfall rate the run is set to.
+  fog_visibility_range:
+    concept: environment_conditions.environment_conditions.weather.fog.fog_visibility_range
+    unit: m
+    default: 10000
+    text: How far one sees through the fog, as meteorology measures it; 10 km is no fog.
+  time_of_day:
+    concept: environment_conditions.environment_conditions.illumination.time_of_day
+    default: day
+    text: The time of day the run is set to.
+
 quantities:
-  # The grip a tyre keeps on the road, as a share of CARLA's dry road's, by
-  # how wet the road is.  Measured tyre-road friction coefficients are about
-  # 0.8-1.0 on dry asphalt, 0.5-0.7 on wet and 0.3-0.5 under a water film
-  # (what heavy rain leaves): a wet road keeps about three quarters of the dry
-  # grip, a flooded one about half.  Each range spans what tyres, their wear
-  # and the asphalt make of the same water; a dry road's is centred on CARLA's
-  # own grip, so a dry run at its median drives as it did before.
-  tire_friction:
+  # CARLA's precipitation, 0-100, for a rainfall rate, mm/h: the taxonomy's
+  # light rain (0.1-2.5 mm/h) up to about 30, moderate (2.5-7.6) up to about
+  # 70, heavy above.
+  carla_precipitation:
     parts:
-      water:
-        at: {water: [0, 50, 100]}        # dry, wet, flooded
+      rain:
+        at: {rainfall_rate: [0, 0.1, 2.5, 7.6, 25]}
+        uniform:
+          low:  [0, 1, 25, 60, 95]
+          high: [0, 10, 35, 75, 100]
+
+  # The cloudiness, standing water and wetness CARLA's rain presets pair with
+  # its precipitation (SoftRain, MidRainy, HardRain; LibCarla's
+  # WeatherParameters.cpp): precipitation alone barely shows in a camera
+  # image -- a few drops on a dry road under a clear sky.
+  carla_cloudiness:
+    parts:
+      rain:
+        at: {carla_precipitation: [0, 30, 60, 100]}
+        uniform:
+          low:  [0, 55, 75, 95]
+          high: [5, 65, 85, 100]
+  carla_precipitation_deposits:
+    parts:
+      rain:
+        at: {carla_precipitation: [0, 30, 60, 100]}
+        uniform:
+          low:  [0, 45, 55, 85]
+          high: [0, 55, 65, 95]
+  carla_wetness:
+    parts:
+      rain:
+        at: {carla_precipitation: [0, 30, 60, 100]}
+        uniform:
+          low:  [0, 25, 55, 95]
+          high: [0, 35, 65, 100]
+
+  # CARLA's fog density, 0-100, for the visibility through the fog, metres:
+  # the taxonomy's thick fog (under 50 m) near 100, no detectable fog (over
+  # 1600 m) near 0.
+  carla_fog_density:
+    parts:
+      fog:
+        at: {fog_visibility_range: [15, 50, 450, 800, 1600, 5000]}
+        uniform:
+          low:  [95, 85, 50, 30, 10, 0]
+          high: [100, 95, 65, 45, 20, 0]
+
+  # The sun, degrees, for the time of day: the day with the sun above the
+  # horizon, dusk and dawn the civil twilight (down to 6 degrees below it),
+  # the night under that.  Dusk and dawn are told apart by the sun's azimuth:
+  # rising (0-180 degrees) at dawn, setting (180-360) at dusk -- what the
+  # `time_of_day` probe reads back.
+  carla_sun_altitude:
+    parts:
+      time:
+        at: {time_of_day: [day, dusk, night, dawn]}
+        uniform:
+          low:  [0, -6, -90, -6]
+          high: [90, -0.01, -6.01, -0.01]
+  carla_sun_azimuth:
+    parts:
+      time:
+        at: {time_of_day: [day, dusk, night, dawn]}
+        uniform:
+          low:  [0, 180, 0, 0]
+          high: [360, 359.99, 360, 179.99]
+
+  # The grip a tyre keeps on the road, as a share of CARLA's dry road's, by
+  # how wet the road is: its wetness and its standing water, each a part, so
+  # the wetter of the two holds.  Measured tyre-road friction coefficients
+  # are about 0.8-1.0 on dry asphalt, 0.5-0.7 on wet and 0.3-0.5 under a
+  # water film (what heavy rain leaves): a wet road keeps about three
+  # quarters of the dry grip, a flooded one about half.  Each range spans
+  # what tyres, their wear and the asphalt make of the same water; a dry
+  # road's is centred on CARLA's own grip, so a dry run at its median drives
+  # as it did before.
+  tire_friction:
+    combine: min
+    parts:
+      wetness:
+        at: {carla_wetness: [0, 50, 100]}                 # dry, wet, flooded
+        uniform:
+          low:  [0.90, 0.65, 0.45]
+          high: [1.10, 0.85, 0.65]
+      standing_water:
+        at: {carla_precipitation_deposits: [0, 50, 100]}
         uniform:
           low:  [0.90, 0.65, 0.45]
           high: [1.10, 0.85, 0.65]
@@ -38,36 +149,35 @@ quantities:
   # How far a driver sees, metres.  The fog, the rain and the light each bound
   # it, and the shortest bound holds: fog at night is seen through no further
   # than either.  Each range spans what eyes, windscreens, headlights and the
-  # road's own lighting make of the same weather.
+  # road's own lighting make of the same conditions.
   visibility:
     combine: min
     parts:
-      # A clear day's is what a driver looks ahead on an open road; dense
-      # fog's is meteorology's dense fog (under 50 m).
+      # A clear day's is what a driver looks ahead on an open road; in fog,
+      # about what meteorology measures through it.
       fog:
-        at: {fog_density: [0, 30, 70, 100]}       # clear, mist, fog, dense
+        at: {fog_visibility_range: [15, 50, 150, 400, 1000]}
         uniform:
-          low:  [250, 120, 40, 15]
-          high: [400, 250, 100, 40]
+          low:  [12, 40, 120, 250, 250]
+          high: [18, 60, 180, 400, 400]
       # Falling rain and the spray the traffic throws up shorten the view less
       # than fog does.
       rain:
-        at: {precipitation: [0, 30, 70, 100]}     # dry, light, heavy, torrential
+        at: {rainfall_rate: [0, 2.5, 7.6, 25]}           # dry, light, heavy, torrential
         uniform:
           low:  [250, 180, 100, 60]
           high: [400, 320, 220, 150]
-      # By the sun's altitude, degrees: from sunset to the end of civil
-      # twilight (6 degrees below the horizon, the ODD's `night`) down to what
-      # headlights light, from a dipped beam's 50 m to a main beam's or a lit
-      # street's 150 m.
+      # At night, what headlights light, from a dipped beam's 50 m to a main
+      # beam's or a lit street's 150 m; in the twilight, between that and
+      # the day's.
       light:
-        at: {sun_altitude_angle: [-6, 0]}         # night below, day above
+        at: {time_of_day: [day, dusk, night, dawn]}
         uniform:
-          low:  [50, 250]
-          high: [150, 400]
+          low:  [250, 150, 50, 150]
+          high: [400, 275, 150, 275]
 
   # The speed a driver keeps, m/s, from how far they see: a part reading the
-  # visibility above, so the rules chain (weather -> visibility -> speed).
+  # visibility above, so the rules chain (conditions -> visibility -> speed).
   # Written for SUMO's default car, braking at 4.5 m/s^2 a second after it
   # sees: `high` is the speed it stops from within the visibility (8 m/s in
   # 15 m, 26 m/s in 100 m; visibility.sight_speed), and most drivers keep a

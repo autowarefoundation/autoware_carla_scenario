@@ -1,23 +1,34 @@
-"""The rules the weather's effects follow: the road's grip and how far drivers see.
+"""The rules the weather's effects follow: CARLA's weather, the road's grip and how far drivers see.
 
-A run sets the weather; what it does to the road and to the drivers' sight
-follows from it, as a distribution a run's quantile picks the value of
-(:func:`~autoware_carla_scenario.actions.environment.tire_friction`,
-:func:`~autoware_carla_scenario.visibility.visibility`).  Which distribution
-is written as conditional distributions (``weather_rules.yaml`` next to this
-module), which openodd reads (:mod:`openodd.rules`, its docs/rules.md): they
-are the CARLA backend's own (:attr:`~.odd.backend.CarlaBackend.rules`).
+A run is given conditions -- the rainfall rate, the visibility through the
+fog, the time of day: the causes, concepts of the taxonomy an ODD is written
+in.  What they do follows from them, as a distribution a run's quantile picks
+the value of: the CARLA weather settings that render them, the road's grip
+(:func:`~autoware_carla_scenario.actions.environment.tire_friction`) and how
+far drivers see (:func:`~autoware_carla_scenario.visibility.visibility`).
+Which distribution is written as conditional distributions, a Bayesian
+network (``weather_rules.yaml`` next to this module, version 3), which
+openodd reads (:mod:`openodd.rules`, its docs/rules.md): they are the CARLA
+backend's own (:attr:`~.odd.backend.CarlaBackend.rules`).
 
-* a **quantity** (``tire_friction``, ``visibility``, ``sight_speed``) is one
-  or more parts;
-  at a run's quantile, each part gives its value and ``combine`` (``min`` or
-  ``max``) joins them;
-* a **part** reads some of the weather's fields (:data:`WEATHER_INPUTS`) and
-  gives a distribution (``uniform``, ``triangular`` or ``normal``) at points
-  of them, interpolated linearly between the points;
-* a part may read another quantity, so the rules chain: ``sight_speed``, the
-  speed a driver keeps, reads the ``visibility``
+* a **quantity** (``carla_precipitation``, ``tire_friction``,
+  ``visibility``, ...: :data:`QUANTITIES`) is one or more parts; at a run's
+  quantile, each part gives its value and ``combine`` (``min`` or ``max``)
+  joins them;
+* a **part** reads some causes (:data:`WEATHER_INPUTS`) or other quantities,
+  and gives a distribution (``uniform``, ``triangular`` or ``normal``) at
+  points of them;
+* so the rules chain: the rainfall rate gives CARLA's precipitation, which
+  gives its wetness, which gives the grip; the visibility gives
+  ``sight_speed``, the speed a driver keeps
   (:func:`~autoware_carla_scenario.visibility.sight_speed_at`).
+
+**The network is worked out once, before a run** (:func:`resolve_environment`):
+the causes a config names, and any CARLA field it sets itself, give every
+CARLA field and the visibility the run then applies as numbers.  The sampler
+does the same for the cases it draws.  Only what depends on a vehicle is
+worked out during the run: its grip, from the water already set
+(:func:`vehicle_at`), and the speed each traffic driver keeps.
 
 A run reads other rules with ``environment.rules`` (:func:`use_weather_rules`):
 a file -- a path or an ``https://`` URL -- merged over the default rules (it
@@ -32,7 +43,7 @@ that differ by vehicle::
           "vehicle.mini.*": weather/mini.yaml   # a blueprint pattern
 
 Each vehicle's file is read over the run's default rules.  The grip is a
-vehicle's (:func:`vehicle_range`); how far drivers see is the default rules'.
+vehicle's (:func:`vehicle_range`); everything else is the default rules'.
 """
 
 from __future__ import annotations
@@ -44,6 +55,8 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from openodd import Rules, RulesError
 
+from .weather_inputs import CARLA_QUANTITIES as CARLA_QUANTITIES
+from .weather_inputs import CAUSE_SETTINGS as CAUSE_SETTINGS
 from .weather_inputs import EGO_KEY as EGO_KEY
 from .weather_inputs import QUANTITIES as QUANTITIES
 from .weather_inputs import WEATHER_INPUTS as WEATHER_INPUTS
@@ -56,13 +69,17 @@ if TYPE_CHECKING:
 logger = logging.getLogger(__name__)
 
 __all__ = [
+    "CARLA_QUANTITIES",
+    "CAUSE_SETTINGS",
     "DEFAULT_RULES",
+    "RESOLVED_QUANTITIES",
     "EGO_KEY",
     "QUANTITIES",
     "WEATHER_INPUTS",
     "RulesError",
     "check_weather_rules",
     "default_rules",
+    "resolve_environment",
     "rule_values",
     "use_weather_rules",
     "vehicle_at",
@@ -160,7 +177,7 @@ def use_weather_rules(spec: Union[str, Path, Mapping[str, Any], None] = None) ->
     base = followed if followed is not None else default_rules()
     for pattern, location in vehicles:
         rules = base.read_over(str(location))
-        rules.check_inputs(WEATHER_INPUTS)
+        rules.check_inputs(list(WEATHER_INPUTS))
         _VEHICLE_RULES.append((pattern, rules))
     if default is not None or _VEHICLE_RULES:
         logger.info(
@@ -188,16 +205,17 @@ def weather_rule_files() -> list[tuple[str, str]]:
     return seen
 
 
-def weather_range(quantity: str, inputs: dict[str, float]) -> tuple[float, float]:
-    """The ``(low, high)`` range of *quantity* in the weather *inputs*, by the
-    rules the run follows (every vehicle's but those ``vehicles`` names)."""
+def weather_range(quantity: str, inputs: Mapping[str, Any]) -> tuple[float, float]:
+    """The ``(low, high)`` range of *quantity* at *inputs* -- causes (a number,
+    or the time of day's label) and quantities -- by the rules the run follows
+    (every vehicle's but those ``vehicles`` names)."""
     return _backend().derived_range(quantity, inputs)
 
 
-def weather_at(quantity: str, inputs: dict[str, float], quantile: float) -> float:
+def weather_at(quantity: str, inputs: Mapping[str, Any], quantile: float) -> float:
     """The value of *quantity* at *quantile* (0-1, clamped) of its
-    distribution in the weather *inputs*, by the rules the run follows (every
-    vehicle's but those ``vehicles`` names)."""
+    distribution at *inputs* (as :func:`weather_range` reads them), by the
+    rules the run follows (every vehicle's but those ``vehicles`` names)."""
     return _backend().derived_at(quantity, inputs, quantile)
 
 
@@ -231,3 +249,82 @@ def vehicle_at(
     if rules is None:
         return weather_at(quantity, inputs, quantile)
     return rules.quantile(quantity, rule_values(inputs), quantile)
+
+
+#: The quantities worked out before a run (:func:`resolve_environment`):
+#: CARLA's weather fields and how far drivers see.  The grip and the speed a
+#: driver keeps depend on the vehicle, and are worked out during it.
+RESOLVED_QUANTITIES: tuple[str, ...] = (*CARLA_QUANTITIES.values(), "visibility")
+
+_FIELD_OF: dict[str, str] = {q: field for field, q in CARLA_QUANTITIES.items()}
+
+
+def resolve_environment(
+    settings: Mapping[str, Any],
+    quantiles: Optional[Mapping[str, float]] = None,
+) -> dict[str, Any]:
+    """The ``environment`` *settings* with the weather rules worked out: what
+    a run applies, as numbers.
+
+    The causes *settings* names (:data:`CAUSE_SETTINGS`: ``rainfall_rate_mm_h``,
+    ``fog_visibility_range_m``, ``time_of_day``) and the CARLA fields it sets
+    itself (``precipitation``, ``fog_density``, ...) are kept; every other
+    CARLA field that follows from them, and ``visibility_m``, are added, each
+    at its quantile in *quantiles* (by quantity; ``visibility`` also from
+    ``visibility_quantile`` in *settings*), the median when none is given.  A
+    field nothing given leads to is left out: the world keeps its own.
+
+    The visibility follows the causes alone, so a config that sets CARLA's
+    fields but names no cause gets none: its drivers see as they always did
+    (a warning says so), and the ODD's weather is not measured.
+
+    Raises:
+        RulesError: When the rules cannot give a quantity at the values given
+            (a cause they do not know, a label they are not written at).
+    """
+    rules = _backend().active_rules
+    out: dict[str, Any] = dict(settings)
+    if rules is None:
+        return out
+    wanted = dict(quantiles or {})
+    if "visibility" not in wanted and settings.get("visibility_quantile") is not None:
+        wanted["visibility"] = float(settings["visibility_quantile"])
+    # What is known: the causes named, and the CARLA fields set.
+    known: dict[str, Any] = {}
+    for key, cause in CAUSE_SETTINGS.items():
+        if settings.get(key) is not None:
+            known[cause] = settings[key]
+    causes = set(known)
+    for field, quantity in CARLA_QUANTITIES.items():
+        if settings.get(field) is not None:
+            known[quantity] = float(settings[field])
+    given = set(known)
+    if settings.get("visibility_m") is not None:
+        given.add("visibility")
+    for quantity in rules.order:
+        if quantity not in RESOLVED_QUANTITIES or quantity in given:
+            continue
+        reads = set(rules.inputs(quantity))
+        # A quantity follows what is known: a cause named, or a quantity set
+        # or worked out; the visibility follows the causes alone.
+        led = reads & causes if quantity == "visibility" else reads & set(known)
+        if not led:
+            continue
+        value = rules.quantile(quantity, known, wanted.get(quantity, 0.5), wanted)
+        known[quantity] = value
+        if quantity == "visibility":
+            out["visibility_m"] = value
+        else:
+            out[_FIELD_OF[quantity]] = value
+    if (
+        not causes
+        and any(settings.get(f) is not None for f in CARLA_QUANTITIES)
+        and settings.get("visibility_m") is None
+    ):
+        logger.warning(
+            "environment sets CARLA's weather but names no condition (%s): how "
+            "far drivers see does not follow it, and the ODD's weather is not "
+            "measured",
+            ", ".join(CAUSE_SETTINGS),
+        )
+    return out

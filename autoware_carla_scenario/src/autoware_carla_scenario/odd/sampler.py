@@ -21,26 +21,28 @@ say which, none of them knowing the others:
   the value is written unchanged, so ``scale``, ``offset``, ``integer`` and
   ``values`` are refused (:func:`controls_from_mapping`);
 
-* the weather and the sun are set for every scenario through the
-  ``environment`` config, which the built-in probes :func:`~.probes.rain`,
-  :func:`~.probes.fog` and :func:`~.probes.illumination` have knobs on
-  (:data:`DEFAULT_KNOBS`).
+* the conditions -- the rainfall rate, the visibility through the fog, the
+  time of day -- are set for every scenario through the ``environment``
+  config, which the built-in probes :func:`~.probes.rainfall_rate_mm_h`,
+  :func:`~.probes.fog_visibility_range_m` and :func:`~.probes.time_of_day`
+  have knobs on (:data:`DEFAULT_KNOBS`); CARLA's weather fields follow from
+  them by the weather rules, drawn with each case as effects at a quantile of
+  their own (:func:`~.backend.weather_effects`).
 
 A sweep's ``knobs``, keyed by the ODD's attributes, replace them attribute by
 attribute. Attributes nothing sets are left open. See openodd's
 :mod:`openodd.sampler` for how cases are drawn.
 
 The road's grip is no attribute of an ODD but follows one: the water the
-weather drawn leaves on the road bounds it
+conditions drawn leave on the road bounds it
 (:func:`~autoware_carla_scenario.actions.environment.tire_friction_range`).
 Each case is given where in that range its grip is,
 ``environment.tire_friction_quantile`` (:func:`with_tire_friction`), drawn
 from the sweep's seed and the case, so the same sweep draws the same grip;
 ``tire_friction: false`` in the sweep leaves it at the middle.
 
-How far drivers see follows the weather the same way
-(:func:`~autoware_carla_scenario.visibility.visibility_range`): night, rain
-and fog shorten it.  Each case is given where in that range its visibility
+How far drivers see follows the conditions the same way (the weather rules'
+``visibility``): night, rain and fog shorten it.  Each case is given where in that range its visibility
 is, ``environment.visibility_quantile`` (:func:`with_visibility`), drawn the
 same way; ``visibility: false`` in the sweep leaves it at the middle.  A
 traffic backend that models drivers' sight (``sumo``) holds its traffic to
@@ -77,7 +79,9 @@ from openodd.sampler import OddSampler as _OddSampler
 from ..config_flags import check_flag
 from ..route.model import _whole_number
 from ..seed import DEFAULT_SEED, check_seed
-from .backend import CARLA_BACKEND, DEFAULT_KNOBS
+from openodd import Rules
+
+from .backend import CARLA_BACKEND, DEFAULT_KNOBS, CarlaBackend, weather_effects
 from .control_fields import (
     CONTROL_TARGETS,
     FLAKY_FIELDS,
@@ -108,6 +112,7 @@ __all__ = [
     "sample_draws",
     "sample_seed",
     "sampler_from_config",
+    "scenario_backend",
     "seed_setting",
     "search_from_config",
     "TIRE_FRICTION_KEY",
@@ -127,7 +132,9 @@ _MAPPING_FIELDS = MAPPING_FIELDS
 
 
 class OddSampler(_OddSampler):
-    """openodd's sampler, with the CARLA backend's knobs by default.
+    """openodd's sampler, with the CARLA backend's knobs by default, and the
+    CARLA weather fields that follow from the conditions the ODD names as
+    effects drawn with each case (:func:`~.backend.weather_effects`).
 
     The ``coverage`` it aims past is read as the scenario measures' current
     definitions read it: the items of a measure past its first version only
@@ -144,9 +151,31 @@ class OddSampler(_OddSampler):
         from ..coverage.collector import current_measure_coverage  # noqa: PLC0415
 
         kw.setdefault("backend", CARLA_BACKEND)
+        if "effects" not in kw:
+            kw["effects"] = weather_effects(odd, kw["backend"].active_rules)
         if kw.get("coverage") is not None:
             kw["coverage"] = current_measure_coverage(kw["coverage"], odd)
         super().__init__(odd, knobs, **kw)
+
+
+def scenario_backend(rules: Optional[Mapping[str, Any]]) -> CarlaBackend:
+    """The CARLA backend a scenario's cases are drawn with: the shared
+    network (:mod:`~autoware_carla_scenario.weather_rules`) and, with
+    *rules* -- the scenario's ``scenario_rules``, a rule document -- the
+    nodes the scenario adds to it (openodd's ``Backend.add_rules``): what it
+    sets up, such as the gap to a vehicle about to cut in, which its
+    ``controls`` write by ``quantity``.  A backend of its own, so one
+    scenario's nodes never reach another's draws.
+
+    Raises:
+        openodd.RulesError: When *rules* is not a rule document, or defines a
+            node the shared network defines.
+    """
+    if not rules:
+        return CARLA_BACKEND
+    backend = CarlaBackend()
+    backend.add_rules(Rules.from_text(yaml.safe_dump(dict(rules), sort_keys=False)))
+    return backend
 
 
 def controls_from_mapping(raw: Optional[Mapping[str, Any]]) -> dict[str, OddKnob]:
@@ -246,6 +275,7 @@ def sampler_from_config(
     controls: Optional[Mapping[str, Any]] = None,
     base_dir: Optional[Path] = None,
     drawn: Optional[OddDraws] = None,
+    rules: Optional[Mapping[str, Any]] = None,
 ) -> tuple[OddSampler, Optional[int]]:
     """An :class:`OddSampler` and the case count, from a ``sweep.odd_sample``
     mapping without ``flaky`` (see :func:`search_from_config`).
@@ -260,7 +290,7 @@ def sampler_from_config(
     if flaky is not None and flaky is not False:
         raise ValueError("sweep.odd_sample.flaky needs search_from_config()")
     sampler, _, count = search_from_config(
-        raw, odd=odd, controls=controls, base_dir=base_dir, drawn=drawn
+        raw, odd=odd, controls=controls, base_dir=base_dir, drawn=drawn, rules=rules
     )
     return sampler, count
 
@@ -398,6 +428,7 @@ def search_from_config(
     controls: Optional[Mapping[str, Any]] = None,
     base_dir: Optional[Path] = None,
     drawn: Optional[OddDraws] = None,
+    rules: Optional[Mapping[str, Any]] = None,
 ) -> tuple[OddSampler, Optional[FlakySearch], Optional[int]]:
     """An :class:`OddSampler`, the flaky search over it (``None`` without
     ``flaky``), and the case count (``None`` when not given), from a
@@ -461,6 +492,7 @@ def search_from_config(
         coverage=coverage,
         weights=weights_from_config(raw.get("weights"), base_dir),
         drawn=drawn.of(definition) if drawn is not None else (),
+        backend=scenario_backend(rules),
     )
     search = None
     if flaky is not None and flaky is not False:
@@ -495,9 +527,9 @@ def with_visibility(samples: Iterable[OddSample], seed: int = 0) -> list[OddSamp
     Each case gets ``environment.visibility_quantile=<q>``, *q* uniform in
     [0, 1] and drawn from *seed* and the case itself, as
     :func:`with_tire_friction` draws the grip.  The range is the run's: the
-    ``EnvironmentAction`` reads it off the weather it leaves
-    (:func:`~autoware_carla_scenario.visibility.visibility_range`), a clear
-    day's 250-400 m, a night's 50-150 m, heavy fog's 15-40 m.  A case that
+    runner works it out from the conditions the case names
+    (:func:`~autoware_carla_scenario.weather_rules.resolve_environment`), a
+    clear day's 250-400 m, a night's 50-150 m, thick fog's 12-18 m.  A case that
     names its quantile, or a visibility (``environment.visibility_m``),
     already keeps it.
     """

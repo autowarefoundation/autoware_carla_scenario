@@ -223,12 +223,18 @@ These live in `autoware_carla_scenario.odd`:
 | `lanelet_speed_limit_kph` | float, km/h | Lanelet2 `speed_limit` tag |
 | `lanelet_location` | str | Lanelet2 `location` tag (`urban`, `nonurban`, ...) |
 | `lanelet_subtype` | str | Lanelet2 `subtype` tag (`road`, `highway`, ...) |
+| `road_type` | `highway`, or nothing | The taxonomy's road type, from the Lanelet2 `subtype`: `highway` for a highway; Lanelet2 has no tag that tells a local road from a primary one, so those read nothing |
+| `drivable_area_type` | `DRIVABLE_AREA_TYPES` | The taxonomy's drivable area type, from the Lanelet2 `subtype`: `road` and `highway` a `lane`, `road_shoulder` a `shoulder`, `parking` a `parking_space`, `play_street` `mixed_pedestrian_and_vehicular_traffic` |
 | `in_junction` | bool | Lanelet2 `turn_direction` tag of the ego's lanelet, else (no Lanelet2 map) the CARLA waypoint |
 | `lane_count` | int | Driving lanes in the ego's direction, outside junctions: the ego's lanelet and its neighbours in the Lanelet2 routing graph, else (no Lanelet2 map) the CARLA waypoint's OpenDRIVE road |
+| `rainfall_rate_mm_h` | float, mm/h | The rainfall rate the run was set to (`environment.rainfall_rate_mm_h`); nothing when it named none |
+| `fog_visibility_range_m` | float, m | The visibility through the fog the run was set to (`environment.fog_visibility_range_m`); nothing when it named none |
+| `time_of_day` | `TIMES_OF_DAY` | The sun: `day` above the horizon, `dawn` (rising, azimuth 0-180) or `dusk` (setting, 180-360) down to 6 degrees below it, `night` under that |
 | `illumination` | `ILLUMINATION_LEVELS` | Sun altitude |
 | `rain`, `fog` | `INTENSITY_LEVELS` | CARLA weather (0-100) |
 | `visibility` | float, m | How far drivers see, as the run's weather left it ([Visibility follows the weather](#visibility-follows-the-weather)); nothing when the run set none |
 | `traffic_density` | `TRAFFIC_DENSITY_LEVELS` | Other vehicles within `NEARBY_RADIUS_M` |
+| `nearby_vehicle_count` | int | Other vehicles within `NEARBY_RADIUS_M` |
 | `pedestrian_nearby` | bool | A walker within `NEARBY_RADIUS_M` |
 | `vehicle_<field>_mean`, `vehicle_<field>_std`, `pedestrian_<field>_mean`, `pedestrian_<field>_std` | float | The mean and std of a traffic parameter's spread, as the run set it ([Traffic parameters from the ODD](#traffic-parameters-from-the-odd)); nothing when the run set none |
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
@@ -237,7 +243,8 @@ then read the CARLA waypoint.
 
 The probes whose value the map alone decides (`speed_limit_kph`,
 `lanelet_speed_limit_kph`, `lanelet_location`, `lanelet_subtype`,
-`in_junction`, `lane_count`) can also read it off a lanelet, which is how a
+`road_type`, `drivable_area_type`, `in_junction`, `lane_count`) can also
+read it off a lanelet, which is how a
 planned route is checked before a run
 ([Checking a planned route](#checking-a-planned-route)) and how a sweep picks
 the road a drawn case is on ([The road a case is on](#the-road-a-case-is-on)).
@@ -245,7 +252,7 @@ the road a drawn case is on ([The road a case is on](#the-road-a-case-is-on)).
 What they read off a lanelet is public too, for code that has to judge a
 lanelet exactly as the ODD does: `lanelet_in_junction(lanelet)` (a
 `turn_direction` tag, `scenery.junction`), `lanelet_road_type(lanelet)` (the
-`subtype` tag, `scenery.road_type`) and `lanelet_speed_limit(lanelet)` (the
+`subtype` tag, which the road type and the drivable area type follow) and `lanelet_speed_limit(lanelet)` (the
 `speed_limit` tag, km/h; None for a tag that is not a finite number above 0,
 as for a missing one). The adversities' location gate reads them
 (`autoware_carla_scenario.adversity.location`).
@@ -413,12 +420,11 @@ scenario may build its own (`Measure("my_measure", read, "m")`); the check
 calls its `read` with a world and refuses one that returns anything but a
 `float` or an `Optional[float]`. A metric's keys are modelled the same way
 ([Metrics](metrics.md)): `autoware_carla_scenario.metrics` is modelled whole, `Metric` and `BUILT_IN_METRICS` included. The ODD names a measure key, never a scenario; the scenario names
-its measures, never the ODD. The default ODD maps
-`dynamic.vehicle_ahead_gap`, `dynamic.vehicle_ahead_relative_speed`,
-`dynamic.crossing_pedestrian_gap` and `dynamic.crossing_pedestrian_speed`
-onto the four built-in measures; the two of the vehicle ahead count stays of
-1 s or more (`min_stay`), so a gap the ego only closes through is not
-covered.
+its measures, never the ODD. The default ODD maps none: what a scenario
+sets up is no condition of the domain, but an effect the rules draw
+(openodd's docs/rules.md, "Effects a scenario sets"), and a case records the
+value it drew (`case.quantities`), which the logical parameter space is
+plotted over.
 
 #### Measures and metrics
 
@@ -791,36 +797,71 @@ Three things meet in a sampled case, and none of them knows the others:
 | **The framework** | the measure keys, and the weather and sun every scenario can be given | neither |
 
 An ODD tightened, loosened or written in another taxonomy needs no scenario
-changed; a scenario added needs no ODD changed. The sampler joins them on the
-measure key: an attribute the ODD maps onto measure *k* is drawn with the
-running scenario's control of *k*. Attributes nothing sets are left open: a
-combination is admitted when the ODD can hold for some value of them.
-Controls of measures the ODD does not map are unused -- what the ODD does not
-speak of, it does not bound.
+changed; a scenario added needs no ODD changed. What a scenario sets up is
+not a condition of the domain but an effect: the nodes it adds to the rules
+([A scenario's nodes](#a-scenarios-nodes)), drawn with every case whatever
+the ODD names. A control without a `quantity` is still joined to the ODD on
+the measure key: an attribute the ODD maps onto measure *k* is drawn with the
+running scenario's control of *k*, and controls of measures the ODD does not
+map are unused. Attributes nothing sets are left open: a combination is
+admitted when the ODD can hold for some value of them.
+
+### A scenario's nodes
+
+A scenario adds nodes of its own to the shared rules (the
+[weather rules](#weather-rules)): what it sets up -- the gap to a vehicle
+about to cut in, how fast a pedestrian crosses -- as a rule document under
+`scenario_rules` in its config, version 3, joined to the shared network
+(openodd's `Backend.add_rules`, its docs/rules.md "A scenario's nodes"). A
+control that names a node by `quantity` writes it; a sweep draws every node
+with every case, at a quantile of its own the flaky search can move, and the
+case records the value it drew (`case.quantities`), which openodd's case plot
+places the runs by:
+
+```yaml
+# scenario/cut_in/left.yaml
+scenario_rules:
+  version: 3
+  taxonomy: {bundled: default}
+  basis: {kind: expert, by: autoware_carla_scenario}
+  quantities:
+    vehicle_ahead_gap:
+      parts:
+        staged:
+          uniform: {low: 2.0, high: 30.0}      # what the scenario can stage
+    vehicle_ahead_relative_speed:
+      parts:
+        staged:
+          uniform: {low: -15.0, high: 15.0}
+controls:
+  vehicle_ahead_gap_m:
+    key: scenario.npc_gap_m
+    target: measure                            # the gap the measure reads at the start
+    quantity: vehicle_ahead_gap
+  vehicle_ahead_relative_speed_kph:
+    key: scenario.npc_initial_speed_kmh
+    quantity: vehicle_ahead_relative_speed
+    offset: ${ego.initial_speed_kmh}           # its speed less the ego's
+    limits: [0.0, null]                        # a speed: never below zero
+```
+
+A node without `at` is a root: nothing in the domain conditions it yet. One
+may read the shared nodes -- a gap that lengthens on a wet road reads the
+grip -- and may not redefine one: the join refuses a node both define, so a
+scenario can never change what another's cases follow. Each scenario's nodes
+are its own: the cases of one never draw another's.
 
 ### Controls
 
 A **control** (an `OddKnob`) ties a measure to the config key that sets it.
 A scenario declares its own in its config, next to the parameters they set,
-keyed by measure:
-
-```yaml
-# scenario/cut_in/left.yaml
-controls:
-  vehicle_ahead_gap_m:
-    key: scenario.npc_gap_m
-    target: measure                    # the gap the measure reads at the start
-    range: [2.0, 30.0]                 # what the scenario can stage
-  vehicle_ahead_relative_speed_kph:
-    key: scenario.npc_initial_speed_kmh
-    offset: ${ego.initial_speed_kmh}   # its speed less the ego's
-    range: [-15.0, 15.0]
-    limits: [0.0, null]                # a speed: never below zero, however slow the ego
-```
+keyed by measure ([A scenario's nodes](#a-scenarios-nodes) has the
+example scenarios' own).
 
 | Field | Meaning |
 |---|---|
 | `key` | The config key the value is written to |
+| `quantity` | A node of the rules (the scenario's `scenario_rules`, or the shared network's) whose value is written, drawn with every case: the control is then the scenario's effect, not an ODD attribute's knob, and `range` and `values` are not used |
 | `target` | `setting` (the default): the key is a raw setting, written through `scale` and `offset`. `measure`: the key takes the measure's value at the start itself, written unchanged -- no `scale`, `offset`, `integer` or `values` (see below) |
 | `range` | Numeric: `[low, high]` in the measure's unit, the values the scenario can bring about. A bucket is drawn only where it meets the range (by more than an edge), and only that part of it |
 | `values` | Per bucket label. Categorical: the value to write, or `[low, high)` to draw it from (`[x, x]` is `x`); a bucket without one is not drawn. Numeric: a range to draw from instead of the bucket's interval -- which an unbounded bucket (`-inf`/`inf` edges) needs to be drawn at all |
@@ -846,7 +887,8 @@ Errors (exit status 1; the config is not compiled): a control that is not a key
 or a mapping, an unknown field, a missing or unknown `key` (it must be a key
 of the composed config), a `target` that is neither `setting` nor `measure`,
 `scale`/`offset`/`integer`/`values` under `target: measure`, a `range` or
-`limits` that is not `[low, high]` with `low <= high`.
+`limits` that is not `[low, high]` with `low <= high`, a `quantity` that is
+not a name.
 
 A measure name that is not a built-in one is only a **warning**
 (`controls.vehicle_ahead_gap: not a built-in measure (did you mean
@@ -935,12 +977,40 @@ fast `s` changes.)
 
 The weather and the sun are set for every scenario, through the
 `environment` config, which sets them before the run starts
-(`EnvironmentAction`); the built-in probes reading them have controls of
-their own:
+(`EnvironmentAction`). The default ODD names the **conditions** -- the
+rainfall rate, the visibility through the fog and the time of day, the
+taxonomy's -- and the built-in probes reading them have controls of their
+own:
+
+| Probe | Key | Range |
+|---|---|---|
+| `rainfall_rate_mm_h` | `environment.rainfall_rate_mm_h` | 0-30 mm/h, within the bucket drawn (the rain intensity's: light 0.1-2.5, moderate 2.5-7.6, heavy above) |
+| `fog_visibility_range_m` | `environment.fog_visibility_range_m` | 15-5000 m, within the bucket drawn (the fog level's: thick under 50, heavy 50-450, medium 450-800, mist 800-1600) |
+| `time_of_day` | `environment.time_of_day` | the label drawn: `day`, `dusk`, `night`, `dawn` |
+
+CARLA does not take these: it renders them by its own weather fields, and
+which fields render a condition is what the [weather rules](#weather-rules)
+say -- a Bayesian network from the conditions to CARLA's `precipitation`,
+`cloudiness`, `precipitation_deposits`, `wetness`, `fog_density`,
+`sun_altitude_angle` and `sun_azimuth_angle`, and on to the grip and the
+visibility. They are worked out **once, before the run**, and the run applies
+numbers: a `sweep.odd_sample` draws each field that follows from a condition
+the ODD names with the case, at a quantile of its own (an effect,
+`environment.precipitation=...` among the case's overrides, its value in the
+case's `quantities`, which the flaky search moves); a config that names a
+condition gets the rest at its median
+(`weather_rules.resolve_environment`). A CARLA field the config sets itself
+is kept, and what follows from it in the rules reads it. The probes read the
+conditions back: the rainfall rate and the fog visibility as the run was set
+to them, the time of day off the sun.
+
+A config that sets CARLA's fields alone names no condition: the ODD's
+weather is not measured, and drivers see as they always did (a warning says
+so). CARLA's own fields have controls too, for an ODD that names them:
 
 | Probe | Key | Ranges |
 |---|---|---|
-| `rain` | `environment.rain` | `none` 0, `light` 1-30, `moderate` 30-70, `heavy` 70-100 |
+| `rain` | `environment.precipitation` | `none` 0, `light` 1-30, `moderate` 30-70, `heavy` 70-100 |
 | `fog` | `environment.fog_density` | as `rain` |
 | `illumination` | `environment.sun_altitude_angle` | `day` 15-90, `low_sun` 0-15, `twilight` -6-0, `night` -90 to -6 |
 | `visibility` | `environment.visibility_m` | 15-400 m, whatever the weather |
@@ -949,29 +1019,26 @@ their own:
 | `wind` | `environment.wind_intensity` | as `rain` |
 | `cloudiness` | `environment.cloudiness` | as `rain` |
 
-`road_wetness` reads the weather's `wetness` alone, which its knob sets, so a
-drawn value reads back as its bucket; the standing water `rain` brings is the
-rain's, and the grip follows the larger of the two. `tire_friction` reads the
-grip the run's weather left the vehicles' wheels (a share of the dry
-road's, 1.0) -- `None` when nothing set it -- and its knob names it outright, as
-`visibility`'s names the visibility. `wind` and `cloudiness` read CARLA's
-0-100 intensities as levels, as `rain` and `fog` do.
-
-`environment.rain` sets the precipitation and, with it, the cloudiness,
-standing water and wetness of CARLA's rain presets (`EnvironmentAction`'s
-`rain`): precipitation alone draws only the falling drops, and a camera sees a
-dry road under a clear sky. The probe reads the precipitation, so a drawn value
-still reads back as its bucket. `rain` and `precipitation` cannot both be set
-(the run fails at its start), and the `none` bucket, `rain=0`, is a dry road
-under a clear sky whatever the map's own weather.
+The precipitation brings, by the rules, the cloudiness, standing water and
+wetness of CARLA's rain presets: precipitation alone draws only the falling
+drops, and a camera sees a dry road under a clear sky. `road_wetness` reads
+the weather's `wetness` alone, which its knob sets, so a drawn value reads
+back as its bucket; the grip follows the wetter of it and the standing
+water. `tire_friction` reads the grip the run's weather left the vehicles'
+wheels (a share of the dry road's, 1.0) -- `None` when nothing set it -- and
+its knob names it outright, as `visibility`'s names the visibility. `wind`
+and `cloudiness` read CARLA's 0-100 intensities as levels, as `rain` and
+`fog` do.
 
 Every `environment.*` value must be a finite number -- an integer or a
 float, not a boolean or a string (`true` and `"15"` are refused, not read as
-1 and 15): any other value, NaN or infinity is refused before the run
-starts, naming the key (`environment.rain must be finite, got nan`). `cloudiness`, `precipitation`, `precipitation_deposits`, `wetness`,
-`wind_intensity` and `fog_density` must be within 0-100, `tire_friction` and
-`visibility_m` positive, and the two quantiles within 0-1; `rain` outside 0-100
-is clamped to it. `EnvironmentAction` refuses the same values with a
+1 and 15) -- but `time_of_day`, one of `day`, `dusk`, `night`, `dawn`: any
+other value, NaN or infinity is refused before the run starts, naming the key
+(`environment.rainfall_rate_mm_h must be finite, got nan`). `cloudiness`,
+`precipitation`, `precipitation_deposits`, `wetness`, `wind_intensity` and
+`fog_density` must be within 0-100, `tire_friction`, `visibility_m` and
+`fog_visibility_range_m` positive, `rainfall_rate_mm_h` not negative, and the
+two quantiles within 0-1. `EnvironmentAction` refuses the same values with a
 `ValueError` naming its argument.
 
 Fog is drawn as `fog_density` alone. How thick that looks is the server's: a
@@ -981,28 +1048,29 @@ Start it with `-ExecCmds="carla.Weather.FogDensityScale 0.01"` for fog a
 camera sees, or set `server.fog_density_scale=0.01`
 ([LiDAR](driver_interface.md#lidar)).
 
-The `rain` and `fog` knobs set the LiDAR noise as well: each `driver.lidars`
-sweep carries the world's precipitation and fog density
+The precipitation and the fog density set the LiDAR noise as well: each
+`driver.lidars` sweep carries the world's precipitation and fog density
 ([LiDAR](driver_interface.md#lidar)).
 
-A scenario that sets the weather itself (its own `EnvironmentAction`) has
-the last word over the config.
+A scenario that sets the weather itself has the last word over the config:
+its own `EnvironmentAction`, with numbers -- worked out from conditions with
+`EnvironmentAction(**resolve_environment({"rainfall_rate_mm_h": 5.0}))`.
 
 ### Tire friction follows the weather
 
 CARLA draws rain but does not drive on it: a vehicle grips a soaked road as
 it grips a dry one. So an `EnvironmentAction` that sets the road's water --
-`rain`, `wetness` or `precipitation_deposits` -- also scales every vehicle's
-wheel friction (`friction_force_multiplier`) to a share of the dry road's
-grip, within the range the resulting weather leaves
+`wetness` or `precipitation_deposits`, which rain brings -- also scales every
+vehicle's wheel friction (`friction_force_multiplier`) to a share of the dry
+road's grip, within the range the resulting water leaves
 (`tire_friction_range`). The default [weather rules](#weather-rules) give it
-by the larger of `wetness` and `precipitation_deposits`:
+by the wetter of `wetness` and `precipitation_deposits`:
 
-| Road water | Grip, share of the dry road's | What `rain` gives it |
+| Road water | Grip, share of the dry road's | The rainfall that leaves it |
 |---|---|---|
-| 0 (dry) | 0.90-1.10 | `rain=0` |
-| 50 (wet) | 0.65-0.85 | `rain=30` (standing water 50) |
-| 100 (flooded) | 0.45-0.65 | `rain=100` |
+| 0 (dry) | 0.90-1.10 | none |
+| 50 (wet) | 0.65-0.85 | moderate, about 4 mm/h (standing water about 50) |
+| 100 (flooded) | 0.45-0.65 | heavy, 25 mm/h and above |
 
 Between the rows the bounds are interpolated (the rules write the
 distribution at these points). Measured tire-road friction
@@ -1010,6 +1078,11 @@ is about 0.8-1.0 on dry asphalt, 0.5-0.7 on wet and 0.3-0.5 under a water
 film; each range spans what tires, their wear and the asphalt make of the
 same water, and a dry road's is centred on CARLA's own grip, so a dry run
 drives as it did before.
+
+The grip is the one quantity the action reads off the rules, during the run:
+it may differ by vehicle ([Rules by vehicle](#weather-rules)), and a vehicle
+spawned later gets its own. It reads the water the action sets, which the
+run's conditions gave before it started.
 
 Where in the range a run's grip is, is `environment.tire_friction_quantile`:
 the quantile of the grip's distribution (0 its low end, 1 its high end; the
@@ -1037,14 +1110,14 @@ one rather than compounding it.
 
 The grip is CARLA's vehicle physics alone: no traffic backend reads it.
 
-The example scenarios declare these:
+The example scenarios declare these, each a node of their `scenario_rules`:
 
-| Scenario | Measure | Parameter |
-|---|---|---|
-| `cut_in/*` | `vehicle_ahead_gap_m` | `npc_gap_m` (`target: measure`), 2-30 m |
-| `cut_in/*` | `vehicle_ahead_relative_speed_kph` | `npc_initial_speed_kmh` less the ego's, -15 to 15 km/h |
-| `pedestrian_dart_out` | `crossing_pedestrian_gap_m` | `trigger_distance_m`, 8-30 m |
-| `pedestrian_dart_out` | `crossing_pedestrian_speed_ms` | `walk_speed_ms`, 0.8-3 m/s |
+| Scenario | Measure | Node | Parameter |
+|---|---|---|---|
+| `cut_in/*` | `vehicle_ahead_gap_m` | `vehicle_ahead_gap`, 2-30 m | `npc_gap_m` (`target: measure`) |
+| `cut_in/*` | `vehicle_ahead_relative_speed_kph` | `vehicle_ahead_relative_speed`, -15 to 15 km/h | `npc_initial_speed_kmh`, offset by the ego's |
+| `pedestrian_dart_out` | `crossing_pedestrian_gap_m` | `crossing_pedestrian_gap`, 8-30 m | `trigger_distance_m` |
+| `pedestrian_dart_out` | `crossing_pedestrian_speed_ms` | `crossing_pedestrian_speed`, 0.8-3 m/s | `walk_speed_ms` |
 
 `traffic_light_compliance` declares none, but has what a control needs:
 `stop_line_distance_m` (`target: measure`: the ego is moved along the lane its
@@ -1064,37 +1137,37 @@ the command line -- one sweep against one ODD -- not for a scenario's config,
 which would then name the ODD's taxonomy: a scenario says `controls`. Controls set where a run starts;
 the measures read what it then drives, which is what coverage counts.
 
-### Visibility follows the weather
+### Visibility follows the conditions
 
 CARLA draws the weather but its traffic never looks through it: the
 TrafficManager's vehicles know where every actor is, fog or not. A driver
 does not, and drives so as to stop within the road they see. So how far
-drivers see is a quantity of the run, in metres, which the weather bounds
-(`visibility_range`, in `autoware_carla_scenario.visibility`). By the default
-[weather rules](#weather-rules), each of the fog, the rain and the light
-gives a range, and the shortest holds.
+drivers see is a quantity of the run, in metres, which the conditions bound
+(the [weather rules](#weather-rules)' `visibility`). Each of the fog, the
+rain and the light gives a range, and the shortest holds:
 
-| Weather | Visibility, m |
+| Condition | Visibility, m |
 |---|---|
 | clear day | 250-400 |
-| `fog_density` 30 / 70 / 100 | 120-250 / 40-100 / 15-40 |
-| `precipitation` 30 / 70 / 100 | 180-320 / 100-220 / 60-150 |
-| night (`sun_altitude_angle` -6 and below) | 50-150 (a dipped beam to a main beam or a lit street) |
+| fog visibility 15 / 50 / 150 / 400 m and over | 12-18 / 40-60 / 120-180 / 250-400 |
+| rainfall rate 2.5 / 7.6 / 25 mm/h | 180-320 / 100-220 / 60-150 |
+| dusk, dawn | 150-275 |
+| night | 50-150 (a dipped beam to a main beam or a lit street) |
 
-Between the rows the bounds are interpolated; through civil twilight (0 to
--6 degrees) the day's range shortens to the night's. An `EnvironmentAction`
-that sets the fog, the rain (`rain` or `precipitation`) or the sun records
-the visibility of the weather it leaves for its world, at
-`environment.visibility_quantile` of its distribution (0 its low end, 1 its
-high end; the median when not set); `environment.visibility_m` fixes it whatever
-the weather. A `sweep.odd_sample` draws the quantile for every case, as it
-draws the grip, so the ODD's `rain`, `fog` and `illumination` knobs are what
-shorten it: a night case's drivers see 50-150 m, a heavy-fog case's 15-40 m.
-`visibility: false` in the `odd_sample` leaves every case at the median
-(read as `tire_friction` is, [strictly](usage.md#the-switches)). An ODD that names the visibility itself (the `visibility` probe)
-sets it through its own knob, `environment.visibility_m`, and a case with one
-keeps it. A run that sets no weather records none, and its traffic sees as
-it always did; each run starts with none, whatever the last left.
+Between the rows the bounds are interpolated. It is worked out before the
+run, from the conditions the run names, at `environment.visibility_quantile`
+of its distribution (0 its low end, 1 its high end; the median when not
+set), and the run records it as `environment.visibility_m`, which also fixes
+it whatever the conditions. A `sweep.odd_sample` draws the quantile for every
+case, as it draws the grip, so the ODD's rainfall rate, fog visibility and
+time of day are what shorten it: a night case's drivers see 50-150 m, a
+thick-fog case's 12-18 m. `visibility: false` in the `odd_sample` leaves every
+case at the median (read as `tire_friction` is,
+[strictly](usage.md#the-switches)). An ODD that names the visibility itself
+(the `visibility` probe) sets it through its own knob,
+`environment.visibility_m`, and a case with one keeps it. A run that names no
+condition records none, and its traffic sees as it always did; each run
+starts with none, whatever the last left.
 
 What follows it is the traffic backend's (`traffic.vehicles.follow_visibility`):
 the `sumo` backend holds its own
@@ -1108,60 +1181,82 @@ and otherwise only logs the speed it would hold traffic to.
 
 ### Weather rules
 
-The grip and the visibility are conditional distributions, not code:
-`weather_rules.yaml` in the package (`autoware_carla_scenario.weather_rules`),
-the CARLA backend's own rules (`CarlaBackend.rules`), which openodd reads and
-evaluates in its Rust core
+What the conditions do is a Bayesian network of conditional distributions,
+not code: `weather_rules.yaml` in the package
+(`autoware_carla_scenario.weather_rules`), the CARLA backend's own rules
+(`CarlaBackend.rules`), which openodd reads and evaluates in its Rust core
 ([its rules docs](https://github.com/hakuturu583/openodd_py/blob/main/docs/rules.md)
-have the file format in full). A **quantity** (`tire_friction`, `visibility`)
-is one or more **parts**; each reads some of the weather's fields and gives
-the quantity's distribution at points of them:
+have the file format in full). It is a version 3 file:
+
+- its **causes** are its inputs, concepts of the taxonomy it names
+  (`taxonomy: {bundled: default}`, openodd's bundled subset of
+  tier4/taxonomy): `rainfall_rate` (mm/h), `fog_visibility_range` (m) and
+  `time_of_day` (a label) -- `weather_rules.WEATHER_INPUTS`, which the
+  `environment` keys `rainfall_rate_mm_h`, `fog_visibility_range_m` and
+  `time_of_day` give (`weather_rules.CAUSE_SETTINGS`);
+- its **effects** are its quantities, in no taxonomy: CARLA's weather fields
+  (`carla_precipitation`, `carla_cloudiness`, `carla_precipitation_deposits`,
+  `carla_wetness`, `carla_fog_density`, `carla_sun_altitude`,
+  `carla_sun_azimuth`: `weather_rules.CARLA_QUANTITIES`), the grip
+  (`tire_friction`), the visibility and the speed a driver keeps
+  (`sight_speed`);
+- every part says what it rests on (`basis`): the default rules are an
+  expert's, set from CARLA's presets and published ranges, not fitted.
+
+A **quantity** is one or more **parts**; each reads some causes or other
+quantities and gives the quantity's distribution at points of them:
 
 ```yaml
-version: 2
 quantities:
-  tire_friction:
+  carla_precipitation:
     parts:
-      water:
-        at: {water: [0, 50, 100]}        # dry, wet, flooded
+      rain:
+        at: {rainfall_rate: [0, 0.1, 2.5, 7.6, 25]}
+        uniform:
+          low:  [0, 1, 25, 60, 95]
+          high: [0, 10, 35, 75, 100]
+  tire_friction:
+    combine: min
+    parts:
+      wetness:
+        at: {carla_wetness: [0, 50, 100]}        # dry, wet, flooded
         uniform:
           low:  [0.90, 0.65, 0.45]
           high: [1.10, 0.85, 0.65]
+      standing_water:
+        at: {carla_precipitation_deposits: [0, 50, 100]}
+        uniform: {low: [0.90, 0.65, 0.45], high: [1.10, 0.85, 0.65]}
 ```
 
 - A part's distribution is `uniform` (`low`, `high`), `triangular` (`low`,
   `mode`, `high`) or `normal` (`mean`, `sd`, cut to `low`..`high`). Each
-  parameter is one number or one value per point; between the points it is
-  interpolated linearly, beyond them it holds the outermost point's value.
-  So the default rules give exactly the tables above.
-- A part may read several inputs -- `at: {water: [0, 100],
-  sun_altitude_angle: [-6, 0]}` -- with a value at every combination of their
+  parameter is one number or one value per point; between number points it
+  is interpolated linearly, beyond them it holds the outermost point's
+  value. A categorical cause (the time of day) is written at its labels, with
+  nothing between them. So the default rules give exactly the tables above.
+- A part may read several inputs, with a value at every combination of their
   points, as nested lists.
-- The inputs a part may read are the weather's `cloudiness`,
-  `precipitation`, `precipitation_deposits`, `wetness`, `wind_intensity`,
-  `fog_density`, `fog_distance`, `sun_altitude_angle` and
-  `sun_azimuth_angle`, and `water`, the larger of `wetness` and
-  `precipitation_deposits` (`weather_rules.WEATHER_INPUTS`). An
-  `EnvironmentAction` hands the rules every field of the weather it leaves;
-  `tire_friction_range()` and `visibility_range()` hand only their own
-  arguments, so an input they do not take needs a `default` (the file's
-  `inputs: {name: {default: ...}}`).
-- **A run's value** is the one at its quantile (`tire_friction_quantile`,
-  `visibility_quantile`): the value with that share of the distribution
-  below it (`weather_rules.weather_at`). With more than one part, every part
-  gives its value at the same quantile and `combine` (`min`, the default, or
-  `max`) joins them: the visibility's fog, rain and light are three parts,
-  and the shortest holds. The parts move together -- a case at quantile 0.1
-  is at the worse end of the fog's, the rain's and the light's alike -- so
-  the quantity's range is the least of the parts' lows to the least of their
-  highs, as before.
+- **A run's value** is the one at its quantile: the value with that share of
+  the distribution below it (`weather_rules.weather_at`). With more than one
+  part, every part gives its value at the same quantile and `combine` (`min`,
+  the default, or `max`) joins them: the visibility's fog, rain and light are
+  three parts, and the shortest holds. The parts move together -- a case at
+  quantile 0.1 is at the worse end of the fog's, the rain's and the light's
+  alike -- so the quantity's range is the least of the parts' lows to the
+  least of their highs.
+- A cause the run does not name reads its `default`: no rain, no fog (10 km),
+  the day. `weather_rules.resolve_environment` works out only the fields that
+  follow from what the run names, so a run that names the time of day alone
+  keeps the map's rain.
 
-**A chain: the speed drivers keep.** A part may read another quantity, so
-the rules chain: `sight_speed`, the speed (m/s) a driver keeps, reads the
-`visibility`. Its distribution is triangular at each visibility: at most the
-speed SUMO's default car (braking at 4.5 m/s² a second after it sees) stops
-from within it, `v * tau + v² / (2 * decel)` = the visibility, and down to
-three quarters of that (`visibility.sight_speed`).
+**Chains.** A part may read another quantity, so the rules chain: the
+rainfall rate gives CARLA's precipitation, which gives its wetness and
+standing water, which give the grip; and `sight_speed`, the speed (m/s) a
+driver keeps, reads the `visibility`. Its distribution is triangular at each
+visibility: at most the speed SUMO's default car (braking at 4.5 m/s² a
+second after it sees) stops from within it, `v * tau + v² / (2 * decel)` =
+the visibility, and down to three quarters of that
+(`visibility.sight_speed`).
 
 | Visibility, m | 15 | 50 | 100 | 250 | 400 |
 |---|---|---|---|---|---|
@@ -1174,16 +1269,16 @@ above that car's stopping speed. A traffic backend holds each of its
 vehicles to it at a quantile of the vehicle's own
 (`visibility.driver_quantile`, from its id: the same in every run, spread
 over the traffic), so some drivers keep close to what they can stop from and
-others well below it. `weather_rules.default_rules().sample(weather)` gives
-every quantity of a weather at once -- the grip, the visibility at its
-median, and the speed kept in that visibility.
+others well below it. `weather_rules.default_rules().sample(conditions)`
+gives every quantity of the conditions at once, each at its median.
 
 A rule file is checked when it is read: every field known, every input's
-points increasing, one value per point, and the distribution valid at every
-point (`low` not above `high`, a `mode` between them, a positive `sd`;
-`openodd.RulesError` says where). Version 1, the fuzzy rules these replaced,
-is no longer read; openodd's rules docs ("From version 1") convert one point
-for point.
+points increasing, one value per point, the distribution valid at every
+point (`low` not above `high`, a `mode` between them, a positive `sd`), and
+every input a part reads a concept of the taxonomy (`openodd.RulesError`
+says where). A version 2 file still reads merged over the default rules (it
+keeps their version and taxonomy), but one that reads an input standing for
+no concept is refused.
 
 **A run's rules.** `environment.rules` names a rule file -- a path, absolute
 or relative to the directory the run starts in, or an `https://` URL --
@@ -1214,7 +1309,8 @@ An `EnvironmentAction` that sets the road's water gives each vehicle the grip of
 its own rules, all at the same `tire_friction_quantile` (a case draws one),
 and a vehicle spawned later its own too; the ODD's `tire_friction` probe
 reads the ego's. `tire_friction`, the grip named outright, is every
-vehicle's. How far drivers see is the default rules'.
+vehicle's. Everything else -- CARLA's weather, the visibility -- is the
+default rules'.
 
 `weather_rules.weather_rule_files()` lists every rule file a run follows,
 with the SHA-256 of each.

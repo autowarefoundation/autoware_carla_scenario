@@ -276,11 +276,12 @@ def test_a_measure_that_raises_reads_as_missing() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_the_default_odd_maps_its_dynamic_elements_onto_measures() -> None:
-    probes = {a.name: a.probe for a in default_odd().attributes}
+def test_the_default_odd_maps_no_measure() -> None:
+    # What a scenario sets up is an effect the rules draw, not a condition of
+    # the default ODD (docs/odd.md, "A scenario's nodes").
+    probes = [a.probe for a in default_odd().attributes]
 
-    assert probes["dynamic.vehicle_ahead_gap"] == scenario_measure(VEHICLE_AHEAD_GAP_M)
-    assert isinstance(probes["dynamic.crossing_pedestrian_speed"], ScenarioMeasure)
+    assert not any(isinstance(p, ScenarioMeasure) for p in probes)
     assert scenario_measure(VEHICLE_AHEAD_GAP_M).unit == "m"
     assert scenario_measure("its_own").unit == ""
 

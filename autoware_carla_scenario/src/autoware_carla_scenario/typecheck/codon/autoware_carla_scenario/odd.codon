@@ -17,6 +17,10 @@ from .coverage import (CoverItem, _expect_cover_expression, _expect_optional_ran
 
 
 NEARBY_RADIUS_M: float = 50.0
+TIMES_OF_DAY: List[str] = ["day", "dusk", "night", "dawn"]
+DRIVABLE_AREA_TYPES: List[str] = [
+    "lane", "shoulder", "parking_space", "mixed_pedestrian_and_vehicular_traffic"
+]
 ILLUMINATION_LEVELS: List[str] = ["day", "low_sun", "twilight", "night"]
 INTENSITY_LEVELS: List[str] = ["none", "light", "moderate", "heavy"]
 TRAFFIC_DENSITY_LEVELS: List[str] = ["none", "low", "medium", "high"]
@@ -517,6 +521,26 @@ def lanelet_speed_limit(lanelet: lanelet2.core.ConstLanelet) -> Optional[float]:
     raise NotImplementedError()
 
 
+def road_type(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def drivable_area_type(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def time_of_day(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def rainfall_rate_mm_h(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
+def fog_visibility_range_m(world: carla.World) -> Optional[float]:
+    raise NotImplementedError()
+
+
 def illumination(world: carla.World) -> Optional[str]:
     raise NotImplementedError()
 
@@ -550,6 +574,10 @@ def cloudiness(world: carla.World) -> Optional[str]:
 
 
 def traffic_density(world: carla.World) -> Optional[str]:
+    raise NotImplementedError()
+
+
+def nearby_vehicle_count(world: carla.World) -> Optional[int]:
     raise NotImplementedError()
 
 

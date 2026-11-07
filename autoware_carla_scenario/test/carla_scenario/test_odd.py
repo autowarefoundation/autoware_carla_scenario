@@ -500,7 +500,10 @@ def _odd_world(weather: Any = "default") -> _OddWorld:
     own._right = _Lane(-2)
     if weather == "default":
         weather = SimpleNamespace(
-            sun_altitude_angle=45.0, precipitation=50.0, fog_density=0.0
+            sun_altitude_angle=45.0,
+            sun_azimuth_angle=90.0,
+            precipitation=50.0,
+            fog_density=0.0,
         )
     return _OddWorld(actors, own, weather)
 
@@ -527,6 +530,10 @@ def _hits(world: Any, odd: OddDefinition | None = None) -> dict[str, list[str]]:
     }
 
 
+SE = "odd.scenery_elements.scenery_elements.scenery_element"
+EC = "odd.environment_conditions.environment_conditions"
+
+
 class TestProbes:
     def test_levels(self) -> None:
         assert [
@@ -541,22 +548,23 @@ class TestProbes:
         assert _hits(_odd_world()) == {
             "odd.scenery.junction": ["false"],
             "odd.scenery.location": [],
-            "odd.scenery.road_type": [],
-            "odd.scenery.speed_limit": ["[50, 60)"],
-            "odd.scenery.lane_count": ["2"],
-            "odd.environment.illumination": ["day"],
-            "odd.environment.rain": ["moderate"],
-            "odd.environment.fog": ["none"],
-            "odd.dynamic.ego_speed": ["[35, 45)"],
-            "odd.dynamic.traffic_density": ["low"],
+            f"{SE}.road_infrastructure.road_type": [],
+            f"{SE}.road_infrastructure.speed_limit": ["[50, 60)"],
+            f"{SE}.lane_infrastructure.detailed_lane_structure.through_lanes.lane_count": [
+                "2"
+            ],
+            f"{SE}.zones_and_areas.area.drivable_area_type": [],
+            # Off the sun.
+            f"{EC}.illumination.time_of_day": ["day"],
+            # What the run was set to: this world's run named no condition,
+            # whatever CARLA's precipitation.
+            f"{EC}.weather.rain.rainfall_rate": [],
+            f"{EC}.weather.rain.rain_intensity": [],
+            f"{EC}.weather.fog.fog_visibility_range": [],
+            f"{EC}.weather.fog.fog_level": [],
+            "odd.ego_vehicle.ego_vehicle.velocity": ["[35, 45)"],
+            "odd.dynamic.nearby_vehicle_count": ["[1, 3)"],
             "odd.dynamic.pedestrian_nearby": ["true"],
-            # Scenario measures, in the ego's frame, which this world's ego
-            # cannot give (see test_measures.py). The vehicle-ahead ones are
-            # their definition's second version, and written as it.
-            "odd.dynamic.vehicle_ahead_gap@v2": [],
-            "odd.dynamic.vehicle_ahead_relative_speed@v2": [],
-            "odd.dynamic.crossing_pedestrian_gap": [],
-            "odd.dynamic.crossing_pedestrian_speed": [],
         }
 
     def test_lanelet_tags_come_first_when_a_map_is_loaded(
@@ -569,8 +577,10 @@ class TestProbes:
         )
         hits = _hits(_odd_world())
         assert hits["odd.scenery.location"] == ["urban"]
-        assert hits["odd.scenery.road_type"] == ["road"]
-        assert hits["odd.scenery.speed_limit"] == ["[40, 50)"]
+        # A road is a lane; Lanelet2 tells no local road from a primary one.
+        assert hits[f"{SE}.zones_and_areas.area.drivable_area_type"] == ["lane"]
+        assert hits[f"{SE}.road_infrastructure.road_type"] == []
+        assert hits[f"{SE}.road_infrastructure.speed_limit"] == ["[40, 50)"]
 
     @pytest.mark.parametrize("tag", ["nan", "inf", "0", "-5"])
     def test_a_bad_speed_limit_tag_falls_back_to_carla(
@@ -586,15 +596,15 @@ class TestProbes:
         collector.tick(world, 0.05)
         out = collector.to_dict("S")
         hits = {i["name"]: [b for b, n in i["hits"].items() if n] for i in out["items"]}
-        assert hits["odd.scenery.speed_limit"] == ["[50, 60)"]
+        assert hits[f"{SE}.road_infrastructure.speed_limit"] == ["[50, 60)"]
         json.dumps(out, allow_nan=False)
 
     def test_a_server_without_weather_leaves_the_weather_unknown(self) -> None:
         collector = CoverageCollector([], odd=default_odd())
         collector.tick(_odd_world(weather=None), 0.05)
         samples = {i["name"]: i["samples"] for i in collector.to_dict("S")["items"]}
-        assert samples["odd.environment.rain"] == 0
-        assert samples["odd.dynamic.ego_speed"] == 1
+        assert samples[f"{EC}.illumination.time_of_day"] == 0
+        assert samples["odd.ego_vehicle.ego_vehicle.velocity"] == 1
 
     def test_without_an_ego_nothing_is_sampled(self) -> None:
         collector = CoverageCollector([], odd=default_odd())
@@ -1035,7 +1045,10 @@ class TestCli:
         assert odd_main(["show", "default"]) == 0
         shown = json.loads(capsys.readouterr().out)
         assert shown["name"] == "default"
-        assert any(a["name"] == "odd.dynamic.ego_speed" for a in shown["attributes"])
+        assert any(
+            a["name"] == "odd.ego_vehicle.ego_vehicle.velocity"
+            for a in shown["attributes"]
+        )
 
     def test_list(self, capsys: Any) -> None:
         assert odd_main(["list"]) == 0
@@ -1078,8 +1091,11 @@ def test_the_model_declares_the_probes_as_python_does() -> None:
     probe_names = {n for n in probes.__all__ if n not in ("reset_probes",)}
     probe_functions = {n for n in probe_names if inspect.isfunction(getattr(probes, n))}
     probe_functions -= {
+        "drivable_area_of_subtype",
         "illumination_level",
         "intensity_level",
+        "road_type_of_subtype",
+        "time_of_day_level",
         "traffic_density_level",
     }
     assert probe_functions <= set(functions), probe_functions - set(functions)
@@ -1296,7 +1312,7 @@ class TestDefaultCriteria:
         speed = next(
             e
             for e in merge_coverage([doc]).entries
-            if e.name == "odd.dynamic.ego_speed"
+            if e.name == "odd.ego_vehicle.ego_vehicle.velocity"
         )
         reached = [b for b, n in speed.hits.items() if n]
         assert reached == [
@@ -1334,7 +1350,7 @@ class TestDefaultCriteria:
         speed = next(
             e
             for e in merge_coverage([doc]).entries
-            if e.name == "odd.dynamic.ego_speed"
+            if e.name == "odd.ego_vehicle.ego_vehicle.velocity"
         )
         assert speed.covered == ["[45, 55)"]
 
