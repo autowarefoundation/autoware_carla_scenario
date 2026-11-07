@@ -1071,10 +1071,26 @@ class LaneletSlot:
 Tristate = Literal["any", "yes", "no"]
 
 
+#: The words YAML 1.1 reads as a boolean, by the tristate each one stands for.
+#: A document is read with YAML 1.2's booleans (#1946), so ``Yes`` or ``on``
+#: now arrives as text; it still means what it meant when it arrived as a bool.
+_YAML11_TRISTATES: dict[str, str] = {
+    **dict.fromkeys(("yes", "on", "true"), "yes"),
+    **dict.fromkeys(("no", "off", "false"), "no"),
+}
+
+
 def _tristate_from_yaml(value: Any) -> Any:
-    """YAML 1.1 reads a bare ``yes`` / ``no`` as a boolean; take it back."""
+    """A route segment's ``yes`` / ``no`` from what YAML made of it.
+
+    A bool (YAML 1.1's reading of a bare ``yes``, or a ``true``) and the words
+    YAML 1.1 read as one, in any case, are taken back to ``"yes"`` / ``"no"``;
+    anything else is left for the field to judge.
+    """
     if isinstance(value, bool):
         return "yes" if value else "no"
+    if isinstance(value, str) and value != "any":
+        return _YAML11_TRISTATES.get(value.lower(), value)
     return value
 
 

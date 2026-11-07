@@ -56,7 +56,7 @@ from ..authoring.models import (
     as_action_phase,
     condition_refs,
 )
-from ..authoring.persistence import Draft, DraftStore
+from ..authoring.persistence import Draft, DraftStore, load_yaml
 from ..authoring.registry import (
     default_params,
     TRUTHY_VALUES,
@@ -2004,7 +2004,9 @@ def parse_route_yaml(text: str) -> Optional["RouteSearch"]:
     if not text.strip():
         return None
     try:
-        raw = yaml.safe_load(text)
+        # Read as a document is read, so a route written here and the same
+        # route in a document mean the same thing (#1946).
+        raw = load_yaml(text)
     except yaml.YAMLError as exc:
         raise EditorError(f"Route search: not YAML ({exc})") from exc
     if not isinstance(raw, dict):
