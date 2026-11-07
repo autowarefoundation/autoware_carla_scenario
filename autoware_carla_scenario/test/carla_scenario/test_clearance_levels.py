@@ -181,3 +181,13 @@ def test_levels_are_told_apart_by_where_each_stands_not_by_the_gap() -> None:
     for look in (clearance.first_box_in_way, clearance.first_in_way):
         found = look(world, 7, 0.0, 0.0, 0.0, "vehicle", 35.0, 1.0, z=0.0)
         assert found is not None and found.id == 1
+
+
+def test_the_nearest_in_the_way_is_found_whatever_the_order() -> None:
+    """Two cars ahead, the further one first: the nearer is in the way."""
+    for look in (clearance.first_box_in_way, clearance.first_in_way):
+        world = _World(
+            {1: ("vehicle.a", 20.0, 0.0, 0.0), 2: ("vehicle.b", 8.0, 0.0, 0.0)}
+        )
+        found = look(world, 99, 0.0, 0.0, 0.0, "vehicle", 30.0, 1.0)
+        assert found is not None and found.id == 2
