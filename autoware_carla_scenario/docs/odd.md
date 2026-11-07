@@ -1310,7 +1310,9 @@ merged over the default rules: it names only what it changes (a part's
 `uniform` without its `at`, say), and may `extends` other files, by path,
 URL (pinned with `{url, sha256}`) or git source. A sweep sets it like any
 other key (`environment.rules=/data/grip_measured.yaml`); every run sets the
-rules it names, or the default ones, so one run's do not reach the next.
+rules it names, or the default ones, when it starts, so one run's do not
+reach the next -- in a batch too, which builds every case before any runs:
+each case runs, and records in its coverage file, its own rules.
 
 **Rules by vehicle.** Tyres differ by vehicle; the weather does not:
 

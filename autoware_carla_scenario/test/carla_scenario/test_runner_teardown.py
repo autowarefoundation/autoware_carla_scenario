@@ -12,6 +12,8 @@ import pytest
 from autoware_carla_scenario import ScenarioRunner
 from autoware_carla_scenario.debug_markers import DebugMarkers, DebugPolyline
 
+from .test_scenario_runner import _mock_scenario
+
 
 class _Ego:
     attaches_to_existing_actor = False
@@ -80,7 +82,7 @@ def _run(
     world.get_snapshot.side_effect = lambda: SimpleNamespace(frame=frame["n"])
     runner._world = world
     runner._pace_tick = lambda: None  # type: ignore[method-assign]
-    scenario = MagicMock()
+    scenario = _mock_scenario()
     scenario.STABILIZE_TICKS = 2
     scenario._pass_conditions = []
     scenario._fail_conditions = []

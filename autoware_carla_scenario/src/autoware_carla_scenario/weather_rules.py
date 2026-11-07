@@ -161,8 +161,11 @@ def check_weather_rules(
 def use_weather_rules(spec: Union[str, Path, Mapping[str, Any], None] = None) -> None:
     """Follow *spec*'s rules from now on: ``None`` the default ones, a file
     (a path or an ``https://`` URL) merged over them, or ``{default,
-    vehicles}`` (the module docstring).  The runner calls this for every run
-    with its config's ``environment.rules``, so one run's do not reach the next.
+    vehicles}`` (the module docstring).  The runner calls this at the start
+    of every run with the rules its scenario was built with (its config's
+    ``environment.rules``, or ``None``), so one run's do not reach the next,
+    and a batch, which builds every case before any runs, runs each under
+    its own (#1936).
 
     Raises:
         RulesError: When a file cannot be read, its rules are not well formed,

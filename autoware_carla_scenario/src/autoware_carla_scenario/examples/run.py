@@ -2952,8 +2952,10 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     (:mod:`autoware_carla_scenario.weather_rules`) -- a file (a path, relative
     to the directory the run was started in, or an ``https://`` URL) merged
     over the default rules, or ``{default, vehicles}`` for rules that differ
-    by vehicle.  The default rules when ``null``; set for every run, so one
-    run's do not reach the next.
+    by vehicle.  The default rules when ``null``.  Followed here, to work
+    the conditions out, and kept on *scenario*, which the runner follows at
+    the start of each of its runs: a batch builds every case before any
+    runs, and each runs under its own rules, not the last case's (#1936).
 
     Raises:
         ValueError: An ``environment.<key>`` is not a number, or is one
@@ -2962,6 +2964,7 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
             names the key.
     """
     from autoware_carla_scenario.weather_rules import (  # noqa: PLC0415
+        check_weather_rules,
         resolve_environment,
         use_weather_rules,
     )
@@ -2970,7 +2973,12 @@ def add_environment(cfg: DictConfig, scenario: BaseScenario) -> None:
     settings: dict[str, Any] = dict(environment_settings(cfg))
     env_cfg = cfg.get("environment")
     raw = {} if env_cfg is None else _to_dict(env_cfg)
-    use_weather_rules(_rules_locations(raw.get("rules")))
+    rules = _rules_locations(raw.get("rules"))
+    use_weather_rules(rules)
+    # What the runner follows when the scenario runs (scenario_runner).
+    default, vehicles = check_weather_rules(rules)
+    scenario._weather_rules_default = None if default is None else str(default)
+    scenario._weather_rules_vehicles = [(p, str(f)) for p, f in vehicles]
     if not settings:
         return
     # Once, before the run: the action applies numbers. The time of day and
