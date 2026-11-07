@@ -1109,3 +1109,52 @@ def test_a_retried_case_goes_by_its_last_conversion(tmp_path: Path) -> None:
     converted = RerunConversion("A", log, recording)
     assert rerun_errors(results, [failed, converted]) == {}
     assert rerun_errors(results, [converted, failed]) == {0: "E: first attempt"}
+
+
+def test_draw_radius_is_passed_on_only_when_set() -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    plain = _shipped(["rerun.enabled=true"])
+    near = _shipped(["rerun.enabled=true", "rerun.draw_radius_m=100"])
+    further = _shipped(["rerun.enabled=true", "rerun.draw_radius_m=150.5"])
+    with patch.object(run, "RerunConverter") as converter:
+        run.build_rerun_converter(near, further)
+        converter.assert_called_once_with(strict=False, draw_radius_m=150.5)
+        converter.reset_mock()
+        # One case asking for all of it: one converter serves the batch.
+        run.build_rerun_converter(near, plain)
+        converter.assert_called_once_with(strict=False)
+
+
+@pytest.mark.parametrize("value", ["-1", ".inf", "wide", "true"])
+def test_a_draw_radius_that_is_no_distance_is_refused(value: str) -> None:
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    case = _shipped(["rerun.enabled=true", f"rerun.draw_radius_m={value}"])
+    with (
+        patch.object(run, "RerunConverter"),
+        pytest.raises(ValueError, match="draw_radius_m"),
+    ):
+        run.build_rerun_converter(case)
+
+
+def test_the_converter_gets_the_radius_only_when_there_is_one(tmp_path: Path) -> None:
+    calls: list[dict] = []
+
+    class _Module:
+        @staticmethod
+        def convert(jsonl: str, out: str, **kwargs: object) -> dict:
+            calls.append(kwargs)
+            Path(out).write_bytes(b"rrd")
+            return {}
+
+    log = tmp_path / "Case.trajectory.jsonl"
+    log.write_text("")
+    for radius in (None, 100.0):
+        with RerunConverter(converter=_Module(), draw_radius_m=radius) as converter:
+            converter.submit(log, "Case")
+    assert calls == [{"strict": False}, {"strict": False, "draw_radius_m": 100.0}]

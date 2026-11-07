@@ -49,6 +49,10 @@ rerun:
   # does not know, rather than skip it with a warning. Either way, a failed
   # conversion is reported at the end of the run; it does not change a verdict.
   strict: false
+  # Write only what comes this near the ego's trajectory (m): the map, the
+  # traffic lights and other actors. A large map makes a recording heavy and its
+  # 3D view crowded. null writes all of it.
+  draw_radius_m: null
   # Also record the LiDAR sweeps the ego's driver policy gets, in the world
   # frame, into {Scenario}.rrd (written to {Scenario}.sensors.rrd during the run
   # and merged in once the log is converted). Needs the Rerun SDK:
