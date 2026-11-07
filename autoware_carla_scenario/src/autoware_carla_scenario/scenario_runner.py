@@ -1550,8 +1550,9 @@ class ScenarioRunner:
                 flakiness and the next sweep's flaky search learn from it.
             reset_world: Reset the world at the end (:meth:`reset_world`: a
                 map reload, or a soft reset), so the next scenario starts on a
-                clean world.  A queue's last scenario has no next one, and
-                whatever runs on the server after it loads its map anyway.
+                clean world.  A queue passes False and resets the world
+                before the attempt that follows instead, so that a reset that
+                raises is that attempt's failure, not this run's.
             file_stem: The stem the run's files are named by.  ``None`` (the
                 default) names them by the scenario's class, numbered past the
                 runs already in the output directory: ``CutInScenario``, then
@@ -2380,6 +2381,6 @@ class ScenarioRunner:
         if reset_world:
             self.reset_world(scenario_name)
         else:
-            logger.info("[%s] No scenario follows: world left as it is", scenario_name)
+            logger.info("[%s] World left as it is (not reset here)", scenario_name)
 
         return result
