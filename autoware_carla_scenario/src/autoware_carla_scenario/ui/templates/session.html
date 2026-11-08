@@ -175,6 +175,12 @@
     return e;
   }
 
+  // An error body's detail: a string, or a list of validation errors (422).
+  function detailText(detail) {
+    if (detail === undefined || detail === null || detail === '') return '';
+    return typeof detail === 'string' ? detail : JSON.stringify(detail);
+  }
+
   function render(st) {
     var state = document.getElementById('slurm-state');
     state.textContent = st.active ? 'running' : (st.summary ? 'collected' : 'ended, not collected');
@@ -260,7 +266,7 @@
     fetch(panel.dataset.statusUrl).then(function (r) {
       return r.json().catch(function () { return {}; }).then(function (st) {
         if (!r.ok || !st.counts) {
-          throw new Error((st && st.detail) || ('HTTP ' + r.status));
+          throw new Error(detailText(st && st.detail) || ('HTTP ' + r.status));
         }
         return st;
       });
@@ -293,7 +299,7 @@
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
       }).then(function (r) {
         return r.json().catch(function () { return {}; }).then(function (res) {
-          out.textContent = res.output || res.detail || (r.ok ? '(no output)' : 'HTTP ' + r.status);
+          out.textContent = res.output || detailText(res.detail) || (r.ok ? '(no output)' : 'HTTP ' + r.status);
           out.dataset.ok = r.ok && res.ok ? '1' : '0';
         });
       }).catch(function (e) {

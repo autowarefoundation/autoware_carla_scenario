@@ -21,15 +21,16 @@
         <!-- Update Button -->
         <button
           id="update-btn"
-          {#- /api/refresh returns the session table: swap it in on the index
-              page only, and reload any other page (#2007). #}
+          {#- /api/refresh clears the cache and returns the session table: swap
+              it in on the index page only; any other page posts it, then
+              reloads itself (#2007). #}
           {% if page == "index" %}
           hx-post="/api/refresh"
           hx-target="#main-content"
           hx-swap="innerHTML"
           hx-indicator="#update-spinner"
           {% else %}
-          onclick="location.reload()"
+          onclick="refreshAndReload()"
           {% endif %}
           class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2"
         >
@@ -386,8 +387,16 @@
       if (btn && btn.hasAttribute('hx-post')) {
         htmx.trigger(btn, 'click');
       } else {
-        location.reload();
+        refreshAndReload();
       }
+    }
+
+    // Off the index page: clear the viewer's cache (/api/refresh), ignoring
+    // the session table it returns, then reload the page.
+    function refreshAndReload() {
+      fetch('/api/refresh', {method: 'POST'})
+        .catch(e => console.warn('Failed to clear the cache:', e))
+        .finally(() => location.reload());
     }
 
     // Collect all run options from the panel

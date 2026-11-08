@@ -582,7 +582,9 @@ def test_the_batch_page_keeps_following_the_batch_after_a_failed_request(
     rearm = refresh.split(".finally(", 1)[1]
     assert "setTimeout(refresh" in rearm
     actions = script.split("querySelectorAll('.slurm-btn').forEach", 1)[1]
-    assert "res.output || res.detail" in actions
+    assert "res.output || detailText(res.detail)" in actions
+    assert "detailText(st && st.detail)" in refresh
+    assert "JSON.stringify(detail)" in _function(script, "function detailText(detail)")
     assert ".catch(" in actions.split(".finally(", 1)[0]
     render = _function(script, "function render(st)")
     hint = "New results: reload the page"

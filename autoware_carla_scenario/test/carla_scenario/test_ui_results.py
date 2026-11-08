@@ -798,7 +798,7 @@ def test_update_swaps_the_session_table_in_on_the_index_page_only(
         assert page.status_code == 200, url
         button = _update_button(page.text)
         assert "hx-post" not in button and "hx-target" not in button, url
-        assert 'onclick="location.reload()"' in button, url
+        assert 'onclick="refreshAndReload()"' in button, url
     # A run that ends refreshes the page the same way, never by clicking a
     # button that would swap the session table into another page.
     text = client.get(f"/session/{ref}").text
@@ -806,7 +806,11 @@ def test_update_swaps_the_session_table_in_on_the_index_page_only(
     assert "connectProgressStream(refreshCurrentPage)" in text
     assert "executeRunWithProgress(body, refreshCurrentPage)" in text
     helper = text.split("function refreshCurrentPage()", 1)[1].split("\n    }\n", 1)[0]
-    assert "hasAttribute('hx-post')" in helper and "location.reload()" in helper
+    assert "hasAttribute('hx-post')" in helper and "refreshAndReload()" in helper
+    # Off the index page the cache is still cleared before the reload.
+    reload = text.split("function refreshAndReload()", 1)[1].split("\n    }\n", 1)[0]
+    post = reload.index("fetch('/api/refresh', {method: 'POST'})")
+    assert post < reload.index(".finally(() => location.reload())")
 
 
 def test_the_session_page_links_its_odd_and_comparison(
