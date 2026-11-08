@@ -297,6 +297,27 @@ def test_an_arrived_walk_is_released_once_as_before(scene: SimpleNamespace) -> N
     assert scene.walker.controls == controls
 
 
+def test_a_walk_held_short_of_its_end_by_the_controller_finishes(
+    scene: SimpleNamespace,
+) -> None:
+    # Held within REACHED_M of its last target, as near as the controller
+    # takes it but short of WALK_ARRIVAL_M from the end: arrived (#2003).
+    route = _walking_route(scene.world, until=None)
+    t = _run(route, scene.world, 3)
+    walk = scene.entity.walk_path
+    assert walk is not None
+    short = walk.at_distance(walk.length - 1.5)
+    scene.walker.loc = carla.Location(short.x, short.y, short.z)
+    _run(route, scene.world, 3, t)
+    assert route.state is ActionState.COMPLETE
+    assert route.finished
+    calls = scene.world.controller.calls
+    assert ("speed", 0.0) in calls
+    assert calls[-2:] == ["stop", "destroy"]
+    assert not scene.entity.walking
+    assert _WALKER_ID not in _walker_ai._DRIVEN
+
+
 def _entity_with(walker: Any) -> PedestrianEntity:
     entity = PedestrianEntity(
         PedestrianEntityConfig(

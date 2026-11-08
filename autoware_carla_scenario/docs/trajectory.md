@@ -372,8 +372,20 @@ mesh: it keeps to the pavements, crosses at crossings (waiting at the kerb, as
 CARLA's walkers do), and walks round what stands in its way. It is sent along
 its route a target every 10 m (reached 2 m short of it along the walk, or
 2 m from it), its top speed the walk's pace; a walker held by its route's
-timing is taken off the controller while it stands (CARLA sends a walker
-standing 4 s somewhere random) and its target is sent again every 2 s.
+timing is kept on its controller at a top speed of 0 while it stands (taken
+off it, it would be put back on the navigation mesh's nearest point -- a jump
+-- when it walked on), and its target is sent again every 2 s (CARLA sends a
+walker standing 4 s somewhere random). Held at its last target -- within 2 m
+of it, as near as the controller takes it, or at the walkway point a target
+on the road was moved to -- the walk has arrived, though that is short of the
+1 m a stepped walk arrives within, and the route finishes. A walker that a
+threat turns back after it steps off a kerb (the route's turn-back
+thresholds) is stepped back behind the kerb (or waits where it stands if its
+steps back get it no nearer for 1.5 s), waits there and steps off again, all
+off the controller, which would walk it straight back onto the road; 60 s
+after it first turned back it crosses and turns back no more. A walker taken
+off its controller (arrived, its walk stopped or overridden) has its physics
+and collisions, which the controller turned off, turned on again.
 Whether it may cross a road away from a crossing is its own: the
 RoutingAction's `cross_factor` (the card's *Crosses away from crossings*), the
 probability its route may use the road anywhere -- 1 for a recorded walk that
