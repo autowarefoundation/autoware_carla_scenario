@@ -155,7 +155,8 @@ def test_a_waypoint_arrival_is_a_dataclass_the_recorder_reads() -> None:
 
 
 def _run_scenario() -> ast.FunctionDef:
-    source = textwrap.dedent(inspect.getsource(ScenarioRunner.run_scenario))
+    # run_scenario() resets the world around _run_scenario(), which runs it.
+    source = textwrap.dedent(inspect.getsource(ScenarioRunner._run_scenario))
     node = ast.parse(source).body[0]
     assert isinstance(node, ast.FunctionDef)
     return node

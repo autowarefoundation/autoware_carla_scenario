@@ -364,3 +364,254 @@ def test_a_failing_finish_does_not_hide_why_the_run_ended(tmp_path: Path) -> Non
     # The rest of the cleanup still went.
     monitor.close.assert_called_once_with()
     trajectory.close.assert_called_once_with()
+
+
+# -- An ego that gives up waiting, a run that raises, the walkers' controllers
+
+
+class _GivesUp(_Ego):
+    """An ego whose stack never becomes ready: it gives up on its first wait
+    tick."""
+
+    is_initialized = False
+    termination_reason = "Autoware never became ready"
+
+    def on_tick(self, world: Any, elapsed: float) -> None:
+        del world, elapsed
+        self.termination_requested = True
+
+
+def _stand_in_run(
+    tmp_path: Path,
+    *,
+    ego: Any = None,
+    pass_conditions: list[Any] | None = None,
+    tick_error: BaseException | None = None,
+    reset_world: bool = True,
+    reset_error: BaseException | None = None,
+    setup: Any = None,
+    runner_out: list[ScenarioRunner] | None = None,
+) -> tuple[ScenarioRunner, MagicMock, MagicMock, Any]:
+    """Run a scenario of one tick through run_scenario on stand-ins, with
+    ``reset_world`` replaced by a mock: the runner, its world, the scenario's
+    result writer, and the result.  An error of the run propagates: the runner
+    is then in *runner_out*."""
+    with patch("autoware_carla_scenario.scenario_runner.carla.Client"):
+        runner = ScenarioRunner(MagicMock(), output_dir=tmp_path)
+    world = MagicMock()
+    frame = {"n": 0}
+    world.tick.side_effect = lambda: frame.__setitem__("n", frame["n"] + 1)
+    world.get_snapshot.side_effect = lambda: SimpleNamespace(frame=frame["n"])
+    runner._world = world
+    runner._pace_tick = lambda: None  # type: ignore[method-assign]
+    runner._traffic_backend = MagicMock()
+    runner.reset_world = MagicMock(side_effect=reset_error)  # type: ignore[method-assign]
+    if runner_out is not None:
+        runner_out.append(runner)
+    scenario = _mock_scenario()
+    scenario.STABILIZE_TICKS = 1
+    scenario._pass_conditions = pass_conditions or []
+    scenario._fail_conditions = []
+    scenario._pre_tick_actions = []
+    scenario._post_tick_actions = []
+    scenario._pre_tick_callbacks = []
+    scenario._post_tick_callbacks = []
+    if tick_error is not None:
+        error = tick_error
+
+        def fail(world: Any) -> None:
+            raise error
+
+        scenario._post_tick_callbacks = [fail]
+    if setup is not None:
+        scenario.setup.side_effect = setup
+    scenario.is_done.side_effect = [False, True]
+    scenario.create_ego.return_value = ego or _Ego()
+    write_result = MagicMock()
+    with (
+        patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
+        patch("autoware_carla_scenario.scenario_runner.CoverageCollector"),
+        patch(
+            "autoware_carla_scenario.scenario_runner._write_result", new=write_result
+        ),
+        patch("autoware_carla_scenario.scenario_runner._record_run"),
+        patch(
+            "autoware_carla_scenario.scenario_runner._npc_collision_monitor",
+            new=MagicMock(return_value=_npc_monitor()),
+        ),
+        patch("autoware_carla_scenario.scenario_runner._ScenarioClock") as clock,
+        patch(
+            "autoware_carla_scenario.scenario_runner.TrajectoryRecorder",
+            new=MagicMock(return_value=MagicMock(active=False)),
+        ),
+    ):
+        clock.return_value.simulated = 0.05
+        result = runner.run_scenario(scenario, reset_world=reset_world)
+    return runner, world, write_result, result
+
+
+def test_an_ego_that_gives_up_waiting_fails_the_run_before_it_begins(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.conditions import AlwaysTrueCondition
+    from autoware_carla_scenario.failure import FailureCategory
+
+    ego: Any = _GivesUp()
+    with patch.object(ScenarioRunner, "_release_vehicles") as release:
+        runner, _world, write_result, result = _stand_in_run(
+            tmp_path,
+            ego=ego,
+            # True at the initial pose: it would pass the run on its first tick.
+            pass_conditions=[AlwaysTrueCondition(label="ego_stopped_before_line")],
+            reset_world=False,
+        )
+    assert not result.passed
+    assert result.message == (
+        "Ego entity requested session termination: Autoware never became ready"
+    )
+    assert result.elapsed_seconds == 0.0
+    assert result.failure is not None
+    assert result.failure.category == FailureCategory.DRIVER
+    assert result.failure.condition == ""
+    # The vehicles were never released, nor the traffic started.
+    backend: Any = runner._traffic_backend
+    release.assert_not_called()
+    backend.start.assert_not_called()
+    # The cleanup went as for any other run, and the result was written.
+    ego.on_scenario_end.assert_called_once()
+    ego.destroy.assert_called_once_with()
+    backend.close.assert_called_once_with()
+    write_result.assert_called_once()
+
+
+def test_a_run_that_raises_resets_the_world_before_the_error_propagates(
+    tmp_path: Path,
+) -> None:
+    runners: list[ScenarioRunner] = []
+    with pytest.raises(RuntimeError, match="time-out"):
+        _stand_in_run(
+            tmp_path,
+            tick_error=RuntimeError("time-out of 10000ms"),
+            runner_out=runners,
+        )
+    runners[0].reset_world.assert_called_once_with("MagicMock")  # type: ignore[attr-defined]
+
+
+def test_a_reset_that_fails_after_a_run_that_raised_does_not_hide_its_error(
+    tmp_path: Path,
+) -> None:
+    runners: list[ScenarioRunner] = []
+    with pytest.raises(ValueError, match="tick broke"):
+        _stand_in_run(
+            tmp_path,
+            tick_error=ValueError("tick broke"),
+            reset_error=RuntimeError("reset broke"),
+            runner_out=runners,
+        )
+    runners[0].reset_world.assert_called_once()  # type: ignore[attr-defined]
+
+
+def test_a_run_that_raises_is_not_reset_when_the_caller_resets(tmp_path: Path) -> None:
+    # A queue passes reset_world=False and resets before the next attempt.
+    runners: list[ScenarioRunner] = []
+    with pytest.raises(ValueError, match="tick broke"):
+        _stand_in_run(
+            tmp_path,
+            tick_error=ValueError("tick broke"),
+            reset_world=False,
+            runner_out=runners,
+        )
+    runners[0].reset_world.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_an_interrupted_run_propagates_without_a_reset(tmp_path: Path) -> None:
+    runners: list[ScenarioRunner] = []
+    with pytest.raises(KeyboardInterrupt):
+        _stand_in_run(
+            tmp_path,
+            tick_error=KeyboardInterrupt(),
+            runner_out=runners,
+        )
+    runners[0].reset_world.assert_not_called()  # type: ignore[attr-defined]
+
+
+def test_a_run_that_ends_normally_is_reset_once(tmp_path: Path) -> None:
+    runner, _world, _write, result = _stand_in_run(tmp_path)
+    assert result.passed
+    runner.reset_world.assert_called_once_with("MagicMock")  # type: ignore[attr-defined]
+
+
+def _driven_walker(walker_id: int) -> MagicMock:
+    """Put a walker on a stand-in controller in the walker AI's state, as a
+    run before left it; the controller."""
+    from autoware_carla_scenario.entity import _walker_ai
+
+    controller = MagicMock()
+    driven = _walker_ai._Driven(controller, [], None)
+    driven.running = True
+    _walker_ai._DRIVEN[walker_id] = driven
+    _walker_ai._GIVING_WAY[walker_id] = 1.0
+    return controller
+
+
+def test_the_walker_controllers_a_run_before_left_are_released_at_its_start(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.entity import _walker_ai
+
+    controller = _driven_walker(42)
+    seen: list[tuple[dict[int, Any], dict[int, float]]] = []
+
+    def setup() -> None:
+        seen.append((dict(_walker_ai._DRIVEN), dict(_walker_ai._GIVING_WAY)))
+
+    try:
+        _stand_in_run(tmp_path, setup=setup)
+    finally:
+        _walker_ai.forget_all()
+    assert seen == [({}, {})]
+    controller.stop.assert_called_once_with()
+    controller.destroy.assert_called_once_with()
+
+
+def test_the_walker_controllers_of_a_run_are_released_when_it_ends(
+    tmp_path: Path,
+) -> None:
+    from autoware_carla_scenario.entity import _walker_ai
+
+    controllers: list[MagicMock] = []
+
+    def setup() -> None:
+        # A walker the run drives on its controller.
+        controllers.append(_driven_walker(7))
+
+    try:
+        with pytest.raises(ValueError, match="tick broke"):
+            _stand_in_run(tmp_path, setup=setup, tick_error=ValueError("tick broke"))
+        assert _walker_ai._DRIVEN == {}
+        assert _walker_ai._GIVING_WAY == {}
+    finally:
+        _walker_ai.forget_all()
+    controllers[0].stop.assert_called_once_with()
+    controllers[0].destroy.assert_called_once_with()
+
+
+def test_forget_all_destroys_every_controller_and_forgets_every_walker() -> None:
+    from autoware_carla_scenario.entity import _walker_ai
+
+    stuck = _driven_walker(1)
+    stuck.stop.side_effect = RuntimeError("actor not found")
+    gone = _driven_walker(2)
+    gone.destroy.side_effect = RuntimeError("actor not found")
+    idle = _driven_walker(3)
+    _walker_ai._DRIVEN[3].running = False
+    _walker_ai._WALKING._placed[4] = (0.0,) * 7 + (False,)  # type: ignore[assignment]
+    _walker_ai.forget_all()
+    # A controller that cannot be stopped is destroyed all the same.
+    stuck.destroy.assert_called_once_with()
+    gone.stop.assert_called_once_with()
+    idle.stop.assert_not_called()
+    idle.destroy.assert_called_once_with()
+    assert _walker_ai._DRIVEN == {}
+    assert _walker_ai._GIVING_WAY == {}
+    assert _walker_ai._WALKING._placed == {}

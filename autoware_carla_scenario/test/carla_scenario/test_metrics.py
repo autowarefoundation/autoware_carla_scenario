@@ -1344,7 +1344,8 @@ def test_the_runner_records_frames_and_judges_after_the_loop() -> None:
 
     from autoware_carla_scenario.scenario_runner import ScenarioRunner
 
-    source = inspect.getsource(ScenarioRunner.run_scenario)
+    # run_scenario() resets the world around _run_scenario(), which runs it.
+    source = inspect.getsource(ScenarioRunner._run_scenario)
     assert "metric_recorder.record(" in source
     assert source.index("_judge_metrics(") < source.index("coverage.end(world")
     assert "if is_post_run(condition):" in source
