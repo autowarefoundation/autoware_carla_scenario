@@ -74,8 +74,9 @@ dependencies = [
     # stopped mypy, and with it scenario-check's None check). 0.45 measures a
     # run's effects beside the ODD (`CoverageCollector(effects=...)`) for the
     # drift view; 0.46.1 draws a knob's values table as a rule, writing a
-    # whole number it gives as an integer.
-    "openodd-py>=0.46.1",
+    # whole number it gives as an integer. 0.47 measures the default ODD's
+    # junction by tier4/taxonomy's junction_type (probe junction_type).
+    "openodd-py>=0.47.0",
     # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
     # to choose the interpreters its wheelhouse is built for.
     "packaging>=23.0",

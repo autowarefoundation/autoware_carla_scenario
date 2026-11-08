@@ -553,7 +553,8 @@ class TestProbes:
 
     def test_the_default_odd_reads_the_world(self) -> None:
         assert _hits(_odd_world()) == {
-            "odd.scenery.junction": ["false"],
+            # Outside a junction: no junction type to hit.
+            "odd.scenery_elements.scenery_elements.scenery_element.drivable_area_geometry.junctions.intersection.junction_type": [],
             "odd.scenery.location": [],
             f"{SE}.road_infrastructure.road_type": [],
             f"{SE}.road_infrastructure.speed_limit": ["[50, 60)"],
