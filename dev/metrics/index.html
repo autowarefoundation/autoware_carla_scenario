@@ -2517,7 +2517,7 @@ of the collisions.</p>
 <tr>
 <td><code>crime_ttc_s</code></td>
 <td>s</td>
-<td>Until the ego hits a road user ahead in its lane, both holding their acceleration (CriMe TTC); <code>inf</code> when they never meet</td>
+<td>Until the ego hits a road user ahead in its lane, both holding their acceleration until they stop (CriMe TTC); <code>inf</code> when they never meet, however far off</td>
 <td>min</td>
 </tr>
 <tr>
@@ -2553,7 +2553,7 @@ of the collisions.</p>
 <tr>
 <td><code>crime_a_long_req_mps2</code></td>
 <td>m/s^2</td>
-<td>The longitudinal acceleration the ego needs not to hit the road user ahead, negative to brake (CriMe ALongReq)</td>
+<td>The longitudinal acceleration the ego needs not to hit the road user ahead, negative to brake: the least deceleration that avoids it, counting a contact within the prediction horizon (<code>horizon_s</code>, 3 s) after the ego has stopped (CriMe ALongReq); <code>-inf</code> when braking alone cannot avoid a contact within it</td>
 <td>min</td>
 </tr>
 <tr>
@@ -2565,7 +2565,7 @@ of the collisions.</p>
 <tr>
 <td><code>crime_btn</code></td>
 <td>ratio</td>
-<td>The deceleration the ego needs not to hit the road user ahead over the most it can brake (11.5 m/s^2); above <code>1</code> braking alone no longer avoids it (CriMe BTN)</td>
+<td>The deceleration the ego needs not to hit the road user ahead over the most it can brake (11.5 m/s^2); above <code>1</code> braking alone no longer avoids it, <code>inf</code> when no braking avoids a contact within the prediction horizon (<code>horizon_s</code>, 3 s) (CriMe BTN)</td>
 <td>max</td>
 </tr>
 <tr>
@@ -2631,7 +2631,39 @@ extra) converts the world's OpenDRIVE once per machine, cached under
 <code>~/.cache/autoware_carla_scenario/commonroad</code>, and stay up for the next run on
 the map. A worker evaluates each frame moved to the ego and turned so the lane
 under it runs along +x: CriMe projects speeds onto a lane with the cosine of
-the lane's own heading, which is the speed along the lane only there. On a
+the lane's own heading, which is the speed along the lane only there. CriMe
+0.4 also drops the sign of the other road user's velocity and acceleration
+along the lane, reading a braking lead as speeding up and a car coming the
+other way in the ego's lane as going its way; the worker reads TTC and
+ALongReq -- and so BTN, and ALatReq and STN, which take TTC -- with their
+sign, the ego's velocity too. A road user braking to a stop then stops and
+stays there, as the worker predicts every road user, rather than reversing as
+CriMe's constant acceleration would carry it on: TTC is when the ego reaches
+it, each holding its acceleration until it stops, so a car creeping to a halt
+ahead of a stopped ego is no conflict. ALongReq is the least constant
+deceleration that keeps the ego off the road user ahead in that model. It is
+CriMe's (the deceleration that matches the other's speed as the ego reaches
+it) where the gap closes on a road user going the ego's way that does not stop
+first; it departs from CriMe for an opening gap, which needs <code>0</code> (CriMe reads
+the relative velocity squared over twice the gap) or, for a lead braking to a
+stop, the deceleration that stops the ego behind where it stops; and for a car
+coming the other way, the ego must stop far enough back that the car, going
+on as it goes until it stops, does not reach it within the horizon after the
+ego has stopped: with the ego at 10 m/s and a car 40 m ahead coming at 10 m/s,
+ALongReq is -15 m/s^2 (stopped 3.3 m on after 0.67 s, the car 3 s further
+off). A contact counts while the ego is moving and within the prediction
+horizon (<code>horizon_s</code>) after it has stopped: a pedestrian crossing the lane a
+little towards the ego, or a car rolling back, that would reach a standing ego
+only after the horizon needs no more than the ego stopping short of it. When
+no braking avoids a contact within the horizon -- a car coming at the ego
+that does not stop in time -- ALongReq is <code>-inf</code> and BTN <code>inf</code>. TTC has no
+horizon, as CriMe's: it is when they would meet, however far off. A road user
+behind the ego gives no ALongReq. The lanelets the worker keeps are those within
+<code>radius_m</code> of the ego anywhere along their centre line, and always those it
+is on, so a long straight lanelet stays in from its middle. The reachable set (the drivable
+area, WTTR) is that of the ego's own box: CommonRoad-Reach's discs and the
+radius it inflates the other road users by are derived from the ego's length
+and width, not its default vehicle's; a reversing ego reaches backwards. On a
 frame of ten road users the eight CriMe measures from TTC to ALatReq take
 about 95 ms together, BTN and STN 170 ms more, the drivable area about 155 ms
 (over 2 s instead of 3, 45 ms), and WTTR about 110 ms on a frame with a
@@ -2903,7 +2935,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 18:39:52 UTC"><span class="timeago" datetime="2026-11-07T18:39:52+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 18:39:52 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 10:29:26 UTC"><span class="timeago" datetime="2026-11-08T10:29:26+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 10:29:26 UTC">2026-11-08</span>
   </span>
 
     
