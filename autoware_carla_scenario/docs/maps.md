@@ -103,8 +103,8 @@ directory is ignored, as if the file were absent. For
 resolver, the projection and origin a run and a sweep read the map with, the
 trajectory log's header, and the copies a T4 dataset and a driver's map set
 carry -- and since the map is then read with the default projection and
-origin, every coordinate moves: an ignored descriptor is logged as a warning
-naming the file. A descriptor shared by several map variants
+the OpenDRIVE geoReference's origin (or (0, 0) without one), every coordinate
+moves: an ignored descriptor is logged as a warning naming the file. A descriptor shared by several map variants
 (`../common/map_projector_info.yaml`) has to be copied into each map
 directory, and a git-annex checkout, whose files are links into
 `.git/annex/objects`, is refused the same way for its `.osm` as well: unlock
@@ -370,5 +370,5 @@ without one. A map whose CARLA assets need it installed is run with
 | `does not name a directory in the repository` | The `#path` is wrong for that ref. Browse the repository in the Map library. |
 | `names a directory outside the repository` / `names a link to a directory outside the repository` | The `#path` contains `..`, or is a symlink leading out of the checkout. Point it at the real directory. |
 | `map directory cannot be read` | The `#path` names a directory the process cannot look at under the map root: a path component longer than the file system allows, a permission it lacks, or an I/O error. The editor shows the map as not downloaded. |
-| A map's `.xodr` or `map_projector_info.yaml` is ignored (`Ignoring .../map_projector_info.yaml` in the log) | It is a symlink to a file outside the map directory, a dangling link, or a link to a directory. Copy the file into the map directory. |
+| A map's `.xodr` or `map_projector_info.yaml` is ignored (for the descriptor, `Ignoring .../map_projector_info.yaml` in the log) | It is a symlink to a file outside the map directory, a dangling link, or a link to a directory. Copy the file into the map directory. |
 | A pinned source re-clones on a machine that has the map | Expected: a pinned source never trusts an unpacked directory, because it records no revision. |
