@@ -554,6 +554,52 @@ def test_a_running_batch_s_cases_and_tasks(
     assert [i.passed for i in items] == [True, None, False, None]
 
 
+def _function(page: str, signature: str) -> str:
+    """The source of the JavaScript function *signature* in *page*, up to
+    the next function at the same indentation."""
+    start = page.index(signature)
+    indent = page.rfind("\n", 0, start) + 1
+    prefix = page[indent:start]
+    end = page.find("\n" + prefix + "function ", start + len(signature))
+    end = page.find("\n" + prefix + "panel.", start) if end < 0 else end
+    return page[start:end] if end >= 0 else page[start:]
+
+
+def test_the_batch_page_keeps_following_the_batch_after_a_failed_request(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The SLURM panel re-arms its poll whatever the request did, shows the
+    error, reports an action's error body or network error, and keeps the
+    new-results hint until the page is reloaded (#2007)."""
+    _manifest_batch(tmp_path)
+    _fake_squeue(tmp_path, monkeypatch, "")
+    page = client.get("/session/batch/2026-10-19/12-00-00").text
+    script = page.split('id="slurm-panel"', 1)[1]
+    refresh = _function(script, "function refresh()")
+    assert "r.ok" in refresh
+    assert ".catch(" in refresh and "slurm-state" in refresh
+    assert ".finally(" in refresh
+    rearm = refresh.split(".finally(", 1)[1]
+    assert "setTimeout(refresh" in rearm
+    actions = script.split("querySelectorAll('.slurm-btn').forEach", 1)[1]
+    assert "res.output || detailText(res.detail)" in actions
+    assert "detailText(st && st.detail)" in refresh
+    assert "JSON.stringify(detail)" in _function(script, "function detailText(detail)")
+    assert ".catch(" in actions.split(".finally(", 1)[0]
+    render = _function(script, "function render(st)")
+    hint = "New results: reload the page"
+    assert hint in render
+    # The hint follows a flag set for good, not a change since the last poll.
+    assert "lastDone" not in script
+    assert "if (newResults)" in render.split(hint, 1)[0]
+    # The run panel's SLURM submit reports a lost request and starts afresh.
+    submit = _function(page, "function submitSlurm(body)")
+    assert submit.count(".catch(e => showSubmitError(String(e)))") == 2
+    reset = submit.split("fetch(", 1)[0]
+    assert "removeAttribute('title')" in reset
+    assert "fill.className = 'bg-blue-600" in reset
+
+
 def _pending_batch(base: Path, time_: str = "13-00-00") -> Path:
     """A SLURM batch of three cases submitted, none of them collected yet."""
     batch = base / "outputs" / "2026-10-19" / time_

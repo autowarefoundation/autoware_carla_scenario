@@ -772,6 +772,47 @@ def test_runs_side_by_side(
     assert "case 0 passed" in page.text and "case 0 failed" in page.text
 
 
+def _update_button(page: str) -> str:
+    """The navbar's Update button tag in *page*."""
+    start = page.index('id="update-btn"')
+    return page[start : page.index(">", start)]
+
+
+def test_update_swaps_the_session_table_in_on_the_index_page_only(
+    client: TestClient, tmp_path: Path
+) -> None:
+    """``/api/refresh`` returns the session table, so only the index page
+    swaps it in; every other page reloads itself (#2007)."""
+    ref = _session(tmp_path, "10-00-00", [True, False, False, False])
+    index = _update_button(client.get("/").text)
+    assert 'hx-post="/api/refresh"' in index
+    assert 'hx-target="#main-content"' in index
+    assert "location.reload()" not in index
+    for url in (
+        f"/session/{ref}",
+        f"/session/{ref}/1",
+        f"/session/{ref}/odd",
+        f"/compare?s={ref}",
+    ):
+        page = client.get(url)
+        assert page.status_code == 200, url
+        button = _update_button(page.text)
+        assert "hx-post" not in button and "hx-target" not in button, url
+        assert 'onclick="refreshAndReload()"' in button, url
+    # A run that ends refreshes the page the same way, never by clicking a
+    # button that would swap the session table into another page.
+    text = client.get(f"/session/{ref}").text
+    assert "htmx.trigger('#update-btn', 'click')" not in text
+    assert "connectProgressStream(refreshCurrentPage)" in text
+    assert "executeRunWithProgress(body, refreshCurrentPage)" in text
+    helper = text.split("function refreshCurrentPage()", 1)[1].split("\n    }\n", 1)[0]
+    assert "hasAttribute('hx-post')" in helper and "refreshAndReload()" in helper
+    # Off the index page the cache is still cleared before the reload.
+    reload = text.split("function refreshAndReload()", 1)[1].split("\n    }\n", 1)[0]
+    post = reload.index("fetch('/api/refresh', {method: 'POST'})")
+    assert post < reload.index(".finally(() => location.reload())")
+
+
 def test_the_session_page_links_its_odd_and_comparison(
     client: TestClient, tmp_path: Path
 ) -> None:
