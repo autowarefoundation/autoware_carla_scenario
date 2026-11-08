@@ -249,6 +249,12 @@ _JUNCTION_SAMPLE_M = 1.0
 #: metres: more than a lane's half width and a sample's reach, so a point's
 #: cell and the eight around it hold every sample it can be on.
 _JUNCTION_CELL_M = 8.0
+#: How far across a junction lane its centre line may be from the ego's
+#: centre for the ego to count as on it, in metres, at most its half width
+#: and :data:`_LANE_EDGE_TOLERANCE_M`: a lane the ego's centre is on the edge
+#: of is more likely one beside the ego's than the one it follows, and taking
+#: it would hide the ego driving the wrong way along its own.
+_JUNCTION_LATERAL_M = 1.0
 #: How far from the ego's centre a lane beside its own still counts towards
 #: the drivable area, in metres: AlpaSim's lane search radius.
 _LANE_SEARCH_RADIUS_M = 6.0
@@ -1264,8 +1270,9 @@ def _heads_along_junction_lane(
     around it, and the lane CARLA finds under a point may be another
     approach's, at any angle to the ego's (#1997): each sample of a junction
     lane (:func:`_junction_lanes_near`) the point is across from, within half
-    a sample's spacing along it and its half width and
-    :data:`_LANE_EDGE_TOLERANCE_M` across it, is a lane under the point.
+    a sample's spacing along it and, across it, within its half width and
+    :data:`_LANE_EDGE_TOLERANCE_M` and within :data:`_JUNCTION_LATERAL_M`, is
+    a lane under the point.
     """
     from .kinematics.angle import normalize_angle_deg  # noqa: PLC0415
 
@@ -1273,16 +1280,14 @@ def _heads_along_junction_lane(
     for x, y, sample_z, sample_yaw, half in _junction_lanes_near(world, point):
         if abs(sample_z - z) > _LANE_LEVEL_M:
             continue
+        across = min(half + _LANE_EDGE_TOLERANCE_M, _JUNCTION_LATERAL_M)
         dx, dy = point[0] - x, point[1] - y
-        if dx * dx + dy * dy > (half + reach) * (half + reach):
+        if dx * dx + dy * dy > (across + reach) * (across + reach):
             continue
         rad = math.radians(sample_yaw)
         if abs(dx * math.cos(rad) + dy * math.sin(rad)) > reach:
             continue
-        if (
-            abs(-dx * math.sin(rad) + dy * math.cos(rad))
-            > half + _LANE_EDGE_TOLERANCE_M
-        ):
+        if abs(-dx * math.sin(rad) + dy * math.cos(rad)) > across:
             continue
         if abs(normalize_angle_deg(yaw - sample_yaw)) <= _WRONG_LANE_HEADING_DEG:
             return True

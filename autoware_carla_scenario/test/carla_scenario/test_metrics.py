@@ -728,6 +728,21 @@ def test_in_a_junction_against_every_lane_is_the_wrong_way() -> None:
     assert _read(WRONG_LANE, _world(road=crossing)) == 1.0
 
 
+def test_in_a_junction_a_lane_more_than_a_metre_across_does_not_count() -> None:
+    """A junction lane heading the ego's way whose centre line is 1.5 m from
+    the ego's centre is one beside its own: driving against its own lane, the
+    ego is on the wrong way.  0.8 m across, it is on that lane."""
+    beside = _Road(
+        [_Lane(1, 0.0, 180.0, junction=True), _Lane(-1, 1.5, 0.0, junction=True)]
+    )
+    over = _Road(
+        [_Lane(1, 0.0, 180.0, junction=True), _Lane(-1, 0.8, 0.0, junction=True)]
+    )
+
+    assert _read(WRONG_LANE, _world(road=beside)) == 1.0
+    assert _read(WRONG_LANE, _world(road=over)) == 0.0
+
+
 def test_off_a_junction_only_the_lane_found_counts() -> None:
     overlapping = _Road([_Lane(1, 0.0, 180.0), _Lane(-1, 0.0, 0.0)])
 

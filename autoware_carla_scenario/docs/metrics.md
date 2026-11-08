@@ -65,22 +65,36 @@ the point is further along) and within 2.5 m of its height. So a lane change
 reads on the road throughout, and `min_distance_to_lane_boundary_m` and
 `wrong_lane` read the lane in the band too. A point beyond the outer lane's
 edge -- on a shoulder, a sidewalk, off the map -- is further out than that,
-and stays off. What remains is the lanes' own gaps: a corner over the end of a
-road where its lane does not continue, or between a road's lane and a
-junction's connecting lane that is narrower there.
+and stays off. The tolerances cut both ways: a point up to 0.1 m outside the
+outer lane's edge, or up to about 0.3 m past the end of a lane that does not
+continue (a dead end), reads on the road. What remains is the lanes' own gaps:
+a corner further over the end of a road where its lane does not continue, or
+between a road's lane and a junction's connecting lane that is narrower there.
 
 In a junction, the connecting lanes overlap each other and the ends of the
 roads around it, and the lane CARLA finds under the ego may be another
 approach's, at any angle to its own. So where it heads more than 120 degrees
 away from that lane, `wrong_lane` also looks at every driving lane in a
-junction under its centre (the map's junction lanes, sampled every metre once
-per map) and reads `1` only when it heads more than 120 degrees away from all
-of them. Off junctions, the lane found is the only one asked.
+junction whose centre line passes within 1 m of the ego's centre (and within
+the lane's half width plus 0.1 m), and reads `1` only when it heads more than
+120 degrees away from all of them. This runs wherever the ego is, so it also
+covers the end of a road that a junction's lanes reach over; on a road away
+from any junction lane, the lane found is the only one asked. The junction
+lanes are sampled every metre, once per world: in a run, once; in a replay
+(`evaluate_metrics`), once per call.
+
+The price is a blind spot: the ego driving the wrong way along a junction's
+connecting lane reads `0` wherever another junction lane heading the ego's way
+passes within that metre of its centre -- where an opposing connector
+overlaps its own. Replaying the ego backwards along every connecting lane of
+the fixture map (430 lanes, every 0.5 m), 13.3% of the frames read `0`;
+driven the right way along their centre lines, 2 frames of one lane read `1`.
 
 A road user whose box reads no extent (a box of no area: a point or a
 segment) holds only the points on it: it meets the ego when it is on or
 inside the ego's box, and is measured to as a point, not as covering
 everything around it.
+
 Boxes are those of vehicles (`vehicle.*`) and pedestrians (`walker.*`); props
 are not road users. `collision_*` reads the boxes, not CARLA's collision
 sensor (`CollisionCondition`): it sees a collision as AlpaSim does, and tells
