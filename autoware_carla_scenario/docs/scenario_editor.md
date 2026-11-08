@@ -200,6 +200,14 @@ have. The editor no longer offers the field for one, refuses it on the way in,
 and drops a stale value on the next save; each track's *+ action* menu offers
 only the actions that belong in it.
 
+Which entities may perform an actor action is the type's too
+(`ActionSpec.actor_kinds`): a track's *+ action* menu offers only the actions
+its entity's kind may perform, the inspector's **Actor** picker lists only the
+entities of those kinds, and the validator refuses any other actor -- on a card
+that may leave its actor out (*Spawn*, *Despawn*) as on one that needs it. So
+neither a Spawn nor a Despawn card takes the ego: it is in the scene from the
+start and stays there.
+
 The Environment track is drawn even when it is empty, because it is where you
 go to add the first one. An action that merely has no actor *yet* is drawn
 there too: it is invalid, and a card nothing draws cannot be corrected.
@@ -633,9 +641,9 @@ its end: it holds from the first tick the entity is on the map, or never. It
 also warns about a strict rule pointing off the route from a target on a bound
 (`<` the start, `>` the end), which never holds
 ([logical scenarios](logical_scenarios.md#route_progress-condition)). A
-**Spawn** card brings a hidden entity in (or, with no
-actor, adds a prop by name); trigger its *Set Goal* card on the Spawn card's
-action state.
+**Spawn** card (a vehicle or a pedestrian, never the ego) brings a hidden
+entity in (or, with no actor, adds a prop by name); trigger its *Set Goal* card
+on the Spawn card's action state.
 
 The **Gate** section below it says when the logical scenario passes over all
 its runs -- minimum runs, success rate, case and cover coverage, trajectory

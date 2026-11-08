@@ -51,10 +51,14 @@
           <label class="ed-label">Actor</label>
           <select name="actor" class="ed-input">
             <option value="" {% if not target.actor %}selected{% endif %}>— none —</option>
+            {# Only the kinds the card is for (the validator refuses any
+               other); the current actor stays listed, so a stale one shows. #}
             {% for entity in document.entities %}
+              {% if not spec or acts_as(entity.kind) in spec.actor_kinds or target.actor == entity.id %}
               <option value="{{ entity.id }}" {% if target.actor == entity.id %}selected{% endif %}>
                 {{ entity.display_name }}
               </option>
+              {% endif %}
             {% endfor %}
           </select>
         </div>

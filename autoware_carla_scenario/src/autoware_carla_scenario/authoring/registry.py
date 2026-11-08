@@ -3338,7 +3338,7 @@ register_action_spec(
                 kind="int_list",
                 default=[],
                 required=False,
-                help="Only used when Target is 'Selected Lanelet2 IDs'.",
+                help="Required, and only used, when Target is 'Selected Lanelet2 IDs'.",
             ),
             FieldSpec(
                 name="freeze",

@@ -405,6 +405,51 @@ def _check_unknown_params(
             )
 
 
+def _check_choices(
+    out: _Collector,
+    path: str,
+    spec: "ActionSpec | ConditionSpec",
+    params: dict[str, Any],
+    object_id: str | None,
+) -> None:
+    """Require the field a select hands to the constructor.
+
+    An :class:`~autoware_carla_scenario.authoring.registry.ArgumentChoice`
+    says which field feeds a constructor argument for each option of a
+    select.  That field is optional on the card -- the other options do not
+    read it -- but once its option is the one picked, it is the argument: a
+    Set Traffic Signal card that targets "Selected Lanelet2 IDs" with none
+    listed would set no light and only say so in the run's log.
+    """
+    fields = {f.name: f for f in spec.fields}
+    for choice in spec.choices:
+        picked = params.get(choice.discriminator)
+        for case in choice.cases:
+            if not case.field or case.when != picked:
+                continue
+            value = params.get(case.field)
+            if not (_is_blank(value) or value == [] or value == ()):
+                continue
+            selector = fields.get(choice.discriminator)
+            target = fields.get(case.field)
+            option = case.when
+            if selector is not None:
+                option = next(
+                    (o.label for o in selector.options if o.value == case.when),
+                    case.when,
+                )
+            out.error(
+                f"{path}.{case.field}",
+                f"{spec.title} with "
+                f"{selector.label if selector is not None else choice.discriminator}"
+                f" {option!r} needs "
+                f"{target.label if target is not None else case.field} "
+                f"({case.field}): leave it empty only with another "
+                f"{choice.discriminator}.",
+                object_id,
+            )
+
+
 # ---------------------------------------------------------------------------
 # Node checking
 # ---------------------------------------------------------------------------
@@ -445,6 +490,7 @@ def _check_condition(
     for field_spec in spec.fields:
         _check_field(out, path, field_spec, node.params, refs, node.id)
     _check_unknown_params(out, path, spec.fields, node.params, node.id)
+    _check_choices(out, path, spec, node.params, node.id)
 
     if owner is not None and owner in condition_refs(node, "action"):
         out.error(
@@ -614,30 +660,27 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
         out.error(path, f"Unknown action type {node.type!r}.", node.id)
         return
 
-    if spec.actor_required:
-        if _is_blank(node.actor):
-            out.error(f"{path}.actor", f"{spec.title} needs an actor.", node.id)
-        elif node.actor not in refs.entities:
+    if spec.actor_required and _is_blank(node.actor):
+        out.error(f"{path}.actor", f"{spec.title} needs an actor.", node.id)
+    elif node.actor is not None and node.actor not in refs.entities:
+        if spec.actor_required:
+            message = f"{spec.title} references unknown entity {node.actor!r}."
+        else:
+            message = f"Action references unknown entity {node.actor!r}."
+        out.error(f"{path}.actor", message, node.id)
+    elif node.actor is not None and spec.scope == "actor":
+        # Whenever an actor is named, not only where one is required: a Spawn
+        # or Despawn card may leave it out, but the one it names still has to
+        # be a kind the card is for -- the ego is in the scene from the start
+        # and cannot be despawned, which the actions refuse only at setup.
+        kind = refs.entity_kinds.get(str(node.actor), "")
+        if kind and actor_kind(kind) not in spec.actor_kinds:
             out.error(
                 f"{path}.actor",
-                f"{spec.title} references unknown entity {node.actor!r}.",
+                f"{spec.title} cannot be performed by a {kind}; it is for "
+                f"{' or '.join(spec.actor_kinds)}.",
                 node.id,
             )
-        else:
-            kind = refs.entity_kinds.get(str(node.actor), "")
-            if kind and actor_kind(kind) not in spec.actor_kinds:
-                out.error(
-                    f"{path}.actor",
-                    f"{spec.title} cannot be performed by a {kind}; it is for "
-                    f"{' or '.join(spec.actor_kinds)}.",
-                    node.id,
-                )
-    elif node.actor is not None and node.actor not in refs.entities:
-        out.error(
-            f"{path}.actor",
-            f"Action references unknown entity {node.actor!r}.",
-            node.id,
-        )
     if node.overrides and node.type not in OVERRIDING_ACTIONS:
         # A document written by hand: the editor offers it only where it means
         # something, and the builder would drop it without a word.
@@ -660,6 +703,7 @@ def _check_action(out: _Collector, path: str, node: ActionNode, refs: _Refs) -> 
     for field_spec in spec.fields:
         _check_field(out, path, field_spec, node.params, refs, node.id)
     _check_unknown_params(out, path, spec.fields, node.params, node.id)
+    _check_choices(out, path, spec, node.params, node.id)
     if node.type == "routing":
         _check_routing(out, path, node)
     if node.type == "spawn":

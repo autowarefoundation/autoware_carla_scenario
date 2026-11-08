@@ -2329,6 +2329,23 @@ class TestEnvironmentTrack:
         assert offers["walker1"] == shared | pedestrian_only
         assert not pedestrian_only & offers["ego"]
 
+    @pytest.mark.parametrize("type_id", ["spawn", "despawn"])
+    def test_the_actor_picker_lists_only_the_kinds_a_card_is_for(
+        self, client: TestClient, draft_id: str, type_id: str
+    ) -> None:
+        """A Spawn or Despawn card may leave its actor out, but never takes
+        the ego (#1993): its inspector does not offer it, as the validator
+        refuses it."""
+        client.post(f"/draft/{draft_id}/action", data={"type_id": type_id})
+        document = yaml.safe_load(client.get(f"/draft/{draft_id}/yaml").text)
+        card = document["actions"][-1]
+        assert card["type"] == type_id
+        body = client.get(f"/draft/{draft_id}/inspector/{card['id']}").text
+        picker = re.search(r'<select name="actor"[\s\S]*?</select>', body)
+        assert picker is not None
+        offered = set(re.findall(r'<option value="([^"]*)"', picker.group(0)))
+        assert offered == {"", "npc1"}
+
     def test_an_environment_action_needs_no_actor(
         self, client: TestClient, draft_id: str
     ) -> None:
