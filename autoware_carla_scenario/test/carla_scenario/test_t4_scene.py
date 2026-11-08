@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import json
 import math
+import re
 import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any, Optional
@@ -457,6 +458,76 @@ def test_a_log_without_an_ego_or_a_tick_is_refused(tmp_path: Path) -> None:
     no_tick = _write_log(tmp_path / "B.trajectory.jsonl", EGO)
     with pytest.raises(ValueError, match="no tick"):
         trajectory_log_to_t4_scene(no_tick, with_map=False)
+
+
+def test_a_killed_runs_cut_off_last_tick_is_left_out(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    log = _write_log(
+        tmp_path / "Killed.trajectory.jsonl",
+        EGO,
+        *[_tick(frame, _state(1, 0.0, 0.0)) for frame in range(100, 110)],
+    )
+    complete = json.dumps(_tick(110, _state(1, 0.0, 0.0)))
+    with log.open("a") as stream:
+        stream.write(complete[: len(complete) // 2])  # no newline: cut off
+    with caplog.at_level("WARNING"):
+        export = trajectory_log_to_t4_scene(log, step_s=0.05, with_map=False)
+    assert list(_numeric(export.scene.frame_indices)) == list(range(100, 110))
+    assert any(
+        message.startswith(f"{log}:14: the last line is not JSON")
+        for message in caplog.messages
+    )
+
+
+def test_a_cut_off_last_line_before_blank_lines_is_left_out(tmp_path: Path) -> None:
+    log = _write_log(
+        tmp_path / "Killed.trajectory.jsonl", EGO, _tick(100, _state(1, 0.0, 0.0))
+    )
+    with log.open("a") as stream:
+        stream.write('{"type": "tick", "frame": 101\n\n')
+    export = trajectory_log_to_t4_scene(log, step_s=0.05, with_map=False)
+    assert list(_numeric(export.scene.frame_indices)) == [100]
+
+
+def test_a_line_that_is_not_json_in_the_middle_is_refused(tmp_path: Path) -> None:
+    log = tmp_path / "Corrupt.trajectory.jsonl"
+    _write_log(log, EGO, _tick(100, _state(1, 0.0, 0.0)))
+    lines = log.read_text().splitlines(keepends=True)
+    lines.insert(3, '{"type": "tick", "frame": 1\n')
+    lines.append(json.dumps(_tick(101, _state(1, 0.0, 0.0))) + "\n")
+    log.write_text("".join(lines))
+    with pytest.raises(ValueError, match=rf"^{re.escape(str(log))}:4: not a JSON line"):
+        trajectory_log_to_t4_scene(log, with_map=False)
+
+
+@pytest.mark.parametrize(
+    ("record", "message"),
+    [
+        ({"type": "tick", "frame": 101, "t": 0.05}, "missing field 'actors'"),
+        ({"type": "rear_axle", "id": 1, "offset": None}, "NoneType"),
+        ({"type": "tick", "frame": 101, "t": 0.05, "actors": [[1]]}, ""),
+        (
+            {"type": "tick", "frame": 101, "t": 0.05, "actors": [], "lights": [1]},
+            "items",
+        ),
+    ],
+    ids=["tick-without-actors", "null-rear-axle-offset", "short-state", "lights-list"],
+)
+def test_a_record_that_cannot_be_used_is_refused_with_its_line(
+    tmp_path: Path, record: dict, message: str
+) -> None:
+    log = _write_log(
+        tmp_path / "Bad.trajectory.jsonl",
+        EGO,
+        _tick(100, _state(1, 0.0, 0.0)),
+        record,
+        _tick(102, _state(1, 0.0, 0.0)),
+    )
+    with pytest.raises(ValueError, match=rf"^{re.escape(str(log))}:5: ") as caught:
+        trajectory_log_to_t4_scene(log, step_s=0.05, with_map=False)
+    assert message in str(caught.value)
+    assert caught.value.__cause__ is not None
 
 
 # -- objects ----------------------------------------------------------------

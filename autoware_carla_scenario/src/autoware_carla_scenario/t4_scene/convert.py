@@ -255,21 +255,54 @@ class _Log:
 
 
 def _read_log(path: Path, step_frames: int) -> _Log:
+    """Read the log at *path* a record at a time.
+
+    The last line of the file that holds anything is a killed run's tick cut
+    off mid-line when it is not JSON (``TrajectoryRecorder``: a killed run
+    loses at most the tick being written): it is logged and left out, and
+    every complete record before it is kept. A line that is not JSON with any
+    line after it, and a record that cannot be used wherever it is, are
+    refused with the file and line number.
+    """
     log = _Log(step_frames=step_frames)
+    # A line that is not JSON, refused only once a line follows it.
+    cut: Optional[tuple[int, str]] = None
     with path.open("rb") as stream:
         for number, line in enumerate(stream, start=1):
             if not line.strip():
                 continue
+            if cut is not None:
+                raise ValueError(f"{path}:{cut[0]}: not a JSON line ({cut[1]})")
             try:
                 record = orjson.loads(line)
             except orjson.JSONDecodeError as error:
-                raise ValueError(
-                    f"{path}:{number}: not a JSON line ({error})"
-                ) from None
+                cut = (number, str(error))
+                continue
             try:
                 log.feed(record)
-            except ValueError as error:
-                raise ValueError(f"{path}:{number}: {error}") from None
+            except (
+                ValueError,
+                KeyError,
+                TypeError,
+                IndexError,
+                # A map that is not an object (``"lights": []``).
+                AttributeError,
+                # A number too large for a float.
+                OverflowError,
+            ) as error:
+                # A KeyError's message is the bare key: say what it is.
+                message = (
+                    f"missing field {error}" if isinstance(error, KeyError) else error
+                )
+                raise ValueError(f"{path}:{number}: {message}") from error
+    if cut is not None:
+        logger.warning(
+            "%s:%d: the last line is not JSON (%s), a tick cut off when the run "
+            "was killed: converting the records before it",
+            path,
+            cut[0],
+            cut[1],
+        )
     if log.first_frame < 0:
         raise ValueError(f"{path} has no tick: there is nothing to convert")
     return log

@@ -89,6 +89,11 @@ uv run scenario-t4scene outputs/2026-10-29/10-00-00
 uv run scenario-t4scene outputs/.../CutInScenario.trajectory.jsonl -o scenes/ --step 0.05 --all-objects
 ```
 
+A log whose last line is cut off -- a run killed while it wrote its last
+tick -- is converted without that line, with a warning; a line that is not
+JSON before the last, or a record that cannot be used, fails the log with
+its file and line number ([what a reader has to handle](trajectory_log.md#what-a-reader-has-to-handle)).
+
 ```python
 from autoware_carla_scenario.t4_scene import trajectory_log_to_t4_scene, write_t4_scene
 

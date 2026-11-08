@@ -172,6 +172,17 @@ SHA-256, so a reader can load the very map the run was on.
   is capped at 2^64 - 1 (see above). Any reader,
   including JavaScript's double-only `JSON.parse`, holds them exactly; a value
   past the cap fails validation rather than silently losing precision.
+- **The last line can be cut off.** Each line is written whole, but a run
+  killed mid-write (SIGKILL, an out-of-memory kill, a job's time limit, a
+  full disk) loses at most the tick being written: the last line of the file
+  that holds anything may be part of a record, with no trailing newline.
+  Leave that one line out and keep every record before it. A line that is
+  not JSON with any line after it is a corrupt file, not a killed run.
+  `scenario-t4scene` (and the T4Scene written as each run ends) warns about a
+  cut-off last line and converts the rest, and refuses a line that is not
+  JSON anywhere else, or a record it cannot use anywhere, naming the file and
+  line; the results UI's metrics and the metric records merged into a Rerun
+  recording skip any line they cannot read.
 - **Only egos have controls.** `control` carries actors whose `role` is
   `ego` or `hero` (any case). `steer` is normalised to [-1, 1]; it is not a
   wheel angle.
