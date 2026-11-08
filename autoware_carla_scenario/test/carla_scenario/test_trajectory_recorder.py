@@ -1092,6 +1092,22 @@ def test_a_projector_file_json_cannot_hold_is_left_out(tmp_path) -> None:
     assert record["lanelet2"]["bytes"] == 6
 
 
+def test_a_projector_file_linked_from_outside_the_map_is_left_out(tmp_path) -> None:
+    """The run ignores it (maps.resolver.projector_info_path), so the header
+    does not record it as the map's projection either (#1974)."""
+    directory = tmp_path / "map"
+    directory.mkdir()
+    osm = directory / "lanelet2_map.osm"
+    osm.write_bytes(b"<osm/>")
+    (tmp_path / "outside.yaml").write_text("projector_type: LocalCartesianUTM\n")
+    (directory / "map_projector_info.yaml").symlink_to(tmp_path / "outside.yaml")
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl", None, osm)
+    recorder.start(_World())
+    recorder.close()
+    [record] = [r for r in _lines(recorder.path) if r["type"] == "map"]
+    assert record["projector_info"] is None and record["lanelet2"] is not None
+
+
 def test_an_unparsable_projector_file_is_left_out(tmp_path) -> None:
     osm = tmp_path / "lanelet2_map.osm"
     osm.write_bytes(b"<osm/>")

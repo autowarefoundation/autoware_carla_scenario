@@ -48,6 +48,7 @@ __all__ = [
     "ResolvedMap",
     "cached_map",
     "pin_source",
+    "projector_info_path",
     "resolve_directory",
     "resolve_map",
 ]
@@ -66,7 +67,14 @@ PREFERRED_LANELET2_NAME = "lanelet2_map.osm"
 #: map that happens to have the same name.
 LOCAL_DERIVED_SUBDIR = "local"
 
+#: Autoware's projection descriptor, written next to the Lanelet2 map.
+PROJECTOR_INFO_FILENAME = "map_projector_info.yaml"
+
 _SLUG_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+#: Projection descriptors :func:`projector_info_path` has warned about, by
+#: path, so a map read many times a run says so once.
+_IGNORED_PROJECTOR_INFO: dict[str, int] = {}
 
 
 class MapResolutionError(RuntimeError):
@@ -179,6 +187,46 @@ def _is_map_file(directory: Path, candidate: Path) -> bool:
         return candidate.resolve().is_file()
     except (OSError, RuntimeError):
         return False
+
+
+def projector_info_path(directory: Path) -> Optional[Path]:
+    """Return the ``map_projector_info.yaml`` of the map in *directory*, if any.
+
+    The one test every reader of the descriptor goes through -- the resolver,
+    the projection and origin a run and a sweep read the map with
+    (:mod:`~autoware_carla_scenario.coordinate.projection`), the trajectory
+    log's header and the copies a T4 dataset and a driver's map set carry --
+    so none of them reads a descriptor the others ignore.  It is
+    :func:`_is_map_file`'s: a link that stays in *directory* is followed; one
+    that leads out of it, dangles or names a directory is not this map's file,
+    and the map is read as if it had none.
+
+    That includes a link into a repository's object store -- a git-annex
+    checkout keeps every file as a link into ``.git/annex/objects`` -- exactly
+    as it does for the ``.osm`` itself, which the resolver refuses the same
+    way.  Because ignoring the descriptor changes the projection and the
+    origin, and so every coordinate on the map, it is logged as a warning, once
+    per path.
+    """
+    candidate = directory / PROJECTOR_INFO_FILENAME
+    if _is_map_file(directory, candidate):
+        found: Optional[Path] = candidate
+        return found
+    try:
+        present = candidate.is_symlink() or candidate.exists()
+    except OSError:
+        present = False
+    key = str(candidate)
+    if present and key not in _IGNORED_PROJECTOR_INFO:
+        _IGNORED_PROJECTOR_INFO[key] = 1
+        logger.warning(
+            "Ignoring %s: it is a link out of %s, a dangling link or a "
+            "directory, so the map is read as if it had no projection "
+            "descriptor (docs/maps.md).",
+            key,
+            str(directory),
+        )
+    return None
 
 
 def _climbs_out(path: str) -> bool:
@@ -509,7 +557,7 @@ def cached_map(
         # (EACCES) or an I/O error instead of answering False.  A map that
         # cannot be looked at is not one the machine has; resolve_map, which
         # the caller is sent to next, says why (#1974).
-        logger.debug("Map %s cannot be looked up", parsed.uri, exc_info=True)
+        logger.warning("Map %s cannot be looked up", parsed.uri, exc_info=True)
         return None
 
 
@@ -623,7 +671,6 @@ def _describe(
             if source is None
             else _lanelet2_of(directory, source)
         )
-    projector_info = directory / "map_projector_info.yaml"
     xodr_path, xodr_is_derived = _find_xodr(directory, derived, directory.name)
     return ResolvedMap(
         source=source,
@@ -631,9 +678,7 @@ def _describe(
         directory=directory,
         lanelet2_path=lanelet2_path,
         xodr_path=xodr_path,
-        projector_info_path=(
-            projector_info if _is_map_file(directory, projector_info) else None
-        ),
+        projector_info_path=projector_info_path(directory),
         derived=derived,
         xodr_is_derived=xodr_is_derived,
         commit=commit,

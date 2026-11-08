@@ -221,7 +221,9 @@ class TestReadProjectorType:
         "map_origin:\n  latitude: 10.0\n  longitude: 20.0\n"
     )
 
-    def test_a_descriptor_linked_from_outside_the_map_is_ignored(self, tmp_path):
+    def test_a_descriptor_linked_from_outside_the_map_is_ignored(
+        self, tmp_path, caplog
+    ):
         # The resolver ignores a map_projector_info.yaml that is a link out of
         # the map directory (docs/maps.md); the projection and origin read the
         # file themselves, and used to follow the link anywhere on the host
@@ -244,6 +246,15 @@ class TestReadProjectorType:
         assert _read_projector_type(map_path) is None
         assert _read_map_origin(map_path) is None
         assert map_origin(map_path)[1] != "map_projector_info.yaml"
+        # Every coordinate on the map moves with it, so it is not silent: a
+        # warning naming the file, once however often the map is read.
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING" and "Ignoring" in r.getMessage()
+        ]
+        assert len(warnings) == 1
+        assert str(directory / "map_projector_info.yaml") in warnings[0].getMessage()
 
     def test_a_descriptor_linked_from_inside_the_map_is_read(self, tmp_path):
         """A link that stays in the map directory is followed, as the resolver does."""

@@ -408,9 +408,12 @@ class T4Recording:
         if lanelet2_path is not None and Path(lanelet2_path).is_file():
             self._writer.add_lanelet2_map(Path(lanelet2_path))
             from .coordinate.projection import PROJECTOR_INFO_FILENAME  # noqa: PLC0415
+            from .maps.resolver import projector_info_path  # noqa: PLC0415
 
-            info = Path(lanelet2_path).parent / PROJECTOR_INFO_FILENAME
-            if info.is_file():
+            # Only the descriptor the run read the map with (a link out of
+            # the map directory is ignored there, and so here).
+            info = projector_info_path(Path(lanelet2_path).parent)
+            if info is not None:
                 shutil.copy(
                     info, self.path / _VERSION / "map" / PROJECTOR_INFO_FILENAME
                 )

@@ -38,8 +38,11 @@ class EntityLanePositionCondition(CompositionCondition):
 
     * A :class:`Lanelet2Pose` names a lanelet.  The entity has to be within that
       lanelet's bounds, and ``s`` / ``t`` are the lanelet's own -- ``s`` from its
-      start along its direction of travel, ``t`` positive to the left of it.
-      This is not the OpenDRIVE road's ``s`` whenever the lanelet runs against
+      start along its direction of travel, ``t`` positive to the left of it,
+      measured from the line of the nearest centerline segment as
+      :func:`~...coordinate.transform.to_lanelet2` measures it (past either end,
+      the end segment's line extended; see
+      :func:`~...coordinate.transform.project_onto_lanelet`).  This is not the OpenDRIVE road's ``s`` whenever the lanelet runs against
       the road's reference line (every lane with a positive id does) or starts
       partway along it: a stretch written as lanelet ``s`` 75-95 on such a lane
       used to be checked as road ``s`` 75-95, at the other end of the lane.

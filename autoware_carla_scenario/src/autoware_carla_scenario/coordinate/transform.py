@@ -137,9 +137,16 @@ def project_onto_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> Lanelet2Pose:
     it lies on is drawn.  ``s`` is exact along the centerline (not snapped to a
     vertex) and clamped to the lanelet.  Both are measured as
     :func:`to_lanelet2` measures them (:func:`_project_to_centerline`), so a
-    point reads the same ``s`` and ``t`` whichever of the two asks: past either
-    end of the centerline, ``t`` is the offset from the end segment's line
-    extended, not the distance to the end point.
+    point reads the same ``s``, ``t`` and heading whichever of the two asks:
+    ``t`` is the signed offset from the line of the nearest centerline
+    segment -- past either end, the end segment's line extended -- not the
+    distance to the nearest point of the centerline.  The two differ outside
+    a convex vertex (a bend, or a skewed or tapered end), where the nearest
+    point is the vertex itself; there ``t`` reads smaller than lanelet2's
+    ``toArcCoordinates()`` distance, which this used before (#1974), and an
+    :class:`~...conditions.composition.entity_lane_position.EntityLanePositionCondition`
+    rule on ``t`` near a corner or an end of the lanelet can hold where it did
+    not.
 
     Args:
         pose: The CARLA world pose to project.

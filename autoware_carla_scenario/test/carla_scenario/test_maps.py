@@ -1126,15 +1126,22 @@ class TestProvisionedMaps:
         # Before Python 3.14 is_file() raises ENAMETOOLONG for a component
         # this long rather than answering False.  The editor asks cached_map on
         # every render and catches only the map errors, so an OSError here was
-        # a 500 on every page of the draft (#1974).  No remote is reachable,
-        # so on 3.14 resolve_map gets as far as the clone and says so instead.
+        # a 500 on every page of the draft (#1974).
         (origin_repo / ".git").rename(origin_repo.parent / "gone")
         # The root has to exist: a lookup under a missing one stops at ENOENT.
         cache.root.mkdir(parents=True, exist_ok=True)
+        try:
+            (cache.root / ("a" * 300)).is_file()
+        except OSError:
+            pass
+        else:
+            pytest.skip("this Python answers False for a name too long")
         uri = _uri(origin_repo, "a" * 300)
         assert cached_map(uri, cache=cache) is None
-        with pytest.raises((MapResolutionError, MapCacheError)):
+        with pytest.raises(MapResolutionError, match="cannot be read") as caught:
             resolve_map(uri, cache=cache)
+        assert isinstance(caught.value.__cause__, OSError)
+        assert caught.value.__cause__.errno == errno.ENAMETOOLONG
 
     def test_a_map_root_that_cannot_be_read_is_a_map_error(
         self,

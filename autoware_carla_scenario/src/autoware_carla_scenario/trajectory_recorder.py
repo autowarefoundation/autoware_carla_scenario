@@ -242,10 +242,12 @@ def _projector_info(lanelet2_path: Optional[Path]) -> Optional[dict[str, Any]]:
         return None
     import yaml  # noqa: PLC0415 - read once a run, where it is needed
 
-    from .coordinate.projection import PROJECTOR_INFO_FILENAME  # noqa: PLC0415
+    from .maps.resolver import projector_info_path  # noqa: PLC0415
 
-    info_path = Path(lanelet2_path).parent / PROJECTOR_INFO_FILENAME
-    if not info_path.is_file():
+    # The descriptor the run read the map with: one that is a link out of the
+    # map directory was ignored there, so it is not recorded here either.
+    info_path = projector_info_path(Path(lanelet2_path).parent)
+    if info_path is None:
         return None
     info = yaml.safe_load(info_path.read_text(encoding="utf-8"))
     return info if isinstance(info, dict) else None
