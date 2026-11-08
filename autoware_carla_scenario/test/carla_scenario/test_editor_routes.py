@@ -2409,6 +2409,247 @@ class TestMapViewerReuse:
         assert "function reuseMap(" in script
 
 
+class _Elements(HTMLParser):
+    """Every element of a page, with its attributes and its parent's index."""
+
+    _VOID = frozenset(
+        "area base br col embed hr img input link meta source track wbr".split()
+    )
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.elements: list[tuple[str, dict[str, str | None], int | None]] = []
+        self._open: list[int] = []
+
+    def handle_starttag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        parent = self._open[-1] if self._open else None
+        self.elements.append((tag, dict(attrs), parent))
+        if tag not in self._VOID:
+            self._open.append(len(self.elements) - 1)
+
+    def handle_startendtag(self, tag: str, attrs: list[tuple[str, str | None]]) -> None:
+        parent = self._open[-1] if self._open else None
+        self.elements.append((tag, dict(attrs), parent))
+
+    def handle_endtag(self, tag: str) -> None:
+        # Close back to the nearest open element of this tag; a stray end tag
+        # (none open) is ignored, as a browser does.
+        for depth in range(len(self._open) - 1, -1, -1):
+            if self.elements[self._open[depth]][0] == tag:
+                del self._open[depth:]
+                return
+
+
+_NAVIGATION_HARNESS = r"""
+'use strict';
+const source = require('fs').readFileSync(process.argv[1], 'utf8');
+const start = source.indexOf('  var SELECTABLE');
+const end = source.indexOf('  window.toggleExportPanel');
+if (start < 0 || end < 0) throw new Error('navigation block not found');
+
+function el(tag, attrs, parent) {
+  return {
+    tagName: tag, attrs: attrs, parent: parent, id: attrs.id || '',
+    hasAttribute(name) { return name in this.attrs; },
+    closest(selector) {
+      for (let node = this; node; node = node.parent) {
+        if (selector === '[data-object-id]' && 'data-object-id' in node.attrs) return node;
+        if (selector === '#canvas' && node.id === 'canvas') return node;
+      }
+      return null;
+    },
+    // Like a browser: focus() on an element that cannot take focus is a no-op.
+    focus() { if ('tabindex' in this.attrs || this.tagName === 'BUTTON') doc.activeElement = this; },
+  };
+}
+
+const body = el('BODY', {}, null);
+const canvas = el('SECTION', { id: 'canvas' }, body);
+const card = el('DIV', { 'data-object-id': 'a', tabindex: '0' }, canvas);
+const group = el('DIV', { 'data-object-id': 'g' }, canvas);
+const head = el('DIV', { class: 'ed-cond-group-head', tabindex: '0' }, group);
+const remove = el('BUTTON', {}, head);
+const leaf = el('DIV', { 'data-object-id': 'l', tabindex: '0' }, group);
+const last = el('DIV', { 'data-object-id': 'b', tabindex: '0' }, canvas);
+const toolbar = el('BUTTON', {}, body);
+const names = new Map([[body, 'body'], [card, 'card'], [head, 'head'], [remove, 'remove'],
+  [leaf, 'leaf'], [last, 'last'], [toolbar, 'toolbar']]);
+
+// Document order. Enough of querySelectorAll for the selectors the canvas
+// code may use: `#canvas` followed by `[data-object-id]`, optionally with
+// `[tabindex]`, or by `[data-object-id] > .ed-cond-group-head[tabindex]`.
+let all = [body, canvas, card, group, head, remove, leaf, last, toolbar];
+function matches(node, part) {
+  const inCanvas = (n) => !!(n.parent && n.parent.closest('#canvas'));
+  const focusable = !/\[tabindex\]$/.test(part) || 'tabindex' in node.attrs;
+  if (part === '#canvas [data-object-id]' || part === '#canvas [data-object-id][tabindex]') {
+    return inCanvas(node) && 'data-object-id' in node.attrs && focusable;
+  }
+  if (part === '#canvas [data-object-id] > .ed-cond-group-head[tabindex]') {
+    return inCanvas(node) && focusable && node.attrs.class === 'ed-cond-group-head' &&
+      !!node.parent && 'data-object-id' in node.parent.attrs;
+  }
+  throw new Error('selector not modelled: ' + part);
+}
+let listener = null;
+const clicks = [];
+const doc = {
+  activeElement: body,
+  querySelectorAll(selector) {
+    const parts = selector.split(/\s*,\s*/);
+    return all.filter((node) => parts.some((part) => matches(node, part)));
+  },
+  getElementById() { return null; },
+  addEventListener(type, fn) { if (type === 'keydown') listener = fn; },
+};
+new Function('document', 'window', 'commitAndClose', source.slice(start, end))(
+  doc, { htmx: { trigger(node) { clicks.push(names.get(node)); } } }, () => {});
+
+function press(key) {
+  const event = { key: key, target: doc.activeElement, prevented: false,
+    preventDefault() { this.prevented = true; } };
+  listener(event);
+  return [key, names.get(doc.activeElement), event.prevented];
+}
+function from(node, keys) { doc.activeElement = node; return keys.map(press); }
+
+const R = 'ArrowRight', L = 'ArrowLeft';
+const result = {
+  forward: from(card, [R, R, R, R]),
+  backward: from(last, [L, L, L, L]),
+  fromInside: from(remove, ['ArrowDown']),
+  outside: from(toolbar, ['ArrowDown', 'ArrowUp']),
+  nothingFocused: from(body, ['ArrowDown']),
+  enterOnHead: from(head, ['Enter']),
+};
+all = [body, toolbar];
+result.noCanvas = from(body, ['ArrowDown']);
+result.clicks = clicks;
+process.stdout.write(JSON.stringify(result));
+"""
+
+
+class TestKeyboardNavigation:
+    """Arrow keys walk the canvas, and only the canvas.
+
+    ``editor.js`` is loaded on every editor page, so an arrow key it claims is
+    one the page can no longer scroll with. It claims one only when focus is on
+    a card and the card selection actually moved.
+    """
+
+    _SCRIPT = Path(editor_app.__file__).parent / "static" / "editor.js"
+
+    def test_every_object_on_the_canvas_has_one_focusable_target(
+        self, client: TestClient, draft_id: str
+    ) -> None:
+        """``selectable()`` lists focusable elements, one per canvas object.
+
+        A composite condition keeps ``data-object-id`` on its wrapper (that is
+        what the selection outlines) and takes focus on its head, so the script
+        selects ``[data-object-id][tabindex]`` and a wrapper's direct
+        ``.ed-cond-group-head``. An object with neither would be one that arrow
+        navigation sticks at.
+        """
+        script = self._SCRIPT.read_text()
+        assert "'#canvas [data-object-id][tabindex], '" in script
+        assert "'#canvas [data-object-id] > .ed-cond-group-head[tabindex]'" in script
+
+        parser = _Elements()
+        parser.feed(client.get(f"/draft/{draft_id}").text)
+        elements = parser.elements
+
+        def inside_canvas(index: int) -> bool:
+            parent: int | None = index
+            while parent is not None:
+                if elements[parent][1].get("id") == "canvas":
+                    return True
+                parent = elements[parent][2]
+            return False
+
+        def classes(index: int) -> list[str]:
+            return (elements[index][1].get("class") or "").split()
+
+        objects = [
+            i
+            for i, (_, attrs, _) in enumerate(elements)
+            if "data-object-id" in attrs and inside_canvas(i)
+        ]
+        composites = [i for i in objects if "ed-cond-group" in classes(i)]
+        assert composites, "the cut-in draft's trigger should draw as a composite"
+        for index in objects:
+            attrs = elements[index][1]
+            heads = [
+                i
+                for i, (_, child, parent) in enumerate(elements)
+                if parent == index
+                and "ed-cond-group-head" in classes(i)
+                and "tabindex" in child
+            ]
+            targets = int("tabindex" in attrs) + len(heads)
+            assert (
+                targets == 1
+            ), f"{attrs['data-object-id']} has {targets} focusable targets"
+
+    def test_arrow_keys_are_claimed_only_when_the_selection_moves(self) -> None:
+        """Run the navigation code against a stub DOM.
+
+        The stub is the shape the templates render: a card, a composite
+        condition (an id-carrying wrapper whose head takes focus) holding a
+        leaf, a last card, and a toolbar button outside the canvas.
+        """
+        import json
+        import shutil
+        import subprocess
+
+        node = shutil.which("node")
+        if node is None:
+            pytest.skip("node is not installed")
+        run = subprocess.run(
+            [node, "-e", _NAVIGATION_HARNESS, str(self._SCRIPT)],
+            capture_output=True,
+            text=True,
+            timeout=_HANG_S,
+            check=True,
+        )
+        result = json.loads(run.stdout)
+        R, L = "ArrowRight", "ArrowLeft"
+        # Through the composite, not stuck at its wrapper; the end of the
+        # canvas is not a move, so the key is left to the page.
+        assert result["forward"] == [
+            [R, "head", True],
+            [R, "leaf", True],
+            [R, "last", True],
+            [R, "last", False],
+        ]
+        assert result["backward"] == [
+            [L, "leaf", True],
+            [L, "head", True],
+            [L, "card", True],
+            [L, "card", False],
+        ]
+        # A button inside a card counts as being on that card.
+        assert result["fromInside"] == [["ArrowDown", "leaf", True]]
+        # Outside the canvas, and with no canvas at all, the page scrolls.
+        assert result["outside"] == [
+            ["ArrowDown", "toolbar", False],
+            ["ArrowUp", "toolbar", False],
+        ]
+        assert result["nothingFocused"] == [["ArrowDown", "body", False]]
+        assert result["noCanvas"] == [["ArrowDown", "body", False]]
+        # Enter activates a composite's head like any card.
+        assert result["enterOnHead"] == [["Enter", "head", True]]
+        assert result["clicks"] == [
+            "head",
+            "leaf",
+            "last",
+            "leaf",
+            "head",
+            "card",
+            "leaf",
+            "head",
+        ]
+
+
 class TestScenarioMap:
     """The places panel: every lanelet a scenario names, drawn once.
 

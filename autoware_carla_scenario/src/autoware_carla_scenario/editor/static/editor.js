@@ -709,37 +709,59 @@
    * Cards carry data-object-id and their own hx-get, so selecting is just
    * "activate the element". Arrow keys walk the selectable cards in document
    * order, which follows the swimlanes left to right, top to bottom.
+   *
+   * What takes focus is not always the element that carries the id: a
+   * composite condition's wrapper holds data-object-id (it is what the
+   * selection highlight outlines), but the focusable element is its head.
+   * selectable() returns the focusable element of each object, so focus()
+   * always moves.
    * ------------------------------------------------------------------- */
 
+  var SELECTABLE = '#canvas [data-object-id][tabindex], ' +
+    '#canvas [data-object-id] > .ed-cond-group-head[tabindex]';
+
   function selectable() {
-    return Array.prototype.slice.call(
-      document.querySelectorAll('#canvas [data-object-id]')
-    );
+    return Array.prototype.slice.call(document.querySelectorAll(SELECTABLE));
   }
 
+  // The object an element belongs to: the nearest [data-object-id] inside the
+  // canvas, which for a composite's head is its wrapper.
+  function owner(element) {
+    var found = element && element.closest && element.closest('[data-object-id]');
+    return found && found.closest('#canvas') ? found : null;
+  }
+
+  // Moves focus by `delta` cards and reports whether it moved. Only focus that
+  // is on a card, or on something inside one, navigates: anywhere else (a
+  // toolbar button, the inspector, a page with no canvas) the arrow keys keep
+  // their usual meaning.
   function focusOffset(delta) {
+    var current = owner(document.activeElement);
+    if (!current) return false;
     var nodes = selectable();
-    if (!nodes.length) return;
-    var index = nodes.indexOf(document.activeElement);
-    var next = nodes[Math.max(0, Math.min(nodes.length - 1, index < 0 ? 0 : index + delta))];
-    if (next) {
-      next.focus();
-      if (window.htmx) window.htmx.trigger(next, 'click');
+    var index = -1;
+    for (var i = 0; i < nodes.length; i++) {
+      if (owner(nodes[i]) === current) { index = i; break; }
     }
+    if (index < 0) return false;
+    var next = nodes[Math.max(0, Math.min(nodes.length - 1, index + delta))];
+    if (!next || next === document.activeElement) return false;
+    next.focus();
+    if (document.activeElement !== next) return false;
+    if (window.htmx) window.htmx.trigger(next, 'click');
+    return true;
   }
 
   document.addEventListener('keydown', function (event) {
     if (event.target && /^(INPUT|SELECT|TEXTAREA)$/.test(event.target.tagName)) return;
 
     if (event.key === 'ArrowRight' || event.key === 'ArrowDown') {
-      focusOffset(1);
-      event.preventDefault();
+      if (focusOffset(1)) event.preventDefault();
     } else if (event.key === 'ArrowLeft' || event.key === 'ArrowUp') {
-      focusOffset(-1);
-      event.preventDefault();
+      if (focusOffset(-1)) event.preventDefault();
     } else if (event.key === 'Enter' || event.key === ' ') {
       var active = document.activeElement;
-      if (active && active.hasAttribute('data-object-id')) {
+      if (active && selectable().indexOf(active) >= 0) {
         if (window.htmx) window.htmx.trigger(active, 'click');
         event.preventDefault();
       }
