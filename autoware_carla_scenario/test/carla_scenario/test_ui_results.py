@@ -8,6 +8,7 @@ import json
 import math
 import re
 from pathlib import Path
+from typing import Any
 
 import pytest
 from fastapi.testclient import TestClient
@@ -453,6 +454,206 @@ def test_the_cases_in_a_cell_are_those_that_spent_time_in_it(tmp_path: Path) -> 
     assert {r.index for r in near} >= {2, 3}
     assert results.cases_in_cell(found, []) == found
     assert results.cases_in_cell(found, [(GAP, "no such bucket")]) == []
+
+
+def _cell_item(attribute: str, seconds: dict[str, float]) -> dict[str, Any]:
+    """An ``odd.`` coverage item of a categorical *attribute*: its seconds
+    per bucket (what each condition alone reads)."""
+    return {
+        "name": f"odd.{attribute}",
+        "attribute": attribute,
+        "group": "odd",
+        "event": "tick",
+        "kind": "categorical",
+        "buckets": list(seconds),
+        "outside_odd": [],
+        "target": 1,
+        "cover_by": "hits",
+        "min_stay": None,
+        "amount": "hits",
+        "samples": 10,
+        "ignored": 0,
+        "hits": {k: 1 for k in seconds},
+        "seconds": seconds,
+        "meters": {k: 0.0 for k in seconds},
+        "entries": {k: 1 for k in seconds},
+        "out_of_range": {},
+    }
+
+
+def _cell_doc(
+    rows: list[tuple[str, str, float]], passed: bool | None
+) -> dict[str, Any]:
+    """A coverage document of attributes ``a`` and ``b``: its joint cells
+    (``(a, b, seconds)``, 20 ticks a second) and the items they add up to."""
+    a: dict[str, float] = {}
+    b: dict[str, float] = {}
+    for x, y, seconds in rows:
+        a[x] = a.get(x, 0.0) + seconds
+        b[y] = b.get(y, 0.0) + seconds
+    total = sum(r[2] for r in rows)
+    return {
+        "schema": "openodd.coverage/1",
+        "generator": {},
+        "scenario": "S",
+        "items": [_cell_item("a", a), _cell_item("b", b)],
+        "crosses": [],
+        "odd": {
+            "name": "o",
+            "text": "",
+            "roots": [],
+            "modules": [],
+            "unmeasured": [],
+            "ticks": {"inside": round(total * 20), "assumed": 0, "outside": 0},
+            "seconds": {"inside": total, "assumed": 0, "outside": 0},
+            "module_ticks": {},
+            "out_intervals": [],
+            "cells": {
+                "attributes": ["a", "b"],
+                "rows": [[[x, y], round(s * 20), s, 0.0] for x, y, s in rows],
+            },
+        },
+        "case": None,
+        "outcome": None if passed is None else {"passed": passed},
+    }
+
+
+def _cell_case(index: int, coverage: dict[str, Any]) -> results.CaseResult:
+    outcome = coverage.get("outcome")
+    return results.CaseResult(
+        index=index,
+        label=f"pkg/s#{index + 1}",
+        passed=outcome["passed"] if outcome else None,
+        errored=False,
+        elapsed_seconds=1.0,
+        message="",
+        overrides=[],
+        files=None,
+        coverage=coverage,
+    )
+
+
+def _matrix_runs(
+    documents: list[dict[str, Any]], conditions: list[tuple[str, str]], **query: Any
+) -> int:
+    """How many runs openodd's matrix counts in the cell of *conditions*."""
+    import openodd
+
+    total = openodd.CoverageView(documents).matrix(conditions=conditions, **query)[
+        "total"
+    ]
+    return int(total["runs"]) + int(total["runs_unknown"])
+
+
+def test_the_cases_in_a_cell_were_in_every_bucket_at_once() -> None:
+    """#2010: run 1 was in ``a=x`` and in ``b=q``, but never in both at once;
+    only run 2 is in the cell ``(x, q)``, as openodd's matrix counts it."""
+    import openodd
+
+    one = _cell_doc([("x", "p", 0.5), ("y", "q", 0.5)], passed=True)
+    two = _cell_doc([("x", "q", 1.0)], passed=False)
+    found = [_cell_case(0, one), _cell_case(1, two)]
+    matrix = openodd.CoverageView([one, two]).matrix(x="a", y="b")
+    xq = matrix["cells"][matrix["y"]["labels"].index("q")][
+        matrix["x"]["labels"].index("x")
+    ]
+    assert (xq["runs"], xq["failed"], xq["state"]) == (1, 1, "fail")
+    # Each condition alone holds both runs: the marginal answer differs.
+    assert one["items"][0]["seconds"]["x"] > 0 and one["items"][1]["seconds"]["q"] > 0
+    assert results.cases_in_cell(found, [("a", "x"), ("b", "q")]) == [found[1]]
+    assert results.cases_in_cell(found, [("a", "x"), ("b", "p")]) == [found[0]]
+    assert results.cases_in_cell(found, [("a", "y"), ("b", "p")]) == []
+    # One condition: every run that was in its bucket.
+    assert results.cases_in_cell(found, [("a", "x")]) == found
+
+
+def test_the_cases_in_every_cell_are_those_openodd_s_matrix_counts() -> None:
+    """Every cell, drilled into or not, holds as many cases as openodd's
+    matrix counts there -- with or without an outcome, with a threshold of
+    seconds too."""
+    labels_a, labels_b = ["x", "y", "z"], ["p", "q"]
+    documents = [
+        _cell_doc([("x", "p", 0.5), ("y", "q", 0.5)], passed=True),
+        _cell_doc([("x", "q", 1.0)], passed=False),
+        _cell_doc([("z", "p", 0.2), ("x", "q", 0.05), ("x", "q", 0.3)], passed=True),
+        _cell_doc([("y", "p", 2.0), ("z", "q", 0.1)], passed=None),
+        _cell_doc([("y", "q", 0.4), ("x", "p", 0.4)], passed=False),
+    ]
+    found = [_cell_case(i, d) for i, d in enumerate(documents)]
+    for min_seconds in (None, 0.3):
+        query = {} if min_seconds is None else {"min_seconds": min_seconds}
+        cells = [[("a", x)] for x in labels_a] + [[("b", y)] for y in labels_b]
+        cells += [[("a", x), ("b", y)] for x in labels_a for y in labels_b]
+        cells += [[("b", y), ("a", x)] for x in labels_a for y in labels_b]
+        for conditions in cells:
+            assert len(
+                results.cases_in_cell(found, conditions, min_seconds=min_seconds or 0.0)
+            ) == _matrix_runs(documents, conditions, **query), conditions
+
+
+def test_a_condition_on_an_attribute_no_run_recorded_is_dropped_as_openodd_does() -> (
+    None
+):
+    one = _cell_doc([("x", "p", 0.5)], passed=True)
+    found = [_cell_case(0, one)]
+    conditions = [("a", "x"), ("c", "k")]
+    assert len(results.cases_in_cell(found, conditions)) == _matrix_runs(
+        [one], conditions
+    )
+    assert results.cases_in_cell(found, conditions) == found
+
+
+def test_malformed_cells_rows_are_skipped_not_raised() -> None:
+    """#1964: a row's numbers may be text, ``null`` or too long for a float;
+    a row that is no list is skipped."""
+    doc = _cell_doc([("x", "q", 1.0)], passed=True)
+    doc["odd"]["cells"]["rows"] = [
+        "junk",
+        [["x", "q"], "many", 1.0, 0.0],
+        [["x", "q"], None, None, None],
+        [["x", "q"], 10**400, 10**400, 0.0],
+    ]
+    found = [_cell_case(0, doc)]
+    # The too-long ticks still count the row; its seconds count as 0.
+    assert results.cases_in_cell(found, [("a", "x"), ("b", "q")]) == found
+    assert results.cases_in_cell(found, [("a", "x")], min_seconds=0.5) == []
+    doc["odd"]["cells"]["rows"] = doc["odd"]["cells"]["rows"][:3]
+    assert results.cases_in_cell(found, [("a", "x"), ("b", "q")]) == []
+
+
+def test_a_coverage_file_without_cells_is_in_no_cell_as_openodd_leaves_it_out() -> None:
+    """A run without ``odd.cells`` is not counted by the matrix, so it is
+    listed in no cell -- even when its items had seconds in every bucket --
+    but still in the whole matrix (no conditions)."""
+    legacy = _cell_doc([("x", "q", 1.0)], passed=True)
+    del legacy["odd"]["cells"]
+    joint = _cell_doc([("x", "q", 1.0)], passed=False)
+    documents = [legacy, joint]
+    found = [_cell_case(0, legacy), _cell_case(1, joint)]
+    for conditions in ([("a", "x"), ("b", "q")], [("a", "x")], [("b", "q")]):
+        assert results.cases_in_cell(found, conditions) == [found[1]]
+        assert _matrix_runs(documents, conditions) == 1
+    assert results.cases_in_cell(found, []) == found
+
+
+def test_cells_whose_attributes_are_not_all_names_are_in_no_cell() -> None:
+    """openodd's view leaves out a document whose ``cells.attributes`` holds
+    a non-string; so is the case, and its attributes do not keep a
+    condition."""
+    import openodd
+
+    odd = _cell_doc([("x", "q", 1.0)], passed=True)
+    odd["odd"]["cells"]["attributes"] = ["a", 3]
+    assert openodd.CoverageView([odd]).runs == 0
+    good = _cell_doc([("x", "p", 1.0)], passed=False)
+    documents = [odd, good]
+    found = [_cell_case(0, odd), _cell_case(1, good)]
+    for conditions in ([("a", "x")], [("a", "x"), ("b", "q")]):
+        assert len(results.cases_in_cell(found, conditions)) == _matrix_runs(
+            documents, conditions
+        )
+    assert results.cases_in_cell(found, [("a", "x")]) == [found[1]]
+    assert results.cases_in_cell(found, [("a", "x"), ("b", "q")]) == []
 
 
 def test_sessions_are_compared_case_by_case_not_by_position(tmp_path: Path) -> None:

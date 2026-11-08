@@ -163,8 +163,25 @@ def test_a_time_too_large_for_a_float_is_skipped(tmp_path: Path) -> None:
     "seconds", [10**400, "x", [1]], ids=["too-large", "text", "list"]
 )
 def test_coverage_seconds_that_are_no_float_count_as_none(seconds: Any) -> None:
-    coverage = {"items": [{"attribute": "a", "seconds": {"b": seconds}}]}
-    assert results._seconds_in(coverage, "a", "b") == 0.0
+    coverage = {
+        "odd": {"cells": {"attributes": ["a"], "rows": [[["b"], 1, seconds, 0.0]]}}
+    }
+    found = [
+        results.CaseResult(
+            index=0,
+            label="s#1",
+            passed=True,
+            errored=False,
+            elapsed_seconds=1.0,
+            message="",
+            overrides=[],
+            files=None,
+            coverage=coverage,
+        )
+    ]
+    # The row counts (its ticks are), its seconds as none.
+    assert results.cases_in_cell(found, [("a", "b")]) == found
+    assert results.cases_in_cell(found, [("a", "b")], min_seconds=0.5) == []
 
 
 def test_a_batch_whose_log_overflows_is_still_compared(

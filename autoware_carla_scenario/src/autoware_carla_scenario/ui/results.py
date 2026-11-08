@@ -468,35 +468,112 @@ def default_axes(results: list[CaseResult]) -> tuple[str | None, str | None]:
     return _default_axes([r.compared() for r in results])
 
 
-def _seconds_in(coverage: dict[str, Any], attribute: str, bucket: str) -> float:
-    """How long the run spent with *attribute* in *bucket* (its ``odd.``
-    coverage item's seconds; a versioned item, ``@v2``, too)."""
-    for item in coverage.get("items") or []:
-        if not isinstance(item, dict) or item.get("attribute") != attribute:
+def _odd_cells(coverage: Any) -> dict[str, Any] | None:
+    """The run's ``odd.cells`` table (``{"attributes": [...], "rows":
+    [[[label, ...], ticks, seconds, meters], ...]}``), else ``None``: a
+    coverage file from before openodd recorded the cells, or one whose
+    attributes are not all names, which openodd's view leaves out."""
+    if not isinstance(coverage, dict):
+        return None
+    odd = coverage.get("odd")
+    cells = odd.get("cells") if isinstance(odd, dict) else None
+    if not isinstance(cells, dict):
+        return None
+    attributes = cells.get("attributes")
+    if not isinstance(attributes, list) or not all(
+        isinstance(a, str) for a in attributes
+    ):
+        return None
+    return cells
+
+
+def _counted(ticks: Any) -> bool:
+    """Whether a cell row counts: its ticks are a JSON number above 0 (an
+    integer too long for a float too, #1964), not text, ``true`` or
+    ``null``."""
+    return isinstance(ticks, (int, float)) and not isinstance(ticks, bool) and ticks > 0
+
+
+def _cell_seconds(row: list[Any]) -> float:
+    """A counted cell row's seconds: a JSON number, at least 0; else 0 (text,
+    ``null``, missing; an integer too long for a float, #1964)."""
+    value = row[2] if len(row) > 2 else None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return 0.0
+    try:
+        return max(0.0, float(value))
+    except OverflowError:
+        return 0.0
+
+
+def _in_cells(
+    cells: dict[str, Any], conditions: list[tuple[str, str]], min_seconds: float
+) -> bool:
+    """Whether the run whose cells are *cells* is in the cell of
+    *conditions* as openodd's ``CoverageView.matrix`` counts it: it has a
+    row with every condition's bucket at once, counted (ticks above 0), and
+    its counted rows there add up to at least *min_seconds*."""
+    attributes = cells["attributes"]
+    indices = []
+    for attribute, bucket in conditions:
+        if attribute not in attributes:
+            # The view knows the attribute but this run did not record it.
+            return False
+        indices.append((attributes.index(attribute), bucket))
+    found = False
+    seconds = 0.0
+    for row in cells.get("rows") or []:
+        if not isinstance(row, list) or len(row) < 2:
             continue
-        seconds = item.get("seconds") or {}
-        if isinstance(seconds, dict) and bucket in seconds:
-            try:
-                return float(seconds[bucket] or 0.0)
-            except (TypeError, ValueError, OverflowError):
-                # Not a number, or an integer too long for a float (#1964).
-                return 0.0
-    return 0.0
+        labels = row[0]
+        if (
+            not isinstance(labels, list)
+            or len(labels) != len(attributes)
+            or not all(isinstance(label, str) for label in labels)
+            or any(labels[i] != bucket for i, bucket in indices)
+            or not _counted(row[1])
+        ):
+            continue
+        found = True
+        seconds += _cell_seconds(row)
+    return found and seconds >= min_seconds
 
 
 def cases_in_cell(
-    results: list[CaseResult], conditions: list[tuple[str, str]]
+    results: list[CaseResult],
+    conditions: list[tuple[str, str]],
+    *,
+    min_seconds: float = 0.0,
 ) -> list[CaseResult]:
-    """The cases that spent time in every bucket of *conditions* (the cell
-    openodd's view was drilled into), as the view counts runs in a cell."""
+    """The cases openodd's ``CoverageView.matrix`` counts in the cell of
+    *conditions* (the cell drilled into, ``[(attribute, bucket), ...]``):
+    those that spent time with every condition's bucket *at once*, read off
+    the joint ``odd.cells`` table of their coverage document -- not merely in
+    each bucket at some moment. As the view does, a condition on an
+    attribute no run's cells are of is dropped, a second one on the same
+    attribute too, and *min_seconds* (the view's, 0 by default) is the least
+    a run must stay in the cell.
+
+    A case whose coverage document has no ``odd.cells`` (or one the view
+    cannot read) is in no cell, as the view leaves it out; with no
+    *conditions* (the whole matrix) every case is listed."""
     if not conditions:
         return list(results)
-    return [
-        r
-        for r in results
-        if r.coverage is not None
-        and all(_seconds_in(r.coverage, a, b) > 0.0 for a, b in conditions)
-    ]
+    known: set[str] = set()
+    for r in results:
+        cells = _odd_cells(r.coverage)
+        if cells is not None:
+            known.update(cells["attributes"])
+    joint: list[tuple[str, str]] = []
+    for attribute, bucket in conditions:
+        if attribute in known and all(attribute != a for a, _ in joint):
+            joint.append((attribute, bucket))
+    found = []
+    for r in results:
+        cells = _odd_cells(r.coverage)
+        if cells is not None and _in_cells(cells, joint, min_seconds):
+            found.append(r)
+    return found
 
 
 # ── Comparing sessions ──────────────────────────────────────────────────────
