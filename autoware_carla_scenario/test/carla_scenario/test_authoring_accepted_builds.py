@@ -170,6 +170,69 @@ def test_spawn_and_despawn_take_an_entity_or_a_prop(
             _build(document)
 
 
+@pytest.mark.parametrize("type_id", ["spawn", "despawn"])
+def test_spawn_and_despawn_refuse_the_ego(
+    type_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The ego is in the scene from the start and stays there: a card that
+    may leave its actor out still checks the kind of the one it names
+    (#1993), as the action would refuse it only at setup."""
+    params: dict[str, Any] = {"lanelet_id": _LANELET} if type_id == "spawn" else {}
+    document = _card(type_id, "ego", **params)
+    report = validate_document(document)
+    spec = registry.get_action_spec(type_id)
+    assert spec is not None
+    assert [(issue.path, issue.message) for issue in report.errors] == [
+        (
+            "actions[0].actor",
+            f"{spec.title} cannot be performed by a ego; it is for "
+            "vehicle or pedestrian.",
+        )
+    ]
+    monkeypatch.setattr(compiler, "validate_document", lambda _: ValidationReport())
+    with pytest.raises(ValueError, match="ego"):
+        _build(document)
+
+
+@pytest.mark.parametrize(
+    ("target", "ids", "accepted"),
+    [
+        ("ids", [], False),
+        ("ids", None, False),
+        ("ids", [1, 2], True),
+        ("all", [], True),
+    ],
+)
+def test_a_traffic_signal_card_on_ids_needs_some(
+    target: str, ids: Optional[list[int]], accepted: bool
+) -> None:
+    """Target "Selected Lanelet2 IDs" with none listed would set no light and
+    only say so in the run's log (#1993)."""
+    spec = registry.get_action_spec("traffic_signal")
+    assert spec is not None
+    values = registry.default_params(spec.fields)
+    values.update(target=target, lanelet2_traffic_light_ids=ids)
+    if ids is None:
+        del values["lanelet2_traffic_light_ids"]
+    document = _document(
+        action={
+            "id": "a",
+            "type": "traffic_signal",
+            "params": values,
+            "trigger": {"type": "elapsed_time", "params": {"duration_seconds": 1.0}},
+        }
+    )
+    report = validate_document(document)
+    assert report.ok is accepted, _errors(report)
+    if accepted:
+        _build(document)
+    else:
+        assert [issue.path for issue in report.errors] == [
+            "actions[0].lanelet2_traffic_light_ids"
+        ]
+        assert "lanelet2_traffic_light_ids" in report.errors[0].message
+
+
 @pytest.mark.parametrize(
     ("lanelet_id", "accepted"),
     [(0, False), (-1, False), (None, False), (_LANELET, True)],
@@ -537,7 +600,10 @@ def test_every_accepted_action_card_builds(
     assert spec is not None
     actors: list[Optional[str]] = [None]
     if spec.scope != "environment":
-        actors = [_ENTITIES[k] for k in spec.actor_kinds if k in _ENTITIES]
+        # Every kind, not only those the card is for: the validator is what
+        # keeps the others out, so a kind it lets through has to build too
+        # (#1993: a Spawn or Despawn card on the ego).
+        actors = list(_ENTITIES.values())
         if spec.actor_optional:
             actors.append(None)
     failures = []

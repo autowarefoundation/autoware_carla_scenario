@@ -413,11 +413,14 @@ class SpawnSpec(LaneletChoice):
     #: Yaw relative to the lanelet's direction of travel, in radians, positive
     #: anticlockwise.  ``pi / 2`` faces across the lane from its right-hand edge.
     heading: float = 0.0
-    #: Spawn out of the world -- under the map, physics off -- and let an
-    #: action bring the entity in: a *Set Goal* card that keeps it out
-    #: until its first vertex.  What a road user a recording picks up late
-    #: needs: placed where it first appears, it could collide at spawn with
-    #: whatever stood there when the run began.
+    #: Spawn out of the world -- under the map, physics off, kept from its
+    #: traffic backend -- and let a *Spawn* card bring the entity in.  Only a
+    #: Spawn card does: a *Set Goal* card routes an entity already in the
+    #: scene, so trigger it on the Spawn card's action state (the validator
+    #: warns about a hidden entity no Spawn card names).  What a road user a
+    #: recording picks up late needs: placed where it first appears, it could
+    #: collide at spawn with whatever stood there when the run began.  Never
+    #: the ego, which the run is measured on from the first tick.
     hidden: bool = False
 
     @property
