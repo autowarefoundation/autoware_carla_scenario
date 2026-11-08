@@ -870,7 +870,12 @@ class HilsBridge:
             # A command being sent finishes first: none follows ``ended``.
             self._forwarding = False
         for sensor_device in self._sensors:
-            sensor_device.detach()
+            try:
+                sensor_device.detach()
+            except Exception:  # noqa: BLE001 - the scenario must still end
+                logger.exception(
+                    "%s: failed to remove the sensor", sensor_device.spec.name
+                )
         try:
             self._reconnect_all()
         except Exception:  # noqa: BLE001 - the scenario must still end

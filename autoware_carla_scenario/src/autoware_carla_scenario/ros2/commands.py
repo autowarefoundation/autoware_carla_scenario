@@ -282,9 +282,12 @@ class CommandArbiter:
 
     Of the sources whose last command arrived at most ``stale_s`` ago, the
     highest priority wins; between equal priorities, the most recent command.
-    "Most recent" is the order :meth:`observe` saw them in, not their arrival
-    time: every command polled on one tick shares that tick's time, so the
-    time alone cannot tell which came later.  When every source is stale, :meth:`select` returns the command that drove
+    "Most recent" is the command read last, in the order :meth:`observe` saw
+    them, not their arrival time: every command polled on one tick shares that
+    tick's time, so the time alone cannot tell which came later.  The
+    transport drains the sources in their configured order, so between
+    equal priorities that each sent a command within one tick, the source
+    configured last wins.  When every source is stale, :meth:`select` returns the command that drove
     last, marked not fresh, so the caller can hold it or brake.
 
     Args:

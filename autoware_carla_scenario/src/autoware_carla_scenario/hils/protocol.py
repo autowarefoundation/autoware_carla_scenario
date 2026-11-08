@@ -129,7 +129,17 @@ class LineReader:
         #: A line's refusal held back for the next read, as the messages that
         #: preceded it were returned first.
         self._refused: Optional[ValueError] = None
-        self.closed = False
+        #: Whether nothing more can be read: the peer closed, or a line was
+        #: too long to read on after it.
+        self._eof = False
+
+    @property
+    def closed(self) -> bool:
+        """Whether the stream is over: the peer closed it (or a line was too
+        long to read on after).  Not before a refusal held back for the next
+        read has been raised, so that a caller reading until closed still
+        hears why the peer's last line was refused."""
+        return self._eof and self._refused is None
 
     def read(self, timeout: Optional[float] = 0.0) -> List[Dict[str, Any]]:
         """The messages that arrived; waits up to *timeout* s for the first.
@@ -160,13 +170,13 @@ class LineReader:
                 selector.register(self._sock, selectors.EVENT_READ)
             except (OSError, ValueError):
                 # Closed (or shut down and closed) under the reader.
-                self.closed = True
+                self._eof = True
                 return self._take()
             while True:
                 try:
                     ready = selector.select(wait)
                 except (OSError, ValueError):
-                    self.closed = True
+                    self._eof = True
                     return self._take()
                 if not ready:
                     return self._take()
@@ -175,10 +185,10 @@ class LineReader:
                 except (socket.timeout, BlockingIOError, InterruptedError):
                     return self._take()
                 except OSError:
-                    self.closed = True
+                    self._eof = True
                     return self._take()
                 if not chunk:
-                    self.closed = True
+                    self._eof = True
                     return self._take()
                 self._buffer += chunk
                 messages = self._take()
@@ -225,7 +235,7 @@ class LineReader:
         preview = bytes(self._buffer[:_PREVIEW_BYTES])
         self._buffer = bytearray()
         self._scanned = 0
-        self.closed = True
+        self._eof = True
         raise ValueError(
             f"not a message: a line longer than {MAX_LINE_BYTES} bytes "
             f"({length} bytes so far, starting {preview!r})"

@@ -368,7 +368,8 @@ and forwards it to the run whenever an input arrives. The fields:
 
 An `ackermann` `speed` is signed: CARLA's Ackermann controller engages reverse for
 a negative target speed, once the vehicle is (nearly) standing still, and brakes to
-a stop first when the vehicle is moving the other way.
+a stop first when the vehicle is moving the other way. Any negative speed, however
+small, asks for reverse: there is no deadband, so an ECU that means "stop" sends 0.
 
 A value that is not finite (NaN or an infinity: a decoded IEEE-float signal, a
 scale that overflows), or larger in magnitude than a 32-bit float holds (CARLA's

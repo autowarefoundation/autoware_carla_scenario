@@ -3024,6 +3024,37 @@ def test_a_line_reader_returns_the_messages_before_a_bad_line_first() -> None:
         assert reader.read(timeout=1.0) == [{"type": "w"}]
 
 
+def test_a_line_reader_raises_a_held_back_refusal_before_it_is_closed() -> None:
+    """A bad line and the peer closing in one chunk: the messages before it
+    first, then its refusal, and only then closed -- a caller reading until
+    closed still hears why."""
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    a, b = socket.socketpair()
+    with b:
+        reader = LineReader(b)
+        a.sendall(b'{"type":"ended"}\nnotjson\n')
+        a.close()
+        messages: List[Any] = []
+        while not messages:
+            messages = reader.read(timeout=1.0)
+        assert messages == [{"type": "ended"}]
+        assert not reader.closed
+        with pytest.raises(ValueError, match="not a message: b'notjson'"):
+            reader.read(timeout=1.0)
+        assert reader.read(timeout=1.0) == []
+        assert reader.closed
+        # However the stream came apart, a held-back refusal keeps the reader
+        # open until it is raised.
+        reader._refused = ValueError("not a message: held back")
+        assert not reader.closed
+        with pytest.raises(ValueError, match="held back"):
+            reader.read(timeout=1.0)
+        assert reader.closed
+
+
 def test_a_line_reader_refuses_an_overlong_line_without_rescanning_it() -> None:
     import socket
 
