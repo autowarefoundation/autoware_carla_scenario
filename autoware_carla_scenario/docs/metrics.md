@@ -39,7 +39,7 @@ value with the aggregation in the last column (`Metric.aggregation`).
 | `offroad` | | A corner of the ego's box is on no driving lane | max |
 | `offroad_or_collision` | | Off the road, or any collision | max |
 | `offroad_or_collision_at_fault` | | Off the road, or a collision at fault | max |
-| `wrong_lane` | | The ego heads more than 120 degrees away from the driving lane under its centre; nothing off the road | max |
+| `wrong_lane` | | The ego heads more than 120 degrees away from the driving lane under its centre (and, where junction lanes are under it, from every one of them); nothing off the road | max |
 | `min_distance_to_obstacle_m` | m | Box to box, to the nearest other vehicle or pedestrian; `0` touching, nothing when the ego is alone | min |
 | `min_distance_to_lane_boundary_m` | m | From the ego's box to the edge of the driving lanes around it (lanes beside its own count while their near edge is within 6 m of its centre); `0` off the road | min |
 | `importance_sampling_weight` | ratio | Not AlpaSim's: the run's importance-sampling weight so far, the product of NADE's `p/q` and `(1-p)/(1-q)` (`AdversarialTrafficAction`); `1` without NADE. Weight a batch of runs by its last value to estimate the naturalistic rate of what they count | last |
@@ -53,6 +53,48 @@ asks whether the union of the lane polygons around the ego covers its box,
 CARLA whether a point is on a driving lane, so `offroad` asks it of the box's
 corners; the lane boundary takes the lanes beside the ego's as parallel strips
 as wide as CARLA says they are there, an approximation through a junction.
+
+CARLA's point query (`get_waypoint(point, project_to_road=False,
+lane_type=Driving)`) misses a band about 0.2 m wide inside a driving lane,
+next to its boundary with the lane beside it (#1997). Where it finds no lane,
+the point is projected to the nearest driving lane instead, and is on the road
+when it lies within that lane's half width, or the half width of the driving
+lane to its left or right, plus 0.1 m, across from the lane's waypoint (within
+0.3 m along it; the lane is followed onto the lanes before or after it when
+the point is further along) and within 2.5 m of its height. So a lane change
+reads on the road throughout, and `min_distance_to_lane_boundary_m` and
+`wrong_lane` read the lane in the band too. A point beyond the outer lane's
+edge -- on a shoulder, a sidewalk, off the map -- is further out than that,
+and stays off. The tolerances cut both ways: a point up to 0.1 m outside the
+outer lane's edge, or up to about 0.3 m past the end of a lane that does not
+continue (a dead end), reads on the road. What remains is the lanes' own gaps:
+a corner further over the end of a road where its lane does not continue, or
+between a road's lane and a junction's connecting lane that is narrower there.
+
+In a junction, the connecting lanes overlap each other and the ends of the
+roads around it, and the lane CARLA finds under the ego may be another
+approach's, at any angle to its own. So where it heads more than 120 degrees
+away from that lane, `wrong_lane` also looks at every driving lane in a
+junction whose centre line passes within 1 m of the ego's centre (and within
+the lane's half width plus 0.1 m), and reads `1` only when it heads more than
+120 degrees away from all of them. This runs wherever the ego is, so it also
+covers the end of a road that a junction's lanes reach over; on a road away
+from any junction lane, the lane found is the only one asked. The junction
+lanes are sampled every metre, once per world: in a run, once; in a replay
+(`evaluate_metrics`), once per call.
+
+The price is a blind spot: the ego driving the wrong way along a junction's
+connecting lane reads `0` wherever another junction lane heading the ego's way
+passes within that metre of its centre -- where an opposing connector
+overlaps its own. Replaying the ego backwards along every connecting lane of
+the fixture map (430 lanes, every 0.5 m), 13.3% of the frames read `0`;
+driven the right way along their centre lines, 2 frames of one lane read `1`.
+
+A road user whose box reads no extent (a box of no area: a point or a
+segment) holds only the points on it: it meets the ego when it is on or
+inside the ego's box, and is measured to as a point, not as covering
+everything around it.
+
 Boxes are those of vehicles (`vehicle.*`) and pedestrians (`walker.*`); props
 are not road users. `collision_*` reads the boxes, not CARLA's collision
 sensor (`CollisionCondition`): it sees a collision as AlpaSim does, and tells
@@ -444,8 +486,8 @@ keys)` computes any of them over recorded frames.
 ### Off the road as a fail condition
 
 `offroad` is a measurement, and a strict one: it reads `1` as soon as any one
-corner of the ego's box is on no driving lane. A corner over a gap between
-lanes at a junction entry, or a small offset between the OpenDRIVE lanes and
+corner of the ego's box is on no driving lane. A corner over a gap between a
+road's lane and a junction's connecting lane, or a small offset between the OpenDRIVE lanes and
 where the vehicle drives, counts though the vehicle is in its lane, so
 `MetricCondition(OFFROAD, ...)` fails such runs (unless its `max_ng_seconds`
 lets them through). To judge a run by how much of
@@ -461,9 +503,11 @@ self.register_fail_condition(OffRoadFractionCondition(0.3, label="offroad"))
 Every tick it samples a 5 x 3 grid of points over the entity's bounding box
 (the ego's unless `entity_name` names another): 5 evenly spaced along its
 length and 3 across its width, the box's edges and corners included. A point
-is off when `get_waypoint(point, project_to_road=False,
-lane_type=carla.LaneType.Driving)` finds no lane there, asked at the height of
-the entity, so that where roads cross at different heights the lane is the one
+is off when no driving lane is under it, as the metrics ask it: when
+`get_waypoint(point, project_to_road=False,
+lane_type=carla.LaneType.Driving)` finds no lane there, and the point is not
+within the half width (plus 0.1 m) of the lane it projects to or one beside it
+either (above). It is asked at the height of the entity, so that where roads cross at different heights the lane is the one
 it is on. It fails once at least `fraction` (in `(0, 1]`) of the 15 points are
 off. The fraction is of points, not of area: one corner off is 1/15, the
 front edge 3/15, one long side 5/15. `fraction=1/15` fails on any one point,
