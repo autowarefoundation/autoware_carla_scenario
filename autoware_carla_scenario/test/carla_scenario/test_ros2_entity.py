@@ -288,7 +288,8 @@ def test_a_new_steer_accel_command_with_the_same_values_recomputes() -> None:
     assert _last_ackermann(actor).speed == pytest.approx(12.0)
 
 
-def test_a_negative_target_speed_is_clamped_to_zero() -> None:
+def test_a_negative_steer_accel_target_speed_is_clamped_to_zero() -> None:
+    """A deceleration past standstill is a stop, not a reverse."""
     entity, transport, actor, clock = _started(actor=_actor(speed_mps=1.0))
     transport.deliver("vp", SteerAccelCommand(0.0, -3.0))
     _tick(entity, clock)
@@ -304,6 +305,15 @@ def test_a_control_command_is_steered_in_carlas_sense() -> None:
     assert control.speed == pytest.approx(4.0)
     assert control.acceleration == pytest.approx(-3.0)
     assert control.jerk == pytest.approx(10.0)
+
+
+def test_a_control_command_s_negative_velocity_reverses() -> None:
+    """Autoware's velocity is negative when it reverses (parking); CARLA's
+    Ackermann controller takes the sign and engages reverse itself."""
+    entity, transport, actor, clock = _started(actor=_actor(speed_mps=0.0))
+    transport.deliver("si", ControlCommand(0.0, -1.5, 0.5))
+    _tick(entity, clock)
+    assert _last_ackermann(actor).speed == pytest.approx(-1.5)
 
 
 def test_a_control_command_keeps_its_own_jerk_when_it_defines_one() -> None:

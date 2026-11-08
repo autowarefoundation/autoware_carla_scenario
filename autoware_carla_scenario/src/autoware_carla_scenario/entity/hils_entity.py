@@ -494,7 +494,9 @@ class HilsEgoEntity(ExternallyDrivenEgo):
                 _carla.VehicleAckermannControl(
                     steer=fields.get("steer", 0.0),
                     steer_speed=fields.get("steer_speed", 0.0),
-                    speed=max(0.0, fields.get("speed", 0.0)),
+                    # Signed: CARLA's Ackermann controller reverses for a
+                    # negative target speed.
+                    speed=fields.get("speed", 0.0),
                     acceleration=fields.get("acceleration", 0.0),
                     jerk=fields.get("jerk", 0.0),
                 )

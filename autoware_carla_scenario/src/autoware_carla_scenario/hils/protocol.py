@@ -89,11 +89,32 @@ def _preview(line: bytes) -> str:
     return repr(line)
 
 
+def _parse(line: bytes) -> Dict[str, Any]:
+    """The message on *line*.
+
+    Raises:
+        ValueError: The line is not a JSON object with a ``type``.
+    """
+    try:
+        message = json.loads(line)
+    except Exception as exc:
+        # Not only ValueError: a deeply nested line is a RecursionError.
+        raise ValueError(
+            f"not a message: {_preview(line)} ({type(exc).__name__})"
+        ) from exc
+    if not isinstance(message, dict) or "type" not in message:
+        raise ValueError(f"not a message: {_preview(line)}")
+    return message
+
+
 class LineReader:
     """Reads the messages arriving on a socket, a line at a time.
 
     A line longer than :data:`MAX_LINE_BYTES` is refused; the stream cannot be
-    read on after it, so the reader counts as :attr:`closed` then.
+    read on after it, so the reader counts as :attr:`closed` then.  A line that
+    is not a message is refused and dropped, and the reader reads on; the
+    messages that arrived before it are returned first, and the call after
+    raises its error.
 
     Args:
         sock: The connected socket.
@@ -105,6 +126,9 @@ class LineReader:
         # How much of the buffer is known to hold no newline: only what arrives
         # after it is searched, so a long line is not rescanned per chunk.
         self._scanned = 0
+        #: A line's refusal held back for the next read, as the messages that
+        #: preceded it were returned first.
+        self._refused: Optional[ValueError] = None
         self.closed = False
 
     def read(self, timeout: Optional[float] = 0.0) -> List[Dict[str, Any]]:
@@ -119,8 +143,9 @@ class LineReader:
         are bounded by, even while another thread sends.
 
         Raises:
-            ValueError: A line is not a JSON object with a ``type``, or is
-                longer than :data:`MAX_LINE_BYTES`.
+            ValueError: A line is not a JSON object with a ``type`` (raised
+                by the call after the one that returned the messages before
+                it, if any), or is longer than :data:`MAX_LINE_BYTES`.
         """
         messages = self._take()
         if messages or self.closed:
@@ -167,6 +192,9 @@ class LineReader:
                         return messages
 
     def _take(self) -> List[Dict[str, Any]]:
+        refused, self._refused = self._refused, None
+        if refused is not None:
+            raise refused
         messages: List[Dict[str, Any]] = []
         while True:
             end = self._buffer.find(b"\n", self._scanned)
@@ -183,15 +211,15 @@ class LineReader:
             if not line.strip():
                 continue
             try:
-                message = json.loads(line)
-            except Exception as exc:
-                # Not only ValueError: a deeply nested line is a RecursionError.
-                raise ValueError(
-                    f"not a message: {_preview(line)} ({type(exc).__name__})"
-                ) from exc
-            if not isinstance(message, dict) or "type" not in message:
-                raise ValueError(f"not a message: {_preview(line)}")
-            messages.append(message)
+                messages.append(_parse(line))
+            except ValueError as exc:
+                if not messages:
+                    raise
+                # The messages before the bad line are not lost with it (an
+                # ``error`` or ``ended`` among them says why the peer stops):
+                # they go first, and the next read raises.
+                self._refused = exc
+                return messages
 
     def _overlong(self, length: int) -> NoReturn:
         preview = bytes(self._buffer[:_PREVIEW_BYTES])

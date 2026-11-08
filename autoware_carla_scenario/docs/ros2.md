@@ -133,8 +133,8 @@ ros2:
 | `kind` | Topics | Applied by |
 | --- | --- | --- |
 | `trajectory` | `topic`: `autoware_planning_msgs/Trajectory` | the framework's trajectory follower (pure pursuit + Autoware's PID longitudinal controller on the trajectory's own speeds, through the powertrain model), as for an [external driver policy](driver_interface.md) |
-| `control` | `topic`: `autoware_control_msgs/Control` | CARLA's Ackermann controller; Autoware's steering (positive left) is negated into CARLA's (positive right) |
-| `steer_accel` | `steering_topic`, `acceleration_topic`: `std_msgs/Float64` | CARLA's Ackermann controller, as VisionPilot's `carla_control_publisher` hands it: target speed `speed + acceleration * speed_horizon_s` |
+| `control` | `topic`: `autoware_control_msgs/Control` | CARLA's Ackermann controller; Autoware's steering (positive left) is negated into CARLA's (positive right), and its signed velocity is handed over as given, so a negative one reverses (the controller comes to a stop before it changes direction) |
+| `steer_accel` | `steering_topic`, `acceleration_topic`: `std_msgs/Float64` | CARLA's Ackermann controller, as VisionPilot's `carla_control_publisher` hands it: target speed `speed + acceleration * speed_horizon_s`, never below zero (a deceleration past standstill stops the ego rather than reversing it) |
 
 The turn indicators are not a source: whichever source drives, the newest
 `autoware_vehicle_msgs/TurnIndicatorsCommand` on `turn_indicators_command_topic`
@@ -187,7 +187,8 @@ speeds instead.
 ### Arbitration
 
 Every tick, of the sources whose last command arrived at most `stale_s` ago, the one
-with the highest `priority` drives; between equal priorities, the most recent command.
+with the highest `priority` drives; between equal priorities, the most recent command
+(the one read last: commands read on the same tick count in the order they were read).
 Once every source is stale, `on_stale` decides: `hold` keeps applying the last command
 (what a relay node does when its upstream stops), `brake` brakes to a stop. Before any
 command has arrived, the ego is held on its brakes.
