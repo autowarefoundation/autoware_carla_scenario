@@ -78,9 +78,11 @@ off the road user ahead in that model (found by bisection): CriMe's
 `a - v_rel^2 / (2 gap)` where the gap closes on a road user going the ego's
 way that does not stop first, `0` for a gap opening for good (where CriMe's
 formula reads `-v_rel^2 / (2 gap)`), the deceleration that stops the ego behind
-where a braking lead or a braking car coming the other way stops, and `-inf`
-(BTN `inf`) when no braking avoids the collision. A contact counts while the
-ego is moving, and within the horizon (`horizon_steps`) after it has stopped:
+where a braking lead stops, for a car coming the other way the deceleration that
+keeps it from reaching the ego while it moves or within the horizon after it
+has stopped, and `-inf` (BTN `inf`) when no braking avoids the collision. A
+contact counts while the ego is moving, and within the horizon
+(`horizon_steps` x dt, 3 s by default) after it has stopped:
 a road user that would reach a standing ego only later (a pedestrian crossing
 a little towards it, a car rolling back) needs no more than the ego stopping
 short of it. TTC has no horizon, as CriMe's. A road user behind the ego gives
