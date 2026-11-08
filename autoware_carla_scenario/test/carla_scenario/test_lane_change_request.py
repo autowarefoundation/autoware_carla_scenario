@@ -12,7 +12,10 @@ import pytest
 from autoware_carla_scenario import LaneChangeAction
 from autoware_carla_scenario.traffic import LaneChangeDirection
 from autoware_carla_scenario.traffic.driven import BackendDriven
-from autoware_carla_scenario.traffic.traffic_manager import TrafficManagerBackend
+from autoware_carla_scenario.traffic.traffic_manager import (
+    TrafficManagerBackend,
+    _Kept,
+)
 
 LANE_WIDTH_M = 3.5
 LANE_CHANGE_BOTH = 3
@@ -79,6 +82,7 @@ class _Actor:
         self.id = actor_id
         self.location = _Vector(x, y)
         self.velocity = _Vector()
+        self.attributes = {"role_name": "npc"}
 
     def get_location(self) -> _Vector:
         return self.location
@@ -132,6 +136,9 @@ class _TrafficManager:
 
     def vehicle_percentage_speed_difference(self, actor: Any, pct: float) -> None:
         self.differences.append(pct)
+
+    def set_path(self, actor: Any, path: list) -> None:
+        pass
 
 
 class _Client:
@@ -219,6 +226,160 @@ class TestOwnLaneChanges:
         run = _Run()
         run.ask(0.0, 0.0)
         assert run.tm.auto == []
+
+
+class _RoutedRun(_Run):
+    """A run whose vehicle is kept (as on autopilot) and can be given a route
+    along the road, with no map: the route is its points."""
+
+    def __init__(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        super().__init__()
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        import autoware_carla_scenario.coordinate.map_manager as map_manager  # noqa: PLC0415
+        import autoware_carla_scenario.coordinate.transform as transform  # noqa: PLC0415
+        import autoware_carla_scenario.traffic.traffic_manager as traffic_manager  # noqa: PLC0415
+
+        monkeypatch.setattr(transform, "to_carla_location", lambda pose: pose)
+        monkeypatch.setattr(
+            map_manager.MapManager,
+            "get_instance",
+            staticmethod(
+                lambda: SimpleNamespace(
+                    lanelet_map=None, routing_graph=None, carla_map=None
+                )
+            ),
+        )
+        monkeypatch.setattr(
+            traffic_manager, "_clear_of_junctions", lambda m, points: list(points)
+        )
+        monkeypatch.setattr(traffic_manager, "_in_junction", lambda m, p: False)
+        monkeypatch.setattr(traffic_manager, "_at_junction_mouth", lambda m, p: False)
+        monkeypatch.setattr(traffic_manager, "_lane_change_marks", lambda path: [])
+        self.monkeypatch = monkeypatch
+        kept = _Kept(self.actor)
+        kept.check_due = 1.0e9  # Never looked at for standing or a dead end.
+        self.backend._kept[self.actor.id] = kept
+
+    def route(self, *xs: float) -> None:
+        """Give it the route from where it stands through each of *xs*."""
+        from types import SimpleNamespace  # noqa: PLC0415
+
+        import autoware_carla_scenario.odd.route_plan as route_plan  # noqa: PLC0415
+
+        here = self.actor.location
+        points = [_Vector(here.x, here.y)] + [_Vector(x) for x in xs]
+        self.monkeypatch.setattr(route_plan, "route_poses", lambda *a, **k: points)
+        self.backend.follow_route(
+            self.entity,
+            self.world,  # type: ignore[arg-type]
+            [SimpleNamespace(), SimpleNamespace()],  # type: ignore[list-item]
+        )
+
+    def tick(self) -> None:
+        """A backend tick: the route ends where its path is used up."""
+        self.backend._keep_scenario_vehicles(self.world, 0.0)  # type: ignore[arg-type]
+
+
+class TestOwnLaneChangesWithARoute:
+    """A route and a crossing each turn the TrafficManager's own lane changes
+    off; they come back only once neither holds (#2005)."""
+
+    def test_a_route_used_up_gives_them_back(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = _RoutedRun(monkeypatch)
+        run.route(10.0, 20.0)
+        assert run.tm.auto == [False]
+        run.drive_to(10.0)
+        run.tick()
+        assert run.tm.auto == [False]
+        run.drive_to(20.0)
+        run.tick()
+        assert run.tm.auto == [False, True]
+        run.tick()
+        assert run.tm.auto == [False, True]
+
+    def test_a_spent_route_leaves_a_later_crossing_locked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = _RoutedRun(monkeypatch)
+        run.route(10.0, 20.0)
+        run.drive_to(10.0)
+        run.tick()
+        run.drive_to(20.0)
+        run.tick()
+        assert run.tm.auto == [False, True]
+        run.ask(10.0, 20.0)
+        assert run.tm.auto == [False, True, False]
+        run.tick()
+        run.drive_to(31.0)
+        run.tick()
+        assert run.tm.auto == [False, True, False]
+        run.drive_to(60.0)
+        run.tick()
+        assert run.tm.auto == [False, True, False, True]
+
+    @pytest.mark.parametrize(("start_after_m", "length_m"), [(10.0, 0.0), (0.0, 20.0)])
+    def test_a_turn_used_up_leaves_a_crossing_locked(
+        self, monkeypatch: pytest.MonkeyPatch, start_after_m: float, length_m: float
+    ) -> None:
+        """A turn's path, driven to its end, is no route to end."""
+        run = _RoutedRun(monkeypatch)
+        run.backend._remember_path(run.actor, [_Vector(-10.0), _Vector(0.0)])  # type: ignore[list-item]
+        run.tick()
+        assert run.backend._kept[1].progress == 2
+        run.ask(start_after_m, length_m)
+        assert run.tm.auto == [False]
+        run.tick()
+        assert run.tm.auto == [False]
+
+    def test_the_end_of_a_crossing_leaves_a_later_route_locked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = _RoutedRun(monkeypatch)
+        run.ask(10.0, 20.0)
+        run.route(50.0, 60.0)
+        assert run.tm.auto == [False, False]
+        run.drive_to(11.0)
+        run.drive_to(40.0)
+        assert run.backend._lane_change_requests == []
+        run.tick()
+        assert run.tm.auto == [False, False]
+        run.drive_to(50.0)
+        run.tick()
+        run.drive_to(60.0)
+        run.tick()
+        assert run.tm.auto == [False, False, True]
+
+    def test_the_end_of_a_route_leaves_a_later_crossing_locked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = _RoutedRun(monkeypatch)
+        run.route(10.0, 20.0)
+        run.drive_to(5.0)
+        run.ask(5.0, 30.0)
+        assert run.tm.auto == [False]  # Off already.
+        run.drive_to(10.0)
+        run.tick()
+        run.drive_to(20.0)
+        run.tick()
+        assert run.tm.auto == [False]
+        assert run.backend._lane_change_requests != []
+        run.drive_to(60.0)
+        assert run.tm.auto == [False, True]
+
+    def test_end_route_leaves_a_crossing_locked(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        run = _RoutedRun(monkeypatch)
+        run.route(50.0, 60.0)
+        run.ask(10.0, 20.0)
+        run.backend.end_route(run.entity, run.world)  # type: ignore[arg-type]
+        assert run.tm.auto == [False]
+        run.drive_to(11.0)
+        run.drive_to(40.0)
+        assert run.tm.auto == [False, True]
 
 
 class TestLength:
