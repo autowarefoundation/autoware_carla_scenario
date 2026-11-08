@@ -224,6 +224,31 @@ COMMONROAD_METRICS: tuple[str, ...] = (
 #: How far the ego must turn from its lane's heading to be against it, in
 #: degrees: AlpaSim's 2/3 pi.
 _WRONG_LANE_HEADING_DEG = 120.0
+#: How far beyond a driving lane's edge a point still counts as on the lane,
+#: in metres, when CARLA's point query finds no lane under it (#1997): that
+#: query misses a band about 0.2 m wide inside a lane, next to the boundary
+#: with the lane beside it, and the lane projected to is measured instead
+#: (:func:`_driving_lane_at`).  A tenth of a metre takes up the rounding of
+#: the lane's width; a point further out is off the road.
+_LANE_EDGE_TOLERANCE_M = 0.1
+#: How far before or beyond a lane's waypoint, along the lane, a point still
+#: counts as across from it, in metres: CARLA's projection lands up to about
+#: 0.3 m from the foot of the perpendicular, and the waypoint of the lane
+#: beside it at the same ``s`` is not quite across from it on a bend.  A point
+#: further along is measured against the lane followed to it.
+_LANE_ALONG_TOLERANCE_M = 0.3
+#: How far above or below the lane projected to a point may be and still be
+#: on it, in metres: less than a level of road over another (a bridge, an
+#: underpass), whose lane is not the one under the point.
+_LANE_LEVEL_M = 2.5
+#: The spacing of the points the map's junction lanes are sampled at to find
+#: every lane under a point in a junction (:func:`_junction_lanes_near`), in
+#: metres.
+_JUNCTION_SAMPLE_M = 1.0
+#: The side of the square cells the junction lanes' samples are filed in, in
+#: metres: more than a lane's half width and a sample's reach, so a point's
+#: cell and the eight around it hold every sample it can be on.
+_JUNCTION_CELL_M = 8.0
 #: How far from the ego's centre a lane beside its own still counts towards
 #: the drivable area, in metres: AlpaSim's lane search radius.
 _LANE_SEARCH_RADIUS_M = 6.0
@@ -256,6 +281,9 @@ Point = tuple[float, float]
 #: An oriented box on the ground: its four corners, front left, front right,
 #: rear right, rear left.
 Box = list[Point]
+#: A point on a lane's centre line: ``(x, y, z, yaw, half_width)``, the yaw
+#: in degrees along the lane's direction of travel, the half width in metres.
+_LaneSample = tuple[float, float, float, float, float]
 
 
 @dataclass(frozen=True)
@@ -335,7 +363,12 @@ def _cross(o: Point, a: Point, b: Point) -> float:
 
 
 def _inside(point: Point, box: Box) -> bool:
-    """Whether *point* is in the convex *box* or on its edge."""
+    """Whether *point* is in the convex *box* or on its edge.
+
+    A box of no area (a road user whose extent read as zero: a point, or a
+    segment) holds only the points on it (#1997): every side's cross product
+    is zero for it, which would otherwise hold every point on the line.
+    """
     sign = 0.0
     for i in range(len(box)):
         side = _cross(box[i], box[(i + 1) % len(box)], point)
@@ -345,6 +378,13 @@ def _inside(point: Point, box: Box) -> bool:
             sign = side
         elif (side > 0.0) != (sign > 0.0):
             return False
+    if sign == 0.0:
+        # Every side is in line with the point: the box is a point or a
+        # segment (or the point is a corner of a box that is); on it or not.
+        for i in range(len(box)):
+            if _point_segment_distance(point, box[i], box[(i + 1) % len(box)]) <= 1e-9:
+                return True
+        return False
     return True
 
 
@@ -524,6 +564,11 @@ class _Cache:
     frame: Optional[_Frame]
     carla_map: Optional["carla.Map"]
     driving: int
+    #: The map's driving lanes in junctions, sampled every
+    #: :data:`_JUNCTION_SAMPLE_M` and filed by :data:`_JUNCTION_CELL_M` cell
+    #: (:func:`_junction_lanes_near`), once junctions_read.
+    junctions: dict[tuple[int, int], list[_LaneSample]]
+    junctions_read: bool
 
     def __init__(self) -> None:
         self.world = None
@@ -531,6 +576,8 @@ class _Cache:
         self.frame = None
         self.carla_map = None
         self.driving = 0
+        self.junctions = {}
+        self.junctions_read = False
 
 
 _CACHE = _Cache()
@@ -542,6 +589,8 @@ def _hold(world: "carla.World") -> None:
     if held is None or held is not world:
         _CACHE.world = world
         _CACHE.at, _CACHE.frame, _CACHE.carla_map = None, None, None
+        _CACHE.junctions = {}
+        _CACHE.junctions_read = False
 
 
 def _frame(world: "carla.World") -> _Frame:
@@ -614,20 +663,95 @@ def _map(world: "carla.World") -> "carla.Map":
     return found
 
 
+def _along(waypoint: "carla.Waypoint", point: Point) -> float:
+    """How far *point* is ahead of *waypoint* along its lane, in metres."""
+    transform = waypoint.transform
+    yaw = math.radians(transform.rotation.yaw)
+    dx = point[0] - transform.location.x
+    dy = point[1] - transform.location.y
+    return dx * math.cos(yaw) + dy * math.sin(yaw)
+
+
+def _on_lane(waypoint: "carla.Waypoint", point: Point, z: float, driving: int) -> bool:
+    """Whether *point*, at the height *z*, is on *waypoint*'s lane where the
+    waypoint is: a driving lane, across from it (within
+    :data:`_LANE_ALONG_TOLERANCE_M` along the lane), within its half width and
+    :data:`_LANE_EDGE_TOLERANCE_M` across it, and on its level of road."""
+    if int(waypoint.lane_type) != driving:
+        return False
+    if abs(float(waypoint.transform.location.z) - z) > _LANE_LEVEL_M:
+        return False
+    if abs(_along(waypoint, point)) > _LANE_ALONG_TOLERANCE_M:
+        return False
+    half = float(waypoint.lane_width) / 2.0
+    return abs(_lateral(waypoint, point)) <= half + _LANE_EDGE_TOLERANCE_M
+
+
+def _on_lane_or_beside(
+    waypoint: "carla.Waypoint", point: Point, z: float, driving: int
+) -> "Optional[carla.Waypoint]":
+    """*waypoint* when *point* is on its lane (:func:`_on_lane`), else the
+    lane to its left or its right when the point is on that, else ``None``."""
+    if _on_lane(waypoint, point, z, driving):
+        return waypoint
+    left = waypoint.get_left_lane()
+    if left is not None and _on_lane(left, point, z, driving):
+        return left
+    right = waypoint.get_right_lane()
+    if right is not None and _on_lane(right, point, z, driving):
+        return right
+    return None
+
+
+def _driving_lane_at(
+    carla_map: "carla.Map", point: Point, z: float, driving: int
+) -> "Optional[carla.Waypoint]":
+    """The driving lane under *point*, at the height *z*, ``None`` when it is
+    on none.
+
+    CARLA's point query (``get_waypoint(project_to_road=False)``) is asked
+    first.  It finds no lane in a band about 0.2 m wide inside a lane, next to
+    its boundary with the lane beside it (#1997), so when it finds none the
+    point is projected to the nearest driving lane, and is on the road when it
+    is within that lane's half width, or the half width of a driving lane
+    beside it, plus :data:`_LANE_EDGE_TOLERANCE_M`.  The projection lands a
+    few tenths of a metre before or beyond the point along the lane, and past
+    a lane's end when the point is beyond it, so the lane is followed (onto
+    the lanes before or after it) to where it is across from the point before
+    it is measured.  A point beyond the outer lane's edge -- on a shoulder, a
+    sidewalk, off the road -- is further out than that, and stays off.
+    """
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    location = carla.Location(x=point[0], y=point[1], z=z)
+    found = carla_map.get_waypoint(location, project_to_road=False, lane_type=driving)
+    if found is not None:
+        return found
+    near = carla_map.get_waypoint(location, project_to_road=True, lane_type=driving)
+    if near is None:
+        return None
+    on = _on_lane_or_beside(near, point, z, driving)
+    if on is not None:
+        return on
+    ahead = _along(near, point)
+    if abs(ahead) <= _LANE_ALONG_TOLERANCE_M:
+        return None
+    moved = near.next(ahead) if ahead > 0.0 else near.previous(-ahead)
+    for waypoint in moved:
+        on = _on_lane_or_beside(waypoint, point, z, driving)
+        if on is not None:
+            return on
+    return None
+
+
 def _driving_waypoint(
     world: "carla.World", point: Point, z: float
 ) -> "Optional[carla.Waypoint]":
     """The driving lane under *point*, at the height *z* (the ego's: where
     roads cross at different heights, the lane is the one it is on), ``None``
-    when it is on none."""
-    import typesafe_carla.carla as carla  # noqa: PLC0415
-
+    when it is on none (:func:`_driving_lane_at`)."""
     carla_map = _map(world)
-    return carla_map.get_waypoint(
-        carla.Location(x=point[0], y=point[1], z=z),
-        project_to_road=False,
-        lane_type=_CACHE.driving,
-    )
+    return _driving_lane_at(carla_map, point, z, _CACHE.driving)
 
 
 def _collision_bits(frame: _Frame) -> int:
@@ -1085,9 +1209,96 @@ def _min_distance_to_obstacle_m(world: "carla.World") -> Optional[float]:
     return best
 
 
+def _cell(point: Point) -> tuple[int, int]:
+    """The :data:`_JUNCTION_CELL_M` cell *point* is in."""
+    return (
+        int(math.floor(point[0] / _JUNCTION_CELL_M)),
+        int(math.floor(point[1] / _JUNCTION_CELL_M)),
+    )
+
+
+def _junction_lanes_near(world: "carla.World", point: Point) -> list[_LaneSample]:
+    """The samples of the map's junction lanes in *point*'s cell and the eight
+    around it.
+
+    Every driving lane in a junction is sampled every
+    :data:`_JUNCTION_SAMPLE_M` (``Map.generate_waypoints``), once per map:
+    ``Junction.get_waypoints`` and the map's topology leave out some of a
+    junction's connecting lanes.
+    """
+    if not _CACHE.junctions_read:
+        cells: dict[tuple[int, int], list[_LaneSample]] = {}
+        driving = _CACHE.driving
+        for waypoint in _map(world).generate_waypoints(_JUNCTION_SAMPLE_M):
+            if not waypoint.is_junction or int(waypoint.lane_type) != driving:
+                continue
+            transform = waypoint.transform
+            x, y = float(transform.location.x), float(transform.location.y)
+            sample: _LaneSample = (
+                x,
+                y,
+                float(transform.location.z),
+                float(transform.rotation.yaw),
+                float(waypoint.lane_width) / 2.0,
+            )
+            cells.setdefault(_cell((x, y)), []).append(sample)
+        _CACHE.junctions = cells
+        _CACHE.junctions_read = True
+    column, row = _cell(point)
+    near: list[_LaneSample] = []
+    for i in range(column - 1, column + 2):
+        for j in range(row - 1, row + 2):
+            found = _CACHE.junctions.get((i, j))
+            if found is not None:
+                near.extend(found)
+    return near
+
+
+def _heads_along_junction_lane(
+    world: "carla.World", point: Point, z: float, yaw: float
+) -> bool:
+    """Whether a driving lane in a junction under *point* (at the height *z*)
+    runs within :data:`_WRONG_LANE_HEADING_DEG` of *yaw*.
+
+    A junction's connecting lanes overlap each other and the ends of the roads
+    around it, and the lane CARLA finds under a point may be another
+    approach's, at any angle to the ego's (#1997): each sample of a junction
+    lane (:func:`_junction_lanes_near`) the point is across from, within half
+    a sample's spacing along it and its half width and
+    :data:`_LANE_EDGE_TOLERANCE_M` across it, is a lane under the point.
+    """
+    from .kinematics.angle import normalize_angle_deg  # noqa: PLC0415
+
+    reach = _JUNCTION_SAMPLE_M / 2.0 + _LANE_EDGE_TOLERANCE_M
+    for x, y, sample_z, sample_yaw, half in _junction_lanes_near(world, point):
+        if abs(sample_z - z) > _LANE_LEVEL_M:
+            continue
+        dx, dy = point[0] - x, point[1] - y
+        if dx * dx + dy * dy > (half + reach) * (half + reach):
+            continue
+        rad = math.radians(sample_yaw)
+        if abs(dx * math.cos(rad) + dy * math.sin(rad)) > reach:
+            continue
+        if (
+            abs(-dx * math.sin(rad) + dy * math.cos(rad))
+            > half + _LANE_EDGE_TOLERANCE_M
+        ):
+            continue
+        if abs(normalize_angle_deg(yaw - sample_yaw)) <= _WRONG_LANE_HEADING_DEG:
+            return True
+    return False
+
+
 def _wrong_lane(world: "carla.World") -> Optional[float]:
     """AlpaSim's ``wrong_lane``: the ego heads more than 120 degrees away from
     the driving lane under its centre.
+
+    Where junction lanes are under its centre -- in a junction, whose
+    connecting lanes overlap, and on the end of a road they reach over -- it
+    is against the lane only when it heads more than 120 degrees away from
+    the lane found and from every junction lane under its centre
+    (:func:`_heads_along_junction_lane`): the lane CARLA finds there may be
+    another approach's, and the ego on any of them is on its way.
 
     ``None`` when its centre is on no driving lane: off the road, there is no
     lane to be the wrong way along.
@@ -1103,7 +1314,11 @@ def _wrong_lane(world: "carla.World") -> Optional[float]:
     if waypoint is None:
         return None
     gap = abs(normalize_angle_deg(frame.ego_yaw - waypoint.transform.rotation.yaw))
-    return 1.0 if gap > _WRONG_LANE_HEADING_DEG else 0.0
+    if gap <= _WRONG_LANE_HEADING_DEG:
+        return 0.0
+    if _heads_along_junction_lane(world, frame.ego_centre, frame.ego_z, frame.ego_yaw):
+        return 0.0
+    return 1.0
 
 
 def _lateral(waypoint: "carla.Waypoint", point: Point) -> float:

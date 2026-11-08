@@ -160,11 +160,22 @@ class _Road:
     def get_waypoint(
         self, location: Any, project_to_road: bool = True, lane_type: int = 2
     ) -> Optional[_Waypoint]:
-        assert not project_to_road
         for lane in self.lanes:
             if abs(location.y - lane.y) <= _LANE_WIDTH / 2:
                 return _Waypoint(self, lane, location.x)
+        if project_to_road and self.lanes:
+            nearest = min(self.lanes, key=lambda lane: abs(location.y - lane.y))
+            return _Waypoint(self, nearest, location.x)
         return None
+
+    def generate_waypoints(self, distance: float) -> list[_Waypoint]:
+        """Every lane's waypoints from x = -50 to 50, *distance* apart."""
+        steps = int(100.0 / distance)
+        return [
+            _Waypoint(self, lane, -50.0 + i * distance)
+            for lane in self.lanes
+            for i in range(steps + 1)
+        ]
 
 
 #: Two lanes heading +x, at y = 0 (the ego's) and y = 3.5 (to its right), and
@@ -695,6 +706,267 @@ def test_a_frame_is_read_once() -> None:
 def test_headings_wrap() -> None:
     assert _read(WRONG_LANE, _world(yaw=350.0)) == 0.0
     assert _read(WRONG_LANE, _world(yaw=-179.0)) == 1.0
+
+
+#: A junction's two connecting lanes over one another at y = 0, the one CARLA
+#: finds first heading -x, the other +x.
+_OVERLAPPING_CONNECTORS = _Road(
+    [_Lane(1, 0.0, 180.0, junction=True), _Lane(-1, 0.0, 0.0, junction=True)]
+)
+
+
+def test_in_a_junction_any_lane_under_the_ego_its_way_is_the_right_way() -> None:
+    """#1997: the connector found under the ego is another approach's."""
+    assert _read(WRONG_LANE, _world(road=_OVERLAPPING_CONNECTORS)) == 0.0
+    assert _read(WRONG_LANE, _world(road=_OVERLAPPING_CONNECTORS, yaw=180.0)) == 0.0
+    assert _read(WRONG_LANE, _world(road=_OVERLAPPING_CONNECTORS, yaw=90.0)) == 0.0
+
+
+def test_in_a_junction_against_every_lane_is_the_wrong_way() -> None:
+    crossing = _Road([_Lane(1, 0.0, 180.0, junction=True)])
+
+    assert _read(WRONG_LANE, _world(road=crossing)) == 1.0
+
+
+def test_off_a_junction_only_the_lane_found_counts() -> None:
+    overlapping = _Road([_Lane(1, 0.0, 180.0), _Lane(-1, 0.0, 0.0)])
+
+    assert _read(WRONG_LANE, _world(road=overlapping)) == 1.0
+
+
+def test_just_past_a_lane_s_edge_is_on_it() -> None:
+    """Where CARLA's point query finds no lane, the point is measured against
+    the lane it projects to: within its half width and 0.1 m it is on it."""
+    # The right lane's edge is at y = 5.25: the ego's right side, 0.05 m past
+    # it, is not found by the point query, and is on the road.
+    assert _read(OFFROAD, _world(at=(0.0, 4.3))) == 0.0
+    # 0.15 m past it is off.
+    assert _read(OFFROAD, _world(at=(0.0, 4.4))) == 1.0
+
+
+# ---------------------------------------------------------------------------
+# A road user whose box has no extent (#1997)
+# ---------------------------------------------------------------------------
+
+
+def test_a_road_user_of_no_extent_beside_the_ego_is_no_collision() -> None:
+    # Its point 0.5 m beyond the ego's right side.
+    point = _Actor(2, "vehicle.npc", (-1.0, 1.5), extent=(0.0, 0.0))
+    world = _world(point)
+
+    assert _collisions(world) == {
+        COLLISION_ANY: 0.0,
+        COLLISION_FRONT: 0.0,
+        COLLISION_REAR: 0.0,
+        COLLISION_LATERAL: 0.0,
+        COLLISION_AT_FAULT: 0.0,
+    }
+    assert _read(MIN_DISTANCE_TO_OBSTACLE_M, world) == pytest.approx(0.5)
+
+
+def test_a_road_user_of_no_extent_inside_the_ego_collides() -> None:
+    world = _world(_Actor(2, "vehicle.npc", (0.5, 0.2), extent=(0.0, 0.0)))
+
+    assert _read(COLLISION_ANY, world) == 1.0
+    assert _read(MIN_DISTANCE_TO_OBSTACLE_M, world) == 0.0
+
+
+def test_a_road_user_of_no_width_is_a_segment() -> None:
+    # A segment from x = 4 to 8 on y = 0, in line with the ego's centre:
+    # 1.7 m ahead of its front edge, at x = 2.3.
+    segment = _Actor(2, "vehicle.npc", (6.0, 0.0), extent=(2.0, 0.0))
+    world = _world(segment)
+
+    assert _read(COLLISION_ANY, world) == 0.0
+    assert _read(MIN_DISTANCE_TO_OBSTACLE_M, world) == pytest.approx(1.7)
+
+
+def test_a_box_of_no_area_holds_only_the_points_on_it() -> None:
+    point = [(1.0, 2.0)] * 4
+    segment = [(0.0, 0.0), (4.0, 0.0), (4.0, 0.0), (0.0, 0.0)]
+
+    assert metrics._inside((1.0, 2.0), point)  # noqa: SLF001
+    assert not metrics._inside((1.0, 2.5), point)  # noqa: SLF001
+    assert metrics._inside((2.0, 0.0), segment)  # noqa: SLF001
+    assert not metrics._inside((6.0, 0.0), segment)  # noqa: SLF001
+    assert not metrics._inside((2.0, 1.0), segment)  # noqa: SLF001
+
+
+# ---------------------------------------------------------------------------
+# The fixture map's lanes (#1997), replayed from frames as a run's are
+# ---------------------------------------------------------------------------
+
+_XODR = Path(__file__).resolve().parents[3] / "data" / "nishishinjuku_carla.xodr"
+
+
+@pytest.fixture(scope="module")
+def fixture_map() -> Any:
+    return carla.Map("nishishinjuku", _XODR.read_text())
+
+
+def _ego_frame(k: int, x: float, y: float, z: float, yaw: float) -> Any:
+    from autoware_carla_scenario.metric_batch import ActorFrame, Frame
+
+    ego = ActorFrame(
+        id=1,
+        type_id="vehicle.test",
+        role="Ego",
+        base_type="car",
+        x=x,
+        y=y,
+        z=z,
+        roll=0.0,
+        pitch=0.0,
+        yaw=yaw,
+        vx=0.0,
+        vy=0.0,
+        vz=0.0,
+        extent=(2.4, 1.0, 0.75),
+        centre=(0.0, 0.0, 0.75),
+    )
+    return Frame(frame=k, t=0.05 * k, weight=None, actors=(ego,))
+
+
+def _across(waypoint: Any, offsets: list[float], yaw: float = 0.0) -> list[Any]:
+    """The ego at each lateral offset (m, to the right) from *waypoint*,
+    heading along its lane (turned by *yaw* degrees)."""
+    t = waypoint.transform
+    heading = math.radians(t.rotation.yaw)
+    right = (-math.sin(heading), math.cos(heading))
+    return [
+        _ego_frame(
+            k,
+            t.location.x + d * right[0],
+            t.location.y + d * right[1],
+            t.location.z,
+            t.rotation.yaw + yaw,
+        )
+        for k, d in enumerate(offsets)
+    ]
+
+
+def _waypoint_at(carla_map: Any, road_id: int, lane_id: int, s: float) -> Any:
+    return next(
+        w
+        for w in carla_map.generate_waypoints(5.0)
+        if w.road_id == road_id and w.lane_id == lane_id and abs(w.s - s) < 0.01
+    )
+
+
+def test_the_band_carla_s_point_query_misses_is_on_the_road(fixture_map: Any) -> None:
+    """Road 98 lane 2 at s = 50: CARLA's point query finds no lane 1.45 to
+    1.65 m right of its centre, next to the lane beside it."""
+    waypoint = _waypoint_at(fixture_map, 98, 2, 50.0)
+    frames = _across(waypoint, [0.0, 0.5, 1.0, 1.6, 2.2, 3.25])
+    series = evaluate_metrics(
+        frames, fixture_map, [OFFROAD, MIN_DISTANCE_TO_LANE_BOUNDARY_M, WRONG_LANE]
+    )
+
+    assert series[OFFROAD].values == [0.0] * 6
+    assert series[WRONG_LANE].values == [0.0] * 6
+    distances = series[MIN_DISTANCE_TO_LANE_BOUNDARY_M].values
+    assert all(d is not None and d > 0.0 for d in distances)
+    # Moving right, towards the road's right edge, the margin shrinks.
+    assert distances == sorted(distances, reverse=True)  # type: ignore[type-var]
+
+
+def test_beyond_the_road_s_outer_edge_is_still_off(fixture_map: Any) -> None:
+    # Road 246's lane 1 at s = 15: no lane of any type is to its right.
+    outer = _waypoint_at(fixture_map, 246, 1, 15.0)
+    assert outer.get_right_lane() is None
+    half = outer.lane_width / 2.0
+    # The ego's right side 0.3 m, 1 m and 3 m past the outer lane's edge, and
+    # the whole box beyond it.
+    offsets = [half - 1.0 + 0.3, half - 1.0 + 1.0, half - 1.0 + 3.0, half + 1.5]
+    series = evaluate_metrics(
+        _across(outer, offsets),
+        fixture_map,
+        [OFFROAD, MIN_DISTANCE_TO_LANE_BOUNDARY_M, WRONG_LANE],
+    )
+
+    assert series[OFFROAD].values == [1.0] * 4
+    assert series[MIN_DISTANCE_TO_LANE_BOUNDARY_M].values == [0.0] * 4
+    assert series[WRONG_LANE].values[-1] is None
+
+
+def test_a_lane_change_stays_on_the_road(fixture_map: Any) -> None:
+    """Lane changes into the lane to the left, on straight stretches of road
+    away from their ends, read on the road throughout."""
+    driving = int(carla.LaneType.Driving)
+    changes = 0
+    for waypoint in fixture_map.generate_waypoints(10.0)[::7]:
+        if waypoint.is_junction or int(waypoint.lane_type) != driving:
+            continue
+        left = waypoint.get_left_lane()
+        if left is None or int(left.lane_type) != driving:
+            continue
+        if left.road_id != waypoint.road_id or left.lane_id * waypoint.lane_id < 0:
+            continue
+        # The box, 4.8 m long, stays on the road's lanes.
+        around = waypoint.next(5.0) + waypoint.previous(5.0)
+        if len(around) < 2 or any(w.road_id != waypoint.road_id for w in around):
+            continue
+        location = left.transform.location
+        across = metrics._lateral(waypoint, (location.x, location.y))  # noqa: SLF001
+        frames = _across(waypoint, [across * i / 30 for i in range(31)])
+        series = evaluate_metrics(frames, fixture_map, [OFFROAD])
+        assert series[OFFROAD].values == [0.0] * 31, (
+            waypoint.road_id,
+            waypoint.lane_id,
+            waypoint.s,
+        )
+        changes += 1
+    assert changes >= 50
+
+
+def _along_lane(carla_map: Any, road_id: int, lane_id: int) -> list[Any]:
+    start = next(
+        w
+        for w in carla_map.generate_waypoints(1000.0)
+        if w.road_id == road_id and w.lane_id == lane_id
+    )
+    path = [start]
+    while len(path) < 400:
+        ahead = [
+            w
+            for w in path[-1].next(0.5)
+            if w.road_id == road_id and w.lane_id == lane_id
+        ]
+        if not ahead:
+            break
+        path.append(ahead[0])
+    return path
+
+
+@pytest.mark.parametrize("road_id", [429, 561, 626, 640, 656])
+def test_along_a_junction_s_connector_is_the_right_way(
+    fixture_map: Any, road_id: int
+) -> None:
+    """Connectors that read against the lane where another approach's
+    connector overlaps them, before #1997."""
+    path = _along_lane(fixture_map, road_id, 1)
+    frames = [
+        _ego_frame(
+            k,
+            w.transform.location.x,
+            w.transform.location.y,
+            w.transform.location.z,
+            w.transform.rotation.yaw,
+        )
+        for k, w in enumerate(path)
+    ]
+    series = evaluate_metrics(frames, fixture_map, [WRONG_LANE])
+
+    assert 1.0 not in series[WRONG_LANE].values
+
+
+def test_against_a_road_s_lane_is_still_the_wrong_way(fixture_map: Any) -> None:
+    waypoint = _waypoint_at(fixture_map, 98, 2, 50.0)
+    series = evaluate_metrics(
+        _across(waypoint, [0.0], yaw=180.0), fixture_map, [WRONG_LANE]
+    )
+
+    assert series[WRONG_LANE].values == [1.0]
 
 
 # ---------------------------------------------------------------------------

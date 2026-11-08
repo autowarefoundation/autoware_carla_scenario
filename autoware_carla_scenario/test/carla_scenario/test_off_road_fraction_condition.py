@@ -279,7 +279,7 @@ class TestCheck:
 
         assert condition.check(world, 1.0) is not None
         assert world.get_map_calls == 0
-        assert len(held.queries) == 15
+        assert len([q for q in held.queries if not q.project_to_road]) == 15
 
 
 def test_angles_are_degrees() -> None:
@@ -289,3 +289,33 @@ def test_angles_are_degrees() -> None:
 
     front = 2.0 / math.sqrt(2.0)
     assert (round(front, 6), round(front, 6)) in _points(world)
+
+
+def test_the_band_carla_s_point_query_misses_is_on_the_road() -> None:
+    """#1997: on the fixture map, road 98 lane 2 at s = 50, CARLA's point
+    query finds no lane 1.45 to 1.65 m right of the lane's centre, next to
+    the lane beside it.  Points there are on the road."""
+    from pathlib import Path
+
+    xodr = Path(__file__).resolve().parents[3] / "data" / "nishishinjuku_carla.xodr"
+    carla_map = carla.Map("nishishinjuku", xodr.read_text())
+    waypoint = next(
+        w
+        for w in carla_map.generate_waypoints(5.0)
+        if w.road_id == 98 and w.lane_id == 2 and abs(w.s - 50.0) < 0.01
+    )
+    t = waypoint.transform
+    yaw = math.radians(t.rotation.yaw)
+    # The box's centre 0.55 m right of the lane's centre: its right edge,
+    # 1 m further, in the band.
+    actor = _actor(
+        x=t.location.x - 0.55 * math.sin(yaw),
+        y=t.location.y + 0.55 * math.cos(yaw),
+        z=t.location.z,
+        yaw=t.rotation.yaw,
+    )
+    world = _World([actor], carla_map)  # type: ignore[arg-type]
+    condition = OffRoadFractionCondition(1 / 15, label="offroad")
+
+    assert condition.check(world, 1.0) is None
+    assert condition.off_road_fraction == 0.0

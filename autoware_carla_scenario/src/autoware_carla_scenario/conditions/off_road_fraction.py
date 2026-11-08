@@ -13,6 +13,7 @@ from ..coordinate.map_manager import run_carla_map
 from ..entity_role import EntityRole
 from .base import BaseCondition, ScenarioResult, find_actor_by_role_name
 from ..failure import FailureCategory
+from ..metrics import _driving_lane_at
 
 __all__ = ["OffRoadFractionCondition"]
 
@@ -31,11 +32,14 @@ class OffRoadFractionCondition(BaseCondition):
     box, seen from above: 5 evenly spaced along its length and 3 across its
     width, the box's edges and corners included (so 15 points: the 4
     corners, the middle of each edge, the centre and points in between).
-    A point is *off* when no driving lane is under it -- when
-    ``carla.Map.get_waypoint(point, project_to_road=False,
-    lane_type=carla.LaneType.Driving)`` returns ``None``, queried at the
-    height of the entity's transform, so that where roads cross at different
-    heights the lane is the one the entity is on.  The condition fails once
+    A point is *off* when no driving lane is under it, as the ``offroad``
+    metric asks it: ``carla.Map.get_waypoint(point, project_to_road=False,
+    lane_type=carla.LaneType.Driving)`` first, and, where that finds no lane
+    (it misses a narrow band inside a lane, next to the lane beside it), the
+    lane the point projects to or one beside it, when the point is within its
+    half width and 0.1 m (#1997).  The map is queried at the height of the
+    entity's transform, so that where roads cross at different heights the
+    lane is the one the entity is on.  The condition fails once
     ``off / 15 >= fraction``.
 
     The measure is the fraction of sample points, not of the box's area: one
@@ -44,8 +48,8 @@ class OffRoadFractionCondition(BaseCondition):
     This is the pass/fail counterpart of the ``offroad`` metric
     (:mod:`autoware_carla_scenario.metrics`, AlpaSim's), which is 1 as soon
     as any *one* corner of the ego's box is on no driving lane.  That is a
-    measurement, and a strict one: a corner over a gap between lanes at a
-    junction entry, or a small offset between the OpenDRIVE lanes and where
+    measurement, and a strict one: a corner over a gap between a road and a
+    junction's connecting lane, or a small offset between the OpenDRIVE lanes and where
     the vehicle drives, counts though the vehicle is in its lane.  Judging a
     run by it fails such runs; this condition gives the judgement a
     tolerance instead.
@@ -142,14 +146,11 @@ class OffRoadFractionCondition(BaseCondition):
             along = box.extent.x * (2.0 * i / (_ALONG - 1) - 1.0)
             for j in range(_ACROSS):
                 across = box.extent.y * (2.0 * j / (_ACROSS - 1) - 1.0)
-                point = carla.Location(
-                    x=centre_x + along * forward_x + across * right_x,
-                    y=centre_y + along * forward_y + across * right_y,
-                    z=z,
+                point = (
+                    centre_x + along * forward_x + across * right_x,
+                    centre_y + along * forward_y + across * right_y,
                 )
-                waypoint = carla_map.get_waypoint(
-                    point, project_to_road=False, lane_type=driving
-                )
+                waypoint = _driving_lane_at(carla_map, point, z, driving)
                 if waypoint is None:
                     off += 1
         return off
