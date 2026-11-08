@@ -52,6 +52,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional, Union
 
 from ..entity_role import find_actor_in_world
+from ..lanelet_junction import is_junction_lanelet
 from ..constants import EGO_ROLE_NAME
 from ..kinematics import Vector3
 from ..visibility import world_visibility
@@ -90,6 +91,8 @@ __all__ = [
     "illumination_level",
     "in_junction",
     "intensity_level",
+    "JUNCTION_INTERSECTION",
+    "junction_type",
     "lane_count",
     "lanelet_in_junction",
     "lanelet_location",
@@ -516,6 +519,23 @@ def in_junction(world: carla.World) -> Optional[bool]:
     return bool(waypoint.is_junction)
 
 
+def junction_type(world: carla.World) -> Optional[str]:
+    """The kind of junction the ego is in, by tier4/taxonomy's
+    ``junction_type`` (the default ODD's): ``intersection`` inside one, as
+    :func:`in_junction` reads it (Lanelet2 tells no branch or merge), and
+    ``None`` outside one, or where nothing can be read."""
+    inside = in_junction(world)
+    return _junction_type(inside)
+
+
+def _junction_type(inside: Optional[bool]) -> Optional[str]:
+    return JUNCTION_INTERSECTION if inside else None
+
+
+#: The ``junction_type`` of a junction lanelet: an intersection.
+JUNCTION_INTERSECTION = "intersection"
+
+
 def lanelet_speed_limit_kph(world: carla.World) -> Optional[float]:
     """The Lanelet2 ``speed_limit`` tag of the ego's lanelet, in km/h."""
     tags = _lanelet_tags(world)
@@ -841,14 +861,16 @@ def _tag(lanelet: ConstLanelet, key: str) -> Optional[str]:
 def lanelet_in_junction(lanelet: ConstLanelet) -> bool:
     """Whether *lanelet* lies in a junction: it has a ``turn_direction`` tag.
 
-    What ``in_junction`` reads off a lanelet (``scenery.junction`` of the
-    default ODD); the adversities' location gate reads the same.
+    What ``in_junction`` and ``junction_type`` read off a lanelet (the
+    default ODD's ``junction_type``); the adversities' location gate reads
+    the same.
 
     Autoware's Lanelet2 maps tag every lanelet inside an intersection with
-    ``turn_direction`` (``straight``, ``left`` or ``right``), and only those;
-    the sweeper's ``is_junction`` constraint reads it the same way.
+    ``turn_direction`` (``straight``, ``left`` or ``right``), and only those.
+    The judgment is :func:`~..lanelet_junction.is_junction_lanelet`, which
+    the sweeper's ``is_junction`` constraint asks too.
     """
-    return "turn_direction" in lanelet.attributes
+    return is_junction_lanelet(lanelet)
 
 
 def _in_junction_on_lanelet(
@@ -877,6 +899,12 @@ def lanelet_road_type(lanelet: ConstLanelet) -> Optional[str]:
     type and drivable area type follow from it.
     """
     return _tag(lanelet, "subtype")
+
+
+def _junction_type_on_lanelet(
+    lanelet: ConstLanelet, lanelet_map: LaneletMap, routing_graph: RoutingGraph
+) -> Optional[str]:
+    return _junction_type(lanelet_in_junction(lanelet))
 
 
 def _lanelet_speed_limit_on_lanelet(
@@ -965,6 +993,7 @@ def _drivable_area_on_lanelet(
 # own, as it compiles every function of the module.
 if not TYPE_CHECKING:
     in_junction.on_lanelet = _in_junction_on_lanelet
+    junction_type.on_lanelet = _junction_type_on_lanelet
     lanelet_speed_limit_kph.on_lanelet = _lanelet_speed_limit_on_lanelet
     speed_limit_kph.on_lanelet = _speed_limit_on_lanelet
     lane_count.on_lanelet = _lane_count_on_lanelet

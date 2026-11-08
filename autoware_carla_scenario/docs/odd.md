@@ -226,6 +226,7 @@ These live in `autoware_carla_scenario.odd`:
 | `road_type` | `highway`, or nothing | The taxonomy's road type, from the Lanelet2 `subtype`: `highway` for a highway; Lanelet2 has no tag that tells a local road from a primary one, so those read nothing |
 | `drivable_area_type` | `DRIVABLE_AREA_TYPES` | The taxonomy's drivable area type, from the Lanelet2 `subtype`: `road` and `highway` a `lane`, `road_shoulder` a `shoulder`, `parking` a `parking_space`, `play_street` `mixed_pedestrian_and_vehicular_traffic` |
 | `in_junction` | bool | Lanelet2 `turn_direction` tag of the ego's lanelet, else (no Lanelet2 map) the CARLA waypoint |
+| `junction_type` | `intersection`, or nothing | The taxonomy's junction type (the default ODD's): `intersection` where `in_junction` reads true; Lanelet2 tells no branch or merge, and outside a junction it reads nothing |
 | `lane_count` | int | Driving lanes in the ego's direction, outside junctions: the ego's lanelet and its neighbours in the Lanelet2 routing graph, else (no Lanelet2 map) the CARLA waypoint's OpenDRIVE road |
 | `rainfall_rate_mm_h` | float, mm/h | The rainfall rate the run was set to (`environment.rainfall_rate_mm_h`); nothing when it named none |
 | `fog_visibility_range_m` | float, m | The visibility through the fog the run was set to (`environment.fog_visibility_range_m`); nothing when it named none |
@@ -244,12 +245,13 @@ These live in `autoware_carla_scenario.odd`:
 | `vehicle_<field>_mean`, `vehicle_<field>_std`, `pedestrian_<field>_mean`, `pedestrian_<field>_std`, `bicycle_<field>_mean`, `bicycle_<field>_std` | float | The mean and std of a traffic parameter's spread, as the run set it ([Traffic parameters from the ODD](#traffic-parameters-from-the-odd)); nothing when the run set none |
 
 The Lanelet2 probes need the run to have a Lanelet2 map (`map.lanelet2_path`).
-Without one they return nothing, except `in_junction` and `lane_count`, which
-then read the CARLA waypoint.
+Without one they return nothing, except `in_junction`, `junction_type` and
+`lane_count`, which then read the CARLA waypoint.
 
 The probes whose value the map alone decides (`speed_limit_kph`,
 `lanelet_speed_limit_kph`, `lanelet_location`, `lanelet_subtype`,
-`road_type`, `drivable_area_type`, `in_junction`, `lane_count`) can also
+`road_type`, `drivable_area_type`, `in_junction`, `junction_type`,
+`lane_count`) can also
 read it off a lanelet, which is how a
 planned route is checked before a run
 ([Checking a planned route](#checking-a-planned-route)) and how a sweep picks
@@ -257,7 +259,7 @@ the road a drawn case is on ([The road a case is on](#the-road-a-case-is-on)).
 
 What they read off a lanelet is public too, for code that has to judge a
 lanelet exactly as the ODD does: `lanelet_in_junction(lanelet)` (a
-`turn_direction` tag, `scenery.junction`), `lanelet_road_type(lanelet)` (the
+`turn_direction` tag, the default ODD's `junction_type`), `lanelet_road_type(lanelet)` (the
 `subtype` tag, which the road type and the drivable area type follow) and `lanelet_speed_limit(lanelet)` (the
 `speed_limit` tag, km/h; None for a tag that is not a finite number above 0,
 as for a missing one). The adversities' location gate reads them
@@ -1714,7 +1716,8 @@ What the lanelet forms read, and where that differs from the run:
 
 | Probe | On a lanelet | At run time |
 |---|---|---|
-| `in_junction` | The lanelet has a `turn_direction` tag (Autoware tags every lanelet in an intersection with one; the sweeper's `is_junction` reads it the same way) | The same, on the ego's lanelet; without a Lanelet2 map, CARLA waypoint `is_junction` |
+| `in_junction` | The lanelet has a `turn_direction` tag (Autoware tags every lanelet in an intersection with one): `lanelet_junction.is_junction_lanelet`, which the sweeper's `is_junction`, its bindings and the route search ask too, so where a sweep places a scenario and what a run measures never disagree | The same, on the ego's lanelet; without a Lanelet2 map, CARLA waypoint `is_junction` |
+| `junction_type` | `intersection` where `in_junction` is true, else nothing | The same, by `in_junction` |
 | `lane_count` | The lanelet and every same-direction neighbour, walked left and right in the routing graph (`left`/`right`, else `adjacentLeft`/`adjacentRight`, so lanes behind a solid line count too); nothing in a junction | The same, on the ego's lanelet; without a Lanelet2 map, the driving lanes of the same sign on the CARLA waypoint's OpenDRIVE road |
 | `speed_limit_kph` | The `speed_limit` tag, else (no tag, or not a finite number above 0: `nan`, `inf`, `0`, `-30`) undecided | The tag, else (the same) CARLA's `get_speed_limit()` |
 | `lanelet_location`, `lanelet_subtype`, `lanelet_speed_limit_kph` | The tag | The tag of the lanelet the ego is on |

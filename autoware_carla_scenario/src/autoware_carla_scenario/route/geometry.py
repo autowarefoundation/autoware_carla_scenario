@@ -44,6 +44,7 @@ from autoware_lanelet2_extension_python.projection import MGRSProjector as _  # 
 import lanelet2.core
 import lanelet2.geometry
 
+from ..lanelet_junction import TURN_DIRECTION_TAG, is_junction_lanelet
 from ..trajectory.relative_lane import (
     _arc,
     _centreline,
@@ -280,15 +281,16 @@ class MapFeatures:
 
     @staticmethod
     def is_junction(lanelet: ConstLanelet) -> bool:
-        """Whether it is a junction lanelet (``turn_direction`` tagged)."""
-        return "turn_direction" in lanelet.attributes
+        """Whether it is a junction lanelet (``turn_direction`` tagged,
+        :func:`~..lanelet_junction.is_junction_lanelet`)."""
+        return is_junction_lanelet(lanelet)
 
     @staticmethod
     def turn(lanelet: ConstLanelet) -> str:
         """Its ``turn_direction``, or ``""``."""
-        if "turn_direction" not in lanelet.attributes:
+        if not is_junction_lanelet(lanelet):
             return ""
-        return str(lanelet.attributes["turn_direction"])
+        return str(lanelet.attributes[TURN_DIRECTION_TAG])
 
     @staticmethod
     def is_crosswalk(lanelet: ConstLanelet) -> bool:

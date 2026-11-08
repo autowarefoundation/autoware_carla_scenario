@@ -66,6 +66,7 @@ _PROBE_UNITS: dict[str, str] = {
         name: ""
         for name in (
             "in_junction",
+            "junction_type",
             "lane_count",
             "lanelet_location",
             "lanelet_subtype",
