@@ -864,16 +864,12 @@ class PedestrianParameters:
 
     def describe(self) -> dict[str, Any]:
         """The fields that are set, for a run's result record."""
-        values: dict[str, Any] = {
-            "walking_speed_mps": self.walking_speed_mps,
-            "min_gap_m": self.min_gap_m,
-            "red_light_violation_s": self.red_light_violation_s,
-        }
-        return {
-            name: _described(value)
-            for name, value in values.items()
-            if value is not None
-        }
+        values: list[tuple[str, Optional[Spread]]] = [
+            ("walking_speed_mps", self.walking_speed_mps),
+            ("min_gap_m", self.min_gap_m),
+            ("red_light_violation_s", self.red_light_violation_s),
+        ]
+        return {name: value.describe() for name, value in values if value is not None}
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "PedestrianParameters":
@@ -1019,7 +1015,7 @@ class BicycleParameters:
 
     def describe(self) -> dict[str, Any]:
         """The fields that are set, for a run's result record."""
-        return {name: _described(value) for name, value in self.spreads().items()}
+        return {name: spread.describe() for name, spread in self.spreads().items()}
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "BicycleParameters":
