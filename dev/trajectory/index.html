@@ -2737,8 +2737,20 @@ mesh: it keeps to the pavements, crosses at crossings (waiting at the kerb, as
 CARLA's walkers do), and walks round what stands in its way. It is sent along
 its route a target every 10 m (reached 2 m short of it along the walk, or
 2 m from it), its top speed the walk's pace; a walker held by its route's
-timing is taken off the controller while it stands (CARLA sends a walker
-standing 4 s somewhere random) and its target is sent again every 2 s.
+timing is kept on its controller at a top speed of 0 while it stands (taken
+off it, it would be put back on the navigation mesh's nearest point -- a jump
+-- when it walked on), and its target is sent again every 2 s (CARLA sends a
+walker standing 4 s somewhere random). Held at its last target -- within 2 m
+of it, as near as the controller takes it, or at the walkway point a target
+on the road was moved to -- the walk has arrived, though that is short of the
+1 m a stepped walk arrives within, and the route finishes. A walker that a
+threat turns back after it steps off a kerb (the route's turn-back
+thresholds) is stepped back behind the kerb (or waits where it stands if its
+steps back get it no nearer for 1.5 s), waits there and steps off again, all
+off the controller, which would walk it straight back onto the road; 60 s
+after it first turned back it crosses and turns back no more. A walker taken
+off its controller (arrived, its walk stopped or overridden) has its physics
+and collisions, which the controller turned off, turned on again.
 Whether it may cross a road away from a crossing is its own: the
 RoutingAction's <code>cross_factor</code> (the card's <em>Crosses away from crossings</em>), the
 probability its route may use the road anywhere -- 1 for a recorded walk that
@@ -3059,7 +3071,7 @@ the same projector.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 12:57:04 UTC"><span class="timeago" datetime="2026-11-05T12:57:04+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 12:57:04 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 20:15:35 UTC"><span class="timeago" datetime="2026-11-08T20:15:35+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 20:15:35 UTC">2026-11-08</span>
   </span>
 
     
