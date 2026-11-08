@@ -3895,10 +3895,34 @@ path); a scenario on another ODD starts afresh.</p>
 boolean), <code>count</code> at least 1 and <code>seed</code> from 0 to 2147483647 (<code>2**31 - 1</code>); any other value is
 refused, naming the key, before the map is read or anything starts.</p>
 <p>Each case is a list of Hydra overrides. A sweep that also has <code>constraints</code>
-gives each drawn case the next lanelet case in turn; one without draws from
-the ODD alone, and needs no map to expand. The last override,
-<code>++odd_case=...</code>, is the case itself, encoded: the run records it, with its
-outcome, in its coverage file (see <a href="#finding-flaky-cases">Finding flaky cases</a>).</p>
+(or a route search) gives each drawn case one of its lanelet cases -- in turn
+unless the map decides some of the ODD's attributes, as it does the default
+ODD's junction, lane count and speed limit: then each drawn case goes on a
+lanelet case in the buckets it drew, so a lanelet case may run more than
+once or not at all (<a href="#the-road-a-case-is-on">The road a case is on</a>). One
+without draws from the ODD alone, and needs no map to expand. The last
+override, <code>++odd_case=...</code>, is the case itself, encoded: the run records it,
+with its outcome, in its coverage file (see <a href="#finding-flaky-cases">Finding flaky cases</a>).</p>
+<p>A drawn case's settings are the sweep's to choose, so the run's own
+overrides may not set them: <code>environment.time_of_day=night</code> on the command
+line of a sweep that draws the time of day is refused, naming the key and
+the ODD attribute that draws it, before any case runs -- by <code>scenario-expand</code>,
+a <code>--multirun</code> batch (local or submitted to SLURM), the lanelet sweeper and
+the UI's Run panel alike. Left to Hydra, the override would win at run time
+while the case recorded the label drawn, its sun and other weather effects
+followed that label, coverage counted its bucket and the flaky search learnt
+from a value the run never had. To hold an attribute, give it a knob in the
+sweep that draws only what you want -- <code>knobs: {&lt;attribute&gt;: {key:
+environment.time_of_day, values: {night: night}}}</code> for one label, a narrower
+<code>range</code> for a number -- or narrow the ODD; then the case, its weather and
+its coverage follow it. A CARLA weather field the conditions lead to (the
+sun's altitude, the precipitation) and a scenario control's node are refused
+the same way: change the rules they follow instead. Overrides of keys no
+case sets (<code>map=</code>, <code>ego.entity=</code>) are not concerned, and one that names the
+grip or the visibility, or where in its range it is, turns that draw off,
+as a case that names one keeps it (<a href="#tire-friction-follows-the-weather">Tire friction follows the
+weather</a>, <a href="#visibility-follows-the-conditions">Visibility follows the
+conditions</a>).</p>
 <h3 id="who-knows-what">Who knows what<a class="headerlink" href="#who-knows-what" title="Permanent link">&para;</a></h3>
 <p>Three things meet in a sampled case, and none of them knows the others:</p>
 <table>
@@ -3975,7 +3999,10 @@ places the runs by:</p>
 may read the shared nodes -- a gap that lengthens on a wet road reads the
 grip -- and may not redefine one: the join refuses a node both define, so a
 scenario can never change what another's cases follow. Each scenario's nodes
-are its own: the cases of one never draw another's.</p>
+are its own: the cases of one never draw another's. Nor may a scenario name a node
+<code>tire_friction_quantile</code> or <code>visibility_quantile</code>: a sweep adds those to its
+nodes to draw where each case's grip and visibility are (see <a href="#tire-friction-follows-the-weather">Tire friction
+follows the weather</a>).</p>
 <p><strong>What the run staged.</strong> A control is keyed by the measure it sets, so that
 measure reads, in the run, the node the case drew: a run of a drawn case
 measures each node its case drew by its control's measure -- the
@@ -4364,8 +4391,11 @@ the quantile of the grip's distribution (0 its low end, 1 its high end; the
 median when not set). A later action in the run that names none -- rain
 starting mid-run -- reads the grip at the same quantile. A
 <code>sweep.odd_sample</code> draws it for every case (<code>environment.tire_friction_quantile=0.412</code>
-among the case's overrides, recorded in its coverage file), from the sweep's
-<code>seed</code> and the case, so the same sweep draws the same grip. The weather comes
+among the case's overrides, recorded in its coverage file) as a parameter of
+the case, <code>quantile(tire_friction_quantile)</code> among its values -- a root node
+of the rules, uniform on [0, 1], drawn as the weather effects' quantiles are
+-- so the same sweep draws the same grip, and the flaky search sees and
+moves it like any other parameter. The weather comes
 from the ODD and the grip from the range that weather allows: a heavy-rain
 case never runs on a dry road's grip. <code>tire_friction: false</code> in the
 <code>odd_sample</code> leaves every case at the median -- of the rules' grip where the
@@ -4377,7 +4407,8 @@ as <code>ture</code> or <code>2</code>, is refused, naming <code>sweep.odd_sampl
 any case is drawn), and
 <code>environment.tire_friction</code> fixes the grip whatever the weather (it wins over
 the quantile, and a case that names one draws no quantile; the ODD's
-<code>tire_friction</code> probe draws it through that knob).</p>
+<code>tire_friction</code> probe draws it through that knob). A run whose own overrides
+name the grip or its quantile draws none either.</p>
 <p>The vehicles in the world when the action fires are scaled then; a scenario
 with such an action -- the config's, or its own -- also runs
 <code>follow_tire_friction</code> after every tick, which gives the vehicles spawned
@@ -4480,13 +4511,15 @@ run, from the conditions the run names, at <code>environment.visibility_quantile
 of its distribution (0 its low end, 1 its high end; the median when not
 set), and the run records it as <code>environment.visibility_m</code>, which also fixes
 it whatever the conditions. A <code>sweep.odd_sample</code> draws the quantile for every
-case, as it draws the grip, so the ODD's rainfall rate, fog visibility and
+case, as it draws the grip -- a parameter of the case,
+<code>quantile(visibility_quantile)</code>, which the flaky search moves -- so the ODD's rainfall rate, fog visibility and
 time of day are what shorten it: a night case's drivers see 50-150 m, a
 thick-fog case's 12-18 m. <code>visibility: false</code> in the <code>odd_sample</code> leaves every
 case at the median (read as <code>tire_friction</code> is,
 <a href="../usage/#the-switches">strictly</a>). An ODD that names the visibility itself
 (the <code>visibility</code> probe) sets it through its own knob,
-<code>environment.visibility_m</code>, and a case with one keeps it. A run that names no
+<code>environment.visibility_m</code>, and a case with one keeps it, as does a run
+whose own overrides name the visibility or its quantile. A run that names no
 condition records none, and its traffic sees as it always did; each run
 starts with none, whatever the last left.</p>
 <p>What follows it is the traffic backend's (<code>traffic.vehicles.follow_visibility</code>):
@@ -5010,8 +5043,14 @@ batch still sweeping the ODD (openodd's
 </code></pre></div>
 <p><code>flaky: true</code> takes the defaults. Its other fields are <code>FlakySearch</code>'s:
 <code>pool</code>, <code>coverage_depth</code>, <code>threshold</code>, <code>epsilon</code>, <code>perturbations</code>, <code>draws</code>
-and <code>directions</code>. Only runs drawn in the same space -- the same attributes,
-ranges and labels -- with an outcome are learnt from; a sweep with no such
+and <code>directions</code>. The space holds every parameter of a case: the attributes
+drawn, the weather effects' quantiles, and where in its range the grip and
+the visibility are (<code>quantile(tire_friction_quantile)</code>,
+<code>quantile(visibility_quantile)</code>), so two cases alike but for their grip are
+two points, not one point whose outcome looks unsure. Only runs drawn in the
+same space -- the same attributes, ranges and labels -- with an outcome are
+learnt from (runs drawn before the grip and visibility were parameters, in
+a space without them, are not); a sweep with no such
 run draws all its cases with the sampler's own policy. Each case chosen for
 its instability records the flakiness predicted for it, beside the one the
 report assesses. Run the sweeps one after another, each reading the earlier
@@ -5201,7 +5240,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 23:24:50 UTC"><span class="timeago" datetime="2026-11-07T23:24:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 23:24:50 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 15:41:30 UTC"><span class="timeago" datetime="2026-11-08T15:41:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 15:41:30 UTC">2026-11-08</span>
   </span>
 
     

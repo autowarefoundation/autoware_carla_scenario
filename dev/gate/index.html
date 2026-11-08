@@ -2480,6 +2480,16 @@ and is the same case as a record of those lanelets with a split. A run that
 was not expanded counts the matches it searched itself (those the ego cannot
 be placed on included, which an expansion skips). A record with no count (a run told nothing) makes the
 criterion fail: the share cannot be known.</p>
+<p>A route sweep that also draws from the ODD (<code>sweep.odd_sample</code>) does not take
+its matches in turn when the map decides some of the ODD's attributes, as
+the default ODD's junction, lane count and speed limit: each drawn case goes
+on a match in the buckets it drew (<a href="../odd/#the-road-a-case-is-on">The road a case is
+on</a>), so a match may run more than once or not
+at all. Its case coverage is then below 100% even with <code>count</code> equal to the
+number of matches -- with the default ODD on the nishishinjuku map, roughly
+half of the matches run. A <code>min_case_coverage</code> meant to see every match run
+needs a route sweep without <code>odd_sample</code>, or a <code>count</code> large enough for the
+draws to reach them.</p>
 <h2 id="what-a-run-records">What a run records<a class="headerlink" href="#what-a-run-records" title="Permanent link">&para;</a></h2>
 <p>A run of a logical scenario with a gate writes <code>{stem}_gate.json</code> beside
 <code>{stem}_result.json</code> (best effort, as the coverage file). The coverage file
@@ -2864,7 +2874,7 @@ whatever its <code>gate_record(result, file_stem)</code> method returns (a
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 21:17:45 UTC"><span class="timeago" datetime="2026-11-07T21:17:45+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 21:17:45 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 15:41:30 UTC"><span class="timeago" datetime="2026-11-08T15:41:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 15:41:30 UTC">2026-11-08</span>
   </span>
 
     
