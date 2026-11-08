@@ -307,6 +307,9 @@ def test_a_walker_threatened_only_as_it_walks_turns_back_at_most_a_minute(
     driven = _walker_ai._DRIVEN[_WALKER_ID]
     assert crossing.turn_backs > 1
     assert crossing.crossed_s is not None
+    # No sooner than KERB_WAIT_MAX_S after its first turn back (0.3 s after
+    # it stepped off; a tick's tolerance): each tick counted once.
+    assert crossing.crossed_s >= 0.3 + _walker_ai.KERB_WAIT_MAX_S - _DT_S
     assert crossing.crossed_s < _walker_ai.KERB_WAIT_MAX_S + 15.0
     assert not driven.stepping
     assert crossing.flips <= 4

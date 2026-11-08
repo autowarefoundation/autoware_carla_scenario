@@ -539,7 +539,6 @@ def _turns_back(
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
     from ..actions._road_threat import STEP_BACK_M  # noqa: PLC0415
-    from .pedestrian_entity import walker_control_speed  # noqa: PLC0415
 
     turn_back = driven.turn_back
     assert turn_back is not None
@@ -582,39 +581,7 @@ def _turns_back(
         driven.kerb_said = ""
         return False
     if driven.turning_back:
-        target = driven.back_to
-        assert target is not None
-        dx, dy = target.x - location.x, target.y - location.y
-        gap = math.hypot(dx, dy)
-        if gap < driven.back_gap - _BACK_PROGRESS_M:
-            driven.back_gap = gap
-            driven.back_stalled = 0.0
-        else:
-            driven.back_stalled += _tick_seconds(walker.get_world())
-        if gap <= _BACK_REACHED_M or driven.back_stalled >= BACK_STALL_S:
-            walker.apply_control(carla.WalkerControl(speed=0.0))
-            driven.turning_back = False
-            driven.waiting_back = True
-            if gap <= _BACK_REACHED_M:
-                logger.info("walker %d: is back behind the kerb", int(walker.id))
-            else:
-                # Its steps back blocked (a walker behind it): it waits where
-                # it stands, as it would behind the kerb.
-                logger.info(
-                    "walker %d: gets no nearer the kerb in %.1f s, waits %.1f m "
-                    "short of it",
-                    int(walker.id),
-                    driven.back_stalled,
-                    gap,
-                )
-            return True
-        walker.apply_control(
-            carla.WalkerControl(
-                direction=carla.Vector3D(x=dx / gap, y=dy / gap, z=0.0),
-                speed=walker_control_speed(max(speed, 1.0)),
-            )
-        )
-        return True
+        return _walk_back(walker, driven, location, speed)
     if driven.kerb_here < 0.0:
         return False
     out_m = here - driven.kerb_here
@@ -635,7 +602,58 @@ def _turns_back(
         max(out_m, 0.0),
         threat,
     )
-    return _turns_back(walker, driven, path, here, location, speed)
+    # Its first step back this tick (not _turns_back again: this tick is
+    # already counted in back_s).
+    return _walk_back(walker, driven, location, speed)
+
+
+def _walk_back(
+    walker: "carla.Actor",
+    driven: _Driven,
+    location: "carla.Location",
+    speed: float,
+) -> bool:
+    """One tick of a turned-back *walker* (at *location*) walking back to the
+    place behind the kerb: once there -- or once its steps get it no nearer
+    for :data:`BACK_STALL_S` -- it waits where it stands.  Always ``True``:
+    it is stepped here this tick."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    from .pedestrian_entity import walker_control_speed  # noqa: PLC0415
+
+    target = driven.back_to
+    assert target is not None
+    dx, dy = target.x - location.x, target.y - location.y
+    gap = math.hypot(dx, dy)
+    if gap < driven.back_gap - _BACK_PROGRESS_M:
+        driven.back_gap = gap
+        driven.back_stalled = 0.0
+    else:
+        driven.back_stalled += _tick_seconds(walker.get_world())
+    if gap <= _BACK_REACHED_M or driven.back_stalled >= BACK_STALL_S:
+        walker.apply_control(carla.WalkerControl(speed=0.0))
+        driven.turning_back = False
+        driven.waiting_back = True
+        if gap <= _BACK_REACHED_M:
+            logger.info("walker %d: is back behind the kerb", int(walker.id))
+        else:
+            # Its steps back blocked (a walker behind it): it waits where
+            # it stands, as it would behind the kerb.
+            logger.info(
+                "walker %d: gets no nearer the kerb in %.1f s, waits %.1f m "
+                "short of it",
+                int(walker.id),
+                driven.back_stalled,
+                gap,
+            )
+        return True
+    walker.apply_control(
+        carla.WalkerControl(
+            direction=carla.Vector3D(x=dx / gap, y=dy / gap, z=0.0),
+            speed=walker_control_speed(max(speed, 1.0)),
+        )
+    )
+    return True
 
 
 def _kerb_wait(
