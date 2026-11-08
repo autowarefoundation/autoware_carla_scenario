@@ -210,8 +210,11 @@ it) where the gap closes on a road user going the ego's way that does not stop
 first; it departs from CriMe for an opening gap, which needs `0` (CriMe reads
 the relative velocity squared over twice the gap) or, for a lead braking to a
 stop, the deceleration that stops the ego behind where it stops; and for a car
-coming the other way, braking, the ego must stop short of where they would
-meet. A contact counts while the ego is moving and within the prediction
+coming the other way, the ego must stop far enough back that the car, going
+on as it goes until it stops, does not reach it within the horizon after the
+ego has stopped: with the ego at 10 m/s and a car 40 m ahead coming at 10 m/s,
+ALongReq is -15 m/s^2 (stopped 3.3 m on after 0.67 s, the car 3 s further
+off). A contact counts while the ego is moving and within the prediction
 horizon (`horizon_s`) after it has stopped: a pedestrian crossing the lane a
 little towards the ego, or a car rolling back, that would reach a standing ego
 only after the horizon needs no more than the ego stopping short of it. When

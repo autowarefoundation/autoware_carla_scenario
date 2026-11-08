@@ -832,7 +832,8 @@ def _required_deceleration(
     reads ``-v_rel^2 / (2 gap)``), one whose lead brakes to a stop the
     deceleration that stops the ego behind where it stops, and a car coming
     the other way the deceleration that stops the ego far enough back that
-    the car does not reach it within the horizon.  ``-inf`` when no
+    the car does not reach it within the horizon after the ego has stopped
+    (at 10 m/s, a car 40 m ahead coming at 10 m/s: -15).  ``-inf`` when no
     deceleration does: the other reaches the ego within the horizon even
     stopped where it is, or the ego is not going forward and the other
     reaches it within the horizon.  Monotone in the ego's deceleration
@@ -849,7 +850,7 @@ def _required_deceleration(
     def avoids(a_ego: float) -> bool:
         contact = _contact_time(gap, v_ego, a_ego, v_other, a_other)
         moving = _stopping_time(v_ego, a_ego) if v_ego > 0.0 else 0.0
-        return contact == math.inf or contact > max(horizon, moving)
+        return contact == math.inf or contact > moving + horizon
 
     if avoids(0.0):
         return 0.0
