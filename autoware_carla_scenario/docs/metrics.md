@@ -199,7 +199,15 @@ the lane's own heading, which is the speed along the lane only there. CriMe
 along the lane, reading a braking lead as speeding up and a car coming the
 other way in the ego's lane as going its way; the worker reads TTC and
 ALongReq -- and so BTN, and ALatReq and STN, which take TTC -- with their
-sign. The lanelets the worker keeps are those within `radius_m` of the ego
+sign. A road user braking to a stop then stops and stays there, as the worker
+predicts every road user, rather than reversing as CriMe's constant
+acceleration would carry it on: TTC is when the ego reaches it, each holding
+its acceleration until it stops, and ALongReq for one that stops before the
+ego would match its speed is the deceleration that stops the ego behind where
+it stops. So a car creeping to a halt ahead of a stopped ego is no conflict. A
+road user behind the ego gives no ALongReq. A road user ahead pulling away
+still does, as CriMe reads it: its acceleration less the relative velocity
+squared over twice the gap, which is negative for an opening gap too. The lanelets the worker keeps are those within `radius_m` of the ego
 anywhere along their centre line, and always those it is on, so a long
 straight lanelet stays in from its middle. The reachable set (the drivable
 area, WTTR) is that of the ego's own box: CommonRoad-Reach's discs and the
