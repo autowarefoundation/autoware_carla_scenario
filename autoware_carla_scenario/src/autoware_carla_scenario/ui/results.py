@@ -12,7 +12,9 @@ arithmetic the library check compiles).
 
 The ODD view is openodd's own coverage component (``openodd.CoverageView``)
 and its case plot (``openodd.CasePlot``), fed the sessions' coverage
-documents. Comparing sessions matches their cases by what they ran -- the
+documents -- those it can read: a document openodd rejects (a number too
+long for a float, ``NaN``, #2012) is left out of every view, and the pages
+name its file (:func:`skipped_coverage`). Comparing sessions matches their cases by what they ran -- the
 case's overrides, else the ODD values it was drawn at -- not by position, so a
 case keeps its match when a sweep's order or size changes; and tallies each
 ODD cell (the buckets a case was drawn in, along two attributes) per session.
@@ -27,6 +29,7 @@ from __future__ import annotations
 import json
 import math
 from dataclasses import dataclass, field
+from functools import cached_property
 from pathlib import Path
 from typing import Any
 
@@ -70,6 +73,7 @@ __all__ = [
     "default_axes",
     "load_results",
     "cases_in_cell",
+    "skipped_coverage",
 ]
 
 
@@ -121,6 +125,23 @@ class CaseResult:
     metrics: dict[str, float] = field(default_factory=dict)
     #: A SLURM batch's case without an outcome yet (``passed`` ``None``).
     pending: bool = False
+
+    @cached_property
+    def coverage_viewable(self) -> bool:
+        """Whether openodd's views can read the case's coverage document:
+        it has one and ``openodd.CoverageView`` accepts it alone. One that
+        holds a number too long for a float or ``NaN`` (which Python's
+        ``json`` reads) is refused there (#2012); it is left out of the views
+        rather than failing the page. Probed once per loaded case."""
+        if not isinstance(self.coverage, dict):
+            return False
+        import openodd  # noqa: PLC0415 -- a Rust extension, loaded on first use
+
+        try:
+            openodd.CoverageView([self.coverage])
+        except (ValueError, TypeError, OverflowError):
+            return False
+        return True
 
     @property
     def scenario(self) -> str:
@@ -458,8 +479,24 @@ def varying_attributes(results: list[CaseResult]) -> list[str]:
 
 
 def coverage_documents(results: list[CaseResult]) -> list[dict[str, Any]]:
-    """The cases' coverage documents, for openodd's views."""
-    return [r.coverage for r in results if isinstance(r.coverage, dict)]
+    """The cases' coverage documents, for openodd's views: those they can
+    read (:attr:`CaseResult.coverage_viewable`); :func:`skipped_coverage`
+    names the others."""
+    return [
+        r.coverage
+        for r in results
+        if isinstance(r.coverage, dict) and r.coverage_viewable
+    ]
+
+
+def skipped_coverage(results: list[CaseResult]) -> list[str]:
+    """The coverage files the views leave out because openodd cannot read
+    them (#2012), by file name (the case's label without one)."""
+    return [
+        r.files.coverage.name if r.files is not None else r.label
+        for r in results
+        if isinstance(r.coverage, dict) and not r.coverage_viewable
+    ]
 
 
 def default_axes(results: list[CaseResult]) -> tuple[str | None, str | None]:
@@ -555,12 +592,15 @@ def cases_in_cell(
     a run must stay in the cell.
 
     A case whose coverage document has no ``odd.cells`` (or one the view
-    cannot read) is in no cell, as the view leaves it out; with no
+    cannot read), or a document openodd rejects altogether
+    (:attr:`CaseResult.coverage_viewable`, #2012), is in no cell, as the view
+    leaves it out; with no
     *conditions* (the whole matrix) every case is listed."""
     if not conditions:
         return list(results)
+    viewable = [r for r in results if r.coverage_viewable]
     known: set[str] = set()
-    for r in results:
+    for r in viewable:
         cells = _odd_cells(r.coverage)
         if cells is not None:
             known.update(cells["attributes"])
@@ -569,7 +609,7 @@ def cases_in_cell(
         if attribute in known and all(attribute != a for a, _ in joint):
             joint.append((attribute, bucket))
     found = []
-    for r in results:
+    for r in viewable:
         cells = _odd_cells(r.coverage)
         if cells is not None and _in_cells(cells, joint, min_seconds):
             found.append(r)

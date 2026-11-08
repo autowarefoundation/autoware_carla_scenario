@@ -613,11 +613,17 @@ def test_malformed_cells_rows_are_skipped_not_raised() -> None:
         [["x", "q"], None, None, None],
         [["x", "q"], 10**400, 10**400, 0.0],
     ]
-    found = [_cell_case(0, doc)]
+    cells = results._odd_cells(doc)
+    assert cells is not None
     # The too-long ticks still count the row; its seconds count as 0.
-    assert results.cases_in_cell(found, [("a", "x"), ("b", "q")]) == found
-    assert results.cases_in_cell(found, [("a", "x")], min_seconds=0.5) == []
+    assert results._in_cells(cells, [("a", "x"), ("b", "q")], 0.0)
+    assert not results._in_cells(cells, [("a", "x")], 0.5)
+    # openodd's view refuses the document for its too-long numbers (#2012),
+    # so the case is in no cell, as the matrix leaves it out.
+    assert results.cases_in_cell([_cell_case(0, doc)], [("a", "x")]) == []
     doc["odd"]["cells"]["rows"] = doc["odd"]["cells"]["rows"][:3]
+    assert not results._in_cells(cells, [("a", "x"), ("b", "q")], 0.0)
+    found = [_cell_case(0, doc)]
     assert results.cases_in_cell(found, [("a", "x"), ("b", "q")]) == []
 
 
@@ -787,6 +793,104 @@ def test_a_session_without_coverage_says_so(client: TestClient, tmp_path: Path) 
     page = client.get(f"/session/{ref}/odd")
     assert page.status_code == 200
     assert "left a coverage file" in page.text
+
+
+#: Numbers openodd's views cannot read, which Python's ``json`` does: an
+#: integer too long for a float, and ``NaN`` (#2012).
+_UNREADABLE = ["1" + "0" * 400, "NaN"]
+
+
+def _spoil(directory: Path, name: str, number: str) -> None:
+    """Write *number* as the ticks of the first ``odd.cells`` row of the
+    coverage file *name* in *directory*."""
+    path = directory / name
+    doc = json.loads(path.read_text())
+    doc["odd"]["cells"]["rows"][0][1] = "__SPOILED__"
+    path.write_text(json.dumps(doc).replace('"__SPOILED__"', number))
+
+
+def _drilled(text: str) -> str:
+    return text.split('id="cell-cases"', 1)[1]
+
+
+@pytest.mark.parametrize("number", _UNREADABLE)
+def test_a_coverage_file_openodd_cannot_read_is_left_out_and_named(
+    client: TestClient, tmp_path: Path, number: str
+) -> None:
+    """#2012: the ODD page renders without the file, says which it left out,
+    and lists the cases of a cell as the matrix of the other files counts
+    them."""
+    ref = _session(tmp_path, "10-00-00", [True, False, False, False])
+    directory = tmp_path / "outputs" / "2026-10-18" / "10-00-00"
+    _spoil(directory, "CutIn-1_coverage.json", number)
+    page = client.get(f"/session/{ref}/odd")
+    assert page.status_code == 200, page.text
+    notice = page.text.split('id="skipped-coverage"', 1)[1].split("</div>", 1)[0]
+    assert "CutIn-1_coverage.json" in notice
+    assert "CutIn_coverage.json" not in notice
+    # The matrix and the plot are the other files'; every case is still listed.
+    assert 'class="oo-cov"' in page.text
+    assert _drilled(page.text).count("data-outcome=") == 4
+    kept = [
+        json.loads((directory / f"{name}_coverage.json").read_text())
+        for name in ("CutIn", "CutIn-2", "CutIn-3")
+    ]
+    found = results.load_results(tmp_path, "batch", "2026-10-18", "10-00-00")
+    assert results.skipped_coverage(found) == ["CutIn-1_coverage.json"]
+    assert results.coverage_documents(found) == kept
+    import openodd
+
+    matrix = openodd.CoverageView(kept).matrix(x=GAP, y=SPEED)
+    listed = 0
+    for x in matrix["x"]["labels"]:
+        for y in matrix["y"]["labels"]:
+            conditions = [(GAP, x), (SPEED, y)]
+            drilled = client.get(
+                f"/session/{ref}/odd",
+                params=[("at", f"{a}={b}") for a, b in conditions],
+            )
+            assert drilled.status_code == 200
+            rows = _drilled(drilled.text)
+            # The skipped case (index 1) is in no cell.
+            assert f'href="/session/{ref}/1#recording"' not in rows
+            assert rows.count("data-outcome=") == _matrix_runs(kept, conditions)
+            listed += rows.count("data-outcome=")
+    assert listed > 0
+
+
+@pytest.mark.parametrize("number", _UNREADABLE)
+def test_compare_leaves_out_a_coverage_file_openodd_cannot_read(
+    client: TestClient, tmp_path: Path, number: str
+) -> None:
+    a = _session(tmp_path, "10-00-00", [True, False, False, False])
+    b = _session(tmp_path, "11-00-00", [False, True, False, False])
+    _spoil(
+        tmp_path / "outputs" / "2026-10-18" / "11-00-00",
+        "CutIn-2_coverage.json",
+        number,
+    )
+    page = client.get("/compare", params=[("s", a), ("s", b)])
+    assert page.status_code == 200, page.text
+    notice = page.text.split('id="skipped-coverage"', 1)[1].split("</div>", 1)[0]
+    assert b in notice and "CutIn-2_coverage.json" in notice
+    assert a not in notice
+    # Both sessions' matrices are drawn.
+    assert page.text.count('class="oo-cov"') == 2
+
+
+def test_a_document_openodd_rejects_is_in_no_cell() -> None:
+    """A number too long for a float anywhere in the document (here in its
+    items, not its cells) makes openodd refuse it: it is in no cell, and not
+    among the documents the views are fed."""
+    good = _cell_doc([("x", "p", 1.0)], passed=True)
+    bad = _cell_doc([("x", "p", 1.0)], passed=False)
+    bad["items"][0]["extra"] = 10**400
+    found = [_cell_case(0, good), _cell_case(1, bad)]
+    assert results.coverage_documents(found) == [good]
+    assert results.skipped_coverage(found) == ["pkg/s#2"]
+    assert results.cases_in_cell(found, [("a", "x")]) == [found[0]]
+    # With no cell drilled into, every case is still listed.
+    assert results.cases_in_cell(found, []) == found
 
 
 def test_the_odd_route_refuses_a_name_outside_the_base(client: TestClient) -> None:

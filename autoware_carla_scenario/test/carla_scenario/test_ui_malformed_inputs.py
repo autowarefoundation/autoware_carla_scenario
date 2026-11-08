@@ -180,7 +180,14 @@ def test_coverage_seconds_that_are_no_float_count_as_none(seconds: Any) -> None:
         )
     ]
     # The row counts (its ticks are), its seconds as none.
-    assert results.cases_in_cell(found, [("a", "b")]) == found
+    cells = results._odd_cells(coverage)
+    assert cells is not None
+    assert results._in_cells(cells, [("a", "b")], 0.0)
+    assert not results._in_cells(cells, [("a", "b")], 0.5)
+    # openodd's view refuses a document with a number too long for a float
+    # (#2012), so the case is in no cell, as the matrix leaves it out.
+    viewable = not isinstance(seconds, int)
+    assert results.cases_in_cell(found, [("a", "b")]) == (found if viewable else [])
     assert results.cases_in_cell(found, [("a", "b")], min_seconds=0.5) == []
 
 
