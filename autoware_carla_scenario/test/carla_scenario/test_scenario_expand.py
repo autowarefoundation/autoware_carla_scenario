@@ -703,9 +703,11 @@ def test_the_cli_expands_a_packaged_logical_scenario(
     assert out["scenario"] == "traffic_light_compliance/traffic_light_compliance"
     assert cases, "the constraints match lanelets on this map"
     for case in cases:
-        lanelet, spawn_s = case
+        lanelet, spawn_s, goal = case
         assert lanelet.startswith("ego.spawn_lanelet_id=")
         assert spawn_s.startswith("ego.spawn_s=")
+        # Each case's own goal, past its junction, not the fixed case's.
+        assert goal.startswith("ego.goal_lanelet_id=")
     # The constraints exclude lanelet 222 explicitly.
     assert "ego.spawn_lanelet_id=222" not in {c[0] for c in cases}
 

@@ -11,7 +11,7 @@ ego:
   # Off the lanelet's start, which can sit on the seam between two
   # OpenDRIVE roads and resolve to the one the ego is not on.
   spawn_s: 5.0
-  # Up the road from the spawn.
+  # Up the road from the spawn; every swept case replaces it.
   goal_lanelet_id: 141
 
 sweep:
@@ -33,3 +33,30 @@ sweep:
             constraint:
               type: in_set
               values: ${map.no_3d_model_lanelet_ids}
+          # Nor one whose goal would be such a lanelet: the lane after it, or
+          # the lane out of the junction it leads into.
+          - type: not
+            constraint:
+              type: previous_of
+              constraints:
+                - type: in_set
+                  values: ${map.no_3d_model_lanelet_ids}
+          - type: not
+            constraint:
+              type: previous_of
+              constraints:
+                - type: and
+                  constraints:
+                    - type: is_junction
+                    - type: previous_of
+                      constraints:
+                        - type: in_set
+                          values: ${map.no_3d_model_lanelet_ids}
+  bindings:
+    # Up the road from the pick: the lane after it, or past the junction it
+    # leads into, so the goal never sits inside one.
+    ego.goal_lanelet_id:
+      type: route_through
+      depth: 1
+      through_junction: true
+      last_only: true

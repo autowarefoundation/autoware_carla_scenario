@@ -19,7 +19,9 @@ scenario:
 ego:
   initial_speed_kmh: 0.0
   spawn_lanelet_id: 285
-  spawn_s: 0.0
+  # 15 m short of the stop line at the start of lanelet 299, where the
+  # sweep's stop_line_offset puts this case.
+  spawn_s: 38.07
   # Past the stop line this run is about, and on up the road.
   goal_lanelet_id: 132
 

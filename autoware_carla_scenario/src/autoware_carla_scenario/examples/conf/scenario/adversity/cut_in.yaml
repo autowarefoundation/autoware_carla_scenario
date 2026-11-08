@@ -1,9 +1,14 @@
 # @package _global_
-# An NPC 6 m ahead in the lane on the ego's left (lanelet 324 beside 446)
+# An NPC 6 m ahead in the lane beside the ego's (lanelet 324 beside 446)
 # changes in front of the ego, close behind it there: a cut-in
 # (AdversarialCutInAction). Placed on Town10HD_Opt:
 #
 #   scenario scenario=adversity/cut_in map=town10hd_opt
+#
+# The lanelet ids are Town10HD_Opt's, so give map=town10hd_opt: this file
+# cannot select the map group itself (Hydra refuses an `override /map` from
+# the scenario group, which config.yaml composes before `map`), and on the
+# default nishishinjuku map the ids name other lanelets or none.
 scenario:
   name: adversity
   kind: cut_in
