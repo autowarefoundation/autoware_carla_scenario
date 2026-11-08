@@ -2420,8 +2420,8 @@ scenario, a whole batch, for as long as it runs.</p>
 <li>Every tick the ego's state goes to the ECUs; whenever an ECU sends a
    command message (<code>inputs</code>), the bridge forwards the command and the runner
    applies it to the ego.</li>
-<li>When the scenario ends the runner sends <code>end</code>; the bridge runs the
-   <code>scenario_end</code> steps, stops the periodic messages, removes its sensors and
+<li>When the scenario ends the runner sends <code>end</code>; the bridge removes its
+   sensors, runs the <code>scenario_end</code> steps, stops the periodic messages and
    answers <code>ended</code>. A run that goes away mid-scenario ends it as well.</li>
 </ol>
 <p>A message that cannot be sent on the link ends the link: either side gives a
@@ -2559,7 +2559,7 @@ are refused, so a typo fails at start-up instead of being ignored.</p>
 <tr>
 <td><code>ego.wait</code></td>
 <td><code>120.0</code></td>
-<td>seconds (not negative) without an ego before a warning (it keeps waiting)</td>
+<td>seconds (not negative; wall clock) without an ego -- since the bridge reached CARLA, or since the last scenario ended -- before a warning, logged once a wait (it keeps waiting)</td>
 </tr>
 <tr>
 <td><code>canvas</code></td>
@@ -2851,11 +2851,15 @@ and forwards it to the run whenever an input arrives. The fields:</p>
 </tr>
 <tr>
 <td><code>ackermann</code></td>
-<td><code>steer</code> (rad, positive right), <code>steer_speed</code> (rad/s), <code>speed</code> (m/s), <code>acceleration</code> (m/s²), <code>jerk</code> (m/s³)</td>
+<td><code>steer</code> (rad, positive right), <code>steer_speed</code> (rad/s), <code>speed</code> (m/s; negative reverses), <code>acceleration</code> (m/s²), <code>jerk</code> (m/s³)</td>
 <td><code>VehicleAckermannControl</code></td>
 </tr>
 </tbody>
 </table>
+<p>An <code>ackermann</code> <code>speed</code> is signed: CARLA's Ackermann controller engages reverse for
+a negative target speed, once the vehicle is (nearly) standing still, and brakes to
+a stop first when the vehicle is moving the other way. Any negative speed, however
+small, asks for reverse: there is no deadband, so an ECU that means "stop" sends 0.</p>
 <p>A value that is not finite (NaN or an infinity: a decoded IEEE-float signal, a
 scale that overflows), or larger in magnitude than a 32-bit float holds (CARLA's
 controls would make it an infinity), is dropped with a warning, as a missing
@@ -2888,7 +2892,7 @@ must be finite. The run clamps <code>gear</code> to a 32-bit integer.</p>
 </tr>
 <tr>
 <td><code>scenario_end</code></td>
-<td>the scenario ends (the run's <code>end</code>, the run going away, or the ego disappearing); then the periodic messages stop and the sensors go</td>
+<td>the scenario ends (the run's <code>end</code>, the run going away, or the ego disappearing); the sensors go before the steps (nothing they measure meanwhile is queued or sent), and the periodic messages stop after them</td>
 <td>logged; the other steps still run</td>
 </tr>
 <tr>
@@ -3072,7 +3076,7 @@ each frame the runner ticks. carla_canvas's client is installed with
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 6, 2026 06:47:43 UTC"><span class="timeago" datetime="2026-11-06T06:47:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 6, 2026 06:47:43 UTC">2026-11-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 01:41:00 UTC"><span class="timeago" datetime="2026-11-08T01:41:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 01:41:00 UTC">2026-11-08</span>
   </span>
 
     
