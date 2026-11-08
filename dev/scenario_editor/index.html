@@ -1426,6 +1426,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Reproducibility">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-the-framework-is-pinned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the framework is pinned
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -2800,6 +2817,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Reproducibility">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#how-the-framework-is-pinned" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        How the framework is pinned
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
         
           <li class="md-nav__item">
@@ -3730,7 +3764,8 @@ wheel the scenario needs:</p>
 <a id="__codelineno-13-6" name="__codelineno-13-6" href="#__codelineno-13-6"></a>    |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
 <a id="__codelineno-13-7" name="__codelineno-13-7" href="#__codelineno-13-7"></a>    |-- ... every transitive dependency, ~94 wheels
 <a id="__codelineno-13-8" name="__codelineno-13-8" href="#__codelineno-13-8"></a>    |-- requirements.txt                           # the whole set, pinned
-<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>    `-- README.md                                  # how to install it
+<a id="__codelineno-13-9" name="__codelineno-13-9" href="#__codelineno-13-9"></a>    |-- manifest.yaml                              # provenance: the framework pin, the Python, the export's warnings
+<a id="__codelineno-13-10" name="__codelineno-13-10" href="#__codelineno-13-10"></a>    `-- README.md                                  # how to install it
 </code></pre></div>
 <p>Install it with pip and nothing else -- no <code>uv</code>, no <code>git</code>, no network, no
 resolution:</p>
@@ -3785,6 +3820,12 @@ builder while the built-in configs (<code>scenario=cut_in/left</code>, ...) stil
 it and hand it the built-in's config keys. It is an <code>id</code> error, <code>The id
 'cut_in' is reserved: it names a built-in scenario ...</code>, worded as
 <code>scenario-new</code>'s refusal of the same <code>--scenario</code>.</p>
+<p>Unlike <code>scenario-new</code>, the editor does not refuse an id that names a built-in
+scenario config group that is no builder, such as <code>lane_change_fail</code>.
+<code>scenario-new</code> writes a config group, <code>conf/scenario/&lt;name&gt;/</code>, which would
+merge with the built-in group of that name; an export writes a single config,
+<code>conf/scenario/&lt;id&gt;.yaml</code>, which Hydra selects as <code>scenario=&lt;id&gt;</code> and keeps
+apart from the built-in group's <code>scenario=&lt;id&gt;/left</code> and the rest.</p>
 <p><code>export_package</code> and <code>names_for_id</code>, called directly, refuse both too, before
 writing anything. That is why the Cut-in example starts as <code>my_cut_in</code>, not
 <code>cut_in</code>. A draft saved from the Cut-in example before this change
@@ -3926,11 +3967,11 @@ not needing to know which Python the target runs before exporting.</p>
 <tbody>
 <tr>
 <td><code>autoware-carla-scenario</code></td>
-<td>exact version, or an exact commit SHA</td>
+<td>exact version, or an exact commit SHA (see <a href="#how-the-framework-is-pinned">How the framework is pinned</a>)</td>
 </tr>
 <tr>
 <td><code>typesafe-carla</code></td>
-<td>the framework's own requirement (<code>&gt;=0.3.0,&lt;0.4</code>), locked in <code>uv.lock</code> like everything else</td>
+<td>the framework's own requirement (<code>&gt;=0.8.1,&lt;0.9</code>), locked in <code>uv.lock</code> like everything else</td>
 </tr>
 <tr>
 <td>Python</td>
@@ -3951,8 +3992,30 @@ package pinned to one stops being the package that was tested as soon as
 somebody pushes. When no immutable pin can be determined the export fails rather
 than guessing. A local-path dependency is only produced by an explicit
 development export, which says so in its README and manifest.</p>
-<p>Set <code>SCENARIO_EXPORT_FRAMEWORK_VERSION</code> to pin a published release instead of
-the current checkout's commit.</p>
+<h4 id="how-the-framework-is-pinned">How the framework is pinned<a class="headerlink" href="#how-the-framework-is-pinned" title="Permanent link">&para;</a></h4>
+<p>The export takes the first of these that applies:</p>
+<ol>
+<li><code>SCENARIO_EXPORT_FRAMEWORK_VERSION</code>, to pin a published release instead of
+   the current checkout's commit. Surrounding whitespace is ignored and a blank
+   value counts as unset; anything else must be a valid
+   <a href="https://peps.python.org/pep-0440/">PEP 440</a> version without a local label
+   (<code>1.2.3</code>, not a range and not <code>1.2.3+local</code>, which no index serves), or the
+   export fails.</li>
+<li>The framework's own git checkout, pinned to <code>HEAD</code>'s commit SHA (with the
+   framework's directory in the repository as <code>subdirectory</code>).</li>
+</ol>
+<p>A commit pin, and a development export's path, are only taken from the
+framework's <strong>source tree</strong>: a directory whose <code>pyproject.toml</code> names
+<code>autoware-carla-scenario</code>. A framework installed from a wheel lives in a
+virtual environment, often a project's <code>.venv</code> inside that project's own git
+repository; that repository is not the framework's, so it is never pinned.
+Nor is such an install pinned to the version it reports: a wheel built from an
+unreleased commit -- the one in a wheelhouse, say -- carries the version of
+the last release, so <code>==</code> that version would silently resolve a different
+framework. <strong>To export from a framework installed from a wheel, set
+<code>SCENARIO_EXPORT_FRAMEWORK_VERSION</code></strong> to the release it is; without it the
+export fails with a message saying so. A development export from a wheel
+install fails too, since there is no checkout to depend on by path.</p>
 <h3 id="export-is-atomic">Export is atomic<a class="headerlink" href="#export-is-atomic" title="Permanent link">&para;</a></h3>
 <p>The exporter builds into a temporary directory and runs <code>uv lock</code>, then
 <code>uv sync --locked</code>, then the generated package's own tests, then the wheelhouse.
@@ -4201,7 +4264,7 @@ egress rule cannot take the layout with it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 17:29:50 UTC"><span class="timeago" datetime="2026-11-07T17:29:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 17:29:50 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 04:55:43 UTC"><span class="timeago" datetime="2026-11-08T04:55:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 04:55:43 UTC">2026-11-08</span>
   </span>
 
     

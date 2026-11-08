@@ -4874,8 +4874,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 307 of the package's 430
-modules (71%; about 94,500 of
-162,500 lines) are <code>CHECKED</code>: the kinematics, the
+modules (71%; about 94,600 of
+162,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6189,8 +6189,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>171 functions and methods of those modules are <code>UNCALLED</code>
-(52 of them protected helpers, see <em>What is
+<p>173 functions and methods of those modules are <code>UNCALLED</code>
+(54 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6202,13 +6202,15 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 171 UNCALLED functions and methods, and why</summary>
+<summary>The 173 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSourceAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.constraints_from_text</code>: reads YAML (yaml, imported inside it) into a list of <code>dict[str, Any]</code> constraint mappings of mixed value types, which Codon cannot express</li>
 <li><code>authoring.framework_pin.Pin.uv_source</code>: builds the <code>[tool.uv.sources]</code> entry, a dict[str, Any] of str and bool values (<code>{"path": ..., "editable": True}</code>), which Codon cannot express</li>
+<li><code>authoring.framework_pin._project_name</code>: imports tomllib or tomli inside it, which Codon has nothing for, and reads a TOML document of mixed value types; _is_framework_project() calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>authoring.framework_pin._version_problem</code>: imports packaging (<code>Version</code>) inside it, which Codon has nothing for; resolve_framework_pin() calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>autoware_stack.bridge_node.bridge_command</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with; CommandAutowareLauncher.start() and DockerAutowareLauncher.start() call it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>autoware_stack.bridge_node.bridge_ros_args</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with</li>
 <li><code>commonroad.frame._state</code>: builds a road user's state as a JSON object of mixed value types (<code>dict[str, Any]</code>) for the worker, which Codon cannot express; its geometry and motion are the checked _kinematics()'s</li>
