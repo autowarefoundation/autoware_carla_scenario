@@ -878,6 +878,7 @@ my_cut_in-wheelhouse.zip
     |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
     |-- ... every transitive dependency, ~94 wheels
     |-- requirements.txt                           # the whole set, pinned
+    |-- manifest.yaml                              # provenance: the framework pin, the Python, the export's warnings
     `-- README.md                                  # how to install it
 ```
 
@@ -1051,8 +1052,8 @@ not needing to know which Python the target runs before exporting.
 
 | What | Pinned by |
 | --- | --- |
-| `autoware-carla-scenario` | exact version, or an exact commit SHA |
-| `typesafe-carla` | the framework's own requirement (`>=0.3.0,<0.4`), locked in `uv.lock` like everything else |
+| `autoware-carla-scenario` | exact version, or an exact commit SHA (see [How the framework is pinned](#how-the-framework-is-pinned)) |
+| `typesafe-carla` | the framework's own requirement (`>=0.8.1,<0.9`), locked in `uv.lock` like everything else |
 | Python | `.python-version`, exact patch version |
 | uv | `[tool.uv] required-version`, when uv's version could be read |
 | Everything else | `uv.lock`, and then the wheels built from it |
@@ -1063,8 +1064,31 @@ somebody pushes. When no immutable pin can be determined the export fails rather
 than guessing. A local-path dependency is only produced by an explicit
 development export, which says so in its README and manifest.
 
-Set `SCENARIO_EXPORT_FRAMEWORK_VERSION` to pin a published release instead of
-the current checkout's commit.
+#### How the framework is pinned
+
+The export takes the first of these that applies:
+
+1. `SCENARIO_EXPORT_FRAMEWORK_VERSION`, to pin a published release instead of
+   the current checkout's commit. Surrounding whitespace is ignored and a blank
+   value counts as unset; anything else must be a valid
+   [PEP 440](https://peps.python.org/pep-0440/) version (`1.2.3`, not a range),
+   or the export fails.
+2. The framework's own git checkout, pinned to `HEAD`'s commit SHA (with the
+   framework's directory in the repository as `subdirectory`).
+3. The installed version, when the framework was installed by name from a
+   package index -- it has no [PEP 610](https://peps.python.org/pep-0610/)
+   `direct_url.json` and no local version label -- which makes that version a
+   published release.
+
+A commit pin, and a development export's path, are only taken from the
+framework's **source tree**: a directory whose `pyproject.toml` names
+`autoware-carla-scenario`. A framework installed from a wheel lives in a
+virtual environment, often a project's `.venv` inside that project's own git
+repository; that repository is not the framework's, so it is never pinned.
+Such an install -- a local wheel, say -- that no index served gets no pin at
+all, and the export fails with the message to set
+`SCENARIO_EXPORT_FRAMEWORK_VERSION`; a development export from it fails too,
+since there is no checkout to depend on by path.
 
 ### Export is atomic
 

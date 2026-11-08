@@ -452,6 +452,15 @@ reserved: it names a built-in scenario ...`. The list is
 constant so that `scenario-new` need not import the runner or CARLA; a test
 checks it against what the runner registers.
 
+Nor can it take the name of a built-in scenario config group, a directory of
+the framework's `conf/scenario/` (such as `lane_change_fail`, whose configs
+reuse the `lane_change` builder): the package's configs would land in the
+same Hydra group, so `scenario='lane_change_fail/*'` would also run the
+built-in `left` and `right`, and a package config named `left.yaml` would be
+shadowed by the built-in one. `scenario-new` reads the groups from the conf
+tree the framework ships, and refuses them with `Error: scenario name
+'lane_change_fail' is reserved: it names a built-in scenario config group ...`.
+
 The scenario name, after it is snake-cased (`-s MyScenario` becomes
 `my_scenario`, `-s cut-in.v2` becomes `cut_in_v2`), must be a lower-case ASCII
 letter followed by lower-case ASCII letters, digits and `_`
