@@ -606,6 +606,11 @@ class HilsBridge:
         self._signals: Dict[str, float] = {}
         self._last_time: Optional[float] = None
         self._last_tick = time.monotonic()
+        #: When the bridge was last without an ego from then on (it reached
+        #: CARLA, or a scenario ended; wall clock), and whether that wait was
+        #: warned about once it passed ``ego.wait`` (:meth:`_check_ego_wait`).
+        self._without_ego_since = time.monotonic()
+        self._without_ego_warned = False
         self._next_scan = 0.0
         self._started = False
         #: Whether a scenario runs (its scenario_start steps ran).
@@ -697,6 +702,8 @@ class HilsBridge:
         self._client.set_timeout(cfg.timeout)
         self._world = self._client.get_world()
         logger.info("connected to CARLA at %s:%d", cfg.host, cfg.port)
+        if not self._active:
+            self._wait_for_ego()
 
     def close(self) -> None:
         """End a running scenario, run the ``shutdown`` steps, close everything."""
@@ -850,12 +857,25 @@ class HilsBridge:
                     )
 
     def _finish(self) -> None:
-        """End the scenario: carry what its cuts stopped again, so that the
-        ``scenario_end`` steps reach the ECUs (and hear back from them), run
-        those steps, then stop the periodic messages and remove the sensors."""
+        """End the scenario: remove the sensors, carry what its cuts stopped
+        again, so that the ``scenario_end`` steps reach the ECUs (and hear
+        back from them), run those steps, then stop the periodic messages.
+
+        The sensors go first, as :meth:`_begin` attaches them last: the steps
+        can wait for seconds, during which nothing is flushed, and a sensor
+        still listening meanwhile would queue all it measured -- unbounded --
+        only to be dropped when it is removed.  Nothing in a step needs a
+        sensor, and nothing it measured is sent once it is removed."""
         with self._forward_lock:
             # A command being sent finishes first: none follows ``ended``.
             self._forwarding = False
+        for sensor_device in self._sensors:
+            try:
+                sensor_device.detach()
+            except Exception:  # noqa: BLE001 - the scenario must still end
+                logger.exception(
+                    "%s: failed to remove the sensor", sensor_device.spec.name
+                )
         try:
             self._reconnect_all()
         except Exception:  # noqa: BLE001 - the scenario must still end
@@ -863,14 +883,33 @@ class HilsBridge:
         self._run_steps("scenario_end", strict=False)
         for message_device in self._messages:
             message_device.stop()
-        for sensor_device in self._sensors:
-            sensor_device.detach()
         with self._command_lock:
             self._command = {}
             self._command_version += 1
         self._ego = None
         self._active = False
+        self._wait_for_ego()
         logger.info("scenario ended")
+
+    def _wait_for_ego(self) -> None:
+        """Start a wait without an ego, from now."""
+        self._without_ego_since = time.monotonic()
+        self._without_ego_warned = False
+
+    def _check_ego_wait(self) -> None:
+        """Warn, once a wait, when no scenario's ego came for ``ego.wait`` s
+        (wall clock, as the run's own timeouts); the bridge keeps waiting."""
+        if self._active or self._without_ego_warned:
+            return
+        waited = time.monotonic() - self._without_ego_since
+        if waited < self.config.ego_wait:
+            return
+        self._without_ego_warned = True
+        logger.warning(
+            "no ego %r for %.0f s (ego.wait); still waiting for one",
+            self.config.role_name,
+            waited,
+        )
 
     def disconnect(
         self,
@@ -1151,6 +1190,7 @@ class HilsBridge:
                 if self._ego is not None and not self._ego.is_alive:
                     logger.info("the ego is gone")
                     self._finish()
+            self._check_ego_wait()
             return False
         self._last_tick = time.monotonic()
         if not self._active and not self._session:
@@ -1174,6 +1214,7 @@ class HilsBridge:
         for sensor_device in self._sensors:
             sensor_device.flush()
         self._advance(snapshot)
+        self._check_ego_wait()
         return True
 
     def _advance(self, snapshot: "carla.WorldSnapshot") -> None:

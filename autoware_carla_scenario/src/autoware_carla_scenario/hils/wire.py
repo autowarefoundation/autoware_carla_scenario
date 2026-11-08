@@ -53,7 +53,7 @@ COMMAND_FIELDS: Dict[str, Dict[str, str]] = {
     "ackermann": {
         "steer": "rad, the front wheels' angle, positive to the right",
         "steer_speed": "rad/s; 0 steers at once",
-        "speed": "m/s, the target speed",
+        "speed": "m/s, the target speed; negative reverses",
         "acceleration": "m/s^2",
         "jerk": "m/s^3",
     },

@@ -517,7 +517,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         ):
             self._last_ackermann = (steer_rad, speed_mps, acceleration_mps2, jerk_mps3)
         else:
-            # max(0.0, nan) is 0.0 and CARLA would take NaN steering as given.
+            # CARLA would take a NaN steering or speed as given.
             self._refuse_non_finite("Ackermann command")
             last = self._last_ackermann
             if last is None:
@@ -530,7 +530,10 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             _carla.VehicleAckermannControl(
                 steer=float(steer_rad),
                 steer_speed=0.0,
-                speed=float(max(0.0, speed_mps)),
+                # Signed: CARLA's Ackermann controller reverses for a negative
+                # target speed, as Autoware's velocity is negative when it
+                # reverses (it comes to a stop before changing direction).
+                speed=float(speed_mps),
                 acceleration=float(acceleration_mps2),
                 jerk=float(jerk_mps3),
             )
@@ -555,9 +558,14 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
         """
         cached = self._steer_accel
         if cached is None or cached[0] is not command:
+            # Never below zero: a deceleration past standstill is a stop, not
+            # the reverse a negative target speed asks CARLA for.
             target = (
                 source.steering_sign * command.steering_rad,
-                speed_mps + command.acceleration_mps2 * source.speed_horizon_s,
+                max(
+                    0.0,
+                    speed_mps + command.acceleration_mps2 * source.speed_horizon_s,
+                ),
                 command.acceleration_mps2,
                 source.jerk_mps3,
             )

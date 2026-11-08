@@ -51,8 +51,8 @@ A scenario's life, with `ego.entity=hils`:
 3. Every tick the ego's state goes to the ECUs; whenever an ECU sends a
    command message (`inputs`), the bridge forwards the command and the runner
    applies it to the ego.
-4. When the scenario ends the runner sends `end`; the bridge runs the
-   `scenario_end` steps, stops the periodic messages, removes its sensors and
+4. When the scenario ends the runner sends `end`; the bridge removes its
+   sensors, runs the `scenario_end` steps, stops the periodic messages and
    answers `ended`. A run that goes away mid-scenario ends it as well.
 
 A message that cannot be sent on the link ends the link: either side gives a
@@ -155,7 +155,7 @@ devices:
 | `carla.host`, `carla.port` | `localhost`, `2000` | the CARLA server the scenario runs on; the port is a whole number from 1 to 65535 |
 | `carla.timeout` | `10.0` | seconds (positive), for RPCs and for each tick |
 | `ego.role_name` | `Ego` | the runner's ego |
-| `ego.wait` | `120.0` | seconds (not negative) without an ego before a warning (it keeps waiting) |
+| `ego.wait` | `120.0` | seconds (not negative; wall clock) without an ego -- since the bridge reached CARLA, or since the last scenario ended -- before a warning, logged once a wait (it keeps waiting) |
 | `canvas` | none | a carla_canvas configuration: see [carla_canvas](#sensors-rendered-by-carla_canvas) |
 | `clock` | `simulation` | the devices' time: see [Time](#time) |
 | `runner.listen` | `0.0.0.0:7700` | where runs with `ego.entity=hils` reach the bridge: `host:port` or `host` (port 7700); an IPv6 address in brackets, `"[::1]:7700"` or `"[::]"` (quoted: unquoted, YAML reads `[...]` as a list). `"[::]"` also takes IPv4 where the OS supports dual-stack sockets (Linux, by default); elsewhere it is IPv6 only and `0.0.0.0` is for IPv4. An IPv6 address without brackets, such as `::1`, is all host, on port 7700: `fe80::1:7700` is not port 7700 of `fe80::1`. The port is a whole number from 0 to 65535 (0 picks a free one), checked when the file loads; `null`: no run link |
@@ -364,7 +364,12 @@ and forwards it to the run whenever an input arrives. The fields:
 | `commands.mode` | Fields | CARLA |
 | --- | --- | --- |
 | `control` | `throttle`, `brake` (0-1), `steer` (-1-1, positive right), `hand_brake`, `reverse`, `manual_gear_shift` (0/1), `gear` | `VehicleControl` |
-| `ackermann` | `steer` (rad, positive right), `steer_speed` (rad/s), `speed` (m/s), `acceleration` (m/s²), `jerk` (m/s³) | `VehicleAckermannControl` |
+| `ackermann` | `steer` (rad, positive right), `steer_speed` (rad/s), `speed` (m/s; negative reverses), `acceleration` (m/s²), `jerk` (m/s³) | `VehicleAckermannControl` |
+
+An `ackermann` `speed` is signed: CARLA's Ackermann controller engages reverse for
+a negative target speed, once the vehicle is (nearly) standing still, and brakes to
+a stop first when the vehicle is moving the other way. Any negative speed, however
+small, asks for reverse: there is no deadband, so an ECU that means "stop" sends 0.
 
 A value that is not finite (NaN or an infinity: a decoded IEEE-float signal, a
 scale that overflows), or larger in magnitude than a 32-bit float holds (CARLA's
@@ -385,7 +390,7 @@ The run applies the newest command every tick. One older than `hils.stale_s`
 | --- | --- | --- |
 | `startup` | once, when the bridge starts (devices just opened, before CARLA is reached) | the bridge stops (status 1) |
 | `scenario_start` | a scenario starts (the run's `start`, or the ego appearing); the periodic messages are already running, and the run waits for the steps; the sensors are attached after them (even when one fails), so no sensor data measured during the steps is sent | the run fails, with the step's error |
-| `scenario_end` | the scenario ends (the run's `end`, the run going away, or the ego disappearing); then the periodic messages stop and the sensors go | logged; the other steps still run |
+| `scenario_end` | the scenario ends (the run's `end`, the run going away, or the ego disappearing); the sensors go before the steps (nothing they measure meanwhile is queued or sent), and the periodic messages stop after them | logged; the other steps still run |
 | `shutdown` | once, when the bridge stops (Ctrl-C, SIGTERM) | logged; the other steps still run |
 
 ```yaml

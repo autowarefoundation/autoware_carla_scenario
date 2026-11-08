@@ -282,7 +282,12 @@ class CommandArbiter:
 
     Of the sources whose last command arrived at most ``stale_s`` ago, the
     highest priority wins; between equal priorities, the most recent command.
-    When every source is stale, :meth:`select` returns the command that drove
+    "Most recent" is the command read last, in the order :meth:`observe` saw
+    them, not their arrival time: every command polled on one tick shares that
+    tick's time, so the time alone cannot tell which came later.  The
+    transport drains the sources in their configured order, so between
+    equal priorities that each sent a command within one tick, the source
+    configured last wins.  When every source is stale, :meth:`select` returns the command that drove
     last, marked not fresh, so the caller can hold it or brake.
 
     Args:
@@ -290,13 +295,17 @@ class CommandArbiter:
     """
 
     _sources: Dict[str, CommandSourceConfig]
-    _latest: Dict[str, Tuple[Command, int]]
+    _latest: Dict[str, Tuple[Command, int, int]]
     _last: Optional[Selection]
+    _sequence: int
 
     def __init__(self, sources: Sequence[CommandSourceConfig]) -> None:
         self._sources = {source.name: source for source in sources}
+        # Per source: its last command, when it arrived, and its sequence
+        # number, which orders the commands as observe() saw them.
         self._latest = {}
         self._last = None
+        self._sequence = 0
 
     def observe(self, source_name: str, command: Command, now_us: int) -> None:
         """Record *command* from *source_name*, arrived at *now_us*.
@@ -306,12 +315,14 @@ class CommandArbiter:
         """
         if source_name not in self._sources:
             raise KeyError(f"unknown command source {source_name!r}")
-        self._latest[source_name] = (command, now_us)
+        self._sequence += 1
+        self._latest[source_name] = (command, now_us, self._sequence)
 
     def select(self, now_us: int) -> Optional[Selection]:
         """Return the command that drives at *now_us*, or ``None`` before any."""
         best: Optional[Selection] = None
-        for name, (command, received_us) in self._latest.items():
+        best_sequence = 0
+        for name, (command, received_us, sequence) in self._latest.items():
             source = self._sources[name]
             if now_us - received_us > source.stale_us:
                 continue
@@ -319,11 +330,11 @@ class CommandArbiter:
                 best is None
                 or source.priority > best.source.priority
                 or (
-                    source.priority == best.source.priority
-                    and received_us > best.received_us
+                    source.priority == best.source.priority and sequence > best_sequence
                 )
             ):
                 best = Selection(source, command, received_us, fresh=True)
+                best_sequence = sequence
         if best is not None:
             self._last = best
             return best

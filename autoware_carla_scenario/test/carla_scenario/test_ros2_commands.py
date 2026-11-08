@@ -95,6 +95,25 @@ def test_equal_priorities_take_the_most_recent() -> None:
     assert arbiter.select(_us(1.1)).source.name == "other"  # type: ignore[union-attr]
 
 
+def test_equal_priorities_take_the_most_recent_within_one_tick() -> None:
+    """Every command polled on a tick arrives at the tick's time: the order
+    they were observed in, not that time, says which is the most recent."""
+    other = CommandSourceConfig(name="other", kind="control", topic="/o", priority=10)
+    arbiter = CommandArbiter([_SI, other])
+    arbiter.observe("si", _control(1.0), 100)
+    assert arbiter.select(100).source.name == "si"  # type: ignore[union-attr]
+    arbiter.observe("other", _control(2.0), 200)
+    arbiter.observe("si", _control(3.0), 200)
+    assert arbiter.select(200).source.name == "si"  # type: ignore[union-attr]
+    arbiter.observe("si", _control(4.0), 300)
+    arbiter.observe("other", _control(5.0), 300)
+    selection = arbiter.select(300)
+    assert selection is not None
+    assert (selection.source.name, selection.command) == ("other", _control(5.0))
+    # The arrival time is still what freshness is judged by.
+    assert selection.received_us == 300
+
+
 def test_a_newer_command_replaces_the_older_from_the_same_source() -> None:
     arbiter = CommandArbiter([_SI])
     arbiter.observe("si", _control(1.0), _us(1.0))

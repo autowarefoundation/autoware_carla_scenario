@@ -1145,6 +1145,61 @@ def test_a_frame_measured_as_the_scenario_ends_is_not_sent(world: _World) -> Non
         receiver.close()
 
 
+def test_ego_wait_warns_once_a_wait_without_an_ego(
+    world: _World, caplog: pytest.LogCaptureFixture
+) -> None:
+    world.actors.clear()
+    url = _mem()
+    receiver = hilspy.open(url)
+    bridge = _bridge(
+        {
+            "ego": {"wait": 60.0},
+            "devices": {
+                "camera": {"url": url, "sensor": {"blueprint": "sensor.camera.rgb"}}
+            },
+        },
+        world,
+    )
+
+    def warnings() -> int:
+        return sum("ego.wait" in r.getMessage() for r in caplog.records)
+
+    def tick() -> None:
+        world.tick()
+        assert bridge.step()
+
+    try:
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.hils.bridge"):
+            tick()
+            assert warnings() == 0
+            # The wait (wall clock, since the bridge reached CARLA) passes.
+            bridge._without_ego_since -= 61.0
+            tick()
+            assert warnings() == 1
+            # Once a wait; and also without a tick.
+            tick()
+            assert not bridge.step(timeout=0.0)
+            assert warnings() == 1
+            # An ego ends the wait; its scenario ending starts the next.
+            world.actors.append(_Ego(1))
+            bridge._next_scan = 0.0
+            tick()
+            assert bridge.active
+            bridge._without_ego_since -= 61.0
+            tick()
+            assert warnings() == 1
+            bridge._finish()
+            world.actors.clear()
+            tick()
+            assert warnings() == 1
+            bridge._without_ego_since -= 61.0
+            tick()
+            assert warnings() == 2
+    finally:
+        bridge.close()
+        receiver.close()
+
+
 def test_after_a_new_ego_only_its_sensor_frames_are_sent(world: _World) -> None:
     bridge, receiver = _camera(world)
     try:
@@ -1903,15 +1958,24 @@ def test_without_a_run_the_ego_appearing_starts_the_scenario(
 
 
 def _sensor_bridge(
-    world: _World, dbc: Path, clock: str, ready_timeout: float = 5.0
+    world: _World,
+    dbc: Path,
+    clock: str,
+    ready_timeout: float = 5.0,
+    end_wait: bool = False,
 ) -> tuple[Any, Any, Any]:
     """A bridge with the CAN device's lifecycle and a camera, its ECU's end of
-    the bus, and the camera's receiver."""
+    the bus, and the camera's receiver.  With *end_wait*, the scenario_end
+    steps wait for the ECU's EcuStatus(Ready=0) after putting it to sleep."""
     from autoware_carla_scenario.hils.bridge import HilsBridge
 
     can, camera = _mem(), _mem()
     document = _hils_config(can, dbc, runner={"listen": None}, clock=clock)
     document["lifecycle"]["scenario_start"][1]["timeout"] = ready_timeout
+    if end_wait:
+        document["lifecycle"]["scenario_end"].append(
+            {"wait": "can", "name": "EcuStatus", "fields": {"Ready": 0}, "timeout": 5}
+        )
     document["devices"]["camera"] = {
         "url": camera,
         "sensor": {"blueprint": "sensor.camera.rgb"},
@@ -1998,6 +2062,60 @@ def test_the_scenario_start_steps_waiting_queue_no_measurement(
         assert max(queued) == 0
         assert device._received.qsize() == 0
         assert device.attached
+    finally:
+        bridge.close()
+        ecu.close()
+        receiver.close()
+
+
+def test_the_scenario_end_steps_waiting_queue_no_measurement(
+    world: _World, dbc: Path
+) -> None:
+    bridge, ecu, receiver = _sensor_bridge(world, dbc, "simulation", end_wait=True)
+    [device] = bridge._sensors
+    queued: List[int] = []
+    failed: List[BaseException] = []
+
+    def put_to_sleep() -> None:
+        # The ECU's side of the scenario_end steps: once put to sleep (the
+        # bridge then waits for its EcuStatus), every sensor still listening
+        # fires, as CARLA's ticks would while the runner cleans up.
+        try:
+            deadline = time.monotonic() + 5.0
+            while True:
+                assert time.monotonic() < deadline, "the bridge sent no Wake(On=0)"
+                message = ecu.recv(0.05)
+                if (
+                    message is not None
+                    and message.name == "Wake"
+                    and message["On"] == 0
+                ):
+                    break
+            for i in range(200):
+                for sensor in list(world.sensors):
+                    if sensor.callback is not None:
+                        sensor.callback(_frame(b"ENDED-FRAME-%04d" % i))
+                queued.append(device._received.qsize())
+            ecu.send("EcuStatus", {"Ready": 0})
+        except BaseException as exc:  # noqa: BLE001 - reported by the test
+            failed.append(exc)
+
+    try:
+        ecu_side, _, start_failed = _fire_while_the_ecu_wakes(world, ecu, device, 0)
+        bridge._begin(world.actors[0], "")
+        ecu_side.join(5.0)
+        assert not ecu_side.is_alive() and start_failed == []
+        assert device.attached
+        end_side = _start(put_to_sleep)
+        bridge._finish()
+        end_side.join(5.0)
+        assert not end_side.is_alive() and failed == []
+        assert len(queued) == 200
+        assert max(queued) == 0
+        assert not device.attached
+        world.tick()
+        bridge.step()
+        assert _drain(receiver) == []
     finally:
         bridge.close()
         ecu.close()
@@ -2344,6 +2462,16 @@ def test_an_ackermann_command_drives_carlas_controller() -> None:
     entity.on_tick(None, 0.0)
     control = entity.actor.controls[-1]
     assert (control.steer, control.speed) == (pytest.approx(0.1), pytest.approx(5.0))
+
+
+def test_a_negative_ackermann_speed_reaches_carla_signed() -> None:
+    """CARLA's Ackermann controller reverses for a negative target speed: an
+    ECU's reverse is not turned into a stop."""
+    command = {"type": "command", "mode": "ackermann", "speed": -2.5}
+    entity = _entity(_ScriptedBridge([{"type": "ready"}, command]).port)
+    assert _ticked(entity, lambda: entity.command is not None)
+    entity.on_tick(None, 0.0)
+    assert entity.actor.controls[-1].speed == pytest.approx(-2.5)
 
 
 def test_the_runner_builds_the_hils_entity() -> None:
@@ -2873,6 +3001,58 @@ def test_a_line_reader_refuses_what_is_not_a_message_and_reads_on() -> None:
         a.sendall(b'{"type": "hello"}\n')
         assert reader.read(timeout=1.0) == [{"type": "hello"}]
         assert not reader.closed
+
+
+def test_a_line_reader_returns_the_messages_before_a_bad_line_first() -> None:
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    a, b = socket.socketpair()
+    with a, b:
+        reader = LineReader(b)
+        a.sendall(b'{"type":"x"}\n{"type":"y"}\nnotjson\n{"type":"z"}\n')
+        assert reader.read(timeout=1.0) == [{"type": "x"}, {"type": "y"}]
+        with pytest.raises(ValueError, match="not a message: b'notjson'"):
+            reader.read(timeout=1.0)
+        assert reader.read(timeout=1.0) == [{"type": "z"}]
+        assert not reader.closed
+        # A bad line first raises at once, as before.
+        a.sendall(b'[1]\n{"type":"w"}\n')
+        with pytest.raises(ValueError, match="not a message"):
+            reader.read(timeout=1.0)
+        assert reader.read(timeout=1.0) == [{"type": "w"}]
+
+
+def test_a_line_reader_raises_a_held_back_refusal_before_it_is_closed() -> None:
+    """A bad line and the peer closing in one chunk: the messages before it
+    first, then its refusal, and only then closed -- a caller reading until
+    closed still hears why."""
+    import socket
+
+    from autoware_carla_scenario.hils.protocol import LineReader
+
+    a, b = socket.socketpair()
+    with b:
+        reader = LineReader(b)
+        a.sendall(b'{"type":"ended"}\nnotjson\n')
+        a.close()
+        messages: List[Any] = []
+        while not messages:
+            messages = reader.read(timeout=1.0)
+        assert messages == [{"type": "ended"}]
+        assert not reader.closed
+        with pytest.raises(ValueError, match="not a message: b'notjson'"):
+            reader.read(timeout=1.0)
+        assert reader.read(timeout=1.0) == []
+        assert reader.closed
+        # However the stream came apart, a held-back refusal keeps the reader
+        # open until it is raised.
+        reader._refused = ValueError("not a message: held back")
+        assert not reader.closed
+        with pytest.raises(ValueError, match="held back"):
+            reader.read(timeout=1.0)
+        assert reader.closed
 
 
 def test_a_line_reader_refuses_an_overlong_line_without_rescanning_it() -> None:
