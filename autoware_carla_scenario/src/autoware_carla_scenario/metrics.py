@@ -149,7 +149,8 @@ STEERING_REVERSALS = "steering_reversals"
 #: hazard), not AlpaSim's.
 TURN_INDICATOR_CHANGES = "turn_indicator_changes"
 #: Seconds until the ego hits a road user ahead in its lane, both holding
-#: their acceleration (CriMe's TTC); ``inf`` when they never meet.
+#: their acceleration until they stop (CriMe's TTC); ``inf`` when they never
+#: meet.
 CRIME_TTC_S = "crime_ttc_s"
 #: Seconds until the ego reaches where the road user ahead is now (CriMe's
 #: THW, time headway).
@@ -167,14 +168,18 @@ CRIME_TTCE_S = "crime_ttce_s"
 #: distance of closest encounter); ``0`` when they would collide.
 CRIME_DCE_M = "crime_dce_m"
 #: The longitudinal acceleration the ego needs not to hit the road user ahead,
-#: m/s^2, negative to brake (CriMe's ALongReq).
+#: m/s^2, negative to brake (CriMe's ALongReq): the least deceleration that
+#: avoids it, counting a contact within the prediction horizon (``horizon_s``,
+#: 3 s by default) after the ego has stopped; ``-inf`` when braking alone
+#: cannot avoid a contact within it.
 CRIME_A_LONG_REQ_MPS2 = "crime_a_long_req_mps2"
 #: The lateral acceleration the ego needs to steer clear of a road user, m/s^2
 #: (CriMe's ALatReq).
 CRIME_A_LAT_REQ_MPS2 = "crime_a_lat_req_mps2"
 #: The deceleration the ego needs not to hit the road user ahead over the most
 #: it can brake (CriMe's BTN, brake threat number): above ``1`` braking alone
-#: no longer avoids it.
+#: no longer avoids it; ``inf`` when no braking avoids a contact within the
+#: prediction horizon (``horizon_s``, 3 s by default).
 CRIME_BTN = "crime_btn"
 #: The lateral acceleration the ego needs to steer clear of a road user over the
 #: most it can steer (CriMe's STN, steer threat number): above ``1`` steering
@@ -1307,8 +1312,8 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             title="Time to collision (CriMe)",
             unit="s",
             text="Seconds until the ego hits a road user ahead in its lane, "
-            "both holding their acceleration; inf when they never meet "
-            "(CriMe TTC)",
+            "both holding their acceleration until they stop; inf when they "
+            "never meet (CriMe TTC)",
             aggregation="min",
         ),
         Metric(
@@ -1362,7 +1367,9 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             title="Required deceleration (CriMe)",
             unit="m/s^2",
             text="The longitudinal acceleration the ego needs not to hit the "
-            "road user ahead, negative to brake (CriMe ALongReq)",
+            "road user ahead, negative to brake; -inf when braking alone "
+            "cannot avoid a contact within the prediction horizon "
+            "(horizon_s, 3 s by default) (CriMe ALongReq)",
             aggregation="min",
         ),
         Metric(
@@ -1381,7 +1388,8 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             unit="ratio",
             text="The deceleration the ego needs not to hit the road user "
             "ahead over the most it can brake; above 1 braking alone no "
-            "longer avoids it (CriMe BTN)",
+            "longer avoids it, inf when no braking avoids a contact within "
+            "the prediction horizon (horizon_s, 3 s by default) (CriMe BTN)",
             aggregation="max",
         ),
         Metric(

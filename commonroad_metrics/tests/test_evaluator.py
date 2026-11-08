@@ -9,12 +9,14 @@ turned) would be off by its cosine, 0.8.
 
 from __future__ import annotations
 
+import copy
 import io
 import json
 import math
 import os
 import subprocess
 import sys
+from dataclasses import replace
 from pathlib import Path
 
 import pytest
@@ -148,10 +150,299 @@ def test_sharing_the_frame_changes_no_value() -> None:
             [on_road(130, 1.75, 10.0, 2), on_road(90, 1.75, 25.0, 3), on_road(120, 5.25, 0.0, 4)],
         ),
     ]
-    braking = Actor(**{**on_road(70, 1.75, 10.0, 5).__dict__, "ax": -3.0 * COS, "ay": -3.0 * SIN})
-    frames.append((on_road(50, 1.75, 14.0, 1), [braking]))
+    frames.append((on_road(50, 1.75, 14.0, 1), [braking(on_road(70, 1.75, 10.0, 5), 3.0)]))
+    oncoming = replace(on_road(90, 1.75, -10.0, 6), yaw=HEADING + math.pi)
+    frames.append((on_road(50, 1.75, 10.0, 1), [oncoming]))
     for ego, others in frames:
         assert shared.evaluate(ego, others, crime) == copied.evaluate(ego, others, crime)
+
+
+def braking(actor: Actor, deceleration: float) -> Actor:
+    """*actor* braking at *deceleration* m/s^2 along the road."""
+    return replace(actor, ax=-deceleration * COS, ay=-deceleration * SIN)
+
+
+def test_a_braking_lead_closes_the_gap() -> None:
+    """CriMe 0.4 reads the lead's deceleration without its sign, as speeding
+    up (TTC ``inf``, ALongReq ``0``); read with it, both copying and sharing
+    the frame."""
+    ego = on_road(50, 1.75, 15.0, 1)
+    # A 20 m gap centre to centre less the two half lengths, the same speed.
+    lead = braking(on_road(74.5, 1.75, 15.0, 2), 5.0)
+    keys = ["crime_hw_m", "crime_ttc_s", "crime_a_long_req_mps2", "crime_btn"]
+    for share_frame in (True, False):
+        values, errors = Evaluator(str(MAP), EvaluatorSettings(share_frame=share_frame)).evaluate(
+            ego, [lead], keys
+        )
+        assert errors == {}
+        assert values["crime_hw_m"] == pytest.approx(20.0, abs=0.1)
+        # 20 = 0.5 * 5 * t^2, before the lead stops (at 3 s).
+        assert values["crime_ttc_s"] == pytest.approx(math.sqrt(8.0), abs=0.02)
+        # The lead stops 22.5 m on: the ego stops behind it braking at
+        # 15^2 / (2 * 42.5), less than the lead's own 5 m/s^2 (which CriMe's
+        # constant acceleration, the lead never stopping, would ask for).
+        assert values["crime_a_long_req_mps2"] == pytest.approx(-225.0 / 85.0, abs=0.01)
+        assert values["crime_btn"] == pytest.approx(2.65 / 11.5, abs=1e-3)
+
+
+def test_a_lead_stopping_before_the_ego_reaches_it(evaluator: Evaluator) -> None:
+    """A lead braking to a stop stays where it stops rather than reversing,
+    as the worker predicts every road user."""
+    ego = on_road(50, 1.75, 5.0, 1)
+    # A 10 m gap; the lead stops after 0.5 s and 0.5 m.
+    lead = braking(on_road(64.5, 1.75, 2.0, 2), 4.0)
+    values, errors = evaluator.evaluate(
+        ego, [lead], ["crime_hw_m", "crime_ttc_s", "crime_a_long_req_mps2"]
+    )
+    assert errors == {}
+    assert values["crime_hw_m"] == pytest.approx(10.0, abs=0.1)
+    # The ego reaches where the lead stopped, 10.5 m on: not the 1.61 s of a
+    # lead reversing.
+    assert values["crime_ttc_s"] == pytest.approx(2.1, abs=0.02)
+    assert values["crime_a_long_req_mps2"] == pytest.approx(-25.0 / 21.0, abs=0.01)
+
+
+def test_a_queue_creeping_to_a_halt_is_no_conflict(evaluator: Evaluator) -> None:
+    """A stopped ego 2 m behind a car creeping to a halt (4 cm on): CriMe's
+    constant acceleration would bring the car back into the ego."""
+    ego = on_road(50, 1.75, 0.0, 1)
+    lead = braking(on_road(56.5, 1.75, 0.5, 2), 3.0)
+    keys = ["crime_ttc_s", "crime_a_long_req_mps2", "crime_btn", "crime_a_lat_req_mps2"]
+    values, errors = evaluator.evaluate(ego, [lead], keys)
+    assert errors == {}
+    assert values == {
+        "crime_ttc_s": math.inf,
+        "crime_a_long_req_mps2": 0.0,
+        "crime_btn": 0.0,
+        "crime_a_lat_req_mps2": 0.0,
+    }
+
+
+def test_a_braking_car_behind_needs_no_braking(evaluator: Evaluator) -> None:
+    ego = on_road(50, 1.75, 10.0, 1)
+    follower = braking(on_road(30, 1.75, 10.0, 2), 4.0)
+    values, errors = evaluator.evaluate(
+        ego, [follower], ["crime_ttc_s", "crime_a_long_req_mps2", "crime_btn"]
+    )
+    assert errors == {}
+    assert values == {"crime_ttc_s": math.inf, "crime_a_long_req_mps2": 0.0, "crime_btn": 0.0}
+
+
+def test_the_contact_time_stops_both_rather_than_reversing() -> None:
+    from commonroad_metrics.evaluator import _contact_time
+
+    # Constant speeds: the gap over the closing speed.
+    assert _contact_time(20.0, 15.0, 0.0, 5.0, 0.0) == pytest.approx(2.0)
+    # The ego stops 10 m on, short of a stopped car 12 m ahead.
+    assert _contact_time(12.0, 10.0, -5.0, 0.0, 0.0) == math.inf
+    # The lead stops 5 m on (at 1 s); the ego, braking too, reaches 20 m when
+    # 10 t - t^2 = 20.
+    assert _contact_time(15.0, 10.0, -2.0, 10.0, -10.0) == pytest.approx(5.0 - math.sqrt(5.0))
+    # A car standing with its acceleration backwards stays (never reverses).
+    assert _contact_time(10.0, 5.0, 0.0, 0.0, -3.0) == pytest.approx(2.0)
+    # Already touching and closing.
+    assert _contact_time(0.0, 5.0, 0.0, 0.0, 0.0) == 0.0
+    # Opening.
+    assert _contact_time(5.0, 5.0, 0.0, 10.0, 0.0) == math.inf
+
+
+def test_an_oncoming_car_in_the_ego_lane_closes_the_gap() -> None:
+    """A car coming the other way in the ego's lane reads as coming, not as
+    going the ego's way."""
+    ego = on_road(50, 1.75, 10.0, 1)
+    oncoming = replace(on_road(94.5, 1.75, -10.0, 2), yaw=HEADING + math.pi)
+    keys = ["crime_hw_m", "crime_ttc_s", "crime_a_long_req_mps2", "crime_btn"]
+    for share_frame in (True, False):
+        values, errors = Evaluator(str(MAP), EvaluatorSettings(share_frame=share_frame)).evaluate(
+            ego, [oncoming], keys
+        )
+        assert errors == {}
+        assert values["crime_hw_m"] == pytest.approx(40.0, abs=0.1)
+        # Closing at 20 m/s.
+        assert values["crime_ttc_s"] == pytest.approx(2.0, abs=0.02)
+        # It keeps coming: the ego, braking at A, stops 10 / A s and 50 / A m
+        # on, and must not be reached for the 3 s horizon after: the car,
+        # 40 - 50 / A m off then, takes (40 - 50 / A) / 10 > 3 s, so A > 15.
+        assert values["crime_a_long_req_mps2"] == pytest.approx(-15.0, abs=0.02)
+        assert values["crime_btn"] == pytest.approx(15.0 / 11.5, abs=1e-3)
+    # Braking at 2 m/s^2 itself, it stops 25 m on, at 5 s: within the horizon
+    # after the ego stops, so the ego must stop short of that point, 15 m on.
+    # (Not CriMe's speed matching -3, which leaves the ego moving as they meet.)
+    braking_oncoming = replace(oncoming, ax=2.0 * COS, ay=2.0 * SIN)
+    values, errors = Evaluator(str(MAP)).evaluate(ego, [braking_oncoming], keys)
+    assert errors == {}
+    assert values["crime_a_long_req_mps2"] == pytest.approx(-100.0 / 30.0, abs=0.01)
+    # 5 m apart, 20 m/s closing: it reaches the ego within the horizon
+    # however hard it brakes.
+    close = replace(oncoming, x=ego.x + 9.5 * COS, y=ego.y + 9.5 * SIN)
+    values, errors = Evaluator(str(MAP)).evaluate(ego, [close], keys)
+    assert errors == {}
+    assert values["crime_a_long_req_mps2"] == -math.inf
+    assert values["crime_btn"] == math.inf
+
+
+def test_a_slow_approach_beyond_the_horizon_needs_no_more_than_a_stop() -> None:
+    """A road user that would reach a standing ego only long after the
+    horizon is not one braking must avoid: a pedestrian crossing the lane a
+    little towards the ego, a car rolling back."""
+    evaluator = Evaluator(str(MAP))
+    keys = ["crime_a_long_req_mps2", "crime_btn"]
+    ego = on_road(50, 1.75, 10.0, 1)
+    values = {}
+    for degrees in (90.0, 95.0):
+        yaw = HEADING + math.radians(degrees)
+        pedestrian = replace(
+            on_road(110, 1.75, 0.0, 2),
+            kind="pedestrian",
+            yaw=yaw,
+            vx=1.4 * math.cos(yaw),
+            vy=1.4 * math.sin(yaw),
+            length=0.5,
+            width=0.5,
+        )
+        values[degrees], errors = evaluator.evaluate(ego, [pedestrian], keys)
+        assert errors == {}
+    # Stopping short of it, 57.5 m ahead: 10^2 / (2 * 57.5); and about the
+    # same with it coming 0.12 m/s towards the ego.
+    assert values[90.0]["crime_a_long_req_mps2"] == pytest.approx(-0.87, abs=0.01)
+    assert values[95.0]["crime_a_long_req_mps2"] == pytest.approx(-0.90, abs=0.005)
+    assert values[95.0]["crime_btn"] < 0.1
+    # A stopped ego, a car 40 m ahead rolling back at 0.2 m/s (TTC 200 s).
+    rolling = replace(on_road(94.5, 1.75, 0.0, 2), vx=-0.2 * COS, vy=-0.2 * SIN)
+    values_rolling, errors = evaluator.evaluate(on_road(50, 1.75, 0.0, 1), [rolling], keys)
+    assert errors == {}
+    assert values_rolling == {"crime_a_long_req_mps2": 0.0, "crime_btn": 0.0}
+
+
+def test_the_required_deceleration_is_the_least_that_avoids_contact() -> None:
+    """ALongReq in the model TTC reads: each holding its acceleration until it
+    stops.  Continuous across a lead's acceleration of 0 on an opening gap,
+    where CriMe's formula reads -v_rel^2 / (2 gap) for a lead that never comes
+    back."""
+    from commonroad_metrics.evaluator import _contact_time, _required_deceleration
+
+    # A stopped ego, a lead pulling away at 10 m/s 2 m ahead.
+    for a_other in (0.0, 0.01, -0.01):
+        assert _required_deceleration(2.0, 0.0, 10.0, a_other, 1) == 0.0
+    # The ego at 10 m/s, a lead pulling away at 15 m/s 20 m ahead.
+    for a_other in (0.0, 0.01):
+        assert _required_deceleration(20.0, 10.0, 15.0, a_other, 1) == 0.0
+    # ... braking slightly: it stops 15^2 / 0.02 = 11250 m on, and the ego
+    # must stop behind that; next to nothing.
+    assert _required_deceleration(20.0, 10.0, 15.0, -0.01, 1) == pytest.approx(
+        -100.0 / (2 * 11270.0), rel=1e-6
+    )
+    # A closing gap, a lead at constant speed: CriMe's v_rel^2 / (2 gap).
+    assert _required_deceleration(25.5, 15.0, 5.0, 0.0, 1) == pytest.approx(-100.0 / 51.0)
+    # Cars coming the other way, braking to a stop where the ego must stop
+    # short of: 40 - 25 m, 2 - 0.9 m, 20 - 10 m ahead.
+    cases = [
+        (40.0, 10.0, -10.0, 2.0, -100.0 / 30.0),
+        (2.0, 20.0, -3.0, 5.0, -400.0 / 2.2),
+        (20.0, 20.0, -10.0, 5.0, -20.0),
+    ]
+    for gap, v_ego, v_other, a_other, expected in cases:
+        a_req = _required_deceleration(gap, v_ego, v_other, a_other, 1)
+        assert a_req == pytest.approx(expected, rel=1e-6)
+        assert _contact_time(gap, v_ego, a_req, v_other, a_other) == math.inf
+        assert _contact_time(gap, v_ego, a_req * 0.99, v_other, a_other) < math.inf
+    # One that reaches the ego even stopped.
+    assert _required_deceleration(5.0, 10.0, -10.0, 1.0, 1) == -math.inf
+    # Within a horizon: the cars above stop within 3 s of the ego stopping.
+    for gap, v_ego, v_other, a_other, expected in cases:
+        assert _required_deceleration(gap, v_ego, v_other, a_other, 1, 3.0) == pytest.approx(
+            expected, rel=1e-6
+        )
+    assert _required_deceleration(25.5, 15.0, 5.0, 0.0, 1, 3.0) == pytest.approx(-100.0 / 51.0)
+    # A car coming at a standing ego, reaching it only after the horizon.
+    assert _required_deceleration(40.0, 0.0, -0.2, 0.0, 1, 3.0) == 0.0
+    assert _required_deceleration(5.0, 10.0, -10.0, 0.0, 1, 3.0) == -math.inf
+    # Cars coming at constant speed: the ego, braking at A from v, stops
+    # v / A s and v^2 / (2 A) m on, and must not be reached for 3 s after,
+    # gap - v^2 / (2 A) > u (v / A + 3).
+    for gap, v_ego, u in [(200.0, 20.0, 10.0), (120.0, 20.0, 10.0), (100.0, 25.0, 5.0)]:
+        expected = -(v_ego**2 / 2 + u * v_ego) / (gap - 3.0 * u)
+        a_req = _required_deceleration(gap, v_ego, -u, 0.0, 1, 3.0)
+        assert a_req == pytest.approx(expected, rel=1e-6)
+    assert _required_deceleration(200.0, 20.0, -10.0, 0.0, 1, 3.0) == pytest.approx(
+        -2.353, abs=1e-3
+    )
+    # One behind.
+    assert _required_deceleration(math.inf, 10.0, 10.0, -4.0, 1) == 0.0
+
+
+_LONG_STRAIGHT = """<?xml version="1.0" encoding="UTF-8"?>
+<commonRoad timeStepSize="0.1" commonRoadVersion="2020a" author="test" affiliation=""
+  source="test" benchmarkID="ZAM_Long-1_1_T-1" date="2026-01-01">
+  <scenarioTags><simulated/></scenarioTags>
+  <lanelet id="1">
+    <leftBound>
+      <point><x>0.0</x><y>3.5</y></point>
+      <point><x>400.0</x><y>3.5</y></point>
+    </leftBound>
+    <rightBound>
+      <point><x>0.0</x><y>0.0</y></point>
+      <point><x>400.0</x><y>0.0</y></point>
+    </rightBound>
+    <laneletType>urban</laneletType>
+  </lanelet>
+</commonRoad>
+"""
+
+
+def test_a_long_straight_lanelet_is_kept_from_its_middle(tmp_path: Path) -> None:
+    """A straight lanelet is just its two end points: 200 m from both, the
+    ego is still on it."""
+    path = tmp_path / "long.xml"
+    path.write_text(_LONG_STRAIGHT)
+    evaluator = Evaluator(str(path), EvaluatorSettings(radius_m=100.0))
+    ego = Actor(1, "car", 200.0, 1.75, 0.0, vx=15.0)
+    lead = Actor(2, "car", 230.0, 1.75, 0.0, vx=5.0)
+    keys = ["crime_ttc_s", "crime_hw_m", "reach_drivable_area_m2"]
+    values, errors = evaluator.evaluate(ego, [lead], keys)
+    assert errors == {}
+    assert values["crime_hw_m"] == pytest.approx(25.5, abs=0.1)
+    assert values["crime_ttc_s"] == pytest.approx(2.55, abs=0.05)
+    assert values["reach_drivable_area_m2"] > 0.0
+
+
+def test_the_reachable_set_reads_the_ego_footprint(evaluator: Evaluator) -> None:
+    """Reach inflates the other road users by the ego's half width (its
+    inscribed circle) and approximates the ego by discs of its own box, not
+    its default vehicle's."""
+    from commonroad_metrics.evaluator import _set_ego_footprint
+
+    config = copy.deepcopy(evaluator._reach_base_config())
+    _set_ego_footprint(config, 5.0, 2.1)
+    assert config.vehicle.ego.radius_inflation == pytest.approx(1.05)
+    assert config.vehicle.ego.radius_disc == pytest.approx(math.hypot(5.0 / 6, 1.05))
+    assert config.vehicle.ego.circle_distance == pytest.approx(5.0 * 2 / 3)
+
+    def area(width: float) -> float:
+        ego = replace(on_road(50, 1.75, 15.0, 1), width=width)
+        values, errors = evaluator.evaluate(
+            ego,
+            [on_road(70, 1.75, 0.0, 2), on_road(70, 5.25, 0.0, 3)],
+            ["reach_drivable_area_m2"],
+        )
+        assert errors == {}
+        return values["reach_drivable_area_m2"]
+
+    assert area(2.1) < area(1.6)
+
+
+def test_a_reversing_ego_reaches_backwards(evaluator: Evaluator) -> None:
+    forward, _ = evaluator.evaluate(on_road(50, 1.75, 3.0, 1), [], ["reach_drivable_area_m2"])
+    backward, errors = evaluator.evaluate(
+        on_road(50, 1.75, -3.0, 1), [], ["reach_drivable_area_m2"]
+    )
+    assert errors == {}
+    assert backward["reach_drivable_area_m2"] > 0.0
+    assert backward["reach_drivable_area_m2"] != forward["reach_drivable_area_m2"]
+    # Faster backwards than Reach's default vehicle reverses (13.9 m/s).
+    fast, errors = evaluator.evaluate(on_road(50, 1.75, -20.0, 1), [], ["reach_drivable_area_m2"])
+    assert errors == {}
+    assert fast["reach_drivable_area_m2"] > 0.0
 
 
 def test_the_threat_numbers_are_the_required_accelerations_over_the_most(

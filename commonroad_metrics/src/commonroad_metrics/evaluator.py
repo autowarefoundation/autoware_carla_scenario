@@ -232,6 +232,19 @@ class Evaluator:
             lanelet.lanelet_id: np.asarray(lanelet.center_vertices)
             for lanelet in self._network.lanelets
         }
+        # Every segment of every lanelet's centre line, and whose it is: a
+        # straight lanelet is just its two end points, and its middle can be
+        # near the ego with both ends far off.
+        starts, ends, owners = [], [], []
+        for lanelet_id, centre in self._centres.items():
+            if len(centre) == 1:
+                centre = np.vstack([centre, centre])
+            starts.append(centre[:-1])
+            ends.append(centre[1:])
+            owners.append(np.full(len(centre) - 1, lanelet_id))
+        self._segment_starts = np.concatenate(starts) if starts else np.zeros((0, 2))
+        self._segment_ends = np.concatenate(ends) if ends else np.zeros((0, 2))
+        self._segment_owners = np.concatenate(owners) if owners else np.zeros(0, dtype=int)
 
     # ------------------------------------------------------------------
     # The scenario of a frame
@@ -245,11 +258,11 @@ class Evaluator:
 
         radius = self.settings.radius_m
         point = np.array([x, y])
-        kept = {
-            lanelet_id
-            for lanelet_id, centre in self._centres.items()
-            if float(np.min(np.linalg.norm(centre - point, axis=1))) <= radius
-        }
+        # A lanelet is kept when its centre line comes within the radius --
+        # anywhere along it, not only at its vertices -- and always when
+        # (x, y) is on it.
+        kept = {int(i) for i in self._segment_owners[self._segment_distances(point) <= radius]}
+        kept.update(self._network.find_lanelet_by_position([point])[0])
         # Each part is turned before it is added: the network indexes where its
         # lanelets are as they are added, and turning it after would leave the
         # index where the map was.
@@ -269,6 +282,15 @@ class Evaluator:
                 light.translate_rotate(-point, angle)
                 network.add_traffic_light(light, set())
         return network
+
+    def _segment_distances(self, point: np.ndarray) -> np.ndarray:
+        """How far *point* is from each segment of the lanelets' centre lines."""
+        a, b = self._segment_starts, self._segment_ends
+        ab = b - a
+        length2 = np.einsum("ij,ij->i", ab, ab)
+        t = np.einsum("ij,ij->i", point - a, ab) / np.where(length2 > 0.0, length2, 1.0)
+        nearest = a + np.clip(t, 0.0, 1.0)[:, None] * ab
+        return np.asarray(np.linalg.norm(nearest - point, axis=1))
 
     def _alignment(self, ego: Actor) -> float | None:
         """The angle that turns the lane under the ego to run along +x (nearly:
@@ -406,10 +428,12 @@ class Evaluator:
 
         config = self._crime_config()
         config.update(ego_id=ego_id, sce=scenario)
+        signed = _signed_crime_measures()
         with _shared_frame() if self.settings.share_frame else nullcontext():
             for key in wanted:
+                name = CRIME_MEASURES[key]
                 try:
-                    measure = getattr(crime_measure, CRIME_MEASURES[key])(config)
+                    measure = signed.get(name, getattr(crime_measure, name))(config)
                     value = _finite_or_none(measure.compute_criticality(0, verbose=False))
                     if key == CRIME_TTR_S and value == -math.inf:
                         value = 0.0
@@ -479,11 +503,13 @@ class Evaluator:
 
         horizon = self.settings.horizon_steps
         speed = math.hypot(ego.vx, ego.vy)
+        # Signed along where the ego heads: a reversing ego goes backwards.
+        velocity = math.copysign(speed, _along_lane(ego.vx, ego.vy, ego.yaw))
         initial = InitialState(
             time_step=start,
             position=np.array([ego.x, ego.y]),
             orientation=ego.yaw,
-            velocity=speed,
+            velocity=velocity,
             acceleration=0.0,
             yaw_rate=0.0,
             slip_angle=0.0,
@@ -501,10 +527,10 @@ class Evaluator:
 
         config = copy.deepcopy(self._reach_base_config())
         config.planning.steps_computation = horizon - start
-        config.vehicle.ego.length = ego.length
-        config.vehicle.ego.width = ego.width
+        _set_ego_footprint(config, ego.length, ego.width)
         config.vehicle.ego.v_max = max(config.vehicle.ego.v_max, speed + 1.0)
         config.vehicle.ego.v_lon_max = max(config.vehicle.ego.v_lon_max, speed + 1.0)
+        config.vehicle.ego.v_lon_min = min(config.vehicle.ego.v_lon_min, velocity - 1.0)
         config.update(scenario=frame.others, planning_problem=problem, CLCS=frame.clcs)
         if frame.checker is None:
             # One collision checker for every reachable set of the frame: the
@@ -703,6 +729,328 @@ def _shared_frame() -> Iterator[None]:
     finally:
         base.copy, base.CriMeBase._update_clcs = module_copy, method
         solver.smoothing_reference_path = smooth
+
+
+def _along_lane(x: float, y: float, heading: float) -> float:
+    """The component of the vector ``(x, y)`` along a lane heading *heading*,
+    signed: negative against the lane."""
+    return x * math.cos(heading) + y * math.sin(heading)
+
+
+def _stopping_time(v: float, a: float) -> float:
+    """When a road user at velocity *v* and acceleration *a* along the lane
+    stops (s): it decelerates to a stop and stays there rather than
+    reversing, as :meth:`Evaluator._obstacle` predicts it; ``0`` for one
+    standing with its acceleration backwards (it never reverses), ``inf``
+    when it does not decelerate."""
+    if v * a < 0.0:
+        return -v / a
+    if v == 0.0 and a < 0.0:
+        return 0.0
+    return math.inf
+
+
+def _quadratic_roots(c0: float, c1: float, c2: float) -> list[float]:
+    """The real roots of ``c0 + c1 t + c2 t^2``, in the numerically stable
+    form (no cancellation between ``-c1`` and the discriminant's root)."""
+    if abs(c2) < 1e-12:
+        return [-c0 / c1] if c1 != 0.0 else []
+    disc = c1 * c1 - 4.0 * c2 * c0
+    if disc < 0.0:
+        return []
+    q = -0.5 * (c1 + math.copysign(math.sqrt(disc), c1))
+    roots = [q / c2]
+    if q != 0.0:
+        roots.append(c0 / q)
+    return roots
+
+
+def _contact_time(gap: float, v_ego: float, a_ego: float, v_other: float, a_other: float) -> float:
+    """When the ego, *gap* behind the road user ahead, reaches it (s); ``inf``
+    when it never does.
+
+    Each holds its acceleration along the lane until it stops, and then
+    stays (:func:`_stopping_time`): Jansson's constant acceleration TTC
+    ((5.24)-(5.26) in "Collision Avoidance Theory", CriMe's TTC) with no one
+    reversing.  Unlike CriMe's, a road user braking to a stop is not
+    extrapolated backwards: a car creeping to a halt ahead of a stopped ego
+    never meets it.  The gap is piecewise quadratic in time, between the
+    times either stops; its first zero is the contact.
+    """
+    t_ego, t_other = _stopping_time(v_ego, a_ego), _stopping_time(v_other, a_other)
+    users = ((1.0, v_other, a_other, t_other), (-1.0, v_ego, a_ego, t_ego))
+
+    def coefficients(lo: float) -> tuple[float, float, float]:
+        # gap(t) = c0 + c1 t + c2 t^2 from *lo* to the next stop.
+        c0, c1, c2 = gap, 0.0, 0.0
+        for sign, v, a, stop in users:
+            if lo >= stop:
+                c0 += sign * (v * stop + 0.5 * a * stop * stop)
+            else:
+                c1 += sign * v
+                c2 += sign * 0.5 * a
+        return c0, c1, c2
+
+    if gap <= 0.0:
+        _, c1, c2 = coefficients(0.0)
+        if c1 < 0.0 or (c1 == 0.0 and c2 < 0.0):
+            return 0.0
+    bounds = sorted({0.0, t_ego, t_other, math.inf})
+    for lo, hi in zip(bounds, bounds[1:], strict=False):
+        roots = _quadratic_roots(*coefficients(lo))
+        found = [t for t in roots if t > 0.0 and lo - 1e-9 <= t <= hi + 1e-9]
+        if found:
+            return min(found)
+    return math.inf
+
+
+def _required_deceleration(
+    gap: float,
+    v_ego: float,
+    v_other: float,
+    a_other: float,
+    mode: int,
+    horizon: float = math.inf,
+) -> float:
+    """ALongReq of the ego *gap* behind the road user ahead (m/s^2, ``0`` or
+    negative).
+
+    In CriMe's mode 1 (its default), the least constant deceleration that
+    keeps the ego off the other, each holding its acceleration until it
+    stops and then staying (:func:`_contact_time`).  A contact counts while
+    the ego is still moving, at any time, and within *horizon* (s; the
+    frame's prediction horizon) after it has stopped: braking that stops the
+    ego short of a car still coming at it does not avoid that car, but a
+    road user that reaches a standing ego only after the horizon -- a
+    pedestrian crossing the lane a little towards the ego, a car rolling back
+    -- is not one braking must avoid.
+
+    It is CriMe's ``min(a_other - v_rel^2 / (2 gap), 0)`` -- matching the
+    other's speed as the ego reaches it -- wherever that holds: a closing
+    gap, the other going the ego's way and matched before it stops.
+    Elsewhere it is not: a gap opening for good needs ``0`` (CriMe's formula
+    reads ``-v_rel^2 / (2 gap)``), one whose lead brakes to a stop the
+    deceleration that stops the ego behind where it stops, and a car coming
+    the other way the deceleration that stops the ego far enough back that
+    the car does not reach it within the horizon after the ego has stopped
+    (at 10 m/s, a car 40 m ahead coming at 10 m/s: -15).  ``-inf`` when no
+    deceleration does: the other reaches the ego within the horizon even
+    stopped where it is, or the ego is not going forward and the other
+    reaches it within the horizon.  Monotone in the ego's deceleration
+    (braking harder brings the ego nowhere further, and stops it sooner), so
+    it is found by bisection to well under the 0.01 m/s^2 it is rounded to.
+    No road user ahead (*gap* ``inf``: CriMe's HW of one behind) needs none.
+    Mode 2 is CriMe's piecewise constant motion, as it writes it.
+    """
+    if not math.isfinite(gap):
+        return 0.0
+    if mode != 1:
+        return -(v_ego**2) / (2 * (gap - v_other**2 / 2 * a_other))
+
+    def avoids(a_ego: float) -> bool:
+        contact = _contact_time(gap, v_ego, a_ego, v_other, a_other)
+        moving = _stopping_time(v_ego, a_ego) if v_ego > 0.0 else 0.0
+        return contact == math.inf or contact > moving + horizon
+
+    if avoids(0.0):
+        return 0.0
+    standing = _contact_time(gap, 0.0, 0.0, v_other, a_other)
+    if v_ego <= 0.0 or (standing < math.inf and standing <= horizon):
+        # Braking cannot hold the ego further back than standing where it is.
+        return -math.inf
+    low, high = 0.0, 1.0  # magnitudes: too little, enough
+    while not avoids(-high):
+        low, high = high, high * 2.0
+        if high > 1e9:
+            return -math.inf
+    for _ in range(60):
+        middle = 0.5 * (low + high)
+        if avoids(-middle):
+            high = middle
+        else:
+            low = middle
+    return -high
+
+
+@functools.cache
+def _signed_crime_measures() -> dict[str, type]:
+    """CriMe's TTC and ALongReq, and the measures built on them, reading the
+    other road user's velocity and acceleration along the lane with their sign.
+
+    CriMe 0.4 reads the other road user's velocity and acceleration along the
+    lane as their magnitude times the cosine of the lane's heading, applying
+    the sign to the ego's alone: a braking lead reads as speeding up (TTC
+    ``inf``, ALongReq ``0``) and a car coming the other way in the ego's lane
+    as going its way.  These subclasses compute what CriMe's ``compute`` does
+    with the other's components projected onto the lane instead
+    (:func:`_along_lane`; in the turned frame the lane runs along +x, so this
+    is its ``state.velocity`` / ``state.acceleration``, as CriMe reads the
+    ego's).  The ego's are read as CriMe reads them in TTC (signed), in
+    ALongReq too.  BTN is ALongReq over the most a car can brake, and ALatReq
+    and STN take TTC: each is given the signed one in place of CriMe's.
+
+    With the sign comes a road user braking to a stop, which CriMe's constant
+    acceleration would carry on into reversing: TTC and ALongReq take it to
+    stop and stay, as the worker predicts every road user
+    (:func:`_contact_time`), and ALongReq is the least deceleration that
+    keeps the ego off it in that model (:func:`_required_deceleration`;
+    ``-inf``, and BTN ``inf``, when none does).  A road user behind the ego
+    (CriMe's HW ``inf``) needs no ALongReq.
+    """
+    import commonroad_crime.utility.general as utils_gen
+    import commonroad_crime.utility.solver as utils_sol
+    from commonroad.scenario.obstacle import DynamicObstacle
+    from commonroad_crime.measure import BTN, STN, TTC, ALatReq, ALongReq
+
+    def heading_at(lanelet: Any, position: Any) -> Any:
+        # The lane's heading where *position* projects onto it, as CriMe reads
+        # it (None out of its domain, for ALongReq).
+        return utils_sol.compute_lanelet_width_orientation(lanelet, position)[1]
+
+    def ego_along(state: Any, heading: float, name: str) -> float:
+        # CriMe's TTC reading of the ego: its magnitude, signed as its
+        # first component, along the lane.
+        x = float(getattr(state, name))
+        y = float(getattr(state, f"{name}_y", 0.0) or 0.0)
+        return float(np.sign(x)) * math.hypot(x, y) * math.cos(heading)
+
+    def other_along(state: Any, heading: float, name: str) -> float:
+        x = float(getattr(state, name))
+        y = float(getattr(state, f"{name}_y", 0.0) or 0.0)
+        return _along_lane(x, y, heading)
+
+    class SignedTTC(TTC):
+        def compute(self, vehicle_id: int, time_step: int = 0, verbose: bool = True) -> Any:
+            if not self.validate_update_states_log(vehicle_id, time_step, verbose):
+                return np.nan
+            state = self.ego_vehicle.state_at_time(time_step)
+            state_other = self.other_vehicle.state_at_time(time_step)
+            network = self.sce.lanelet_network
+            lanelet_ids = network.find_lanelet_by_position([state.position])[0]
+            delta_d = self._hw_object.compute(vehicle_id, time_step, verbose)
+            if delta_d == math.inf:
+                self.value = math.inf
+                return self.value
+            lanelet = network.find_lanelet_by_id(lanelet_ids[0])
+            try:
+                ego_heading = heading_at(lanelet, state.position)
+            except ValueError:
+                self.value = math.nan
+                return self.value
+            try:
+                other_heading = heading_at(lanelet, state_other.position)
+            except ValueError:
+                # Out of the projection's domain: the other is far away.
+                self.value = math.inf
+                return self.value
+            v_ego = ego_along(state, ego_heading, "velocity")
+            a_ego = ego_along(state, ego_heading, "acceleration")
+            if isinstance(self.other_vehicle, DynamicObstacle):
+                v_other = other_along(state_other, other_heading, "velocity")
+                a_other = other_along(state_other, other_heading, "acceleration")
+            else:
+                v_other = a_other = 0.0
+            ttc = _contact_time(delta_d, v_ego, a_ego, v_other, a_other)
+            self.value = ttc if ttc == math.inf else float(utils_gen.int_round(ttc, 2))
+            return self.value
+
+    class SignedALongReq(ALongReq):
+        def compute(self, vehicle_id: int, time_step: int = 0, verbose: bool = True) -> Any:
+            if not self.validate_update_states_log(vehicle_id, time_step, verbose):
+                return np.nan
+            if self._except_obstacle_in_same_lanelet(expected_value=0.0, verbose=verbose):
+                return self.value
+            state = self.ego_vehicle.state_at_time(time_step)
+            state_other = self.other_vehicle.state_at_time(time_step)
+            network = self.sce.lanelet_network
+            lanelet = network.find_lanelet_by_id(
+                network.find_lanelet_by_position([state.position])[0][0]
+            )
+            ego_heading = heading_at(lanelet, state.position)
+            other_heading = heading_at(lanelet, state_other.position)
+            if not ego_heading or not other_heading:
+                # Out of the projection's domain: the other is far away.
+                a_req = 0.0
+            else:
+                a_req = _required_deceleration(
+                    self._hw_object.compute(vehicle_id, time_step, verbose=verbose),
+                    ego_along(state, ego_heading, "velocity"),
+                    other_along(state_other, other_heading, "velocity"),
+                    other_along(state_other, other_heading, "acceleration"),
+                    self.configuration.acceleration.acceleration_mode,
+                    # The frame's prediction horizon: the steps the ego's
+                    # trajectory runs on (EvaluatorSettings.horizon_steps).
+                    (self.ego_vehicle.prediction.final_time_step - time_step) * self.dt,
+                )
+            if a_req > 0:
+                self.value = 0.0
+            elif math.isfinite(a_req):
+                self.value = utils_gen.int_round(a_req, 2)
+            else:
+                self.value = a_req  # no braking avoids it
+            return self.value
+
+    class SignedBTN(BTN):
+        def __init__(self, config: Any) -> None:
+            super().__init__(config)
+            self._a_long_req_object = SignedALongReq(config)
+
+        def compute(self, vehicle_id: int, time_step: int = 0, verbose: bool = True) -> Any:
+            # CriMe's, but for an ALongReq of -inf (no braking avoids the
+            # collision), which CriMe's rounding cannot take: BTN inf.
+            if not self.validate_update_states_log(vehicle_id, time_step, verbose):
+                return np.nan
+            a_long_req = self._a_long_req_object.compute(vehicle_id, time_step, verbose=verbose)
+            btn = a_long_req / -self.configuration.vehicle.curvilinear.a_lon_max
+            self.value = utils_gen.int_round(btn, 4) if math.isfinite(btn) else btn
+            return self.value
+
+    class SignedALatReq(ALatReq):
+        def __init__(self, config: Any) -> None:
+            super().__init__(config)
+            self._ttc_object = SignedTTC(config)
+
+    class SignedSTN(STN):
+        def __init__(self, config: Any) -> None:
+            super().__init__(config)
+            self._a_lat_req_object = SignedALatReq(config)
+
+    return {
+        "TTC": SignedTTC,
+        "ALongReq": SignedALongReq,
+        "BTN": SignedBTN,
+        "ALatReq": SignedALatReq,
+        "STN": SignedSTN,
+    }
+
+
+def _set_ego_footprint(config: Any, length: float, width: float) -> None:
+    """Give CommonRoad-Reach's ego the box ``length`` x ``width`` (m).
+
+    Reach derives the discs that approximate the ego, and the radius the
+    other road users are inflated by for its collision check, from the box
+    once, as its configuration is built (from its default vehicle, a BMW 320i
+    of 4.508 x 1.61 m); ``Configuration.update`` does not derive them again.
+    They are derived here as Reach does, by its inflation mode and reference
+    point.
+    """
+    from commonroad_reach.utility.configuration import (
+        compute_disc_radius_and_distance,
+        compute_inflation_radius,
+    )
+
+    vehicle = config.vehicle.ego
+    vehicle.length = length
+    vehicle.width = width
+    vehicle.radius_disc, vehicle.circle_distance = compute_disc_radius_and_distance(
+        length,
+        width,
+        ref_point=config.planning.reference_point,
+        dist_axle_rear=vehicle.wb_rear_axle,
+    )
+    vehicle.radius_inflation = compute_inflation_radius(
+        config.reachable_set.mode_inflation, length, width, vehicle.radius_disc
+    )
 
 
 def _moved(actor: Actor, x: float, y: float, angle: float) -> Actor:

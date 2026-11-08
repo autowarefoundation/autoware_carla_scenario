@@ -64,6 +64,38 @@ the cosine of the lane's own heading, which is its speed along the lane only
 where the lane runs along +x. Distances, times and areas do not change with the
 turn.
 
+CriMe 0.4 reads the other road user's velocity and acceleration along the lane
+as their magnitude, dropping their sign: a braking lead reads as speeding up
+(TTC `inf`, ALongReq `0`) and a car coming the other way in the ego's lane as
+going its way. The worker's TTC and ALongReq are CriMe's with the other's
+components projected onto the lane, signed; BTN, which is ALongReq over the
+most a car can brake, and ALatReq and STN, which take TTC, use them. The
+ego's velocity is read signed too. A road user braking to a stop stops and stays there, as
+the worker predicts it, rather than reversing as CriMe's constant acceleration
+carries it on: TTC is the first contact with each holding its acceleration
+until it stops. ALongReq is the least constant deceleration that keeps the ego
+off the road user ahead in that model (found by bisection): CriMe's
+`a - v_rel^2 / (2 gap)` where the gap closes on a road user going the ego's
+way that does not stop first, `0` for a gap opening for good (where CriMe's
+formula reads `-v_rel^2 / (2 gap)`), the deceleration that stops the ego behind
+where a braking lead stops, for a car coming the other way the deceleration that
+keeps it from reaching the ego while it moves or within the horizon after it
+has stopped, and `-inf` (BTN `inf`) when no braking avoids the collision. A
+contact counts while the ego is moving, and within the horizon
+(`horizon_steps` x dt, 3 s by default) after it has stopped:
+a road user that would reach a standing ego only later (a pedestrian crossing
+a little towards it, a car rolling back) needs no more than the ego stopping
+short of it. TTC has no horizon, as CriMe's. A road user behind the ego gives
+no ALongReq.
+
+A lanelet is kept when its centre line comes within `radius_m` of the ego
+anywhere along it, not only at a vertex (a straight lanelet is just its two end
+points), and always when the ego is on it. The reachable set is that of the
+ego's own box: CommonRoad-Reach derives its discs and the radius it inflates
+the other road users by from its default vehicle (a BMW 320i) as its
+configuration is built, and the worker derives them again from the ego's
+length and width. A reversing ego is given to Reach going backwards.
+
 CriMe's measures share each frame's scenario rather than each copying it,
 and the ego's reference path and a lanelet's smoothed bounds are built once a
 frame (`EvaluatorSettings.share_frame`; a test checks the values match CriMe's
