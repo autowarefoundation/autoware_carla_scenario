@@ -130,6 +130,7 @@ _ON_THE_LOOP: dict[str, Make] = {
     "set_speed_with_until": lambda _: SetSpeedAction(
         "v", 30.0, until=AlwaysTrueCondition()
     ),
+    "set_speed_reissued": lambda _: SetSpeedAction("v", 30.0, reissue=True),
     "lane_change": lambda _: LaneChangeAction("v", LaneChangeDirection.LEFT),
     "construction_zone": lambda _: ConstructionZoneAction(
         1, 20.0, 70.0, start_time=1.0, end_time=3.0
@@ -176,6 +177,32 @@ def test_an_action_that_acts_once_stays_in_the_init_phase(
     scenario.register_init(action)
     assert action in scenario._init_actions
     assert action not in scenario._pre_tick_actions
+
+
+class _Reissuing(BaseAction):
+    """An action of a scenario's own that reissues and says nothing more."""
+
+    REISSUES_BY_DEFAULT = True
+
+    def execute(self, world: carla.World) -> None:
+        pass
+
+
+class _Once(BaseAction):
+    """An action of a scenario's own that is over once commanded."""
+
+    def execute(self, world: carla.World) -> None:
+        pass
+
+
+def test_an_action_that_reissues_needs_the_tick_loop_by_default() -> None:
+    """``BaseAction.needs_tick_loop`` follows ``reissues_while_running``
+    unless the class says otherwise (#1972): only the tick loop calls
+    ``execute`` again."""
+    assert _Reissuing("r").needs_tick_loop
+    assert _Once("o", reissue=True).needs_tick_loop
+    assert not _Once("o").needs_tick_loop
+    assert not _Reissuing("r", reissue=False).needs_tick_loop
 
 
 def test_routing_keeps_its_own_answer_over_the_trajectory_run() -> None:

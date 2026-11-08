@@ -242,9 +242,10 @@ is asked to start: `run_init` performs each action a single time at
 commanded (a light frozen, a speed handed over, a source's initial vehicles
 placed). An action that keeps acting after the tick it fired on, or whose run
 waits on an `until` the world has to reach, says so with
-`BaseAction.needs_tick_loop`, and `register_init` puts it on the pre-tick loop
+`BaseAction.needs_tick_loop` -- by default, whether it reissues its command
+(`reissues_while_running`) -- and `register_init` puts it on the pre-tick loop
 instead, where it fires on the first tick: a trajectory or a stalled object, a
-rate-limited (or `until`-bounded) `SetSpeedAction`, a lane change waiting to
+rate-limited, `until`-bounded or `reissue=True` `SetSpeedAction`, a lane change waiting to
 settle, a walk that may turn back, a played or generated pedestrian motion, an
 adversarial manoeuvre or NADE traffic, a construction zone that appears late
 or is cleared away, and a

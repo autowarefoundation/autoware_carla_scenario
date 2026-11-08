@@ -431,6 +431,29 @@ class TestInitPhase:
         assert action.needs_tick_loop
         assert not immediate.needs_tick_loop
 
+    def test_a_reissued_change_registered_for_init_is_reissued(
+        self, vehicle: _RecordingVehicle
+    ) -> None:
+        """`reissue=True` with no rate (#1972): the init phase would send it
+        once and leave it running for good, so it goes on the tick loop, where
+        it is sent again on the tick of its run and then completes."""
+        action = SetSpeedAction("npc1", 10.0, reissue=True)
+        assert action.needs_tick_loop
+
+        world = _FakeWorld(vehicle)
+        states = []
+        for tick in range(4):
+            action.tick(world, tick * 0.1)
+            states.append(action.state)
+
+        assert vehicle.commanded == [10.0, 10.0]
+        assert states == [
+            ActionState.START_TRANSITION,
+            ActionState.END_TRANSITION,
+            ActionState.COMPLETE,
+            ActionState.COMPLETE,
+        ]
+
 
 class TestConstruction:
     def test_a_negative_target_is_refused(self) -> None:
