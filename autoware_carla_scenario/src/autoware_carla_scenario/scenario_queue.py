@@ -745,7 +745,10 @@ class ScenarioQueue:
 
         A server the queue was given is never asked: it is not the queue's to
         restart, and nor is one its own manager found already running and
-        reused (:attr:`CarlaServerManager.reused`).  One whose restart began
+        reused (:attr:`CarlaServerManager.reused`) -- which every server on a
+        remote ``host`` is, so a remote server is never restarted: the
+        manager launches CARLA only for a local host, and a run a remote
+        server drops fails as on any reused one.  One whose restart began
         and did not finish (:attr:`_restart_pending`) is restarted again.
         """
         if not self._owns_server:

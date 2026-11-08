@@ -329,9 +329,11 @@ def _ego_number(key: str, value: Any) -> float:
 def _check_ego_numbers(cfg: DictConfig) -> None:
     """Refuse the ego's and entities' number settings of
     :data:`_EGO_NUMBER_MINIMA` -- a NaN, an infinity, a negative speed or
-    retry step -- as building the ego would (:func:`build_ego_and_spawn`), so
-    a batch refuses them before CARLA starts (#1809).  A key that is absent
-    or null is left to the build, which reads its default or refuses it.
+    retry step -- and ``entity.spawn_retry_max_count`` unless a whole number,
+    0 or more (:func:`_spawn_retry_max_count`), as building the ego would
+    (:func:`build_ego_and_spawn`), so a batch refuses them before CARLA
+    starts (#1809, #1984).  A key that is absent or null is left to the
+    build, which reads its default or refuses it.
 
     Raises:
         ValueError: naming the key of the value refused.
@@ -344,18 +346,33 @@ def _check_ego_numbers(cfg: DictConfig) -> None:
         value = block.get(name)
         if value is not None:
             _ego_number(key, value)
+    # The retry count, a whole number rather than a finite one (#1984).
+    entity = cfg.get("entity")
+    if isinstance(entity, (DictConfig, Mapping)):
+        count = entity.get("spawn_retry_max_count")
+        if count is not None:
+            _spawn_retry_max_count(count)
 
 
-def _config_int(key: str, value: Any) -> int:
-    """``int(value)`` of the config's *key*; for a value ``int()`` cannot read
-    (not a number, an infinity, a string of more digits than
-    ``sys.get_int_max_str_digits()``), a ``ValueError`` naming the key
-    (#1660).  What ``int()`` reads is read as before.
+#: The config key of the ego's spawn retries (:func:`_spawn_retry_max_count`).
+_SPAWN_RETRY_MAX_COUNT_KEY = "entity.spawn_retry_max_count"
+
+
+def _spawn_retry_max_count(value: Any) -> int:
+    """``entity.spawn_retry_max_count``, checked as every whole-number setting
+    is (:func:`~autoware_carla_scenario.odd.sampler.whole_number_setting`):
+    ``4``, ``4.0`` or ``"4"``, 0 or more -- not ``2.5`` or ``true``, which
+    ``int()`` alone read as 2 and 1, a negative count or null (#1984).
+
+    Raises:
+        ValueError: naming the key.
     """
-    try:
-        return int(value)
-    except (TypeError, ValueError, OverflowError):
-        raise ValueError(f"{key} must be a whole number, got {shown(value)}") from None
+    count = whole_number_setting(_SPAWN_RETRY_MAX_COUNT_KEY, value, minimum=0)
+    if count is None:
+        raise ValueError(
+            f"{_SPAWN_RETRY_MAX_COUNT_KEY} must be a whole number, got None"
+        )
+    return count
 
 
 def build_ego_and_spawn(
@@ -385,9 +402,7 @@ def build_ego_and_spawn(
         initial_speed_kmh=_ego_number(
             "ego.initial_speed_kmh", cfg.ego.initial_speed_kmh
         ),
-        spawn_retry_max_count=_config_int(
-            "entity.spawn_retry_max_count", cfg.entity.spawn_retry_max_count
-        ),
+        spawn_retry_max_count=_spawn_retry_max_count(cfg.entity.spawn_retry_max_count),
         spawn_retry_t_step=_ego_number(
             "entity.spawn_retry_t_step", cfg.entity.spawn_retry_t_step
         ),
@@ -2074,6 +2089,27 @@ def _check_port_setting(cfg: DictConfig, section: str) -> None:
         )
 
 
+def _check_host_setting(cfg: DictConfig) -> None:
+    """Refuse ``server.host`` of *cfg* unless it is a non-blank string, when
+    it is set (null included).  The queue launches CARLA only for a local
+    host and uses the server already listening at any other
+    (:class:`~autoware_carla_scenario.CarlaServerManager`); a null or blank
+    host names neither, and would otherwise reach the CARLA client (#1984).
+
+    Raises:
+        ValueError: naming the key.
+    """
+    node = cfg.get("server")
+    if not isinstance(node, (DictConfig, Mapping)) or "host" not in node:
+        return
+    host = node.get("host")
+    if not isinstance(host, str) or not host.strip():
+        raise ValueError(
+            "server.host must be the CARLA server's host name or address "
+            f"(localhost for one this run launches), got {host!r}"
+        )
+
+
 def _check_batch_queue_settings(cfg: DictConfig) -> None:
     """Refuse what :func:`_batch_queue` would refuse of *cfg*, building nothing
     that starts: no queue, no CARLA, no Autoware.
@@ -2082,6 +2118,7 @@ def _check_batch_queue_settings(cfg: DictConfig) -> None:
         ValueError: naming the key, for a server, traffic or Autoware launcher
             setting the queue would refuse.
     """
+    _check_host_setting(cfg)
     _check_port_setting(cfg, "server")
     _check_port_setting(cfg, "traffic_manager")
     _cooldown_seconds(cfg)
@@ -2274,7 +2311,8 @@ def check_batch_configs(
     (:func:`_check_backend_settings`), the ``scenario`` settings its config
     class refuses (:func:`_check_scenario_config`), the ego's and entities'
     numbers (``ego.initial_speed_kmh``, the spawn and goal poses,
-    ``entity.spawn_retry_*_step``: :func:`_check_ego_numbers`), ``odd_case``
+    ``entity.spawn_retry_*_step`` and ``entity.spawn_retry_max_count``:
+    :func:`_check_ego_numbers`), ``odd_case``
     and ``metrics.heavy`` (:func:`metrics_heavy`); and the server, traffic and Autoware launcher settings its
     queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
     each distinct set of them.  A batch is refused for these before any

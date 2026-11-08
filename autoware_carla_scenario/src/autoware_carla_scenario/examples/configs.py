@@ -197,11 +197,22 @@ class IntersectionPassingConfig:
         its key (#1815, #1816)."""
         npc_vehicles: list[NpcVehicleConfig] = []
         for i, v in enumerate(self.npc_vehicles):
+            if not isinstance(v, dict) and not isinstance(v, NpcVehicleConfig):
+                # A bare number or string would reach setup() as it is (#1984).
+                raise ValueError(
+                    f"scenario.npc_vehicles[{i}] must be a mapping of an NPC "
+                    f"vehicle's settings, got {v!r}"
+                )
             try:
+                # The conditional expression, not an if statement: Codon
+                # realises only the branch the static isinstance selects.
                 npc_vehicles.append(NpcVehicleConfig(**v) if isinstance(v, dict) else v)
             except ValueError as exc:
                 # Named by its key, as a run's other refusals are (#1809).
                 raise ValueError(f"scenario.npc_vehicles[{i}].{exc}") from None
+            except TypeError as exc:
+                # A key NpcVehicleConfig does not take.
+                raise ValueError(f"scenario.npc_vehicles[{i}]: {exc}") from None
         self.npc_vehicles = npc_vehicles
         _require_positive("timeout_seconds", self.timeout_seconds)
         min_speed_kmh = self.min_speed_kmh

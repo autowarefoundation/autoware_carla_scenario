@@ -3387,9 +3387,10 @@ What Codon 0.19 needs that Python does not, beyond
   no `str`; `softkwlist` and `issoftkeyword()`, which differ between
   versions, are not declared (#1654).
   `socket` declares `create_connection(address, timeout=None)`,
-  `gethostname()`, `AF_INET`, `SOCK_STREAM` and `socket(family=AF_INET,
-  type=SOCK_STREAM, proto=0)`, whose socket has `bind(address, /)` and
-  `getsockname()` of an AF_INET (host, port) pair, `close()` and `with`;
+  `gethostname()`, `AF_INET`, `AF_INET6`, `SOCK_STREAM` and
+  `socket(family=AF_INET, type=SOCK_STREAM, proto=0)`, whose socket has
+  `bind(address, /)` and `getsockname()` of a (host, port) pair (an AF_INET6
+  socket's bind takes the same pair), `close()` and `with`;
   nothing connects or binds, and `fileno` and the rest of the module are not
   declared (#1498). `sys` replaces Codon's, keeping all of it (`argv`,
   the standard streams, `exit()`, `maxsize`), and adds `platform`

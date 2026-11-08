@@ -4,12 +4,13 @@
 #
 # - create_connection(address, timeout): address a (host, port) pair, timeout
 #   a float or None. source_address and all_errors are not declared.
-# - socket(family, type, proto), with the AF_INET and SOCK_STREAM constants
-#   (ints here; CPython's are IntEnum members of the same values). fileno is
-#   not declared.
+# - socket(family, type, proto), with the AF_INET, AF_INET6 and SOCK_STREAM
+#   constants (ints here; CPython's are IntEnum members of the same values).
+#   fileno is not declared.
 # - On a socket: bind(address, /) and getsockname() of an AF_INET socket, whose
-#   address is a (host, port) pair, close(), and `with` (__enter__ returns
-#   the socket, __exit__ closes it).
+#   address is a (host, port) pair, and bind() of an AF_INET6 one given the
+#   same pair (CPython fills in flowinfo and scope_id), close(), and `with`
+#   (__enter__ returns the socket, __exit__ closes it).
 # - gethostname().
 #
 # The rest of the module is not declared. Nothing here connects, binds or
@@ -19,6 +20,7 @@
 import internal.static as static
 
 AF_INET = 2
+AF_INET6 = 10
 SOCK_STREAM = 1
 
 

@@ -113,6 +113,65 @@ def _dying_with_this_process(argv: List[str]) -> List[str]:
     ] + argv
 
 
+def _is_loopback_literal(name: str) -> bool:
+    """Whether *name* (lower case, unbracketed) is ``localhost`` or a loopback
+    address: IPv4 ``127.0.0.0/8``, IPv6 ``::1`` or IPv4-mapped
+    ``::ffff:127.x.y.z`` -- what serve_cli's ``is_loopback`` takes, spelled out
+    without ``ipaddress``, which the library check cannot compile.
+    """
+    if name == "localhost" or name.endswith(".localhost"):
+        return True
+    if name in ("::1", "0:0:0:0:0:0:0:1"):
+        return True
+    if name.startswith("::ffff:"):
+        name = name[len("::ffff:") :]
+    parts = name.split(".")
+    if len(parts) != 4:
+        return False
+    for part in parts:
+        if not part or len(part) > 3 or any(c not in "0123456789" for c in part):
+            return False
+        if int(part) > 255:
+            return False
+    return int(parts[0]) == 127
+
+
+def _is_local_host(host: str) -> bool:
+    """Whether *host* names this machine, so that a CARLA server
+    :class:`CarlaServerManager` launches here is the one reached at it.
+
+    The rule (docs/installation.md, "CARLA server"):
+
+    * ``localhost`` (and ``*.localhost``), an IPv4 loopback address
+      (``127.0.0.0/8``), ``::1`` (bracketed or not) or an IPv4-mapped
+      loopback address, without asking the system; an empty host, which the
+      socket API reads as this machine, too;
+    * this machine's own name (``socket.gethostname()``);
+    * any other name or address that resolves to an address of one of this
+      machine's interfaces (``0.0.0.0``, the LAN address, a name for it in
+      ``/etc/hosts``): one a socket can be bound to here.
+
+    Anything else -- an address of another machine, a name that does not
+    resolve -- is remote: a server launched here would never answer there.
+    """
+    name = host.strip().strip("[]").rstrip(".").lower()
+    if name == "" or _is_loopback_literal(name):
+        return True
+    if name == socket.gethostname().strip().rstrip(".").lower():
+        return True
+    # bind() resolves the name for its family and is refused (EADDRNOTAVAIL,
+    # or a resolver error) unless the address is one of this machine's.
+    for family in (socket.AF_INET, socket.AF_INET6):
+        try:
+            with socket.socket(family, socket.SOCK_STREAM) as probe:
+                probe.bind((name, 0))
+            return True
+        except (OSError, ValueError):
+            # ValueError: a name the IDNA codec refuses (a label too long).
+            continue
+    return False
+
+
 class CarlaServerManager:
     """Start and stop a CARLA UE5 server process.
 
@@ -126,6 +185,12 @@ class CarlaServerManager:
     recommended mode for local development where CARLA may already be running.
     A reused server is never stopped: not by :meth:`stop`, and not when this
     process ends.
+
+    A server is only ever launched on this machine, so only for a *host* that
+    names it (``localhost``, a loopback address, this machine's name or one of
+    its addresses).  For any other host :meth:`start` uses the server already
+    listening there, and raises at once when there is none: it never launches
+    one here and waits for it to appear at the remote address.
 
     A server this manager launched does not outlive the process that launched
     it, however that process ends: :meth:`stop` (or ``with``, or ``atexit``)
@@ -200,15 +265,25 @@ class CarlaServerManager:
         Behaviour:
         1. If *reuse_if_running* is ``True`` and the server is already
            reachable, record that we are reusing it and return immediately.
-        2. Otherwise, find the launcher (:meth:`executable`), launch the
+        2. If *host* is not this machine, raise: a server launched here would
+           never answer at it.
+        3. Otherwise, find the launcher (:meth:`executable`), launch the
            process, and poll until the server accepts connections.
 
+        A remote server is therefore always reused, so a queue never restarts
+        one (:meth:`ScenarioQueue._server_down` asks only for a server it
+        launched): a run it drops fails as on any reused server.
+
         Raises:
-            RuntimeError: If there is no launcher (when a new process must be
-                launched), the executable does not exist, or the server does
-                not become reachable within *timeout* seconds.
+            RuntimeError: If *host* is remote and no server answers there,
+                there is no launcher (when a new process must be launched),
+                the executable does not exist, or the server does not become
+                reachable within *timeout* seconds.
         """
-        if self.reuse_if_running and self._ping():
+        remote = not _is_local_host(self.host)
+        # A remote server is the one there or none: never launched here, so
+        # reuse_if_running=False has nothing to launch instead of it.
+        if (self.reuse_if_running or remote) and self._ping():
             self._reused = True
             if self.extra_args:
                 logger.warning(
@@ -219,6 +294,13 @@ class CarlaServerManager:
                     " ".join(self.extra_args),
                 )
             return
+        if remote:
+            raise RuntimeError(
+                f"No CARLA server reachable at {self.host}:{self.port}; the runner "
+                "only launches CARLA for a local host (localhost, a loopback "
+                "address or this machine's own name or address). Start the server "
+                "there, or check server.host and server.port."
+            )
 
         exe_path = self.executable()
         if exe_path is None:
