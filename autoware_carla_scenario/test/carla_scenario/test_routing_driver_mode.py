@@ -1991,11 +1991,14 @@ def test_a_stepped_walker_turns_back_within_reach_of_the_kerb(
     )  # still a threat
     threat["on"] = False
     assert not _walker_ai._turns_back(walker, driven, path, 3.6, back, 1.4)  # off again
-    assert driven.kerb_here == 3.6
+    # Still watched from the kerb it stepped off, not from behind it: turned
+    # back again, it goes to the same place, not a metre further each time
+    # (#2003).
+    assert driven.kerb_here == 4.0
     # Further out than within_m: it carries on whatever comes.
     threat["on"] = True
-    far = SimpleNamespace(x=5.0, y=0.0, z=0.0)
-    assert not _walker_ai._turns_back(walker, driven, path, 5.0, far, 1.4)
+    far = SimpleNamespace(x=5.1, y=0.0, z=0.0)
+    assert not _walker_ai._turns_back(walker, driven, path, 5.1, far, 1.4)
     assert driven.kerb_here < 0.0
 
 

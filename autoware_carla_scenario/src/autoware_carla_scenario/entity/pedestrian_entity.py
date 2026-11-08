@@ -41,7 +41,9 @@ WALKER_LOOKAHEAD_M: float = 1.5
 
 #: How near (m) the end of its walk a walker has arrived, as a
 #: :class:`~autoware_carla_scenario.actions.RoutingAction` following a
-#: trajectory takes it.
+#: trajectory takes it.  One on CARLA's walker controller has also arrived
+#: once it is held at its last target (:func:`._walker_ai.at_walk_end`,
+#: within :data:`._walker_ai.REACHED_M` of it).
 WALK_ARRIVAL_M: float = 1.0
 
 #: A pedestrian's walking speed along a route, in m/s, unless it is told one.
@@ -137,6 +139,17 @@ def _killed_by_crowd(walker: "carla.Actor") -> bool:
 
     try:
         return killed_by_crowd(int(walker.id))
+    except (AttributeError, RuntimeError):
+        return False
+
+
+def _held_at_walk_end(walker: "carla.Actor") -> bool:
+    """Whether *walker*, on CARLA's walker controller, is held at its walk's
+    last target: arrived (:func:`._walker_ai.at_walk_end`)."""
+    from ._walker_ai import at_walk_end  # noqa: PLC0415
+
+    try:
+        return at_walk_end(int(walker.id))
     except (AttributeError, RuntimeError):
         return False
 
@@ -541,9 +554,17 @@ class PedestrianEntity(WalkedEntity):
         speed = self._walk_speed
         if speed_mps is not None:
             speed = speed_mps
-        if not _walk_by_ai(
+        if _walk_by_ai(
             walker, path, here, speed, location, self._walk_cross, self._walk_turn_back
         ):
+            if _held_at_walk_end(walker):
+                # Held at its last target, as near as its controller takes it
+                # (short of WALK_ARRIVAL_M, or where a target on the road was
+                # moved to): arrived.
+                self._walk = None
+                _release_walker_ai(walker)
+                walker.apply_control(carla.WalkerControl(speed=0.0))
+        else:
             # Stepped along the route (over a road stretch, or on a map with
             # no navigation mesh), giving way to a walker in its way.
             if _gives_way(walker, path, here, location):
