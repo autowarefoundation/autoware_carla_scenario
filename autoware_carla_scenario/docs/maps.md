@@ -98,10 +98,12 @@ A repository can carry symlinks, so each file is checked for where it really
 is. The `.osm`, the `.xodr` and `map_projector_info.yaml` are used only when
 they resolve to a regular file inside the map directory: a link within the
 directory is followed, but one that leads out of it, dangles, or names a
-directory is ignored, as if the file were absent. An OpenDRIVE read back from
-CARLA is held to the same rule inside its derived directory. A `#path` that is
-itself a link out of the checkout, or that contains `..`, is refused. Local
-directories (`map.directory`) go through the same file checks.
+directory is ignored, as if the file were absent -- by the resolver and by
+the projection and origin a run and a sweep read the map with alike. An
+OpenDRIVE read back from CARLA is held to the same rule inside its derived
+directory. A `#path` that is itself a link out of the checkout, or that
+contains `..`, is refused. Local directories (`map.directory`) go through the
+same file checks.
 
 ### How a map is read
 
@@ -358,5 +360,6 @@ without one. A map whose CARLA assets need it installed is run with
 | A map resolves but the `.osm` is a few hundred bytes | git-lfs did not pull it. Install `git-lfs`, then **Refresh**. |
 | `does not name a directory in the repository` | The `#path` is wrong for that ref. Browse the repository in the Map library. |
 | `names a directory outside the repository` / `names a link to a directory outside the repository` | The `#path` contains `..`, or is a symlink leading out of the checkout. Point it at the real directory. |
+| `map directory cannot be read` | The `#path` names a directory the process cannot look at under the map root: a path component longer than the file system allows, a permission it lacks, or an I/O error. The editor shows the map as not downloaded. |
 | A map's `.xodr` or `map_projector_info.yaml` is ignored | It is a symlink to a file outside the map directory, a dangling link, or a link to a directory. |
 | A pinned source re-clones on a machine that has the map | Expected: a pinned source never trusts an unpacked directory, because it records no revision. |

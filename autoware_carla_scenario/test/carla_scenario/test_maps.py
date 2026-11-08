@@ -1120,6 +1120,46 @@ class TestProvisionedMaps:
         assert not resolved.provisioned
         assert resolved.commit == _head(origin_repo)
 
+    def test_a_path_too_long_to_look_up_is_a_map_error(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        # Before Python 3.14 is_file() raises ENAMETOOLONG for a component
+        # this long rather than answering False.  The editor asks cached_map on
+        # every render and catches only the map errors, so an OSError here was
+        # a 500 on every page of the draft (#1974).  No remote is reachable,
+        # so on 3.14 resolve_map gets as far as the clone and says so instead.
+        (origin_repo / ".git").rename(origin_repo.parent / "gone")
+        # The root has to exist: a lookup under a missing one stops at ENOENT.
+        cache.root.mkdir(parents=True, exist_ok=True)
+        uri = _uri(origin_repo, "a" * 300)
+        assert cached_map(uri, cache=cache) is None
+        with pytest.raises((MapResolutionError, MapCacheError)):
+            resolve_map(uri, cache=cache)
+
+    def test_a_map_root_that_cannot_be_read_is_a_map_error(
+        self,
+        origin_repo: Path,
+        cache: GitMapCache,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        directory = self._provision(cache, "autoware_maps/TownA")
+        error = PermissionError(errno.EACCES, "Permission denied")
+        is_file = Path.is_file
+
+        def _refuse(self: Path) -> bool:
+            if self == directory:
+                raise error
+            return is_file(self)
+
+        monkeypatch.setattr(Path, "is_file", _refuse)
+        # "Is it already here?" -- not that the caller can tell: no.
+        assert cached_map(_uri(origin_repo), cache=cache) is None
+        # Asked for the map, it is this map's error, saying why.
+        with pytest.raises(MapResolutionError, match="cannot be read") as caught:
+            resolve_map(_uri(origin_repo), cache=cache)
+        assert "Permission denied" in str(caught.value)
+        assert caught.value.__cause__ is error
+
 
 class TestPinning:
     """Fixing a scenario's map so two runs are two runs on the same map."""
@@ -2176,6 +2216,35 @@ class TestEditorMapSource:
         body = editor.get(f"/draft/{draft_id}/map-view").text
         assert "No map" in body
         assert "has not been downloaded yet" in body
+
+    def test_a_source_path_too_long_to_look_up_leaves_the_draft_usable(
+        self,
+        editor: "TestClient",
+        drafts: "DraftStore",
+        origin_repo: Path,
+        cache: GitMapCache,
+    ) -> None:
+        # Before Python 3.14 looking for the map under the map root raised
+        # ENAMETOOLONG out of cached_map, past map_paths -- which catches only
+        # the map errors -- and every page of the draft answered 500 (#1974).
+        cache.root.mkdir(parents=True, exist_ok=True)
+        uri = _uri(origin_repo, "a" * 300)
+        draft_id = _new_draft(editor)
+        response = editor.post(
+            f"/draft/{draft_id}/scenario",
+            data={"map_source": uri, "map_lanelet2_path": ""},
+        )
+        assert response.status_code == 200
+        assert _stored(drafts, draft_id).map.source == uri
+        for page in (
+            f"/draft/{draft_id}",
+            f"/draft/{draft_id}/canvas",
+            f"/draft/{draft_id}/map-view",
+            f"/draft/{draft_id}/inspector/scenario",
+        ):
+            response = editor.get(page)
+            assert response.status_code == 200, page
+        assert "No map" in editor.get(f"/draft/{draft_id}/map-view").text
 
     def test_the_exported_config_carries_the_source(
         self, editor: "TestClient", drafts: "DraftStore", origin_repo: Path

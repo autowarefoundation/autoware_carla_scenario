@@ -311,7 +311,9 @@ def resolve_map(
     Raises:
         MapSourceError: If *source* is not a usable URI.
         MapCacheError: If the repository could not be cloned or updated.
-        MapResolutionError: If the repository holds no Lanelet2 map there.
+        MapResolutionError: If the repository holds no Lanelet2 map there, or
+            the map directory cannot be read (a name too long, a permission
+            the process lacks).
     """
     parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
     if _climbs_out(parsed.directory):
@@ -322,9 +324,18 @@ def resolve_map(
     at_directory = parsed.with_path(parsed.directory)
     derived = store.derived_dir(at_directory)
 
-    directory = None if (refresh or parsed.pinned) else store.provisioned(at_directory)
-    if directory is not None:
-        return _describe(parsed, directory, derived, provisioned=True)
+    try:
+        directory = (
+            None if (refresh or parsed.pinned) else store.provisioned(at_directory)
+        )
+        if directory is not None:
+            return _describe(parsed, directory, derived, provisioned=True)
+    except OSError as exc:
+        # Before Python 3.14 ``is_file()`` / ``is_dir()`` / ``glob()`` raise
+        # for a name too long, a permission the process lacks or an I/O error
+        # instead of answering False: said as this map's problem, the way
+        # resolve_directory says it (#1963, #1974).
+        raise _unreadable(parsed, exc) from exc
 
     # Below this line every source is pinned: a branch is replaced by the commit
     # it names right now.  A branch ref reads as "the latest" but never behaved
@@ -345,17 +356,25 @@ def resolve_map(
         refresh=refresh,
     )
     directory = _in_worktree(repo, parsed.directory)
-    if not directory.is_dir():
-        raise MapResolutionError(
-            f"{parsed.uri} does not name a directory in the repository."
-        )
-    if not _is_within(repo.worktree, directory):
-        # A map directory that is a symlink out of the checkout would make
-        # every file check below pass against the link's target.
-        raise MapResolutionError(
-            f"{parsed.uri} names a link to a directory outside the repository."
-        )
-    return _describe(parsed, directory, derived, commit=repo.commit)
+    try:
+        if not directory.is_dir():
+            raise MapResolutionError(
+                f"{parsed.uri} does not name a directory in the repository."
+            )
+        if not _is_within(repo.worktree, directory):
+            # A map directory that is a symlink out of the checkout would make
+            # every file check below pass against the link's target.
+            raise MapResolutionError(
+                f"{parsed.uri} names a link to a directory outside the repository."
+            )
+        return _describe(parsed, directory, derived, commit=repo.commit)
+    except OSError as exc:
+        raise _unreadable(parsed, exc) from exc
+
+
+def _unreadable(source: MapSource, exc: OSError) -> MapResolutionError:
+    """The error for *source*'s map directory raising *exc* when looked at."""
+    return MapResolutionError(f"{source.uri}: map directory cannot be read: {exc}")
 
 
 def resolve_directory(
@@ -473,8 +492,8 @@ def cached_map(
     up through the commit a previous resolve recorded for it.
 
     Returns:
-        The resolved map, or ``None`` if it is not cached, not downloaded, or
-        cached only as a git-lfs pointer.
+        The resolved map, or ``None`` if it is not cached, not downloaded,
+        cached only as a git-lfs pointer, or its directory cannot be read.
 
     Raises:
         MapSourceError: If *source* is not a usable URI.
@@ -482,6 +501,22 @@ def cached_map(
     parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
     if _climbs_out(parsed.directory):
         return None
+    try:
+        return _cached_map(parsed, cache)
+    except OSError:
+        # Before Python 3.14 ``is_file()`` / ``is_dir()`` / ``glob()`` raise
+        # for a name too long (ENAMETOOLONG), a permission the process lacks
+        # (EACCES) or an I/O error instead of answering False.  A map that
+        # cannot be looked at is not one the machine has; resolve_map, which
+        # the caller is sent to next, says why (#1974).
+        logger.debug("Map %s cannot be looked up", parsed.uri, exc_info=True)
+        return None
+
+
+def _cached_map(
+    parsed: MapSource, cache: Optional[GitMapCache]
+) -> Optional[ResolvedMap]:
+    """:func:`cached_map`, letting an ``OSError`` escape."""
     store = cache or GitMapCache()
     at_directory = parsed.with_path(parsed.directory)
     derived = store.derived_dir(at_directory)

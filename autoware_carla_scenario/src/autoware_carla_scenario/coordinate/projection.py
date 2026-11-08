@@ -97,8 +97,15 @@ def _projector_info(lanelet2_path: Path) -> dict[str, Any]:
     """
     import yaml  # type: ignore[import-untyped]
 
-    info_path = Path(lanelet2_path).parent / PROJECTOR_INFO_FILENAME
-    if not info_path.is_file():
+    from ..maps.resolver import _is_map_file  # noqa: PLC0415
+
+    directory = Path(lanelet2_path).parent
+    info_path = directory / PROJECTOR_INFO_FILENAME
+    # The resolver's own test: a descriptor that is a link out of the map
+    # directory, dangles or names a directory is ignored, as if absent
+    # (docs/maps.md).  A plain is_file() follows a link anywhere, which let a
+    # repository have a file elsewhere on the host read as its projection.
+    if not _is_map_file(directory, info_path):
         return {}
     try:
         info = yaml.safe_load(info_path.read_text(encoding="utf-8"))
