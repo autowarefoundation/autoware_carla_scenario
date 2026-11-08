@@ -240,8 +240,8 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         title="Time to collision (CriMe)",
         unit="s",
         text="Seconds until the ego hits a road user ahead in its lane, "
-        "both holding their acceleration; inf when they never meet "
-        "(CriMe TTC)",
+        "both holding their acceleration until they stop; inf when they "
+        "never meet (CriMe TTC)",
         aggregation="min",
     ),
     CRIME_THW_S: Metric(
@@ -295,7 +295,9 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         title="Required deceleration (CriMe)",
         unit="m/s^2",
         text="The longitudinal acceleration the ego needs not to hit the "
-        "road user ahead, negative to brake (CriMe ALongReq)",
+        "road user ahead, negative to brake; -inf when braking alone "
+        "cannot avoid a contact within the prediction horizon (horizon_s, "
+        "3 s by default) (CriMe ALongReq)",
         aggregation="min",
     ),
     CRIME_A_LAT_REQ_MPS2: Metric(
@@ -314,7 +316,8 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         unit="ratio",
         text="The deceleration the ego needs not to hit the road user "
         "ahead over the most it can brake; above 1 braking alone no "
-        "longer avoids it (CriMe BTN)",
+        "longer avoids it, inf when no braking avoids a contact within "
+        "the prediction horizon (horizon_s, 3 s by default) (CriMe BTN)",
         aggregation="max",
     ),
     CRIME_STN: Metric(
