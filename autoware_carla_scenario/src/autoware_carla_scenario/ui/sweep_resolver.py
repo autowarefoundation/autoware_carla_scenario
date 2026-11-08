@@ -110,7 +110,7 @@ def resolve_sweep(
     if refusal is not None:
         raise SweepResolutionError(f"{scenario_name}: {refusal}")
     try:
-        cases = expand_config(cfg, drawn=drawn)
+        cases = expand_config(cfg, drawn=drawn, composed=extra_overrides or ())
     except ControlsError as exc:
         raise SweepResolutionError(
             "; ".join(format_diagnostics(exc.diagnostics, scenario_name))

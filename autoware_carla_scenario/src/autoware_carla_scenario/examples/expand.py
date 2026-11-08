@@ -114,7 +114,7 @@ def main(argv: list[str] | None = None) -> int:
             status = max(status, 1)
             continue
         try:
-            cases = expand_config(cfg, drawn=drawn)
+            cases = expand_config(cfg, drawn=drawn, composed=overrides)
         except ControlsError as exc:
             # An authoring error: one line per problem, with its config path.
             for line in format_diagnostics(exc.diagnostics, name):

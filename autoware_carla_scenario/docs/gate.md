@@ -106,6 +106,17 @@ was not expanded counts the matches it searched itself (those the ego cannot
 be placed on included, which an expansion skips). A record with no count (a run told nothing) makes the
 criterion fail: the share cannot be known.
 
+A route sweep that also draws from the ODD (`sweep.odd_sample`) does not take
+its matches in turn when the map decides some of the ODD's attributes, as
+the default ODD's junction, lane count and speed limit: each drawn case goes
+on a match in the buckets it drew ([The road a case is
+on](odd.md#the-road-a-case-is-on)), so a match may run more than once or not
+at all. Its case coverage is then below 100% even with `count` equal to the
+number of matches -- with the default ODD on the nishishinjuku map, roughly
+half of the matches run. A `min_case_coverage` meant to see every match run
+needs a route sweep without `odd_sample`, or a `count` large enough for the
+draws to reach them.
+
 ## What a run records
 
 A run of a logical scenario with a gate writes `{stem}_gate.json` beside

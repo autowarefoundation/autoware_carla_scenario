@@ -787,10 +787,35 @@ boolean), `count` at least 1 and `seed` from 0 to 2147483647 (`2**31 - 1`); any 
 refused, naming the key, before the map is read or anything starts.
 
 Each case is a list of Hydra overrides. A sweep that also has `constraints`
-gives each drawn case the next lanelet case in turn; one without draws from
-the ODD alone, and needs no map to expand. The last override,
-`++odd_case=...`, is the case itself, encoded: the run records it, with its
-outcome, in its coverage file (see [Finding flaky cases](#finding-flaky-cases)).
+(or a route search) gives each drawn case one of its lanelet cases -- in turn
+unless the map decides some of the ODD's attributes, as it does the default
+ODD's junction, lane count and speed limit: then each drawn case goes on a
+lanelet case in the buckets it drew, so a lanelet case may run more than
+once or not at all ([The road a case is on](#the-road-a-case-is-on)). One
+without draws from the ODD alone, and needs no map to expand. The last
+override, `++odd_case=...`, is the case itself, encoded: the run records it,
+with its outcome, in its coverage file (see [Finding flaky cases](#finding-flaky-cases)).
+
+A drawn case's settings are the sweep's to choose, so the run's own
+overrides may not set them: `environment.time_of_day=night` on the command
+line of a sweep that draws the time of day is refused, naming the key and
+the ODD attribute that draws it, before any case runs -- by `scenario-expand`,
+a `--multirun` batch (local or submitted to SLURM), the lanelet sweeper and
+the UI's Run panel alike. Left to Hydra, the override would win at run time
+while the case recorded the label drawn, its sun and other weather effects
+followed that label, coverage counted its bucket and the flaky search learnt
+from a value the run never had. To hold an attribute, give it a knob in the
+sweep that draws only what you want -- `knobs: {<attribute>: {key:
+environment.time_of_day, values: {night: night}}}` for one label, a narrower
+`range` for a number -- or narrow the ODD; then the case, its weather and
+its coverage follow it. A CARLA weather field the conditions lead to (the
+sun's altitude, the precipitation) and a scenario control's node are refused
+the same way: change the rules they follow instead. Overrides of keys no
+case sets (`map=`, `ego.entity=`) are not concerned, and one that names the
+grip or the visibility, or where in its range it is, turns that draw off,
+as a case that names one keeps it ([Tire friction follows the
+weather](#tire-friction-follows-the-weather), [Visibility follows the
+conditions](#visibility-follows-the-conditions)).
 
 ### Who knows what
 
@@ -855,7 +880,10 @@ A node without `at` is a root: nothing in the domain conditions it yet. One
 may read the shared nodes -- a gap that lengthens on a wet road reads the
 grip -- and may not redefine one: the join refuses a node both define, so a
 scenario can never change what another's cases follow. Each scenario's nodes
-are its own: the cases of one never draw another's.
+are its own: the cases of one never draw another's. Nor may a scenario name a node
+`tire_friction_quantile` or `visibility_quantile`: a sweep adds those to its
+nodes to draw where each case's grip and visibility are (see [Tire friction
+follows the weather](#tire-friction-follows-the-weather)).
 
 **What the run staged.** A control is keyed by the measure it sets, so that
 measure reads, in the run, the node the case drew: a run of a drawn case
@@ -1143,8 +1171,11 @@ the quantile of the grip's distribution (0 its low end, 1 its high end; the
 median when not set). A later action in the run that names none -- rain
 starting mid-run -- reads the grip at the same quantile. A
 `sweep.odd_sample` draws it for every case (`environment.tire_friction_quantile=0.412`
-among the case's overrides, recorded in its coverage file), from the sweep's
-`seed` and the case, so the same sweep draws the same grip. The weather comes
+among the case's overrides, recorded in its coverage file) as a parameter of
+the case, `quantile(tire_friction_quantile)` among its values -- a root node
+of the rules, uniform on [0, 1], drawn as the weather effects' quantiles are
+-- so the same sweep draws the same grip, and the flaky search sees and
+moves it like any other parameter. The weather comes
 from the ODD and the grip from the range that weather allows: a heavy-rain
 case never runs on a dry road's grip. `tire_friction: false` in the
 `odd_sample` leaves every case at the median -- of the rules' grip where the
@@ -1156,7 +1187,8 @@ as `ture` or `2`, is refused, naming `sweep.odd_sample.tire_friction`, before
 any case is drawn), and
 `environment.tire_friction` fixes the grip whatever the weather (it wins over
 the quantile, and a case that names one draws no quantile; the ODD's
-`tire_friction` probe draws it through that knob).
+`tire_friction` probe draws it through that knob). A run whose own overrides
+name the grip or its quantile draws none either.
 
 The vehicles in the world when the action fires are scaled then; a scenario
 with such an action -- the config's, or its own -- also runs
@@ -1216,13 +1248,15 @@ run, from the conditions the run names, at `environment.visibility_quantile`
 of its distribution (0 its low end, 1 its high end; the median when not
 set), and the run records it as `environment.visibility_m`, which also fixes
 it whatever the conditions. A `sweep.odd_sample` draws the quantile for every
-case, as it draws the grip, so the ODD's rainfall rate, fog visibility and
+case, as it draws the grip -- a parameter of the case,
+`quantile(visibility_quantile)`, which the flaky search moves -- so the ODD's rainfall rate, fog visibility and
 time of day are what shorten it: a night case's drivers see 50-150 m, a
 thick-fog case's 12-18 m. `visibility: false` in the `odd_sample` leaves every
 case at the median (read as `tire_friction` is,
 [strictly](usage.md#the-switches)). An ODD that names the visibility itself
 (the `visibility` probe) sets it through its own knob,
-`environment.visibility_m`, and a case with one keeps it. A run that names no
+`environment.visibility_m`, and a case with one keeps it, as does a run
+whose own overrides name the visibility or its quantile. A run that names no
 condition records none, and its traffic sees as it always did; each run
 starts with none, whatever the last left.
 
@@ -1637,8 +1671,14 @@ sweep:
 
 `flaky: true` takes the defaults. Its other fields are `FlakySearch`'s:
 `pool`, `coverage_depth`, `threshold`, `epsilon`, `perturbations`, `draws`
-and `directions`. Only runs drawn in the same space -- the same attributes,
-ranges and labels -- with an outcome are learnt from; a sweep with no such
+and `directions`. The space holds every parameter of a case: the attributes
+drawn, the weather effects' quantiles, and where in its range the grip and
+the visibility are (`quantile(tire_friction_quantile)`,
+`quantile(visibility_quantile)`), so two cases alike but for their grip are
+two points, not one point whose outcome looks unsure. Only runs drawn in the
+same space -- the same attributes, ranges and labels -- with an outcome are
+learnt from (runs drawn before the grip and visibility were parameters, in
+a space without them, are not); a sweep with no such
 run draws all its cases with the sampler's own policy. Each case chosen for
 its instability records the flakiness predicted for it, beside the one the
 report assesses. Run the sweeps one after another, each reading the earlier
