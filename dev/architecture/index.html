@@ -3230,9 +3230,10 @@ is asked to start: <code>run_init</code> performs each action a single time at
 commanded (a light frozen, a speed handed over, a source's initial vehicles
 placed). An action that keeps acting after the tick it fired on, or whose run
 waits on an <code>until</code> the world has to reach, says so with
-<code>BaseAction.needs_tick_loop</code>, and <code>register_init</code> puts it on the pre-tick loop
+<code>BaseAction.needs_tick_loop</code> -- by default, whether it reissues its command
+(<code>reissues_while_running</code>) -- and <code>register_init</code> puts it on the pre-tick loop
 instead, where it fires on the first tick: a trajectory or a stalled object, a
-rate-limited (or <code>until</code>-bounded) <code>SetSpeedAction</code>, a lane change waiting to
+rate-limited, <code>until</code>-bounded or <code>reissue=True</code> <code>SetSpeedAction</code>, a lane change waiting to
 settle, a walk that may turn back, a played or generated pedestrian motion, an
 adversarial manoeuvre or NADE traffic, a construction zone that appears late
 or is cleared away, and a
@@ -4676,7 +4677,7 @@ CARLA map name using <code>map_asset_env_var()</code> (<code>maps/opendrive.py</
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 23:16:58 UTC"><span class="timeago" datetime="2026-11-07T23:16:58+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 23:16:58 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 02:29:01 UTC"><span class="timeago" datetime="2026-11-08T02:29:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 02:29:01 UTC">2026-11-08</span>
   </span>
 
     
