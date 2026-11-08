@@ -4873,8 +4873,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-304 of the package's 430
-modules (71%; about 93,700 of
+307 of the package's 430
+modules (71%; about 94,400 of
 162,300 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4883,7 +4883,11 @@ base, its runner and its queue, the traffic backends' interface, the
 plain-typed parts of the SUMO backend (its geometry, its physics control, the
 signal states it sets, and its command-line options, mode bits, vehicle types
 and type files, with the command line of <code>randomTrips.py</code> and the options of
-each demand it generates: <code>traffic.sumo.options</code>, #1679), the signal
+each demand it generates: <code>traffic.sumo.options</code>, #1679, and where SUMO is,
+the network's files and the demand <code>randomTrips.py</code> generates for it:
+<code>traffic.sumo.network</code>, #1967; not the conversion of the map with roadgen,
+the signal table read off roadgen's traces or the crossings read with
+<code>xml.etree.ElementTree</code>, which the check leaves uncalled), the signal
 controllers, the adversity math, the measures, the metrics (and which of the
 CommonRoad metrics are heavy, the environment that turns them off and the
 checks of their periods: <code>heavy_metrics</code>, #1689; not <code>commonroad.session</code>,
@@ -4891,7 +4895,10 @@ which runs the workers and re-exports it) and the ODD's
 probes (and the names, knob keys, limits and ranges of the traffic
 parameters' probes: <code>odd.traffic_ranges</code>, #1680; not the probes themselves,
 <code>odd.traffic_probes</code>, which builds openodd's knobs), the gate package's
-<code>__init__</code>, its per-run record and probe,
+<code>__init__</code>, its per-run record and probe, finding the markers of the
+<code>--multirun</code> jobs given up and the plans of the sweeps (<code>gate.errored</code> and
+<code>gate.sweep_plan</code>, #1967; not writing or reading them, JSON objects of mixed
+value types),
 and the typed criteria its evaluator judges (<code>gate.criteria</code>: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
 baseline; and <code>gate.report</code>, #1738: a verdict's and a comparison's Markdown,
@@ -4942,7 +4949,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 304 CHECKED modules</summary>
+<summary>The 307 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5600,6 +5607,10 @@ with the first paragraph of its docstring:</p>
 <td>The typed core of a gate's criteria: what <code>scenario-gate</code> measures.</td>
 </tr>
 <tr>
+<td><code>gate.errored</code></td>
+<td>The marker a <code>--multirun</code> job leaves when it is given up: <code>case_errored.json</code>.</td>
+</tr>
+<tr>
 <td><code>gate.probe</code></td>
 <td>Sample the ego in the route's frame on every tick, for the gate.</td>
 </tr>
@@ -5610,6 +5621,10 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>gate.report</code></td>
 <td>The typed core of <code>scenario-gate</code>'s report: its Markdown, and what changed.</td>
+</tr>
+<tr>
+<td><code>gate.sweep_plan</code></td>
+<td>The jobs a <code>--multirun</code> sweep is going to run: <code>sweep_plan.json</code>.</td>
 </tr>
 <tr>
 <td><code>heavy_metrics</code></td>
@@ -6044,6 +6059,10 @@ with the first paragraph of its docstring:</p>
 <td>Poses between SUMO's network frame and CARLA's world frame.</td>
 </tr>
 <tr>
+<td><code>traffic.sumo.network</code></td>
+<td>The SUMO network of the road network a CARLA world runs.</td>
+</tr>
+<tr>
 <td><code>traffic.sumo.options</code></td>
 <td>The SUMO backend's command-line options, mode bits, vehicle types and type files.</td>
 </tr>
@@ -6170,8 +6189,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>159 functions and methods of those modules are <code>UNCALLED</code>
-(50 of them protected helpers, see <em>What is
+<p>171 functions and methods of those modules are <code>UNCALLED</code>
+(52 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6183,7 +6202,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 159 UNCALLED functions and methods, and why</summary>
+<summary>The 171 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6246,6 +6265,9 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>gate.criteria.CaseChange.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>gate.criteria.CriterionChange.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>gate.criteria.CriterionResult.to_dict</code>: returns the criterion as the report stores it (<code>dataclasses.asdict()</code>), a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express</li>
+<li><code>gate.errored.read_case_errored</code>: parses the marker into a JSON object of mixed value types (<code>Optional[dict[str, Any]]</code>), which Codon cannot express</li>
+<li><code>gate.errored.write_case_errored</code>: writes the marker as a JSON object of mixed value types (<code>dict[str, Any]</code>: the schema, the overrides, the exit code or None, the attempts, the reason and the unfinished flag), which Codon cannot express</li>
+<li><code>gate.errored.write_case_unfinished</code>: writes the marker with write_case_errored(), itself uncalled (a <code>dict[str, Any]</code> of mixed value types)</li>
 <li><code>gate.record.GateCase.from_dict</code>: reads the dict to_dict() wrote, a <code>Mapping[str, Any]</code> of mixed value types (see <code>_DETAILS</code>), which Codon cannot express</li>
 <li><code>gate.record.GateCase.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>gate.record.GateRecord.__init__</code>: the generated constructor of a dataclass whose required <code>gate</code> field is the gate as the document stores it, a <code>dict[str, Any]</code> of mixed value types (see <code>_DETAILS</code>), which Codon cannot express; its other methods are called on a value of the class</li>
@@ -6255,6 +6277,9 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>gate.record._object</code>: reads an object of a parsed JSON object (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express; only the uncalled GateRecord.from_dict() calls it</li>
 <li><code>gate.record.read_gate_record</code>: parses a JSON document (<code>Any</code>) and reads it with GateRecord.from_dict(), a <code>Mapping[str, Any]</code> of mixed value types, which Codon cannot express</li>
 <li><code>gate.record.write_gate_record</code>: serialises GateRecord.to_dict(), a <code>dict[str, Any]</code> of mixed value types (see <code>_DETAILS</code>), which Codon cannot express</li>
+<li><code>gate.sweep_plan._read_entries</code>: parses the plan (<code>Any</code>) into its jobs, JSON objects of mixed value types (<code>list[dict[str, Any]]</code>: a directory string beside a list of overrides), which Codon cannot express</li>
+<li><code>gate.sweep_plan.read_sweep_plan</code>: reads the plan's jobs with _read_entries(), itself uncalled (<code>list[dict[str, Any]]</code> of mixed value types)</li>
+<li><code>gate.sweep_plan.write_sweep_plan</code>: writes the plan as a JSON object of mixed value types (<code>dict[str, Any]</code>: a schema string beside a list of jobs, each a directory string beside a list of overrides), which Codon cannot express</li>
 <li><code>hils.wire.encode</code>: takes a message of any shape (<code>Mapping[str, Any]</code>: JSON values of mixed types), which Codon cannot express</li>
 <li><code>maps.config._flag</code>: reads a boolean <code>map</code> setting with _setting, off a config of any shape (<code>map_config: Any</code>), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it, and passes what it reads to the checked _resolve()</li>
 <li><code>maps.config._setting</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths and _flag, both themselves uncalled, call it, and what they read is resolved by the checked _resolve()</li>
@@ -6338,6 +6363,12 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>traffic.sumo.config.BicycleConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
 <li><code>traffic.sumo.config.PedestrianConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
 <li><code>traffic.sumo.config.SumoBackendConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.sumo.network.SignalTable.__init__</code>: takes roadgen's trace (<code>trace: Any</code>, a roadgen.Trace), which has no Codon model</li>
+<li><code>traffic.sumo.network.SignalTable.links</code>: asks roadgen's trace (<code>Any</code>) what a signal became in SUMO, answers of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express</li>
+<li><code>traffic.sumo.network.SignalTable.load</code>: imports roadgen (the <code>sumo</code> extra) inside it, which has no Codon model, and builds the table with SignalTable.__init__, itself uncalled</li>
+<li><code>traffic.sumo.network._sumo_package_homes</code>: imports the eclipse-sumo package (the <code>sumo</code> extra) inside it, which has no Codon model; sumo_home calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>traffic.sumo.network.build_network</code>: imports roadgen (the <code>sumo</code> extra) inside it, which has no Codon model, and converts the map with it</li>
+<li><code>traffic.sumo.network.crossing_edges</code>: reads the network with xml.etree.ElementTree (imported inside it), which Codon has nothing for</li>
 <li><code>traffic.traffic_manager.TrafficManagerBackend.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>trajectory.model._refusing_vertex_times</code>: the run-time wrapper of TrajectoryVertex.__init__ that refuses the calls written for a vertex with a time (<code>*args: Any, **kwargs: Any</code>, functools.wraps, an inspect.Signature); the check drops the decorator and compiles __init__ as written</li>
 <li><code>trajectory.model._vertex_advance</code>: takes a TrajectoryVertex call's <code>*args</code> and <code>**kwargs</code> as written (<code>tuple[Any, ...]</code>, <code>dict[str, Any]</code>), which Codon cannot express; only _refusing_vertex_times, itself uncalled, calls it</li>
@@ -6346,7 +6377,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number, which checks the traffic options, calls it with the float the check types the option with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 126 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 123 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6375,7 +6406,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 126 EXCLUDED modules, and why</summary>
+<summary>The 123 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped</li>
@@ -6403,7 +6434,7 @@ the first:</p>
 <li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, platform, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>), and reads the install's stamp from JSON of any value types; its paths, lock file, needed room, swap, and the decision whether an install is current and the conditional request that asks so, are the checked carla_install_paths's, which it re-exports</li>
 <li><code>commonroad</code>: re-exports commonroad.session and commonroad.worker, which are not checked</li>
 <li><code>commonroad.session</code>: imports concurrent.futures, and commonroad.worker and, inside a function, metric_batch, which are not checked; holds the workers' settings as values of any type (<code>dict[str, Any]</code>); which metrics are heavy, the environment that turns them off and the period checks are the checked heavy_metrics' (#1689), which it re-exports</li>
-<li><code>commonroad.worker</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>), and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express</li>
+<li><code>commonroad.worker</code>: imports select (<code>select.poll()</code>, <code>select.POLLIN</code>), which Codon has nothing for, and more of shlex and os than their shims declare (<code>shlex.split()</code>, <code>os.read()</code>, <code>os.set_blocking()</code>), and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express</li>
 <li><code>coverage.cod</code>: re-exports openodd's COD export (a Rust extension)</li>
 <li><code>coverage.collector</code>: derives openodd's collector (a Rust extension); imports <code>types.SimpleNamespace</code>, which Codon has nothing for; the names a versioned measure's cover items are written under are the checked coverage.item_names's</li>
 <li><code>coverage.items</code>: re-exports openodd's cover items (a Rust extension)</li>
@@ -6426,9 +6457,7 @@ the first:</p>
 <li><code>examples.compose_errors</code>: imports difflib, and, inside functions, hydra and omegaconf (their errors), the registry (omegaconf, importlib) and examples.run (hydra, omegaconf), which are neither checked nor modelled; reads a composed config of any shape (<code>Any</code>), which Codon cannot express</li>
 <li><code>examples.expand</code>: imports the registry (omegaconf, importlib) and sweeper.expand (omegaconf), and, inside main(), authoring.hydra_config (pydantic, through authoring.models), odd.controls (omegaconf, difflib) and examples.compose_errors (difflib, and hydra, omegaconf and examples.run inside its functions), which are not checked, and <code>OddDraws</code> from odd.sampler, which the odd model does not declare; holds the composed config as <code>Any</code>, which Codon cannot express</li>
 <li><code>examples.run</code>: imports omegaconf, hydra, and typecheck and typecheck.mode (the checker, outside the library check), registry (omegaconf, importlib), prepare.pool (<code>BackendPool</code>), hydra_compat (argparse, hydra) and batch_resume (a resumed batch's summary read as <code>dict[str, Any]</code>, #1957) and, inside functions, pedestrian.ardy (grpc; <code>ArdyBackend</code>, inside _check_backend_settings()), authoring.hydra_config (pydantic, through authoring.models; inside check_scenario_maps()), sweeper.expand (omegaconf), commonroad.session (concurrent.futures), odd.controls (omegaconf, difflib), slurm.submit (omegaconf, slurm.manifest), utils.config (a dataclass's fields read from its class) and entity.hils_entity (hils.protocol), which are neither checked nor modelled, and, inside _cap_malloc_arenas(), ctypes, ctypes.util and platform, which Codon has nothing for; imports <code>ScenarioQueue</code> (and, inside build_ego_entity(), <code>AutowareBridgeConfig</code> and <code>AutowareEgoEntity</code>) from the package, <code>PlannedRoute</code>, <code>RouteError</code>, <code>ODD_CASE_KEY</code>, <code>check_sample_settings()</code>, <code>decode_case()</code>, <code>seed_setting()</code> and <code>whole_number_setting()</code> (and, inside a function, <code>OddDraws</code>) from odd.route and odd.sampler, which the package and odd models do not declare, <code>RerunConversion</code>, <code>RerunUnavailableError</code> and <code>report()</code> from rerun, which the rerun model does not declare, <code>T4Settings</code> and <code>T4UnavailableError</code> from t4, which the t4 model does not declare, and, inside functions, <code>use_weather_rules()</code> and <code>check_weather_rules()</code> from weather_rules, which the weather_rules model does not declare; imports more of contextlib and threading than their shims declare (<code>contextlib.contextmanager</code>, <code>threading.main_thread()</code>, <code>threading.current_thread()</code>); reads the fields of <code>DockerAutowareConfig</code> from its class (<code>__dataclass_fields__</code>), and those of <code>AutowareBridgeConfig</code> through utils.config, and builds them, <code>EnvironmentAction</code> and <code>RerunConverter</code> with <code>**</code> of a dict; holds a registered scenario's config class as a value (<code>config_cls</code>, from <code>get_scenario_classes()</code>) and builds it with <code>config_cls(**...)</code> of the settings among its <code>dataclasses.fields()</code> in _check_scenario_config(); none of which Codon compiles; takes a launcher setting of any type (<code>value: object</code>) in _launcher_str_list() and _launcher_str_mapping(), which Codon cannot express; holds settings as <code>dict[str, Any]</code> of mixed value types (a case's settings, the video, sensor and environment settings, <code>_to_dict()</code>, <code>_rules_locations(spec: Any) -&gt; Any</code>), which Codon cannot express; what it reads off the command line and the environment is the checked examples.argv's, and what its Hydra argv asks for and the run directory it reserves are the checked run_dirs', and the suffix of a run's result the checked run_outputs's (<code>RESULT_SUFFIX</code>, #1704)</li>
-<li><code>gate.errored</code>: writes and reads the marker of a <code>--multirun</code> job given up as a JSON object of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express; it is replaced in one rename by the checked atomic_file (#1830)</li>
 <li><code>gate.evaluate</code>: imports argparse, authoring.models (pydantic) and, inside functions, openodd's coverage merge (a Rust extension), authoring.persistence (yaml) and slurm.manifest (a batch's files read as <code>dict[str, Any]</code>, to find its cases that left no gate record), which are neither checked nor modelled; the criteria it judges, the trajectory consistency, the case coverage, finding the records and the changes from a baseline are the checked gate.criteria's, which it re-exports; a verdict's and a comparison's Markdown, a criterion's cell, the criteria and cases compared from a baseline and the records grouped by scenario are the checked gate.report's (#1738)</li>
-<li><code>gate.sweep_plan</code>: writes and reads the plan of a <code>--multirun</code> sweep as a JSON object of mixed value types (<code>dict[str, Any]</code>: a schema string beside a list of jobs), which Codon cannot express; it is replaced in one rename by the checked atomic_file (#1833)</li>
 <li><code>hils</code>: re-exports hils.config (yaml), which is neither checked nor modelled</li>
 <li><code>hils.bridge</code>: imports hilspy (a Rust extension) at module level under TYPE_CHECKING, for its <code>Channel</code>, <code>Periodic</code> and <code>Clock</code> annotations, and inside _require_hilspy(), which hands the module on as a <code>types.ModuleType</code> value, and typesafe_carla's CPython package inside HilsBridge, which it holds as <code>_carla: Any</code>; uses more of threading than its shim declares (<code>Event</code>); holds hilspy's messages, CARLA's measurements and the queues that carry them typed <code>Any</code>; and builds on hils.link and hils.protocol (socket), hils.measurements (cv2) and hils.config (yaml), which are neither checked nor modelled</li>
 <li><code>hils.cli</code>: imports argparse and importlib.resources, and serve_cli (argparse, ipaddress) and hils.config (yaml) and, inside main(), hils.bridge (hilspy), which are neither checked nor modelled</li>
@@ -6487,8 +6516,7 @@ the first:</p>
 <li><code>templating</code>: imports jinja2; its filters escape with the checked text_escape</li>
 <li><code>tools.detect_no_3d_model_lanelets</code>: imports omegaconf, yaml, tqdm, argparse, and serve_cli (argparse, ipaddress), which is not checked</li>
 <li><code>traffic.registry</code>: holds backend factories behind the alias <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> (registry.py:44, "expected type expression") and takes their options as <code>Mapping[str, Any]</code>, which Codon cannot express; registry (omegaconf, importlib), which is neither checked nor modelled, is imported inside load_traffic_backend_plugins, which an UNCALLED entry would skip, so that import alone does not block it; traffic.codon models it for the traffic package</li>
-<li><code>traffic.sumo.backend</code>: imports traci, sumolib and libsumo inside its functions, and at module level traffic.sumo.network (roadgen, sumo), which is neither checked nor modelled; holds SUMO's connection as <code>_traci: Any</code> (traci or libsumo, whichever _load_traci() finds) and sumolib's network as <code>_net: Any</code>, and takes CARLA's world, its actors and the scenario's entities typed <code>Any</code>, which Codon cannot express; the signal states it sets, SUMO's step per CARLA tick and the links a program lets go together are the checked traffic.sumo.signal_states', and its command-line options, mode bits, vehicle types and type files the checked traffic.sumo.options'</li>
-<li><code>traffic.sumo.network</code>: imports, inside its functions, roadgen, sumo and xml.etree.ElementTree; the command line of randomTrips.py and the options of each demand it generates are the checked traffic.sumo.options'</li>
+<li><code>traffic.sumo.backend</code>: imports traci, sumolib and libsumo inside its functions, and builds its network and reads its signals and crossings with build_network(), SignalTable and crossing_edges() of the checked traffic.sumo.network, which the check leaves uncalled for roadgen and xml.etree.ElementTree; holds SUMO's connection as <code>_traci: Any</code> (traci or libsumo, whichever _load_traci() finds) and sumolib's network as <code>_net: Any</code>, and takes CARLA's world, its actors and the scenario's entities typed <code>Any</code>, which Codon cannot express; the signal states it sets, SUMO's step per CARLA tick and the links a program lets go together are the checked traffic.sumo.signal_states', and its command-line options, mode bits, vehicle types and type files the checked traffic.sumo.options'</li>
 <li><code>trajectory.authoring</code>: parses document values of <code>Any</code> (YAML rows, editor fields) into <code>dict[str, Any]</code>, which Codon cannot express; what it does with the editor's text and with parsed rows is the checked trajectory.vertex_text's, and the typed builders it re-exports (the goal, via lanelets, timing and lanelet path) are the checked trajectory.authored's</li>
 <li><code>trajectory_recorder</code>: writes JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) serialised with orjson (module level; <code>orjson.JSONEncodeError</code>), reads the projector's settings with yaml (inside <code>_projector_info</code>), and neither has a Codon model; trajectory_recorder.codon models what scenario_runner uses of it</li>
 <li><code>ui</code>: imports argparse and serve_cli (argparse, ipaddress), which is not checked; imports uvicorn, ui.app (fastapi) and the registry (omegaconf, importlib) inside main(), and ui.recordings (tarfile) inside a function</li>
@@ -8409,7 +8437,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 10:47:02 UTC"><span class="timeago" datetime="2026-11-07T10:47:02+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 10:47:02 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 00:43:57 UTC"><span class="timeago" datetime="2026-11-08T00:43:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 00:43:57 UTC">2026-11-08</span>
   </span>
 
     
