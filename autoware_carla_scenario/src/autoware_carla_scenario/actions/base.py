@@ -224,8 +224,12 @@ class BaseAction(ABC):
         (:meth:`~autoware_carla_scenario.scenario_base.BaseScenario.register_init`):
         the initialization phase performs an action once and never ticks it
         again, so it would be left running with nothing driving it.
-        ``False`` unless the action says."""
-        return False
+
+        By default, whether it :attr:`reissues_while_running` -- given
+        ``reissue=True`` or reissuing on its own -- since nothing but the tick
+        loop calls :meth:`execute` again.  An action that steps or waits on
+        something itself says so by overriding this."""
+        return self.reissues_while_running
 
     @property
     def reissues_while_running(self) -> bool:

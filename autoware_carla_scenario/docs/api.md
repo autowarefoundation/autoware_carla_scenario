@@ -98,7 +98,7 @@ and composite conditions reset their children.
 
 | Symbol | Description |
 |--------|-------------|
-| `BaseCondition` | Abstract base class. Subclasses override `_check()`. |
+| `BaseCondition` | Abstract base class. Subclasses override `check()` (`_check()` is the hook of `CompositionCondition` only). |
 | `ScenarioResult` | Pass / fail outcome with message, elapsed time, and per-condition statuses. |
 | `ConditionStatus` | Per-condition leaf record used for reporting. |
 | `AlwaysTrueCondition` | Default trigger for actions. |

@@ -117,6 +117,31 @@ class TestActions:
         first.tick(None, 2.05)
         assert first.state is ActionState.COMPLETE
 
+    def test_a_post_tick_command_and_the_next_pre_tick_one_share_a_step(
+        self,
+    ) -> None:
+        """The runner hands a pre-tick action the time read before
+        ``world.tick()``, which is the time the post-tick actions of the loop
+        before were handed: both commands are sent between the same two world
+        steps, so only the later one reaches the simulation.  That is two
+        commands in one tick (docs/architecture.md, *Control domains*), not two
+        a frame apart (#1972)."""
+        dt = 0.05
+        post = _Command("post", (LON,))
+        post.tick(None, 2 * dt)  # loop 2, after world.tick(): t = 0.10
+        pre = _Command("pre", (LON,))
+        with pytest.raises(ControlConflictError):
+            pre.tick(None, 2 * dt)  # loop 3, before world.tick(): t = 0.10
+
+    def test_a_pre_tick_command_and_the_same_loop_s_post_tick_one_do_not(
+        self,
+    ) -> None:
+        """The pre-tick command is stepped by this loop's ``world.tick()``,
+        the post-tick one by the next loop's: two different steps."""
+        dt = 0.05
+        _Command("pre", (LON,)).tick(None, 2 * dt)  # loop 3, before the step
+        _Command("post", (LON,)).tick(None, 3 * dt)  # loop 3, after it
+
     def test_a_repeating_action_takes_its_domain_again(self) -> None:
         repeating = _Command("speed", (LON,), until=_Switch(on=True), once=False)
         for i in range(6):
