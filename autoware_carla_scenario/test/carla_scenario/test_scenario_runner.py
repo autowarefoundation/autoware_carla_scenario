@@ -239,6 +239,18 @@ class TestCleanupExemption:
         _destroy_all_dynamic_actors(self._world([], [], walkers=[walker]), "S")
         assert walker.destroyed
 
+    def test_a_leftover_walker_controller_is_destroyed_too(self):
+        # The runner forgets the walker AI's controllers without destroying
+        # them (#1982): this sweep, at the start of the next run, does.
+        walker = _FakeActor(1, "walker1")
+        controller = _FakeActor(2, parent=walker)
+        world = MagicMock()
+        world.get_actors.return_value = _FakeActorList(
+            [], [], walkers=[walker], controllers=[controller]
+        )
+        _destroy_all_dynamic_actors(world, "S")
+        assert controller.destroyed
+
     def test_a_kept_ego_survives_with_its_sensors(self):
         # The interface node spawns this ego and drives it; destroying it would
         # leave the run polling for an actor that is never coming back.

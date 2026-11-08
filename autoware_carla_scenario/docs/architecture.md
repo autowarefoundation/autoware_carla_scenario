@@ -328,6 +328,20 @@ stack to come up does not spend the scenario's timeout booting. Simulation
 time does advance during that wait, which is why the start is measured rather
 than assumed to be zero.
 
+An entity that gives up waiting (its stack never became ready, so it sets
+`termination_requested`) ends the run right there, before it begins: a failed
+result of the `driver` category ("Ego entity requested session termination:
+<reason>", at 0 s, with no condition statuses), and no vehicle released, no
+traffic started, no condition checked. The cleanup and the result JSON go as
+for any other run, but the run writes no trajectory log and no coverage file,
+since its clock never started.
+
+`run_scenario(reset_world=True)` (the default, for a direct call; a queue
+passes `False` and resets before its next attempt) resets the world at the
+end of a run, and also after a run that raises, before the error propagates:
+best effort, a reset that fails is logged and the run's own error is the one
+raised. A `KeyboardInterrupt` (Ctrl-C) propagates at once, with no reset.
+
 ### ScenarioQueue: Batch Execution and Retry
 
 `ScenarioQueue` wraps `ScenarioRunner` to support sequential execution of multiple scenarios:

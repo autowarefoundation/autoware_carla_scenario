@@ -24,9 +24,12 @@ CARLA's pedestrian seed is a 32-bit unsigned integer and SUMO's ``--seed`` a
 case, after CARLA had started.  :func:`check_seed` refuses it up front.
 
 A component given ``seed=None`` (the default) takes the run's seed when it is
-built (:func:`resolve_seed`); one given a number keeps it.  The runner sets the
-run's seed before it builds the scenario and again before ``setup()``
-(:func:`set_run_seed`), so an action built in either place follows it.
+built (:func:`resolve_seed`); one given a number keeps it.  The run's seed is
+set (:func:`set_run_seed`) before the scenario is built, by the
+``scenario`` command (``examples/run.py``'s ``build_scenario``), and
+again before ``setup()``, by
+:meth:`~autoware_carla_scenario.ScenarioRunner.run_scenario` (to the
+scenario's ``random_seed``), so an action built in either place follows it.
 
 This module imports nothing but the standard library.
 """

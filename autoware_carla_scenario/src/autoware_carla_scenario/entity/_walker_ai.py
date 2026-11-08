@@ -99,6 +99,7 @@ __all__ = [
     "RETARGET_S",
     "TARGET_SPACING_M",
     "drive",
+    "forget_all",
     "give_way",
     "killed_by_crowd",
     "has_navmesh",
@@ -897,6 +898,23 @@ def release(walker_id: int) -> None:
         driven.controller.destroy()
     except RuntimeError:
         pass
+
+
+def forget_all() -> None:
+    """Forget every walker this module drives or watches -- a run ended, or
+    one begins -- without a call to the server.
+
+    What a run leaves is otherwise only released by :func:`release`, which
+    the world reset after a run does not call: an actor id the next run's
+    world reuses would be driven with the dead controller and the targets of
+    the run before.  The controllers themselves are actors
+    (``controller.ai.walker``) that the world reset and the leftovers' sweep
+    at the start of a run destroy, so nothing is stopped or destroyed here:
+    after a server that died mid-run, a call per walker could each wait out
+    the client's timeout."""
+    _DRIVEN.clear()
+    _GIVING_WAY.clear()
+    _WALKING.clear()
 
 
 def _stop(driven: _Driven) -> None:
