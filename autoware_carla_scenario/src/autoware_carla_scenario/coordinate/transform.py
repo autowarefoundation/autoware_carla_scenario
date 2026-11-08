@@ -135,7 +135,18 @@ def project_onto_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> Lanelet2Pose:
     that lanelet's own frame -- ``s`` from its start along its direction of
     travel, ``t`` positive to the left of it -- whichever way the OpenDRIVE road
     it lies on is drawn.  ``s`` is exact along the centerline (not snapped to a
-    vertex) and clamped to the lanelet.
+    vertex) and clamped to the lanelet.  Both are measured as
+    :func:`to_lanelet2` measures them (:func:`_project_to_centerline`), so a
+    point reads the same ``s``, ``t`` and heading whichever of the two asks:
+    ``t`` is the signed offset from the line of the nearest centerline
+    segment -- past either end, the end segment's line extended -- not the
+    distance to the nearest point of the centerline.  The two differ outside
+    a convex vertex (a bend, or a skewed or tapered end), where the nearest
+    point is the vertex itself; there ``t`` reads smaller than lanelet2's
+    ``toArcCoordinates()`` distance, which this used before (#1974), and an
+    :class:`~...conditions.composition.entity_lane_position.EntityLanePositionCondition`
+    rule on ``t`` near a corner or an end of the lanelet can hold where it did
+    not.
 
     Args:
         pose: The CARLA world pose to project.
@@ -147,18 +158,15 @@ def project_onto_lanelet(pose: CarlaWorldPose, lanelet_id: int) -> Lanelet2Pose:
     mm = MapManager.get_instance()
     lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
     x, y, heading = _carla_to_lanelet2_frame(pose)
-    centerline = lanelet2.geometry.to2D(lanelet.centerline)
-    arc = lanelet2.geometry.toArcCoordinates(
-        centerline, lanelet2.core.BasicPoint2d(x, y)
-    )
-    length = float(lanelet2.geometry.length(centerline))
-    s = min(max(float(arc.length), 0.0), length)
-    points = np.array([(p.x, p.y) for p in lanelet.centerline])
-    heading_cl = _heading_at_s(points, _compute_arc_lengths_2d(points), s)
+    # Not lanelet2.geometry.toArcCoordinates: past either end of the line its
+    # ``distance`` is the distance to the end point, which read a point beside
+    # a skewed or tapered end metres farther out than to_lanelet2 does (#1974).
+    points = [(p.x, p.y, p.z) for p in lanelet.centerline]
+    s, t, heading_cl = _project_to_centerline(points, x, y)
     return Lanelet2Pose(
         lanelet_id=lanelet_id,
         s=s,
-        t=float(arc.distance),
+        t=t,
         heading=_normalize_angle(heading - heading_cl),
     )
 

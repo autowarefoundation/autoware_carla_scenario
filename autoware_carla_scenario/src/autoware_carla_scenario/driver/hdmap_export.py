@@ -37,6 +37,7 @@ import tempfile
 from pathlib import Path
 from typing import Any, Dict, Iterable, List, Mapping, Optional, Set, Tuple, Union
 
+from ..maps.resolver import projector_info_path
 from ..utils.opendrive import sanitize_opendrive
 from .hdmap_files import (
     IR_FILE,
@@ -341,8 +342,10 @@ def _copy_provided(source: Path, destination: Path) -> Dict[str, Any]:
         "trace": trace,
         "provided": True,
     }
-    projector = source.parent / PROJECTOR_FILE
-    if projector.is_file():
+    # Only the descriptor the run reads the map with: a link out of the map
+    # directory is ignored there (maps.resolver.projector_info_path).
+    projector = projector_info_path(source.parent)
+    if projector is not None:
         shutil.copyfile(projector, destination.parent / PROJECTOR_FILE)
         entry["projector"] = PROJECTOR_FILE
     return entry

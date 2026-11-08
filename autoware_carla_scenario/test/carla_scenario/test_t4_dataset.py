@@ -9,7 +9,7 @@ import json
 import math
 from pathlib import Path
 from types import SimpleNamespace
-from typing import Any, Optional
+from typing import Any, Callable, Optional
 
 import numpy as np
 import pytest
@@ -480,12 +480,15 @@ def _start(
     world: "_World",
     driver: Optional[DriverClientConfig] = None,
     section: Optional[dict[str, Any]] = None,
+    prepare: Optional[Callable[[Path], None]] = None,
 ) -> T4Recording:
     monkeypatch.setattr(t4, "_map_offset", lambda: OFFSETS)
     monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
     lanelet2 = tmp_path / "map" / "lanelet2_map.osm"
     lanelet2.parent.mkdir()
     lanelet2.write_text("<osm/>")
+    if prepare is not None:
+        prepare(lanelet2.parent)
     recording = T4Recorder(
         T4Settings.from_driver(driver or _driver(), section or {})
     ).start(
@@ -543,6 +546,34 @@ def test_a_key_frame_is_written_for_every_sweep(
     )
     assert channels == ["CAM_FRONT", LIDAR_CHANNEL]
     assert (root / "0" / "map" / "lanelet2_map.osm").read_text() == "<osm/>"
+
+
+@pytest.mark.parametrize("linked_out", [False, True])
+def test_only_the_projector_the_run_reads_is_copied(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, linked_out: bool
+) -> None:
+    """A descriptor linked from outside the map directory is ignored by the
+    run (maps.resolver.projector_info_path), so the dataset does not ship it
+    as the map's projection either (#1974)."""
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("projector_type: MGRS\n")
+
+    def prepare(directory: Path) -> None:
+        info = directory / "map_projector_info.yaml"
+        if linked_out:
+            info.symlink_to(outside)
+        else:
+            info.write_text("projector_type: MGRS\n")
+
+    recording = _start(tmp_path, monkeypatch, _World(), prepare=prepare)
+    recording.close()
+    copied = (
+        dataset_path(tmp_path / "out", "CutInScenario")
+        / "0"
+        / "map"
+        / "map_projector_info.yaml"
+    )
+    assert copied.exists() is not linked_out
 
 
 def test_the_ego_pose_is_its_rear_axle_in_the_map_frame(

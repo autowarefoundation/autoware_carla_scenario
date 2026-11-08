@@ -48,6 +48,7 @@ __all__ = [
     "ResolvedMap",
     "cached_map",
     "pin_source",
+    "projector_info_path",
     "resolve_directory",
     "resolve_map",
 ]
@@ -66,7 +67,14 @@ PREFERRED_LANELET2_NAME = "lanelet2_map.osm"
 #: map that happens to have the same name.
 LOCAL_DERIVED_SUBDIR = "local"
 
+#: Autoware's projection descriptor, written next to the Lanelet2 map.
+PROJECTOR_INFO_FILENAME = "map_projector_info.yaml"
+
 _SLUG_UNSAFE = re.compile(r"[^A-Za-z0-9._-]+")
+
+#: Projection descriptors :func:`projector_info_path` has warned about, by
+#: path, so a map read many times a run says so once.
+_IGNORED_PROJECTOR_INFO: dict[str, int] = {}
 
 
 class MapResolutionError(RuntimeError):
@@ -179,6 +187,46 @@ def _is_map_file(directory: Path, candidate: Path) -> bool:
         return candidate.resolve().is_file()
     except (OSError, RuntimeError):
         return False
+
+
+def projector_info_path(directory: Path) -> Optional[Path]:
+    """Return the ``map_projector_info.yaml`` of the map in *directory*, if any.
+
+    The one test every reader of the descriptor goes through -- the resolver,
+    the projection and origin a run and a sweep read the map with
+    (:mod:`~autoware_carla_scenario.coordinate.projection`), the trajectory
+    log's header and the copies a T4 dataset and a driver's map set carry --
+    so none of them reads a descriptor the others ignore.  It is
+    :func:`_is_map_file`'s: a link that stays in *directory* is followed; one
+    that leads out of it, dangles or names a directory is not this map's file,
+    and the map is read as if it had none.
+
+    That includes a link into a repository's object store -- a git-annex
+    checkout keeps every file as a link into ``.git/annex/objects`` -- exactly
+    as it does for the ``.osm`` itself, which the resolver refuses the same
+    way.  Because ignoring the descriptor changes the projection and the
+    origin, and so every coordinate on the map, it is logged as a warning, once
+    per path.
+    """
+    candidate = directory / PROJECTOR_INFO_FILENAME
+    if _is_map_file(directory, candidate):
+        found: Optional[Path] = candidate
+        return found
+    try:
+        present = candidate.is_symlink() or candidate.exists()
+    except OSError:
+        present = False
+    key = str(candidate)
+    if present and key not in _IGNORED_PROJECTOR_INFO:
+        _IGNORED_PROJECTOR_INFO[key] = 1
+        logger.warning(
+            "Ignoring %s: it is a link out of %s, a dangling link or a "
+            "directory, so the map is read as if it had no projection "
+            "descriptor (docs/maps.md).",
+            key,
+            str(directory),
+        )
+    return None
 
 
 def _climbs_out(path: str) -> bool:
@@ -311,7 +359,9 @@ def resolve_map(
     Raises:
         MapSourceError: If *source* is not a usable URI.
         MapCacheError: If the repository could not be cloned or updated.
-        MapResolutionError: If the repository holds no Lanelet2 map there.
+        MapResolutionError: If the repository holds no Lanelet2 map there, or
+            the map directory cannot be read (a name too long, a permission
+            the process lacks).
     """
     parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
     if _climbs_out(parsed.directory):
@@ -322,9 +372,18 @@ def resolve_map(
     at_directory = parsed.with_path(parsed.directory)
     derived = store.derived_dir(at_directory)
 
-    directory = None if (refresh or parsed.pinned) else store.provisioned(at_directory)
-    if directory is not None:
-        return _describe(parsed, directory, derived, provisioned=True)
+    try:
+        directory = (
+            None if (refresh or parsed.pinned) else store.provisioned(at_directory)
+        )
+        if directory is not None:
+            return _describe(parsed, directory, derived, provisioned=True)
+    except OSError as exc:
+        # Before Python 3.14 ``is_file()`` / ``is_dir()`` / ``glob()`` raise
+        # for a name too long, a permission the process lacks or an I/O error
+        # instead of answering False: said as this map's problem, the way
+        # resolve_directory says it (#1963, #1974).
+        raise _unreadable(parsed, exc) from exc
 
     # Below this line every source is pinned: a branch is replaced by the commit
     # it names right now.  A branch ref reads as "the latest" but never behaved
@@ -345,17 +404,25 @@ def resolve_map(
         refresh=refresh,
     )
     directory = _in_worktree(repo, parsed.directory)
-    if not directory.is_dir():
-        raise MapResolutionError(
-            f"{parsed.uri} does not name a directory in the repository."
-        )
-    if not _is_within(repo.worktree, directory):
-        # A map directory that is a symlink out of the checkout would make
-        # every file check below pass against the link's target.
-        raise MapResolutionError(
-            f"{parsed.uri} names a link to a directory outside the repository."
-        )
-    return _describe(parsed, directory, derived, commit=repo.commit)
+    try:
+        if not directory.is_dir():
+            raise MapResolutionError(
+                f"{parsed.uri} does not name a directory in the repository."
+            )
+        if not _is_within(repo.worktree, directory):
+            # A map directory that is a symlink out of the checkout would make
+            # every file check below pass against the link's target.
+            raise MapResolutionError(
+                f"{parsed.uri} names a link to a directory outside the repository."
+            )
+        return _describe(parsed, directory, derived, commit=repo.commit)
+    except OSError as exc:
+        raise _unreadable(parsed, exc) from exc
+
+
+def _unreadable(source: MapSource, exc: OSError) -> MapResolutionError:
+    """The error for *source*'s map directory raising *exc* when looked at."""
+    return MapResolutionError(f"{source.uri}: map directory cannot be read: {exc}")
 
 
 def resolve_directory(
@@ -473,8 +540,8 @@ def cached_map(
     up through the commit a previous resolve recorded for it.
 
     Returns:
-        The resolved map, or ``None`` if it is not cached, not downloaded, or
-        cached only as a git-lfs pointer.
+        The resolved map, or ``None`` if it is not cached, not downloaded,
+        cached only as a git-lfs pointer, or its directory cannot be read.
 
     Raises:
         MapSourceError: If *source* is not a usable URI.
@@ -482,6 +549,22 @@ def cached_map(
     parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
     if _climbs_out(parsed.directory):
         return None
+    try:
+        return _cached_map(parsed, cache)
+    except OSError:
+        # Before Python 3.14 ``is_file()`` / ``is_dir()`` / ``glob()`` raise
+        # for a name too long (ENAMETOOLONG), a permission the process lacks
+        # (EACCES) or an I/O error instead of answering False.  A map that
+        # cannot be looked at is not one the machine has; resolve_map, which
+        # the caller is sent to next, says why (#1974).
+        logger.warning("Map %s cannot be looked up", parsed.uri, exc_info=True)
+        return None
+
+
+def _cached_map(
+    parsed: MapSource, cache: Optional[GitMapCache]
+) -> Optional[ResolvedMap]:
+    """:func:`cached_map`, letting an ``OSError`` escape."""
     store = cache or GitMapCache()
     at_directory = parsed.with_path(parsed.directory)
     derived = store.derived_dir(at_directory)
@@ -588,7 +671,6 @@ def _describe(
             if source is None
             else _lanelet2_of(directory, source)
         )
-    projector_info = directory / "map_projector_info.yaml"
     xodr_path, xodr_is_derived = _find_xodr(directory, derived, directory.name)
     return ResolvedMap(
         source=source,
@@ -596,9 +678,7 @@ def _describe(
         directory=directory,
         lanelet2_path=lanelet2_path,
         xodr_path=xodr_path,
-        projector_info_path=(
-            projector_info if _is_map_file(directory, projector_info) else None
-        ),
+        projector_info_path=projector_info_path(directory),
         derived=derived,
         xodr_is_derived=xodr_is_derived,
         commit=commit,

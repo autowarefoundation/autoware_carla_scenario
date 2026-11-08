@@ -21,7 +21,11 @@ from autoware_carla_scenario.coordinate import (
     to_map_frame,
     to_opendrive,
 )
-from autoware_carla_scenario.coordinate.transform import lanelet_length, on_lanelet
+from autoware_carla_scenario.coordinate.transform import (
+    lanelet_length,
+    on_lanelet,
+    project_onto_lanelet,
+)
 from autoware_carla_scenario.coordinate.map_manager import _parse_geo_reference
 from autoware_carla_scenario.coordinate.projection import (
     LOCAL_XY,
@@ -211,6 +215,55 @@ class TestReadProjectorType:
         # rather than the documented fallback.
         map_path = self._map_with_info(tmp_path, "- projector_type: Local\n")
         assert _read_projector_type(map_path) is None
+
+    _OUTSIDE_INFO = (
+        "projector_type: LocalCartesianUTM\n"
+        "map_origin:\n  latitude: 10.0\n  longitude: 20.0\n"
+    )
+
+    def test_a_descriptor_linked_from_outside_the_map_is_ignored(
+        self, tmp_path, caplog
+    ):
+        # The resolver ignores a map_projector_info.yaml that is a link out of
+        # the map directory (docs/maps.md); the projection and origin read the
+        # file themselves, and used to follow the link anywhere on the host
+        # (#1974).  Both have to agree that there is no descriptor.
+        from autoware_carla_scenario.maps import GitMapCache, resolve_directory
+
+        outside = tmp_path / "outside"
+        outside.mkdir()
+        (outside / "map_projector_info.yaml").write_text(self._OUTSIDE_INFO)
+        directory = tmp_path / "map"
+        directory.mkdir()
+        map_path = directory / "lanelet2_map.osm"
+        map_path.write_text("<osm/>", encoding="utf-8")
+        (directory / "map_projector_info.yaml").symlink_to(
+            Path("..") / "outside" / "map_projector_info.yaml"
+        )
+
+        resolved = resolve_directory(directory, cache=GitMapCache(tmp_path / "root"))
+        assert resolved.projector_info_path is None
+        assert _read_projector_type(map_path) is None
+        assert _read_map_origin(map_path) is None
+        assert map_origin(map_path)[1] != "map_projector_info.yaml"
+        # Every coordinate on the map moves with it, so it is not silent: a
+        # warning naming the file, once however often the map is read.
+        warnings = [
+            r
+            for r in caplog.records
+            if r.levelname == "WARNING" and "Ignoring" in r.getMessage()
+        ]
+        assert len(warnings) == 1
+        assert str(directory / "map_projector_info.yaml") in warnings[0].getMessage()
+
+    def test_a_descriptor_linked_from_inside_the_map_is_read(self, tmp_path):
+        """A link that stays in the map directory is followed, as the resolver does."""
+        (tmp_path / "shared.yaml").write_text(self._OUTSIDE_INFO)
+        (tmp_path / "map_projector_info.yaml").symlink_to("shared.yaml")
+        map_path = tmp_path / "lanelet2_map.osm"
+        map_path.write_text("<osm/>", encoding="utf-8")
+        assert _read_projector_type(map_path) == "utm"
+        assert _read_map_origin(map_path) == (10.0, 20.0, 0.0)
 
 
 class TestLocalCartesianUtmMap:
@@ -953,6 +1006,88 @@ class TestToLanelet2ProjectsOntoThePolyline:
                     lanelet.id,
                     fraction,
                 )
+
+
+class TestProjectOntoLaneletPastTheEnds:
+    """``project_onto_lanelet`` reads ``t`` as ``to_lanelet2`` does (#1974).
+
+    lanelet2's ``toArcCoordinates`` gives the distance to the end point past
+    either end of the line, which is not a lateral offset at all.
+    """
+
+    def test_past_the_end_t_is_the_offset_from_the_end_segment(self, monkeypatch):
+        import types
+
+        import lanelet2.core
+
+        from autoware_carla_scenario.coordinate import transform
+
+        def line(id_: int, y: float) -> lanelet2.core.LineString3d:
+            return lanelet2.core.LineString3d(
+                id_,
+                [
+                    lanelet2.core.Point3d(10 * id_, 0.0, y, 0.0),
+                    lanelet2.core.Point3d(10 * id_ + 1, 10.0, y, 0.0),
+                ],
+            )
+
+        # Centreline (0, 0) -> (10, 0).
+        lanelet = lanelet2.core.Lanelet(1, line(2, 1.0), line(3, -1.0))
+        lanelet_map = lanelet2.core.LaneletMap()
+        lanelet_map.add(lanelet)
+        manager = types.SimpleNamespace(lanelet_map=lanelet_map, mgrs_offset=(0, 0))
+        monkeypatch.setattr(
+            transform.MapManager, "get_instance", staticmethod(lambda: manager)
+        )
+
+        # (10.5, -0.1) in the Lanelet2 frame; CARLA's y points the other way.
+        pose = project_onto_lanelet(CarlaWorldPose(x=10.5, y=0.1, z=0.0), 1)
+        assert pose.t == pytest.approx(-0.1, abs=1e-9)  # not -0.51
+        assert pose.s == pytest.approx(10.0, abs=1e-9)  # clamped, as documented
+        before = project_onto_lanelet(CarlaWorldPose(x=-2.0, y=-0.3, z=0.0), 1)
+        assert (before.s, before.t) == (0.0, pytest.approx(0.3, abs=1e-9))
+
+    def test_t_agrees_with_to_lanelet2_near_the_ends_of_the_map(self, map_manager):
+        """Points inside lanelets near their corners, where the two parted."""
+        ox, oy = map_manager.mgrs_offset
+        checked = 0
+        for lanelet in map_manager.lanelet_map.laneletLayer:
+            centerline = lanelet.centerline
+            middle = centerline[len(centerline) // 2]
+            points = [(p.x, p.y, p.z) for p in centerline]
+            for bound in (lanelet.leftBound, lanelet.rightBound):
+                for corner in (bound[0], bound[len(bound) - 1]):
+                    # 2 % of the way from the corner toward the middle: inside.
+                    x = corner.x + (middle.x - corner.x) * 0.02
+                    y = corner.y + (middle.y - corner.y) * 0.02
+                    pose = CarlaWorldPose(x=x - ox, y=-(y - oy), z=0.0)
+                    if not on_lanelet(pose, lanelet.id, by_height=False):
+                        continue
+                    projected = project_onto_lanelet(pose, lanelet.id)
+                    s, t, _heading = _project_to_centerline(points, x, y)
+                    assert projected.t == pytest.approx(t, abs=1e-6), lanelet.id
+                    assert projected.s == pytest.approx(s, abs=1e-6), lanelet.id
+                    checked += 1
+        assert checked > 1000
+
+    def test_lanelet_146(self, map_manager):
+        """The worst case on the fixture map: -10.60 m, against -1.49 m."""
+        lanelet = map_manager.lanelet_map.laneletLayer[146]
+        ox, oy = map_manager.mgrs_offset
+        middle = lanelet.centerline[len(lanelet.centerline) // 2]
+        points = [(p.x, p.y, p.z) for p in lanelet.centerline]
+        worst = 0.0
+        for bound in (lanelet.leftBound, lanelet.rightBound):
+            for corner in (bound[0], bound[len(bound) - 1]):
+                x = corner.x + (middle.x - corner.x) * 0.02
+                y = corner.y + (middle.y - corner.y) * 0.02
+                pose = CarlaWorldPose(x=x - ox, y=-(y - oy), z=0.0)
+                if not on_lanelet(pose, 146, by_height=False):
+                    continue
+                t = project_onto_lanelet(pose, 146).t
+                assert t == pytest.approx(_project_to_centerline(points, x, y)[1])
+                worst = max(worst, abs(t))
+        assert 0.0 < worst < 3.0
 
 
 # ---------------------------------------------------------------------------

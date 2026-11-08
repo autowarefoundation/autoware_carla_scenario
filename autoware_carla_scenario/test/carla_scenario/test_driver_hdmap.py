@@ -661,6 +661,21 @@ def test_the_projector_beside_a_given_map_is_copied(
     assert projector.read_text() == "projector_type: MGRS\n"
 
 
+def test_a_projector_linked_from_outside_the_map_is_not_copied(
+    opendrive: str, local_osm: Path, tmp_path: Path
+) -> None:
+    """The run ignores it (maps.resolver.projector_info_path), so the map set
+    does not ship it as the map's projection either (#1974)."""
+    outside = tmp_path / "outside.yaml"
+    outside.write_text("projector_type: LocalCartesianUTM\n")
+    (local_osm.parent / "map_projector_info.yaml").symlink_to(outside)
+    maps = tmp_path / "maps"
+    map_id = export_map(opendrive, "Town", maps, lanelet2_path=local_osm)
+    manifest = json.loads((maps / map_id / MANIFEST_FILE).read_text())
+    assert "projector" not in manifest["formats"]["lanelet2"]
+    assert not (maps / map_id / "map_projector_info.yaml").exists()
+
+
 def test_a_given_lanelet2_map_needs_map_dir() -> None:
     with pytest.raises(ValueError, match="map_dir"):
         DriverClientConfig(lanelet2_path="/maps/lanelet2_map.osm")
