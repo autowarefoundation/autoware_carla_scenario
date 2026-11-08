@@ -1187,3 +1187,31 @@ def test_expand_re_exports_the_checked_walk_back_lanelet_key() -> None:
     assert (
         expand_module._walk_back_lanelet_key is bindings_module._walk_back_lanelet_key
     )
+
+
+# The run's override of a key a drawn case sets is refused before anything
+# runs, by scenario-expand (which composes it into the config) and by the
+# batch (which appends it to each case), not left to win at run time while
+# the case records the value drawn (#1995).
+@pytest.mark.usefixtures("at_repo_root")
+def test_an_override_of_a_drawn_key_is_refused_by_the_cli_and_the_batch(
+    capsys: pytest.CaptureFixture[str], monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.examples.expand import main
+
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
+    name = "cut_in/left"
+    overrides = ["+sweep.odd_sample.count=2", "environment.time_of_day=night"]
+
+    code = main([f"scenario={name}", *overrides])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert f"Error: {name}: sweep.odd_sample: " in captured.err
+    assert "environment.time_of_day is drawn by the ODD's" in captured.err
+    assert captured.out == ""
+
+    with pytest.raises(SystemExit) as exited:
+        run._expand_batch([name], overrides)
+    assert exited.value.code == 1
+    assert "environment.time_of_day is drawn by the ODD's" in capsys.readouterr().err

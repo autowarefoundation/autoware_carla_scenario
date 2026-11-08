@@ -37,14 +37,17 @@ The road's grip is no attribute of an ODD but follows one: the water the
 conditions drawn leave on the road bounds it
 (:func:`~autoware_carla_scenario.actions.environment.tire_friction_range`).
 Each case is given where in that range its grip is,
-``environment.tire_friction_quantile`` (:func:`with_tire_friction`), drawn
-from the sweep's seed and the case, so the same sweep draws the same grip;
-``tire_friction: false`` in the sweep leaves it at the middle.
+``environment.tire_friction_quantile``, a parameter of the case
+(``quantile(tire_friction_quantile)``, :data:`QUANTILE_DRAWS`): a root node
+of the rules, uniform on [0, 1], written by an effect as the weather fields
+are, so the same sweep draws the same grip and the flaky search moves it
+(#1995); ``tire_friction: false`` in the sweep leaves it at the middle.
+(:func:`with_tire_friction` draws one for cases no sampler drew.)
 
 How far drivers see follows the conditions the same way (the weather rules'
 ``visibility``): night, rain and fog shorten it.  Each case is given where in that range its visibility
-is, ``environment.visibility_quantile`` (:func:`with_visibility`), drawn the
-same way; ``visibility: false`` in the sweep leaves it at the middle.  A
+is, ``environment.visibility_quantile`` (``quantile(visibility_quantile)``),
+drawn the same way; ``visibility: false`` in the sweep leaves it at the middle.  A
 traffic backend that models drivers' sight (``sumo``) holds its traffic to
 it.  An ODD that names the visibility itself (the ``visibility`` probe) sets
 it through its knob, ``environment.visibility_m``, whatever the weather.
@@ -67,7 +70,7 @@ import base64
 import dataclasses
 import json
 import random
-from collections.abc import Iterable, Mapping
+from collections.abc import Iterable, Mapping, Sequence
 from pathlib import Path
 from typing import Any, Optional, Union
 
@@ -79,7 +82,7 @@ from openodd.sampler import OddSampler as _OddSampler
 from ..config_flags import check_flag
 from ..route.model import _whole_number
 from ..seed import DEFAULT_SEED, check_seed
-from openodd import Rules
+from openodd import Rules, RulesError
 
 from .backend import CARLA_BACKEND, DEFAULT_KNOBS, CarlaBackend, weather_effects
 from .control_fields import (
@@ -108,6 +111,8 @@ __all__ = [
     "controls_from_mapping",
     "knobs_from_mapping",
     "check_sample_settings",
+    "case_settings",
+    "QUANTILE_DRAWS",
     "sample_count",
     "sample_draws",
     "sample_seed",
@@ -510,16 +515,45 @@ def search_from_config(
     if resolved:
         coverage = load_and_merge(resolved)
     strategy = raw.get("strategy")
+    knobs = controls_from_mapping(raw.get("knobs"))
+    scenario_controls = controls_from_mapping(controls)
+    backend = scenario_backend(rules, environment_rules)
+    # The grip's and the visibility's quantiles, drawn with each case as
+    # parameters of it (effects of root nodes, uniform on [0, 1]), so the
+    # flaky search sees and moves them as it moves the weather effects'
+    # (#1995) -- unless a knob already sets them, or what they place.  Not
+    # for a sampler that sets nothing else: openodd refuses one that draws
+    # nothing of the ODD, and the quantiles alone would hide that.
+    written = case_settings(definition, knobs, scenario_controls, backend)
+    nodes = [
+        quantity
+        for name, key, quantity, fixed in QUANTILE_DRAWS
+        if written and sample_draws(raw, name) and not set(written) & {key, *fixed}
+    ]
+    if nodes:
+        backend.add_rules(
+            Rules.from_text(
+                yaml.safe_dump(_rules_with_quantiles(rules, nodes), sort_keys=False)
+            )
+        )
+        scenario_controls = {
+            **scenario_controls,
+            **{
+                f"sweep.odd_sample.{name}": OddKnob(key, quantity=quantity)
+                for name, key, quantity, _fixed in QUANTILE_DRAWS
+                if quantity in nodes
+            },
+        }
     sampler = OddSampler(
         definition,
-        controls_from_mapping(raw.get("knobs")),
-        controls=controls_from_mapping(controls),
+        knobs,
+        controls=scenario_controls,
         seed=seed,
         strategy=None if strategy is None else str(strategy),
         coverage=coverage,
         weights=weights_from_config(raw.get("weights"), base_dir),
         drawn=drawn.of(definition) if drawn is not None else (),
-        backend=scenario_backend(rules, environment_rules),
+        backend=backend,
     )
     search = None
     if flaky is not None and flaky is not False:
@@ -529,6 +563,89 @@ def search_from_config(
         if coverage is not None:
             search.observe_report(coverage, None if scenario is None else str(scenario))
     return sampler, search, count
+
+
+#: The draws of each case's place in a range its weather leaves: the
+#: ``sweep.odd_sample`` switch (:data:`SAMPLE_DRAWS`), the setting it is drawn
+#: into, the node of the rules that draws it (a root, uniform on [0, 1], so
+#: the value written is the case's quantile, ``quantile(<node>)`` among its
+#: values), and the settings that fix what it places, which a case that sets
+#: draws no quantile for.
+QUANTILE_DRAWS = (
+    (
+        "tire_friction",
+        TIRE_FRICTION_KEY,
+        "tire_friction_quantile",
+        ("environment.tire_friction",),
+    ),
+    (
+        "visibility",
+        VISIBILITY_KEY,
+        "visibility_quantile",
+        ("environment.visibility_m",),
+    ),
+)
+
+
+def case_settings(
+    definition: OddDefinition,
+    knobs: Mapping[str, OddKnob],
+    controls: Mapping[str, OddKnob],
+    backend: CarlaBackend,
+) -> dict[str, tuple[str, str]]:
+    """The settings a case drawn from *definition* is given by a knob or an
+    effect, each with what draws it, ``(kind, name)``: ``("attribute",
+    <attribute>)`` for an attribute's knob (one of *knobs*, a sweep's, else
+    the backend's for it, which *controls*, the scenario's, may give),
+    ``("control", <name>)`` for a control that writes a node of the rules,
+    and ``("weather", <quantity>)`` for a CARLA weather field that follows
+    from the conditions the ODD names (:func:`~.backend.weather_effects`)."""
+    settings: dict[str, tuple[str, str]] = {}
+    for attribute in definition.attributes:
+        knob = knobs.get(attribute.name) or backend.knob(attribute, controls)
+        if knob is not None:
+            settings.setdefault(knob.key, ("attribute", attribute.name))
+    for name, control in controls.items():
+        if control.quantity is not None:
+            settings.setdefault(control.key, ("control", name))
+    for effect in weather_effects(definition, backend.active_rules):
+        settings.setdefault(effect.key, ("weather", str(effect.quantity)))
+    return settings
+
+
+def _rules_with_quantiles(
+    rules: Optional[Mapping[str, Any]], nodes: Sequence[str]
+) -> dict[str, Any]:
+    """The scenario's rule document (*rules*, its ``scenario_rules``; a bare
+    one without), with *nodes* added: roots, uniform on [0, 1].
+
+    Raises:
+        openodd.RulesError: When *rules* defines one of *nodes* already.
+    """
+    doc: dict[str, Any] = (
+        {str(k): v for k, v in rules.items()}
+        if rules
+        else {"version": 3, "taxonomy": {"bundled": "default"}}
+    )
+    quantities = dict(doc.get("quantities") or {})
+    for node in nodes:
+        if node in quantities:
+            raise RulesError(
+                f"scenario_rules: {node} is the node sweep.odd_sample draws "
+                "each case's quantile of it from; name the scenario's own "
+                "node otherwise"
+            )
+        quantities[node] = {
+            "basis": {
+                "kind": "expert",
+                "by": "autoware_carla_scenario",
+                "text": "Where in the range its weather leaves a case is: "
+                "any quantile alike.",
+            },
+            "parts": {"case": {"uniform": {"low": 0.0, "high": 1.0}}},
+        }
+    doc["quantities"] = quantities
+    return doc
 
 
 def with_tire_friction(samples: Iterable[OddSample], seed: int = 0) -> list[OddSample]:

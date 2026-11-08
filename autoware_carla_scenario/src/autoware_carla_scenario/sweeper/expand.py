@@ -18,7 +18,10 @@ and the match itself (``scenario.route.*``) as overrides
 ``sweep.odd_sample`` draws the settings a run can be given -- the weather, the
 sun, scenario parameters -- from the ODD, aimed at what earlier runs left
 uncovered when asked to (:mod:`autoware_carla_scenario.odd.sampler`); with
-constraints or a route search too, each drawn case takes their cases in turn.
+constraints or a route search too, each drawn case takes one of their cases
+-- in turn, unless the map decides some of the ODD's attributes (below).
+The run's own overrides may not set what a drawn case sets
+(:func:`expand_sweep`).
 A batch expanding several scenarios hands each the cases the earlier ones
 drew (``drawn``, an :class:`~autoware_carla_scenario.odd.sampler.OddDraws`),
 so scenarios on one ODD go on from each other rather than draw alike. Each
@@ -116,6 +119,7 @@ def expand_sweep(
     seed: int | None = None,
     rules: Mapping[str, Any] | None = None,
     environment_rules: Any = None,
+    composed: Sequence[str] = (),
 ) -> list[list[str]]:
     """The override list of every concrete scenario ``sweep`` describes on ``lanelet_map``.
 
@@ -123,9 +127,18 @@ def expand_sweep(
     binding cannot be resolved is skipped (and logged).
 
     With ``sweep.odd_sample``, ``count`` cases are drawn from the ODD
-    (``odd_sample.odd``, else *odd*, the run's) and each is given the next
-    lanelet case or route match in turn -- or none, when the sweep has
-    neither. Without a ``count``, one case is drawn per lanelet case or match.  *controls* are
+    (``odd_sample.odd``, else *odd*, the run's) and each is given a lanelet
+    case or route match -- in turn unless the map decides some of the ODD's
+    attributes (docs/odd.md, "The road a case is on"): then each is put on a
+    case in the buckets it drew, so a case may run more than once or not at
+    all -- or none, when the sweep has neither. Without a ``count``, one case
+    is drawn per lanelet case or match.  A drawn case's settings may not be
+    overridden: an argument (or one of *composed*, the run's overrides
+    already composed into its config, which its caller adds to the cases
+    itself) that sets a key a knob or an effect of the ODD draws is refused,
+    as the run would follow it while the case records the value drawn
+    (#1995); one that sets the grip or the visibility (or the quantile of
+    either) turns that draw off, as a case that names it draws none.  *controls* are
     the scenario's (its config's ``controls``): what its parameters set; *rules*
     are the nodes it adds to the rules (its ``scenario_rules``), which a
     control with a ``quantity`` writes; *environment_rules* are the run's
@@ -144,7 +157,7 @@ def expand_sweep(
             ``odd_sample``, or both constraints and a route search, or
             constraints for more than one target key, or a ``case_index``
             that is not a non-negative whole number or is past the cases it
-            expands to.
+            expands to, or an argument sets a key a drawn case sets.
     """
     check_constraint_keys(sweep)
     index = _case_index(sweep.get("case_index"))
@@ -178,6 +191,7 @@ def expand_sweep(
             lanelet_map=lanelet_map if base_cases != [[]] else None,
             rules=rules,
             environment_rules=environment_rules,
+            arguments=[*arguments, *composed],
         )
     if index is not None:
         if not 0 <= index < len(base_cases):
@@ -319,6 +333,7 @@ def _with_odd_samples(
     lanelet_map: Any = None,
     rules: Mapping[str, Any] | None = None,
     environment_rules: Any = None,
+    arguments: Sequence[str] = (),
 ) -> list[list[str]]:
     """``odd_sample.count`` cases (as many as base cases by default), each a
     base case -- a lanelet or a route match -- and settings drawn from the ODD.
@@ -326,25 +341,31 @@ def _with_odd_samples(
     With *lanelet_map*, the attributes the map decides are drawn as well and
     each case is put on a base case in the buckets drawn (the module
     docstring), so a base case may run more than once, or not at all; without
-    it, the base cases are taken in turn."""
+    it, the base cases are taken in turn.
+
+    *arguments* are the run's own overrides: one that sets a key a drawn
+    case sets is refused (:func:`_refuse_overridden`); one that sets the grip
+    or the visibility, or its quantile, turns that draw off."""
     from openodd import ParameterSpace  # noqa: PLC0415
 
+    from ..odd.control_fields import sets_any  # noqa: PLC0415
     from ..odd.registry import resolve_odd  # noqa: PLC0415
     from ..odd.sampler import (  # noqa: PLC0415
         ODD_CASE_KEY,
+        QUANTILE_DRAWS,
         encode_case,
         sample_draws,
-        sample_seed,
         search_from_config,
-        with_tire_friction,
-        with_visibility,
     )
 
     raw = {str(k): v for k, v in odd_sample.items()}
-    # Read before anything is drawn, and strictly (check_sample_settings()):
-    # "false" turns a draw off, "ture" is refused (#1756).
-    draws_grip = sample_draws(raw, "tire_friction")
-    draws_visibility = sample_draws(raw, "visibility")
+    for name, key, _quantity, fixed in QUANTILE_DRAWS:
+        # Read strictly first (check_sample_settings()): "ture" is refused
+        # whatever the arguments say (#1756).  The run names the grip or the
+        # visibility, or where it is: the case draws none, as a case that
+        # names one keeps it.
+        if sample_draws(raw, name) and sets_any(arguments, (key, *fixed)):
+            raw[name] = False
     readings: list[dict[str, tuple[str, Any]]] = []
     buckets: list[dict[str, str]] = []
     map_attributes: list[str] = []
@@ -386,18 +407,10 @@ def _with_odd_samples(
         cases = [base_cases[i] for i in indices]
     else:
         cases = [base_cases[i % len(base_cases)] for i in range(len(samples))]
+    # Before the draws are recorded: a refused sweep draws nothing.
+    _refuse_overridden(samples, arguments, raw, odd, controls, rules, environment_rules)
     if drawn is not None:
         drawn.add(sampler.odd, samples)
-    # The seed the ODD was drawn from (expand_sweep() has filled a null one
-    # in), as the int it names: 4.0, "4" and " 4 " draw the grip and the
-    # visibility seed 4 does, as they draw its cases (#1442).
-    draw_seed = sample_seed(raw)
-    if draws_grip:
-        # After the draws are recorded: the grip is no attribute of the ODD.
-        samples = with_tire_friction(samples, draw_seed)
-    if draws_visibility:
-        # Nor is how far drivers see.
-        samples = with_visibility(samples, draw_seed)
     logger.info(
         "Drew %d case(s) from ODD %s over %s (%s)%s",
         len(samples),
@@ -431,6 +444,87 @@ def _with_odd_samples(
         [*case, *sample.overrides, f"++{ODD_CASE_KEY}={encode_case(sample, space)}"]
         for case, sample in zip(cases, samples)
     ]
+
+
+def _override_key(override: str) -> str:
+    """The config key a Hydra override names: ``a.b`` of ``a.b=1``,
+    ``+a.b=1``, ``++a.b=1`` and ``~a.b``."""
+    return override.lstrip("~+").split("=", 1)[0]
+
+
+def _refuse_overridden(
+    samples: Sequence[Any],
+    arguments: Sequence[str],
+    raw: Mapping[str, Any],
+    odd: Any,
+    controls: Mapping[str, Any] | None,
+    rules: Mapping[str, Any] | None,
+    environment_rules: Any,
+) -> None:
+    """Refuse *arguments* that set a key one of the drawn *samples* sets.
+
+    The run's overrides come after a case's, so Hydra runs the argument's
+    value -- while the case records the value drawn (``++odd_case``), its
+    weather effects follow that value, coverage counts its bucket and the
+    flaky search learns from it (#1995).  Pinning the value instead would
+    need it read back into a bucket, which a value outside the ODD's has
+    not; the sweep's own knobs pin it exactly, so the message says how.
+
+    Raises:
+        ValueError: Naming each key overridden, what draws it, and how to
+            hold it instead.
+    """
+    keys = {_override_key(a) for a in arguments}
+    if not keys:
+        return
+    drawn = {_override_key(o) for sample in samples for o in sample.overrides}
+    clashes = sorted(keys & drawn)
+    if not clashes:
+        return
+    from ..odd.registry import resolve_odd  # noqa: PLC0415
+    from ..odd.sampler import (  # noqa: PLC0415
+        case_settings,
+        controls_from_mapping,
+        scenario_backend,
+    )
+
+    settings = case_settings(
+        resolve_odd(raw.get("odd") or odd),
+        controls_from_mapping(raw.get("knobs")),
+        controls_from_mapping(controls),
+        scenario_backend(rules, environment_rules),
+    )
+    reasons: list[str] = []
+    for key in clashes:
+        kind, name = settings.get(key, ("", ""))
+        if kind == "attribute":
+            reasons.append(
+                f"{key} is drawn by the ODD's {name}; pin it in the sweep "
+                "instead of overriding it, with a knob for that attribute "
+                f"in sweep.odd_sample.knobs ({{key: {key}, values: "
+                "{<label>: <value>}} to draw one label, a narrower range for "
+                "a number), or narrow the ODD, so that the case records, its "
+                "weather follows and coverage counts what runs"
+            )
+        elif kind == "control":
+            reasons.append(
+                f"{key} is drawn with each case by the scenario's control "
+                f"{name}, from its node of the rules; change that node "
+                "(scenario_rules) instead of overriding it"
+            )
+        elif kind == "weather":
+            reasons.append(
+                f"{key} follows from the conditions each case draws, by the "
+                f"weather rules' {name}; change the rules (environment.rules) "
+                "or the conditions drawn instead of overriding it"
+            )
+        else:
+            reasons.append(f"{key} is set by each case drawn from the ODD")
+    raise ValueError(
+        "sweep.odd_sample: the run's overrides set what a drawn case sets, "
+        "and the run would follow them while the case records the value "
+        "drawn: " + "; ".join(reasons)
+    )
 
 
 def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
@@ -740,11 +834,15 @@ def expand_config(
     arguments: Sequence[str] = (),
     *,
     drawn: OddDraws | None = None,
+    composed: Sequence[str] = (),
 ) -> list[list[str]]:
     """The concrete scenarios of a composed scenario config (see module docstring).
 
     *drawn* is a batch's record of the cases drawn from the ODD so far
-    (see :func:`expand_sweep`).
+    (see :func:`expand_sweep`).  *composed* are the overrides *cfg* was
+    composed with when they are not *arguments* (the caller adds them to
+    each case itself): a drawn case may not set what they set either
+    (:func:`expand_sweep`).
 
     Raises:
         ControlsError: When the config's ``controls`` are invalid, whether or
@@ -755,7 +853,8 @@ def expand_config(
             constraint key, an empty constraints section, or a constraint or
             binding the parsers refuse (:func:`expand_sweep`) -- or when the
             run's ``seed``, or ``sweep.odd_sample``'s ``seed`` or ``count``,
-            is not a whole number (a negative seed, a count below 1), checked
+            is not a whole number, or an override sets what a case drawn
+            from the ODD sets (a negative seed, a count below 1), checked
             before any map is read -- or when the Lanelet2 map a constraint or
             route sweep needs is not named, is missing, or cannot be read,
             whether ``map.lanelet2_path``, ``map.directory`` or ``map.source``
@@ -798,6 +897,7 @@ def expand_config(
             seed=seed,
             rules=rules,
             environment_rules=weather,
+            composed=composed,
         )
 
     lanelet_map = load_sweep_map(OmegaConf.select(cfg, "map"))
@@ -811,6 +911,7 @@ def expand_config(
         seed=seed,
         rules=rules,
         environment_rules=weather,
+        composed=composed,
     )
 
 

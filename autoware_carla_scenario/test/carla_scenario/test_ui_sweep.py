@@ -117,8 +117,13 @@ def test_resolve_sweep_is_the_cli_expansion(monkeypatch: pytest.MonkeyPatch) -> 
 
     calls: list[Any] = []
 
-    def fake_expand_config(cfg: Any, arguments: Any = (), *, drawn: Any = None) -> Any:
+    def fake_expand_config(
+        cfg: Any, arguments: Any = (), *, drawn: Any = None, composed: Any = ()
+    ) -> Any:
         calls.append(cfg.scenario.name)
+        # The Run panel's overrides, which every job runs with after its
+        # case's: a case may not set what they set (#1995).
+        assert list(composed) == list(EXTRA)
         return [["scenario.route.index=0", "ego.spawn_lanelet_id=7"]]
 
     monkeypatch.setattr(expand, "expand_config", fake_expand_config)

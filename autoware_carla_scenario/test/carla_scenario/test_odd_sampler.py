@@ -1550,7 +1550,13 @@ def test_a_measure_targeted_control_writes_the_drawn_value_unchanged() -> None:
     )
 
     for case in sampler.sample(30):
-        (override,) = case.overrides
+        # The gap, and where the case's grip and visibility are in the ranges
+        # its weather leaves (parameters of the case, #1995).
+        override, *quantiles = case.overrides
+        assert [q.split("=")[0] for q in quantiles] == [
+            "environment.tire_friction_quantile",
+            "environment.visibility_quantile",
+        ]
         key, value = override.split("=")
         assert key == "scenario.npc_gap_m"
         assert float(value) == pytest.approx(case.values["dynamic.lead_gap"])
@@ -2002,3 +2008,206 @@ def test_a_derived_attribute_gets_no_knob_of_its_own() -> None:
     )
 
     assert set(knobs) == {"scenery.speed_limit"}
+
+
+# A run's own override of a key a drawn case sets won at run time, while the
+# case recorded (++odd_case), weathered and counted the value drawn (#1995).
+def test_an_override_of_a_drawn_attribute_is_refused_naming_it() -> None:
+    with pytest.raises(ValueError) as refused:
+        expand_sweep(
+            {"odd_sample": {"count": 2}},
+            None,
+            ["environment.time_of_day=night"],
+            odd="default",
+        )
+
+    message = str(refused.value)
+    assert f"environment.time_of_day is drawn by the ODD's {_TIME}" in message
+    # And how to hold it instead.
+    assert "sweep.odd_sample.knobs" in message
+
+
+@pytest.mark.parametrize("prefix", ["", "+", "++", "~"])
+def test_an_override_of_a_weather_effect_is_refused(prefix: str) -> None:
+    override = f"{prefix}environment.sun_altitude_angle"
+    if prefix != "~":
+        override += "=10"
+    with pytest.raises(
+        ValueError,
+        match=r"environment\.sun_altitude_angle follows from the conditions "
+        r"each case draws, by the weather rules' carla_sun_altitude",
+    ):
+        expand_sweep({"odd_sample": {"count": 2}}, None, [override], odd="default")
+
+
+def test_an_override_composed_into_the_config_is_refused_too() -> None:
+    # scenario-expand and the UI compose the run's overrides into the config
+    # and add them to each case themselves.
+    cfg = OmegaConf.create(
+        {"odd": "default", "sweep": {"odd_sample": {"count": 2, "seed": 1}}}
+    )
+
+    with pytest.raises(ValueError, match="environment.rainfall_rate_mm_h is drawn"):
+        expand_config(cfg, composed=["environment.rainfall_rate_mm_h=3"])
+    # Overrides of keys no case sets expand as before.
+    assert expand_config(cfg, composed=["map=nishishinjuku", "ego.entity=x"]) == (
+        expand_config(cfg)
+    )
+
+
+def test_a_knob_pins_what_an_override_would_have_set() -> None:
+    # What the refusal recommends: the case records the label, and its
+    # weather follows it.
+    knob = {"key": "environment.time_of_day", "values": {"night": "night"}}
+    cases = expand_sweep(
+        {"odd_sample": {"count": 3, "knobs": {_TIME: knob}}}, None, (), odd="default"
+    )
+
+    for case in cases:
+        assert "environment.time_of_day=night" in case
+        sample, _space = decode_case(case[-1].split("=", 1)[1])
+        assert sample.values[_TIME] == "night"
+        (altitude,) = [o for o in case if o.startswith("environment.sun_altitude")]
+        assert float(altitude.split("=", 1)[1]) < 0
+
+
+@pytest.mark.parametrize(
+    "override",
+    [
+        "environment.tire_friction=0.5",
+        "environment.tire_friction_quantile=0.2",
+        "++environment.visibility_quantile=0.2",
+        "environment.visibility_m=40",
+    ],
+)
+def test_an_override_of_the_grip_or_visibility_turns_that_draw_off(
+    override: str,
+) -> None:
+    key = override.lstrip("+").split("=")[0]
+    drawn = (
+        "environment.tire_friction_quantile"
+        if "tire_friction" in key
+        else "environment.visibility_quantile"
+    )
+    other = (
+        "environment.visibility_quantile"
+        if drawn.endswith("tire_friction_quantile")
+        else "environment.tire_friction_quantile"
+    )
+
+    for case in expand_sweep(
+        {"odd_sample": {"count": 2}}, None, [override], odd="default"
+    ):
+        assert case[-1] == override
+        assert not any(o.startswith(f"{drawn}=") for o in case[:-1])
+        assert any(o.startswith(f"{other}=") for o in case)
+        sample, space = decode_case(case[-2].split("=", 1)[1])
+        assert f"quantile({drawn.split('.')[1]})" not in space.names
+
+
+def _quantiles(case: list[str]) -> dict[str, float]:
+    return {
+        o.split("=")[0]: float(o.split("=", 1)[1])
+        for o in case
+        if o.startswith(
+            ("environment.tire_friction_quantile=", "environment.visibility_quantile=")
+        )
+    }
+
+
+# The grip's and the visibility's quantiles were drawn after the case, from
+# its index, apart from its values and space: the flaky search saw two cases
+# alike with unrelated grips (#1995).
+@pytest.mark.parametrize("flaky", [None, {}])
+def test_the_grip_and_visibility_quantiles_are_parameters_of_the_case(
+    flaky: Any,
+) -> None:
+    odd_sample: dict[str, Any] = {"count": 4, "seed": 5}
+    if flaky is not None:
+        odd_sample["flaky"] = flaky
+
+    cases = expand_sweep({"odd_sample": odd_sample}, None, (), odd="default")
+
+    for case in cases:
+        sample, space = decode_case(case[-1].split("=", 1)[1])
+        quantiles = _quantiles(case)
+        assert set(quantiles) == {
+            "environment.tire_friction_quantile",
+            "environment.visibility_quantile",
+        }
+        # In the space the flaky search learns in, over [0, 1] ...
+        assert space.numeric["quantile(tire_friction_quantile)"] == (0.0, 1.0)
+        assert space.numeric["quantile(visibility_quantile)"] == (0.0, 1.0)
+        # ... and recorded with the case, as the value its run is given.
+        assert sample.values["quantile(tire_friction_quantile)"] == pytest.approx(
+            quantiles["environment.tire_friction_quantile"]
+        )
+        assert sample.values["quantile(visibility_quantile)"] == pytest.approx(
+            quantiles["environment.visibility_quantile"]
+        )
+    # Reproducible.
+    assert expand_sweep({"odd_sample": odd_sample}, None, (), odd="default") == cases
+
+
+def test_the_flaky_search_moves_the_grip_and_visibility_quantiles() -> None:
+    _sampler, search, _count = search_from_config(
+        {"seed": 1, "flaky": {}}, odd="default"
+    )
+    assert search is not None
+    assert {"quantile(tire_friction_quantile)", "quantile(visibility_quantile)"} <= (
+        set(search.space.numeric)
+    )
+    case = search.sample(1)[0]
+    near = dict(case.values)
+    near["quantile(tire_friction_quantile)"] = (
+        near["quantile(tire_friction_quantile)"] + 0.5
+    ) % 1.0
+    # Cases alike but for their grip are apart in the space it learns in.
+    assert search.space.encode(case) != search.space.encode(near)
+
+
+def test_a_knob_that_sets_the_grip_draws_no_quantile_for_it() -> None:
+    from openodd import ParameterSpace
+
+    sampler, _count = sampler_from_config(
+        {
+            "seed": 1,
+            "knobs": {
+                _RAINFALL: {"key": "environment.tire_friction", "range": [0.3, 1.0]}
+            },
+        },
+        odd="default",
+    )
+
+    space = ParameterSpace.of(sampler)
+    assert "quantile(tire_friction_quantile)" not in space.names
+    assert "quantile(visibility_quantile)" in space.names
+
+
+def test_scenario_rules_may_not_define_the_quantile_nodes() -> None:
+    rules = {
+        "version": 3,
+        "taxonomy": {"bundled": "default"},
+        "basis": {"kind": "expert", "by": "test"},
+        "quantities": {
+            "tire_friction_quantile": {
+                "parts": {"x": {"uniform": {"low": 0.0, "high": 1.0}}}
+            }
+        },
+    }
+
+    with pytest.raises(ValueError, match="tire_friction_quantile is the node"):
+        sampler_from_config({"seed": 1}, odd="default", rules=rules)
+    # Unless the sweep draws no grip.
+    sampler_from_config({"seed": 1, "tire_friction": False}, odd="default", rules=rules)
+
+
+def test_the_quantiles_alone_do_not_make_an_odd_drawable() -> None:
+    # A sweep over an ODD nothing can set is still refused, not drawn as its
+    # grip and visibility alone.
+    probe_odd = OddDefinition(
+        "probe", [OddAttribute("dynamic.lead_gap", lambda w: None, buckets=[0, 10, 20])]
+    )
+
+    with pytest.raises(ValueError, match="nothing of ODD"):
+        sampler_from_config({"seed": 1}, odd=probe_odd)
