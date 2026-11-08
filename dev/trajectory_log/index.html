@@ -2491,6 +2491,17 @@ SHA-256, so a reader can load the very map the run was on.</p>
   is capped at 2^64 - 1 (see above). Any reader,
   including JavaScript's double-only <code>JSON.parse</code>, holds them exactly; a value
   past the cap fails validation rather than silently losing precision.</li>
+<li><strong>The last line can be cut off.</strong> Each line is written whole, but a run
+  killed mid-write (SIGKILL, an out-of-memory kill, a job's time limit, a
+  full disk) loses at most the tick being written: the last line of the file
+  that holds anything may be part of a record, with no trailing newline.
+  Leave that one line out and keep every record before it. A line that is
+  not JSON with any line after it is a corrupt file, not a killed run.
+  <code>scenario-t4scene</code> (and the T4Scene written as each run ends) warns about a
+  cut-off last line and converts the rest, and refuses a line that is not
+  JSON anywhere else, or a record it cannot use anywhere, naming the file and
+  line; the results UI's metrics and the metric records merged into a Rerun
+  recording skip any line they cannot read.</li>
 <li><strong>Only egos have controls.</strong> <code>control</code> carries actors whose <code>role</code> is
   <code>ego</code> or <code>hero</code> (any case). <code>steer</code> is normalised to [-1, 1]; it is not a
   wheel angle.</li>
@@ -2583,7 +2594,7 @@ change that a reader of the last version could not skip over is a new
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 07:54:37 UTC"><span class="timeago" datetime="2026-11-05T07:54:37+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 07:54:37 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 05:43:21 UTC"><span class="timeago" datetime="2026-11-08T05:43:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 05:43:21 UTC">2026-11-08</span>
   </span>
 
     
