@@ -64,6 +64,21 @@ the cosine of the lane's own heading, which is its speed along the lane only
 where the lane runs along +x. Distances, times and areas do not change with the
 turn.
 
+CriMe 0.4 reads the other road user's velocity and acceleration along the lane
+as their magnitude, dropping their sign: a braking lead reads as speeding up
+(TTC `inf`, ALongReq `0`) and a car coming the other way in the ego's lane as
+going its way. The worker's TTC and ALongReq are CriMe's with the other's
+components projected onto the lane, signed; BTN, which is ALongReq over the
+most a car can brake, and ALatReq and STN, which take TTC, use them.
+
+A lanelet is kept when its centre line comes within `radius_m` of the ego
+anywhere along it, not only at a vertex (a straight lanelet is just its two end
+points), and always when the ego is on it. The reachable set is that of the
+ego's own box: CommonRoad-Reach derives its discs and the radius it inflates
+the other road users by from its default vehicle (a BMW 320i) as its
+configuration is built, and the worker derives them again from the ego's
+length and width. A reversing ego is given to Reach going backwards.
+
 CriMe's measures share each frame's scenario rather than each copying it,
 and the ego's reference path and a lanelet's smoothed bounds are built once a
 frame (`EvaluatorSettings.share_frame`; a test checks the values match CriMe's

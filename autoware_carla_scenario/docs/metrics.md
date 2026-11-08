@@ -194,7 +194,17 @@ extra) converts the world's OpenDRIVE once per machine, cached under
 `~/.cache/autoware_carla_scenario/commonroad`, and stay up for the next run on
 the map. A worker evaluates each frame moved to the ego and turned so the lane
 under it runs along +x: CriMe projects speeds onto a lane with the cosine of
-the lane's own heading, which is the speed along the lane only there. On a
+the lane's own heading, which is the speed along the lane only there. CriMe
+0.4 also drops the sign of the other road user's velocity and acceleration
+along the lane, reading a braking lead as speeding up and a car coming the
+other way in the ego's lane as going its way; the worker reads TTC and
+ALongReq -- and so BTN, and ALatReq and STN, which take TTC -- with their
+sign. The lanelets the worker keeps are those within `radius_m` of the ego
+anywhere along their centre line, and always those it is on, so a long
+straight lanelet stays in from its middle. The reachable set (the drivable
+area, WTTR) is that of the ego's own box: CommonRoad-Reach's discs and the
+radius it inflates the other road users by are derived from the ego's length
+and width, not its default vehicle's; a reversing ego reaches backwards. On a
 frame of ten road users the eight CriMe measures from TTC to ALatReq take
 about 95 ms together, BTN and STN 170 ms more, the drivable area about 155 ms
 (over 2 s instead of 3, 45 ms), and WTTR about 110 ms on a frame with a
