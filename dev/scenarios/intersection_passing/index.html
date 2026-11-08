@@ -2197,7 +2197,7 @@ movement of that kind on the map. Every light is green, so nothing stops it.</p>
 <tbody>
 <tr>
 <td><strong>Ego</strong></td>
-<td>Constraint search: a junction lanelet whose <code>turn_direction</code> is the movement and which has a stop line -- any, or a traffic light's (see the variants) -- excluding the map's lanelets with no 3D model, except from a standstill. Position <em>before stop line</em>: 25 m short of it -- which walks back onto the lane that approaches the junction, where the run starts. Goal <em>from the search</em>: the lanelet after the junction lanelet.</td>
+<td>Constraint search: a junction lanelet whose <code>turn_direction</code> is the movement and which has a stop line -- any, or a traffic light's (see the variants) -- excluding the map's lanelets with no 3D model and those that lead onto one. Position <em>before stop line</em>: 25 m short of it -- which walks back onto the lane that approaches the junction, where the run starts. Goal <em>from the search</em>: the lanelet after the junction lanelet.</td>
 </tr>
 <tr>
 <td><strong>Initialization</strong></td>
@@ -2238,8 +2238,7 @@ stop line, 20 km/h, 20 s.</p>
 <p><img alt="Right turn from a standstill in the Scenario Editor" src="../media/intersection_right_turn_sweep.png" /></p>
 <p><code>scenario=intersection_passing/right_turn_sweep</code> -- <code>turn_direction:
 right</code> at a signalised junction only (a traffic-light stop line), starting
-at 0 km/h, so the ego has to pull away as well as steer; 60 s. It does
-not leave out the lanelets with no 3D model.</p>
+at 0 km/h, so the ego has to pull away as well as steer; 60 s.</p>
 <p><video controls muted playsinline width="100%" src="../media/intersection_right_turn_sweep.mp4"></video></p>
 <p><em>Town10HD_Opt, the first case: the search matched lanelet 4766 and the ego starts on lanelet 3235, 7.0 m along it. Result: PASSED.</em></p>
 </div>
@@ -2283,7 +2282,7 @@ a signalised junction only, 5 km/h, 15 s. Also fails if the ego drops below
 <td>No-3D-model lanelets left out</td>
 <td>yes</td>
 <td>yes</td>
-<td>no</td>
+<td>yes</td>
 <td>yes</td>
 </tr>
 <tr>
@@ -2338,7 +2337,7 @@ a signalised junction only, 5 km/h, 15 s. Also fails if the ego drops below
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="October 6, 2026 01:00:22 UTC"><span class="timeago" datetime="2026-10-06T01:00:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="October 6, 2026 01:00:22 UTC">2026-10-06</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 13:16:44 UTC"><span class="timeago" datetime="2026-11-08T13:16:44+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 13:16:44 UTC">2026-11-08</span>
   </span>
 
     
