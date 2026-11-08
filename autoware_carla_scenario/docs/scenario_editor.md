@@ -945,6 +945,13 @@ it and hand it the built-in's config keys. It is an `id` error, `The id
 'cut_in' is reserved: it names a built-in scenario ...`, worded as
 `scenario-new`'s refusal of the same `--scenario`.
 
+Unlike `scenario-new`, the editor does not refuse an id that names a built-in
+scenario config group that is no builder, such as `lane_change_fail`.
+`scenario-new` writes a config group, `conf/scenario/<name>/`, which would
+merge with the built-in group of that name; an export writes a single config,
+`conf/scenario/<id>.yaml`, which Hydra selects as `scenario=<id>` and keeps
+apart from the built-in group's `scenario=<id>/left` and the rest.
+
 `export_package` and `names_for_id`, called directly, refuse both too, before
 writing anything. That is why the Cut-in example starts as `my_cut_in`, not
 `cut_in`. A draft saved from the Cut-in example before this change
@@ -1071,24 +1078,24 @@ The export takes the first of these that applies:
 1. `SCENARIO_EXPORT_FRAMEWORK_VERSION`, to pin a published release instead of
    the current checkout's commit. Surrounding whitespace is ignored and a blank
    value counts as unset; anything else must be a valid
-   [PEP 440](https://peps.python.org/pep-0440/) version (`1.2.3`, not a range),
-   or the export fails.
+   [PEP 440](https://peps.python.org/pep-0440/) version without a local label
+   (`1.2.3`, not a range and not `1.2.3+local`, which no index serves), or the
+   export fails.
 2. The framework's own git checkout, pinned to `HEAD`'s commit SHA (with the
    framework's directory in the repository as `subdirectory`).
-3. The installed version, when the framework was installed by name from a
-   package index -- it has no [PEP 610](https://peps.python.org/pep-0610/)
-   `direct_url.json` and no local version label -- which makes that version a
-   published release.
 
 A commit pin, and a development export's path, are only taken from the
 framework's **source tree**: a directory whose `pyproject.toml` names
 `autoware-carla-scenario`. A framework installed from a wheel lives in a
 virtual environment, often a project's `.venv` inside that project's own git
 repository; that repository is not the framework's, so it is never pinned.
-Such an install -- a local wheel, say -- that no index served gets no pin at
-all, and the export fails with the message to set
-`SCENARIO_EXPORT_FRAMEWORK_VERSION`; a development export from it fails too,
-since there is no checkout to depend on by path.
+Nor is such an install pinned to the version it reports: a wheel built from an
+unreleased commit -- the one in a wheelhouse, say -- carries the version of
+the last release, so `==` that version would silently resolve a different
+framework. **To export from a framework installed from a wheel, set
+`SCENARIO_EXPORT_FRAMEWORK_VERSION`** to the release it is; without it the
+export fails with a message saying so. A development export from a wheel
+install fails too, since there is no checkout to depend on by path.
 
 ### Export is atomic
 

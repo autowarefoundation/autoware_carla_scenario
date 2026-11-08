@@ -31,6 +31,8 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Optional
 
+from .requirements_pin import canonical_name
+
 __all__ = [
     "DISTRIBUTION",
     "Pin",
@@ -277,11 +279,6 @@ def _installed_version() -> Optional[str]:
         return None
 
 
-def _normalise_distribution(name: str) -> str:
-    """Return *name* normalised as PEP 503 does (``A_b.c`` -> ``a-b-c``)."""
-    return re.sub(r"[-_.]+", "-", name).lower()
-
-
 def _project_name(pyproject: Path) -> Optional[str]:
     """Return ``[project].name`` of *pyproject*, or ``None`` if it has none.
 
@@ -326,50 +323,28 @@ def _is_framework_project(source_root: Path) -> bool:
         name = _project_name(pyproject)
     if name is None:
         return False
-    return _normalise_distribution(name) == DISTRIBUTION
+    return canonical_name(name) == DISTRIBUTION
 
 
 def _version_problem(version: str) -> Optional[str]:
-    """Return why *version* is not a valid exact version, or ``None``."""
+    """Return why *version* is not a released version, or ``None``.
+
+    It must be a valid PEP 440 version without a local label
+    (``1.2.3+local``), which no package index serves.
+    """
     # packaging has no model (typecheck/library.py: UNCALLED).
     from packaging.version import InvalidVersion, Version  # noqa: PLC0415
 
     try:
-        Version(version)
-    except InvalidVersion:
-        return f"{version!r} is not a valid version (PEP 440)"
-    return None
-
-
-def _index_release_version() -> Optional[str]:
-    """Return the framework's version when it was installed from an index.
-
-    An installer records where a distribution came from in
-    ``direct_url.json`` (PEP 610) whenever it was *not* resolved by name and
-    version from a package index: a local wheel, a directory, an editable
-    checkout, a git URL.  Without that file the installed version is one an
-    index served, so ``autoware-carla-scenario==<it>`` resolves to the same
-    release.  A local version (``1.2.3+local``) is never one, and yields
-    ``None`` too.
-    """
-    from importlib import metadata  # noqa: PLC0415
-
-    from packaging.version import InvalidVersion, Version  # noqa: PLC0415
-
-    try:
-        distribution = metadata.distribution(DISTRIBUTION)
-    except metadata.PackageNotFoundError:  # pragma: no cover - always installed
-        return None
-    if distribution.read_text("direct_url.json") is not None:
-        return None
-    version = distribution.version
-    try:
         parsed = Version(version)
     except InvalidVersion:
-        return None
+        return f"{version!r} is not a valid version (PEP 440)"
     if parsed.local is not None:
-        return None
-    return version
+        return (
+            f"{version!r} has a local version label (+{parsed.local}), which "
+            "no package index serves"
+        )
+    return None
 
 
 def _resolve_git_pin(source_root: Path) -> Optional[Pin]:
@@ -436,13 +411,14 @@ def resolve_framework_pin(*, dev_mode: bool = False) -> Pin:
        package should track exactly.  Surrounding whitespace is ignored, and a
        blank value counts as unset.
     2. The framework's own git checkout, pinned to ``HEAD``'s commit SHA.
-    3. The installed version, when the framework was installed from a package
-       index (no PEP 610 ``direct_url.json``), which makes it a published
-       release.
 
     A commit or a path pin is only made from the framework's own source tree
     (a ``pyproject.toml`` naming ``autoware-carla-scenario``), never from a
-    wheel install's directory, whichever git work tree that sits in.
+    wheel install's directory, whichever git work tree that sits in.  A
+    framework installed from a wheel is not pinned to its installed version
+    either: a wheel built from an unreleased commit carries the version of
+    the last release, so ``==<it>`` would silently resolve a different
+    framework.  Such an install needs :data:`VERSION_ENV`.
 
     Args:
         dev_mode: Depend on the local framework checkout by path.  Packages
@@ -499,18 +475,10 @@ def resolve_framework_pin(*, dev_mode: bool = False) -> Pin:
     if git_pin is not None:
         return git_pin
 
-    if TYPE_CHECKING:
-        # importlib.metadata.distribution() and packaging have no model
-        # (typecheck/library.py: UNCALLED).
-        released: Optional[str] = None
-    else:
-        released = _index_release_version()
-    if released is not None:
-        return Pin(kind="version", version=released)
-
     raise PinResolutionError(
         "Cannot pin autoware-carla-scenario to an exact version or commit. "
-        f"Set {VERSION_ENV} to a released version, run the export from a git "
+        f"Set {VERSION_ENV} to a released version (the way to export from a "
+        "framework installed from a wheel), run the export from a git "
         "checkout of the framework, or export in development mode (which "
         "produces a non-portable package)."
     )

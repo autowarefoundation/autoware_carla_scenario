@@ -179,14 +179,21 @@ def _builtin_scenario_groups() -> tuple[str, ...]:
     (``lane_change_fail``) alike.  A generated package named after one shares
     that Hydra group with the built-in (#1976): ``scenario=<group>/*`` also
     runs the built-in configs, and a built-in config shadows the package's
-    config of the same name.  Read from the conf tree the package ships (the
+    config of the same name.  Hidden and private directories (``.x``,
+    ``__pycache__``) are no groups.  Read from the conf tree the package ships (the
     wheel carries it, Hydra needs it), so it follows that tree.
     """
     try:
         entries = list(_BUILTIN_SCENARIO_CONF.iterdir())
     except OSError:  # pragma: no cover - the conf tree ships with the package
         return ()
-    return tuple(sorted(entry.name for entry in entries if entry.is_dir()))
+    return tuple(
+        sorted(
+            entry.name
+            for entry in entries
+            if entry.is_dir() and not entry.name.startswith((".", "_"))
+        )
+    )
 
 
 @functools.cache

@@ -361,7 +361,11 @@ class TestBuiltinScenarioGroups:
             / "conf"
             / "scenario"
         )
-        return sorted(entry.name for entry in conf.iterdir() if entry.is_dir())
+        return sorted(
+            entry.name
+            for entry in conf.iterdir()
+            if entry.is_dir() and not entry.name.startswith((".", "_"))
+        )
 
     def test_the_groups_follow_the_conf_tree(self) -> None:
         from autoware_carla_scenario.scaffold.generator import (  # noqa: PLC0415
@@ -376,6 +380,21 @@ class TestBuiltinScenarioGroups:
         assert "lane_change_fail" in groups
         # Every builder has its configs there too.
         assert set(BUILTIN_SCENARIO_NAMES) <= set(groups)
+
+    def test_hidden_and_private_directories_are_no_groups(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario.scaffold import generator  # noqa: PLC0415
+
+        for name in ("lane_change", "__pycache__", ".hidden", "_private"):
+            (tmp_path / name).mkdir()
+        (tmp_path / "top.yaml").write_text("")
+        monkeypatch.setattr(generator, "_BUILTIN_SCENARIO_CONF", tmp_path)
+        generator._builtin_scenario_groups.cache_clear()
+        try:
+            assert generator._builtin_scenario_groups() == ("lane_change",)
+        finally:
+            generator._builtin_scenario_groups.cache_clear()
 
     def test_a_group_that_is_no_builder_is_refused(self) -> None:
         with pytest.raises(ValueError, match="built-in scenario config group"):

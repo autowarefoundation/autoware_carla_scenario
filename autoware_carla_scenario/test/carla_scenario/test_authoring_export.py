@@ -307,7 +307,6 @@ class TestFrameworkPin:
 
         monkeypatch.delenv("SCENARIO_EXPORT_FRAMEWORK_VERSION", raising=False)
         monkeypatch.setattr(module, "_resolve_git_pin", lambda _root: None)
-        monkeypatch.setattr(module, "_index_release_version", lambda: None)
         with pytest.raises(PinResolutionError):
             resolve_framework_pin()
 
@@ -392,7 +391,6 @@ class TestFrameworkPinSourceTree:
         monkeypatch.delenv(module.VERSION_ENV, raising=False)
         monkeypatch.delenv(module.REPOSITORY_ENV, raising=False)
         monkeypatch.setattr(module, "framework_source_root", lambda: root)
-        monkeypatch.setattr(module, "_index_release_version", lambda: None)
         return module
 
     def test_a_venv_inside_a_users_repo_is_no_checkout(
@@ -448,51 +446,6 @@ class TestFrameworkPinSourceTree:
         assert pin.kind == "path"
         assert pin.path == str(checkout)
 
-    def test_an_index_install_is_pinned_by_version(
-        self, monkeypatch: pytest.MonkeyPatch, user_venv: Path
-    ) -> None:
-        module = self._use_root(monkeypatch, user_venv)
-        monkeypatch.setattr(module, "_index_release_version", lambda: "1.2.3")
-        pin = resolve_framework_pin()
-        assert pin.kind == "version"
-        assert pin.requirement() == f"{DISTRIBUTION}==1.2.3"
-
-
-class TestIndexReleaseVersion:
-    """Which installs count as a published release (#1976)."""
-
-    class _Distribution:
-        def __init__(self, version: str, direct_url: str | None) -> None:
-            self.version = version
-            self._direct_url = direct_url
-
-        def read_text(self, filename: str) -> str | None:
-            return self._direct_url if filename == "direct_url.json" else None
-
-    @pytest.mark.parametrize(
-        ("version", "direct_url", "expected"),
-        [
-            ("1.2.3", None, "1.2.3"),
-            ("1.2.3", '{"url": "file:///w/x.whl", "archive_info": {}}', None),
-            ("1.2.3", '{"url": "file:///src", "dir_info": {"editable": true}}', None),
-            ("1.2.3+local", None, None),
-        ],
-    )
-    def test_only_an_index_release_counts(
-        self,
-        monkeypatch: pytest.MonkeyPatch,
-        version: str,
-        direct_url: str | None,
-        expected: str | None,
-    ) -> None:
-        from importlib import metadata  # noqa: PLC0415
-
-        import autoware_carla_scenario.authoring.framework_pin as module
-
-        fake = self._Distribution(version, direct_url)
-        monkeypatch.setattr(metadata, "distribution", lambda _name: fake)
-        assert module._index_release_version() == expected
-
 
 class TestFrameworkVersionEnv:
     """``SCENARIO_EXPORT_FRAMEWORK_VERSION`` is stripped and validated (#1976)."""
@@ -522,6 +475,22 @@ class TestFrameworkVersionEnv:
     ) -> None:
         monkeypatch.setenv("SCENARIO_EXPORT_FRAMEWORK_VERSION", value)
         with pytest.raises(PinResolutionError, match="not a valid version"):
+            resolve_framework_pin()
+
+    def test_a_local_version_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No index serves ``1.2.3+local``."""
+        monkeypatch.setenv("SCENARIO_EXPORT_FRAMEWORK_VERSION", "1.2.3+local")
+        with pytest.raises(PinResolutionError, match="local version label"):
+            resolve_framework_pin()
+
+    def test_the_error_points_wheel_installs_at_the_variable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import autoware_carla_scenario.authoring.framework_pin as module
+
+        monkeypatch.delenv(module.VERSION_ENV, raising=False)
+        monkeypatch.setattr(module, "_resolve_git_pin", lambda _root: None)
+        with pytest.raises(PinResolutionError, match="installed from a wheel"):
             resolve_framework_pin()
 
 

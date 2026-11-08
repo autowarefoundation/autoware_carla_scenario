@@ -454,7 +454,6 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.actions.background_traffic.TrafficSinkAction.__init__": _CONSTRAINT_SPECS,
     "autoware_carla_scenario.actions.background_traffic.TrafficSourceAction.__init__": _CONSTRAINT_SPECS,
     "autoware_carla_scenario.authoring.framework_pin.Pin.uv_source": 'builds the `[tool.uv.sources]` entry, a dict[str, Any] of str and bool values (`{"path": ..., "editable": True}`), which Codon cannot express',
-    "autoware_carla_scenario.authoring.framework_pin._index_release_version": "imports more of importlib.metadata than its shim declares (`distribution()`, `Distribution.read_text()`) and packaging (`Version`), which Codon has nothing for, inside it; resolve_framework_pin() calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.authoring.framework_pin._project_name": "imports tomllib or tomli inside it, which Codon has nothing for, and reads a TOML document of mixed value types; _is_framework_project() calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.authoring.framework_pin._version_problem": "imports packaging (`Version`) inside it, which Codon has nothing for; resolve_framework_pin() calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.autoware_stack.bridge_node.bridge_ros_args": _ROS_PARAMETERS,
