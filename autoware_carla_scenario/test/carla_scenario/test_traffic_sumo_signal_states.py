@@ -22,7 +22,16 @@ from autoware_carla_scenario.traffic.sumo.signal_states import (
 )
 
 _CARLA_TO_SUMO_SIGNAL = {"Red": "r", "Yellow": "y", "Green": "G"}
-_SUMO_TO_CARLA_SIGNAL = {"r": "Red", "y": "Yellow", "g": "Green", "G": "Green"}
+_SUMO_TO_CARLA_SIGNAL = {
+    "r": "Red",
+    "u": "Red",
+    "s": "Red",
+    "y": "Yellow",
+    "g": "Green",
+    "G": "Green",
+    "o": "Off",
+    "O": "Off",
+}
 
 
 def _before_ride_state(follows: str, states: list[str]) -> str:
@@ -80,6 +89,19 @@ def _before_signals_to_sumo(
 def test_the_signal_tables_are_unchanged() -> None:
     assert CARLA_TO_SUMO_SIGNAL == _CARLA_TO_SUMO_SIGNAL
     assert SUMO_TO_CARLA_SIGNAL == _SUMO_TO_CARLA_SIGNAL
+
+
+def test_every_sumo_signal_state_shows_as_a_carla_light_state() -> None:
+    """Red-yellow and a stop sign stop as red does, a light switched off is
+    Off: none leaves the CARLA light as it was (#1988)."""
+    import typesafe_carla.carla as carla
+
+    for state in "rugGysoO":
+        name = SUMO_TO_CARLA_SIGNAL[state]
+        assert hasattr(carla.TrafficLightState, name)
+    assert SUMO_TO_CARLA_SIGNAL["u"] == "Red"
+    assert SUMO_TO_CARLA_SIGNAL["s"] == "Red"
+    assert SUMO_TO_CARLA_SIGNAL["o"] == SUMO_TO_CARLA_SIGNAL["O"] == "Off"
 
 
 def _state(rng: random.Random, size: int) -> str:

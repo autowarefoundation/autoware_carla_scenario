@@ -322,6 +322,16 @@ _BACKGROUND_ROUTE_EDGES = 40
 _PERSON_EDGE_RADIUS_M = 50.0
 
 
+def _safe_weights_prefix(net_file: Path) -> Path:
+    """The prefix of the safe-weight files beside *net_file*, as roadgen names
+    them: ``network.safe`` (``network.safe.src.xml`` ...) beside
+    ``network.net.xml`` (:func:`.network.build_network`)."""
+    name = net_file.name
+    if name.endswith(".net.xml"):
+        return net_file.with_name(name[: -len(".net.xml")] + ".safe")
+    return net_file.with_suffix(".safe")
+
+
 def _load_traci(use_libsumo: bool) -> Any:
     if use_libsumo:
         try:
@@ -963,7 +973,7 @@ class SumoTrafficBackend(TrafficBackend):
             net_file = Path(self._config.net_path).expanduser()
             if not net_file.is_file():
                 raise TrafficBackendUnavailable(f"net_path {net_file} does not exist")
-            self._network = SumoNetwork(net_file, net_file.with_suffix(".safe"))
+            self._network = SumoNetwork(net_file, _safe_weights_prefix(net_file))
         else:
             self._network = build_network(
                 self._opendrive(context),
@@ -2608,6 +2618,13 @@ class SumoTrafficBackend(TrafficBackend):
             pos, lane = 0.0, int(index)
         return edge, pos, lane
 
+    def _new_route_id(self, sumo_id: str) -> str:
+        """A route id for *sumo_id* that SUMO has not seen yet: a route added
+        through TraCI stays for the rest of the run, and adding one under an
+        id it has fails."""
+        self._route_count += 1
+        return f"route:{sumo_id}:{self._route_count}"
+
     def _add_vehicle(self, sumo_id: str, actor: Any, speed: float = 0.0) -> bool:
         """Add *actor* to SUMO where it stands, at *speed* (m/s, no faster
         than its lane allows); ``False`` if it is off the network.
@@ -2626,7 +2643,10 @@ class SumoTrafficBackend(TrafficBackend):
         if place is None:
             return False
         edge, pos, lane = place
-        route_id = f"route:{sumo_id}"
+        # A route of its own each time: SUMO keeps a route added through TraCI
+        # for the rest of the run, so a vehicle parked again and brought back
+        # (_leave, _bring_in) could never be added under the same one (#1988).
+        route_id = self._new_route_id(sumo_id)
         if pos <= 0.0:
             # Out of a junction, onto the start of the lane it leads to:
             # standing there (libsumo crashed inserting a vehicle there at
@@ -4101,6 +4121,13 @@ class SumoTrafficBackend(TrafficBackend):
             return False
         if not (0 <= index < len(route) and route[index] == edge):
             route, index = [edge], 0
+        # Its own maximum speed, not the one the visibility holds it to: the
+        # queue model keeps it until the vehicle returns, when SUMO sets it
+        # again, and the visibility (if still short) holds it anew as it
+        # departs.  Kept as read, the cap would outlast the fog (#1988).
+        held = self._max_speeds.pop(sumo_id, None)
+        if held is not None:
+            max_speed = held[0]
         entity = self._driven.get(sumo_id)
         if entity is not None:
             actor = getattr(entity, "actor", None)
@@ -4173,8 +4200,7 @@ class SumoTrafficBackend(TrafficBackend):
             if actor is None:
                 return False
         tc = self._traci
-        self._route_count += 1
-        route_id = f"route:{sumo_id}:{self._route_count}"
+        route_id = self._new_route_id(sumo_id)
         try:
             tc.route.add(route_id, vehicle.remaining_route)
             tc.vehicle.add(

@@ -212,6 +212,162 @@ def test_a_sumo_step_divides_the_carla_tick() -> None:
             sumo_step(0.05, bad)
 
 
+def test_a_tick_sumo_steps_by_must_be_whole_milliseconds() -> None:
+    """With no step_length_s the tick is SUMO's step, held to the same rule
+    as an explicit one: 1/30 s would be rounded to 0.033 s (#1988)."""
+    from autoware_carla_scenario.traffic.sumo.signal_states import sumo_step
+
+    assert sumo_step(0.05, None) == (0.05, 1)
+    assert sumo_step(0.02, None) == (0.02, 1)
+    for bad in (1 / 30, 1 / 60, 0.0125):
+        with pytest.raises(
+            ValueError,
+            match="fixed_delta_seconds.*traffic=sumo|traffic=sumo.*fixed_delta_seconds",
+        ):
+            sumo_step(bad, None)
+
+
+def test_a_step_length_that_does_not_fit_the_tick_is_refused_with_the_config() -> None:
+    """Checked against the runner's tick when the config is read, before the
+    run starts CARLA."""
+    assert SumoBackendConfig.from_mapping({"step_length_s": 0.01}).step_length_s == (
+        pytest.approx(0.01)
+    )
+    for bad in (0.03, 0.0125, 1 / 30):
+        with pytest.raises(ValueError, match="step_length_s.*whole milliseconds"):
+            SumoBackendConfig.from_mapping({"step_length_s": bad})
+
+
+def test_prepare_refuses_a_tick_that_is_not_whole_milliseconds(
+    tmp_path: Path,
+) -> None:
+    """Before SUMO is looked for or anything is built."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    with pytest.raises(ValueError, match="fixed_delta_seconds"):
+        backend.prepare(TrafficContext(fixed_delta_seconds=1 / 30, output_dir=tmp_path))
+    assert backend._traci is None
+
+
+@pytest.mark.parametrize(
+    ("net", "prefix"),
+    [
+        ("network.net.xml", "network.safe"),
+        ("town.net.xml", "town.safe"),
+        ("plain.xml", "plain.safe"),
+    ],
+)
+def test_a_net_path_finds_the_safe_weights_roadgen_wrote_beside_it(
+    net: str, prefix: str
+) -> None:
+    """roadgen writes `network.safe.src.xml` and friends beside
+    `network.net.xml`, not `network.net.safe.*` (#1988)."""
+    from autoware_carla_scenario.traffic.sumo.backend import _safe_weights_prefix
+
+    assert _safe_weights_prefix(Path("/cache/abc") / net) == Path("/cache/abc") / prefix
+
+
+def test_the_safe_weights_prefix_is_the_one_build_network_uses() -> None:
+    import inspect
+
+    from autoware_carla_scenario.traffic.sumo import network
+    from autoware_carla_scenario.traffic.sumo.backend import _safe_weights_prefix
+
+    source = inspect.getsource(network.build_network)
+    assert 'SumoNetwork(target / "network.net.xml", target / "network.safe")' in source
+    target = Path("/cache/abc")
+    assert _safe_weights_prefix(target / "network.net.xml") == target / "network.safe"
+
+
+class _HeldVehicles:
+    """The vehicle domain of TraCI, as far as the visibility and the queue
+    model use it."""
+
+    def __init__(self) -> None:
+        self.max_speed = {"v": 20.0}
+
+    def getMaxSpeed(self, sumo_id: str) -> float:
+        return self.max_speed[sumo_id]
+
+    def setMaxSpeed(self, sumo_id: str, speed: float) -> None:
+        self.max_speed[sumo_id] = speed
+
+    def getDecel(self, sumo_id: str) -> float:
+        return 4.5
+
+    def getTau(self, sumo_id: str) -> float:
+        return 1.0
+
+    def getRoadID(self, sumo_id: str) -> str:
+        return "e1"
+
+    def getRoute(self, sumo_id: str) -> list[str]:
+        return ["e1", "e2"]
+
+    def getRouteIndex(self, sumo_id: str) -> int:
+        return 0
+
+    def getLanePosition(self, sumo_id: str) -> float:
+        return 10.0
+
+    def getLength(self, sumo_id: str) -> float:
+        return 4.5
+
+    def getWidth(self, sumo_id: str) -> float:
+        return 1.8
+
+    def getTypeID(self, sumo_id: str) -> str:
+        return "DEFAULT_VEHTYPE"
+
+    def remove(self, sumo_id: str) -> None:
+        pass
+
+
+class _QueueModel:
+    def __init__(self) -> None:
+        self.added: dict[str, dict[str, Any]] = {}
+
+    def has_link(self, edge: str) -> bool:
+        return True
+
+    def add(self, sumo_id: str, route: list[str], **kwargs: Any) -> None:
+        self.added[sumo_id] = kwargs
+
+
+def test_a_vehicle_held_to_the_fog_takes_its_own_speed_into_the_queue_model() -> None:
+    """The queue model keeps the speed the vehicle had before the fog held it
+    down, not the cap: back in SUMO it would keep the cap once the fog has
+    cleared, nothing being left to give it its own back (#1988)."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    vehicles = _HeldVehicles()
+    backend._traci = SimpleNamespace(vehicle=vehicles)
+    meso = _QueueModel()
+    backend._meso = meso  # type: ignore[assignment]
+    backend._hold_to_sight("v", 15.0)
+    capped = vehicles.max_speed["v"]
+    assert capped < 20.0
+    assert backend._to_mesoscopic("v", 0.0)
+    assert meso.added["v"]["max_speed"] == pytest.approx(20.0)
+    # Out of SUMO, nothing is held for it any more.
+    assert "v" not in backend._max_speeds
+
+
+def test_a_vehicle_not_held_takes_its_speed_into_the_queue_model() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    vehicles = _HeldVehicles()
+    vehicles.max_speed["v"] = 12.0
+    backend._traci = SimpleNamespace(vehicle=vehicles)
+    meso = _QueueModel()
+    backend._meso = meso  # type: ignore[assignment]
+    assert backend._to_mesoscopic("v", 0.0)
+    assert meso.added["v"]["max_speed"] == pytest.approx(12.0)
+
+
 def test_a_lateral_acceleration_needs_the_sublane_model() -> None:
     from autoware_carla_scenario.traffic.parameters import (
         TrafficParameterError,
@@ -4406,6 +4562,37 @@ def test_a_published_vehicle_that_leaves_the_world_leaves_sumo(
 
 
 @needs_sumo
+def test_a_vehicle_parked_again_comes_back_into_sumo_every_time(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """Under the map and up again, twice: each time it comes up it is in SUMO
+    again -- on a route of its own, SUMO refusing a route id it has seen
+    (#1988)."""
+    backend, world, _npc, ego = _prepared(crossroads, tmp_path)
+    ego_id = next(iter(backend._external))
+    z = ego.transform.location.z
+    tc = backend._traci
+    elapsed = 0.0
+    try:
+        backend.tick(world, elapsed)
+        assert ego_id in tc.vehicle.getIDList()
+        for _ in range(2):
+            ego.transform.location.z = -500.0
+            elapsed += 0.05
+            backend.tick(world, elapsed)
+            assert ego_id not in tc.vehicle.getIDList()
+            assert ego.id in backend._parked
+            ego.transform.location.z = z
+            for _tick in range(5):
+                elapsed += 0.05
+                backend.tick(world, elapsed)
+            assert ego.id not in backend._parked
+            assert ego_id in tc.vehicle.getIDList()
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_a_vehicle_stopping_at_its_goal_stands_there(
     crossroads: Path, tmp_path: Path
 ) -> None:
@@ -4841,8 +5028,16 @@ def test_a_sumo_number_option_refuses_what_is_no_number_by_its_key(
         _sumo_option(group, key, 10**5000)
     # A valid number is kept, an int as its float.
     assert _sumo_option_value(_sumo_option(group, key, valid), group, key) == valid
-    whole = _sumo_option_value(_sumo_option(group, key, int(valid) or 1), group, key)
-    assert type(whole) is float and whole == float(int(valid) or 1)
+    if key == "step_length_s":
+        # No whole number of seconds divides the runner's 0.05 s tick, which
+        # the config is checked against: the int is refused for that.
+        with pytest.raises(ValueError, match="whole milliseconds"):
+            _sumo_option(group, key, 1)
+    else:
+        whole = _sumo_option_value(
+            _sumo_option(group, key, int(valid) or 1), group, key
+        )
+        assert type(whole) is float and whole == float(int(valid) or 1)
     if nullable:
         assert _sumo_option_value(_sumo_option(group, key, None), group, key) is None
 

@@ -1243,7 +1243,12 @@ published before SUMO steps; SUMO's result is applied to the actors after it.
 `step_length_s` makes SUMO's step shorter: it must divide the tick in whole
 milliseconds, as SUMO's clock counts them (0.01 or 0.025 for a 0.05 s tick, not
 0.0125), and SUMO then makes that many steps per tick, with the CARLA poses it
-sees held for all of them.
+sees held for all of them. A `step_length_s` that does not is refused when the
+config is read, before the run starts CARLA. Without `step_length_s` the tick
+itself is SUMO's step, so `fixed_delta_seconds` must then be whole milliseconds
+too: `traffic=sumo` refuses a world ticking at 1/30 s (SUMO would round its
+step to 0.033 s and fall 3 s behind CARLA every 300 s), and runs at 0.05 s, the
+runner's tick.
 
 **Lane changes**: SUMO runs its sublane model (`lateral_resolution_m`, 0.4 m
 by default, `--lateral-resolution`): a vehicle's lateral position is

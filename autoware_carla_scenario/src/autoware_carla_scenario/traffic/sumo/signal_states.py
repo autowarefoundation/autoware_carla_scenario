@@ -26,12 +26,19 @@ __all__ = [
 
 #: CARLA's light state names -> the SUMO link state a CARLA light sets.
 CARLA_TO_SUMO_SIGNAL: dict[str, str] = {"Red": "r", "Yellow": "y", "Green": "G"}
-#: SUMO's link states -> the CARLA light state name each shows as.
+#: SUMO's link states -> the CARLA light state name each shows as: red-yellow
+#: (``u``, the light about to turn green) and a stop sign (``s``) stop a
+#: driver as red does, and a light switched off (``o`` blinking, ``O`` dark)
+#: is CARLA's ``Off``.
 SUMO_TO_CARLA_SIGNAL: dict[str, str] = {
     "r": "Red",
+    "u": "Red",
+    "s": "Red",
     "y": "Yellow",
     "g": "Green",
     "G": "Green",
+    "o": "Off",
+    "O": "Off",
 }
 
 
@@ -41,9 +48,19 @@ def sumo_step(tick: float, step_length: Optional[float]) -> tuple[float, int]:
     Raises:
         ValueError: If *step_length* is longer than the tick, does not divide
             it, or is not a whole number of milliseconds -- SUMO's clock counts
-            those, so it would round the step and drift from CARLA's.
+            those, so it would round the step and drift from CARLA's.  With no
+            *step_length*, if the tick itself is not a whole number of
+            milliseconds (1/30 s), for the same reason.
     """
     if step_length is None:
+        tick_millis = tick * 1000.0
+        if abs(tick_millis - round(tick_millis)) > 1e-6:
+            raise ValueError(
+                f"traffic=sumo needs the world's fixed_delta_seconds ({tick:g} s) "
+                "in whole milliseconds: SUMO steps once per CARLA tick, and its "
+                "clock counts milliseconds, so it would round the step and drift "
+                "from CARLA's"
+            )
         return tick, 1
     steps = round(tick / step_length)
     millis = step_length * 1000.0

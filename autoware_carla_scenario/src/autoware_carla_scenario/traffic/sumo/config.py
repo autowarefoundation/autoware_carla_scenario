@@ -13,9 +13,10 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from ...config_flags import check_flag
-from ...constants import DEFAULT_TM_PORT
+from ...constants import DEFAULT_TM_PORT, FIXED_DELTA_SECONDS
 from ..fidelity import MesoscopicConfig, _number
 from ..parameters import BICYCLE_PARAMETER_BACKENDS
+from .signal_states import sumo_step
 
 __all__ = [
     "AmbientTrafficConfig",
@@ -572,6 +573,9 @@ class SumoBackendConfig:
         self.step_length_s = _check_positive_or_null(
             "step_length_s", self.step_length_s
         )
+        # Against the tick the runner gives the world, before the run starts
+        # CARLA: prepare() checks it again against the tick it is handed.
+        sumo_step(FIXED_DELTA_SECONDS, self.step_length_s)
         self.warmup_s = _check_not_negative("warmup_s", self.warmup_s)
         self.spawn_radius_m = _check_positive_or_null(
             "spawn_radius_m", self.spawn_radius_m
