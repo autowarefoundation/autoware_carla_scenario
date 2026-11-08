@@ -282,10 +282,14 @@ def test_the_safe_weights_prefix_is_the_one_build_network_uses() -> None:
 
 class _HeldVehicles:
     """The vehicle domain of TraCI, as far as the visibility and the queue
-    model use it."""
+    model use it: one vehicle, "v", 20 m/s at most of its own."""
 
     def __init__(self) -> None:
         self.max_speed = {"v": 20.0}
+        self.present = {"v"}
+
+    def getIDList(self) -> list[str]:
+        return sorted(self.present)
 
     def getMaxSpeed(self, sumo_id: str) -> float:
         return self.max_speed[sumo_id]
@@ -321,51 +325,146 @@ class _HeldVehicles:
         return "DEFAULT_VEHTYPE"
 
     def remove(self, sumo_id: str) -> None:
+        self.present.discard(sumo_id)
+
+    def add(self, sumo_id: str, route_id: str, **kwargs: Any) -> None:
+        self.present.add(sumo_id)
+
+    def setLength(self, sumo_id: str, length: float) -> None:
+        pass
+
+    def setWidth(self, sumo_id: str, width: float) -> None:
         pass
 
 
 class _QueueModel:
+    """The queue model, as far as moving a vehicle in and out of it and the
+    visibility use it."""
+
     def __init__(self) -> None:
-        self.added: dict[str, dict[str, Any]] = {}
+        self.max_speed: dict[str, float] = {}
+
+    def __contains__(self, sumo_id: str) -> bool:
+        return sumo_id in self.max_speed
 
     def has_link(self, edge: str) -> bool:
         return True
 
     def add(self, sumo_id: str, route: list[str], **kwargs: Any) -> None:
-        self.added[sumo_id] = kwargs
+        self.max_speed[sumo_id] = kwargs["max_speed"]
+
+    def set_max_speed(self, sumo_id: str, speed: float, now: float) -> None:
+        self.max_speed[sumo_id] = speed
+
+    def vehicle(self, sumo_id: str) -> SimpleNamespace:
+        return SimpleNamespace(
+            remaining_route=["e1", "e2"],
+            type_id="DEFAULT_VEHTYPE",
+            max_speed=self.max_speed[sumo_id],
+            length=4.5,
+            speed_cap=None,
+        )
+
+    def position(self, sumo_id: str, now: float) -> tuple[str, float]:
+        return "e1", 10.0
+
+    def speed(self, sumo_id: str, now: float) -> float:
+        return 10.0
+
+    def link(self, link_id: str) -> SimpleNamespace:
+        return SimpleNamespace(length=100.0)
+
+    def remove(self, sumo_id: str) -> None:
+        del self.max_speed[sumo_id]
 
 
-def test_a_vehicle_held_to_the_fog_takes_its_own_speed_into_the_queue_model() -> None:
-    """The queue model keeps the speed the vehicle had before the fog held it
-    down, not the cap: back in SUMO it would keep the cap once the fog has
-    cleared, nothing being left to give it its own back (#1988)."""
+def _fogged_backend() -> tuple[Any, _HeldVehicles, _QueueModel, SimpleNamespace]:
+    """A SUMO backend over the fakes, and a world whose visibility is set."""
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
 
     backend = SumoTrafficBackend(SumoBackendConfig())
     vehicles = _HeldVehicles()
-    backend._traci = SimpleNamespace(vehicle=vehicles)
+    backend._traci = SimpleNamespace(
+        vehicle=vehicles,
+        route=SimpleNamespace(add=lambda route_id, edges: None),
+        simulation=SimpleNamespace(
+            getArrivedIDList=lambda: [], getDepartedIDList=lambda: []
+        ),
+    )
     meso = _QueueModel()
     backend._meso = meso  # type: ignore[assignment]
-    backend._hold_to_sight("v", 15.0)
-    capped = vehicles.max_speed["v"]
-    assert capped < 20.0
-    assert backend._to_mesoscopic("v", 0.0)
-    assert meso.added["v"]["max_speed"] == pytest.approx(20.0)
-    # Out of SUMO, nothing is held for it any more.
-    assert "v" not in backend._max_speeds
+    return backend, vehicles, meso, SimpleNamespace(id=1988)
+
+
+def test_a_vehicle_held_to_the_fog_keeps_the_cap_in_the_queue_model() -> None:
+    """The queue model drives it at the speed the fog holds it to, follows
+    the fog as it thickens, and gives it its own speed back when the fog
+    clears: the cap neither lapses nor outlasts the fog (#1988)."""
+    from autoware_carla_scenario.visibility import (
+        forget_visibility,
+        set_world_visibility,
+    )
+
+    backend, vehicles, meso, world = _fogged_backend()
+    try:
+        set_world_visibility(world.id, 50.0)
+        backend._follow_visibility(world)
+        capped = vehicles.max_speed["v"]
+        assert capped < 20.0
+        assert backend._to_mesoscopic("v", 0.0)
+        assert meso.max_speed["v"] == pytest.approx(capped)
+        assert "v" not in backend._max_speeds
+        # Thicker: held lower.
+        set_world_visibility(world.id, 20.0)
+        backend._follow_visibility(world)
+        assert meso.max_speed["v"] < capped
+        # Clear: its own, in the queue model already.
+        forget_visibility()
+        backend._follow_visibility(world)
+        assert meso.max_speed["v"] == pytest.approx(20.0)
+        assert backend._meso_held == {}
+        # And back in SUMO, its own too.
+        assert backend._to_microscopic(None, "v", 1.0)
+        assert vehicles.max_speed["v"] == pytest.approx(20.0)
+    finally:
+        forget_visibility()
+
+
+def test_a_vehicle_back_from_the_queue_model_in_fog_gets_its_own_speed() -> None:
+    """Returned while the fog lasts, it is given its own maximum speed, which
+    the fog holds anew as it departs -- not the cap, which nothing would lift
+    (#1988)."""
+    from autoware_carla_scenario.visibility import (
+        forget_visibility,
+        set_world_visibility,
+    )
+
+    backend, vehicles, meso, world = _fogged_backend()
+    try:
+        set_world_visibility(world.id, 50.0)
+        backend._follow_visibility(world)
+        capped = vehicles.max_speed["v"]
+        assert backend._to_mesoscopic("v", 0.0)
+        assert meso.max_speed["v"] == pytest.approx(capped)
+        assert backend._to_microscopic(None, "v", 1.0)
+        assert vehicles.max_speed["v"] == pytest.approx(20.0)
+        assert backend._meso_held == {}
+        # Departing, the fog holds it again; when it clears, its own is back.
+        backend._hold_to_sight("v", 50.0)
+        assert vehicles.max_speed["v"] == pytest.approx(capped)
+        forget_visibility()
+        backend._follow_visibility(world)
+        assert vehicles.max_speed["v"] == pytest.approx(20.0)
+    finally:
+        forget_visibility()
 
 
 def test_a_vehicle_not_held_takes_its_speed_into_the_queue_model() -> None:
-    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
-
-    backend = SumoTrafficBackend(SumoBackendConfig())
-    vehicles = _HeldVehicles()
+    backend, vehicles, meso, _world = _fogged_backend()
     vehicles.max_speed["v"] = 12.0
-    backend._traci = SimpleNamespace(vehicle=vehicles)
-    meso = _QueueModel()
-    backend._meso = meso  # type: ignore[assignment]
     assert backend._to_mesoscopic("v", 0.0)
-    assert meso.added["v"]["max_speed"] == pytest.approx(12.0)
+    assert meso.max_speed["v"] == pytest.approx(12.0)
+    assert backend._meso_held == {}
 
 
 def test_a_lateral_acceleration_needs_the_sublane_model() -> None:

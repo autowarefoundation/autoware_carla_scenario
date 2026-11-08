@@ -240,6 +240,16 @@ class MesoscopicTraffic:
         vehicle.speed_cap = speed
         vehicle.exit_s = self._exit_time(vehicle, link, now)
 
+    def set_max_speed(self, vehicle_id: str, speed: float, now: float) -> None:
+        """Give *vehicle_id* the top speed *speed* (m/s) from where it is
+        now -- one that held it down, the visibility's, has changed."""
+        vehicle = self._vehicles[vehicle_id]
+        link = self._links[vehicle.link]
+        vehicle.start_m = self.position(vehicle_id, now)[1]
+        vehicle.entered_s = now
+        vehicle.max_speed = speed
+        vehicle.exit_s = self._exit_time(vehicle, link, now)
+
     def set_route(self, vehicle_id: str, route: Sequence[str]) -> None:
         """Drive *route* from now on; it starts with the road the vehicle is on."""
         vehicle = self._vehicles[vehicle_id]

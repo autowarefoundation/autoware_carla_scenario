@@ -8,6 +8,7 @@ name and SUMO's state from arguments instead of the light and TraCI.
 from __future__ import annotations
 
 import random
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -15,6 +16,7 @@ import pytest
 from autoware_carla_scenario.traffic.sumo.signal_states import (
     CARLA_TO_SUMO_SIGNAL,
     SUMO_TO_CARLA_SIGNAL,
+    carla_light_state,
     green_together,
     link_states,
     permissive_links,
@@ -102,6 +104,67 @@ def test_every_sumo_signal_state_shows_as_a_carla_light_state() -> None:
     assert SUMO_TO_CARLA_SIGNAL["u"] == "Red"
     assert SUMO_TO_CARLA_SIGNAL["s"] == "Red"
     assert SUMO_TO_CARLA_SIGNAL["o"] == SUMO_TO_CARLA_SIGNAL["O"] == "Off"
+
+
+@pytest.mark.parametrize(
+    ("states", "shown"),
+    [
+        ("G", "Green"),
+        ("GO", "Green"),
+        ("Go", "Green"),
+        ("Gs", "Green"),
+        ("sG", "Green"),
+        ("OG", "Green"),
+        ("rG", "Green"),  # the last regular link, as before
+        ("Gr", "Red"),
+        ("Gu", "Red"),
+        ("uy", "Yellow"),
+        ("O", "Off"),
+        ("so", "Off"),  # no regular link: the last of the others
+        ("os", "Red"),
+        ("", None),
+        ("R", None),  # not a SUMO state
+    ],
+)
+def test_a_light_shows_its_regular_links_over_off_and_turn_on_red(
+    states: str, shown: str | None
+) -> None:
+    """A light off, or a right turn on red, on one of a light's links does
+    not make it show Off or Red over a green on another (#1988)."""
+    assert carla_light_state(states) == shown
+
+
+def test_a_carla_light_over_several_sumo_links_shows_their_regular_state() -> None:
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    class Light:
+        def __init__(self) -> None:
+            self.state = carla.TrafficLightState.Red
+
+        def get_state(self) -> Any:
+            return self.state
+
+        def set_state(self, state: Any) -> None:
+            self.state = state
+
+    for links, shown in (
+        ("GO", carla.TrafficLightState.Green),
+        ("Gs", carla.TrafficLightState.Green),
+        ("sG", carla.TrafficLightState.Green),
+        ("oO", carla.TrafficLightState.Off),
+    ):
+        backend = SumoTrafficBackend()
+        light = Light()
+        backend._signals = {("j", 0): light, ("j", 1): light}
+        backend._traci = SimpleNamespace(
+            trafficlight=SimpleNamespace(
+                getRedYellowGreenState=lambda tls, links=links: links
+            )
+        )
+        backend._signals_to_carla()
+        assert int(light.state) == int(shown), links
 
 
 def _state(rng: random.Random, size: int) -> str:
