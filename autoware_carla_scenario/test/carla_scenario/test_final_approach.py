@@ -612,7 +612,7 @@ def test_a_path_given_before_start_changes_lanes_where_it_crosses() -> None:
     backend, tm = _lane_changing_backend()
     npc = _Actor(5)
     npc.location = carla.Location(0.0, 0.0, 0.0)
-    backend._lane_locked.add(5)  # as follow_route leaves it
+    backend._route_locked.add(5)  # as follow_route leaves it
     backend._remember_path(npc, _crossing_path())
     backend.start(_World([npc]))
     assert len(backend._kept[5].lane_changes) == 1

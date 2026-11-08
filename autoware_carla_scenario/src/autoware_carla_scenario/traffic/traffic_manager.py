@@ -402,7 +402,8 @@ class TrafficManagerBackend(TrafficBackend):
     _kept: dict[int, _Kept]
     _desired_mps: dict[int, float]
     _given: dict[int, List["carla.Location"]]
-    _lane_locked: set[int]
+    _route_locked: set[int]
+    _crossing_locked: set[int]
     _paused: dict[int, _Kept]
     _lead_from: dict[int, "carla.Location"]
     _lead_route: dict[int, List["carla.Location"]]
@@ -493,8 +494,14 @@ class TrafficManagerBackend(TrafficBackend):
         #: The path each vehicle was last given, by actor id, kept or not yet.
         self._given = {}
         #: The vehicles :meth:`follow_route` turned the TrafficManager's own
-        #: lane changes off for, which their first draw keeps off.
-        self._lane_locked = set()
+        #: lane changes off for, until their route ends.
+        self._route_locked = set()
+        #: The vehicles a delayed or stretched :meth:`change_lane` turned them
+        #: off for, until the crossing ends.  Two reasons kept apart: the end
+        #: of one gives the lane changes back only if the other does not hold
+        #: (:meth:`_unlock_lanes`), and either keeps them off at the first
+        #: draw.
+        self._crossing_locked = set()
         #: Kept vehicles taken back (:meth:`release_actor`), by actor id: their
         #: path and their progress along it, which goes on while the scenario
         #: drives them, for when they are resumed.
@@ -740,7 +747,8 @@ class TrafficManagerBackend(TrafficBackend):
         self._kept = {}
         self._desired_mps = {}
         self._given = {}
-        self._lane_locked = set()
+        self._route_locked = set()
+        self._crossing_locked = set()
         self._paused = {}
         self._lead_from = {}
         self._lead_route = {}
@@ -926,9 +934,11 @@ class TrafficManagerBackend(TrafficBackend):
             )
             # Its own lane changes would have it cross elsewhere, or round
             # what is in the way, or back.
-            if int(actor.id) not in self._lane_locked:
-                tm.auto_lane_change(_vehicle(actor), False)
-                self._lane_locked.add(int(actor.id))
+            actor_id = int(actor.id)
+            if actor_id not in self._crossing_locked:
+                if actor_id not in self._route_locked:
+                    tm.auto_lane_change(_vehicle(actor), False)
+                self._crossing_locked.add(actor_id)
                 request.locked_lanes = True
             self._lane_change_requests.append(request)
             if start_after_m > 0.0:
@@ -1095,7 +1105,7 @@ class TrafficManagerBackend(TrafficBackend):
             return
         if request.locked_lanes:
             request.locked_lanes = False
-            self._unlock_lanes(request.actor, _entity_name(request.entity))
+            self._unlock_lanes(request.actor, _entity_name(request.entity), False)
         if not request.stretched:
             return
         tm.vehicle_lane_offset(_vehicle(request.actor), 0.0)
@@ -1376,7 +1386,7 @@ class TrafficManagerBackend(TrafficBackend):
         # The route says where to change lane; the TrafficManager's own lane
         # changes would take the vehicle off it.
         tm.auto_lane_change(_vehicle(actor), False)
-        self._lane_locked.add(int(actor.id))
+        self._route_locked.add(int(actor.id))
         tm.set_path(_vehicle(actor), path)
         self._remember_path(actor, path)
         self._drive_on(actor)
@@ -1399,16 +1409,26 @@ class TrafficManagerBackend(TrafficBackend):
         if actor is None:
             return
         vehicle: "carla.Actor" = actor
-        self._unlock_lanes(vehicle, _entity_name(entity))
+        self._unlock_lanes(vehicle, _entity_name(entity), True)
 
-    def _unlock_lanes(self, vehicle: "carla.Actor", name: str) -> None:
-        """Give *vehicle* its own lane changes back, if :meth:`follow_route` or
-        :meth:`change_lane` turned them off: the run's ``lane_changes`` with its entity's
-        overrides, or, unset, the TrafficManager's default, on."""
+    def _unlock_lanes(self, vehicle: "carla.Actor", name: str, route: bool) -> None:
+        """End the lock :meth:`follow_route` (*route*) or :meth:`change_lane`
+        (not *route*) put on *vehicle*'s own lane changes, and give them back
+        unless the other lock still holds: the run's ``lane_changes`` with its
+        entity's overrides, or, unset, the TrafficManager's default, on."""
         actor_id = int(vehicle.id)
-        if actor_id not in self._lane_locked:
-            return
-        self._lane_locked.discard(actor_id)
+        if route:
+            if actor_id not in self._route_locked:
+                return
+            self._route_locked.discard(actor_id)
+            if actor_id in self._crossing_locked:
+                return  # Its crossing gives them back when it ends.
+        else:
+            if actor_id not in self._crossing_locked:
+                return
+            self._crossing_locked.discard(actor_id)
+            if actor_id in self._route_locked:
+                return  # Its route gives them back when it ends.
         tm = self._require_tm("end_route")
         if tm is None:
             return
@@ -1430,10 +1450,13 @@ class TrafficManagerBackend(TrafficBackend):
         up and drives on as it likes, which is what a route handed over with
         nothing to watch it (an untimed ``RoutingAction``) ends in (#1100).
         Not merely near that point: a route that ends near where it starts
-        is near it from the start (#1105)."""
+        is near it from the start (#1105).  The route's lock alone: a crossing's
+        is not ended by a path used up before it (an earlier route's or a
+        turn's), and a route's lock, once ended, is gone, so its used-up path
+        ends nothing more (#2005)."""
         if not kept.path or kept.progress < len(kept.path):
             return
-        self._unlock_lanes(kept.actor, _actor_name(kept.actor))
+        self._unlock_lanes(kept.actor, _actor_name(kept.actor), True)
 
     def _follow_progress(self, kept: _Kept) -> None:
         """Move *kept*'s progress along its path on to where its vehicle is
@@ -1631,6 +1654,11 @@ class TrafficManagerBackend(TrafficBackend):
             del self._lead_route[actor.id]
             self._lead_out(actor, start, route, self._kept[actor.id].path)
 
+    def _lanes_locked(self, actor_id: int) -> bool:
+        """Whether a route or a crossing has the vehicle *actor_id*'s own lane
+        changes off: its first draw leaves them so."""
+        return actor_id in self._route_locked or actor_id in self._crossing_locked
+
     def _parameters_of(self, actor: "carla.Actor") -> VehicleParameters:
         """The run's parameters, overridden by those of *actor*'s entity
         overrides: what a draw of all of them for it is made from."""
@@ -1646,7 +1674,8 @@ class TrafficManagerBackend(TrafficBackend):
         if actor_id in self._entity_overrides:
             del self._entity_overrides[actor_id]
         self._drawn.discard(actor_id)
-        self._lane_locked.discard(actor_id)
+        self._route_locked.discard(actor_id)
+        self._crossing_locked.discard(actor_id)
         if actor_id in self._paused:
             del self._paused[actor_id]
         self._forget_lead_out(actor_id)
@@ -1711,7 +1740,7 @@ class TrafficManagerBackend(TrafficBackend):
                 vehicle, min_gap.draw(rng, VEHICLE_BOUNDS["min_gap_m"])
             )
         lane_changes = parameters.lane_changes
-        if lane_changes is not None and not (first and actor_id in self._lane_locked):
+        if lane_changes is not None and not (first and self._lanes_locked(actor_id)):
             tm.auto_lane_change(vehicle, lane_changes)
         # The TrafficManager's are percentages, the parameters' probabilities.
         # An emergency vehicle on a call keeps running them (set_emergency):
@@ -1784,7 +1813,7 @@ class TrafficManagerBackend(TrafficBackend):
                 continue
             if not kept.held and len(kept.lane_changes) > 0:
                 self._change_lanes_on_path(kept)
-            if actor_id in self._lane_locked:
+            if actor_id in self._route_locked:
                 self._end_route_at_path_end(kept)
             if kept.held or elapsed < kept.check_due:
                 continue
@@ -2024,7 +2053,7 @@ class TrafficManagerBackend(TrafficBackend):
         for undrawn in list(self._exact_kmh):
             if undrawn not in self._drawn:
                 self._given_before_draw(undrawn, overrides)
-        for undrawn in list(self._lane_locked):
+        for undrawn in list(self._route_locked):
             if undrawn not in self._drawn:
                 self._given_before_draw(undrawn, overrides)
         for actor_id in list(self._entity_overrides):
@@ -2125,7 +2154,9 @@ class TrafficManagerBackend(TrafficBackend):
         if overrides.speed_factor is not None and actor_id in self._exact_kmh:
             del self._exact_kmh[actor_id]
         if overrides.lane_changes is not None:
-            self._lane_locked.discard(actor_id)
+            # The route's lock, not a crossing's: that one gives them back,
+            # as these overrides say, when the crossing ends.
+            self._route_locked.discard(actor_id)
 
     def _require_tm(self, what: str) -> Optional["carla.TrafficManager"]:
         """Return the TrafficManager handle, or ``None`` with a warning."""

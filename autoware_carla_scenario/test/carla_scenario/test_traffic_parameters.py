@@ -672,12 +672,12 @@ def test_the_end_of_a_route_gives_lane_changes_back(
         world,  # type: ignore[arg-type]
         [SimpleNamespace(), SimpleNamespace()],  # type: ignore[list-item]
     )
-    assert backend._lane_locked == {5}
+    assert backend._route_locked == {5}
     client.tm.calls.clear()
 
     backend.end_route(entity, world)  # type: ignore[arg-type]
     assert client.tm.called("auto_lane_change") == [(npc, after)]
-    assert backend._lane_locked == set()
+    assert backend._route_locked == set()
     # Safe to repeat: nothing more to give back.
     backend.end_route(entity, world)  # type: ignore[arg-type]
     assert client.tm.called("auto_lane_change") == [(npc, after)]
@@ -734,12 +734,12 @@ def test_a_route_used_up_gives_lane_changes_back(
 
     backend._keep_scenario_vehicles(world, 0.0)  # type: ignore[arg-type]
     assert client.tm.called("auto_lane_change") == []
-    assert backend._lane_locked == {5}
+    assert backend._route_locked == {5}
 
     npc.location = _Point(8.0)  # within a point's spacing of its last, 10 m
     backend._keep_scenario_vehicles(world, 0.05)  # type: ignore[arg-type]
     assert client.tm.called("auto_lane_change") == [(npc, after)]
-    assert backend._lane_locked == set()
+    assert backend._route_locked == set()
     backend._keep_scenario_vehicles(world, 0.1)  # type: ignore[arg-type]
     assert client.tm.called("auto_lane_change") == [(npc, after)]
 
@@ -812,7 +812,7 @@ def _drive(
     for point in points:
         npc.location = point  # type: ignore[assignment]
         backend._keep_scenario_vehicles(world, 0.0)  # type: ignore[arg-type]
-        locked.append(5 in backend._lane_locked)
+        locked.append(5 in backend._route_locked)
     return locked
 
 
@@ -860,7 +860,7 @@ def test_a_loop_vehicle_re_registered_near_its_start_keeps_its_path(
     backend._keep_standing(kept, 0.0, 61.0)
     # The point beside it (5 m on) is taken as passed, as on any path.
     assert client.tm.called("set_path") == [(npc, loop[2:])]
-    assert 5 in backend._lane_locked
+    assert 5 in backend._route_locked
 
 
 def test_a_vehicle_driven_off_its_route_picks_it_up_further_on(
@@ -912,7 +912,7 @@ def test_a_resumed_vehicle_goes_on_from_where_it_was_driven(
     backend.release_actor(world, npc)  # type: ignore[arg-type]
 
     _drive(backend, world, npc, loop[half:])
-    assert 5 in backend._lane_locked
+    assert 5 in backend._route_locked
     backend.resume_actor(world, npc)  # type: ignore[arg-type]
     assert _drive(backend, world, npc, [loop[-1]]) == [False]
 
@@ -968,7 +968,7 @@ def test_a_lane_changes_override_after_a_route_wins_at_the_first_draw() -> None:
     client, backend, world, npc, entity = _released_before_start(
         VehicleParameters(lane_changes=True)
     )
-    backend._lane_locked.add(42)  # as follow_route leaves it
+    backend._route_locked.add(42)  # as follow_route leaves it
     backend.override_entity_parameters(
         world,  # type: ignore[arg-type]
         VehicleParameters(lane_changes=True),
