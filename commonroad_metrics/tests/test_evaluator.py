@@ -238,6 +238,8 @@ def test_the_contact_time_stops_both_rather_than_reversing() -> None:
     # The lead stops 5 m on (at 1 s); the ego, braking too, reaches 20 m when
     # 10 t - t^2 = 20.
     assert _contact_time(15.0, 10.0, -2.0, 10.0, -10.0) == pytest.approx(5.0 - math.sqrt(5.0))
+    # A car standing with its acceleration backwards stays (never reverses).
+    assert _contact_time(10.0, 5.0, 0.0, 0.0, -3.0) == pytest.approx(2.0)
     # Already touching and closing.
     assert _contact_time(0.0, 5.0, 0.0, 0.0, 0.0) == 0.0
     # Opening.
@@ -249,7 +251,7 @@ def test_an_oncoming_car_in_the_ego_lane_closes_the_gap() -> None:
     going the ego's way."""
     ego = on_road(50, 1.75, 10.0, 1)
     oncoming = replace(on_road(94.5, 1.75, -10.0, 2), yaw=HEADING + math.pi)
-    keys = ["crime_hw_m", "crime_ttc_s", "crime_a_long_req_mps2"]
+    keys = ["crime_hw_m", "crime_ttc_s", "crime_a_long_req_mps2", "crime_btn"]
     for share_frame in (True, False):
         values, errors = Evaluator(str(MAP), EvaluatorSettings(share_frame=share_frame)).evaluate(
             ego, [oncoming], keys
@@ -258,8 +260,53 @@ def test_an_oncoming_car_in_the_ego_lane_closes_the_gap() -> None:
         assert values["crime_hw_m"] == pytest.approx(40.0, abs=0.1)
         # Closing at 20 m/s.
         assert values["crime_ttc_s"] == pytest.approx(2.0, abs=0.02)
-        # 20^2 / (2 * 40).
-        assert values["crime_a_long_req_mps2"] == pytest.approx(-5.0, abs=0.02)
+        # It keeps coming: no braking avoids it, however hard.
+        assert values["crime_a_long_req_mps2"] == -math.inf
+        assert values["crime_btn"] == math.inf
+    # Braking at 2 m/s^2 itself, it stops 25 m on, 15 m ahead of the ego:
+    # the ego must stop within them, not match its speed (CriMe's -3).
+    braking_oncoming = replace(oncoming, ax=2.0 * COS, ay=2.0 * SIN)
+    values, errors = Evaluator(str(MAP)).evaluate(ego, [braking_oncoming], keys)
+    assert errors == {}
+    assert values["crime_a_long_req_mps2"] == pytest.approx(-100.0 / 30.0, abs=0.01)
+
+
+def test_the_required_deceleration_is_the_least_that_avoids_contact() -> None:
+    """ALongReq in the model TTC reads: each holding its acceleration until it
+    stops.  Continuous across a lead's acceleration of 0 on an opening gap,
+    where CriMe's formula reads -v_rel^2 / (2 gap) for a lead that never comes
+    back."""
+    from commonroad_metrics.evaluator import _contact_time, _required_deceleration
+
+    # A stopped ego, a lead pulling away at 10 m/s 2 m ahead.
+    for a_other in (0.0, 0.01, -0.01):
+        assert _required_deceleration(2.0, 0.0, 10.0, a_other, 1) == 0.0
+    # The ego at 10 m/s, a lead pulling away at 15 m/s 20 m ahead.
+    for a_other in (0.0, 0.01):
+        assert _required_deceleration(20.0, 10.0, 15.0, a_other, 1) == 0.0
+    # ... braking slightly: it stops 15^2 / 0.02 = 11250 m on, and the ego
+    # must stop behind that; next to nothing.
+    assert _required_deceleration(20.0, 10.0, 15.0, -0.01, 1) == pytest.approx(
+        -100.0 / (2 * 11270.0), rel=1e-6
+    )
+    # A closing gap, a lead at constant speed: CriMe's v_rel^2 / (2 gap).
+    assert _required_deceleration(25.5, 15.0, 5.0, 0.0, 1) == pytest.approx(-100.0 / 51.0)
+    # Cars coming the other way, braking to a stop where the ego must stop
+    # short of: 40 - 25 m, 2 - 0.9 m, 20 - 10 m ahead.
+    cases = [
+        (40.0, 10.0, -10.0, 2.0, -100.0 / 30.0),
+        (2.0, 20.0, -3.0, 5.0, -400.0 / 2.2),
+        (20.0, 20.0, -10.0, 5.0, -20.0),
+    ]
+    for gap, v_ego, v_other, a_other, expected in cases:
+        a_req = _required_deceleration(gap, v_ego, v_other, a_other, 1)
+        assert a_req == pytest.approx(expected, rel=1e-6)
+        assert _contact_time(gap, v_ego, a_req, v_other, a_other) == math.inf
+        assert _contact_time(gap, v_ego, a_req * 0.99, v_other, a_other) < math.inf
+    # One that reaches the ego even stopped.
+    assert _required_deceleration(5.0, 10.0, -10.0, 1.0, 1) == -math.inf
+    # One behind.
+    assert _required_deceleration(math.inf, 10.0, 10.0, -4.0, 1) == 0.0
 
 
 _LONG_STRAIGHT = """<?xml version="1.0" encoding="UTF-8"?>

@@ -740,9 +740,29 @@ def _along_lane(x: float, y: float, heading: float) -> float:
 def _stopping_time(v: float, a: float) -> float:
     """When a road user at velocity *v* and acceleration *a* along the lane
     stops (s): it decelerates to a stop and stays there rather than
-    reversing, as :meth:`Evaluator._obstacle` predicts it; ``inf`` when it
-    does not decelerate."""
-    return -v / a if v * a < 0.0 else math.inf
+    reversing, as :meth:`Evaluator._obstacle` predicts it; ``0`` for one
+    standing with its acceleration backwards (it never reverses), ``inf``
+    when it does not decelerate."""
+    if v * a < 0.0:
+        return -v / a
+    if v == 0.0 and a < 0.0:
+        return 0.0
+    return math.inf
+
+
+def _quadratic_roots(c0: float, c1: float, c2: float) -> list[float]:
+    """The real roots of ``c0 + c1 t + c2 t^2``, in the numerically stable
+    form (no cancellation between ``-c1`` and the discriminant's root)."""
+    if abs(c2) < 1e-12:
+        return [-c0 / c1] if c1 != 0.0 else []
+    disc = c1 * c1 - 4.0 * c2 * c0
+    if disc < 0.0:
+        return []
+    q = -0.5 * (c1 + math.copysign(math.sqrt(disc), c1))
+    roots = [q / c2]
+    if q != 0.0:
+        roots.append(c0 / q)
+    return roots
 
 
 def _contact_time(gap: float, v_ego: float, a_ego: float, v_other: float, a_other: float) -> float:
@@ -759,14 +779,9 @@ def _contact_time(gap: float, v_ego: float, a_ego: float, v_other: float, a_othe
     """
     t_ego, t_other = _stopping_time(v_ego, a_ego), _stopping_time(v_other, a_other)
     users = ((1.0, v_other, a_other, t_other), (-1.0, v_ego, a_ego, t_ego))
-    if gap <= 0.0:
-        c1 = sum(sign * v for sign, v, _, _ in users)
-        c2 = sum(sign * a for sign, _, a, _ in users)
-        if c1 < 0.0 or (c1 == 0.0 and c2 < 0.0):
-            return 0.0
-    bounds = sorted({0.0, t_ego, t_other, math.inf})
-    for lo, hi in zip(bounds, bounds[1:], strict=False):
-        # gap(t) = c0 + c1 t + c2 t^2 on [lo, hi].
+
+    def coefficients(lo: float) -> tuple[float, float, float]:
+        # gap(t) = c0 + c1 t + c2 t^2 from *lo* to the next stop.
         c0, c1, c2 = gap, 0.0, 0.0
         for sign, v, a, stop in users:
             if lo >= stop:
@@ -774,15 +789,15 @@ def _contact_time(gap: float, v_ego: float, a_ego: float, v_other: float, a_othe
             else:
                 c1 += sign * v
                 c2 += sign * 0.5 * a
-        if abs(c2) < 1e-12:
-            roots = [-c0 / c1] if c1 != 0.0 else []
-        else:
-            disc = c1 * c1 - 4.0 * c2 * c0
-            if disc < 0.0:
-                roots = []
-            else:
-                root = math.sqrt(disc)
-                roots = [(-c1 - root) / (2.0 * c2), (-c1 + root) / (2.0 * c2)]
+        return c0, c1, c2
+
+    if gap <= 0.0:
+        _, c1, c2 = coefficients(0.0)
+        if c1 < 0.0 or (c1 == 0.0 and c2 < 0.0):
+            return 0.0
+    bounds = sorted({0.0, t_ego, t_other, math.inf})
+    for lo, hi in zip(bounds, bounds[1:], strict=False):
+        roots = _quadratic_roots(*coefficients(lo))
         found = [t for t in roots if t > 0.0 and lo - 1e-9 <= t <= hi + 1e-9]
         if found:
             return min(found)
@@ -792,31 +807,52 @@ def _contact_time(gap: float, v_ego: float, a_ego: float, v_other: float, a_othe
 def _required_deceleration(
     gap: float, v_ego: float, v_other: float, a_other: float, mode: int
 ) -> float:
-    """CriMe's ALongReq of the ego *gap* behind the road user ahead (m/s^2,
-    ``0`` or negative), with the other's velocity and acceleration signed.
+    """ALongReq of the ego *gap* behind the road user ahead (m/s^2, ``0`` or
+    negative).
 
-    CriMe's (mode 1, its default): the acceleration that brings the
-    relative velocity to zero as the ego reaches the other, the other
-    holding its acceleration, ``min(a_other - v_rel^2 / (2 gap), 0)`` --
-    non-zero for an opening gap too, as CriMe reads it.  A road user that
-    stops before then (:func:`_stopping_time`) is taken where it stops: the
-    deceleration that stops the ego behind that point.  No road user ahead
-    (*gap* ``inf``: CriMe's HW of one behind) needs none.
+    In CriMe's mode 1 (its default), the least constant deceleration that
+    keeps the ego off the other, each holding its acceleration until it
+    stops and then staying (:func:`_contact_time`).  It is CriMe's
+    ``min(a_other - v_rel^2 / (2 gap), 0)`` -- matching the other's speed as
+    the ego reaches it -- wherever that holds: a closing gap, the other going
+    the ego's way and matched before it stops.  Elsewhere it is not: a gap
+    opening for good needs ``0`` (CriMe's formula reads ``-v_rel^2 / (2
+    gap)``), one whose lead brakes to a stop the deceleration that stops the
+    ego behind where it stops, and a car coming the other way, braking, the
+    deceleration that stops the ego before they meet.  ``-inf`` when no
+    deceleration does: the other reaches the ego even stopped (a car coming
+    at it that does not stop in time), or the ego is not going forward and
+    still meets it.  Monotone in the ego's deceleration (braking harder
+    never brings the ego further), so it is found by bisection to well under
+    the 0.01 m/s^2 it is rounded to.  No road user ahead (*gap* ``inf``:
+    CriMe's HW of one behind) needs none.  Mode 2 is CriMe's piecewise
+    constant motion, as it writes it.
     """
     if not math.isfinite(gap):
         return 0.0
-    if mode != 1:  # CriMe's piecewise constant motion, as it writes it
+    if mode != 1:
         return -(v_ego**2) / (2 * (gap - v_other**2 / 2 * a_other))
-    v_rel = v_other - v_ego
-    a_req = min(a_other - v_rel**2 / (2 * gap), 0.0)
-    stop = _stopping_time(v_other, a_other)
-    if math.isfinite(stop):
-        # Jansson's solution meets the other when their velocities match.
-        meet = 2 * gap / -v_rel if v_rel < 0 else math.inf
-        room = gap + 0.5 * v_other * stop  # where the other stops
-        if meet > stop and room > 0.0:
-            a_req = min(-(max(v_ego, 0.0) ** 2) / (2 * room), 0.0)
-    return a_req
+
+    def avoids(a_ego: float) -> bool:
+        return _contact_time(gap, v_ego, a_ego, v_other, a_other) == math.inf
+
+    if avoids(0.0):
+        return 0.0
+    if v_ego <= 0.0 or _contact_time(gap, 0.0, 0.0, v_other, a_other) < math.inf:
+        # Braking cannot hold the ego further back than standing where it is.
+        return -math.inf
+    low, high = 0.0, 1.0  # magnitudes: too little, enough
+    while not avoids(-high):
+        low, high = high, high * 2.0
+        if high > 1e9:
+            return -math.inf
+    for _ in range(60):
+        middle = 0.5 * (low + high)
+        if avoids(-middle):
+            high = middle
+        else:
+            low = middle
+    return -high
 
 
 @functools.cache
@@ -839,8 +875,10 @@ def _signed_crime_measures() -> dict[str, type]:
     With the sign comes a road user braking to a stop, which CriMe's constant
     acceleration would carry on into reversing: TTC and ALongReq take it to
     stop and stay, as the worker predicts every road user
-    (:func:`_contact_time`, :func:`_required_deceleration`).  A road user
-    behind the ego (CriMe's HW ``inf``) needs no ALongReq.
+    (:func:`_contact_time`), and ALongReq is the least deceleration that
+    keeps the ego off it in that model (:func:`_required_deceleration`;
+    ``-inf``, and BTN ``inf``, when none does).  A road user behind the ego
+    (CriMe's HW ``inf``) needs no ALongReq.
     """
     import commonroad_crime.utility.general as utils_gen
     import commonroad_crime.utility.solver as utils_sol
@@ -924,13 +962,28 @@ def _signed_crime_measures() -> dict[str, type]:
                     other_along(state_other, other_heading, "acceleration"),
                     self.configuration.acceleration.acceleration_mode,
                 )
-            self.value = 0.0 if a_req > 0 else utils_gen.int_round(a_req, 2)
+            if a_req > 0:
+                self.value = 0.0
+            elif math.isfinite(a_req):
+                self.value = utils_gen.int_round(a_req, 2)
+            else:
+                self.value = a_req  # no braking avoids it
             return self.value
 
     class SignedBTN(BTN):
         def __init__(self, config: Any) -> None:
             super().__init__(config)
             self._a_long_req_object = SignedALongReq(config)
+
+        def compute(self, vehicle_id: int, time_step: int = 0, verbose: bool = True) -> Any:
+            # CriMe's, but for an ALongReq of -inf (no braking avoids the
+            # collision), which CriMe's rounding cannot take: BTN inf.
+            if not self.validate_update_states_log(vehicle_id, time_step, verbose):
+                return np.nan
+            a_long_req = self._a_long_req_object.compute(vehicle_id, time_step, verbose=verbose)
+            btn = a_long_req / -self.configuration.vehicle.curvilinear.a_lon_max
+            self.value = utils_gen.int_round(btn, 4) if math.isfinite(btn) else btn
+            return self.value
 
     class SignedALatReq(ALatReq):
         def __init__(self, config: Any) -> None:

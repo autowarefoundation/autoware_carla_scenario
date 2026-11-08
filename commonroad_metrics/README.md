@@ -69,14 +69,18 @@ as their magnitude, dropping their sign: a braking lead reads as speeding up
 (TTC `inf`, ALongReq `0`) and a car coming the other way in the ego's lane as
 going its way. The worker's TTC and ALongReq are CriMe's with the other's
 components projected onto the lane, signed; BTN, which is ALongReq over the
-most a car can brake, and ALatReq and STN, which take TTC, use them. A road
-user braking to a stop stops and stays there in both, as the worker predicts
-it, rather than reversing as CriMe's constant acceleration carries it on: TTC
-is the first contact with each holding its acceleration until it stops, and
-ALongReq for one that stops before the ego matches its speed is the
-deceleration that stops the ego behind where it stops. A road user behind the
-ego gives no ALongReq; one ahead pulling away still gives CriMe's
-`a - v_rel^2 / (2 gap)`.
+most a car can brake, and ALatReq and STN, which take TTC, use them. The
+ego's velocity is read signed too. A road user braking to a stop stops and stays there, as
+the worker predicts it, rather than reversing as CriMe's constant acceleration
+carries it on: TTC is the first contact with each holding its acceleration
+until it stops. ALongReq is the least constant deceleration that keeps the ego
+off the road user ahead in that model (found by bisection): CriMe's
+`a - v_rel^2 / (2 gap)` where the gap closes on a road user going the ego's
+way that does not stop first, `0` for a gap opening for good (where CriMe's
+formula reads `-v_rel^2 / (2 gap)`), the deceleration that stops the ego behind
+where a braking lead or a braking car coming the other way stops, and `-inf`
+(BTN `inf`) when no braking avoids the collision. A road user behind the ego
+gives no ALongReq.
 
 A lanelet is kept when its centre line comes within `radius_m` of the ego
 anywhere along it, not only at a vertex (a straight lanelet is just its two end
