@@ -473,6 +473,9 @@ def test_an_ego_that_gives_up_waiting_fails_the_run_before_it_begins(
     assert result.failure is not None
     assert result.failure.category == FailureCategory.DRIVER
     assert result.failure.condition == ""
+    # No condition was ever checked: the always-true one is not reported
+    # as satisfied beside the failure.
+    assert result.condition_statuses == []
     # The vehicles were never released, nor the traffic started.
     backend: Any = runner._traffic_backend
     release.assert_not_called()
@@ -482,6 +485,25 @@ def test_an_ego_that_gives_up_waiting_fails_the_run_before_it_begins(
     ego.destroy.assert_called_once_with()
     backend.close.assert_called_once_with()
     write_result.assert_called_once()
+
+
+def test_a_run_its_ego_gave_up_on_checks_no_condition(tmp_path: Path) -> None:
+    from autoware_carla_scenario.conditions import AlwaysTrueCondition
+    from autoware_carla_scenario.failure import FailureCategory
+
+    class _NotReady(AlwaysTrueCondition):
+        def check(self, world: Any, elapsed: float) -> Any:
+            raise RuntimeError("checked before its first tick")
+
+    _runner, _world, _write, result = _stand_in_run(
+        tmp_path,
+        ego=_GivesUp(),
+        pass_conditions=[_NotReady(label="not_ready")],
+        reset_world=False,
+    )
+    assert not result.passed
+    assert result.failure is not None
+    assert result.failure.category == FailureCategory.DRIVER
 
 
 def test_a_run_that_raises_resets_the_world_before_the_error_propagates(
@@ -554,7 +576,7 @@ def _driven_walker(walker_id: int) -> MagicMock:
     return controller
 
 
-def test_the_walker_controllers_a_run_before_left_are_released_at_its_start(
+def test_the_walkers_a_run_before_left_are_forgotten_at_its_start(
     tmp_path: Path,
 ) -> None:
     from autoware_carla_scenario.entity import _walker_ai
@@ -570,20 +592,22 @@ def test_the_walker_controllers_a_run_before_left_are_released_at_its_start(
     finally:
         _walker_ai.forget_all()
     assert seen == [({}, {})]
-    controller.stop.assert_called_once_with()
-    controller.destroy.assert_called_once_with()
+    # Forgotten, not destroyed: the leftovers' sweep destroys the controller.
+    assert controller.mock_calls == []
 
 
-def test_the_walker_controllers_of_a_run_are_released_when_it_ends(
+def test_the_walkers_of_a_run_are_forgotten_without_a_call_per_walker(
     tmp_path: Path,
 ) -> None:
+    """A run's cleanup calls nothing on a walker's controller: after a server
+    that died mid-run, each call could wait out the client's timeout."""
     from autoware_carla_scenario.entity import _walker_ai
 
     controllers: list[MagicMock] = []
 
     def setup() -> None:
-        # A walker the run drives on its controller.
-        controllers.append(_driven_walker(7))
+        # Walkers the run drives on their controllers.
+        controllers.extend(_driven_walker(walker_id) for walker_id in (7, 8, 9))
 
     try:
         with pytest.raises(ValueError, match="tick broke"):
@@ -592,26 +616,18 @@ def test_the_walker_controllers_of_a_run_are_released_when_it_ends(
         assert _walker_ai._GIVING_WAY == {}
     finally:
         _walker_ai.forget_all()
-    controllers[0].stop.assert_called_once_with()
-    controllers[0].destroy.assert_called_once_with()
+    assert [c.mock_calls for c in controllers] == [[], [], []]
 
 
-def test_forget_all_destroys_every_controller_and_forgets_every_walker() -> None:
+def test_forget_all_forgets_every_walker_without_calling_the_server() -> None:
     from autoware_carla_scenario.entity import _walker_ai
 
-    stuck = _driven_walker(1)
-    stuck.stop.side_effect = RuntimeError("actor not found")
-    gone = _driven_walker(2)
-    gone.destroy.side_effect = RuntimeError("actor not found")
-    idle = _driven_walker(3)
-    _walker_ai._DRIVEN[3].running = False
+    controller = _driven_walker(1)
+    controller.stop.side_effect = RuntimeError("time-out of 60000ms")
+    controller.destroy.side_effect = RuntimeError("time-out of 60000ms")
     _walker_ai._WALKING._placed[4] = (0.0,) * 7 + (False,)  # type: ignore[assignment]
     _walker_ai.forget_all()
-    # A controller that cannot be stopped is destroyed all the same.
-    stuck.destroy.assert_called_once_with()
-    gone.stop.assert_called_once_with()
-    idle.stop.assert_not_called()
-    idle.destroy.assert_called_once_with()
+    assert controller.mock_calls == []
     assert _walker_ai._DRIVEN == {}
     assert _walker_ai._GIVING_WAY == {}
     assert _walker_ai._WALKING._placed == {}

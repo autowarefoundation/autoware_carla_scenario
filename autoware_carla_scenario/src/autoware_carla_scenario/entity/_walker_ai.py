@@ -901,34 +901,17 @@ def release(walker_id: int) -> None:
 
 
 def forget_all() -> None:
-    """Stop and destroy every driven walker's controller, through its own
-    handle, and forget every walker: a run ended, or one begins.
+    """Forget every walker this module drives or watches -- a run ended, or
+    one begins -- without a call to the server.
 
-    Best effort: a controller that cannot be stopped or destroyed (gone with
-    its world already) is logged and forgotten all the same.  What a run
-    leaves is otherwise only released by :func:`release`, which the world
-    reset after the run does not call: an actor id the next run's world
-    reuses would be driven with the dead controller and the targets of the
-    run before."""
-    for walker_id, driven in list(_DRIVEN.items()):
-        try:
-            if driven.running:
-                driven.running = False
-                driven.controller.stop()
-        except Exception:  # noqa: BLE001 - best effort: destroyed below
-            logger.debug(
-                "Stopping the controller of walker %d failed",
-                walker_id,
-                exc_info=True,
-            )
-        try:
-            driven.controller.destroy()
-        except Exception:  # noqa: BLE001 - best effort: forgotten either way
-            logger.debug(
-                "Destroying the controller of walker %d failed",
-                walker_id,
-                exc_info=True,
-            )
+    What a run leaves is otherwise only released by :func:`release`, which
+    the world reset after a run does not call: an actor id the next run's
+    world reuses would be driven with the dead controller and the targets of
+    the run before.  The controllers themselves are actors
+    (``controller.ai.walker``) that the world reset and the leftovers' sweep
+    at the start of a run destroy, so nothing is stopped or destroyed here:
+    after a server that died mid-run, a call per walker could each wait out
+    the client's timeout."""
     _DRIVEN.clear()
     _GIVING_WAY.clear()
     _WALKING.clear()

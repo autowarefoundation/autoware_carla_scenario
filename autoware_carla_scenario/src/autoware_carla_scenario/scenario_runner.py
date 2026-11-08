@@ -274,20 +274,18 @@ def _failure(
 
 
 def _termination_result(
-    scenario: BaseScenario,
-    world: "carla.World",
     reason: Optional[str],
     elapsed: float,
-    scenario_name: str,
+    statuses: list[ConditionStatus],
 ) -> ScenarioResult:
     """The result of a run its ego ended (``termination_requested``), with
-    *reason* (its ``termination_reason``) at *elapsed* seconds: a failure of
-    the DRIVER category, by no condition.  An early stop is not a pass,
-    whether the ego asked during the run or while the run waited for it."""
+    *reason* (its ``termination_reason``) at *elapsed* seconds and the
+    condition *statuses*: a failure of the DRIVER category, by no condition.
+    An early stop is not a pass, whether the ego asked during the run or
+    while the run waited for it."""
     message = "Ego entity requested session termination" + (
         "" if reason is None else f": {reason}"
     )
-    statuses = _condition_statuses(scenario, world, elapsed, scenario_name)
     return ScenarioResult(
         passed=False,
         message=message,
@@ -1681,7 +1679,8 @@ class ScenarioRunner:
         clear_entities()
         # And the walkers a controller drove: a run that never reached its
         # cleanup left their controllers and targets behind, for an actor id
-        # this run's world may reuse.
+        # this run's world may reuse.  Forgotten only: the controllers are
+        # actors, which the leftovers' sweep below destroys.
         forget_all()
         # What a scenario before carried out is not under way in this one.
         clear_adversities()
@@ -1943,9 +1942,12 @@ class ScenarioRunner:
                     "[%s] Ego entity requested termination before the run began",
                     scenario_name,
                 )
-                result = _termination_result(
-                    scenario, world, ego.termination_reason, 0.0, scenario_name
-                )
+                # No condition statuses: none was ever checked, and checking
+                # one now (a pass condition true at the initial pose, a
+                # condition that raises before its first tick) is what this
+                # ending avoids.
+                unchecked: list[ConditionStatus] = []
+                result = _termination_result(ego.termination_reason, 0.0, unchecked)
             else:
                 # The init phase is over: the ego is ready and the clock is about to
                 # start, so the brakes that held everything still come off before
@@ -2265,11 +2267,11 @@ class ScenarioRunner:
                             tick_count,
                         )
                         result = _termination_result(
-                            scenario,
-                            world,
                             ego.termination_reason,
                             elapsed,
-                            scenario_name,
+                            _condition_statuses(
+                                scenario, world, elapsed, scenario_name
+                            ),
                         )
                         break
 
@@ -2310,9 +2312,10 @@ class ScenarioRunner:
             # The walkers the trajectory runs and the vehicles led out of their
             # junctions measured were this run's.
             forget_walkers()
-            # As were the walkers' controllers, stopped and destroyed through
-            # their own handles while the world is still the run's (the world
-            # reset leaves them to the next run otherwise).
+            # As were the walkers a controller drove.  Forgotten only, with no
+            # call to the server (one that died mid-run would hold each call
+            # for the client's timeout): the controllers are actors, which the
+            # world reset and the next run's leftovers' sweep destroy.
             forget_all()
             logger.info("[%s] === Cleanup start ===", scenario_name)
             _set_warmup_done(False)
