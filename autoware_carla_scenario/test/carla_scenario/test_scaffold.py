@@ -346,6 +346,83 @@ class TestBuiltinScenarioNames:
         assert result.stdout.strip().splitlines()[-1] == "[]"
 
 
+class TestBuiltinScenarioGroups:
+    """Nor a built-in scenario config group's (#1976): the package's configs
+    would share the Hydra group, ``scenario=<group>/*`` would run the built-in
+    ones too, and a built-in config would shadow the package's of that name."""
+
+    @staticmethod
+    def _conf_tree_groups() -> list[str]:
+        import autoware_carla_scenario  # noqa: PLC0415
+
+        conf = (
+            Path(autoware_carla_scenario.__file__).parent
+            / "examples"
+            / "conf"
+            / "scenario"
+        )
+        return sorted(
+            entry.name
+            for entry in conf.iterdir()
+            if entry.is_dir() and not entry.name.startswith((".", "_"))
+        )
+
+    def test_the_groups_follow_the_conf_tree(self) -> None:
+        from autoware_carla_scenario.scaffold.generator import (  # noqa: PLC0415
+            _builtin_scenario_groups,
+        )
+        from autoware_carla_scenario.scaffold.names import (  # noqa: PLC0415
+            BUILTIN_SCENARIO_NAMES,
+        )
+
+        groups = _builtin_scenario_groups()
+        assert list(groups) == self._conf_tree_groups()
+        assert "lane_change_fail" in groups
+        # Every builder has its configs there too.
+        assert set(BUILTIN_SCENARIO_NAMES) <= set(groups)
+
+    def test_hidden_and_private_directories_are_no_groups(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario.scaffold import generator  # noqa: PLC0415
+
+        for name in ("lane_change", "__pycache__", ".hidden", "_private"):
+            (tmp_path / name).mkdir()
+        (tmp_path / "top.yaml").write_text("")
+        monkeypatch.setattr(generator, "_BUILTIN_SCENARIO_CONF", tmp_path)
+        generator._builtin_scenario_groups.cache_clear()
+        try:
+            assert generator._builtin_scenario_groups() == ("lane_change",)
+        finally:
+            generator._builtin_scenario_groups.cache_clear()
+
+    def test_a_group_that_is_no_builder_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="built-in scenario config group"):
+            resolve_names("lane_change_fail_pkg", scenario_name="lane_change_fail")
+
+    def test_a_derived_group_name_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="'lane_change_fail' is reserved"):
+            resolve_names("lane_change_fail_package")
+
+    def test_every_group_is_refused(self) -> None:
+        for scenario in self._conf_tree_groups():
+            with pytest.raises(ValueError, match="is reserved"):
+                resolve_names("my_pkg", scenario_name=scenario)
+
+    def test_cli_reports_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        argv = ["my_pkg", "--scenario", "lane_change_fail", "-o", str(tmp_path)]
+        assert main(argv) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("Error: scenario name 'lane_change_fail' is reserved")
+        assert "conf/scenario/lane_change_fail/" in err
+        assert "Traceback" not in err
+        assert list(tmp_path.iterdir()) == []
+
+
 class TestScenarioModuleShadowing:
     """A generated class may not replace a name ``scenario.py`` imports (#809)."""
 

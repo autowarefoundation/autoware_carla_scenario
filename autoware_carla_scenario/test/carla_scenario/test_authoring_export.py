@@ -316,6 +316,184 @@ class TestFrameworkPin:
         assert pin.warnings
 
 
+def _git_repo(root: Path, *, origin: str) -> Path:
+    """Make *root* a git repository with one commit and an ``origin``."""
+    import subprocess  # noqa: PLC0415
+
+    env = {
+        **os.environ,
+        "GIT_AUTHOR_NAME": "t",
+        "GIT_AUTHOR_EMAIL": "t@example.invalid",
+        "GIT_COMMITTER_NAME": "t",
+        "GIT_COMMITTER_EMAIL": "t@example.invalid",
+        "GIT_CONFIG_GLOBAL": os.devnull,
+        "GIT_CONFIG_NOSYSTEM": "1",
+    }
+    for args in (
+        ("init", "-q"),
+        ("add", "-A"),
+        ("commit", "-q", "--no-gpg-sign", "-m", "init"),
+        ("remote", "add", "origin", origin),
+    ):
+        subprocess.run(  # noqa: S603
+            ["git", "-C", str(root), *args],  # noqa: S607
+            check=True,
+            capture_output=True,
+            env=env,
+        )
+    return root
+
+
+def _head(root: Path) -> str:
+    import subprocess  # noqa: PLC0415
+
+    return subprocess.run(  # noqa: S603
+        ["git", "-C", str(root), "rev-parse", "HEAD"],  # noqa: S607
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.strip()
+
+
+@pytest.mark.skipif(__import__("shutil").which("git") is None, reason="needs git")
+class TestFrameworkPinSourceTree:
+    """A commit or path pin needs the framework's own source tree (#1976)."""
+
+    @pytest.fixture
+    def user_venv(self, tmp_path: Path) -> Path:
+        """The ``lib/python3.12`` of a wheel install in a user's own repo."""
+        repo = tmp_path / "user_project"
+        lib = repo / ".venv" / "lib" / "python3.12"
+        (lib / "site-packages" / "autoware_carla_scenario").mkdir(parents=True)
+        (lib / "site-packages" / "autoware_carla_scenario" / "__init__.py").write_text(
+            ""
+        )
+        (repo / "pyproject.toml").write_text('[project]\nname = "user-project"\n')
+        _git_repo(repo, origin="https://github.com/someone/user_project")
+        return lib
+
+    @pytest.fixture
+    def checkout(self, tmp_path: Path) -> Path:
+        """A framework-like checkout: ``<repo>/autoware_carla_scenario``."""
+        repo = tmp_path / "framework"
+        project = repo / "autoware_carla_scenario"
+        project.mkdir(parents=True)
+        (project / "pyproject.toml").write_text(
+            '[project]\nname = "Autoware_Carla.Scenario"\nversion = "0"\n'
+        )
+        _git_repo(repo, origin="git@github.com:owner/autoware_carla_scenario.git")
+        return project
+
+    @staticmethod
+    def _use_root(monkeypatch: pytest.MonkeyPatch, root: Path) -> Any:
+        import autoware_carla_scenario.authoring.framework_pin as module
+
+        monkeypatch.delenv(module.VERSION_ENV, raising=False)
+        monkeypatch.delenv(module.REPOSITORY_ENV, raising=False)
+        monkeypatch.setattr(module, "framework_source_root", lambda: root)
+        return module
+
+    def test_a_venv_inside_a_users_repo_is_no_checkout(
+        self, monkeypatch: pytest.MonkeyPatch, user_venv: Path
+    ) -> None:
+        module = self._use_root(monkeypatch, user_venv)
+        assert module._resolve_git_pin(user_venv) is None
+        with pytest.raises(PinResolutionError, match=module.VERSION_ENV):
+            resolve_framework_pin()
+
+    def test_dev_mode_refuses_a_venv_too(
+        self, monkeypatch: pytest.MonkeyPatch, user_venv: Path
+    ) -> None:
+        self._use_root(monkeypatch, user_venv)
+        with pytest.raises(PinResolutionError, match="not one"):
+            resolve_framework_pin(dev_mode=True)
+
+    def test_a_project_of_another_name_is_no_checkout(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "other"
+        repo.mkdir()
+        (repo / "pyproject.toml").write_text('[project]\nname = "other"\n')
+        _git_repo(repo, origin="https://github.com/someone/other")
+        module = self._use_root(monkeypatch, repo)
+        assert module._resolve_git_pin(repo) is None
+
+    def test_an_unreadable_pyproject_is_no_checkout(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        repo = tmp_path / "broken"
+        repo.mkdir()
+        (repo / "pyproject.toml").write_text("[project\n")
+        _git_repo(repo, origin="https://github.com/someone/broken")
+        module = self._use_root(monkeypatch, repo)
+        assert module._resolve_git_pin(repo) is None
+
+    def test_a_framework_checkout_is_pinned_by_commit(
+        self, monkeypatch: pytest.MonkeyPatch, checkout: Path
+    ) -> None:
+        self._use_root(monkeypatch, checkout)
+        pin = resolve_framework_pin()
+        assert pin.kind == "git"
+        assert pin.repository == "https://github.com/owner/autoware_carla_scenario"
+        assert pin.commit == _head(checkout)
+        assert pin.subdirectory == "autoware_carla_scenario"
+
+    def test_dev_mode_pins_a_framework_checkout_by_path(
+        self, monkeypatch: pytest.MonkeyPatch, checkout: Path
+    ) -> None:
+        self._use_root(monkeypatch, checkout)
+        pin = resolve_framework_pin(dev_mode=True)
+        assert pin.kind == "path"
+        assert pin.path == str(checkout)
+
+
+class TestFrameworkVersionEnv:
+    """``SCENARIO_EXPORT_FRAMEWORK_VERSION`` is stripped and validated (#1976)."""
+
+    @pytest.mark.parametrize("value", ["", "  ", "\t\n"])
+    def test_a_blank_value_counts_as_unset(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        import autoware_carla_scenario.authoring.framework_pin as module
+
+        sentinel = Pin(
+            kind="git", repository="https://example.invalid/r", commit="a" * 40
+        )
+        monkeypatch.setenv(module.VERSION_ENV, value)
+        monkeypatch.setattr(module, "_resolve_git_pin", lambda _root: sentinel)
+        assert resolve_framework_pin() is sentinel
+
+    def test_surrounding_whitespace_is_dropped(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setenv("SCENARIO_EXPORT_FRAMEWORK_VERSION", " 1.2.3\n")
+        assert resolve_framework_pin().requirement() == f"{DISTRIBUTION}==1.2.3"
+
+    @pytest.mark.parametrize("value", ["latest", ">=1.0", "1.2.3; extra", "1..2"])
+    def test_an_invalid_value_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        monkeypatch.setenv("SCENARIO_EXPORT_FRAMEWORK_VERSION", value)
+        with pytest.raises(PinResolutionError, match="not a valid version"):
+            resolve_framework_pin()
+
+    def test_a_local_version_is_refused(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """No index serves ``1.2.3+local``."""
+        monkeypatch.setenv("SCENARIO_EXPORT_FRAMEWORK_VERSION", "1.2.3+local")
+        with pytest.raises(PinResolutionError, match="local version label"):
+            resolve_framework_pin()
+
+    def test_the_error_points_wheel_installs_at_the_variable(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import autoware_carla_scenario.authoring.framework_pin as module
+
+        monkeypatch.delenv(module.VERSION_ENV, raising=False)
+        monkeypatch.setattr(module, "_resolve_git_pin", lambda _root: None)
+        with pytest.raises(PinResolutionError, match="installed from a wheel"):
+            resolve_framework_pin()
+
+
 class TestGeneratedPackage:
     def test_naming(self) -> None:
         names = package_names(new_document())

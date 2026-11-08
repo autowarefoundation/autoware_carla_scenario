@@ -163,6 +163,39 @@ def _scenario_module_globals() -> frozenset[str]:
     return frozenset(_template_globals(_SCENARIO_TEMPLATE) - own)
 
 
+#: The framework's own scenario config groups, ``conf/scenario/<group>/``,
+#: which Hydra's search path puts ahead of an installed package's.
+_BUILTIN_SCENARIO_CONF = (
+    Path(__file__).resolve().parent.parent / "examples" / "conf" / "scenario"
+)
+
+
+@functools.cache
+def _builtin_scenario_groups() -> tuple[str, ...]:
+    """Return the names of the framework's own scenario config groups, sorted.
+
+    Every directory of the packaged ``examples/conf/scenario/`` -- builders'
+    names (``lane_change``) and groups of configs that reuse another builder
+    (``lane_change_fail``) alike.  A generated package named after one shares
+    that Hydra group with the built-in (#1976): ``scenario=<group>/*`` also
+    runs the built-in configs, and a built-in config shadows the package's
+    config of the same name.  Hidden and private directories (``.x``,
+    ``__pycache__``) are no groups.  Read from the conf tree the package ships (the
+    wheel carries it, Hydra needs it), so it follows that tree.
+    """
+    try:
+        entries = list(_BUILTIN_SCENARIO_CONF.iterdir())
+    except OSError:  # pragma: no cover - the conf tree ships with the package
+        return ()
+    return tuple(
+        sorted(
+            entry.name
+            for entry in entries
+            if entry.is_dir() and not entry.name.startswith((".", "_"))
+        )
+    )
+
+
 @functools.cache
 def _reserved_scenario_names() -> frozenset[str]:
     """Return the names the scenario module may not take.
@@ -353,6 +386,17 @@ def resolve_names(
             f"built-in configs (scenario={scenario}/...) still select it "
             f"(built-in scenarios: {', '.join(BUILTIN_SCENARIO_NAMES)}). Pass a "
             f"different --scenario."
+        )
+        raise ValueError(msg)
+    groups = _builtin_scenario_groups()
+    if scenario in groups:
+        msg = (
+            f"scenario name {scenario!r} is reserved: it names a built-in "
+            f"scenario config group (conf/scenario/{scenario}/), which the "
+            f"generated package's configs would share: scenario={scenario}/* "
+            f"would also run the built-in configs, and a built-in config would "
+            f"shadow the package's config of the same name (built-in groups: "
+            f"{', '.join(groups)}). Pass a different --scenario."
         )
         raise ValueError(msg)
 

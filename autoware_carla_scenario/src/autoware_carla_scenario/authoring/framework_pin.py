@@ -9,6 +9,11 @@ to something immutable.  This module resolves exactly one of:
 * a **local path**, which is only ever produced when the caller explicitly asks
   for a development export.
 
+A commit or a path pin needs the framework's own source tree: a directory
+whose ``pyproject.toml`` names ``autoware-carla-scenario``.  Being inside some
+git work tree is not enough -- a framework installed from a wheel into a
+project's ``.venv`` sits inside *that project's* repository (#1976).
+
 A branch name is never emitted.  ``main``, ``master`` and ``HEAD`` all move, so
 a package pinned to one stops being the package that was tested the moment
 somebody pushes -- which is the failure mode this whole exercise exists to
@@ -21,9 +26,12 @@ import os
 import re
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Literal, Optional
+from typing import TYPE_CHECKING, Any, Literal, Optional
+
+from .requirements_pin import canonical_name
 
 __all__ = [
     "DISTRIBUTION",
@@ -236,9 +244,12 @@ def normalize_repository_url(url: str) -> str:
 def framework_source_root() -> Path:
     """Return the directory holding the framework's own ``pyproject.toml``.
 
-    For a source checkout this is ``<repo>/autoware_carla_scenario``; for an
-    installed wheel it is the ``site-packages`` directory, which has no
-    ``pyproject.toml`` and therefore fails the git probe -- exactly as intended.
+    For a source checkout this is ``<repo>/autoware_carla_scenario``.  For an
+    installed wheel it is the directory above ``site-packages``
+    (``.../lib/pythonX.Y``), which holds no framework ``pyproject.toml``, so
+    :func:`_is_framework_project` refuses it and no commit or path pin is made
+    from it -- even when it lies inside some other project's git work tree, as
+    a project's ``.venv`` does (#1976).
     """
     # What getattr(autoware_carla_scenario, "__file__", None) reads: a
     # package without the attribute (ImportError here) or with it None (a
@@ -268,8 +279,83 @@ def _installed_version() -> Optional[str]:
         return None
 
 
+def _project_name(pyproject: Path) -> Optional[str]:
+    """Return ``[project].name`` of *pyproject*, or ``None`` if it has none.
+
+    A file that cannot be read or is not TOML has no name either.
+    """
+    # tomllib landed in 3.11, and 3.10 is still the floor of the supported
+    # range; imported here because Codon has neither (typecheck/library.py:
+    # UNCALLED).
+    if sys.version_info >= (3, 11):
+        import tomllib  # noqa: PLC0415
+    else:  # pragma: no cover - only taken on 3.10
+        import tomli as tomllib  # noqa: PLC0415
+
+    try:
+        data = tomllib.loads(pyproject.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, tomllib.TOMLDecodeError):
+        return None
+    project = data.get("project")
+    if not isinstance(project, dict):
+        return None
+    name = project.get("name")
+    return name if isinstance(name, str) else None
+
+
+def _is_framework_project(source_root: Path) -> bool:
+    """Return whether *source_root* is the framework's own source tree.
+
+    That is, whether it holds a ``pyproject.toml`` whose ``[project].name``
+    normalises to :data:`DISTRIBUTION`.  Only such a directory may be pinned
+    by commit or by path: the ``lib/pythonX.Y`` directory of a wheel install
+    may well be inside a git work tree -- the user's own project, holding its
+    ``.venv`` -- and pinning that would point the export at the wrong
+    repository (#1976).
+    """
+    pyproject = source_root / "pyproject.toml"
+    if not pyproject.is_file():
+        return False
+    if TYPE_CHECKING:
+        # tomllib and tomli have no model (typecheck/library.py: UNCALLED).
+        name: Optional[str] = None
+    else:
+        name = _project_name(pyproject)
+    if name is None:
+        return False
+    return canonical_name(name) == DISTRIBUTION
+
+
+def _version_problem(version: str) -> Optional[str]:
+    """Return why *version* is not a released version, or ``None``.
+
+    It must be a valid PEP 440 version without a local label
+    (``1.2.3+local``), which no package index serves.
+    """
+    # packaging has no model (typecheck/library.py: UNCALLED).
+    from packaging.version import InvalidVersion, Version  # noqa: PLC0415
+
+    try:
+        parsed = Version(version)
+    except InvalidVersion:
+        return f"{version!r} is not a valid version (PEP 440)"
+    if parsed.local is not None:
+        return (
+            f"{version!r} has a local version label (+{parsed.local}), which "
+            "no package index serves"
+        )
+    return None
+
+
 def _resolve_git_pin(source_root: Path) -> Optional[Pin]:
-    """Return a commit pin for *source_root*, or ``None`` when it is not a checkout."""
+    """Return a commit pin for *source_root*, or ``None`` when it is not a checkout.
+
+    Not a checkout of the framework, that is: *source_root* must be the
+    framework's own source tree (:func:`_is_framework_project`), not merely a
+    directory inside some git work tree.
+    """
+    if not _is_framework_project(source_root):
+        return None
     toplevel = _git(source_root, "rev-parse", "--show-toplevel")
     if not toplevel:
         return None
@@ -322,8 +408,17 @@ def resolve_framework_pin(*, dev_mode: bool = False) -> Pin:
     and never what you want for a package somebody else will run.  Otherwise:
 
     1. :data:`VERSION_ENV`, when the framework has a published release that the
-       package should track exactly.
+       package should track exactly.  Surrounding whitespace is ignored, and a
+       blank value counts as unset.
     2. The framework's own git checkout, pinned to ``HEAD``'s commit SHA.
+
+    A commit or a path pin is only made from the framework's own source tree
+    (a ``pyproject.toml`` naming ``autoware-carla-scenario``), never from a
+    wheel install's directory, whichever git work tree that sits in.  A
+    framework installed from a wheel is not pinned to its installed version
+    either: a wheel built from an unreleased commit carries the version of
+    the last release, so ``==<it>`` would silently resolve a different
+    framework.  Such an install needs :data:`VERSION_ENV`.
 
     Args:
         dev_mode: Depend on the local framework checkout by path.  Packages
@@ -334,12 +429,21 @@ def resolve_framework_pin(*, dev_mode: bool = False) -> Pin:
         The resolved :class:`Pin`.
 
     Raises:
-        PinResolutionError: If no immutable pin can be determined and
-            *dev_mode* is not set.
+        PinResolutionError: If :data:`VERSION_ENV` is not a valid version, if
+            no immutable pin can be determined and *dev_mode* is not set, or
+            if *dev_mode* is set and the framework is not a source checkout.
     """
     source_root = framework_source_root()
 
     if dev_mode:
+        if not _is_framework_project(source_root):
+            raise PinResolutionError(
+                "A development export depends on the framework's source "
+                f"checkout by path, but {source_root} is not one (it has no "
+                "pyproject.toml naming autoware-carla-scenario): the framework "
+                "is installed from a wheel. Install it from a checkout "
+                "(editable), or export without development mode."
+            )
         return Pin(
             kind="path",
             path=str(source_root),
@@ -353,9 +457,19 @@ def resolve_framework_pin(*, dev_mode: bool = False) -> Pin:
             ),
         )
 
-    version = os.environ.get(VERSION_ENV)
+    version = (os.environ.get(VERSION_ENV) or "").strip()
     if version:
-        return Pin(kind="version", version=version.strip())
+        if TYPE_CHECKING:
+            # packaging has no model (typecheck/library.py: UNCALLED).
+            problem: Optional[str] = None
+        else:
+            problem = _version_problem(version)
+        if problem is not None:
+            raise PinResolutionError(
+                f"{VERSION_ENV} must be an exact released version of "
+                f"autoware-carla-scenario (such as 1.2.3): {problem}."
+            )
+        return Pin(kind="version", version=version)
 
     git_pin = _resolve_git_pin(source_root)
     if git_pin is not None:
@@ -363,7 +477,8 @@ def resolve_framework_pin(*, dev_mode: bool = False) -> Pin:
 
     raise PinResolutionError(
         "Cannot pin autoware-carla-scenario to an exact version or commit. "
-        f"Set {VERSION_ENV} to a released version, run the export from a git "
+        f"Set {VERSION_ENV} to a released version (the way to export from a "
+        "framework installed from a wheel), run the export from a git "
         "checkout of the framework, or export in development mode (which "
         "produces a non-portable package)."
     )

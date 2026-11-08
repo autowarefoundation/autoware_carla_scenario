@@ -878,6 +878,7 @@ my_cut_in-wheelhouse.zip
     |-- typesafe_carla_toolchain-*.whl             # the Codon compiler it pins
     |-- ... every transitive dependency, ~94 wheels
     |-- requirements.txt                           # the whole set, pinned
+    |-- manifest.yaml                              # provenance: the framework pin, the Python, the export's warnings
     `-- README.md                                  # how to install it
 ```
 
@@ -943,6 +944,13 @@ builder while the built-in configs (`scenario=cut_in/left`, ...) still select
 it and hand it the built-in's config keys. It is an `id` error, `The id
 'cut_in' is reserved: it names a built-in scenario ...`, worded as
 `scenario-new`'s refusal of the same `--scenario`.
+
+Unlike `scenario-new`, the editor does not refuse an id that names a built-in
+scenario config group that is no builder, such as `lane_change_fail`.
+`scenario-new` writes a config group, `conf/scenario/<name>/`, which would
+merge with the built-in group of that name; an export writes a single config,
+`conf/scenario/<id>.yaml`, which Hydra selects as `scenario=<id>` and keeps
+apart from the built-in group's `scenario=<id>/left` and the rest.
 
 `export_package` and `names_for_id`, called directly, refuse both too, before
 writing anything. That is why the Cut-in example starts as `my_cut_in`, not
@@ -1051,8 +1059,8 @@ not needing to know which Python the target runs before exporting.
 
 | What | Pinned by |
 | --- | --- |
-| `autoware-carla-scenario` | exact version, or an exact commit SHA |
-| `typesafe-carla` | the framework's own requirement (`>=0.3.0,<0.4`), locked in `uv.lock` like everything else |
+| `autoware-carla-scenario` | exact version, or an exact commit SHA (see [How the framework is pinned](#how-the-framework-is-pinned)) |
+| `typesafe-carla` | the framework's own requirement (`>=0.8.1,<0.9`), locked in `uv.lock` like everything else |
 | Python | `.python-version`, exact patch version |
 | uv | `[tool.uv] required-version`, when uv's version could be read |
 | Everything else | `uv.lock`, and then the wheels built from it |
@@ -1063,8 +1071,31 @@ somebody pushes. When no immutable pin can be determined the export fails rather
 than guessing. A local-path dependency is only produced by an explicit
 development export, which says so in its README and manifest.
 
-Set `SCENARIO_EXPORT_FRAMEWORK_VERSION` to pin a published release instead of
-the current checkout's commit.
+#### How the framework is pinned
+
+The export takes the first of these that applies:
+
+1. `SCENARIO_EXPORT_FRAMEWORK_VERSION`, to pin a published release instead of
+   the current checkout's commit. Surrounding whitespace is ignored and a blank
+   value counts as unset; anything else must be a valid
+   [PEP 440](https://peps.python.org/pep-0440/) version without a local label
+   (`1.2.3`, not a range and not `1.2.3+local`, which no index serves), or the
+   export fails.
+2. The framework's own git checkout, pinned to `HEAD`'s commit SHA (with the
+   framework's directory in the repository as `subdirectory`).
+
+A commit pin, and a development export's path, are only taken from the
+framework's **source tree**: a directory whose `pyproject.toml` names
+`autoware-carla-scenario`. A framework installed from a wheel lives in a
+virtual environment, often a project's `.venv` inside that project's own git
+repository; that repository is not the framework's, so it is never pinned.
+Nor is such an install pinned to the version it reports: a wheel built from an
+unreleased commit -- the one in a wheelhouse, say -- carries the version of
+the last release, so `==` that version would silently resolve a different
+framework. **To export from a framework installed from a wheel, set
+`SCENARIO_EXPORT_FRAMEWORK_VERSION`** to the release it is; without it the
+export fails with a message saying so. A development export from a wheel
+install fails too, since there is no checkout to depend on by path.
 
 ### Export is atomic
 
