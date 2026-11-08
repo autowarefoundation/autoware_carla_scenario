@@ -98,6 +98,11 @@ __all__ = [
 class TrafficBackendError(RuntimeError):
     """A traffic backend could not do what the run needs of it."""
 
+    # Spelled out: Codon 0.19 cannot raise an exception subclass that leaves
+    # its constructor to the built-in base (docs/typecheck.md).
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+
 
 class TrafficBackendUnavailable(TrafficBackendError):
     """A backend was selected that this installation cannot provide.
@@ -107,6 +112,11 @@ class TrafficBackendUnavailable(TrafficBackendError):
     :class:`TrafficBackendError` because it is a setup problem, not a run
     problem, and it is raised before anything is spawned.
     """
+
+    # Spelled out: Codon 0.19 cannot raise an exception subclass that leaves
+    # its constructor to the built-in base (docs/typecheck.md).
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
 
 
 # ---------------------------------------------------------------------------

@@ -2467,7 +2467,11 @@ base, its runner and its queue, the traffic backends' interface, the
 plain-typed parts of the SUMO backend (its geometry, its physics control, the
 signal states it sets, and its command-line options, mode bits, vehicle types
 and type files, with the command line of `randomTrips.py` and the options of
-each demand it generates: `traffic.sumo.options`, #1679), the signal
+each demand it generates: `traffic.sumo.options`, #1679, and where SUMO is,
+the network's files and the demand `randomTrips.py` generates for it:
+`traffic.sumo.network`, #1967; not the conversion of the map with roadgen,
+the signal table read off roadgen's traces or the crossings read with
+`xml.etree.ElementTree`, which the check leaves uncalled), the signal
 controllers, the adversity math, the measures, the metrics (and which of the
 CommonRoad metrics are heavy, the environment that turns them off and the
 checks of their periods: `heavy_metrics`, #1689; not `commonroad.session`,
@@ -2475,7 +2479,10 @@ which runs the workers and re-exports it) and the ODD's
 probes (and the names, knob keys, limits and ranges of the traffic
 parameters' probes: `odd.traffic_ranges`, #1680; not the probes themselves,
 `odd.traffic_probes`, which builds openodd's knobs), the gate package's
-`__init__`, its per-run record and probe,
+`__init__`, its per-run record and probe, finding the markers of the
+`--multirun` jobs given up and the plans of the sweeps (`gate.errored` and
+`gate.sweep_plan`, #1967; not writing or reading them, JSON objects of mixed
+value types),
 and the typed criteria its evaluator judges (`gate.criteria`: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
 baseline; and `gate.report`, #1738: a verdict's and a comparison's Markdown,
