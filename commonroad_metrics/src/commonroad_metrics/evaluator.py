@@ -805,28 +805,41 @@ def _contact_time(gap: float, v_ego: float, a_ego: float, v_other: float, a_othe
 
 
 def _required_deceleration(
-    gap: float, v_ego: float, v_other: float, a_other: float, mode: int
+    gap: float,
+    v_ego: float,
+    v_other: float,
+    a_other: float,
+    mode: int,
+    horizon: float = math.inf,
 ) -> float:
     """ALongReq of the ego *gap* behind the road user ahead (m/s^2, ``0`` or
     negative).
 
     In CriMe's mode 1 (its default), the least constant deceleration that
     keeps the ego off the other, each holding its acceleration until it
-    stops and then staying (:func:`_contact_time`).  It is CriMe's
-    ``min(a_other - v_rel^2 / (2 gap), 0)`` -- matching the other's speed as
-    the ego reaches it -- wherever that holds: a closing gap, the other going
-    the ego's way and matched before it stops.  Elsewhere it is not: a gap
-    opening for good needs ``0`` (CriMe's formula reads ``-v_rel^2 / (2
-    gap)``), one whose lead brakes to a stop the deceleration that stops the
-    ego behind where it stops, and a car coming the other way, braking, the
-    deceleration that stops the ego before they meet.  ``-inf`` when no
-    deceleration does: the other reaches the ego even stopped (a car coming
-    at it that does not stop in time), or the ego is not going forward and
-    still meets it.  Monotone in the ego's deceleration (braking harder
-    never brings the ego further), so it is found by bisection to well under
-    the 0.01 m/s^2 it is rounded to.  No road user ahead (*gap* ``inf``:
-    CriMe's HW of one behind) needs none.  Mode 2 is CriMe's piecewise
-    constant motion, as it writes it.
+    stops and then staying (:func:`_contact_time`).  A contact counts while
+    the ego is still moving, at any time, and within *horizon* (s; the
+    frame's prediction horizon) after it has stopped: braking that stops the
+    ego short of a car still coming at it does not avoid that car, but a
+    road user that reaches a standing ego only after the horizon -- a
+    pedestrian crossing the lane a little towards the ego, a car rolling back
+    -- is not one braking must avoid.
+
+    It is CriMe's ``min(a_other - v_rel^2 / (2 gap), 0)`` -- matching the
+    other's speed as the ego reaches it -- wherever that holds: a closing
+    gap, the other going the ego's way and matched before it stops.
+    Elsewhere it is not: a gap opening for good needs ``0`` (CriMe's formula
+    reads ``-v_rel^2 / (2 gap)``), one whose lead brakes to a stop the
+    deceleration that stops the ego behind where it stops, and a car coming
+    the other way the deceleration that stops the ego far enough back that
+    the car does not reach it within the horizon.  ``-inf`` when no
+    deceleration does: the other reaches the ego within the horizon even
+    stopped where it is, or the ego is not going forward and the other
+    reaches it within the horizon.  Monotone in the ego's deceleration
+    (braking harder brings the ego nowhere further, and stops it sooner), so
+    it is found by bisection to well under the 0.01 m/s^2 it is rounded to.
+    No road user ahead (*gap* ``inf``: CriMe's HW of one behind) needs none.
+    Mode 2 is CriMe's piecewise constant motion, as it writes it.
     """
     if not math.isfinite(gap):
         return 0.0
@@ -834,11 +847,14 @@ def _required_deceleration(
         return -(v_ego**2) / (2 * (gap - v_other**2 / 2 * a_other))
 
     def avoids(a_ego: float) -> bool:
-        return _contact_time(gap, v_ego, a_ego, v_other, a_other) == math.inf
+        contact = _contact_time(gap, v_ego, a_ego, v_other, a_other)
+        moving = _stopping_time(v_ego, a_ego) if v_ego > 0.0 else 0.0
+        return contact == math.inf or contact > max(horizon, moving)
 
     if avoids(0.0):
         return 0.0
-    if v_ego <= 0.0 or _contact_time(gap, 0.0, 0.0, v_other, a_other) < math.inf:
+    standing = _contact_time(gap, 0.0, 0.0, v_other, a_other)
+    if v_ego <= 0.0 or (standing < math.inf and standing <= horizon):
         # Braking cannot hold the ego further back than standing where it is.
         return -math.inf
     low, high = 0.0, 1.0  # magnitudes: too little, enough
@@ -961,6 +977,9 @@ def _signed_crime_measures() -> dict[str, type]:
                     other_along(state_other, other_heading, "velocity"),
                     other_along(state_other, other_heading, "acceleration"),
                     self.configuration.acceleration.acceleration_mode,
+                    # The frame's prediction horizon: the steps the ego's
+                    # trajectory runs on (EvaluatorSettings.horizon_steps).
+                    (self.ego_vehicle.prediction.final_time_step - time_step) * self.dt,
                 )
             if a_req > 0:
                 self.value = 0.0

@@ -13,8 +13,9 @@ and speaks to it one line at a time, each request answered by one line:
     Evaluate the measures in a frame; each road user is an
     :class:`~.evaluator.Actor`'s fields.  Answers ``{"ok": true, "values":
     {key: value}, "errors": {key: message}}``; a value is a number,
-    ``Infinity`` (JSON as Python writes it: no conflict, TTC never comes) or
-    ``null`` (nothing to measure).
+    ``Infinity`` (JSON as Python writes it: no conflict, TTC never comes),
+    ``-Infinity`` (ALongReq when no braking avoids the collision within the
+    horizon; BTN is ``Infinity`` then) or ``null`` (nothing to measure).
 
 ``{"op": "close"}``
     Answers ``{"ok": true}`` and exits.

@@ -260,15 +260,60 @@ def test_an_oncoming_car_in_the_ego_lane_closes_the_gap() -> None:
         assert values["crime_hw_m"] == pytest.approx(40.0, abs=0.1)
         # Closing at 20 m/s.
         assert values["crime_ttc_s"] == pytest.approx(2.0, abs=0.02)
-        # It keeps coming: no braking avoids it, however hard.
-        assert values["crime_a_long_req_mps2"] == -math.inf
-        assert values["crime_btn"] == math.inf
-    # Braking at 2 m/s^2 itself, it stops 25 m on, 15 m ahead of the ego:
-    # the ego must stop within them, not match its speed (CriMe's -3).
+        # It keeps coming: the ego must stand far enough back that it is not
+        # reached within the 3 s horizon, 40 - 3 * 10 = 10 m on: 10^2 / (2 * 10).
+        assert values["crime_a_long_req_mps2"] == pytest.approx(-5.0, abs=0.02)
+        assert values["crime_btn"] == pytest.approx(5.0 / 11.5, abs=1e-3)
+    # Braking at 2 m/s^2 itself, it would stop 25 m on.  The ego must stop
+    # before it reaches the ego: it does at 3.47 s, after the horizon, as
+    # the ego stops braking at A, 40 A^2 - 150 A + 100 = 0.  (Not CriMe's
+    # speed matching -3, which leaves the ego moving as they meet.)
     braking_oncoming = replace(oncoming, ax=2.0 * COS, ay=2.0 * SIN)
     values, errors = Evaluator(str(MAP)).evaluate(ego, [braking_oncoming], keys)
     assert errors == {}
-    assert values["crime_a_long_req_mps2"] == pytest.approx(-100.0 / 30.0, abs=0.01)
+    assert values["crime_a_long_req_mps2"] == pytest.approx(
+        -(150.0 + math.sqrt(6500.0)) / 80.0, abs=0.01
+    )
+    # 5 m apart, 20 m/s closing: it reaches the ego within the horizon
+    # however hard it brakes.
+    close = replace(oncoming, x=ego.x + 9.5 * COS, y=ego.y + 9.5 * SIN)
+    values, errors = Evaluator(str(MAP)).evaluate(ego, [close], keys)
+    assert errors == {}
+    assert values["crime_a_long_req_mps2"] == -math.inf
+    assert values["crime_btn"] == math.inf
+
+
+def test_a_slow_approach_beyond_the_horizon_needs_no_more_than_a_stop() -> None:
+    """A road user that would reach a standing ego only long after the
+    horizon is not one braking must avoid: a pedestrian crossing the lane a
+    little towards the ego, a car rolling back."""
+    evaluator = Evaluator(str(MAP))
+    keys = ["crime_a_long_req_mps2", "crime_btn"]
+    ego = on_road(50, 1.75, 10.0, 1)
+    values = {}
+    for degrees in (90.0, 95.0):
+        yaw = HEADING + math.radians(degrees)
+        pedestrian = replace(
+            on_road(110, 1.75, 0.0, 2),
+            kind="pedestrian",
+            yaw=yaw,
+            vx=1.4 * math.cos(yaw),
+            vy=1.4 * math.sin(yaw),
+            length=0.5,
+            width=0.5,
+        )
+        values[degrees], errors = evaluator.evaluate(ego, [pedestrian], keys)
+        assert errors == {}
+    # Stopping short of it, 57.5 m ahead: 10^2 / (2 * 57.5); and about the
+    # same with it coming 0.12 m/s towards the ego.
+    assert values[90.0]["crime_a_long_req_mps2"] == pytest.approx(-0.87, abs=0.01)
+    assert values[95.0]["crime_a_long_req_mps2"] == pytest.approx(-0.89, abs=0.01)
+    assert values[95.0]["crime_btn"] < 0.1
+    # A stopped ego, a car 40 m ahead rolling back at 0.2 m/s (TTC 200 s).
+    rolling = replace(on_road(94.5, 1.75, 0.0, 2), vx=-0.2 * COS, vy=-0.2 * SIN)
+    values_rolling, errors = evaluator.evaluate(on_road(50, 1.75, 0.0, 1), [rolling], keys)
+    assert errors == {}
+    assert values_rolling == {"crime_a_long_req_mps2": 0.0, "crime_btn": 0.0}
 
 
 def test_the_required_deceleration_is_the_least_that_avoids_contact() -> None:
@@ -305,6 +350,19 @@ def test_the_required_deceleration_is_the_least_that_avoids_contact() -> None:
         assert _contact_time(gap, v_ego, a_req * 0.99, v_other, a_other) < math.inf
     # One that reaches the ego even stopped.
     assert _required_deceleration(5.0, 10.0, -10.0, 1.0, 1) == -math.inf
+    # Within a horizon: the contacts of the cases above come within 3 s, but
+    # for the first's, which comes at 3.47 s, the ego standing by then.
+    assert _required_deceleration(40.0, 10.0, -10.0, 2.0, 1, 3.0) == pytest.approx(
+        -(150.0 + math.sqrt(6500.0)) / 80.0, rel=1e-6
+    )
+    for gap, v_ego, v_other, a_other, expected in cases[1:]:
+        assert _required_deceleration(gap, v_ego, v_other, a_other, 1, 3.0) == pytest.approx(
+            expected, rel=1e-6
+        )
+    assert _required_deceleration(25.5, 15.0, 5.0, 0.0, 1, 3.0) == pytest.approx(-100.0 / 51.0)
+    # A car coming at a standing ego, reaching it only after the horizon.
+    assert _required_deceleration(40.0, 0.0, -0.2, 0.0, 1, 3.0) == 0.0
+    assert _required_deceleration(5.0, 10.0, -10.0, 0.0, 1, 3.0) == -math.inf
     # One behind.
     assert _required_deceleration(math.inf, 10.0, 10.0, -4.0, 1) == 0.0
 

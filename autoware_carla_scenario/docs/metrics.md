@@ -145,15 +145,15 @@ of the collisions.
 
 | Key | Unit | Reads | Folds with |
 |---|---|---|---|
-| `crime_ttc_s` | s | Until the ego hits a road user ahead in its lane, both holding their acceleration (CriMe TTC); `inf` when they never meet | min |
+| `crime_ttc_s` | s | Until the ego hits a road user ahead in its lane, both holding their acceleration until they stop (CriMe TTC); `inf` when they never meet, however far off | min |
 | `crime_thw_s` | s | Until the ego reaches where the road user ahead is now (CriMe THW) | min |
 | `crime_hw_m` | m | From the ego's front to the rear of the road user ahead, along the lane (CriMe HW) | min |
 | `crime_ttb_s` | s | Left before the ego must brake at full to avoid a collision (CriMe TTB) | min |
 | `crime_ttce_s` | s | Until the ego and a road user come closest (CriMe TTCE) | min |
 | `crime_dce_m` | m | Between the ego and a road user when they come closest; `0` when they would collide (CriMe DCE) | min |
-| `crime_a_long_req_mps2` | m/s^2 | The longitudinal acceleration the ego needs not to hit the road user ahead, negative to brake (CriMe ALongReq) | min |
+| `crime_a_long_req_mps2` | m/s^2 | The longitudinal acceleration the ego needs not to hit the road user ahead, negative to brake: the least deceleration that avoids it, counting a contact within the prediction horizon (`horizon_s`, 3 s) after the ego has stopped (CriMe ALongReq); `-inf` when braking alone cannot avoid a contact within it | min |
 | `crime_a_lat_req_mps2` | m/s^2 | The lateral acceleration the ego needs to steer clear of a road user (CriMe ALatReq) | max |
-| `crime_btn` | ratio | The deceleration the ego needs not to hit the road user ahead over the most it can brake (11.5 m/s^2); above `1` braking alone no longer avoids it (CriMe BTN) | max |
+| `crime_btn` | ratio | The deceleration the ego needs not to hit the road user ahead over the most it can brake (11.5 m/s^2); above `1` braking alone no longer avoids it, `inf` when no braking avoids a contact within the prediction horizon (`horizon_s`, 3 s) (CriMe BTN) | max |
 | `crime_stn` | ratio | The lateral acceleration the ego needs to steer clear of a road user over the most it can steer (8 m/s^2); above `1` steering alone no longer avoids it (CriMe STN) | max |
 | `crime_ttr_s` | s | How long the ego can go on as it goes before no evasive manoeuvre -- braking, kick-down, steering left or right, each simulated -- avoids the collision (CriMe TTR); at or under WTTR; `inf` when it hits no one, `0` when none does even now. Evaluated every 0.5 s by default | min |
 | `crime_wttr_s` | s | How long the ego can go on as it goes before no way it can go is free of collisions to the end of the horizon, by CommonRoad-Reach's reachable set (CriMe WTTR); `inf` when it hits no one, `0` when no way is left even now | min |
@@ -211,9 +211,14 @@ first; it departs from CriMe for an opening gap, which needs `0` (CriMe reads
 the relative velocity squared over twice the gap) or, for a lead braking to a
 stop, the deceleration that stops the ego behind where it stops; and for a car
 coming the other way, braking, the ego must stop short of where they would
-meet. When no braking avoids the collision -- a car coming at the ego that
-does not stop in time -- ALongReq is `-inf` and BTN `inf`. A road user behind
-the ego gives no ALongReq. The lanelets the worker keeps are those within
+meet. A contact counts while the ego is moving and within the prediction
+horizon (`horizon_s`) after it has stopped: a pedestrian crossing the lane a
+little towards the ego, or a car rolling back, that would reach a standing ego
+only after the horizon needs no more than the ego stopping short of it. When
+no braking avoids a contact within the horizon -- a car coming at the ego
+that does not stop in time -- ALongReq is `-inf` and BTN `inf`. TTC has no
+horizon, as CriMe's: it is when they would meet, however far off. A road user
+behind the ego gives no ALongReq. The lanelets the worker keeps are those within
 `radius_m` of the ego anywhere along their centre line, and always those it
 is on, so a long straight lanelet stays in from its middle. The reachable set (the drivable
 area, WTTR) is that of the ego's own box: CommonRoad-Reach's discs and the
