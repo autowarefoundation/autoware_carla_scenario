@@ -468,31 +468,21 @@ def default_axes(results: list[CaseResult]) -> tuple[str | None, str | None]:
     return _default_axes([r.compared() for r in results])
 
 
-def _seconds_in(coverage: dict[str, Any], attribute: str, bucket: str) -> float:
-    """How long the run spent with *attribute* in *bucket* (its ``odd.``
-    coverage item's seconds; a versioned item, ``@v2``, too)."""
-    for item in coverage.get("items") or []:
-        if not isinstance(item, dict) or item.get("attribute") != attribute:
-            continue
-        seconds = item.get("seconds") or {}
-        if isinstance(seconds, dict) and bucket in seconds:
-            try:
-                return float(seconds[bucket] or 0.0)
-            except (TypeError, ValueError, OverflowError):
-                # Not a number, or an integer too long for a float (#1964).
-                return 0.0
-    return 0.0
-
-
 def _odd_cells(coverage: Any) -> dict[str, Any] | None:
     """The run's ``odd.cells`` table (``{"attributes": [...], "rows":
-    [[[label, ...], ticks, seconds, meters], ...]}``), else ``None`` (a
-    coverage file from before openodd recorded the cells)."""
+    [[[label, ...], ticks, seconds, meters], ...]}``), else ``None``: a
+    coverage file from before openodd recorded the cells, or one whose
+    attributes are not all names, which openodd's view leaves out."""
     if not isinstance(coverage, dict):
         return None
     odd = coverage.get("odd")
     cells = odd.get("cells") if isinstance(odd, dict) else None
-    if not isinstance(cells, dict) or not isinstance(cells.get("attributes"), list):
+    if not isinstance(cells, dict):
+        return None
+    attributes = cells.get("attributes")
+    if not isinstance(attributes, list) or not all(
+        isinstance(a, str) for a in attributes
+    ):
         return None
     return cells
 
@@ -564,29 +554,24 @@ def cases_in_cell(
     attribute too, and *min_seconds* (the view's, 0 by default) is the least
     a run must stay in the cell.
 
-    A coverage document without ``odd.cells`` (the view leaves it out) falls
-    back to each condition on its own: the case is listed when its
-    attribute's ``odd.`` item (``@vN`` too) has seconds in every bucket."""
+    A case whose coverage document has no ``odd.cells`` (or one the view
+    cannot read) is in no cell, as the view leaves it out; with no
+    *conditions* (the whole matrix) every case is listed."""
     if not conditions:
         return list(results)
     known: set[str] = set()
     for r in results:
         cells = _odd_cells(r.coverage)
         if cells is not None:
-            known.update(a for a in cells["attributes"] if isinstance(a, str))
+            known.update(cells["attributes"])
     joint: list[tuple[str, str]] = []
     for attribute, bucket in conditions:
         if attribute in known and all(attribute != a for a, _ in joint):
             joint.append((attribute, bucket))
     found = []
     for r in results:
-        if not isinstance(r.coverage, dict):
-            continue
         cells = _odd_cells(r.coverage)
-        if cells is not None:
-            if _in_cells(cells, joint, min_seconds):
-                found.append(r)
-        elif all(_seconds_in(r.coverage, a, b) > 0.0 for a, b in conditions):
+        if cells is not None and _in_cells(cells, joint, min_seconds):
             found.append(r)
     return found
 

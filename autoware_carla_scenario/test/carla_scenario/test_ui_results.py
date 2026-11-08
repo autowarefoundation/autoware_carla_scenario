@@ -559,7 +559,7 @@ def test_the_cases_in_a_cell_were_in_every_bucket_at_once() -> None:
     ]
     assert (xq["runs"], xq["failed"], xq["state"]) == (1, 1, "fail")
     # Each condition alone holds both runs: the marginal answer differs.
-    assert all(results._seconds_in(one, a, b) > 0 for a, b in [("a", "x"), ("b", "q")])
+    assert one["items"][0]["seconds"]["x"] > 0 and one["items"][1]["seconds"]["q"] > 0
     assert results.cases_in_cell(found, [("a", "x"), ("b", "q")]) == [found[1]]
     assert results.cases_in_cell(found, [("a", "x"), ("b", "p")]) == [found[0]]
     assert results.cases_in_cell(found, [("a", "y"), ("b", "p")]) == []
@@ -621,15 +621,39 @@ def test_malformed_cells_rows_are_skipped_not_raised() -> None:
     assert results.cases_in_cell(found, [("a", "x"), ("b", "q")]) == []
 
 
-def test_a_coverage_file_without_cells_falls_back_to_each_condition_alone() -> None:
-    legacy = _cell_doc([("x", "p", 0.5), ("y", "q", 0.5)], passed=True)
+def test_a_coverage_file_without_cells_is_in_no_cell_as_openodd_leaves_it_out() -> None:
+    """A run without ``odd.cells`` is not counted by the matrix, so it is
+    listed in no cell -- even when its items had seconds in every bucket --
+    but still in the whole matrix (no conditions)."""
+    legacy = _cell_doc([("x", "q", 1.0)], passed=True)
     del legacy["odd"]["cells"]
-    # A versioned item answers for its attribute.
-    legacy["items"][0]["name"] = "odd.a@v2"
     joint = _cell_doc([("x", "q", 1.0)], passed=False)
+    documents = [legacy, joint]
     found = [_cell_case(0, legacy), _cell_case(1, joint)]
-    assert results.cases_in_cell(found, [("a", "x"), ("b", "q")]) == found
-    assert results.cases_in_cell(found, [("a", "z")]) == []
+    for conditions in ([("a", "x"), ("b", "q")], [("a", "x")], [("b", "q")]):
+        assert results.cases_in_cell(found, conditions) == [found[1]]
+        assert _matrix_runs(documents, conditions) == 1
+    assert results.cases_in_cell(found, []) == found
+
+
+def test_cells_whose_attributes_are_not_all_names_are_in_no_cell() -> None:
+    """openodd's view leaves out a document whose ``cells.attributes`` holds
+    a non-string; so is the case, and its attributes do not keep a
+    condition."""
+    import openodd
+
+    odd = _cell_doc([("x", "q", 1.0)], passed=True)
+    odd["odd"]["cells"]["attributes"] = ["a", 3]
+    assert openodd.CoverageView([odd]).runs == 0
+    good = _cell_doc([("x", "p", 1.0)], passed=False)
+    documents = [odd, good]
+    found = [_cell_case(0, odd), _cell_case(1, good)]
+    for conditions in ([("a", "x")], [("a", "x"), ("b", "q")]):
+        assert len(results.cases_in_cell(found, conditions)) == _matrix_runs(
+            documents, conditions
+        )
+    assert results.cases_in_cell(found, [("a", "x")]) == [found[1]]
+    assert results.cases_in_cell(found, [("a", "x"), ("b", "q")]) == []
 
 
 def test_sessions_are_compared_case_by_case_not_by_position(tmp_path: Path) -> None:
