@@ -7,7 +7,8 @@ intersection approach (:mod:`~..adversity.construction`) along a lane of the Lan
 the straightest successors -- and from ``start_time`` to ``end_time``
 (scenario seconds; ``None`` for good) it stands the objects there as CARLA
 props, each added and removed by a :class:`~.spawn.SpawnAction` (named
-``<label>/<zone>/<n>``).  Then, as TeraSim's ``initialize``:
+``<label>#<k>/<zone>/<n>``, *k* numbering the zone actions, so two zones of
+one label own their own props, #2013).  Then, as TeraSim's ``initialize``:
 
 * the traffic backend's background vehicles in the zone are taken off the
   road (``clear_traffic``);
@@ -69,6 +70,11 @@ DEFAULT_PROP_BLUEPRINTS: dict[str, str] = {
 #: The lane width (m) a lanelet whose bounds cannot be read is taken to be.
 _DEFAULT_LANE_WIDTH_M = 3.5
 
+#: How many zone actions have been made: numbers each one's prop names, which
+#: its label alone does not make unique (#2013).  A list, so a method can
+#: count it up without ``global``.
+_ZONES_MADE: list[int] = [0]
+
 
 class ConstructionZoneAction(_BackendAction):
     """A construction zone on lanelet *lanelet_id*'s lane, from *start_s* to
@@ -94,7 +100,8 @@ class ConstructionZoneAction(_BackendAction):
             (:data:`DEFAULT_PROP_BLUEPRINTS`).
         condition: Starts the action; at once by default.
         timing: Tick phase.
-        label: Human-readable identifier.
+        label: Human-readable identifier, in logs; the props are named by
+            it and the action's number (``<label>#<k>/...``).
 
     Raises:
         ValueError: a non-finite *start_s* or *end_s*, *end_s* not after
@@ -112,6 +119,7 @@ class ConstructionZoneAction(_BackendAction):
     _close_lane: bool
     _clear_traffic: bool
     _blueprints: dict[str, str]
+    _prefix: str
     _props: list[str]
     _closed: list[str]
     _placed: bool
@@ -160,6 +168,8 @@ class ConstructionZoneAction(_BackendAction):
         if blueprints is not None:
             chosen.update(blueprints)
         self._blueprints = chosen
+        _ZONES_MADE[0] += 1
+        self._prefix = f"{label}#{_ZONES_MADE[0]}"
         self._props = []
         self._closed = []
         self._placed = False
@@ -271,7 +281,7 @@ class ConstructionZoneAction(_BackendAction):
                 )
             except ValueError:
                 continue  # past the lane's last lanelet
-            name = f"{self.label}/{item.zone}/{index}"
+            name = f"{self._prefix}/{item.zone}/{index}"
             added = SpawnAction(
                 name=name,
                 position=Lanelet2Pose(lanelet_id, along, item.t),

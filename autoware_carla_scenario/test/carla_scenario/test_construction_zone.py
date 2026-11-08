@@ -571,11 +571,40 @@ def test_a_zone_for_good_is_cleared_away_when_the_run_ends() -> None:
     # Its props are SpawnAction's, named by the zone; the runner takes them
     # away when the run ends, after closing the action.
     assert len(prop_module.standing_props()) == 11
-    assert "construction_zone/taper_in/2" in prop_module.standing_props()
+    assert f"{action._prefix}/taper_in/2" in prop_module.standing_props()
+    assert action._prefix.startswith("construction_zone#")
     action.close()
     assert action.prop_count == 0
     prop_module.clear_props()
     assert all(p.destroyed for p in world.spawned)
+
+
+def test_two_zones_of_one_label_each_own_their_props() -> None:
+    """Two zones on the default label name their props apart: placing the
+    second leaves the first's standing, and clearing the first away removes
+    only its own (#2013)."""
+    world = _World()
+    first = ConstructionZoneAction(
+        rm.W_IN1, 20.0, 70.0, SHORT, end_time=2.0, close_lane=False, clear_traffic=False
+    )
+    second = ConstructionZoneAction(
+        rm.W_IN1, 20.0, 70.0, SHORT, close_lane=False, clear_traffic=False
+    )
+    assert first.label == second.label == "construction_zone"
+    _run(first, world, [0.0])
+    _run(second, world, [0.0])
+    assert first.prop_count == second.prop_count == 11
+    assert len(world.spawned) == 22
+    assert not any(p.destroyed for p in world.spawned)
+    assert len(prop_module.standing_props()) == 22
+    _run(first, world, [2.0])
+    assert first.cleared and first.prop_count == 0
+    assert all(p.destroyed for p in world.spawned[:11])
+    assert not any(p.destroyed for p in world.spawned[11:])
+    assert second.prop_count == 11
+    standing = prop_module.standing_props()
+    assert len(standing) == 11
+    assert all(name.startswith(second._prefix + "/") for name in standing)
 
 
 def test_a_missing_prop_is_skipped() -> None:
@@ -597,7 +626,7 @@ def test_an_urban_zone_is_placed_by_the_same_action() -> None:
     # left edge: the lane is shut before the intersection.
     last = world.spawned[-1].transform.location
     assert (last.x, last.y) == pytest.approx((-10.0, 1.75 - 1.45), abs=0.05)
-    assert "construction_zone/merge_taper/" + str(len(expected) - 1) in (
+    assert f"{action._prefix}/merge_taper/" + str(len(expected) - 1) in (
         prop_module.standing_props()
     )
     assert backend.removed == ["in_zone"] and len(backend.closed) == 2
