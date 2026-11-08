@@ -1243,7 +1243,12 @@ published before SUMO steps; SUMO's result is applied to the actors after it.
 `step_length_s` makes SUMO's step shorter: it must divide the tick in whole
 milliseconds, as SUMO's clock counts them (0.01 or 0.025 for a 0.05 s tick, not
 0.0125), and SUMO then makes that many steps per tick, with the CARLA poses it
-sees held for all of them.
+sees held for all of them. A `step_length_s` that does not is refused when the
+config is read, before the run starts CARLA. Without `step_length_s` the tick
+itself is SUMO's step, so it must be whole milliseconds too. The runner always
+ticks at 0.05 s; a backend prepared with a tick that is not whole milliseconds
+(1/30 s, which SUMO would round to 0.033 s and fall 3 s behind CARLA every
+300 s) is refused.
 
 **Lane changes**: SUMO runs its sublane model (`lateral_resolution_m`, 0.4 m
 by default, `--lateral-resolution`): a vehicle's lateral position is
@@ -1317,8 +1322,13 @@ and never above the speed it stops from within the visibility, `v * tau + v² /
 (2 * decel)` -- a default car in 50 m of fog drives at about 46-62 km/h, at
 night under a dipped beam (50 m) the same. A vehicle that departs later is
 held as it departs, and when the weather lifts each gets its own maximum speed
-back. The scenario's own vehicles, driven by SUMO or not, are left to the
-scenario. `traffic.vehicles.follow_visibility=false` ignores the visibility.
+back. A vehicle that leaves SUMO for the queue model (**Far traffic** below)
+while held keeps the held speed there, follows the visibility as it changes,
+and gets its own back when the weather lifts or it returns to SUMO, where it is
+held anew as it departs if the weather has not lifted; one that went into the
+queue model before the weather closed in has no reaction time or braking there
+to be held by, and is held only once it returns. The scenario's own vehicles,
+driven by SUMO or not, are left to the scenario. `traffic.vehicles.follow_visibility=false` ignores the visibility.
 It used to be `traffic.options.follow_visibility`, which is now an error
 pointing here.
 
@@ -1333,6 +1343,11 @@ signals the states of CARLA's lights every step, so a scenario that sets the
 lights sets them for SUMO's traffic too; `sumo` drives CARLA's lights from
 SUMO's programs; `none` leaves each alone. CARLA's lights are applied while
 SUMO warms up too, so the queues it starts with are the ones they would build.
+Under `sumo`, SUMO's red-yellow (`u`) and its green right-turn arrow that a
+driver must stop at first (`s`, a right turn on red) show as CARLA's `Red`, and
+a signal switched off (`o` blinking, `O` dark) as `Off`. A CARLA light
+switching several links shows the state of the last one with a regular state
+(`r u y g G`); an `s`, `o` or `O` link decides only for a light with no other.
 
 Which SUMO signal links a CARLA light switches is read off roadgen's traces,
 written beside the network when it is built: the light is the OpenDRIVE signal

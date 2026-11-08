@@ -202,7 +202,7 @@ from .physics_control import (
     to_vehicle_frame,
 )
 from .signal_states import (
-    SUMO_TO_CARLA_SIGNAL,
+    carla_light_state,
     green_together,
     link_states,
     permissive_links,
@@ -320,6 +320,29 @@ _BACKGROUND_LENGTH_M = 4.6
 _BACKGROUND_ROUTE_EDGES = 40
 #: How far from a pedestrian an edge to add its person on is looked for, m.
 _PERSON_EDGE_RADIUS_M = 50.0
+
+
+def _sight_cap(sumo_id: str, seen: float, held: tuple[float, float, float]) -> float:
+    """The maximum speed (m/s) *sumo_id*'s driver keeps in *seen* metres,
+    from *held*: its own maximum speed, deceleration and tau -- the weather
+    rules' ``sight_speed`` at the driver's own quantile, scaled to the
+    vehicle's braking and reaction."""
+    own, decel, tau = held
+    limit = sight_speed_at(seen, driver_quantile(sumo_id), decel, tau)
+    # Never to a standstill: a car in thick fog still creeps on.  Nor above
+    # its own: a background vehicle capped below the creep keeps its cap
+    # (#967).
+    return min(own, max(limit, 1.0))
+
+
+def _safe_weights_prefix(net_file: Path) -> Path:
+    """The prefix of the safe-weight files beside *net_file*, as roadgen names
+    them: ``network.safe`` (``network.safe.src.xml`` ...) beside
+    ``network.net.xml`` (:func:`.network.build_network`)."""
+    name = net_file.name
+    if name.endswith(".net.xml"):
+        return net_file.with_name(name[: -len(".net.xml")] + ".safe")
+    return net_file.with_suffix(".safe")
 
 
 def _load_traci(use_libsumo: bool) -> Any:
@@ -639,6 +662,12 @@ class SumoTrafficBackend(TrafficBackend):
         #: width of a mesoscopic vehicle, to bring it back as it was.
         self._meso_blueprints: dict[str, str] = {}
         self._meso_widths: dict[str, float] = {}
+        #: SUMO id -> what the visibility held a vehicle in the queue model
+        #: to it from (its own maximum speed, m/s, deceleration and tau, as
+        #: _max_speeds keeps them): the queue model drives it at the capped
+        #: speed while the fog lasts, and it gets its own back when the fog
+        #: clears or it returns to SUMO.
+        self._meso_held: dict[str, tuple[float, float, float]] = {}
         #: SUMO time at which the next level decision is due.
         self._fidelity_due = -math.inf
         #: SUMO ids of driven vehicles that stay microscopic: their entity
@@ -963,7 +992,7 @@ class SumoTrafficBackend(TrafficBackend):
             net_file = Path(self._config.net_path).expanduser()
             if not net_file.is_file():
                 raise TrafficBackendUnavailable(f"net_path {net_file} does not exist")
-            self._network = SumoNetwork(net_file, net_file.with_suffix(".safe"))
+            self._network = SumoNetwork(net_file, _safe_weights_prefix(net_file))
         else:
             self._network = build_network(
                 self._opendrive(context),
@@ -1401,6 +1430,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._meso_entities = {}
         self._meso_blueprints = {}
         self._meso_widths = {}
+        self._meso_held = {}
         self._fidelity_due = -math.inf
         self._stays_microscopic = set()
         self._edge_signals = {}
@@ -2608,6 +2638,13 @@ class SumoTrafficBackend(TrafficBackend):
             pos, lane = 0.0, int(index)
         return edge, pos, lane
 
+    def _new_route_id(self, sumo_id: str) -> str:
+        """A route id for *sumo_id* that SUMO has not seen yet: a route added
+        through TraCI stays for the rest of the run, and adding one under an
+        id it has fails."""
+        self._route_count += 1
+        return f"route:{sumo_id}:{self._route_count}"
+
     def _add_vehicle(self, sumo_id: str, actor: Any, speed: float = 0.0) -> bool:
         """Add *actor* to SUMO where it stands, at *speed* (m/s, no faster
         than its lane allows); ``False`` if it is off the network.
@@ -2626,7 +2663,10 @@ class SumoTrafficBackend(TrafficBackend):
         if place is None:
             return False
         edge, pos, lane = place
-        route_id = f"route:{sumo_id}"
+        # A route of its own each time: SUMO keeps a route added through TraCI
+        # for the rest of the run, so a vehicle parked again and brought back
+        # (_leave, _bring_in) could never be added under the same one (#1988).
+        route_id = self._new_route_id(sumo_id)
         if pos <= 0.0:
             # Out of a junction, onto the start of the lane it leads to:
             # standing there (libsumo crashed inserting a vehicle there at
@@ -2889,6 +2929,7 @@ class SumoTrafficBackend(TrafficBackend):
         if self._meso is not None and self._meso.remove(handle) is not None:
             self._blueprints.pop(handle, None)
             self._meso_widths.pop(handle, None)
+            self._meso_held.pop(handle, None)
             return
         try:
             self._traci.vehicle.remove(handle)
@@ -4001,6 +4042,7 @@ class SumoTrafficBackend(TrafficBackend):
             self._blueprints.pop(vehicle.id, None)
             self._commanded.pop(vehicle.id, None)
             self._meso_widths.pop(vehicle.id, None)
+            self._meso_held.pop(vehicle.id, None)
         if now >= self._fidelity_due:
             self._fidelity_due = now + self._config.mesoscopic.update_interval_s
             self._rebalance_fidelity(world, now, entities=entities)
@@ -4120,6 +4162,12 @@ class SumoTrafficBackend(TrafficBackend):
             tc.vehicle.remove(sumo_id)
         except Exception as exc:  # noqa: BLE001 - it may have left this step
             logger.debug("SUMO: removing %s: %s", sumo_id, exc)
+        # Held to the visibility, it keeps the capped speed in the queue
+        # model, and what it was held from beside it: the cap is lifted when
+        # the fog clears (_follow_visibility) or the vehicle returns
+        # (_to_microscopic).  The capped speed alone would outlast the fog
+        # (#1988).
+        held = self._max_speeds.pop(sumo_id, None)
         meso.add(
             sumo_id,
             route[index:],
@@ -4131,6 +4179,8 @@ class SumoTrafficBackend(TrafficBackend):
             speed_cap=self._commanded.get(sumo_id),
         )
         self._meso_widths[sumo_id] = width
+        if held is not None:
+            self._meso_held[sumo_id] = held
         if entity is not None:
             self._mark_fidelity(entity, SimulationFidelity.MESOSCOPIC)
             logger.info("SUMO: %s is mesoscopic now; out of CARLA", sumo_id)
@@ -4173,8 +4223,7 @@ class SumoTrafficBackend(TrafficBackend):
             if actor is None:
                 return False
         tc = self._traci
-        self._route_count += 1
-        route_id = f"route:{sumo_id}:{self._route_count}"
+        route_id = self._new_route_id(sumo_id)
         try:
             tc.route.add(route_id, vehicle.remaining_route)
             tc.vehicle.add(
@@ -4185,8 +4234,12 @@ class SumoTrafficBackend(TrafficBackend):
                 departPos=f"{min(offset, max(meso.link(link).length - 0.1, 0.0)):.2f}",
                 departSpeed=depart_speed,
             )
-            if math.isfinite(vehicle.max_speed):
-                tc.vehicle.setMaxSpeed(sumo_id, vehicle.max_speed)
+            # Its own, not a cap the visibility held it to: held anew as it
+            # departs, if the fog is still there (_follow_visibility).
+            held = self._meso_held.get(sumo_id)
+            max_speed = held[0] if held is not None else vehicle.max_speed
+            if math.isfinite(max_speed):
+                tc.vehicle.setMaxSpeed(sumo_id, max_speed)
             tc.vehicle.setLength(sumo_id, vehicle.length)
             if sumo_id in self._meso_widths:
                 tc.vehicle.setWidth(sumo_id, self._meso_widths[sumo_id])
@@ -4204,6 +4257,7 @@ class SumoTrafficBackend(TrafficBackend):
             return False
         meso.remove(sumo_id)
         self._meso_widths.pop(sumo_id, None)
+        self._meso_held.pop(sumo_id, None)
         if entity is not None:
             del self._meso_entities[sumo_id]
             self._meso_blueprints.pop(sumo_id, None)
@@ -4682,10 +4736,11 @@ class SumoTrafficBackend(TrafficBackend):
         if seen is None and self._visibility is None:
             return  # nothing set, nothing held: no TraCI call at all
         tc = self._traci
+        changed = seen != self._visibility
         if self._max_speeds:
             for sumo_id in tc.simulation.getArrivedIDList():
                 self._max_speeds.pop(sumo_id, None)
-        if seen == self._visibility:
+        if not changed:
             ids = self._departed_ids()
         elif seen is None:
             self._visibility = None
@@ -4701,6 +4756,31 @@ class SumoTrafficBackend(TrafficBackend):
         for sumo_id in ids:
             if sumo_id not in self._driven and sumo_id not in self._external:
                 self._hold_to_sight(sumo_id, seen)
+        if changed:
+            self._hold_meso_to_sight(seen)
+
+    def _hold_meso_to_sight(self, seen: Optional[float]) -> None:
+        """Hold the vehicles the queue model has, that the visibility held
+        when they left SUMO, to *seen* metres; ``None`` gives them their own
+        maximum speed back.
+
+        One that went into the queue model before the fog has no deceleration
+        or tau there to be held by: it keeps its own speed until it returns
+        to SUMO, where the visibility holds it as it departs.
+        """
+        meso = self._meso
+        if meso is None:
+            self._meso_held = {}
+            return
+        now = self._now()
+        for sumo_id, held in list(self._meso_held.items()):
+            if sumo_id not in meso:
+                del self._meso_held[sumo_id]
+            elif seen is None:
+                meso.set_max_speed(sumo_id, held[0], now)
+                del self._meso_held[sumo_id]
+            else:
+                meso.set_max_speed(sumo_id, _sight_cap(sumo_id, seen, held), now)
 
     def _hold_to_sight(self, sumo_id: str, seen: Optional[float]) -> None:
         """Cap *sumo_id*'s maximum speed at the one its driver keeps in
@@ -4721,12 +4801,7 @@ class SumoTrafficBackend(TrafficBackend):
                 vehicle.getDecel(sumo_id),
                 vehicle.getTau(sumo_id),
             )
-        own, decel, tau = held
-        limit = sight_speed_at(seen, driver_quantile(sumo_id), decel, tau)
-        # Never to a standstill: a car in thick fog still creeps on.  Nor
-        # above its own: a background vehicle capped below the creep keeps
-        # its cap (#967).
-        vehicle.setMaxSpeed(sumo_id, min(own, max(limit, 1.0)))
+        vehicle.setMaxSpeed(sumo_id, _sight_cap(sumo_id, seen, held))
 
     # ------------------------------------------------------------------
     # Internals: traffic lights
@@ -4992,15 +5067,22 @@ class SumoTrafficBackend(TrafficBackend):
 
         tc = self._traci
         states: dict[str, str] = {}
-        # Each light once, with the state of its last link (a light switching
-        # several links was set once per link, the last one winning) ...
-        wanted: dict[int, tuple[Any, Any]] = {}
+        # Each light once, with the states of all its links, in order ...
+        links: dict[int, tuple[Any, str]] = {}
         for (tls, index), light in self._signals.items():
             if tls not in states:
                 states[tls] = tc.trafficlight.getRedYellowGreenState(tls)
-            name = SUMO_TO_CARLA_SIGNAL.get(states[tls][index])
+            shown = links.get(id(light))
+            seen = shown[1] if shown is not None else ""
+            links[id(light)] = (light, seen + states[tls][index])
+        # ... showing what they say together (carla_light_state: the last
+        # regular one, a light switched several times having been set once
+        # per link) ...
+        wanted: dict[int, tuple[Any, Any]] = {}
+        for key, (light, shown_states) in links.items():
+            name = carla_light_state(shown_states)
             if name is not None:
-                wanted[id(light)] = (light, getattr(carla.TrafficLightState, name))
+                wanted[key] = (light, getattr(carla.TrafficLightState, name))
         # ... and only when it shows another: set_state() is an RPC, and the
         # state a light shows is read off the client's snapshot. A light a
         # scenario switched is still set back to SUMO's state.
