@@ -2507,8 +2507,10 @@
 <li>On aarch64 the framework, its CARLA client and the static check all run,
   but CARLA itself does not: its server is built for x86_64 only. Run the
   server on an x86_64 host and point the runner at it with
-  <code>server.host=&lt;address&gt;</code> (a server already listening is used rather than
-  launched); <code>scenario-setup</code> refuses to download the nightly there.</li>
+  <code>server.host=&lt;address&gt;</code> (the server already listening there is used; the
+  runner launches CARLA only for a local host, see
+  <a href="#carla-simulator">CARLA Simulator</a>); <code>scenario-setup</code> refuses to download
+  the nightly there.</li>
 </ul>
 <h3 id="python-version">Python Version<a class="headerlink" href="#python-version" title="Permanent link">&para;</a></h3>
 <ul>
@@ -2540,6 +2542,17 @@ is not supported. <code>uv run scenario-setup</code> downloads CARLA's nightly L
 build into <code>~/.autoware_carla_scenario/bin/carla</code>, and the runner launches it
 from there (see the <a href="../quickstart/">Quick Start</a>). A CARLA installed any other
 way is used through <code>CARLA_EXECUTABLE</code>.</p>
+<p>The runner launches CARLA only for a <strong>local</strong> <code>server.host</code>: <code>localhost</code>
+(or a <code>*.localhost</code> name), a loopback address (<code>127.0.0.0/8</code>, <code>::1</code>), this
+machine's own host name, or any name or address that resolves to one of this
+machine's interface addresses (its LAN address, <code>0.0.0.0</code>). For any other
+host it uses the server already listening at <code>server.host:server.port</code>, and
+when none answers there it stops at once with <code>No CARLA server reachable at
+&lt;host&gt;:&lt;port&gt;; the runner only launches CARLA for a local host</code> rather than
+launching one here, which could never answer at the remote address. Nor does
+a run restart a remote server that goes away: a run it drops fails, as on any
+server the runner did not launch itself. Start the remote server first, and
+check <code>server.host</code> and <code>server.port</code> when the message appears.</p>
 <h3 id="carla-client">CARLA client<a class="headerlink" href="#carla-client" title="Permanent link">&para;</a></h3>
 <p>The Python client is
 <a href="https://github.com/hakuturu583/typesafe_carla">typesafe_carla</a>, a plain
@@ -2720,7 +2733,7 @@ requires a CARLA server: a live one, or one to launch (<code>scenario-setup</cod
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 3, 2026 07:22:46 UTC"><span class="timeago" datetime="2026-11-03T07:22:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 3, 2026 07:22:46 UTC">2026-11-03</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 08:05:23 UTC"><span class="timeago" datetime="2026-11-08T08:05:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 08:05:23 UTC">2026-11-08</span>
   </span>
 
     
