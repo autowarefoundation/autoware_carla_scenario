@@ -852,7 +852,7 @@ Defines the default config group composition:
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `server.host` | str | `localhost` | CARLA server hostname |
+| `server.host` | str | `localhost` | CARLA server hostname; a non-blank string. CARLA is launched only for a local host ([installation.md](installation.md#carla-simulator)); at any other the server must already be listening |
 | `server.port` | int | `2000` | CARLA server port |
 | `server.cooldown_seconds` | float | `2.0` | Wait time (seconds) between consecutive scenario runs; a finite number, `0` or more (`0`: none) |
 | `server.cooldown_max_retries` | int | `0` | Maximum retries of a run that raised (not of one that ran and failed); a whole number, `0` or more (`2.0` is 2; `1.9` or `true` is refused) |
@@ -888,7 +888,7 @@ Controls ground projection (ray casting) and spawn retry behavior:
 |-----------|------|---------|-------------|
 | `entity.ground_projection_ray_distance_upper` | float | `5.0` | Ray search range above estimated z (meters) |
 | `entity.ground_projection_ray_distance_lower` | float | `10.0` | Ray search range below estimated z (meters) |
-| `entity.spawn_retry_max_count` | int | `10` | Maximum retry attempts for spawn |
+| `entity.spawn_retry_max_count` | int | `10` | Maximum retry attempts for spawn; a whole number, `0` or more (`3.0` is 3; `2.5` or `true` is refused before the run) |
 | `entity.spawn_retry_t_step` | float | `0.1` | Lateral offset shift per retry, tried to both sides (meters); finite, `0` or more (`0`: no lateral shift) |
 | `entity.spawn_retry_z_step` | float | `0.5` | Vertical shift per retry, tried up and down (meters); finite, `0` or more (`0`: no vertical shift) |
 
@@ -1174,10 +1174,12 @@ npc_vehicles:
     initial_speed_kmh: 10.0
 ```
 
-An NPC's `spawn_s` must be finite and its `initial_speed_kmh` finite and not
-negative; a run or batch refuses another value before anything starts
-(`Error: scenario.npc_vehicles[0].initial_speed_kmh must be finite and at
-least 0, got nan`).
+Each entry is a mapping. Its `spawn_lanelet_id` is required and a whole
+number (`100` or `100.0`; not `abc`, `1.5` or `true`), its `spawn_s` must be
+finite and its `initial_speed_kmh` finite and not negative; a run or batch
+refuses another value, or an entry that is no mapping (`[7]`), before
+anything starts (`Error: scenario.npc_vehicles[0].initial_speed_kmh must be
+finite and at least 0, got nan`).
 
 **Behavior:**
 - Sets all traffic lights to GREEN
@@ -2102,6 +2104,15 @@ uv run scenario scenario='*/*' map=nishishinjuku
 uv run scenario scenario=intersection_passing/left_turn \
   server.host=192.168.1.100 server.port=2000
 ```
+
+The server must already be listening at `server.host:server.port`: the runner
+launches CARLA only for a local host (`localhost`, a loopback address, or this
+machine's own name or address; [installation.md](installation.md#carla-simulator)).
+When nothing answers at a remote host the run stops at once with `No CARLA
+server reachable at 192.168.1.100:2000; the runner only launches CARLA for a
+local host`, without launching CARLA here. A remote server is never
+restarted: if it goes away mid-batch, the runs it drops fail (or are retried,
+`server.cooldown_max_retries`) against the same address.
 
 ### Use Case 4: Detect Missing 3D Models Before Running Scenarios
 

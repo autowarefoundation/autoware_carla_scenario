@@ -30,6 +30,7 @@ import math
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional
 
+from .seed import check_whole_number
 from .traffic.config import TrafficConfig, TrafficManagerBackendConfig
 from .traffic.parameters import (
     BicycleParameters,
@@ -278,14 +279,25 @@ class NpcVehicleConfig:
     initial_speed_kmh: float = 0.0
 
     def __post_init__(self) -> None:
-        """Refuse a NaN or infinite ``spawn_s``, and an ``initial_speed_kmh``
-        that is not finite or is below zero (#1809): a NaN pose fails far from
-        the key behind it, a negative or NaN speed leaves the NPC still with no
-        error and an infinite one breaks its physics.
+        """Refuse a ``spawn_lanelet_id`` left unset (:data:`MISSING`, which a
+        plain dataclass does not enforce) or that is not a whole number
+        (``abc``, ``1.5``, a bool; #1984), normalising a whole float to an
+        int; a NaN or infinite ``spawn_s``; and an ``initial_speed_kmh`` that
+        is not finite or is below zero (#1809): a NaN pose fails far from the
+        key behind it, a negative or NaN speed leaves the NPC still with no
+        error and an infinite one breaks its physics.  Each would otherwise
+        fail the run in ``setup()``, once CARLA, the map and the ego are up.
 
         Raises:
             ValueError: naming the field.
         """
+        # str(): the field holds the marker (a str) or a number; compared as
+        # text, the check needs no isinstance of a field typed int.
+        if str(self.spawn_lanelet_id) == MISSING:
+            raise ValueError("spawn_lanelet_id is required: name the NPC's lanelet")
+        self.spawn_lanelet_id = check_whole_number(
+            "spawn_lanelet_id", self.spawn_lanelet_id
+        )
         if not math.isfinite(self.spawn_s):
             raise ValueError(f"spawn_s must be finite, got {self.spawn_s}")
         # NaN fails `>= 0.0` as well.

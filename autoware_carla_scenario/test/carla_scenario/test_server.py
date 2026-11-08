@@ -167,3 +167,101 @@ def test_without_a_display_the_server_renders_off_screen(
     monkeypatch.delenv("DISPLAY", raising=False)
     monkeypatch.delenv("WAYLAND_DISPLAY", raising=False)
     assert "-RenderOffScreen" in _launched(monkeypatch, tmp_path, free_port)
+
+
+# ---------------------------------------------------------------------------
+# A server is launched only for a local host (#1984)
+# ---------------------------------------------------------------------------
+
+
+def _marking_launcher(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """A fake CARLA launcher that leaves a mark when it runs; the mark's path."""
+    mark = tmp_path / "launched"
+    launcher = tmp_path / "CarlaUnreal.sh"
+    launcher.write_text(f"#!/bin/sh\ntouch {mark}\nexit 3\n")
+    launcher.chmod(0o755)
+    monkeypatch.setenv(CarlaServerManager.ENV_VAR, str(launcher))
+    return mark
+
+
+@pytest.mark.parametrize("reuse", [True, False])
+@pytest.mark.parametrize("host", ["192.0.2.1", "2001:db8::1", "[2001:db8::1]"])
+def test_a_remote_host_that_does_not_answer_launches_nothing(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, host: str, reuse: bool
+) -> None:
+    """An unreachable remote server.host is refused at once, naming it; no
+    local CARLA is launched to be polled at the remote address."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    manager = CarlaServerManager(
+        host=host, port=2000, timeout=30.0, reuse_if_running=reuse
+    )
+    monkeypatch.setattr(manager, "_ping", lambda: False)
+    with pytest.raises(RuntimeError) as raised:
+        manager.start()
+    message = str(raised.value)
+    assert message.startswith(f"No CARLA server reachable at {host}:2000"), message
+    assert "only launches CARLA for a local host" in message
+    assert not mark.exists()
+    assert manager._process is None
+
+
+@pytest.mark.parametrize("reuse", [True, False])
+def test_a_remote_server_that_answers_is_reused(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, reuse: bool
+) -> None:
+    """A remote server is the one there: reused, never launched (nor stopped)."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    manager = CarlaServerManager(host="192.0.2.1", reuse_if_running=reuse)
+    monkeypatch.setattr(manager, "_ping", lambda: True)
+    manager.start()
+    assert manager.reused
+    assert not mark.exists()
+    manager.stop()
+
+
+def test_a_local_host_that_does_not_answer_is_launched(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int
+) -> None:
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    manager = CarlaServerManager(host="127.0.0.1", port=free_port, timeout=30.0)
+    with pytest.raises(RuntimeError, match="exited with code 3"):
+        manager.start()
+    manager.stop()
+    assert mark.exists()
+
+
+@pytest.mark.parametrize(
+    "host",
+    [
+        "localhost",
+        "LocalHost.",
+        "carla.localhost",
+        "127.0.0.1",
+        "127.10.0.2",
+        "::1",
+        "[::1]",
+        "::ffff:127.0.0.1",
+        "",
+        "0.0.0.0",
+    ],
+)
+def test_loopback_and_this_machines_addresses_are_local(host: str) -> None:
+    from autoware_carla_scenario.server import _is_local_host
+
+    assert _is_local_host(host)
+
+
+def test_this_machines_name_is_local() -> None:
+    from autoware_carla_scenario.server import _is_local_host
+
+    assert _is_local_host(socket.gethostname())
+
+
+@pytest.mark.parametrize(
+    "host",
+    ["192.0.2.1", "2001:db8::1", "[2001:db8::1]", "127.0.0.256", "128.0.0.1", "a" * 70],
+)
+def test_other_machines_are_not_local(host: str) -> None:
+    from autoware_carla_scenario.server import _is_local_host
+
+    assert not _is_local_host(host)

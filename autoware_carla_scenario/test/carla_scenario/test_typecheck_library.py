@@ -4967,7 +4967,7 @@ def test_the_socket_shim_constants_are_cpythons() -> None:
     import socket
 
     shim = (model_dir() / "socket.codon").read_text()
-    for name in ("AF_INET", "SOCK_STREAM"):
+    for name in ("AF_INET", "AF_INET6", "SOCK_STREAM"):
         value = int(getattr(socket, name))
         assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
 

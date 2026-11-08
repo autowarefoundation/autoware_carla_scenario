@@ -1157,6 +1157,113 @@ class TestEgoNumbersMustBeFinite:
             run.check_run_config(cfg)
 
 
+class TestNpcVehiclesAndRetryCountAreCheckedBeforeTheRun:
+    """#1984: a ``scenario.npc_vehicles`` entry without a lanelet, with one
+    that is no whole number or that is no mapping at all, and an
+    ``entity.spawn_retry_max_count`` that is no whole number of 0 or more, are
+    refused by the batch check, naming the key, before anything starts."""
+
+    @pytest.mark.parametrize(
+        ("entries", "match"),
+        [
+            (
+                [{"spawn_s": 5.0}],
+                r"^scenario\.npc_vehicles\[0\]\.spawn_lanelet_id is required",
+            ),
+            (
+                [{"spawn_lanelet_id": "abc"}],
+                r"^scenario\.npc_vehicles\[0\]\.spawn_lanelet_id must be a whole number",
+            ),
+            (
+                [{"spawn_lanelet_id": 1.5}],
+                r"^scenario\.npc_vehicles\[0\]\.spawn_lanelet_id must be a whole number",
+            ),
+            (
+                [{"spawn_lanelet_id": True}],
+                r"^scenario\.npc_vehicles\[0\]\.spawn_lanelet_id must be a whole number",
+            ),
+            ([7], r"^scenario\.npc_vehicles\[0\] must be a mapping"),
+            (
+                [{"spawn_lanelet_id": 1}, "npc"],
+                r"^scenario\.npc_vehicles\[1\] must be a mapping",
+            ),
+            (
+                [{"spawn_lanelet_id": 1, "speed": 3}],
+                r"^scenario\.npc_vehicles\[0\]: .*speed",
+            ),
+        ],
+        ids=["missing", "text", "fraction", "bool", "number", "string", "unknown-key"],
+    )
+    def test_the_batch_check_refuses_a_bad_npc_vehicle(
+        self, entries: list[Any], match: str
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = _shipped(["scenario=intersection_passing/straight_3npc"])
+        cfg.scenario.npc_vehicles = entries
+        with pytest.raises(run.RunConfigError, match=match):
+            run.check_run_config(cfg)
+
+    def test_a_whole_float_lanelet_is_read_as_an_int(self) -> None:
+        from autoware_carla_scenario import NpcVehicleConfig
+        from autoware_carla_scenario.examples import run
+
+        npc = NpcVehicleConfig(spawn_lanelet_id=12.0)  # type: ignore[arg-type]
+        assert npc.spawn_lanelet_id == 12 and type(npc.spawn_lanelet_id) is int
+        cfg = _shipped(["scenario=intersection_passing/straight_3npc"])
+        cfg.scenario.npc_vehicles[0].spawn_lanelet_id = 12.0
+        run.check_run_config(cfg)
+
+    @pytest.mark.parametrize(
+        ("value", "message"),
+        [
+            (2.5, "must be a whole number"),
+            (True, "must be a whole number"),
+            ("abc", "must be a whole number"),
+            (-1, "must be >= 0"),
+        ],
+    )
+    def test_the_retry_count_is_refused(self, value: object, message: str) -> None:
+        from autoware_carla_scenario.examples import run
+
+        match = rf"^entity\.spawn_retry_max_count {message}"
+        cfg = _shipped([])
+        cfg.entity.spawn_retry_max_count = value
+        with pytest.raises(run.RunConfigError, match=match):
+            run.check_run_config(cfg)
+        with pytest.raises(ValueError, match=match):
+            run.build_ego_and_spawn(
+                TestEgoNumbersAreRefusedByTheirKey._cfg(
+                    "entity", "spawn_retry_max_count", value
+                )
+            )
+
+    def test_a_zero_or_whole_float_retry_count_is_accepted(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        for value in (0, 3.0, "4"):
+            cfg = _shipped([])
+            cfg.entity.spawn_retry_max_count = value
+            run.check_run_config(cfg)
+        ego, _, _ = run.build_ego_and_spawn(
+            TestEgoNumbersAreRefusedByTheirKey._cfg(
+                "entity", "spawn_retry_max_count", 3.0
+            )
+        )
+        assert ego.spawn_retry_max_count == 3
+
+    @pytest.mark.parametrize("value", [None, "", "  ", 7])
+    def test_the_batch_check_refuses_a_server_host_that_names_nothing(
+        self, value: object
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = _shipped([])
+        cfg.server.host = value
+        with pytest.raises(run.RunConfigError, match=r"^server\.host must be"):
+            run.check_run_config(cfg)
+
+
 class TestEntityConfigNumbersMustBeFinite:
     """#1809: ``NpcVehicleConfig`` and ``VehicleEntityConfig`` (and the ego's
     and the other vehicles' configs built on it) refuse a NaN, an infinity or

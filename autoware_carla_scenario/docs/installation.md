@@ -13,8 +13,10 @@ This guide will help you install the `autoware-carla-scenario` package.
 - On aarch64 the framework, its CARLA client and the static check all run,
   but CARLA itself does not: its server is built for x86_64 only. Run the
   server on an x86_64 host and point the runner at it with
-  `server.host=<address>` (a server already listening is used rather than
-  launched); `scenario-setup` refuses to download the nightly there.
+  `server.host=<address>` (the server already listening there is used; the
+  runner launches CARLA only for a local host, see
+  [CARLA Simulator](#carla-simulator)); `scenario-setup` refuses to download
+  the nightly there.
 
 ### Python Version
 
@@ -47,6 +49,18 @@ is not supported. `uv run scenario-setup` downloads CARLA's nightly Linux
 build into `~/.autoware_carla_scenario/bin/carla`, and the runner launches it
 from there (see the [Quick Start](quickstart.md)). A CARLA installed any other
 way is used through `CARLA_EXECUTABLE`.
+
+The runner launches CARLA only for a **local** `server.host`: `localhost`
+(or a `*.localhost` name), a loopback address (`127.0.0.0/8`, `::1`), this
+machine's own host name, or any name or address that resolves to one of this
+machine's interface addresses (its LAN address, `0.0.0.0`). For any other
+host it uses the server already listening at `server.host:server.port`, and
+when none answers there it stops at once with `No CARLA server reachable at
+<host>:<port>; the runner only launches CARLA for a local host` rather than
+launching one here, which could never answer at the remote address. Nor does
+a run restart a remote server that goes away: a run it drops fails, as on any
+server the runner did not launch itself. Start the remote server first, and
+check `server.host` and `server.port` when the message appears.
 
 ### CARLA client
 
