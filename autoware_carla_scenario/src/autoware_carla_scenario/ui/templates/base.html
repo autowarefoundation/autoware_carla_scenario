@@ -21,10 +21,16 @@
         <!-- Update Button -->
         <button
           id="update-btn"
+          {#- /api/refresh returns the session table: swap it in on the index
+              page only, and reload any other page (#2007). #}
+          {% if page == "index" %}
           hx-post="/api/refresh"
           hx-target="#main-content"
           hx-swap="innerHTML"
           hx-indicator="#update-spinner"
+          {% else %}
+          onclick="location.reload()"
+          {% endif %}
           class="px-4 py-2 bg-blue-600 text-white rounded-lg hover:bg-blue-700 transition-colors text-sm font-medium flex items-center gap-2"
         >
           <svg id="update-spinner" class="htmx-indicator animate-spin h-4 w-4" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
@@ -366,11 +372,23 @@
         .then(data => {
           if (data.running && data.progress) {
             updateProgress(data.progress);
-            connectProgressStream(() => htmx.trigger('#update-btn', 'click'));
+            connectProgressStream(refreshCurrentPage);
           }
         })
         .catch(e => console.warn('Failed to check run status:', e));
     });
+
+    // Refresh the page once a run has ended: the index page swaps in the
+    // session table (the Update button's hx-post); any other page reloads,
+    // since /api/refresh returns the session table and nothing else (#2007).
+    function refreshCurrentPage() {
+      const btn = document.getElementById('update-btn');
+      if (btn && btn.hasAttribute('hx-post')) {
+        htmx.trigger(btn, 'click');
+      } else {
+        location.reload();
+      }
+    }
 
     // Collect all run options from the panel
     function collectRunOptions() {
@@ -477,7 +495,7 @@
       const chevron = document.getElementById('run-btn-chevron');
       if (chevron) chevron.classList.remove('rotate-180');
 
-      executeRunWithProgress(body, () => htmx.trigger('#update-btn', 'click'));
+      executeRunWithProgress(body, refreshCurrentPage);
     }
 
     // Submit through SLURM, then go to the batch's page, which follows it.
@@ -489,6 +507,9 @@
       document.getElementById('run-panel').classList.add('hidden');
       bar.classList.remove('hidden');
       text.textContent = 'Submitting to SLURM (expanding and checking the batch)...';
+      // Undo a previous submission's error (#2007).
+      text.removeAttribute('title');
+      fill.className = 'bg-blue-600 h-2 rounded-full transition-all duration-300';
       fill.style.width = '30%';
       fetch('/api/run', {
         method: 'POST',
@@ -508,9 +529,9 @@
           } else {
             showSubmitError(sub.output || 'The batch was not submitted');
           }
-        });
+        }).catch(e => showSubmitError(String(e)));
         poll();
-      });
+      }).catch(e => showSubmitError(String(e)));
     }
 
     function showSubmitError(message) {

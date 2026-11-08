@@ -164,7 +164,9 @@
                  pending: 'bg-blue-50 text-blue-700', missing: 'bg-gray-200 text-gray-800',
                  unknown: 'bg-gray-100 text-gray-600' };
   var ORDER = ['passed', 'failed', 'errored', 'running', 'pending', 'missing', 'unknown'];
-  var lastDone = null, timer = null;
+  // firstDone: the cases done at the first render; newResults: set for good
+  // once that changes, so the hint stays until the page is reloaded (#2007).
+  var firstDone = null, newResults = false, timer = null;
 
   function el(tag, cls, text) {
     var e = document.createElement(tag);
@@ -243,17 +245,34 @@
       problems.appendChild(list);
     }
     var done = st.total - (st.counts.running || 0) - (st.counts.pending || 0);
-    if (lastDone !== null && done !== lastDone) {
+    if (firstDone === null) firstDone = done;
+    else if (done !== firstDone) newResults = true;
+    if (newResults) {
       problems.appendChild(el('div', 'mt-2 text-xs text-gray-500', 'New results: reload the page to see them in the table below.'));
     }
-    lastDone = done;
   }
 
+  // Poll the batch's status. A failed request (network error, an error
+  // status or an error body) is shown in the panel's state and polled
+  // again: the timer is re-armed whatever happens (#2007).
   function refresh() {
-    fetch(panel.dataset.statusUrl).then(function (r) { return r.json(); }).then(function (st) {
+    var delay = panel.dataset.active === '0' ? 30000 : 5000;
+    fetch(panel.dataset.statusUrl).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (st) {
+        if (!r.ok || !st.counts) {
+          throw new Error((st && st.detail) || ('HTTP ' + r.status));
+        }
+        return st;
+      });
+    }).then(function (st) {
       render(st);
+      delay = st.active ? 5000 : 30000;
+    }).catch(function (e) {
+      document.getElementById('slurm-state').textContent =
+        'status unavailable: ' + (e && e.message ? e.message : e) + ' (retrying)';
+    }).finally(function () {
       clearTimeout(timer);
-      timer = setTimeout(refresh, st.active ? 5000 : 30000);
+      timer = setTimeout(refresh, delay);
     });
   }
 
@@ -272,9 +291,14 @@
       panel.querySelectorAll('.slurm-btn').forEach(function (b) { b.disabled = true; });
       fetch(panel.dataset.actionUrl + '/' + action, {
         method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify(body)
-      }).then(function (r) { return r.json(); }).then(function (res) {
-        out.textContent = res.output || '(no output)';
-        out.dataset.ok = res.ok ? '1' : '0';
+      }).then(function (r) {
+        return r.json().catch(function () { return {}; }).then(function (res) {
+          out.textContent = res.output || res.detail || (r.ok ? '(no output)' : 'HTTP ' + r.status);
+          out.dataset.ok = r.ok && res.ok ? '1' : '0';
+        });
+      }).catch(function (e) {
+        out.textContent = 'scenario-slurm ' + action + ' failed: ' + (e && e.message ? e.message : e);
+        out.dataset.ok = '0';
       }).finally(function () {
         panel.querySelectorAll('.slurm-btn').forEach(function (b) { b.disabled = false; });
         refresh();
