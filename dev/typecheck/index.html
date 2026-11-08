@@ -6189,8 +6189,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>173 functions and methods of those modules are <code>UNCALLED</code>
-(54 of them protected helpers, see <em>What is
+<p>167 functions and methods of those modules are <code>UNCALLED</code>
+(52 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6202,7 +6202,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 173 UNCALLED functions and methods, and why</summary>
+<summary>The 167 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6267,7 +6267,6 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>gate.criteria.CaseChange.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>gate.criteria.CriterionChange.to_dict</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>gate.criteria.CriterionResult.to_dict</code>: returns the criterion as the report stores it (<code>dataclasses.asdict()</code>), a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express</li>
-<li><code>gate.errored.read_case_errored</code>: parses the marker into a JSON object of mixed value types (<code>Optional[dict[str, Any]]</code>), which Codon cannot express</li>
 <li><code>gate.errored.write_case_errored</code>: writes the marker as a JSON object of mixed value types (<code>dict[str, Any]</code>: the schema, the overrides, the exit code or None, the attempts, the reason and the unfinished flag), which Codon cannot express</li>
 <li><code>gate.errored.write_case_unfinished</code>: writes the marker with write_case_errored(), itself uncalled (a <code>dict[str, Any]</code> of mixed value types)</li>
 <li><code>gate.record.GateCase.from_dict</code>: reads the dict to_dict() wrote, a <code>Mapping[str, Any]</code> of mixed value types (see <code>_DETAILS</code>), which Codon cannot express</li>
@@ -6279,8 +6278,6 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>gate.record._object</code>: reads an object of a parsed JSON object (<code>Mapping[str, Any]</code>) of mixed value types, which Codon cannot express; only the uncalled GateRecord.from_dict() calls it</li>
 <li><code>gate.record.read_gate_record</code>: parses a JSON document (<code>Any</code>) and reads it with GateRecord.from_dict(), a <code>Mapping[str, Any]</code> of mixed value types, which Codon cannot express</li>
 <li><code>gate.record.write_gate_record</code>: serialises GateRecord.to_dict(), a <code>dict[str, Any]</code> of mixed value types (see <code>_DETAILS</code>), which Codon cannot express</li>
-<li><code>gate.sweep_plan._read_entries</code>: parses the plan (<code>Any</code>) into its jobs, JSON objects of mixed value types (<code>list[dict[str, Any]]</code>: a directory string beside a list of overrides), which Codon cannot express</li>
-<li><code>gate.sweep_plan.read_sweep_plan</code>: reads the plan's jobs with _read_entries(), itself uncalled (<code>list[dict[str, Any]]</code> of mixed value types)</li>
 <li><code>gate.sweep_plan.write_sweep_plan</code>: writes the plan as a JSON object of mixed value types (<code>dict[str, Any]</code>: a schema string beside a list of jobs, each a directory string beside a list of overrides), which Codon cannot express</li>
 <li><code>hils.wire.encode</code>: takes a message of any shape (<code>Mapping[str, Any]</code>: JSON values of mixed types), which Codon cannot express</li>
 <li><code>maps.config._flag</code>: reads a boolean <code>map</code> setting with _setting, off a config of any shape (<code>map_config: Any</code>), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it, and passes what it reads to the checked _resolve()</li>
@@ -6310,7 +6307,6 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>scenario_queue.ScenarioQueue.as_fixture</code>: builds a pytest fixture (pytest, imported inside it), a generator function returned as a <code>Callable[[], Generator[ScenarioQueue, None, None]]</code></li>
 <li><code>scenario_runner._build_condition_status</code>: builds a ConditionStatus, which holds the condition's details (<code>dict[str, Any]</code>), which Codon cannot express; only _collect_condition_statuses, itself uncalled, calls it</li>
 <li><code>scenario_runner._collect_condition_statuses</code>: builds ConditionStatus values, which hold a condition's details (<code>dict[str, Any]</code>), which Codon cannot express; _condition_statuses calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
-<li><code>scenario_runner._effect_measures</code>: reads the effects a case drew from its OddSample's <code>quantities</code> (openodd's, a Rust extension, a <code>dict[str, float]</code> the odd model does not declare) and the scenario's <code>_effect_measures</code>, which the scenario_base model does not declare; _run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>scenario_runner._follow_weather_rules</code>: follows the scenario's weather rules with weather_rules.use_weather_rules() (imported inside it), which reads rule files with openodd (a Rust extension) and takes <code>environment.rules</code> as <code>Mapping[str, Any]</code>, which Codon cannot express, and which the weather_rules model does not declare; _run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code> (#1936)</li>
 <li><code>scenario_runner._judge_metrics</code>: evaluates the recorded frames with metric_batch (the frames replayed as a world of duck-typed actors, and the CommonRoad workers, processes spoken to in JSON), which is not checked; _run_scenario calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code>. How its verdicts merge into the run's result is checked, in _merge_metric_verdicts</li>
 <li><code>scenario_runner._record_metrics</code>: writes the metric series evaluate_metrics returns into the trajectory log, both held as <code>Any</code>, in rows of mixed float and bool values (<code>dict[str, Optional[Union[float, bool]]]</code>); only _judge_metrics, itself uncalled, calls it</li>
@@ -6351,13 +6347,11 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>traffic.config.TrafficConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
 <li><code>traffic.config.TrafficManagerBackendConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
 <li><code>traffic.fidelity.MesoscopicConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
-<li><code>traffic.parameters.BicycleParameters.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>traffic.parameters.BicycleParameters.from_mapping</code>: takes a traffic.vehicles, traffic.pedestrians or traffic.bicycles node as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and builds the parameters with <code>**</code> of the <code>dict[str, Any]</code> that _spreads_from, itself uncalled, returns</li>
-<li><code>traffic.parameters.PedestrianParameters.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>traffic.parameters.PedestrianParameters.from_mapping</code>: takes a traffic.vehicles, traffic.pedestrians or traffic.bicycles node as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and builds the parameters with <code>**</code> of the <code>dict[str, Any]</code> that _spreads_from, itself uncalled, returns</li>
 <li><code>traffic.parameters.VehicleParameters.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
 <li><code>traffic.parameters.VehicleParameters.from_mapping</code>: takes a traffic.vehicles, traffic.pedestrians or traffic.bicycles node as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and builds the parameters with <code>**</code> of the <code>dict[str, Any]</code> that _spreads_from, itself uncalled, returns</li>
-<li><code>traffic.parameters._described</code>: takes and returns a value of any type (<code>Any</code>: a Spread's describe() or the value unchanged), which Codon cannot express; only the describe() methods, themselves uncalled, call it</li>
+<li><code>traffic.parameters._described</code>: takes and returns a value of any type (<code>Any</code>: a Spread's describe() or the value unchanged), which Codon cannot express; only VehicleParameters.describe(), itself uncalled, calls it</li>
 <li><code>traffic.parameters._number_of</code>: takes one config value of any type (<code>Any</code>: a number or numeric text, <code>'1.5'</code> read as 1.5; a bool, other text, None, a list or a mapping to refuse), which Codon cannot express; only _spread_of, itself uncalled, calls it</li>
 <li><code>traffic.parameters._spread_of</code>: takes one config value of any type (<code>Any</code>: None, a Spread, a <code>{mean, std}</code> mapping, a number or numeric text; a bool, other text, a list or a mapping with other keys to refuse), which Codon cannot express; only _spreads_from, itself uncalled, calls it</li>
 <li><code>traffic.parameters._spreads_from</code>: takes a traffic.vehicles, traffic.pedestrians or traffic.bicycles node as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and the parameter class as a value (<code>cls: type</code>); checks the node's keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>) and is imported inside it, and returns a <code>dict[str, Any]</code> of Spreads and the values of the other fields, so it is not compiled</li>
@@ -6376,7 +6370,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>trajectory.model._vertex_advance</code>: takes a TrajectoryVertex call's <code>*args</code> and <code>**kwargs</code> as written (<code>tuple[Any, ...]</code>, <code>dict[str, Any]</code>), which Codon cannot express; only _refusing_vertex_times, itself uncalled, calls it</li>
 <li><code>trajectory.model._whole</code>: checks that a value of any type (<code>value: Any</code>: whatever a YAML document or a caller wrote for a lane or junction index) is a whole number, which Codon cannot express; the route poses' __post_init__ call it with their own fields, so its body is compiled through them</li>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
-<li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number, which checks the traffic options, calls it with the float the check types the option with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
+<li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
 <p>The 123 <code>EXCLUDED</code> modules fall in three groups. Many fit
@@ -7318,7 +7312,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   built-in exceptions that Codon lacks (<code>ImportError</code>,
   <code>ModuleNotFoundError</code>, <code>FileNotFoundError</code>, <code>PermissionError</code>,
   <code>ProcessLookupError</code>, <code>ChildProcessError</code>, <code>TimeoutError</code>,
-  <code>ConnectionError</code>, <code>BrokenPipeError</code>, and <code>KeyboardInterrupt</code>, derived from
+  <code>ConnectionError</code>, <code>BrokenPipeError</code>, <code>RecursionError</code>, and
+  <code>KeyboardInterrupt</code>, derived from
   <code>BaseException</code>, so <code>except Exception:</code> does not catch it) are declared in
   the model's <code>_exceptions.codon</code>, each
   derived from its CPython base, and the prelude of every rewritten module
@@ -8440,7 +8435,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 08:05:23 UTC"><span class="timeago" datetime="2026-11-08T08:05:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 08:05:23 UTC">2026-11-08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 18:50:56 UTC"><span class="timeago" datetime="2026-11-08T18:50:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 18:50:56 UTC">2026-11-08</span>
   </span>
 
     
