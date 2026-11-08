@@ -486,7 +486,7 @@ class CutInConfig:
     side: str = "left"
 
     #: The lanelet beside the ego's spawn lanelet the NPC starts on.  A sweep
-    #: binds it to the pick's neighbour (``neighbour`` binding).
+    #: binds it to the lane beside the pick (``adjacent`` binding).
     npc_lanelet_id: int = 0
 
     #: How far ahead of the ego the NPC starts, along its lanelet (m): its

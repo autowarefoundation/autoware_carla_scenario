@@ -16,15 +16,20 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 
 | | |
 |---|---|
-| **Ego** | Constraint search: a lane that is not in a junction and is long enough, excluding the map's lanelets with no 3D model -- with a lane on that side to change into, or, for the refused change, without one. 1 km/h. |
+| **Ego** | Constraint search: a lane that is not in a junction and is long enough, excluding the map's lanelets with no 3D model -- with a lane on that side to change into, or, for the refused change, without one. 1 km/h. Goal *from the search*: the lanelet after the matched one, or the first one past the junction it leads into (along the junction lanelet with the lowest ID where the way forks); a match with no lanelet ahead along that way is skipped. |
 | **Initialization** | Every traffic light green. |
 | **Ego, from the start** | Change lane, left or right. |
-| **Pass** | Changing: the ego has been on the OpenDRIVE lane beside the one it started on (*lane of a position*: the matched lanelet at the spawn, the lane to its left or right). Refusing: the timeout passes. |
+| **Pass** | Changing: the ego has been on the lane beside the one it started on (*lane of a position*: the lanelet to the matched lanelet's left or right, or one ahead of it before the next junction). Refusing: the timeout passes. |
 | **Fail** | Changing: the timeout. Refusing: the ego reaches that lane. |
 
-The lane checked is the OpenDRIVE lane next to the spawn's, anywhere along its
-road, rather than the lanelet next to the spawn's: a refused change has no
-such lanelet to name.
+The lane is checked in the Lanelet2 frame: the lanelet beside the spawn
+lanelet on that side -- the routing graph's `left` / `right`, the lane
+`has_adjacent` asks about -- and the lanelets ahead of it up to the next
+junction, less any that the spawn lanelet's own lane also reaches before its
+junction (a lane beside that merges into the ego's). The ego has changed lane
+once its centre is on one of them. Where there is no lanelet beside on that
+side -- every refused change -- the check never holds, so a refused change
+passes on its timeout.
 
 ## Variants
 

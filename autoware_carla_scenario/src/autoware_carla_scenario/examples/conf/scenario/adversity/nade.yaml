@@ -6,6 +6,11 @@
 # each sampled adversity are in the run's log. Placed on Town10HD_Opt:
 #
 #   scenario scenario=adversity/nade map=town10hd_opt
+#
+# The lanelet ids are Town10HD_Opt's, so give map=town10hd_opt: this file
+# cannot select the map group itself (Hydra refuses an `override /map` from
+# the scenario group, which config.yaml composes before `map`), and on the
+# default nishishinjuku map the ids name other lanelets or none.
 scenario:
   name: adversity
   kind: nade

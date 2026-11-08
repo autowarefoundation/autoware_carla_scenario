@@ -7,6 +7,11 @@ check of the [adversarial actions](../adversity.md) (#404).
 Unlike the other examples these are **concrete** scenarios, not logical
 ones: each case names its lanelets, on Town10HD_Opt.
 
+Run them with `map=town10hd_opt`. A scenario config cannot select the map
+group itself -- Hydra refuses an `override /map` from the scenario group, which
+the framework composes before `map` -- so without it a case runs on the default
+map, Nishi-Shinjuku, where its lanelet ids name other lanelets or none.
+
 ```bash
 uv run scenario scenario=adversity/cut_in map=town10hd_opt
 ```
@@ -26,7 +31,7 @@ so that the trigger holds:
 |---|---|---|---|---|
 | `brake_check` | NPC1 | 15 m ahead of the ego on lanelet 324, both at 30 km/h | `AdversarialBrakeAction`: brakes at 9 m/s² for 2 s, to a stop | about 1.3 s in |
 | `ignore_leader` | NPC1 | 25 m behind a slow ego (8 km/h) on lanelet 324, at 25 km/h | `IgnoreLeaderAction`: speeds up at the free-flow rate for 2 s, as if the ego were not there | about 0.7 s in |
-| `cut_in` | NPC1 | 6 m ahead in the lane on the ego's left (324 beside 446), at 30 km/h | `AdversarialCutInAction`: changes in front of the ego in 1 s | at once |
+| `cut_in` | NPC1 | 6 m ahead in the lane beside the ego's (324 beside 446), at 30 km/h | `AdversarialCutInAction`: changes in front of the ego in 1 s | at once |
 | `traffic_rule` | NPC1 | 10 m ahead of the ego on lanelet 719, every light red | `RunTrafficRuleAction`: slowing for its red light, drives on through it at the free-flow rate for 2 s | about 24 s in, at the light |
 | `jaywalking` | pedestrian1 | at the kerb 35 m ahead of the ego, off any crosswalk | `JaywalkAction`: walks straight across the road | at once |
 | `nade` | the background vehicles | 40 of the TrafficManager's, around the ego on lanelet 324 | `AdversarialTrafficAction` (NADE) over the five kinds | several times a run |

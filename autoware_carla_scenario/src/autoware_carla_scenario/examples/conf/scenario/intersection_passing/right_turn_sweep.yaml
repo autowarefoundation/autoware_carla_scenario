@@ -14,8 +14,9 @@ scenario:
   turn_direction: right
   expected_route_lanelet_ids: [502, 193]
   pass_on_last_lanelet: false
-  # A turn from a standstill at the stop line, unlike right_turn.yaml's flying
-  # start, so the ego has to pull away as well as steer.
+  # A turn from a standstill 25 m short of the stop line, unlike
+  # right_turn.yaml's flying start, so the ego has to pull away as well as
+  # steer.
   timeout_seconds: 60.0
   # The rest are IntersectionPassingConfig's defaults, listed so that a
   # scenario.<key>= override finds them (#1317).
@@ -30,7 +31,9 @@ scenario:
 ego:
   initial_speed_kmh: 0.0
   spawn_lanelet_id: 206
-  spawn_s: 25.0
+  # 25 m short of the stop line at the start of junction lanelet 502, where
+  # the sweep's stop_line_offset puts this case.
+  spawn_s: 5.26
 
 sweep:
   constraints:

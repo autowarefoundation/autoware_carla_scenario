@@ -25,7 +25,9 @@ scenario:
 ego:
   initial_speed_kmh: 20.0
   spawn_lanelet_id: 203
-  spawn_s: 25.0
+  # 25 m short of the stop line at the start of junction lanelet 411, where
+  # the sweep's stop_line_offset puts this case.
+  spawn_s: 5.29
 
 sweep:
   constraints:

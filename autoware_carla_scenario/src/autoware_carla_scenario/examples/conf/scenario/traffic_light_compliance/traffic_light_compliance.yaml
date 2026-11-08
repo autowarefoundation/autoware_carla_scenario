@@ -28,7 +28,8 @@ ego:
   initial_speed_kmh: 0.0
   spawn_lanelet_id: 242
   spawn_s: 20.1
-  # Through the junction and out the other side.
+  # Through the junction and out the other side; every swept case replaces
+  # it.
   goal_lanelet_id: 265
 
 sweep:
@@ -44,6 +45,25 @@ sweep:
             constraint:
               type: in_set
               values: ${map.no_3d_model_lanelet_ids}
+          # Nor one whose goal would be such a lanelet: the lane after it, or
+          # the lane out of the junction it leads into.
+          - type: not
+            constraint:
+              type: previous_of
+              constraints:
+                - type: in_set
+                  values: ${map.no_3d_model_lanelet_ids}
+          - type: not
+            constraint:
+              type: previous_of
+              constraints:
+                - type: and
+                  constraints:
+                    - type: is_junction
+                    - type: previous_of
+                      constraints:
+                        - type: in_set
+                          values: ${map.no_3d_model_lanelet_ids}
           - type: not
             constraint:
               type: equals
@@ -59,3 +79,10 @@ sweep:
     ego.spawn_s:
       type: stop_line_offset
       offset: 10.0
+    # Through the junction and out the other side: the first lanelet past
+    # the junction the pick leads into (the lowest ID where it forks).
+    ego.goal_lanelet_id:
+      type: route_through
+      depth: 1
+      through_junction: true
+      last_only: true
