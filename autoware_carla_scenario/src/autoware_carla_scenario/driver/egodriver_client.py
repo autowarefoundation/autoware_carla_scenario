@@ -214,7 +214,28 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
                 revision this release cannot translate.
         """
         stub = self._connect()
+        try:
+            self._open_session(stub, session_uuid, scene_id, rear_axle_offset_m)
+        except BaseException:
+            # Do not leave what _connect opened behind: nothing will call
+            # close_session for a session that never opened.  A failure while
+            # closing must not mask the one that got us here.
+            try:
+                self.close_session()
+            except Exception:
+                logger.warning(
+                    "closing after a failed start_session failed", exc_info=True
+                )
+            raise
 
+    def _open_session(
+        self,
+        stub: egodriver_pb2_grpc.EgodriverServiceStub,
+        session_uuid: str,
+        scene_id: str,
+        rear_axle_offset_m: float,
+    ) -> None:
+        """Negotiate the contract revision and open the session on *stub*."""
         version, revision = negotiate(stub, timeout=self._config.timeout_s)
         logger.info(
             "Connected to %s at %s (version_id=%r git_hash=%r contract revision %d)",
@@ -389,7 +410,11 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         return int(command.turn_indicator)
 
     def close_session(self) -> None:
-        """Close the session and the channel.  Safe to call more than once."""
+        """Close the session, and the channel if this client opened it.
+
+        An injected channel is kept (its owner closes it), so the next
+        ``start_session`` rebuilds the stubs on it.  Safe to call more than once.
+        """
         if self._stub is not None and self._session_uuid is not None:
             try:
                 self._stub.close_session(
@@ -406,7 +431,7 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         self._serves_vehicle_commands = True
         if self._channel is not None and self._owns_channel:
             self._channel.close()
-        self._channel = None
+            self._channel = None
 
     # ------------------------------------------------------------------
     # Internals

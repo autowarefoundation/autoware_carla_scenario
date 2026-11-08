@@ -345,6 +345,77 @@ def test_close_session_is_idempotent(policy: _StubPolicy) -> None:
     assert client.session_uuid is None
 
 
+def test_an_injected_channel_outlives_close_session(policy: _StubPolicy) -> None:
+    """A client handed a channel keeps it across sessions: the second session
+    goes over the same channel, not to ``config.address`` (#1999)."""
+    channel = grpc.insecure_channel(
+        f"localhost:{policy.port}",  # type: ignore[attr-defined]
+        options=channel_options(),
+    )
+    # The address reaches nothing: only the injected channel reaches the policy.
+    config = DriverClientConfig(address="localhost:1", timeout_s=10.0)
+    client = EgoDriverGrpcClient(config, channel=channel)
+    try:
+        client.start_session("session-1", "scene")
+        client.close_session()
+        assert id(client._channel) == id(channel)  # no narrowing of `channel`
+        assert client._stub is None
+        client.start_session("session-2", "scene")
+        client.close_session()
+    finally:
+        channel.close()
+
+    assert [request.session_uuid for request in policy.sessions] == [
+        "session-1",
+        "session-2",
+    ]
+    assert policy.closed == ["session-1", "session-2"]
+    assert client._target == "an injected channel"
+
+
+class _RefusesSessions(_StubPolicy):
+    """Answers ``get_version`` but refuses every session."""
+
+    def start_session(self, request, context):  # noqa: ANN001, D102
+        context.abort(grpc.StatusCode.INVALID_ARGUMENT, "wrong cameras")
+
+
+def test_a_failed_start_session_closes_the_channel_it_opened() -> None:
+    """``_connect`` opened a channel that no ``close_session`` would close, as the
+    session never opened: ``start_session`` closes it before re-raising (#1999)."""
+    for stub in _serve(_RefusesSessions()):
+        config = DriverClientConfig(
+            address=f"localhost:{stub.port}",  # type: ignore[attr-defined]
+            timeout_s=10.0,
+        )
+        client = EgoDriverGrpcClient(config)
+        with pytest.raises(grpc.RpcError) as raised:
+            client.start_session("session-1", "scene")
+
+        assert raised.value.code() == grpc.StatusCode.INVALID_ARGUMENT
+        assert client._channel is None
+        assert client._stub is None
+        assert client.session_uuid is None
+
+
+def test_a_failed_start_session_keeps_an_injected_channel() -> None:
+    """An injected channel is its owner's to close; the stubs are reset all the same."""
+    for stub in _serve(_RefusesSessions()):
+        config = DriverClientConfig(
+            address=f"localhost:{stub.port}",  # type: ignore[attr-defined]
+            timeout_s=10.0,
+        )
+        channel = grpc.insecure_channel(config.address, options=channel_options())
+        client = EgoDriverGrpcClient(config, channel=channel)
+        try:
+            with pytest.raises(grpc.RpcError):
+                client.start_session("session-1", "scene")
+            assert id(client._channel) == id(channel)  # no narrowing of `channel`
+            assert client._stub is None
+        finally:
+            channel.close()
+
+
 def test_calls_before_start_session_raise(policy: _StubPolicy) -> None:
     client = _client(policy)
     with pytest.raises(RuntimeError, match="No driver session is open"):

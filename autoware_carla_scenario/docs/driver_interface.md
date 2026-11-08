@@ -491,8 +491,10 @@ the same numbers here.
 
 The contract has no LiDAR submission RPC, so sweeps ride in `renderer_data` too. Each
 `driver.lidars` entry mounts a `sensor.lidar.ray_cast` (mount in CARLA's convention, like
-a camera) spinning one full revolution per simulation tick, and each policy step sends
-that tick's sweep, already converted into the rig frame. A sweep that does not arrive
+a camera) that sweeps once per policy step (`policy_timestep_s`), and each policy step
+sends that sweep, already converted into the rig frame. The sweep may come from an
+earlier simulation tick of the step than the one the step is sent on; it is stamped
+with the tick it was taken on, not the tick it is sent on. A sweep that does not arrive
 within a second is left out rather than replaced by an older one.
 
 A policy does not see that transport: the servicer records each sweep before `drive` as
@@ -828,11 +830,12 @@ See `carla_driver_interface/proto/README.md` for the full provenance.
   through `submit_recording_ground_truth` is the route itself: its waypoints, headed
   along the path and spaced `policy_timestep_s` apart. This is the *recorded*
   trajectory channel, unrelated to the CARLA ground truth in `renderer_data`.
-* The route is a lane-following walk of CARLA's road graph, taking the first
-  continuation at each fork. It is a rolling window, re-sent on every policy step so the
-  horizon stays ahead of the vehicle, but it is not a global plan: the ego will not turn
-  toward a goal. Scenarios needing a specific route should submit their own waypoints
-  through the client.
+* The route is a lane-following walk of CARLA's road graph. At a fork it follows the
+  scenario's route when there is one (a `RoutingAction`, or
+  `CarlaDriverEntity.route_to`), so the turn the scenario asserts is the one the policy
+  is shown; without a route, or where no lane route reaches the goal, it takes the
+  first continuation. It is a rolling window, re-sent on every policy step so the
+  horizon stays ahead of the vehicle, not the whole route to the goal.
 * Actor reporting covers vehicles, pedestrians and props (`vehicle.*`, `walker.*`,
   `static.prop.*`) within `actor_horizon_m` of the ego, the ego itself excluded. Walker
   AI controllers, sensors, the spectator, traffic lights and signs are not reported, and
