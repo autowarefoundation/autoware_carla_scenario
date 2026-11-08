@@ -155,13 +155,17 @@ def _held_at_walk_end(walker: "carla.Actor") -> bool:
 
 
 def _release_walker_ai(walker: "carla.Actor") -> None:
-    """Stop and destroy *walker*'s controller, if it has one."""
-    from ._walker_ai import release  # noqa: PLC0415
+    """Stop and destroy *walker*'s controller, if it has one: one it walked
+    on lets it take steps again (:func:`._walker_ai.own_steps`) -- starting
+    set its physics and its collisions off, and stopping sets neither on."""
+    from ._walker_ai import own_steps, release  # noqa: PLC0415
 
     try:
-        release(int(walker.id))
+        stopped = release(int(walker.id))
     except (AttributeError, RuntimeError):
-        pass
+        return
+    if stopped:
+        own_steps(walker)
 
 
 @dataclass

@@ -380,9 +380,12 @@ of it, as near as the controller takes it, or at the walkway point a target
 on the road was moved to -- the walk has arrived, though that is short of the
 1 m a stepped walk arrives within, and the route finishes. A walker that a
 threat turns back after it steps off a kerb (the route's turn-back
-thresholds) is stepped back behind the kerb, waits there (at most 60 s, after
-which it crosses and turns back no more) and steps off again, all off the
-controller, which would walk it straight back onto the road.
+thresholds) is stepped back behind the kerb (or waits where it stands if its
+steps back get it no nearer for 1.5 s), waits there and steps off again, all
+off the controller, which would walk it straight back onto the road; 60 s
+after it first turned back it crosses and turns back no more. A walker taken
+off its controller (arrived, its walk stopped or overridden) has its physics
+and collisions, which the controller turned off, turned on again.
 Whether it may cross a road away from a crossing is its own: the
 RoutingAction's `cross_factor` (the card's *Crosses away from crossings*), the
 probability its route may use the road anywhere -- 1 for a recorded walk that

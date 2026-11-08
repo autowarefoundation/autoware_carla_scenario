@@ -1360,7 +1360,7 @@ def test_a_walker_off_its_controller_has_its_physics_and_collisions_back() -> No
         set_simulate_physics=lambda on: calls.append(("physics", on)),
         set_collisions=lambda on: calls.append(("collisions", on)),
     )
-    _walker_ai._own_steps(walker)
+    _walker_ai.own_steps(walker)
     assert calls == [("physics", True), ("collisions", True)]
 
 

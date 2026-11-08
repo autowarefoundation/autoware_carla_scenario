@@ -76,8 +76,10 @@ by distance or by time to collision).  Once off the kerb it keeps watching:
 a threat while it is within its turn-back distance of the kerb turns it back
 to just behind the kerb, where it checks again; further out it carries
 on.  It stays stepped while it turns back, waits there and steps off again
--- the controller would walk it straight back onto the road -- and once that
-wait has run out (:data:`KERB_WAIT_MAX_S`) it no longer turns back.
+-- the controller would walk it straight back onto the road.  Turned back
+for :data:`KERB_WAIT_MAX_S` in all (waits and steps off again included) it
+crosses and turns back no more; one whose steps back get it no nearer the
+kerb for :data:`BACK_STALL_S` (a walker behind it) waits where it stands.
 
 A map without a navigation mesh -- ``get_random_location_from_navigation()``
 finds nothing -- is said once, and its walkers are stepped along the route as
@@ -111,6 +113,7 @@ __all__ = [
     "forget_all",
     "give_way",
     "killed_by_crowd",
+    "own_steps",
     "has_navmesh",
     "release",
     "road_stretches",
@@ -169,6 +172,12 @@ _THREAT_MARGIN_M: float = 10.0
 _THREAT_SPEED_MPS: float = 20.0
 #: How near (m) the place behind the kerb a turned-back walker has reached.
 _BACK_REACHED_M: float = 0.3
+#: How long (s) a turned-back walker may get no nearer the place behind the
+#: kerb (by :data:`_BACK_PROGRESS_M`) before it waits where it stands: its
+#: steps back are blocked (a walker behind it).
+BACK_STALL_S: float = 1.5
+#: How much nearer (m) the place behind the kerb counts as progress.
+_BACK_PROGRESS_M: float = 0.05
 #: How long (s) each stepped walker has given way, by actor id.
 _GIVING_WAY: dict[int, float] = {}
 #: The tick, for the retargeting clock where the world does not say.
@@ -203,6 +212,9 @@ class _Driven:
     turning_back: bool
     back_to: Optional["TrajectorySample"]
     waiting_back: bool
+    back_s: float
+    back_gap: float
+    back_stalled: float
     held_at_end: bool
 
     def __init__(
@@ -238,6 +250,13 @@ class _Driven:
         self.turning_back = False
         self.back_to = None
         self.waiting_back = False
+        #: How long (s) since it first turned back from this kerb: past
+        #: :data:`KERB_WAIT_MAX_S` it turns back no more.
+        self.back_s = 0.0
+        #: The nearest (m) it has come to the place behind the kerb on its
+        #: way back, and how long (s) it has come no nearer.
+        self.back_gap = 0.0
+        self.back_stalled = 0.0
         #: Whether it is held at its last target: its walk has arrived.
         self.held_at_end = False
 
@@ -389,12 +408,13 @@ def drive(
         driven.turning_back = False
         driven.back_to = None
         driven.waiting_back = False
+        driven.back_s = 0.0
         logger.info(
             "walker %d: stepped over the road from %.1f m", int(walker.id), here
         )
         if driven.running:
             _stop(driven)
-            _own_steps(walker)
+            own_steps(walker)
     elif not stepped and driven.stepping:
         driven.stepping = False
         driven.since_sent = RETARGET_S
@@ -403,6 +423,7 @@ def drive(
         driven.turning_back = False
         driven.back_to = None
         driven.waiting_back = False
+        driven.back_s = 0.0
         logger.info("walker %d: back on its controller at %.1f m", int(walker.id), here)
     while driven.index < len(driven.targets) - 1:
         along, target = driven.targets[driven.index]
@@ -510,8 +531,10 @@ def _turns_back(
     this tick -- else the caller steps it on.  Within ``within_m`` of the
     kerb a threat turns it back to :data:`~..actions._road_threat.STEP_BACK_M`
     behind it (no further back than where its walk began), where it checks at
-    the kerb again (up to :data:`KERB_WAIT_MAX_S`, after which it no longer
-    turns back), stepped all the while; further out it carries on, as a
+    the kerb again (where it waits if it gets no nearer for
+    :data:`BACK_STALL_S`), stepped all the while -- for at most
+    :data:`KERB_WAIT_MAX_S` from the first turn back, after which it crosses;
+    further out it carries on, as a
     :class:`~..actions.walk_straight.WalkStraightAction` pedestrian does."""
     import typesafe_carla.carla as carla  # noqa: PLC0415
 
@@ -524,18 +547,36 @@ def _turns_back(
     # Where it stands each tick off the kerb, for its velocity when a threat
     # is looked for (asked again this tick, the same).
     _walking(walker, location)
+    if driven.back_to is not None:
+        driven.back_s += _tick_seconds(walker.get_world())
+        if driven.back_s >= KERB_WAIT_MAX_S and (
+            driven.turning_back or driven.waiting_back or driven.kerb_here >= 0.0
+        ):
+            # Turned back, waiting and stepping off again for as long as it
+            # waits at a kerb at most (WalkerEventStopAndCheck(60)): it
+            # crosses, and turns back no more -- a threat it walks into
+            # whenever it steps off, or that never goes, would hold it for
+            # ever.
+            logger.info(
+                "walker %d: crosses after %.0f s turning back from the kerb",
+                int(walker.id),
+                driven.back_s,
+            )
+            driven.turning_back = False
+            driven.waiting_back = False
+            driven.kerb_here = -1.0
+            driven.kerb_waited = 0.0
+            driven.kerb_light_read = False
+            driven.kerb_said = ""
+            return False
     if driven.waiting_back:
         if _kerb_wait(walker, driven, path, here, location):
             walker.apply_control(carla.WalkerControl(speed=0.0))
             return True
         driven.waiting_back = False
         # Off the kerb again, from behind it: still watched from the kerb it
-        # stepped off (turned back again, to the same place) -- but no longer
-        # once its wait there has run out, as at the kerb
-        # (WalkerEventStopAndCheck(60)): turned back once more, a threat that
-        # stays would hold it there for ever.
-        if driven.kerb_waited >= KERB_WAIT_MAX_S:
-            driven.kerb_here = -1.0
+        # stepped off (turned back again, to the same place), until it has
+        # been turning back for KERB_WAIT_MAX_S (above).
         driven.kerb_waited = 0.0
         driven.kerb_light_read = False
         driven.kerb_said = ""
@@ -545,11 +586,27 @@ def _turns_back(
         assert target is not None
         dx, dy = target.x - location.x, target.y - location.y
         gap = math.hypot(dx, dy)
-        if gap <= _BACK_REACHED_M:
+        if gap < driven.back_gap - _BACK_PROGRESS_M:
+            driven.back_gap = gap
+            driven.back_stalled = 0.0
+        else:
+            driven.back_stalled += _tick_seconds(walker.get_world())
+        if gap <= _BACK_REACHED_M or driven.back_stalled >= BACK_STALL_S:
             walker.apply_control(carla.WalkerControl(speed=0.0))
             driven.turning_back = False
             driven.waiting_back = True
-            logger.info("walker %d: is back behind the kerb", int(walker.id))
+            if gap <= _BACK_REACHED_M:
+                logger.info("walker %d: is back behind the kerb", int(walker.id))
+            else:
+                # Its steps back blocked (a walker behind it): it waits where
+                # it stands, as it would behind the kerb.
+                logger.info(
+                    "walker %d: gets no nearer the kerb in %.1f s, waits %.1f m "
+                    "short of it",
+                    int(walker.id),
+                    driven.back_stalled,
+                    gap,
+                )
             return True
         walker.apply_control(
             carla.WalkerControl(
@@ -570,6 +627,8 @@ def _turns_back(
     back = path.at_distance(max(0.0, driven.kerb_here - STEP_BACK_M))
     driven.back_to = back
     driven.turning_back = True
+    driven.back_gap = math.inf
+    driven.back_stalled = 0.0
     logger.info(
         "walker %d: turns back %.2f m onto the road (%s)",
         int(walker.id),
@@ -786,7 +845,7 @@ def _stepped(driven: _Driven, here: float, location: "carla.Location") -> bool:
     return False
 
 
-def _own_steps(walker: "carla.Actor") -> None:
+def own_steps(walker: "carla.Actor") -> None:
     """Let *walker* take steps again (``apply_control``) off its controller.
     Starting the controller set the walker's physics and its collisions off
     (``WalkerAIController::Start``) and stopping it sets neither on again: a
@@ -938,19 +997,23 @@ def at_walk_end(walker_id: int) -> bool:
     return driven is not None and driven.held_at_end
 
 
-def release(walker_id: int) -> None:
-    """Stop and destroy *walker_id*'s controller, if it has one."""
+def release(walker_id: int) -> bool:
+    """Stop and destroy *walker_id*'s controller, if it has one; whether it
+    was walking it (stopped here), for the caller to let the walker take
+    steps again (:func:`own_steps`)."""
     _GIVING_WAY.pop(int(walker_id), None)
     _WALKING.forget(int(walker_id))
     driven = _DRIVEN.pop(int(walker_id), None)
     if driven is None:
-        return
-    if driven.running:
+        return False
+    running = driven.running
+    if running:
         _stop(driven)
     try:
         driven.controller.destroy()
     except RuntimeError:
         pass
+    return running
 
 
 def forget_all() -> None:
