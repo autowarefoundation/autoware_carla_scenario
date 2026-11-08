@@ -333,10 +333,12 @@ class OddDefinition:
 
 
 # openodd's sample and parameter space (a Rust extension): the checked
-# scenario_runner only hands them to CoverageCollector.record_case(), so
-# neither declares more than its being a value.
+# scenario_runner hands them to CoverageCollector.record_case(), and reads a
+# sample's `quantities` (the rules quantity -> the value a knob wrote from the
+# rules, openodd's `dict[str, float]`) for the effects it measures
+# (_effect_measures); neither declares more.
 class OddSample:
-    _unused: int
+    quantities: Dict[str, float]
 
     def __init__(self):
         compile_error("OddSample: openodd's sampler draws it; it is not built here")
@@ -357,11 +359,22 @@ class ParameterSpace:
 
 # A case drawn from the ODD and the space it was drawn in
 # (`tuple[OddSample, ParameterSpace]`): the checked scenario_runner records it
-# (`coverage.record_case(*case)`), and scenario_queue passes it on.
+# (`coverage.record_case(*case)`) and reads its sample (`case[0]`), and
+# scenario_queue passes it on.
 @tuple
 class OddCase:
     sample: OddSample
     space: ParameterSpace
+
+    # `case[0]`, `case[1]`: Codon indexes a class of fields of different types
+    # by a constant only through a method that takes it as one.
+    def __getitem__(self, index: Literal[int]):
+        if index == 0:
+            return self.sample
+        elif index == 1:
+            return self.space
+        else:
+            compile_error("OddCase: a case is its sample (0) and its space (1)")
 
 
 # What the checked scenario_runner uses of odd.route (excluded): the ODD's

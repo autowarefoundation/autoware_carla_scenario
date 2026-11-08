@@ -238,6 +238,7 @@ MISSING_BUILTIN_EXCEPTIONS = (
     "ModuleNotFoundError",
     "PermissionError",
     "ProcessLookupError",
+    "RecursionError",
     "TimeoutError",
 )
 

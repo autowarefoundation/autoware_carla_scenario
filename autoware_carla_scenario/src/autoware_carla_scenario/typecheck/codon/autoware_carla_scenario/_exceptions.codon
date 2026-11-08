@@ -3,7 +3,8 @@
 # Every rewritten module (a checked module and a scenario alike) imports them
 # through the transform's prelude (typecheck/transform.py), so they read as
 # the builtins they are in Python. Each derives from its CPython base
-# (FileNotFoundError from OSError, BrokenPipeError from ConnectionError).
+# (FileNotFoundError from OSError, BrokenPipeError from ConnectionError,
+# RecursionError from RuntimeError).
 #
 # Each is built as CPython builds one with a message: from nothing or from one
 # value by position, whose str() is the message (`FileNotFoundError(path)`).
@@ -292,6 +293,16 @@ class BrokenPipeError(Static[ConnectionError]):
 
     def __init__(self, *args, **kwargs):
         super().__init__("BrokenPipeError", _message(args, kwargs, "BrokenPipeError()"))
+        self.python_type = self.__class__._pytype
+
+
+# Derived from RuntimeError, as CPython's is: json.loads() raises it for a
+# document nested too deeply, which a reader catches beside ValueError.
+class RecursionError(Static[RuntimeError]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__("RecursionError", _message(args, kwargs, "RecursionError()"))
         self.python_type = self.__class__._pytype
 
 

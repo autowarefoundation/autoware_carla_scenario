@@ -82,7 +82,7 @@ def _read_entries(path: Path) -> list[dict[str, Any]]:
         raise ValueError(str(exc)) from None
     if not isinstance(data, dict) or not isinstance(data.get("jobs"), list):
         raise ValueError("not a sweep plan (no list of jobs)")
-    entries: list[dict[str, Any]] = []
+    entries = []
     for job in data["jobs"]:
         if not isinstance(job, dict) or not isinstance(job.get("dir"), str):
             raise ValueError(f"a job without a directory ({job!r})")
@@ -129,7 +129,7 @@ def read_sweep_plan(path: Path) -> list[PlannedJob]:
     for entry in _read_entries(path):
         overrides = entry.get("overrides")
         listed = [str(o) for o in overrides] if isinstance(overrides, list) else []
-        jobs.append((path.parent / entry["dir"], listed))
+        jobs.append((path.parent / str(entry["dir"]), listed))
     return jobs
 
 

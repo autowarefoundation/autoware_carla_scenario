@@ -2054,11 +2054,7 @@ class ScenarioRunner:
                 forget_walkers()
                 # A drawn case's effects -- what the scenario stages, which the
                 # case drew -- are measured too, for the drift view.
-                effect_measures: Dict[str, str] = {}
-                if TYPE_CHECKING:
-                    pass
-                else:
-                    effect_measures = _effect_measures(scenario, case)
+                effect_measures: Dict[str, str] = _effect_measures(scenario, case)
                 coverage = CoverageCollector(
                     scenario._cover_items,
                     scenario._cross_items,

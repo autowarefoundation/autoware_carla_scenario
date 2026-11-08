@@ -3410,7 +3410,8 @@ What Codon 0.19 needs that Python does not, beyond
   built-in exceptions that Codon lacks (`ImportError`,
   `ModuleNotFoundError`, `FileNotFoundError`, `PermissionError`,
   `ProcessLookupError`, `ChildProcessError`, `TimeoutError`,
-  `ConnectionError`, `BrokenPipeError`, and `KeyboardInterrupt`, derived from
+  `ConnectionError`, `BrokenPipeError`, `RecursionError`, and
+  `KeyboardInterrupt`, derived from
   `BaseException`, so `except Exception:` does not catch it) are declared in
   the model's `_exceptions.codon`, each
   derived from its CPython base, and the prelude of every rewritten module
