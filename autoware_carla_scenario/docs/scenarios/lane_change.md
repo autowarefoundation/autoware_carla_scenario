@@ -16,7 +16,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 
 | | |
 |---|---|
-| **Ego** | Constraint search: a lane that is not in a junction and is long enough, excluding the map's lanelets with no 3D model -- with a lane on that side to change into, or, for the refused change, without one. 1 km/h. Goal *from the search*: the lanelet after the matched one, or the first one past the junction it leads into. |
+| **Ego** | Constraint search: a lane that is not in a junction and is long enough, excluding the map's lanelets with no 3D model -- with a lane on that side to change into, or, for the refused change, without one. 1 km/h. Goal *from the search*: the lanelet after the matched one, or the first one past the junction it leads into (along the junction lanelet with the lowest ID where the way forks); a match with no lanelet ahead along that way is skipped. |
 | **Initialization** | Every traffic light green. |
 | **Ego, from the start** | Change lane, left or right. |
 | **Pass** | Changing: the ego has been on the lane beside the one it started on (*lane of a position*: the lanelet to the matched lanelet's left or right, or one ahead of it before the next junction). Refusing: the timeout passes. |

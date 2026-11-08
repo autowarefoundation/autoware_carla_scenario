@@ -20,7 +20,7 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 
 | | |
 |---|---|
-| **Ego** | Constraint search: a lanelet *before* a junction lanelet that has a traffic-light stop line, excluding the map's lanelets with no 3D model. Position *before stop line*: 10 m short of it. Goal *from the search*: past the junction -- the first lanelet out of it, along the junction lanelet with the lowest ID where the way forks. |
+| **Ego** | Constraint search: a lanelet *before* a junction lanelet that has a traffic-light stop line, excluding the map's lanelets with no 3D model. Position *before stop line*: 10 m short of it. Goal *from the search*: past the junction -- the first lanelet out of it, along the junction lanelet with the lowest ID where the way forks; a match whose way out of the junction leads nowhere is skipped. |
 | **Initialization** | Every traffic light red. |
 | **After 5 s** | Every traffic light green. |
 | **Pass** | Both have happened: before the green the ego stood still (0.1 m/s or slower) for 0.5 s with its front bumper 0-3 m before the stop line (the stop zone), *and* after 5.5 s it was moving at 10 km/h or more. |
