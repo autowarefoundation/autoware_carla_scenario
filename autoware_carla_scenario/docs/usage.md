@@ -1881,6 +1881,11 @@ recorded outcome holds no verdict, or a result that cannot be reported (no
 string `message`, no number `elapsed_seconds`, `condition_statuses` or a
 `failure` that cannot be read), shows as an error, as `scenario-slurm
 collect` reports it.
+A coverage file openodd cannot read -- one holding a number too long for a
+float (an integer of hundreds of digits, which Python's `json` reads) or
+`NaN` -- is left out of the matrix, the plot and the cases in a cell alike,
+and the page names it; `/compare` names the files each session's matrix left
+out the same way.
 
 ### Comparing runs
 

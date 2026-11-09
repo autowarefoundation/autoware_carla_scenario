@@ -791,7 +791,10 @@ async def session_odd(
     found = await asyncio.to_thread(
         results.load_results, _base_path(), session_type, date, time
     )
+    # Only the coverage documents openodd can read; the page names the
+    # files it leaves out (#2012).
     documents = results.coverage_documents(found)
+    skipped = results.skipped_coverage(found)
     openodd = _openodd()
     conditions = openodd.view.parse_conditions(request.query_params.getlist("at"))
     ref = _session_ref(session_type, date, time)
@@ -830,6 +833,7 @@ async def session_odd(
             "conditions": conditions,
             "matrix_html": matrix_html,
             "plot_html": plot_html,
+            "skipped": skipped,
             "oo_styles": openodd.view.styles(),
             "oo_script": openodd.view.script(),
             "metric_names": results.METRICS,
@@ -874,6 +878,9 @@ async def compare_sessions(request: Request) -> HTMLResponse:
     offered = await asyncio.to_thread(offer)
     comparison = None
     matrices: list[tuple[str, str]] = []
+    # The coverage files each session's matrix leaves out, as openodd cannot
+    # read them (#2012).
+    skipped: list[tuple[str, list[str]]] = []
     if len(loaded) >= 2:
         every = [r for _, found in loaded for r in found]
         dx, dy = results.default_axes(every)
@@ -883,6 +890,9 @@ async def compare_sessions(request: Request) -> HTMLResponse:
         openodd = _openodd()
         for ref, found in loaded:
             documents = results.coverage_documents(found)
+            names = results.skipped_coverage(found)
+            if names:
+                skipped.append((ref, names))
             if not documents:
                 matrices.append((ref, ""))
                 continue
@@ -910,6 +920,7 @@ async def compare_sessions(request: Request) -> HTMLResponse:
             # Each session's pending cases, which the pass rates leave out.
             "pending": [results.pending_count(found) for _, found in loaded],
             "matrices": matrices,
+            "skipped": skipped,
             "attributes": attributes,
             "metric_names": results.METRICS,
             "oo_styles": _openodd().view.styles() if matrices else "",
