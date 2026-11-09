@@ -3,11 +3,18 @@
 # simulated at, and the traffic parameters a TrafficParametersAction sets. Traffic backends are the runner's business and are not
 # modelled for a scenario.
 #
-# The library check compiles traffic.base, traffic.config, traffic.driven,
-# traffic.traffic_manager and the package itself from their source
-# (typecheck/library.py), and this module stands in for the modules of the
-# package it does not: traffic.context (pathlib) and traffic.registry
-# (importlib, omegaconf).
+# The library check compiles the package itself and every traffic module but
+# traffic.registry and traffic.sumo.backend from their source
+# (typecheck/library.py lists them as CHECKED): traffic.authoring, base,
+# config, context, driven, fidelity, final_approach, mesoscopic, parameters,
+# route_match, traffic_manager and the traffic.sumo package but its backend.
+# Of the two it does not, this module stands in for traffic.registry, which
+# the checked package re-exports: the TrafficBackendFactory alias is a
+# Callable of a mapping of any values, which Codon has no type for, and its
+# load_traffic_backend_plugins() imports the framework's registry, which is
+# neither checked nor modelled. traffic.sumo.backend is imported only lazily:
+# inside the package's build_sumo(), which the check leaves uncalled, and
+# inside traffic.sumo's module __getattr__, which the check does not compile.
 
 import typesafe_carla.carla as carla
 
