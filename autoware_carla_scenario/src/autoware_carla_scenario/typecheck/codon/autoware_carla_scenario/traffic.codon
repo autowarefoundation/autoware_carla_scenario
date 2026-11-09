@@ -12,8 +12,9 @@
 # the checked package re-exports: the TrafficBackendFactory alias is a
 # Callable of a mapping of any values, which Codon has no type for, and its
 # load_traffic_backend_plugins() imports the framework's registry, which is
-# neither checked nor modelled. traffic.sumo.backend is imported only inside
-# the package's build_sumo(), which the check leaves uncalled.
+# neither checked nor modelled. traffic.sumo.backend is imported only lazily:
+# inside the package's build_sumo(), which the check leaves uncalled, and
+# inside traffic.sumo's module __getattr__, which the check does not compile.
 
 import typesafe_carla.carla as carla
 
