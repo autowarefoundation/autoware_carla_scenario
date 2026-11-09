@@ -2269,8 +2269,9 @@ cannot read 2020-12 tuples.</p>
 The records marked (2) in the table below that are not in that list
 (<code>rear_axle</code>, <code>turn_indicators</code>, <code>plan</code>, <code>adversity</code>, <code>waypoint_arrival</code>, <code>collision</code>, <code>walker_fallen</code>, <code>metric</code>,
 <code>spawn</code>, <code>despawn</code>) came later within version 2: a reader of version 2 that does not
-know one skips it. So did the <code>tick</code>'s optional <code>angular_velocity</code> field: a
-file written before it has none.
+know one skips it. So did the <code>tick</code>'s optional <code>angular_velocity</code> field and
+the <code>collision</code>'s optional <code>start_frame</code> field: a file written before one has
+none.
 Every change keeps the records there are: a new version adds records (and
 optional fields), so a reader that skips the <code>type</code>s and ignores the fields
 it does not know reads any later file.</p>
@@ -2384,7 +2385,7 @@ each condition that changed and an <code>action</code> line for each action that
 <tr>
 <td><code>collision</code> (2)</td>
 <td>when a vehicle other than the ego begins a contact with a vehicle or a walker, and when it ends (no event from the pair for a second, or the run ended with it still going) (<code>npc_collisions</code>)</td>
-<td><code>frame</code>, <code>t</code>, <code>actors</code> <code>[role, role]</code> (type ids where an actor has no role), <code>ids</code> <code>[id, id]</code>, <code>impulse</code> (N*s; at the end, the strongest), <code>ego</code> (one side is the ego), <code>phase</code> (<code>start</code>/<code>end</code>), <code>duration</code> (s, at the end; null at the start)</td>
+<td><code>frame</code>, <code>t</code> (one tick's: at the start, the tick that took the contact up; at the end, the tick that saw it end), <code>actors</code> <code>[role, role]</code> (type ids where an actor has no role), <code>ids</code> <code>[id, id]</code>, <code>impulse</code> (N*s; at the end, the strongest), <code>ego</code> (one side is the ego), <code>phase</code> (<code>start</code>/<code>end</code>), <code>duration</code> (s, at the end; null at the start), <code>start_frame</code> (optional: the frame of the contact's first event, as the sensor heard it)</td>
 </tr>
 <tr>
 <td><code>walker_fallen</code> (2)</td>
@@ -2594,7 +2595,7 @@ change that a reader of the last version could not skip over is a new
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 05:43:21 UTC"><span class="timeago" datetime="2026-11-08T05:43:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 05:43:21 UTC">2026-11-08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 9, 2026 01:55:29 UTC"><span class="timeago" datetime="2026-11-09T01:55:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 9, 2026 01:55:29 UTC">2026-11-09</span>
   </span>
 
     
