@@ -326,8 +326,9 @@ zone. A zone whose spacing would lay out more than `MAX_ZONE_OBJECTS`
 
 From `start_time` to `end_time` (`None`: never removed) the objects stand in
 the world as CARLA props, each added by a `SpawnAction` and named
-`<label>/<zone>/<n>` (`docs/api.md`). Unlike a vehicle, a prop may appear
-while a run is under way. When the zone appears, two things happen:
+`<label>#<k>/<zone>/<n>` (`docs/api.md`), where `<k>` numbers the zone
+actions, so two zones with the same label each own their own props (#2013).
+Unlike a vehicle, a prop may appear while a run is under way. When the zone appears, two things happen:
 
 - `clear_traffic` takes the backend's background vehicles in the zone off the
   road;
