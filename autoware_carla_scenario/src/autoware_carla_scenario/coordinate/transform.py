@@ -1104,8 +1104,9 @@ def _project_to_centerline(
 
 
 def _normalize_angle(angle: float) -> float:
-    """Normalize angle to (−π, π]."""
-    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+    """Normalize angle to [−π, π)."""
+    wrapped = (angle + math.pi) % (2.0 * math.pi) - math.pi
+    return -math.pi if wrapped >= math.pi else wrapped
 
 
 def _lane_width_at_ds(lane: Lane, ds: float) -> float:

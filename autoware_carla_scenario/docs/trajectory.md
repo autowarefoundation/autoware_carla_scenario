@@ -94,6 +94,16 @@ Positions are converted to CARLA world coordinates when the action first runs,
 through the loaded map. Vertices of different kinds may be mixed in one
 trajectory.
 
+Between two vertices the heading turns only from one **given** `yaw` to
+another. Along a segment neither of whose ends gives a `yaw`, the entity faces
+that segment's own direction, the direction it is moving, with a yaw rate of
+`0`, and turns to the next segment's at the vertex. Where one end gives a
+`yaw` and the other does not, it turns from the given heading to the
+segment's direction, or from the segment's direction to the given heading,
+across the segment. A segment that does not move (a stop: the same point
+twice) has no direction; a vertex there keeps the heading it arrived with,
+and over the stop the entity turns on the spot to the heading it leaves with.
+
 Every number of a `MapPose`, a `RelativeLanePose` or a route pose must be
 finite: `nan` and `inf` are refused when the pose is built, a `yaw` or `z`
 given as `None` excepted. Whatever the frame, a vertex that resolves to a

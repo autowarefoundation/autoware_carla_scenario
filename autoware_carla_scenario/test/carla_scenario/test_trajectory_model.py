@@ -243,6 +243,123 @@ class TestHeadings:
         )
         assert trajectory.at_time(2.5).yaw == pytest.approx(0.0)
 
+    def test_a_derived_heading_is_the_segment_s_own_on_an_l(self) -> None:
+        """Half way along the first leg of an L the entity faces along that
+        leg, not half way round the corner it has yet to reach (#2022)."""
+        corner = ResolvedTrajectory(
+            xs=[0.0, 100.0, 100.0], ys=[0.0, 0.0, 100.0], zs=[0.0] * 3, yaws=[None] * 3
+        )
+        first = corner.at_distance(50.0, speed=1.0)
+        assert (first.yaw, first.vx, first.vy) == pytest.approx((0.0, 1.0, 0.0))
+        assert first.yaw_rate == 0.0
+        # Just before the corner, still along the first leg.
+        assert corner.at_distance(99.0).yaw == pytest.approx(0.0)
+        second = corner.at_distance(150.0, speed=1.0)
+        assert (second.yaw, second.vx, second.vy) == pytest.approx((90.0, 0.0, 1.0))
+
+    @pytest.mark.parametrize(
+        ("time", "position", "yaw", "velocity"),
+        [
+            (2.5, (25.0, 0.0), 0.0, (10.0, 0.0)),
+            (4.9, (49.0, 0.0), 0.0, (10.0, 0.0)),
+            (7.5, (50.0, 25.0), 90.0, (0.0, 10.0)),
+            (12.5, (25.0, 50.0), 180.0, (-10.0, 0.0)),
+        ],
+    )
+    def test_a_timed_square_faces_along_each_leg(
+        self,
+        time: float,
+        position: tuple[float, float],
+        yaw: float,
+        velocity: tuple[float, float],
+    ) -> None:
+        """Every leg of a sparse timed square, not only the last, is driven
+        facing along it, without turning (#2022)."""
+        square = ResolvedTrajectory(
+            xs=[0.0, 50.0, 50.0, 0.0],
+            ys=[0.0, 0.0, 50.0, 50.0],
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+            times=[0.0, 5.0, 10.0, 15.0],
+        )
+        sample = square.at_time(time)
+        assert (sample.x, sample.y) == pytest.approx(position)
+        assert math.cos(math.radians(sample.yaw - yaw)) == pytest.approx(1.0)
+        assert (sample.vx, sample.vy) == pytest.approx(velocity)
+        assert sample.yaw_rate == 0.0
+
+    def test_a_closed_square_faces_along_each_leg_and_the_closing_one(self) -> None:
+        square = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 0.0],
+            ys=[0.0, 0.0, 10.0, 10.0],
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+            closed=True,
+        )
+        for distance, yaw in ((5.0, 0.0), (15.0, 90.0), (25.0, 180.0), (35.0, -90.0)):
+            sample = square.at_distance(distance)
+            assert math.cos(math.radians(sample.yaw - yaw)) == pytest.approx(1.0)
+            assert sample.yaw_rate == 0.0
+        # A lap later it wraps onto the first leg again.
+        assert square.at_distance(45.0).yaw == pytest.approx(0.0)
+
+    def test_given_headings_still_interpolate(self) -> None:
+        trajectory = ResolvedTrajectory(
+            xs=[0.0, 10.0],
+            ys=[0.0, 0.0],
+            zs=[0.0, 0.0],
+            yaws=[0.0, 90.0],
+            times=[0.0, 2.0],
+        )
+        sample = trajectory.at_time(1.0)
+        assert sample.yaw == pytest.approx(45.0)
+        assert sample.yaw_rate == pytest.approx(45.0)
+        assert trajectory.at_distance(2.5).yaw == pytest.approx(22.5)
+
+    def test_one_given_end_turns_to_or_from_the_segment_s_heading(self) -> None:
+        """A given heading at one end and none at the other: the yaw turns
+        between the given heading and the segment's own direction."""
+        given_first = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0],
+            ys=[0.0, 0.0, 10.0],
+            zs=[0.0] * 3,
+            yaws=[-60.0, None, None],
+            times=[0.0, 2.0, 4.0],
+        )
+        sample = given_first.at_time(1.0)
+        assert sample.yaw == pytest.approx(-30.0)
+        assert sample.yaw_rate == pytest.approx(30.0)
+        # The second vertex's resolved heading (90, the next leg's) plays no part.
+        assert given_first.at_time(1.9).yaw == pytest.approx(-3.0)
+        given_last = ResolvedTrajectory(
+            xs=[0.0, 10.0],
+            ys=[0.0, 0.0],
+            zs=[0.0] * 2,
+            yaws=[None, 40.0],
+            times=[0.0, 2.0],
+        )
+        sample = given_last.at_time(0.5)
+        assert sample.yaw == pytest.approx(10.0)
+        assert sample.yaw_rate == pytest.approx(20.0)
+        assert given_last.at_distance(5.0).yaw == pytest.approx(20.0)
+
+    def test_a_stop_turns_on_the_spot_to_the_next_leg(self) -> None:
+        """A segment that does not move has no direction of its own: the yaw
+        turns from the heading the entity stopped with to the next leg's."""
+        trajectory = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 10.0],
+            ys=[0.0, 0.0, 0.0, 10.0],
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+            times=[0.0, 1.0, 3.0, 4.0],
+        )
+        stopped = trajectory.at_time(2.0)
+        assert (stopped.x, stopped.y) == pytest.approx((10.0, 0.0))
+        assert stopped.yaw == pytest.approx(45.0)
+        assert stopped.yaw_rate == pytest.approx(45.0)
+        assert trajectory.at_time(0.5).yaw == pytest.approx(0.0)
+        assert trajectory.at_time(3.5).yaw == pytest.approx(90.0)
+
 
 class TestAlongThePath:
     def test_at_distance(self) -> None:

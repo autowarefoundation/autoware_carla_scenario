@@ -240,4 +240,5 @@ def _heading_at(centre: "lanelet2.core.ConstLineString2d", s: float) -> float:
 
 
 def _angle(angle: float) -> float:
-    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+    wrapped = (angle + math.pi) % (2.0 * math.pi) - math.pi
+    return -math.pi if wrapped >= math.pi else wrapped

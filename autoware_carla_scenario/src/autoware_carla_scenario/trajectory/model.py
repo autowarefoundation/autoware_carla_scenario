@@ -941,7 +941,13 @@ class ResolvedTrajectory:
     Args:
         xs, ys, zs: Vertex positions in CARLA world coordinates (m).
         yaws: Vertex headings in CARLA degrees; ``None`` for a vertex whose
-            heading is taken from the path.
+            heading is taken from the path.  Between two vertices the yaw
+            turns only from one given heading to the other: along a segment
+            neither of whose ends was given one, the entity faces the
+            segment's own direction, with a yaw rate of ``0``; with one end
+            given, it turns from (or to) that heading to (or from) the
+            segment's direction.  A segment that does not move (a stop) turns
+            from one vertex's resolved heading to the next's.
         times: Vertex times, or ``None`` for an untimed trajectory.
         closed: Whether the last vertex joins back to the first.
 
@@ -959,6 +965,7 @@ class ResolvedTrajectory:
     closed: bool = False
     _arc: list[float] = field(init=False, repr=False)
     _headings: list[float] = field(init=False, repr=False)
+    _given: list[bool] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         count = len(self.xs)
@@ -1006,6 +1013,7 @@ class ResolvedTrajectory:
                 )
             )
         self._arc = arc
+        self._given = [yaw is not None for yaw in self.yaws]
         self._headings = self._fill_headings()
 
     # ------------------------------------------------------------------
@@ -1239,13 +1247,31 @@ class ResolvedTrajectory:
     ) -> TrajectorySample:
         """The point *fraction* of the way along segment *index*.
 
-        With a *duration* the velocity is the segment's, and the yaw rate the
-        turn between its vertex headings over that time.
+        The yaw turns between the segment's two end headings: a vertex's own
+        (given) heading, or, for an end without one, the segment's direction --
+        not the vertex's resolved heading, which is the direction of the next
+        segment and would turn the entity across the whole segment.  So with
+        neither end given the yaw is the segment's direction throughout.  A
+        segment that does not move has no direction, and turns from one
+        vertex's resolved heading to the next's (a turn on the spot, or
+        nothing, where a stop kept its heading).
+
+        With a *duration* the velocity is the segment's, and the yaw rate that
+        turn over that time.
         """
         x0, y0, z0 = self.xs[index], self.ys[index], self.zs[index]
         x1, y1, z1 = self.xs[index + 1], self.ys[index + 1], self.zs[index + 1]
-        turn = _wrap_degrees(self._headings[index + 1] - self._headings[index])
-        yaw = _wrap_degrees(self._headings[index] + fraction * turn)
+        start = self._headings[index]
+        end = self._headings[index + 1]
+        direction = self._segment_heading(index)
+        if direction is not None:
+            along = math.degrees(direction)
+            if not self._given[index]:
+                start = along
+            if not self._given[index + 1]:
+                end = along
+        turn = _wrap_degrees(end - start)
+        yaw = _wrap_degrees(start + fraction * turn)
         if duration is None:
             vx = vy = yaw_rate = 0.0
         else:
@@ -1303,4 +1329,6 @@ class ResolvedTrajectory:
 
 def _wrap_degrees(angle: float) -> float:
     """*angle* wrapped into ``[-180, 180)``."""
-    return (angle + 180.0) % 360.0 - 180.0
+    wrapped = (angle + 180.0) % 360.0 - 180.0
+    # Rounding can land a value just below -180 on +180 itself.
+    return -180.0 if wrapped >= 180.0 else wrapped
