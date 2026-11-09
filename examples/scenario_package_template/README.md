@@ -90,7 +90,10 @@ the config does not have (the message suggests the closest key).
 ## Making it a workspace member (optional)
 
 To develop the package alongside the framework in this monorepo, add it to the
-root `pyproject.toml` workspace:
+root `pyproject.toml` workspace, and tell uv that its `autoware-carla-scenario`
+dependency is the workspace member rather than the release on PyPI (without
+that entry, `uv lock` fails with "`autoware-carla-scenario` is included as a
+workspace member, but is missing an entry in `tool.uv.sources`"):
 
 ```toml
 [tool.uv.workspace]
@@ -100,5 +103,14 @@ members = [
 ]
 ```
 
-then run `uv sync`. This is optional — the package works as a plain editable
-install too.
+and, in this package's own `pyproject.toml`:
+
+```toml
+[tool.uv.sources]
+autoware-carla-scenario = { workspace = true }
+```
+
+then run `uv lock` and `uv sync`. This is optional — the package works as a
+plain editable install too. Drop the `{ workspace = true }` source entry again
+when you move the package out of the monorepo: outside a workspace, uv refuses
+it.

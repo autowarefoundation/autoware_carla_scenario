@@ -11,9 +11,9 @@ from pathlib import Path
 
 from jinja2 import Environment, FileSystemLoader, StrictUndefined
 
-from .text_escape import py_docstring, toml_string
+from .text_escape import py_docstring, single_line, toml_string
 
-__all__ = ["code_environment", "py_docstring", "toml_string"]
+__all__ = ["code_environment", "py_docstring", "single_line", "toml_string"]
 
 
 def _toml_string_filter(value: object) -> str:
@@ -24,6 +24,11 @@ def _toml_string_filter(value: object) -> str:
 def _py_docstring_filter(value: object) -> str:
     """The ``py_docstring`` filter: :func:`py_docstring` of ``str(value)``."""
     return py_docstring(str(value))
+
+
+def _single_line_filter(value: object) -> str:
+    """The ``single_line`` filter: :func:`single_line` of ``str(value)``."""
+    return single_line(str(value))
 
 
 def code_environment(templates_dir: str | Path) -> Environment:
@@ -38,4 +43,5 @@ def code_environment(templates_dir: str | Path) -> Environment:
     )
     environment.filters["toml_string"] = _toml_string_filter
     environment.filters["py_docstring"] = _py_docstring_filter
+    environment.filters["single_line"] = _single_line_filter
     return environment

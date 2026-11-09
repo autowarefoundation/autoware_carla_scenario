@@ -1,7 +1,7 @@
 [project]
 name = "{{ distribution_name }}"
 version = "0.1.0"
-description = {{ description | toml_string }}
+description = {{ description | single_line | toml_string }}
 # Whatever the framework this was scaffolded against supports, so the two
 # cannot disagree about which interpreters the package installs on.
 requires-python = {{ requires_python | toml_string }}

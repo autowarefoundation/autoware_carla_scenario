@@ -17,7 +17,7 @@ else:  # pragma: no cover - only taken on 3.10
     import tomli as tomllib
 
 from autoware_carla_scenario import templating, text_escape
-from autoware_carla_scenario.text_escape import py_docstring, toml_string
+from autoware_carla_scenario.text_escape import py_docstring, single_line, toml_string
 
 #: Inputs that exercise every rule of both escapes.
 EDGE_CASES = [
@@ -118,13 +118,13 @@ DOCSTRING_EXPECTED = [
 ]
 
 
-@pytest.mark.parametrize("name", ["py_docstring", "toml_string"])
+@pytest.mark.parametrize("name", ["py_docstring", "single_line", "toml_string"])
 def test_templating_re_exports_each_moved_name(name: str) -> None:
     assert getattr(templating, name) is getattr(text_escape, name)
 
 
 def test_text_escape_exports_exactly_the_moved_names() -> None:
-    assert sorted(text_escape.__all__) == ["py_docstring", "toml_string"]
+    assert sorted(text_escape.__all__) == ["py_docstring", "single_line", "toml_string"]
 
 
 @pytest.mark.parametrize(
@@ -160,8 +160,29 @@ def test_py_docstring_leaves_inner_quotes_alone() -> None:
 
 
 @pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("plain prose", "plain prose"),
+        ("", ""),
+        ("line one\nline two", "line one line two"),
+        ("line one\r\nline two\rline three", "line one line two line three"),
+        ("para one\n\n  para two  \n", "para one para two"),
+        ("a\u2028b\u2029c\x85d\x0be\x0cf\x1cg", "a b c d e f g"),
+        ("\n\r\n", ""),
+        ("tab\tinside  stays", "tab\tinside  stays"),
+    ],
+)
+def test_single_line_folds_every_line_break(value: str, expected: str) -> None:
+    folded = single_line(value)
+    assert folded == expected
+    assert len(folded.splitlines()) <= 1
+
+
+@pytest.mark.parametrize(
     ("filter_name", "value", "expected"),
     [
+        ("single_line", "a\nb", "a b"),
+        ("single_line", 3, "3"),
         ("toml_string", 3, '"3"'),
         ("toml_string", None, '"None"'),
         ("toml_string", 'a "b"', '"a \\"b\\""'),

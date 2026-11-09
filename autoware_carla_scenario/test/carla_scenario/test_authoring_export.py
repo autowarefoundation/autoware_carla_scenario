@@ -8,6 +8,7 @@ generated files themselves runs unconditionally.
 
 from __future__ import annotations
 
+import ast
 import os
 import re
 import sys
@@ -2119,18 +2120,25 @@ class TestFreeFormTextReachesTheManifest:
     """Titles and descriptions are prose, and prose ends up in TOML."""
 
     @pytest.mark.parametrize(
-        "description",
+        ("description", "expected"),
         [
-            'NPC1 cuts in "hard" on the ego',
-            "line one\nline two",
-            "back\\slash",
+            ('NPC1 cuts in "hard" on the ego', 'NPC1 cuts in "hard" on the ego'),
+            # ``project.description`` must be one line (PEP 621): a multi-line
+            # description is folded, or ``uv build`` refuses the package (#2031).
+            ("line one\nline two", "line one line two"),
+            ("line one\r\n\r\nline two\u2028three", "line one line two three"),
+            ("back\\slash", "back\\slash"),
         ],
     )
     def test_a_description_survives_into_a_parsable_pyproject(
-        self, tmp_path: Path, description: str
+        self, tmp_path: Path, description: str, expected: str
     ) -> None:
         document = new_document()
         document.description = description
         result = export_package(document, tmp_path, **OFFLINE)
         parsed = tomllib.loads((result.root / "pyproject.toml").read_text())
-        assert parsed["project"]["description"] == description
+        assert parsed["project"]["description"] == expected
+        # The docstring keeps the description as written.
+        init = next((result.root / "src").glob("*/__init__.py"))
+        tree = ast.parse(init.read_text(encoding="utf-8"))
+        assert description in (ast.get_docstring(tree, clean=False) or "")

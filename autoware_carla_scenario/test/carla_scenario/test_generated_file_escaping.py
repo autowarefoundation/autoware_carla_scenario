@@ -27,7 +27,7 @@ from autoware_carla_scenario.authoring import package_export
 from autoware_carla_scenario.authoring.framework_pin import Pin
 from autoware_carla_scenario.authoring.starter import new_document
 from autoware_carla_scenario.scaffold import create_scenario_package
-from autoware_carla_scenario.templating import py_docstring, toml_string
+from autoware_carla_scenario.templating import py_docstring, single_line, toml_string
 
 #: Text that broke a TOML basic string or a Python docstring, one way or another.
 HOSTILE = [
@@ -86,7 +86,8 @@ def test_scaffolded_package_parses(tmp_path: Path, description: str) -> None:
     )
     _parse_tree(result.root)
     pyproject = tomllib.loads((result.root / "pyproject.toml").read_text("utf-8"))
-    assert pyproject["project"]["description"] == description
+    # One line, as PEP 621 requires (#2031); the docstring keeps it whole.
+    assert pyproject["project"]["description"] == single_line(description)
     init = (result.root / "src" / "my_pkg" / "__init__.py").read_text("utf-8")
     docstring = ast.get_docstring(ast.parse(init), clean=False)
     assert docstring is not None and docstring.startswith(description + "\n")
@@ -128,7 +129,8 @@ def test_exported_package_parses(tmp_path: Path, description: str, pin: Pin) -> 
     package_export._write_package_tree(tmp_path, document, names, pin, "0.9.7", [])
     _parse_tree(tmp_path)
     pyproject = tomllib.loads((tmp_path / "pyproject.toml").read_text("utf-8"))
-    assert pyproject["project"]["description"] == description
+    # One line, as PEP 621 requires (#2031); the docstring keeps it whole.
+    assert pyproject["project"]["description"] == single_line(description)
     init = tmp_path / "src" / names["package_name"] / "__init__.py"
     docstring = ast.get_docstring(ast.parse(init.read_text("utf-8")), clean=False)
     assert docstring is not None and docstring.startswith(description + "\n")

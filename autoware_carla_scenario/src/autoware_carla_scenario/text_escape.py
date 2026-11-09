@@ -2,16 +2,17 @@
 
 Scenario titles and descriptions are the user's prose, and they end up in a
 generated ``pyproject.toml`` and in the docstring of a generated
-``__init__.py``.  These functions are what keeps a quote, a backslash or a
-control character in that prose from breaking either file.  :mod:`templating`
-registers them as the Jinja filters ``toml_string`` and ``py_docstring``.
+``__init__.py``.  These functions are what keeps a quote, a backslash, a
+control character or a line break in that prose from breaking either file.
+:mod:`templating` registers them as the Jinja filters ``toml_string``,
+``py_docstring`` and ``single_line``.
 """
 
 from __future__ import annotations
 
 import re
 
-__all__ = ["py_docstring", "toml_string"]
+__all__ = ["py_docstring", "single_line", "toml_string"]
 
 #: Control characters a TOML basic string may not hold unescaped (tab, LF and
 #: CR are escaped by name in :func:`toml_string`).
@@ -41,6 +42,26 @@ def toml_string(text: str) -> str:
     # TOML forbids every other control character in a basic string, raw.
     escaped = _TOML_CONTROL.sub(lambda m: f"\\u{ord(m.group()):04X}", escaped)
     return f'"{escaped}"'
+
+
+def single_line(text: str) -> str:
+    """Return *text* with its line breaks folded into single spaces.
+
+    ``project.description`` must be a single line (PEP 621, the core
+    metadata's ``Summary``): a description with a newline, escaped by
+    :func:`toml_string` into valid TOML all the same, made a package that
+    ``uv build`` refused (#2031).  Every boundary CPython's
+    :meth:`str.splitlines` knows counts -- ``\\n``, ``\\r``, ``\\r\\n``,
+    ``\\v``, ``\\f``, the separators ``\\x1c``-``\\x1e``, NEL (U+0085) and
+    U+2028/U+2029 -- so every line break an editor's text area can produce is
+    folded.  These are CPython's boundaries: the generators run this under
+    CPython, and the static check only type-checks it with Codon.  Each line
+    is stripped and blank lines dropped, so a paragraph break does not leave a
+    run of spaces; a description without a line break only loses the
+    whitespace around it.
+    """
+    lines = [line.strip() for line in text.splitlines()]
+    return " ".join(line for line in lines if line)
 
 
 def _escape_closing_quotes(text: str) -> str:
