@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from types import SimpleNamespace
 from typing import Any
 
@@ -306,6 +307,32 @@ def test_a_sweep_delivered_late_does_not_push_out_the_newest(
     assert sweep is not None and sweep[0] == 12
 
 
+def test_a_due_sweep_that_never_comes_costs_one_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A LiDAR that stops delivering waited the whole timeout on every read (#2018)."""
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.01)
+    lidar = CarlaLidarSensor(DriverLidarConfig())
+    lidar._receive(_measurement(10))  # noqa: SLF001
+    assert lidar.latest_sweep(10) is not None
+    # Nothing on 11: one wait, then the stale sweep is not handed out ...
+    assert lidar.latest_sweep(11) is None
+    # ... and the reads after do not wait for one again, even a sweep a tick.
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 60.0)
+    started = time.monotonic()
+    for frame in (12, 13, 14):
+        assert lidar.latest_sweep(frame) is None
+    assert time.monotonic() - started < 0.5
+    # Once a sweep comes, it is taken, and the next one due is waited for.
+    lidar._receive(_measurement(15))  # noqa: SLF001
+    sweep = lidar.latest_sweep(15)
+    assert sweep is not None and sweep[0] == 15
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    started = time.monotonic()
+    assert lidar.latest_sweep(16) is None
+    assert time.monotonic() - started >= 0.04
+
+
 def test_sweeps_stay_bounded_while_the_bridged_stack_boots() -> None:
     """The driver entity attaches its LiDARs, then waits for the stack's handshake
     without reading them; the sweeps of that wait must not pile up (#983)."""
@@ -532,6 +559,93 @@ def test_the_weather_noise_repeats_with_its_seed_and_can_be_turned_off(
     assert np.array_equal(sweeps[0], sweeps[1])
     assert not np.array_equal(sweeps[0], sweeps[2])
     np.testing.assert_array_equal(sweeps[3], _ring(40.0))
+
+
+def _rainy_sweep(lidar: CarlaLidarSensor, frame: int = 10) -> np.ndarray:
+    weather = SimpleNamespace(precipitation=100.0, fog_density=0.0, fog_distance=0.0)
+    _attached(lidar, weather)
+    lidar._receive(_ring_measurement(frame))  # noqa: SLF001
+    sweep = lidar.get_sweep(frame)
+    assert sweep is not None
+    return sweep
+
+
+def test_lidars_left_to_the_runs_seed_draw_their_own_noise(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Every LiDAR without a noise_seed drew the run's noise stream (#2018)."""
+    from autoware_carla_scenario.seed import set_run_seed  # noqa: PLC0415
+
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    previous = set_run_seed(7)
+    try:
+        config = DriverLidarConfig()
+        top = _rainy_sweep(CarlaLidarSensor(config, sensor_id="lidar_top"))
+        rear = _rainy_sweep(CarlaLidarSensor(config, sensor_id="lidar_rear"))
+        assert not np.array_equal(top, rear)
+        # The same LiDAR draws the same noise again, as in every run of the seed.
+        again = _rainy_sweep(CarlaLidarSensor(config, sensor_id="lidar_top"))
+        np.testing.assert_array_equal(top, again)
+        # Without an id, LiDARs on different mounts draw apart too.
+        left = _rainy_sweep(CarlaLidarSensor(DriverLidarConfig(position_y=-1.0)))
+        right = _rainy_sweep(CarlaLidarSensor(DriverLidarConfig(position_y=1.0)))
+        assert not np.array_equal(left, right)
+        # Another run's seed, other noise.
+        set_run_seed(8)
+        other = _rainy_sweep(CarlaLidarSensor(config, sensor_id="lidar_top"))
+        assert not np.array_equal(top, other)
+    finally:
+        set_run_seed(previous)
+
+
+def test_a_noise_seed_given_is_the_noise_of_every_lidar_given_it(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(carla_lidar, "_SWEEP_TIMEOUT", 0.05)
+    config = DriverLidarConfig(noise_seed=3)
+    top = _rainy_sweep(CarlaLidarSensor(config, sensor_id="lidar_top"))
+    rear = _rainy_sweep(CarlaLidarSensor(config, sensor_id="lidar_rear"))
+    np.testing.assert_array_equal(top, rear)
+    weather = LidarWeather(precipitation=100.0, fog_density=0.0, fog_distance=0.0)
+    np.testing.assert_array_equal(top, apply_weather(_ring(40.0), weather, 1.0, 3, 10))
+
+
+def test_the_driver_entity_and_the_t4_recorder_name_their_lidars_by_logical_id(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Both callers hand the sensor the LiDAR's logical id, its noise stream (#2018)."""
+    import autoware_carla_scenario.entity.carla_driver_entity as cde  # noqa: PLC0415
+    from autoware_carla_scenario import t4  # noqa: PLC0415
+    from autoware_carla_scenario.t4_settings import T4Settings  # noqa: PLC0415
+
+    built: list[str] = []
+
+    class _Lidar(CarlaLidarSensor):
+        def __init__(self, config: Any, **kwargs: Any) -> None:
+            super().__init__(config, **kwargs)
+            built.append(kwargs["sensor_id"])
+
+        def attach(self, world: Any, actor: Any) -> None:
+            pass
+
+    monkeypatch.setattr(carla_lidar, "CarlaLidarSensor", _Lidar)
+    monkeypatch.setattr(t4, "CarlaLidarSensor", _Lidar)
+    lidars = (
+        DriverLidarConfig(logical_id="lidar_top"),
+        DriverLidarConfig(logical_id="lidar_rear"),
+    )
+    entity = cde.CarlaDriverEntity(
+        DriverClientConfig(lidars=lidars),
+        client=SimpleNamespace(),  # type: ignore[arg-type]
+    )
+    entity._attach_lidars(SimpleNamespace(), SimpleNamespace())  # type: ignore[arg-type]  # noqa: SLF001
+    recording = object.__new__(t4.T4Recording)
+    recording._settings = T4Settings(lidars=lidars)  # noqa: SLF001
+    recording._rear_axle = 0.0  # noqa: SLF001
+    recording._lidars = []  # noqa: SLF001
+    recording._cameras = []  # noqa: SLF001
+    recording._attach_sensors(SimpleNamespace(), SimpleNamespace())  # type: ignore[arg-type]  # noqa: SLF001
+    assert built == ["lidar_top", "lidar_rear"] * 2
 
 
 # ---------------------------------------------------------------------------

@@ -537,7 +537,7 @@ Each grows with its intensity (0-100). Clear weather leaves a sweep as CARLA cas
 | Field | Default | |
 |---|---|---|
 | `weather_noise` | `1.0` | Scale of the weather noise: 0 off, 1 as tuned, more exaggerates it |
-| `noise_seed` | `null` | Seed of the noise (the run's `seed` when null); with the sweep's frame, it repeats a run's sweeps |
+| `noise_seed` | `null` | Seed of the noise; with the sweep's frame, it repeats a run's sweeps. Null takes the run's `seed`, mixed with the LiDAR's `logical_id`, so that LiDARs alike draw different noise on the same frame and each the same in every run of a seed; a seed given is used as it is, so two LiDARs given the same one draw the same noise |
 | `fog_density_scale` | `server.fog_density_scale`, else `0.001` | The server's `carla.Weather.FogDensityScale`; normally left to `server` |
 
 How thick a `fog_density` looks is the server's `carla.Weather.FogDensityScale`, and the

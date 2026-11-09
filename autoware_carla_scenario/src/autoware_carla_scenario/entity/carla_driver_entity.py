@@ -553,9 +553,12 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
 
         for config in self._config.lidars:
             # Swept only on the ticks the policy reads it: the sweeps between
-            # would be ray-cast for nobody.
+            # would be ray-cast for nobody.  Its logical id keeps its weather
+            # noise apart from the other LiDARs' (#2018).
             lidar = CarlaLidarSensor(
-                config, sweep_interval_s=self._config.policy_timestep_s
+                config,
+                sweep_interval_s=self._config.policy_timestep_s,
+                sensor_id=config.logical_id,
             )
             lidar.attach(world, actor)
             mount = sensor_pose_in_rig(

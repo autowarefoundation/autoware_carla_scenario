@@ -375,7 +375,7 @@ class DriverLidarSpec:
     lower_fov_deg: float = -25.0
     dropoff_general_rate: float = 0.0
     weather_noise: float = 1.0
-    #: ``null`` takes the run's seed.
+    #: ``null`` takes the run's seed, mixed with ``logical_id``.
     noise_seed: int | None = None
     fog_density_scale: float = 0.001
     position_x: float = 0.0

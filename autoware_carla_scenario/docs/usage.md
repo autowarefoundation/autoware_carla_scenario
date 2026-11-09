@@ -768,7 +768,7 @@ It is the seed of:
 | The adversarial actions, `AdversarialTrafficAction`, `AdversityFeasibleCondition`, `TrafficSourceAction` | their `seed` argument (`Seed` in the editor) |
 | The smart pedestrian's motion generator (`SmartPedestrianControllerAction`) | its `seed` argument |
 | The driver policy's session (`DriveSessionRequest.random_seed`) | `driver.random_seed` |
-| A LiDAR's weather noise | `driver.lidars[].noise_seed` |
+| A LiDAR's weather noise (the run's seed mixed with the LiDAR's `logical_id`, so that each LiDAR draws its own) | `driver.lidars[].noise_seed` |
 
 Every one of those seeds is `null` (`None` in Python) by default, and a null seed
 is the run's. In Python the run's seed lives in `autoware_carla_scenario.seed`:
