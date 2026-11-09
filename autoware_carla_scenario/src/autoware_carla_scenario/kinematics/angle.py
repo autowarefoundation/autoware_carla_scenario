@@ -14,7 +14,9 @@ def normalize_angle_deg(angle: float) -> float:
     wrapped: 359 degrees apart is one degree apart, and every place that
     compares two yaws needs the same answer.
     """
-    return (angle + 180.0) % 360.0 - 180.0
+    wrapped = (angle + 180.0) % 360.0 - 180.0
+    # Rounding can land a value just below -180 on +180 itself.
+    return -180.0 if wrapped >= 180.0 else wrapped
 
 
 def normalize_angle_rad(angle: float) -> float:
@@ -22,4 +24,6 @@ def normalize_angle_rad(angle: float) -> float:
 
     :func:`normalize_angle_deg` for radians.
     """
-    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+    wrapped = (angle + math.pi) % (2.0 * math.pi) - math.pi
+    # Rounding can land a value just below -pi on +pi itself.
+    return -math.pi if wrapped >= math.pi else wrapped

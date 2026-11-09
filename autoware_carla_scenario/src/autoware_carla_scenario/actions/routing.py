@@ -185,7 +185,11 @@ def _direction(path: ResolvedTrajectory, s: float) -> tuple[float, float]:
 
 
 def _side(path: ResolvedTrajectory, s: float, x: float, y: float) -> float:
-    """How far (m) ``(x, y)`` lies left of *path* at *s* (negative: right)."""
+    """How far (m) ``(x, y)`` lies right of *path* at *s* (negative: left).
+
+    Right, not left: CARLA's frame is left-handed (+y is 90 degrees clockwise
+    of +x), so the cross product of the heading and the offset is positive to
+    the right."""
     at = path.at_distance(s)
     hx, hy = _direction(path, s)
     return hx * (y - at.y) - hy * (x - at.x)
@@ -194,7 +198,8 @@ def _side(path: ResolvedTrajectory, s: float, x: float, y: float) -> float:
 def _beside(
     path: ResolvedTrajectory, s: float, side: float
 ) -> tuple[float, float, float]:
-    """The point *side* m left of *path* at *s*."""
+    """The point *side* m right of *path* at *s* (negative: left), in CARLA's
+    left-handed frame, as :func:`_side` measures it."""
     at = path.at_distance(s)
     hx, hy = _direction(path, s)
     return at.x - hy * side, at.y + hx * side, at.z

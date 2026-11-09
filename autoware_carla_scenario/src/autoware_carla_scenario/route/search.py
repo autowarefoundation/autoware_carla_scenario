@@ -102,7 +102,8 @@ def lane_shape(heading_change_rad: float) -> str:
 
 
 def _wrap(angle: float) -> float:
-    return (angle + math.pi) % (2.0 * math.pi) - math.pi
+    wrapped = (angle + math.pi) % (2.0 * math.pi) - math.pi
+    return -math.pi if wrapped >= math.pi else wrapped
 
 
 @dataclass

@@ -87,6 +87,25 @@ def test_normalize_angle_rad(angle: float, wrapped: float) -> None:
     assert normalize_angle_rad(angle) == pytest.approx(wrapped)
 
 
+def test_angle_wrapping_never_returns_the_excluded_upper_bound() -> None:
+    """Just below -pi (-180) rounds onto +pi (+180) in the modulo; the wrap
+    answers the included lower bound instead (#2022)."""
+    from autoware_carla_scenario.coordinate.transform import _normalize_angle
+    from autoware_carla_scenario.kinematics import normalize_angle_deg
+    from autoware_carla_scenario.route.search import _wrap
+    from autoware_carla_scenario.traffic.route_match import _angle
+    from autoware_carla_scenario.trajectory.model import _wrap_degrees
+
+    for wrap in (normalize_angle_rad, _wrap, _angle, _normalize_angle):
+        assert wrap(-math.pi - 4e-16) == -math.pi
+        assert wrap(math.pi) == -math.pi
+        assert wrap(-math.pi) == -math.pi
+    for wrap_deg in (normalize_angle_deg, _wrap_degrees):
+        assert wrap_deg(-180.0 - 1e-14) == -180.0
+        assert wrap_deg(180.0) == -180.0
+        assert wrap_deg(190.0) == pytest.approx(-170.0)
+
+
 # -- collision ----------------------------------------------------------------
 
 
