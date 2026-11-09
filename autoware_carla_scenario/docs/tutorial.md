@@ -602,8 +602,10 @@ framework's own. Hydra composes a config path such as
 `scenario/my_scenario/default.yaml` from the first directory that has it.
 What happens to a name that is already taken depends on who took it:
 
-- **A built-in scenario** (or one registered explicitly before the plugins
-  load): the plugin replaces it, and `load_scenario_plugins()` logs a warning
+- **A built-in scenario**, or one registered explicitly before the plugins
+  load (a package whose `register()` a custom runner calls itself, as in the
+  "No entry point?" tip below, counts as a built-in here): the plugin
+  replaces it, and `load_scenario_plugins()` logs a warning
   naming the entry point and every scenario name it replaced. The built-in
   configs are still composed from the framework's `conf/`, so
   `scenario=lane_change/left` would hand `LaneChangeConfig`'s keys to the
@@ -614,35 +616,37 @@ What happens to a name that is already taken depends on who took it:
   replaced 'lane_change', registered before the plugins loaded ...
   ```
 
-- **Another installed package**: the package loaded first keeps the name. Its
-  scenario class builds the scenario, and its `conf/` directory, being the
-  earlier one on the search path, is the one Hydra reads wherever both
-  packages ship the same config path, so a run never mixes one package's class
-  with the other's YAML. The later package's registration of that name is
-  dropped, with a warning naming both entry points (#2034):
+- **Another installed package**: the package loaded first keeps the name,
+  and the later one is not loaded at all. Everything it registered with the
+  scenario registry while loading -- every scenario it added or changed, a
+  document included -- and every `conf/` directory it registered are undone,
+  so none of its configs is on Hydra's search path and a run never mixes one
+  package's class with the other's YAML. The warning names both entry points
+  (#2034):
 
   ```
-  WARNING ... The scenario plugins 'pkga' (pkga:register) and 'pkgb' (pkgb:register)
-  both register the scenario 'dup'. 'pkga' loaded first ... and keeps it ...
+  WARNING ... The scenario plugin 'pkgb' (pkgb:register) was not loaded: it
+  registers scenario(s) an earlier plugin of the walk already registered
+  ('dup' from 'pkga' (pkga:register)) ...
   ```
 
-  A config of the later package's own that names the scenario (a path only it
-  ships) then builds the first package's class, so rename the scenario in one
-  of them.
+  What the refused package registered elsewhere when it was imported -- traffic
+  backends, ODD builders, authoring specs, ... -- is not undone. Rename the
+  scenario in one of the packages to install both.
 
 Config paths are checked as well, in every group (`scenario/`, `map/`,
 `ego/`, ...): registering a `conf/` directory that ships a path an earlier
 directory -- the framework's own, or another package's -- already provides
 logs a warning naming both directories and the one Hydra uses, since the later
-copy is never read. A package's `conf/scenario/lane_change/left.yaml` is
+copy is never read. Only the new directory is scanned (what the earlier ones
+provide is indexed), so registering hundreds of packages stays cheap. A package's `conf/scenario/lane_change/left.yaml` is
 shadowed by the built-in one, for example:
 
 ```
-WARNING ... The config directory /.../my_pkg/conf ships 1 config path(s) that
-/.../autoware_carla_scenario/examples/conf already provides:
-scenario/lane_change/left.yaml. Hydra composes a config from the first
-directory on its search path that has it, so it uses
-/.../autoware_carla_scenario/examples/conf for these ...
+WARNING ... The config directory /.../my_pkg/conf ships 1 config path(s) already
+provided by /.../autoware_carla_scenario/examples/conf, which comes earlier on
+Hydra's search path: scenario/lane_change/left.yaml. Hydra composes these from
+the earlier directory and never reads the copies here ...
 ```
 
 !!! tip "No entry point? Register explicitly."

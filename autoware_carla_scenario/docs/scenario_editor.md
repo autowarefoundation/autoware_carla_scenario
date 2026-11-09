@@ -1009,14 +1009,13 @@ exporting. Every id the export accepts gets a package of its own.
     ```
 
     With both installed, both register a builder named `new_scenario` and
-    both put a `scenario/new_scenario.yaml` on Hydra's search path. The entry
-    points load sorted by distribution name, so `new-scenario` loads before
-    `new-scenario-scenario`: the old package keeps the name, its builder
-    *and*, its conf directory being the earlier one on the search path, its
-    config. The new package's builder is dropped, and the run logs a warning
-    naming both entry points, and another naming both conf directories and
-    the one Hydra composes `scenario/new_scenario.yaml` from. The re-export
-    is not used until the old distribution is uninstalled.
+    both ship `scenario/new_scenario.yaml`. The entry points load sorted by
+    distribution name, so `new-scenario` loads before `new-scenario-scenario`:
+    the old package keeps the name, and the re-export is not loaded at all --
+    its builder, document and `conf/` directory are undone, with a warning
+    naming both entry points -- so a run uses the old package's builder and
+    config together. The re-export is not used until the old distribution is
+    uninstalled.
 
     The id `autoware_carla_scenario`, refused before because it exported as
     the framework's own package, now exports as `autoware_carla_scenario_scenario`

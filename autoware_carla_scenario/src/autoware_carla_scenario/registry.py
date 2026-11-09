@@ -40,7 +40,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
 if TYPE_CHECKING:
-    from collections.abc import Iterable, Mapping
+    from collections.abc import Mapping
 
     from .authoring.models import ScenarioDocument
     from .coordinate import GroundProjectionConfig, Lanelet2Pose
@@ -244,6 +244,23 @@ _FRAMEWORK_CONF_DIR = Path(__file__).resolve().parent / "examples" / "conf"
 #: How many shadowed config paths a collision warning lists by name.
 _SHOWN_COLLISIONS = 10
 
+#: Each config path (``scenario/lane_change/left.yaml``) and the first
+#: directory on the search path that provides it -- the one Hydra composes it
+#: from.  Kept so that registering a directory scans only that directory: the
+#: editor exports a package per scenario, so hundreds of registered
+#: directories are plausible, and every CLI start registers them all.
+_CONFIG_INDEX: dict[str, Path] = {}
+
+#: The directories :data:`_CONFIG_INDEX` was built from, in search-path order.
+#: When it no longer matches the registered ones (a directory was unregistered,
+#: or a test replaced :data:`_CONF_DIRS`) the index is rebuilt from
+#: :data:`_DIR_CONFIG_PATHS`, without rescanning.
+_INDEXED_DIRS: list[Path] = []
+
+#: The config paths each indexed directory provides, as scanned when it was
+#: registered.
+_DIR_CONFIG_PATHS: dict[Path, frozenset[str]] = {}
+
 
 def register_conf_dir(path: str | Path) -> None:
     """Register a Hydra config directory contributed by a scenario package.
@@ -257,60 +274,83 @@ def register_conf_dir(path: str | Path) -> None:
     first directory on its search path that has it, so a directory registered
     later cannot replace a config an earlier one -- the framework's own, or
     another package's -- already provides.  Every such path is logged as a
-    warning naming both directories and the one Hydra uses (#2034).
+    warning naming both directories and the one Hydra uses (#2034).  Only the
+    new directory is scanned: what the earlier ones provide is indexed.
     """
     resolved = Path(path).resolve()
     if resolved in _CONF_DIRS:
         return
     if resolved != _FRAMEWORK_CONF_DIR:
-        _warn_about_shadowed_configs(resolved)
+        _sync_config_index()
+        provided = _config_paths(resolved)
+        _DIR_CONFIG_PATHS[resolved] = provided
+        _warn_about_shadowed_configs(resolved, provided)
+        for config in provided:
+            _CONFIG_INDEX.setdefault(config, resolved)
+        _INDEXED_DIRS.append(resolved)
     _CONF_DIRS.append(resolved)
 
 
-def _config_paths(directory: Path) -> set[str]:
+def _indexed_order() -> list[Path]:
+    """Return the directories the index covers, in search-path order.
+
+    The framework's own comes first whether or not it is registered: it is
+    the ``scenario`` CLI's primary config directory.
+    """
+    return [_FRAMEWORK_CONF_DIR] + [
+        conf_dir for conf_dir in _CONF_DIRS if conf_dir != _FRAMEWORK_CONF_DIR
+    ]
+
+
+def _sync_config_index() -> None:
+    """Rebuild :data:`_CONFIG_INDEX` if the registered directories changed."""
+    order = _indexed_order()
+    if _INDEXED_DIRS == order:
+        return
+    _CONFIG_INDEX.clear()
+    for conf_dir in order:
+        if conf_dir not in _DIR_CONFIG_PATHS:
+            _DIR_CONFIG_PATHS[conf_dir] = _config_paths(conf_dir)
+        for config in _DIR_CONFIG_PATHS[conf_dir]:
+            _CONFIG_INDEX.setdefault(config, conf_dir)
+    _INDEXED_DIRS[:] = order
+
+
+def _config_paths(directory: Path) -> frozenset[str]:
     """Return the config paths *directory* provides, relative and POSIX."""
     if not directory.is_dir():
-        return set()
-    return {
+        return frozenset()
+    return frozenset(
         config.relative_to(directory).as_posix()
         for config in directory.rglob("*.yaml")
         if config.is_file()
-    }
+    )
 
 
-def _warn_about_shadowed_configs(directory: Path) -> None:
+def _warn_about_shadowed_configs(directory: Path, provided: frozenset[str]) -> None:
     """Warn about every config path of *directory* an earlier one provides.
 
-    The earlier directories are the registered ones, in order, behind the
-    framework's own, which comes first whether or not it is registered: it is
-    the ``scenario`` CLI's primary config directory.
+    One warning per earlier directory, naming each directory once.
     """
-    provided = _config_paths(directory)
-    if not provided:
-        return
-    earlier = [_FRAMEWORK_CONF_DIR]
-    earlier += [conf_dir for conf_dir in _CONF_DIRS if conf_dir != _FRAMEWORK_CONF_DIR]
-    for earlier_dir in earlier:
-        shadowed = sorted(provided & _config_paths(earlier_dir))
-        if not shadowed:
-            continue
-        provided.difference_update(shadowed)
-        shown = ", ".join(shadowed[:_SHOWN_COLLISIONS])
-        if len(shadowed) > _SHOWN_COLLISIONS:
-            shown += f" and {len(shadowed) - _SHOWN_COLLISIONS} more"
+    shadowed: dict[Path, list[str]] = {}
+    for config in sorted(provided):
+        earlier_dir = _CONFIG_INDEX.get(config)
+        if earlier_dir is not None:
+            shadowed.setdefault(earlier_dir, []).append(config)
+    for earlier_dir, configs in shadowed.items():
+        shown = ", ".join(configs[:_SHOWN_COLLISIONS])
+        if len(configs) > _SHOWN_COLLISIONS:
+            shown += f" and {len(configs) - _SHOWN_COLLISIONS} more"
         logger.warning(
-            "The config directory %s ships %d config path(s) that %s already "
-            "provides: %s. Hydra composes a config from the first directory on "
-            "its search path that has it, so it uses %s for these, and the "
-            "copies in %s are never read. Rename them (or the scenario) in the "
-            "package that registered %s.",
+            "The config directory %s ships %d config path(s) already provided "
+            "by %s, which comes earlier on Hydra's search path: %s. Hydra "
+            "composes these from the earlier directory and never reads the "
+            "copies here; rename them (or the scenario) in the package that "
+            "registered this directory.",
             directory,
-            len(shadowed),
+            len(configs),
             earlier_dir,
             shown,
-            earlier_dir,
-            directory,
-            directory,
         )
 
 
@@ -323,7 +363,10 @@ def unregister_conf_dir(path: str | Path) -> None:
     try:
         _CONF_DIRS.remove(resolved)
     except ValueError:
-        pass
+        return
+    if resolved != _FRAMEWORK_CONF_DIR:
+        # Rescanned if it is registered again: its files may have changed.
+        _DIR_CONFIG_PATHS.pop(resolved, None)
 
 
 def get_conf_dirs() -> list[Path]:
@@ -352,13 +395,20 @@ def load_scenario_plugins() -> None:
 
     The entry points load in a fixed order, by distribution name and then
     entry-point name (:func:`load_entry_point_plugins`), so their config
-    directories join Hydra's search path in that order.  Two packages that
-    register the same scenario name are told apart by it: the first one loaded
-    keeps the name, its class *and* -- its config directory being earlier on
-    the search path -- its YAML wherever both ship the same config path, and
-    the later package's registration of that name is dropped with a warning
-    naming both (#2034).  A plugin that replaces a scenario registered before
-    the plugins loaded (a built-in) still replaces it, with a warning (#1802).
+    directories join Hydra's search path in that order.
+
+    A plugin that registers a scenario name an earlier plugin of the walk
+    registered (its builder, classes or document) is refused as a whole: every
+    scenario registration it made and every config directory it registered
+    are undone, with a warning naming both plugins (#2034).  So the first
+    package keeps the name, and a run uses one package's class and YAML: no
+    config the refused package ships is on the search path.  What the refused
+    plugin did to other registries at import -- traffic backends, ODD
+    builders, authoring specs, ... -- is not undone.
+
+    A plugin that replaces a scenario registered before the walk -- a
+    built-in, or a package registered explicitly (the tutorial's "No entry
+    point?" tip) -- still replaces it, with a warning (#1802).
 
     Loading is idempotent: subsequent calls are no-ops within a single process.
     A failing plugin is logged and skipped so that one broken package cannot
@@ -382,7 +432,7 @@ def load_entry_point_plugins(
     what: str,
     snapshot: Callable[[], Mapping[str, object]] | None = None,
     *,
-    checkpoint: Callable[[], Callable[[Iterable[str]], None]] | None = None,
+    checkpoint: Callable[[], Callable[[], None]] | None = None,
     override_intended: bool = False,
 ) -> None:
     """Import every distribution advertising *group* and call what it names.
@@ -415,11 +465,11 @@ def load_entry_point_plugins(
             point and every name it replaced (#1802); one that replaces a name
             an earlier plugin of the walk registered is warned about naming
             both entry points (#2034).
-        checkpoint: Requires *snapshot*.  Returns a callable that puts the
-            names it is given back as they were when ``checkpoint`` was
-            called.  With it, the first plugin to register a name keeps it:
-            a later plugin's registration of that name is undone.  Without
-            it, the last plugin wins.
+        checkpoint: Requires *snapshot*.  Returns a callable that undoes
+            everything the plugin registered since ``checkpoint`` was called.
+            With it, a plugin that replaces a name an earlier plugin of the
+            walk registered is refused as a whole, so the first plugin keeps
+            the name.  Without it, the last plugin wins.
         override_intended: Whether replacing a name registered before the
             walk is something a plugin may mean to do (a traffic backend
             overriding a built-in one), which is reported in softer words.
@@ -451,7 +501,7 @@ def load_entry_point_plugins(
         if snapshot is None:
             continue
         # Checked even for a plugin that then failed: what it registered
-        # before the failure stays registered.
+        # before the failure stays registered (unless it is refused).
         after = snapshot()
         changed = sorted(
             name
@@ -461,19 +511,18 @@ def load_entry_point_plugins(
         replaced_earlier = [name for name in changed if name in before]
         replaced_plugins = [name for name in replaced_earlier if name in owners]
         replaced_builtins = [name for name in replaced_earlier if name not in owners]
+        if undo is not None and replaced_plugins:
+            undo()
+            _warn_about_refusal(entry_point, what, replaced_plugins, owners)
+            continue
         if replaced_builtins:
             _warn_about_replacements(
                 entry_point, what, replaced_builtins, override_intended
             )
         for name in replaced_plugins:
-            _warn_about_collision(
-                owners[name], entry_point, what, name, keep_first=undo is not None
-            )
-        if undo is not None and replaced_plugins:
-            undo(replaced_plugins)
+            _warn_about_collision(owners[name], entry_point, what, name)
         for name in changed:
-            if undo is None or name not in replaced_plugins:
-                owners[name] = entry_point
+            owners[name] = entry_point
 
 
 def _entry_point_sort_key(entry_point: Any) -> tuple[str, str, str]:
@@ -503,19 +552,38 @@ def _scenario_snapshot() -> dict[str, object]:
     whose ``register()`` ran explicitly before its entry point did (the
     tutorial's "No entry point?" tip), or a distribution on the path twice,
     re-registers the same pair, which replaces nothing.
+
+    With the document loader, if there is one, by where it is defined (its
+    module and qualified name), not by identity: a ``register()`` that runs
+    twice makes a new closure each time, but it is the same document, while a
+    plugin that registers a document for another package's scenario changes
+    what that scenario runs.
     """
-    return {
-        name: _SCENARIO_CLASSES.get(name, builder)
-        for name, builder in _SCENARIO_REGISTRY.items()
-    }
+    names = list(_SCENARIO_REGISTRY)
+    names += [name for name in _SCENARIO_DOCUMENTS if name not in _SCENARIO_REGISTRY]
+    snapshot: dict[str, object] = {}
+    for name in names:
+        builder = _SCENARIO_REGISTRY.get(name)
+        what = _SCENARIO_CLASSES.get(name, builder)
+        loader = _SCENARIO_DOCUMENTS.get(name)
+        if loader is None:
+            snapshot[name] = what
+        else:
+            snapshot[name] = (
+                what,
+                getattr(loader, "__module__", None),
+                getattr(loader, "__qualname__", loader),
+            )
+    return snapshot
 
 
-def _scenario_checkpoint() -> Callable[[Iterable[str]], None]:
-    """Save the scenario registry, to put names back as they are now.
+def _scenario_checkpoint() -> Callable[[], None]:
+    """Save the scenario and config-directory registries, to undo a plugin.
 
-    Everything a name stands for is put back together: its builder, its
-    classes and its document, so a scenario keeps all of what one package
-    registered for it.
+    The callable it returns puts the scenario tables back as they are now --
+    every name the plugin added, replaced or removed -- and unregisters every
+    config directory registered since, so nothing a refused plugin registered
+    here stays.  Other registries are not saved.
     """
     tables: list[dict[str, Any]] = [
         _SCENARIO_REGISTRY,
@@ -523,14 +591,14 @@ def _scenario_checkpoint() -> Callable[[Iterable[str]], None]:
         _SCENARIO_DOCUMENTS,
     ]
     saved = [dict(table) for table in tables]
+    conf_dirs = list(_CONF_DIRS)
 
-    def undo(names: Iterable[str]) -> None:
-        for name in names:
-            for table, copy in zip(tables, saved):
-                if name in copy:
-                    table[name] = copy[name]
-                else:
-                    table.pop(name, None)
+    def undo() -> None:
+        for table, copy in zip(tables, saved):
+            table.clear()
+            table.update(copy)
+        for conf_dir in [d for d in _CONF_DIRS if d not in conf_dirs]:
+            unregister_conf_dir(conf_dir)
 
     return undo
 
@@ -572,36 +640,31 @@ def _warn_about_replacements(
     )
 
 
-def _warn_about_collision(
-    first: Any, later: Any, what: str, name: str, keep_first: bool
+def _warn_about_refusal(
+    refused: Any, what: str, names: list[str], owners: Mapping[str, Any]
 ) -> None:
-    """Warn that two plugins of the same walk registered *name*."""
-    if keep_first:
-        logger.warning(
-            "The %s plugins %s and %s both register the %s %r. %s loaded "
-            "first (plugins load sorted by distribution and entry-point name) "
-            "and keeps it: %r builds its %s, and Hydra composes its configs "
-            "first wherever both packages ship the same config path, so a run "
-            "uses one package's class and YAML. The registration of %r by %s "
-            "was dropped, and a config only %s ships that names %r builds the "
-            "%s of %s. Rename the %s in one of the packages.",
-            what,
-            _describe(first),
-            _describe(later),
-            what,
-            name,
-            repr(first.name),
-            name,
-            what,
-            name,
-            repr(later.name),
-            repr(later.name),
-            name,
-            what,
-            repr(first.name),
-            what,
-        )
-        return
+    """Warn that *refused* was not loaded: it took names earlier plugins own."""
+    taken = "; ".join(f"{name!r} from {_describe(owners[name])}" for name in names)
+    logger.warning(
+        "The %s plugin %s was not loaded: it registers %s(s) an earlier plugin "
+        "of the walk already registered (%s). Plugins load sorted by "
+        "distribution and entry-point name and the first keeps the name, so "
+        "every %s registration of %s and every config directory it registered "
+        "were undone, and a run uses one package's class and YAML. What it "
+        "registered elsewhere at import (traffic backends, ODD builders, ...) "
+        "stays. Rename the %s in one of the packages.",
+        what,
+        _describe(refused),
+        what,
+        taken,
+        what,
+        repr(refused.name),
+        what,
+    )
+
+
+def _warn_about_collision(first: Any, later: Any, what: str, name: str) -> None:
+    """Warn that two plugins of the same walk registered *name*; the last won."""
     logger.warning(
         "The %s plugins %s and %s both register the %s %r. %s loaded last "
         "(plugins load sorted by distribution and entry-point name), so %r "
