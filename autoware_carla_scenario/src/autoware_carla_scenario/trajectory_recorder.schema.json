@@ -923,14 +923,14 @@
     },
     "CollisionRecord": {
       "title": "CollisionRecord",
-      "description": "A vehicle other than the ego collided with a vehicle or a walker (`npc_collisions.NpcCollisionMonitor`): logged, not judged -- the ego's own collision condition is what fails a run. A contact is written when it begins (`phase: start`) and when it ends (`phase: end`, no event from the pair for a second), with how long it lasted. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "description": "A vehicle other than the ego collided with a vehicle or a walker (`npc_collisions.NpcCollisionMonitor`): logged, not judged -- the ego's own collision condition is what fails a run. A contact is written when it begins (`phase: start`) and when it ends (`phase: end`, no event from the pair for a second), with how long it lasted. `frame` and `t` are always one tick's. Added in version 2, which a reader of version 2 that does not know it skips.",
       "type": "object",
       "properties": {
         "type": {
           "const": "collision"
         },
         "frame": {
-          "description": "The CARLA frame the collision happened on.",
+          "description": "The CARLA frame of the tick the record is of: at `start`, the tick that took the contact up; at `end`, the tick that saw it end (the run's last tick, for a contact the run ended in).",
           "$ref": "#/definitions/SafeUInt"
         },
         "t": {
@@ -978,6 +978,10 @@
             "number",
             "null"
           ]
+        },
+        "start_frame": {
+          "description": "The CARLA frame of the contact's first collision event, as the sensor heard it: at or before the start record's `frame`. Optional: a file written before it was added has none.",
+          "$ref": "#/definitions/SafeUInt"
         }
       },
       "required": [

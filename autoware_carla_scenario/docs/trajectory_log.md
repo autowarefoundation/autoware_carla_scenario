@@ -32,8 +32,9 @@ The format has a version, `schema_version` in the `world` line: **2**. Version
 The records marked (2) in the table below that are not in that list
 (`rear_axle`, `turn_indicators`, `plan`, `adversity`, `waypoint_arrival`, `collision`, `walker_fallen`, `metric`,
 `spawn`, `despawn`) came later within version 2: a reader of version 2 that does not
-know one skips it. So did the `tick`'s optional `angular_velocity` field: a
-file written before it has none.
+know one skips it. So did the `tick`'s optional `angular_velocity` field and
+the `collision`'s optional `start_frame` field: a file written before one has
+none.
 Every change keeps the records there are: a new version adds records (and
 optional fields), so a reader that skips the `type`s and ignores the fields
 it does not know reads any later file.
@@ -82,7 +83,7 @@ each condition that changed and an `action` line for each action that moved on. 
 | `action` (2) | on the first tick of the loop, and when the action's state changes | `frame`, `t`, `phase` (`pre_tick`/`post_tick`), `index` (in its list), `label`, `action_type` (its class), `state` (`standbyState`, `startTransition`, `runningState`, `endTransition`, `completeState`: OpenSCENARIO's, `ActionState`) |
 | `adversity` (2) | on the tick NADE samples an adversity (`AdversarialTrafficAction`) | `frame`, `t`, `label` (the action's), `agent`, `kind` (`AdversityKind`), `location` (`AdversityLocation`), `probability` (`p`, cut for an unavoidable one), `is_probability` (`q`), `weight` (the run's, once sampled), `avoidable`, `victims`, `response` (`avoid`, `accept` or empty) |
 | `waypoint_arrival` (2) | when a routed entity has reached a waypoint with a time or a departure condition (`RoutingAction`, any mode), and its target is known | `frame`, `t`, `label` (the action's), `entity`, `vertex` (0-based), `kind` (`time`, or `condition`: the target is when it first held), `mode` (`driver`, `follow`, `position`), `target_t`, `actual_t`, `error_s` (`actual_t - target_t`) |
-| `collision` (2) | when a vehicle other than the ego begins a contact with a vehicle or a walker, and when it ends (no event from the pair for a second, or the run ended with it still going) (`npc_collisions`) | `frame`, `t`, `actors` `[role, role]` (type ids where an actor has no role), `ids` `[id, id]`, `impulse` (N*s; at the end, the strongest), `ego` (one side is the ego), `phase` (`start`/`end`), `duration` (s, at the end; null at the start) |
+| `collision` (2) | when a vehicle other than the ego begins a contact with a vehicle or a walker, and when it ends (no event from the pair for a second, or the run ended with it still going) (`npc_collisions`) | `frame`, `t` (one tick's: at the start, the tick that took the contact up; at the end, the tick that saw it end), `actors` `[role, role]` (type ids where an actor has no role), `ids` `[id, id]`, `impulse` (N*s; at the end, the strongest), `ego` (one side is the ego), `phase` (`start`/`end`), `duration` (s, at the end; null at the start), `start_frame` (optional: the frame of the contact's first event, as the sensor heard it) |
 | `walker_fallen` (2) | once per walker seen fallen over (tipped beyond 50 deg, or dropped more than half its height between two looks a quarter second apart while barely moving sideways) | `frame`, `t`, `id`, `role`, `drop` (m), `tilt` (deg) |
 | `spawn` (2) | on the tick a `SpawnAction` brought an entity into the scene (one spawned hidden, as a rule; not for a prop) | `frame`, `t`, `label` (the action's), `entity` (role), `id` (its actor's, or null) |
 | `despawn` (2) | on the tick a `DespawnAction` removed an entity, or the run a walker that lay fallen 5 s | `frame`, `t`, `label` (the action's), `entity` (role; a fallen walker with none, its blueprint id), `id` (its actor's, or null), `reason` (`action`/`fallen`) |

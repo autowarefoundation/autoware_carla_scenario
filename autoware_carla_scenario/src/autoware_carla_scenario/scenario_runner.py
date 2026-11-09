@@ -1751,9 +1751,11 @@ class ScenarioRunner:
         coverage: Optional[CoverageCollector] = None
         t4_recording: Optional[T4Recording] = None
         npc_events: Optional["NpcCollisionMonitor"] = None
-        # The scenario time of the last tick, which the contacts still under
-        # way when the run ends are ended at.
+        # The scenario time and world frame of the last tick, which the
+        # contacts still under way when the run ends are ended at (-1: no
+        # tick yet).
         last_elapsed = 0.0
+        last_frame = -1
         # The log the Rerun converter takes once the result JSON is written.
         rerun_log: Optional[Path] = None
         # The scenario's seed is the run's (autoware_carla_scenario.seed): what
@@ -2094,6 +2096,9 @@ class ScenarioRunner:
                     # it advanced to.
                     elapsed = clock.simulated
                     last_elapsed = elapsed
+                    # Read with the time, so that a tick cut short before the
+                    # NPC monitor's own still ends the contacts on one tick.
+                    last_frame = int(world.get_snapshot().frame)
                     trajectory.record(world, elapsed)
 
                     # Give the ego entity a chance to drive itself before the
@@ -2349,7 +2354,7 @@ class ScenarioRunner:
                 # The contacts still under way end with the run, however it
                 # ended, while the trajectory log is still open to take them.
                 try:
-                    for collision in npc_events.finish(last_elapsed):
+                    for collision in npc_events.finish(last_elapsed, last_frame):
                         trajectory.record_collision(collision)
                 except Exception:
                     logger.warning(

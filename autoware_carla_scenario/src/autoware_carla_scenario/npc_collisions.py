@@ -16,7 +16,10 @@ recorded.  The two vehicles of one crash each report it, and a contact keeps
 reporting while it lasts: one pair's contact is recorded when it begins and
 again when it ends -- once no event has come from the pair for
 :data:`REPEAT_S` seconds, or when the run ends with it still going
-(:meth:`NpcCollisionMonitor.finish`) -- with how long it lasted.
+(:meth:`NpcCollisionMonitor.finish`) -- with how long it lasted.  Each
+record's ``frame`` and ``t`` are one tick's: the tick that took the contact
+up (its start) or saw it end; the frame CARLA heard the contact's first event
+on is ``start_frame``.
 
 **A fallen walker** is told from one world snapshot every few ticks: a walker
 tipped over more than :data:`FALLEN_TILT_DEG`, or more than half its height
@@ -81,8 +84,10 @@ class NpcCollision:
     """A collision of a vehicle other than the ego, as the log records it.
 
     Attributes:
-        frame: The world frame it happened on.
-        t: Scenario time (s) it was taken up at.
+        frame: The world frame of the tick the record is of: the tick that
+            took the contact up at its start, the tick that saw it end at
+            its end (the run's last tick, for a contact the run ended in).
+        t: That tick's scenario time (s).
         actors: The ``role_name`` of each side (its type id when it has none).
         ids: The two actors' ids.
         impulse: The normal impulse's magnitude (N·s); at the end of a
@@ -91,6 +96,9 @@ class NpcCollision:
         phase: ``"start"`` when the contact began, ``"end"`` when it ended.
         duration: How long (s) the contact lasted, at its end; ``None`` at
             its start.
+        start_frame: The world frame of the contact's first collision event,
+            as its sensor heard it (at or before the start record's
+            ``frame``); ``-1`` when unknown.
     """
 
     frame: int
@@ -101,10 +109,15 @@ class NpcCollision:
     ego: bool
     phase: str = "start"
     duration: Optional[float] = None
+    start_frame: int = -1
 
 
 class _Contact:
-    """A contact between two actors under way: since when, and how hard."""
+    """A contact between two actors under way: since when, and how hard.
+
+    ``frame`` is the frame of its first collision event; ``start`` and
+    ``last`` are the scenario times of the ticks that took up its first and
+    latest events."""
 
     frame: int
     start: float
@@ -140,6 +153,7 @@ class _Contact:
             ego=ego_role in self.names,
             phase=phase,
             duration=duration,
+            start_frame=self.frame,
         )
 
 
@@ -193,6 +207,7 @@ class NpcCollisionMonitor:
 
     _ego_role: str
     _ticks: int
+    _frame: int
     _sensed: dict[int, _Sensed]
     _names: dict[int, str]
     _lock: threading.Lock
@@ -217,6 +232,8 @@ class NpcCollisionMonitor:
     ) -> None:
         self._ego_role = str(EGO_ROLE_NAME) if ego_role is None else ego_role
         self._ticks = 0
+        #: The world frame of the latest tick, which its records are of.
+        self._frame = 0
         self._sensed: dict[int, _Sensed] = {}
         self._names: dict[int, str] = {}
         self._lock = threading.Lock()
@@ -260,9 +277,13 @@ class NpcCollisionMonitor:
             self._broken = True
             return [], [], []
 
-    def finish(self, elapsed: float) -> list[NpcCollision]:
-        """The run is over at *elapsed* (the last tick's time): the records of
-        the contacts it ends.
+    def finish(self, elapsed: float, frame: int = -1) -> list[NpcCollision]:
+        """The run is over at *elapsed*, the last tick's time, on *frame*, its
+        world frame: the records of the contacts it ends, all of that tick.
+
+        *frame* is the frame *elapsed* belongs to, which may be past the last
+        :meth:`tick`'s (a run that failed between the world's tick and the
+        monitor's); ``-1`` takes the last :meth:`tick`'s.
 
         The events heard since the last tick are taken up first, as
         :meth:`tick` would; then each contact still under way is ended, as one
@@ -272,12 +293,14 @@ class NpcCollisionMonitor:
         if self._broken or self._finished:
             return []
         self._finished = True
+        if frame >= 0:
+            self._frame = frame
         try:
             out = self._collisions(elapsed)
             for contact in self._contacts.values():
                 out.append(
                     contact.record(
-                        contact.frame,
+                        self._frame,
                         elapsed,
                         "end",
                         contact.last - contact.start,
@@ -320,6 +343,9 @@ class NpcCollisionMonitor:
     def _tick(
         self, world: "carla.World", elapsed: float
     ) -> tuple[list[NpcCollision], list[WalkerFallen], list[tuple[str, int]]]:
+        # The frame this tick's records are of, read as the trajectory
+        # recorder reads its tick's.
+        self._frame = int(world.get_snapshot().frame)
         if self._ticks % SCAN_EVERY_TICKS == 0:
             self._scan(world)
         fallen: list[WalkerFallen] = []
@@ -468,7 +494,8 @@ class NpcCollisionMonitor:
     def _collisions(self, elapsed: float) -> list[NpcCollision]:
         """A record for each contact that began, and for each that ended
         (no event from the pair for :data:`REPEAT_S`), with how long it
-        lasted; a warning when one begins."""
+        lasted; a warning when one begins.  Every record is of this tick:
+        its frame and *elapsed*."""
         with self._lock:
             heard, self._heard = self._heard, []
         out: list[NpcCollision] = []
@@ -490,14 +517,16 @@ class NpcCollisionMonitor:
                 names[1],
                 impulse,
             )
-            out.append(contact.record(frame, elapsed, "start", None, self._ego_role))
+            out.append(
+                contact.record(self._frame, elapsed, "start", None, self._ego_role)
+            )
         for pair, contact in list(self._contacts.items()):
             if elapsed - contact.last <= REPEAT_S:
                 continue
             del self._contacts[pair]
             out.append(
                 contact.record(
-                    contact.frame,
+                    self._frame,
                     elapsed,
                     "end",
                     contact.last - contact.start,

@@ -509,6 +509,7 @@ def test_the_new_records_follow_the_schema(tmp_path: Any) -> None:
             ego=False,
             phase="end",
             duration=2.5,
+            start_frame=2,
         )
     )
     recorder.record_walker_fallen(
@@ -526,6 +527,7 @@ def test_the_new_records_follow_the_schema(tmp_path: Any) -> None:
     for line in lines:
         validator.validate(line)
     assert lines[0]["error_s"] == pytest.approx(1.5)
+    assert (lines[1]["frame"], lines[1]["start_frame"]) == (3, 2)
 
 
 def test_an_always_true_gate_never_holds_the_entity() -> None:
@@ -632,6 +634,42 @@ def test_a_contact_is_logged_when_it_starts_and_when_it_ends() -> None:
     assert records[1].duration == pytest.approx(2.95, abs=0.06)
 
 
+def test_a_contacts_records_each_name_one_tick() -> None:
+    """#2019: a contact lasting several ticks, heard a tick before the tick
+    that takes it up: the start record is that tick's frame and time, the end
+    record the frame and time of the tick that saw it end, and the frame of
+    its first event is start_frame on both."""
+    a = _actor(2, "vehicle.mini", "npc1")
+    b = _actor(3, "vehicle.mini", "npc2")
+    world = _MonitoredWorld([a, b])
+    monitor = NpcCollisionMonitor()
+    monitor.tick(world, 0.0)  # type: ignore[arg-type]
+    records: list[Any] = []
+    times: dict[int, float] = {}  # each tick's frame: its time
+    for tick in range(1, 100):
+        t = round(0.05 * tick, 2)
+        world.frame = 500 + tick
+        times[world.frame] = t
+        if tick <= 20:  # in contact for 20 ticks, heard on the frame before
+            world.sensors[0].listener(
+                SimpleNamespace(
+                    frame=world.frame - 1,
+                    other_actor=b,
+                    normal_impulse=SimpleNamespace(x=1.0, y=0.0, z=0.0),
+                )
+            )
+        records += monitor.tick(world, t)[0]  # type: ignore[arg-type]
+    assert [r.phase for r in records] == ["start", "end"]
+    start, end = records
+    for record in records:
+        assert times[record.frame] == record.t
+        assert record.start_frame == 500
+    assert (start.frame, start.t) == (501, 0.05)
+    # Last heard on tick 20 (t = 1.0); quiet for more than REPEAT_S on tick 41.
+    assert (end.frame, end.t) == (541, 2.05)
+    assert end.duration == pytest.approx(0.95)
+
+
 def test_a_contact_still_going_when_the_run_ends_is_ended_with_it() -> None:
     """#1539: a contact that never goes quiet for REPEAT_S still gets its end
     record, from finish(), with how long it lasted and its strongest impulse."""
@@ -644,6 +682,7 @@ def test_a_contact_still_going_when_the_run_ends_is_ended_with_it() -> None:
     t = 0.05
     last = t
     while t < 3.0:  # in contact until the run ends
+        world.frame = int(round(t * 20)) + 1000
         world.sensors[0].listener(
             SimpleNamespace(
                 frame=int(t * 20),
@@ -659,8 +698,9 @@ def test_a_contact_still_going_when_the_run_ends_is_ended_with_it() -> None:
     monitor.close()
     assert [r.phase for r in ended] == ["end"]
     end = ended[0]
-    assert end.frame == records[0].frame  # the contact's, as a normal end's
-    assert end.t == last
+    # The last tick's frame and time (#2019), and the contact's first event.
+    assert end.frame == world.frame and end.t == last
+    assert end.start_frame == records[0].start_frame == 1
     assert end.duration == pytest.approx(last - records[0].t)
     assert end.impulse == 4.0
     assert end.actors == ["npc1", "npc2"] and not end.ego
@@ -684,6 +724,31 @@ def test_finish_takes_up_the_events_heard_since_the_last_tick() -> None:
     records = monitor.finish(0.2)
     monitor.close()
     assert [(r.phase, r.duration) for r in records] == [("start", None), ("end", 0.0)]
+
+
+def test_finish_on_a_tick_the_monitor_did_not_see_takes_that_ticks_frame() -> None:
+    """#2019: finish() given the frame of its time ends the contacts on it,
+    though the monitor's last tick was an earlier one."""
+    a = _actor(2, "vehicle.mini", "npc1")
+    b = _actor(3, "vehicle.mini", "npc2")
+    world = _MonitoredWorld([a, b])
+    monitor = NpcCollisionMonitor()
+    world.frame = 10
+    monitor.tick(world, 0.0)  # type: ignore[arg-type]
+    world.sensors[0].listener(
+        SimpleNamespace(
+            frame=10,
+            other_actor=b,
+            normal_impulse=SimpleNamespace(x=2.0, y=0.0, z=0.0),
+        )
+    )
+    world.frame = 11
+    monitor.tick(world, 0.05)  # type: ignore[arg-type]
+    records = monitor.finish(0.1, 12)
+    monitor.close()
+    assert [(r.phase, r.frame, r.t, r.start_frame) for r in records] == [
+        ("end", 12, 0.1, 10)
+    ]
 
 
 def test_finish_with_no_contact_records_nothing() -> None:
