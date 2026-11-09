@@ -860,11 +860,18 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         # one runs, and two bridges cannot hold the same address at once.  The
         # entity starts this one when its own scenario starts.
         scenario_cfg = cfg.get("scenario") or {}
+        native = ego_cfg.get("native_autoware_interface", False)
+        if not isinstance(native, bool):
+            raise ValueError(
+                "ego.native_autoware_interface must be true or false, "
+                f"got {native!r}"
+            )
         return AutowareEgoEntity(
             bridge_cfg,
             bridge=GrpcAutowareBridgeServer(bridge_cfg, autostart=False),
             launcher=build_autoware_launcher(cfg),
             episode_name=str(scenario_cfg.get("name", "")),
+            native_autoware_interface=native,
         )
 
     if entity == "carla_driver":

@@ -19,7 +19,9 @@ DEFAULT_TM_PORT: int = 8100
 
 # The ``role_name`` values that make an actor the ego of a trajectory log: the
 # recorder logs their control inputs, and a reader of the log finds the ego by
-# them (t4_scene).
+# them (t4_scene).  They are also the role names CARLA's native Autoware
+# interface serves, and the framework finds its ego by them too
+# (entity_role.EGO_ROLE_ALIASES, which must stay the same; the tests check it).
 EGO_ROLES = ("ego", "hero")
 
 # The simulation step the runner drives the world at (20 Hz).
