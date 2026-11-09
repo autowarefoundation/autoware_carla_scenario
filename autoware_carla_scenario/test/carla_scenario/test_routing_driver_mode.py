@@ -726,6 +726,31 @@ def test_finish_takes_up_the_events_heard_since_the_last_tick() -> None:
     assert [(r.phase, r.duration) for r in records] == [("start", None), ("end", 0.0)]
 
 
+def test_finish_on_a_tick_the_monitor_did_not_see_takes_that_ticks_frame() -> None:
+    """#2019: finish() given the frame of its time ends the contacts on it,
+    though the monitor's last tick was an earlier one."""
+    a = _actor(2, "vehicle.mini", "npc1")
+    b = _actor(3, "vehicle.mini", "npc2")
+    world = _MonitoredWorld([a, b])
+    monitor = NpcCollisionMonitor()
+    world.frame = 10
+    monitor.tick(world, 0.0)  # type: ignore[arg-type]
+    world.sensors[0].listener(
+        SimpleNamespace(
+            frame=10,
+            other_actor=b,
+            normal_impulse=SimpleNamespace(x=2.0, y=0.0, z=0.0),
+        )
+    )
+    world.frame = 11
+    monitor.tick(world, 0.05)  # type: ignore[arg-type]
+    records = monitor.finish(0.1, 12)
+    monitor.close()
+    assert [(r.phase, r.frame, r.t, r.start_frame) for r in records] == [
+        ("end", 12, 0.1, 10)
+    ]
+
+
 def test_finish_with_no_contact_records_nothing() -> None:
     world = _MonitoredWorld([_actor(2, "vehicle.mini", "npc1")])
     monitor = NpcCollisionMonitor()

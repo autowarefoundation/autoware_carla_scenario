@@ -67,10 +67,12 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
   reached a waypoint with a time or a departure condition: when it was due
   (its time; the moment its condition first held) and when it arrived.
 * ``{"type": "collision", "frame", "t", "actors": [role, role], "ids":
-  [id, id], "impulse", "ego", "phase", "duration"}`` -- a vehicle other than
-  the ego began (``phase: "start"``) or ended (``"end"``, with how long it
-  lasted) a contact with a vehicle or a walker
-  (:mod:`~autoware_carla_scenario.npc_collisions`).
+  [id, id], "impulse", "ego", "phase", "duration", "start_frame"}`` -- a
+  vehicle other than the ego began (``phase: "start"``) or ended (``"end"``,
+  with how long it lasted) a contact with a vehicle or a walker
+  (:mod:`~autoware_carla_scenario.npc_collisions`); ``frame`` and ``t`` are
+  the tick that took it up or saw it end, ``start_frame`` (optional) the
+  frame of its first event.
 * ``{"type": "walker_fallen", "frame", "t", "id", "role", "drop", "tilt"}``
   -- a walker was seen fallen over, once per walker.
 * ``{"type": "spawn", "frame", "t", "label", "entity", "id"}`` -- a

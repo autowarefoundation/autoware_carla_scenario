@@ -277,9 +277,13 @@ class NpcCollisionMonitor:
             self._broken = True
             return [], [], []
 
-    def finish(self, elapsed: float) -> list[NpcCollision]:
-        """The run is over at *elapsed* (the last tick's time): the records of
-        the contacts it ends, all of the last tick (its frame and *elapsed*).
+    def finish(self, elapsed: float, frame: int = -1) -> list[NpcCollision]:
+        """The run is over at *elapsed*, the last tick's time, on *frame*, its
+        world frame: the records of the contacts it ends, all of that tick.
+
+        *frame* is the frame *elapsed* belongs to, which may be past the last
+        :meth:`tick`'s (a run that failed between the world's tick and the
+        monitor's); ``-1`` takes the last :meth:`tick`'s.
 
         The events heard since the last tick are taken up first, as
         :meth:`tick` would; then each contact still under way is ended, as one
@@ -289,6 +293,8 @@ class NpcCollisionMonitor:
         if self._broken or self._finished:
             return []
         self._finished = True
+        if frame >= 0:
+            self._frame = frame
         try:
             out = self._collisions(elapsed)
             for contact in self._contacts.values():

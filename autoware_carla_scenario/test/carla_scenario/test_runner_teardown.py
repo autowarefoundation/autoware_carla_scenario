@@ -311,7 +311,7 @@ def _ordered_npc_monitor(trajectory: MagicMock, order: list[str]) -> MagicMock:
     monitor = _npc_monitor([contact])
     real_finish = monitor.finish.return_value
 
-    def finish(elapsed: float) -> list[Any]:
+    def finish(elapsed: float, frame: int = -1) -> list[Any]:
         order.append(f"finish {elapsed}")
         return real_finish
 
@@ -329,8 +329,13 @@ def test_the_contacts_still_going_end_with_the_run(tmp_path: Path) -> None:
     trajectory.active = True
     order: list[str] = []
     monitor = _ordered_npc_monitor(trajectory, order)
+    frames: list[int] = []
+    trajectory.record.side_effect = lambda world, t: frames.append(
+        world.get_snapshot().frame
+    )
     _run(tmp_path, trajectory, npc_monitor=monitor)
-    monitor.finish.assert_called_once_with(0.1)
+    # With the frame of the tick that time is of (#2019).
+    monitor.finish.assert_called_once_with(0.1, frames[-1])
     assert order == ["finish 0.1", "end", "close", "trajectory close"]
 
 
@@ -347,6 +352,38 @@ def test_the_contacts_end_with_a_run_that_raised(tmp_path: Path) -> None:
             tick_error=ValueError("tick broke"),
         )
     assert order == ["finish 0.1", "end", "close", "trajectory close"]
+
+
+def test_a_run_that_raised_before_the_monitors_tick_ends_contacts_on_one_tick(
+    tmp_path: Path,
+) -> None:
+    """#2019: a tick cut short between the world's tick and the NPC monitor's
+    still ends the contacts under way with the frame and time of one tick --
+    the tick the world last advanced to, not the monitor's last."""
+    from autoware_carla_scenario.npc_collisions import NpcCollisionMonitor
+
+    trajectory = MagicMock()
+    trajectory.active = True
+    frames: list[int] = []
+    trajectory.record.side_effect = lambda world, t: frames.append(
+        world.get_snapshot().frame
+    )
+    monitor = NpcCollisionMonitor()
+    # A contact heard, never taken up by a tick of the monitor.
+    monitor._names.update({2: "npc1", 3: "npc2"})  # noqa: SLF001
+    monitor._heard.append((1, 2, 3, "npc2", 5.0))  # noqa: SLF001
+    with pytest.raises(ValueError, match="tick broke"):
+        _run(
+            tmp_path,
+            trajectory,
+            npc_monitor=monitor,
+            tick_error=ValueError("tick broke"),
+        )
+    records = [c.args[0] for c in trajectory.record_collision.call_args_list]
+    assert [r.phase for r in records] == ["start", "end"]
+    assert frames[-1] > 0
+    assert [(r.frame, r.t) for r in records] == [(frames[-1], 0.1)] * 2
+    assert all(r.start_frame == 1 for r in records)
 
 
 def test_a_failing_finish_does_not_hide_why_the_run_ended(tmp_path: Path) -> None:
