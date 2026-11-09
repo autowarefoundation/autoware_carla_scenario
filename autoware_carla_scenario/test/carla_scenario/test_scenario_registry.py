@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -192,6 +193,7 @@ class TestPluginReplacement:
             "importlib.metadata.entry_points", lambda *, group: [entry_point]
         )
         monkeypatch.setattr(registry, "_plugins_loaded", False)
+        monkeypatch.setattr(registry, "_PLUGIN_SCENARIOS", {})
         registry.load_scenario_plugins()
 
     @staticmethod
@@ -377,8 +379,14 @@ class TestPluginCollisions:
         import autoware_carla_scenario.examples.run  # noqa: F401, PLC0415
         from autoware_carla_scenario import registry  # noqa: PLC0415
 
-        for table in ("_SCENARIO_REGISTRY", "_SCENARIO_CLASSES", "_SCENARIO_DOCUMENTS"):
+        for table in (
+            "_SCENARIO_REGISTRY",
+            "_SCENARIO_CLASSES",
+            "_SCENARIO_DOCUMENTS",
+            "_BUILTIN_SCENARIOS",
+        ):
             monkeypatch.setattr(registry, table, dict(getattr(registry, table)))
+        monkeypatch.setattr(registry, "_PLUGIN_SCENARIOS", {})
         _isolate_conf_dirs(monkeypatch)
 
     @staticmethod
@@ -599,6 +607,183 @@ class TestPluginCollisions:
         assert "Hydra still composes" in message
         assert "framework's conf directory" in message
         assert "gets the plugin's" not in message
+
+    @staticmethod
+    def _before_the_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+        """A process that has not imported ``examples.run``.
+
+        Empties the registry, and writes a module ``fake_run_<n>`` that, like
+        ``examples.run``, registers the framework's conf dir and a built-in
+        scenario ``fake_builtin`` when it is imported; returns its name.
+        """
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        for table in (
+            "_SCENARIO_REGISTRY",
+            "_SCENARIO_CLASSES",
+            "_SCENARIO_DOCUMENTS",
+            "_BUILTIN_SCENARIOS",
+        ):
+            monkeypatch.setattr(registry, table, {})
+        monkeypatch.setattr(registry, "_CONF_DIRS", [])
+        module = f"fake_run_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from autoware_carla_scenario import registry\n"
+            "class Scenario: pass\n"
+            "class Config: pass\n"
+            "registry.register_conf_dir(registry._FRAMEWORK_CONF_DIR)\n"
+            "registry._register_builtin_scenario('fake_builtin', Scenario, Config)\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.delitem(sys.modules, module, raising=False)
+        return module
+
+    def test_a_refused_plugin_keeps_the_built_ins_its_import_registered(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        """Only what the plugin registered itself is undone."""
+        import importlib  # noqa: PLC0415
+
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        module = self._before_the_runner(monkeypatch, tmp_path)
+        conf_b = _conf_dir(tmp_path, "pkgb", {"scenario/dup/b.yaml": "name: dup\n"})
+
+        def register_b() -> None:
+            importlib.import_module(module)  # e.g. examples.configs
+            registry.register_scenario("dup", _DummyScenario, _DummyConfig)
+            registry.register_conf_dir(conf_b)
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                [
+                    _entry_point(
+                        "pkga",
+                        lambda: registry.register_scenario_builder("dup", MagicMock()),
+                    ),
+                    _entry_point("pkgb", register_b),
+                ],
+            )
+        refused = "'pkgb' (pkgb:register) was not loaded"
+        assert any(refused in w for w in self._warnings(caplog))
+        fake = sys.modules[module]
+        assert registry.get_scenario_classes("fake_builtin") == (
+            fake.Scenario,
+            fake.Config,
+        )
+        assert registry.get_scenario_classes("dup") is None  # pkga's builder
+        assert registry._FRAMEWORK_CONF_DIR in registry.get_conf_dirs()
+        assert conf_b.resolve() not in registry.get_conf_dirs()
+
+    def test_the_framework_conf_dir_survives_a_refusal_that_registered_it(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        self._before_the_runner(monkeypatch, tmp_path)
+        real_register = registry.register_conf_dir
+        framework_first: list[bool] = []
+
+        def register_b() -> None:
+            # As if the walk had not registered it before (an older caller).
+            registry._CONF_DIRS.remove(registry._FRAMEWORK_CONF_DIR)
+            real_register(registry._FRAMEWORK_CONF_DIR)
+            registry.register_scenario("dup", _DummyScenario, _DummyConfig)
+
+        def register_a() -> None:
+            first = registry.get_conf_dirs()[:1]
+            framework_first.append(first == [registry._FRAMEWORK_CONF_DIR])
+            registry.register_scenario_builder("dup", MagicMock())
+
+        self._load(
+            monkeypatch,
+            [_entry_point("pkga", register_a), _entry_point("pkgb", register_b)],
+        )
+        # The walk registered the framework's conf dir before any plugin.
+        assert framework_first == [True]
+        assert registry.get_conf_dirs() == [registry._FRAMEWORK_CONF_DIR]
+
+    def test_a_winner_importing_the_built_ins_does_not_own_them(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        """A later plugin replacing that built-in replaces it (#1802)."""
+        import importlib  # noqa: PLC0415
+
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        module = self._before_the_runner(monkeypatch, tmp_path)
+
+        class _Replacement(_DummyScenario):
+            pass
+
+        def register_a() -> None:
+            importlib.import_module(module)
+            registry.register_scenario("dup", _DummyScenario, _DummyConfig)
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                [
+                    _entry_point("pkga", register_a),
+                    _entry_point(
+                        "pkgb",
+                        lambda: registry.register_scenario(
+                            "fake_builtin", _Replacement, _DummyConfig
+                        ),
+                    ),
+                ],
+            )
+        assert registry.get_scenario_classes("fake_builtin") == (
+            _Replacement,
+            _DummyConfig,
+        )
+        (message,) = self._warnings(caplog)
+        assert "'pkgb' (pkgb:register) replaced 'fake_builtin'" in message
+
+    def test_a_built_in_replaced_before_the_runner_is_imported(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        """Warned about then, and not silently undone by the import later."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        self._before_the_runner(monkeypatch, tmp_path)
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                [
+                    _entry_point(
+                        "my_pkg",
+                        lambda: registry.register_scenario(
+                            "lane_change", _DummyScenario, _DummyConfig
+                        ),
+                    )
+                ],
+            )
+        (message,) = self._warnings(caplog)
+        assert "'my_pkg' (my_pkg:register) replaced 'lane_change'" in message
+
+        class _BuiltIn(_DummyScenario):
+            pass
+
+        # What importing examples.run now does.
+        registry._register_builtin_scenario("lane_change", _BuiltIn, _DummyConfig)
+        assert registry.get_scenario_classes("lane_change") == (
+            _DummyScenario,
+            _DummyConfig,
+        )
+        # A built-in no plugin took is registered as usual.
+        registry._register_builtin_scenario("cut_in", _BuiltIn, _DummyConfig)
+        assert registry.get_scenario_classes("cut_in") == (_BuiltIn, _DummyConfig)
 
     def test_entry_points_load_sorted(self, monkeypatch: pytest.MonkeyPatch) -> None:
         """By normalised distribution name, then entry-point name."""

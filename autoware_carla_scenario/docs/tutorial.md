@@ -598,7 +598,8 @@ Scenario names share one registry, so give yours a name nothing else uses.
 Entry points load in a fixed order, sorted by distribution name (normalised,
 so `my-pkg` and `my_pkg` sort together) and then entry-point name, and every
 `conf/` directory joins Hydra's search path in that order, behind the
-framework's own. Hydra composes a config path such as
+framework's own, which `load_scenario_plugins()` registers before any of
+them. Hydra composes a config path such as
 `scenario/my_scenario/default.yaml` from the first directory that has it.
 What happens to a name that is already taken depends on who took it:
 
@@ -612,9 +613,16 @@ What happens to a name that is already taken depends on who took it:
   plugin's class, which is why `scenario-new` refuses built-in names (#1802):
 
   ```
-  WARNING ... The scenario plugin 'my_scenario_package' (my_scenario_package:register)
-  replaced 'lane_change', registered before the plugins loaded ...
+  WARNING ... The scenario plugin 'my_scenario_package'
+  (my_scenario_package:register) replaced 'lane_change', registered before
+  the plugins loaded ...
   ```
+
+  This holds whether or not the runner (`examples.run`, which registers the
+  built-ins when it is imported) was imported before the plugins loaded: the
+  viewer and `scenario-expand` load them first. The built-in names are known
+  without importing it, and a built-in registered after the plugins does not
+  take its name back from the plugin that replaced it.
 
 - **Another installed package**: the package loaded first keeps the name,
   and the later one is not loaded at all. Everything it registered with the
@@ -630,9 +638,13 @@ What happens to a name that is already taken depends on who took it:
   ('dup' from 'pkga' (pkga:register)) ...
   ```
 
-  What the refused package registered elsewhere when it was imported -- traffic
-  backends, ODD builders, authoring specs, ... -- is not undone. Rename the
-  scenario in one of the packages to install both.
+  Only what the refused package registered itself is undone: a built-in that
+  its `register()` registered as a side effect (importing anything under
+  `autoware_carla_scenario.examples`, such as `examples.configs` to subclass a
+  built-in config, imports the runner) stays, and so does the framework's
+  `conf/`. Nor is what it registered elsewhere when it was imported (traffic
+  backends, ODD builders, authoring specs, ...). Rename the scenario in one of
+  the packages to install both.
 
 Config paths are checked as well, in every group (`scenario/`, `map/`,
 `ego/`, ...): registering a `conf/` directory that ships a path an earlier

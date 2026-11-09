@@ -384,6 +384,45 @@ def get_conf_dirs() -> list[Path]:
 
 _plugins_loaded = False
 
+#: The built-in scenarios, as :func:`_register_builtin_scenario` registered
+#: them (``(scenario_cls, config_cls)``), by name -- whether or not a plugin
+#: holds the name now.  What the walk tells apart from a plugin's own
+#: registrations: a plugin whose ``register()`` imports anything under
+#: ``autoware_carla_scenario.examples`` registers the built-ins as a side
+#: effect, which is not the plugin's doing.
+_BUILTIN_SCENARIOS: dict[str, tuple[type[BaseScenario], type]] = {}
+
+#: The scenario names entry-point plugins registered, and the entry point that
+#: registered each.  A built-in registered after the walk (by a later import
+#: of ``examples.run``) does not take a name back from a plugin that replaced
+#: it.
+_PLUGIN_SCENARIOS: dict[str, Any] = {}
+
+_MISSING = object()
+
+
+def _register_builtin_scenario(
+    name: str, scenario_cls: type[BaseScenario], config_cls: type
+) -> None:
+    """Register one of the framework's built-in scenarios (``examples.run``).
+
+    As :func:`register_scenario`, except that it is recorded as a built-in,
+    and that a plugin which already replaced the built-in keeps the name:
+    ``examples.run`` can be imported after the plugins loaded (the viewer and
+    ``scenario-expand`` load them first), and a plugin replacing a built-in
+    is warned about when it does (#1802), not silently undone later.
+    """
+    _BUILTIN_SCENARIOS[name] = (scenario_cls, config_cls)
+    if name in _PLUGIN_SCENARIOS and name in _SCENARIO_REGISTRY:
+        logger.info(
+            "The built-in scenario %r is not registered: the scenario plugin "
+            "%s replaced it.",
+            name,
+            _describe(_PLUGIN_SCENARIOS[name]),
+        )
+        return
+    register_scenario(name, scenario_cls, config_cls)
+
 
 def load_scenario_plugins() -> None:
     """Discover and load external scenario packages via entry points.
@@ -393,22 +432,29 @@ def load_scenario_plugins() -> None:
     with no arguments.  The target is expected to register scenarios and/or
     config directories (see the module docstring).
 
-    The entry points load in a fixed order, by distribution name and then
-    entry-point name (:func:`load_entry_point_plugins`), so their config
-    directories join Hydra's search path in that order.
+    The framework's own config directory is registered first, so it leads
+    the search path whichever module asked for the plugins.  The entry points
+    then load in a fixed order, by distribution name and then entry-point
+    name (:func:`load_entry_point_plugins`), so their config directories join
+    Hydra's search path in that order.
 
     A plugin that registers a scenario name an earlier plugin of the walk
-    registered (its builder, classes or document) is refused as a whole: every
-    scenario registration it made and every config directory it registered
+    registered (its builder, classes or document) is refused as a whole: the
+    scenario registrations it made and the config directories it registered
     are undone, with a warning naming both plugins (#2034).  So the first
     package keeps the name, and a run uses one package's class and YAML: no
-    config the refused package ships is on the search path.  What the refused
-    plugin did to other registries at import -- traffic backends, ODD
-    builders, authoring specs, ... -- is not undone.
+    config the refused package ships is on the search path.  Only what the
+    plugin itself registered is undone -- not the built-ins an import of
+    ``autoware_carla_scenario.examples`` registers along the way, nor the
+    framework's config directory -- and what it did to other registries at
+    import (traffic backends, ODD builders, authoring specs, ...) stays.
 
-    A plugin that replaces a scenario registered before the walk -- a
-    built-in, or a package registered explicitly (the tutorial's "No entry
-    point?" tip) -- still replaces it, with a warning (#1802).
+    A plugin that replaces a built-in scenario -- registered or not yet:
+    the names are known without importing the runner
+    (:data:`~autoware_carla_scenario.scaffold.names.BUILTIN_SCENARIO_NAMES`)
+    -- or one a package registered explicitly before the walk (the
+    tutorial's "No entry point?" tip) replaces it, with a warning (#1802),
+    and keeps it if ``examples.run`` is imported later.
 
     Loading is idempotent: subsequent calls are no-ops within a single process.
     A failing plugin is logged and skipped so that one broken package cannot
@@ -419,12 +465,94 @@ def load_scenario_plugins() -> None:
         return
     _plugins_loaded = True
 
-    load_entry_point_plugins(
-        SCENARIO_ENTRY_POINT_GROUP,
-        "scenario",
-        snapshot=_scenario_snapshot,
-        checkpoint=_scenario_checkpoint,
+    import importlib.metadata as importlib_metadata  # noqa: PLC0415
+
+    # A plain constant (no runner, no CARLA); a test holds it to the registry.
+    from .scaffold.names import BUILTIN_SCENARIO_NAMES  # noqa: PLC0415
+
+    register_conf_dir(_FRAMEWORK_CONF_DIR)
+    _PLUGIN_SCENARIOS.clear()
+    builtin_names = set(BUILTIN_SCENARIO_NAMES) | set(_BUILTIN_SCENARIOS)
+    entry_points = sorted(
+        importlib_metadata.entry_points(group=SCENARIO_ENTRY_POINT_GROUP),
+        key=_entry_point_sort_key,
     )
+    for entry_point in entry_points:
+        _load_scenario_entry_point(entry_point, builtin_names)
+
+
+def _load_scenario_entry_point(entry_point: Any, builtin_names: set[str]) -> None:
+    """Load one scenario plugin, refusing it if it takes another plugin's name."""
+    before = _scenario_snapshot()
+    saved = [dict(table) for table in _scenario_tables()]
+    conf_dirs_before = list(_CONF_DIRS)
+    _call_entry_point(entry_point, "scenario")
+    # Checked even for a plugin that then failed: what it registered before
+    # the failure stays registered (unless it is refused).
+    after = _scenario_snapshot()
+    own = [
+        name
+        for name in sorted(set(before) | set(after))
+        if before.get(name, _MISSING) != after.get(name, _MISSING)
+        # A built-in registered by an import the plugin made is not its own.
+        and not (name in after and after[name] == _BUILTIN_SCENARIOS.get(name))
+    ]
+    registered = [name for name in own if name in after]
+    taken = [name for name in registered if name in _PLUGIN_SCENARIOS]
+    if taken:
+        _undo_plugin(own, saved, conf_dirs_before)
+        _warn_about_refusal(entry_point, "scenario", taken, _PLUGIN_SCENARIOS)
+        return
+    replaced = [name for name in registered if name in before or name in builtin_names]
+    if replaced:
+        _warn_about_replacements(entry_point, "scenario", replaced, False)
+    for name in registered:
+        _PLUGIN_SCENARIOS[name] = entry_point
+
+
+def _scenario_tables() -> list[dict[str, Any]]:
+    """The tables a scenario name has entries in."""
+    return [_SCENARIO_REGISTRY, _SCENARIO_CLASSES, _SCENARIO_DOCUMENTS]
+
+
+def _undo_plugin(
+    names: list[str], saved: list[dict[str, Any]], conf_dirs_before: list[Path]
+) -> None:
+    """Undo what a refused scenario plugin registered.
+
+    Puts *names* back as *saved* had them in every scenario table, and the
+    config directories as they were: those registered since are unregistered
+    (never the framework's own) and those removed since are put back where
+    they were.
+    """
+    for table, copy in zip(_scenario_tables(), saved):
+        for name in names:
+            if name in copy:
+                table[name] = copy[name]
+            else:
+                table.pop(name, None)
+    for conf_dir in list(_CONF_DIRS):
+        if conf_dir not in conf_dirs_before and conf_dir != _FRAMEWORK_CONF_DIR:
+            unregister_conf_dir(conf_dir)
+    for index, conf_dir in enumerate(conf_dirs_before):
+        if conf_dir not in _CONF_DIRS:
+            _CONF_DIRS.insert(min(index, len(_CONF_DIRS)), conf_dir)
+
+
+def _call_entry_point(entry_point: Any, what: str) -> None:
+    """Call what *entry_point* names; a failure is logged, not raised."""
+    try:
+        entry_point.load()()
+        logger.info(
+            "Loaded %s plugin %r from %s",
+            what,
+            entry_point.name,
+            getattr(entry_point, "value", entry_point),
+        )
+    except Exception:  # noqa: BLE001 -- one bad plugin must not kill the CLI
+        logger.exception(
+            "Failed to load %s plugin %r; skipping.", what, entry_point.name
+        )
 
 
 def load_entry_point_plugins(
@@ -432,7 +560,6 @@ def load_entry_point_plugins(
     what: str,
     snapshot: Callable[[], Mapping[str, object]] | None = None,
     *,
-    checkpoint: Callable[[], Callable[[], None]] | None = None,
     override_intended: bool = False,
 ) -> None:
     """Import every distribution advertising *group* and call what it names.
@@ -448,10 +575,11 @@ def load_entry_point_plugins(
     differs from one machine to the next), so which plugin wins a collision
     does not depend on the environment (#2034).
 
-    Shared with :func:`autoware_carla_scenario.traffic.registry.load_traffic_backend_plugins`,
-    which discovers traffic backends the same way -- the walk is the same, only
-    the group and the word in the log line differ.  Callers own their own
-    idempotence latch, because "loaded already" is a fact about a group.
+    Used by :func:`autoware_carla_scenario.traffic.registry.load_traffic_backend_plugins`,
+    for which the last plugin to register a name wins.  Scenarios are walked
+    by :func:`load_scenario_plugins`, which refuses a plugin that takes
+    another's name instead.  Callers own their own idempotence latch, because
+    "loaded already" is a fact about a group.
 
     Args:
         group: The entry-point group to walk.
@@ -465,11 +593,6 @@ def load_entry_point_plugins(
             point and every name it replaced (#1802); one that replaces a name
             an earlier plugin of the walk registered is warned about naming
             both entry points (#2034).
-        checkpoint: Requires *snapshot*.  Returns a callable that undoes
-            everything the plugin registered since ``checkpoint`` was called.
-            With it, a plugin that replaces a name an earlier plugin of the
-            walk registered is refused as a whole, so the first plugin keeps
-            the name.  Without it, the last plugin wins.
         override_intended: Whether replacing a name registered before the
             walk is something a plugin may mean to do (a traffic backend
             overriding a built-in one), which is reported in softer words.
@@ -485,42 +608,26 @@ def load_entry_point_plugins(
     owners: dict[str, Any] = {}
     for entry_point in entry_points:
         before = dict(snapshot()) if snapshot is not None else {}
-        undo = checkpoint() if checkpoint is not None else None
-        try:
-            entry_point.load()()
-            logger.info(
-                "Loaded %s plugin %r from %s",
-                what,
-                entry_point.name,
-                getattr(entry_point, "value", entry_point),
-            )
-        except Exception:  # noqa: BLE001 -- one bad plugin must not kill the CLI
-            logger.exception(
-                "Failed to load %s plugin %r; skipping.", what, entry_point.name
-            )
+        _call_entry_point(entry_point, what)
         if snapshot is None:
             continue
         # Checked even for a plugin that then failed: what it registered
-        # before the failure stays registered (unless it is refused).
+        # before the failure stays registered.
         after = snapshot()
         changed = sorted(
             name
             for name, entry in after.items()
             if name not in before or before[name] != entry
         )
-        replaced_earlier = [name for name in changed if name in before]
-        replaced_plugins = [name for name in replaced_earlier if name in owners]
-        replaced_builtins = [name for name in replaced_earlier if name not in owners]
-        if undo is not None and replaced_plugins:
-            undo()
-            _warn_about_refusal(entry_point, what, replaced_plugins, owners)
-            continue
+        replaced = [name for name in changed if name in before]
+        replaced_builtins = [name for name in replaced if name not in owners]
         if replaced_builtins:
             _warn_about_replacements(
                 entry_point, what, replaced_builtins, override_intended
             )
-        for name in replaced_plugins:
-            _warn_about_collision(owners[name], entry_point, what, name)
+        for name in replaced:
+            if name in owners:
+                _warn_about_collision(owners[name], entry_point, what, name)
         for name in changed:
             owners[name] = entry_point
 
@@ -577,32 +684,6 @@ def _scenario_snapshot() -> dict[str, object]:
     return snapshot
 
 
-def _scenario_checkpoint() -> Callable[[], None]:
-    """Save the scenario and config-directory registries, to undo a plugin.
-
-    The callable it returns puts the scenario tables back as they are now --
-    every name the plugin added, replaced or removed -- and unregisters every
-    config directory registered since, so nothing a refused plugin registered
-    here stays.  Other registries are not saved.
-    """
-    tables: list[dict[str, Any]] = [
-        _SCENARIO_REGISTRY,
-        _SCENARIO_CLASSES,
-        _SCENARIO_DOCUMENTS,
-    ]
-    saved = [dict(table) for table in tables]
-    conf_dirs = list(_CONF_DIRS)
-
-    def undo() -> None:
-        for table, copy in zip(tables, saved):
-            table.clear()
-            table.update(copy)
-        for conf_dir in [d for d in _CONF_DIRS if d not in conf_dirs]:
-            unregister_conf_dir(conf_dir)
-
-    return undo
-
-
 def _warn_about_replacements(
     entry_point: Any,
     what: str,
@@ -649,10 +730,11 @@ def _warn_about_refusal(
         "The %s plugin %s was not loaded: it registers %s(s) an earlier plugin "
         "of the walk already registered (%s). Plugins load sorted by "
         "distribution and entry-point name and the first keeps the name, so "
-        "every %s registration of %s and every config directory it registered "
-        "were undone, and a run uses one package's class and YAML. What it "
-        "registered elsewhere at import (traffic backends, ODD builders, ...) "
-        "stays. Rename the %s in one of the packages.",
+        "the %s registrations of %s were undone and the config directories "
+        "it registered were unregistered (ignore any shadowed-config warning "
+        "about them just above): a run uses one package's class and YAML. "
+        "What it registered elsewhere at import (traffic backends, ODD "
+        "builders, ...) stays. Rename the %s in one of the packages.",
         what,
         _describe(refused),
         what,
