@@ -411,11 +411,16 @@ class TestHeadings:
         assert square.at_distance(0.0).yaw == pytest.approx(-45.0)
         assert square.at_distance(0.5).yaw == pytest.approx(-22.5)
         assert square.at_distance(40.5).yaw == pytest.approx(-22.5)
-        assert square.start().yaw == pytest.approx(-45.0)
-        # Its clock ends at the last vertex written, half way round the
-        # corner onto the closing leg (#2030); untimed, the path ends at the
-        # seam.
-        assert square.end().yaw == pytest.approx(-135.0)
+        assert square.at_vertex(0).yaw == pytest.approx(-45.0)
+        # Its clock never drives the closing leg (#2030): it starts facing
+        # along the first leg and ends at the last vertex written facing
+        # along the leg arriving there, as an open path's do.
+        assert square.start().yaw == pytest.approx(0.0)
+        assert square.at_time(0.05).yaw == pytest.approx(0.0)
+        assert square.at_time(0.05).yaw_rate == 0.0
+        assert abs(square.end().yaw) == pytest.approx(180.0)
+        assert abs(square.at_time(2.95).yaw) == pytest.approx(180.0)
+        # Untimed, the path starts and ends half way round the seam.
         untimed = ResolvedTrajectory(
             xs=[0.0, 10.0, 10.0, 0.0],
             ys=[0.0, 0.0, 10.0, 10.0],
@@ -423,9 +428,8 @@ class TestHeadings:
             yaws=[None] * 4,
             closed=True,
         )
+        assert untimed.start().yaw == pytest.approx(-45.0)
         assert untimed.end().yaw == pytest.approx(-45.0)
-        # Leaving the seam: half of 90 degrees over 1 m at 10 m/s.
-        assert square.at_time(0.05).yaw_rate == pytest.approx(450.0)
 
     def test_given_headings_still_interpolate(self) -> None:
         trajectory = ResolvedTrajectory(
@@ -616,6 +620,24 @@ class TestHeadings:
         assert stop.at_time(1.25).yaw_rate == pytest.approx(180.0)
         assert stop.at_time(1.51).yaw == pytest.approx(90.0)
 
+    def test_a_stop_written_as_two_pauses_off_a_round_time_is_one(self) -> None:
+        """Two 0.25 s pauses written from a time base of 0.502 s add up a hair
+        short of 0.5 s in floating point: still a stop, not a corner."""
+        base = 0.502
+        arrived = base + 1.0
+        times = [base, arrived, arrived + 0.25, arrived + 0.25 + 0.25]
+        assert times[3] - times[1] < 0.5
+        stop = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 10.0, 10.0],
+            ys=[0.0, 0.0, 0.0, 0.0, 10.0],
+            zs=[0.0] * 5,
+            yaws=[None] * 5,
+            times=[*times, times[3] + 1.0],
+        )
+        assert stop.at_time(arrived - 0.01).yaw == pytest.approx(0.0)
+        assert stop.at_vertex(1).yaw == pytest.approx(0.0)
+        assert stop.at_time(times[3] + 0.01).yaw == pytest.approx(90.0)
+
 
 class TestAlongThePath:
     def test_at_distance(self) -> None:
@@ -653,8 +675,9 @@ class TestAlongThePath:
         )
         last = square.at_time(3.0)
         assert (last.x, last.y, last.speed) == pytest.approx((0.0, 10.0, 0.0))
-        # Half way round the corner between the last leg and the closing one.
-        assert last.yaw == pytest.approx(-135.0)
+        # Along the last leg it drove, not round onto the closing one.
+        assert abs(last.yaw) == pytest.approx(180.0)
+        assert square.start().yaw == pytest.approx(0.0)
         assert square.at_time(4.0) == last
         assert square.end() == last
         assert square.end_time == 3.0
@@ -679,7 +702,9 @@ class TestAlongThePath:
 
     def test_a_closed_timed_path_repeating_its_first_vertex(self) -> None:
         """Written back to its first vertex, the last written vertex is that
-        one: the clock ends there, facing half way round the seam."""
+        one: the clock ends there facing along the leg it arrived on, and
+        starts there facing along the first, never turning across the seam
+        it does not drive -- which, along the path, is a corner."""
         square = ResolvedTrajectory(
             xs=[0.0, 10.0, 10.0, 0.0, 0.0],
             ys=[0.0, 0.0, 10.0, 10.0, 0.0],
@@ -689,9 +714,12 @@ class TestAlongThePath:
             closed=True,
         )
         end = square.at_time(4.0)
-        assert (end.x, end.y, end.yaw) == pytest.approx((0.0, 0.0, -45.0))
-        assert square.at_time(0.0).yaw == pytest.approx(-45.0)
-        assert square.at_time(3.95).yaw == pytest.approx(-67.5)
+        assert (end.x, end.y, end.yaw) == pytest.approx((0.0, 0.0, -90.0))
+        assert square.at_time(0.0).yaw == pytest.approx(0.0)
+        assert square.at_time(0.05).yaw == pytest.approx(0.0)
+        assert square.at_time(3.95).yaw == pytest.approx(-90.0)
+        assert square.at_distance(39.5).yaw == pytest.approx(-67.5)
+        assert square.at_distance(40.0).yaw == pytest.approx(-45.0)
         assert len(square.vertices()) == 6
         assert square.distance_at_time(4.0) == pytest.approx(40.0)
 

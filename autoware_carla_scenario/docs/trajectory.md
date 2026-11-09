@@ -111,11 +111,13 @@ A segment that does not move -- the same point written twice in a row, as a
 recording resampled onto a faster tick writes every sample, or a closed
 trajectory that repeats its first vertex at the end -- is looked past: the
 corner is between the nearest segments that move before and after it, with
-the same window, and every copy of the point faces half way round. On a timed
-trajectory the entity pauses there, and the turn is spread over the window's
-time and the pause's together, so a duplicated recording turns at its own rate
-rather than in bursts. Along the path (by distance) the pause takes no room,
-and the turn is half before the point and half after.
+the same window. Along the path (by distance) the pause takes no room: every
+copy of the point faces half way round, and the turn is half before the point
+and half after. On a timed trajectory the entity pauses there, and on the
+clock the turn is spread over the window's time and the pause's together, so a
+duplicated recording turns at its own rate rather than in bursts. A copy with a
+`yaw` of its own beside one without is not looked past: by distance the
+heading still jumps at the zero-length segment between them, as before.
 
 A pause of half a second or longer is a **stop**, not part of a corner, and
 neither are the first and last vertices of an open trajectory, nor a point

@@ -979,8 +979,11 @@ class ResolvedTrajectory:
             next's -- a stop turns on the spot.
         times: Vertex times, or ``None`` for an untimed trajectory.  On a
             closed trajectory they are the written vertices' times: the
-            closing segment has none, so the clock ends at the last written
-            vertex, as an open trajectory's does (:meth:`at_time`).
+            closing segment has none, so the clock starts at the first vertex
+            facing along the first segment, and ends at the last written
+            vertex facing along the segment arriving there, as an open
+            trajectory's does (:meth:`at_time`); only along the path
+            (:meth:`at_distance`, which wraps) does it turn at the seam.
         closed: Whether the last vertex joins back to the first.
 
     Raises:
@@ -1091,7 +1094,12 @@ class ResolvedTrajectory:
         return float(self.times[-1]) if self.times is not None else 0.0
 
     def start(self) -> TrajectorySample:
-        """The first vertex, at rest."""
+        """The first vertex, at rest.
+
+        On a closed timed trajectory, whose clock starts there and never
+        drives the closing segment, it faces along the first segment; untimed,
+        half way round the seam.
+        """
         return self._at_rest(0)
 
     def end(self) -> TrajectorySample:
@@ -1099,8 +1107,9 @@ class ResolvedTrajectory:
 
         The last vertex -- on a closed untimed trajectory the first one again,
         where the closing segment ends.  A timed trajectory's clock ends at the
-        last vertex written, so on a closed one that is where it stays: the
-        closing segment has no time (:meth:`at_time`).
+        last vertex written, so on a closed one that is where it stays, facing
+        along the segment arriving there: the closing segment has no time
+        (:meth:`at_time`).
         """
         if self.times is not None:
             return self._at_rest(self._last)
@@ -1450,7 +1459,17 @@ class ResolvedTrajectory:
         path the pause takes no distance, so there the windows still turn half
         each; at a vertex of such a corner :meth:`at_time` and
         :meth:`at_distance` differ by the clock's share of the turn spent on
-        the spot.
+        the spot.  The pause is a difference of the run's times, and one
+        within :data:`_EPSILON_S` of :data:`_STOP_MIN_S` is a stop.
+
+        A timed closed path's clock never drives its closing segment, so on
+        the clock a corner that segment is part of -- at the first vertex, at
+        the last one written, or a run across the seam -- does not turn: its
+        windows face along their own segments (``_corner_share`` ``0``), and
+        its vertices along the timed segment on their side, the first vertex
+        along the first segment and the last written one along the segment
+        arriving there, as an open path's ends.  Along the path, which wraps,
+        it is a corner like any other.
 
         ``_corner_before`` and ``_corner_after`` hold each vertex's reach (m)
         back and on (``0`` for none), ``_corner_turn`` the turn (degrees,
@@ -1496,11 +1515,28 @@ class ResolvedTrajectory:
                     given = True
             if given:
                 continue
-            pause = 0.0
-            for vertex in run[:-1]:
-                pause += self._segment_duration(vertex)
-            if pause >= _STOP_MIN_S:
+            # How long the run stays put, each stretch of it as one difference
+            # of times, so a stop written as several pauses is not a hair
+            # short of _STOP_MIN_S.  On a closed path the closing segment,
+            # which has no time, splits a run across the seam in two.
+            seam = segments - 1
+            crosses = self.closed and seam in run[:-1]
+            if crosses:
+                pause = self._elapsed(run[0], seam) + self._elapsed(0, run[-1])
+            else:
+                pause = self._elapsed(run[0], run[-1])
+            if pause >= _STOP_MIN_S - _EPSILON_S:
                 continue
+            # A timed closed path's clock never drives the closing segment:
+            # it starts at the first vertex and stops at the last one written,
+            # so on the clock a corner the closing segment is part of is no
+            # corner -- each side faces along its own timed segment, as an
+            # open path's ends do.
+            untimed = (
+                self.closed
+                and self.times is not None
+                and (arriving == seam or leaving == seam or crosses)
+            )
             turn = _wrap_degrees(math.degrees(after) - math.degrees(before))
             span_in = self._arc[arriving + 1] - self._arc[arriving]
             span_out = self._arc[leaving + 1] - self._arc[leaving]
@@ -1512,17 +1548,23 @@ class ResolvedTrajectory:
             ) * self._segment_duration(leaving)
             total = moving + pause
             share = 0.5
-            if total >= _EPSILON_S:
+            if untimed:
+                share = 0.0
+            elif total >= _EPSILON_S:
                 share = 0.5 * moving / total
             middle = _wrap_degrees(math.degrees(before) + 0.5 * turn)
-            elapsed = 0.0
+            # On the clock, past the seam yet (untimed corners only).
+            past = arriving == seam
             for position in range(len(run)):
                 vertex = run[position]
-                if position > 0:
-                    elapsed += self._segment_duration(run[position - 1])
-                done = share
-                if total >= _EPSILON_S:
-                    done = share + elapsed / total
+                if position > 0 and run[position - 1] == seam:
+                    past = True
+                heading = middle
+                if untimed:
+                    heading = math.degrees(after) if past else math.degrees(before)
+                elif total >= _EPSILON_S:
+                    done = share + self._elapsed(run[0], vertex) / total
+                    heading = math.degrees(before) + done * turn
                 indices = [vertex]
                 if self.closed and vertex == 0:
                     indices.append(count - 1)
@@ -1530,7 +1572,7 @@ class ResolvedTrajectory:
                     corner_turn[index] = turn
                     corner_share[index] = share
                     self._headings[index] = middle
-                    clock[index] = _wrap_degrees(math.degrees(before) + done * turn)
+                    clock[index] = _wrap_degrees(heading)
                     if position == 0:
                         corner_before[index] = reach_in
                     if position == len(run) - 1:
@@ -1540,6 +1582,14 @@ class ResolvedTrajectory:
         self._corner_turn = corner_turn
         self._corner_share = corner_share
         self._clock_headings = clock
+
+    def _elapsed(self, first: int, last: int) -> float:
+        """The time (s) from vertex *first* to vertex *last*; ``0`` untimed,
+        or where either has no time (a closed trajectory's closing vertex)."""
+        times = self.times
+        if times is None or first >= len(times) or last >= len(times):
+            return 0.0
+        return float(times[last]) - float(times[first])
 
     def _segment_duration(self, index: int) -> float:
         """Segment *index*'s duration (s); ``0`` untimed, and for a closed
