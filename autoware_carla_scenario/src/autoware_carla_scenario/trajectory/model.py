@@ -949,9 +949,9 @@ class ResolvedTrajectory:
         yaws: Vertex headings in CARLA degrees; ``None`` for a vertex whose
             heading is taken from the path.  Such a vertex is a corner: the
             entity turns from the arriving segment's direction to the leaving
-            one's across a window centred on it, :data:`_CORNER_HALF_WIDTH_M`
-            either side or half of either segment if that is shorter, and the
-            vertex itself faces half way round.  Elsewhere along a segment it
+            one's across a window around it, reaching
+            :data:`_CORNER_HALF_WIDTH_M` along each segment or half of it if
+            that is shorter, and the vertex itself faces half way round.  Elsewhere along a segment it
             faces the segment's own direction, with a yaw rate of ``0`` -- a
             sparse path is driven along its legs, a dense one turns smoothly.
             Given yaws interpolate between each other; between a given yaw and
@@ -980,7 +980,8 @@ class ResolvedTrajectory:
     _arc: list[float] = field(init=False, repr=False)
     _headings: list[float] = field(init=False, repr=False)
     _given: list[bool] = field(init=False, repr=False)
-    _corner: list[float] = field(init=False, repr=False)
+    _corner_before: list[float] = field(init=False, repr=False)
+    _corner_after: list[float] = field(init=False, repr=False)
     _corner_turn: list[float] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
@@ -1291,22 +1292,26 @@ class ResolvedTrajectory:
             yaw = self._headings[index] + fraction * slope
         else:
             along = math.degrees(direction)
-            start_window = self._corner[index] / span
-            end_window = self._corner[index + 1] / span
+            # Each at most half the segment, so the two never overlap.
+            start_window = self._corner_after[index] / span
+            end_window = self._corner_before[index + 1] / span
             if fraction < start_window:
                 # Leaving a corner: from half way round to the segment's way.
                 slope = 0.5 * self._corner_turn[index] / start_window
                 yaw = along + (fraction - start_window) * slope
-            elif fraction > 1.0 - end_window:
+            elif end_window > 0.0 and fraction >= 1.0 - end_window:
                 # Arriving at a corner: from the segment's way to half way round.
                 slope = 0.5 * self._corner_turn[index + 1] / end_window
                 yaw = along + (fraction - (1.0 - end_window)) * slope
             else:
                 first = self._headings[index] if self._given[index] else along
                 last = self._headings[index + 1] if self._given[index + 1] else along
+                # A turn here means a given end, which has no window, and the
+                # other end's window is at most half: the stretch is at least
+                # half the segment.  With neither end given there is no turn.
                 stretch = 1.0 - start_window - end_window
                 turn = _wrap_degrees(last - first)
-                if stretch > _EPSILON_M and turn != 0.0:
+                if turn != 0.0 and stretch > 0.0:
                     slope = turn / stretch
                     yaw = first + (fraction - start_window) * slope
                 else:
@@ -1340,15 +1345,24 @@ class ResolvedTrajectory:
 
         A corner is a vertex without a yaw of its own between two segments
         that move (on a closed path the first vertex too, between the closing
-        segment and the first).  Its window reaches :data:`_CORNER_HALF_WIDTH_M`
-        either side of it, or half of the shorter segment, so two windows
-        never overlap; the entity turns from the arriving segment's direction
-        to the leaving one's across it, and the vertex itself faces half way
-        round.  ``_corner`` holds each vertex's half-width (``0`` for none),
-        ``_corner_turn`` the turn (degrees, anticlockwise in CARLA's sense).
+        segment and the first).  Its window reaches back along the arriving
+        segment :data:`_CORNER_HALF_WIDTH_M` or half of it, whichever is
+        shorter, and on along the leaving one the same way, so two windows
+        never overlap and on a dense path they cover it all.  The entity turns
+        from the arriving segment's direction to the leaving one's across the
+        window, and the vertex itself faces half way round: half the turn
+        before it, half after.  On a path sampled at even times (a recording)
+        each half then takes half a sample's time, so the yaw rate is the turn
+        over the time across the window, as steady as the curve -- unlike a
+        split in proportion to each half's length, which would swing with
+        uneven spacing.  ``_corner_before`` and ``_corner_after`` hold each
+        vertex's reach (m) back and on (``0`` for none), ``_corner_turn`` the
+        turn (degrees, positive towards +y: clockwise seen from above, CARLA's
+        sense of yaw).
         """
         count = len(self.xs)
-        corner = [0.0] * count
+        corner_before = [0.0] * count
+        corner_after = [0.0] * count
         corner_turn = [0.0] * count
         for index in range(count):
             if self._given[index]:
@@ -1367,16 +1381,19 @@ class ResolvedTrajectory:
             after = self._segment_heading(leaving)
             if before is None or after is None:
                 continue
-            half = min(
+            turn = _wrap_degrees(math.degrees(after) - math.degrees(before))
+            corner_before[index] = min(
                 _CORNER_HALF_WIDTH_M,
                 0.5 * (self._arc[arriving + 1] - self._arc[arriving]),
+            )
+            corner_after[index] = min(
+                _CORNER_HALF_WIDTH_M,
                 0.5 * (self._arc[leaving + 1] - self._arc[leaving]),
             )
-            turn = _wrap_degrees(math.degrees(after) - math.degrees(before))
-            corner[index] = half
             corner_turn[index] = turn
             self._headings[index] = _wrap_degrees(math.degrees(before) + 0.5 * turn)
-        self._corner = corner
+        self._corner_before = corner_before
+        self._corner_after = corner_after
         self._corner_turn = corner_turn
 
     def _fill_headings(self) -> list[float]:

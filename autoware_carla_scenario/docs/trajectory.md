@@ -96,9 +96,9 @@ trajectory.
 
 A vertex with no `yaw` of its own is a **corner**: the entity turns there
 from the direction of the segment arriving to that of the segment leaving,
-across a window centred on the vertex that reaches 1 m either side of it, or
-half of either segment if that is shorter, and the vertex itself faces half
-way round. Everywhere else along a segment it faces that segment's own
+across a window around the vertex that reaches 1 m along each segment, or
+half of that segment if it is shorter, and the vertex itself faces half way
+round: half the turn before it, half after. Everywhere else along a segment it faces that segment's own
 direction -- the direction it is moving -- with a yaw rate of `0`. So a
 sparse path (a few hand-written points) is driven along each straight leg
 and turns only at the corners, and a dense one (a recording) turns smoothly

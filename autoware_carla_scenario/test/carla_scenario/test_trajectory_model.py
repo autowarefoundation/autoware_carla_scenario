@@ -348,6 +348,74 @@ class TestHeadings:
         # A lap later it wraps onto the first leg again.
         assert square.at_distance(45.0).yaw == pytest.approx(0.0)
 
+    def test_an_unevenly_sampled_curve_turns_steadily(self) -> None:
+        """A quarter circle (r = 10 m) recorded every 0.02 s with its points
+        alternately 0.1 m and 0.3 m apart: each corner turns half before its
+        vertex and half after, so the rate holds steady between the first and
+        last half segments, never 0 mid-curve -- the samples exactly half way
+        along a segment, where two windows meet, included."""
+        along = [0.0]
+        while along[-1] < 15.7:
+            along.append(along[-1] + (0.1 if len(along) % 2 == 1 else 0.3))
+        count = len(along)
+        curve = ResolvedTrajectory(
+            xs=[10.0 * math.sin(s / 10.0) for s in along],
+            ys=[10.0 - 10.0 * math.cos(s / 10.0) for s in along],
+            zs=[0.0] * count,
+            yaws=[None] * count,
+            times=[0.02 * index for index in range(count)],
+        )
+        # Each vertex turns by the chord angle, (0.1 + 0.3) / 2 / 10 rad, in
+        # one sample's time: about 57.3 degrees a second.
+        rate = math.degrees(0.02) / 0.02
+        end = 0.02 * (count - 1)
+        for step in range(20, int(end / 0.0005) - 20):
+            time = step * 0.0005
+            sample = curve.at_time(time)
+            assert sample.yaw_rate == pytest.approx(rate, rel=0.01)
+            tangent = math.degrees(curve.distance_at_time(time) / 10.0)
+            assert abs(sample.yaw - tangent) < 0.5
+
+    def test_a_u_turn_turns_one_way_without_a_jump(self) -> None:
+        """East, a metre South, then West: both corners turn clockwise (towards
+        +y), and the yaw never jumps on the way round."""
+        u_turn = ResolvedTrajectory(
+            xs=[0.0, 20.0, 20.0, 0.0],
+            ys=[0.0, 0.0, 1.0, 1.0],
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+            times=[0.0, 2.0, 2.1, 4.1],
+        )
+        assert u_turn.at_distance(10.0).yaw == pytest.approx(0.0)
+        assert u_turn.at_distance(20.5).yaw == pytest.approx(90.0)
+        assert abs(u_turn.at_distance(31.0).yaw) == pytest.approx(180.0)
+        previous = u_turn.at_distance(0.0).yaw
+        for step in range(1, 4101):
+            sample = u_turn.at_time(step * 0.001)
+            assert sample.yaw_rate >= 0.0
+            assert abs(math.remainder(sample.yaw - previous, 360.0)) < 5.0
+            previous = sample.yaw
+
+    def test_a_closed_loop_turns_across_its_seam(self) -> None:
+        square = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 0.0],
+            ys=[0.0, 0.0, 10.0, 10.0],
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+            closed=True,
+            times=[0.0, 1.0, 2.0, 3.0],
+        )
+        # The closing leg runs North (-90); the first one East (0).
+        assert square.at_distance(39.5).yaw == pytest.approx(-67.5)
+        assert square.at_distance(40.0).yaw == pytest.approx(-45.0)
+        assert square.at_distance(0.0).yaw == pytest.approx(-45.0)
+        assert square.at_distance(0.5).yaw == pytest.approx(-22.5)
+        assert square.at_distance(40.5).yaw == pytest.approx(-22.5)
+        assert square.start().yaw == pytest.approx(-45.0)
+        assert square.end().yaw == pytest.approx(-45.0)
+        # Leaving the seam: half of 90 degrees over 1 m at 10 m/s.
+        assert square.at_time(0.05).yaw_rate == pytest.approx(450.0)
+
     def test_given_headings_still_interpolate(self) -> None:
         trajectory = ResolvedTrajectory(
             xs=[0.0, 10.0],
