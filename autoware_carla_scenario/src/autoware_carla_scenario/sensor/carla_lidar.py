@@ -77,7 +77,10 @@ class CarlaLidarSensorConfig:
     #: casts them; 1 the model as tuned; more exaggerates it.
     weather_noise: float = 1.0
     #: Seed of the weather noise, so a run repeats its sweeps; ``None`` takes
-    #: the run's seed (:mod:`~autoware_carla_scenario.seed`) when it attaches.
+    #: the run's seed (:mod:`~autoware_carla_scenario.seed`) when it attaches,
+    #: mixed with the sensor's own id (:class:`CarlaLidarSensor`'s
+    #: ``sensor_id``), so that LiDARs left to the run's seed draw apart
+    #: (#2018).  A seed given here is used as it is.
     noise_seed: Optional[int] = None
     #: The server's ``carla.Weather.FogDensityScale``, which the LiDAR's fog
     #: follows.  A scenario run sets it from ``server.fog_density_scale``;
@@ -165,6 +168,11 @@ class CarlaLidarSensor:
         sweep_interval_s: Simulated seconds between sweeps, a positive whole
             number of ticks; one tick (the default) sweeps on every tick.  Each
             sweep is still one whole revolution, taken within its tick.
+        sensor_id: What tells this LiDAR from the others on the vehicle (a
+            driver LiDAR's ``logical_id``); empty (the default) for its mount.
+            Without a ``noise_seed`` of its own, its weather noise is drawn from
+            the run's seed and this, so two LiDARs alike draw different noise
+            and the same LiDAR the same in every run of a seed (#2018).
 
     Raises:
         ValueError: If *sweep_interval_s* is not a positive whole number of ticks.
@@ -188,11 +196,20 @@ class CarlaLidarSensor:
     _weathered_frame: int
     #: The weather noise's seed: the config's, or the run's when it attaches.
     _noise_seed: int
+    #: Mixed into the weather noise with :attr:`_noise_seed`: a hash of the
+    #: sensor's id, when the config gives no ``noise_seed``; ``None`` when it
+    #: does, whose noise is the seed's alone.
+    _noise_stream: Optional[int]
+    #: The frame a sweep due did not come by in time, until a sweep comes; -1
+    #: otherwise.  While set, no sweep is waited for: a sensor that stopped
+    #: delivering costs one wait, not one a read (#2018).
+    _missed: int
 
     def __init__(
         self,
         config: CarlaLidarSensorConfig,
         sweep_interval_s: float = FIXED_DELTA_SECONDS,
+        sensor_id: str = "",
     ) -> None:
         ticks = tick_multiple(sweep_interval_s, "LiDAR sweep_interval_s")
         self._config = config
@@ -203,6 +220,12 @@ class CarlaLidarSensor:
         self._world = None
         self._weathered_frame = -1
         self._noise_seed = resolve_seed(config.noise_seed)
+        self._noise_stream = (
+            None
+            if config.noise_seed is not None
+            else _stream_of(sensor_id if sensor_id else _mount_key(config))
+        )
+        self._missed = -1
 
     @property
     def sweep_interval_ticks(self) -> int:
@@ -316,10 +339,12 @@ class CarlaLidarSensor:
         The buffer is in the sensor frame, with the world's rain and fog on it
         (:meth:`_weather`).  A sweep is due on *frame* when the
         newest one is a whole interval old; then this waits up to
-        :data:`_SWEEP_TIMEOUT` seconds for it.  Between sweeps the newest one is
-        the answer, taken on an earlier tick of the interval.  ``None`` when
-        nothing within the last interval arrived -- an older sweep would be a
-        stale one, and the policy is better told nothing than told the past.
+        :data:`_SWEEP_TIMEOUT` seconds for it.  When none comes, no read waits
+        again until a sweep does (one already queued is still taken).  Between
+        sweeps the newest one is the answer, taken on an earlier tick of the
+        interval.  ``None`` when nothing within the last interval arrived -- an
+        older sweep would be a stale one, and the policy is better told nothing
+        than told the past.
         """
         deadline = time.monotonic() + _SWEEP_TIMEOUT
         self._take_queued()
@@ -333,6 +358,11 @@ class CarlaLidarSensor:
                 )
             except queue.Empty:
                 logger.warning("no LiDAR sweep for frame %d in time; skipped", frame)
+                # Not waited for again, on every read, until a sweep comes
+                # (#2018): with a sweep every tick, counting the next one
+                # from here, as the camera does (#951), would still wait on
+                # every read.
+                self._missed = frame
                 break
             self._take_queued()
         newest = self._newest
@@ -369,6 +399,7 @@ class CarlaLidarSensor:
                 self._config.weather_noise,
                 self._noise_seed,
                 sweep[0],
+                self._noise_stream,
             ),
         )
         self._newest = result
@@ -392,7 +423,11 @@ class CarlaLidarSensor:
         )
 
     def _due(self, frame: int) -> bool:
-        """Whether a sweep newer than the newest one is due by *frame*."""
+        """Whether a sweep newer than the newest one is due by *frame*: an
+        interval after the newest, or at once before any -- unless one due
+        has not come since (:attr:`_missed`), which is not waited for again."""
+        if self._missed >= 0:
+            return False
         newest = self._newest
         if newest is None:
             return True
@@ -401,9 +436,12 @@ class CarlaLidarSensor:
     def _keep(
         self, sweep: Tuple[int, np.ndarray[tuple[int, int], np.dtype[np.float32]]]
     ) -> None:
+        """Make *sweep* the newest, unless a later one already is."""
         newest = self._newest
         if newest is None or sweep[0] >= newest[0]:
             self._newest = sweep
+            # The sensor delivers again: its next sweep is waited for.
+            self._missed = -1
 
     def _take_queued(self) -> None:
         """Move every sweep already queued into :attr:`_newest`; never waits."""
@@ -413,3 +451,30 @@ class CarlaLidarSensor:
             except queue.Empty:
                 break
             self._keep(sweep)
+
+
+def _mount_key(config: CarlaLidarSensorConfig) -> str:
+    """A LiDAR's mount as text: what tells it apart when it is given no id."""
+    return ",".join(
+        str(value)
+        for value in (
+            config.position_x,
+            config.position_y,
+            config.position_z,
+            config.roll,
+            config.pitch,
+            config.yaw,
+        )
+    )
+
+
+def _stream_of(key: str) -> int:
+    """A stable 32-bit hash of *key* (FNV-1a), the same in every process.
+
+    Python's ``hash()`` of a string is salted per process, so it would not
+    repeat a run's noise.
+    """
+    value = 2166136261
+    for char in key:
+        value = ((value ^ ord(char)) * 16777619) & 0xFFFFFFFF
+    return value

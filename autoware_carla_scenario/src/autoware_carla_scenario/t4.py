@@ -496,8 +496,12 @@ class T4Recording:
                     cfg.yaw,
                     self._rear_axle,
                 )
+                # The driver LiDAR's logical id, as the driver entity gives
+                # it, keeps its weather noise apart from the others' (#2018).
                 lidar = CarlaLidarSensor(
-                    cfg, sweep_interval_s=interval * FIXED_DELTA_SECONDS
+                    cfg,
+                    sweep_interval_s=interval * FIXED_DELTA_SECONDS,
+                    sensor_id=str(getattr(cfg, "logical_id", "")),
                 )
                 lidar.attach(world, ego)
                 self._lidars.append((lidar, mount))

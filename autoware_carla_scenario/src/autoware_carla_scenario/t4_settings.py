@@ -75,8 +75,8 @@ class T4Settings:
     """What a run's dataset holds, and how often: the driver policy's sensors
     and step, and the ``t4`` config."""
 
-    #: The LiDARs, as ``driver.lidars`` (their ``logical_id`` is not used:
-    #: every sweep goes into :data:`LIDAR_CHANNEL`).
+    #: The LiDARs, as ``driver.lidars`` (their ``logical_id`` only keeps their
+    #: weather noise apart: every sweep goes into :data:`LIDAR_CHANNEL`).
     lidars: tuple[CarlaLidarSensorConfig, ...] = ()
     #: The cameras, ``(logical id, sensor)``, as ``driver.cameras``.
     cameras: tuple[tuple[str, CarlaCameraSensorConfig], ...] = ()
