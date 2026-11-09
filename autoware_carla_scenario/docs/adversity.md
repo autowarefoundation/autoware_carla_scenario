@@ -18,7 +18,7 @@ behaviour generation (#385). There are three ways to use it:
 | Layer | Module | What it does |
 |---|---|---|
 | Observation | `adversity.observation` | Builds a `Scene` of the agents in the Lanelet2 map frame. It answers TeraSim's traci questions: the leader and follower within 40 m, the lanes beside, the next signal, a pedestrian's crosswalk and nearest road. |
-| Triggers | `adversity.triggers` | One pure function per kind. Each takes what the agent sees and returns an `AdversarialCommand`, or `None`. `adversity_command` applies the location gate first, then the kind's trigger. |
+| Triggers | `adversity.triggers` | One pure function per kind. Each takes what the agent sees and returns an `AdversarialCommand`, or `None`. `adversity_command` applies the location gate first, then the kind's trigger. A vehicle's gate reads the lanes ahead from where it is on its lane; a pedestrian's, from its projection on the road nearest it, so one beside the junction end of a long approach is at `INTERSECTION` (#2024). |
 | Location | `adversity.location` | `AdversityLocation`: `ANY`, `INTERSECTION`, `HIGHWAY`, `ROUNDABOUT`. These are read from the map by the ODD's own probes, so an adversity fires where coverage records that location. |
 | Commands | `adversity.command` | An acceleration, a lane change or a path, planned along the lanes into a timed path (`plan_command`, `predict_command`). |
 | Execution | `actions._adversarial_execution` | Drives the path: it takes the vehicle from its traffic backend, follows the path, then hands the vehicle back. |
@@ -30,6 +30,17 @@ behaviour generation (#385). There are three ways to use it:
 The numbers are TeraSim's defaults; each can be overridden in
 `TriggerThresholds`. The accelerations come from the Intelligent Driver Model
 (`adversity.idm`), which stands in for SUMO's car-following model.
+
+`TriggerThresholds` refuses, when it is built, a value outside its bounds,
+naming the field and the value (#2024), rather than dividing by zero in the
+middle of a tick: a `duration`, `lane_change_duration`, `abort_resolution`,
+`jaywalk_duration`, `jaywalk_resolution`, `pedestrian_speed` or
+`pedestrian_max_speed` that is not finite and positive; a
+`pedestrian_speed_factor` whose ends are not finite and positive, or whose
+low end is above its high end; a negative or non-finite speed, gain,
+distance, angle, headway or `stop_crossing_wait` deviation; and a
+non-finite `stop_crossing_wait` mean (a negative mean is a pedestrian that
+never waits).
 
 | Kind | Action | TeraSim | Fires when | Does |
 |---|---|---|---|---|
@@ -107,7 +118,8 @@ map. A crosswalk without one has no red light to run.
 `AdversarialTrafficAction` runs TeraSim's NADE loop on every tick of the run:
 
 1. **Candidates**: the `max_controlled` (5) vehicles nearest the ego within
-   `control_radius` (50 m), and every pedestrian there.
+   `control_radius` (50 m), and every pedestrian there, in one list nearest
+   first whatever their kind (#2024).
 2. **Adversity**: each candidate's adversity is the first entry of
    `adversities` whose trigger fires. That gives `{normal: 1 - p,
    adversarial: p}`.
@@ -170,6 +182,15 @@ self.register_pre_tick(
 whole number from 0 to 2147483647 (`2**31 - 1`); `None`, the default, follows the run's seed. A
 seed of `2.5`, `True` or `-1` is refused when the action is built, naming
 `seed`, rather than read as 2 or 1.
+
+NADE splits a run's seed into three random streams: the sampling draws, the
+triggers' own draws (a jaywalker's speed, a crosser's wait) and the victims'
+responses. Stream `i` of seed `s` is seeded with `3 s + i`
+(`adversity.nade.stream_seed`), so no stream of one run is a stream of
+another, and a sweep over consecutive seeds gives independent runs (#2024).
+A run still repeats from its seed. Before #2024 the streams were seeded
+`s`, `s + 1` and `s + 2`, so run `k`'s triggers drew what run `k + 1`
+sampled with; the draws for a given seed other than 0 changed with the fix.
 
 It drives the NPCs and pedestrians a scenario registers, and with
 `drive_background` (the default) the traffic backend's background vehicles in

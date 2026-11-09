@@ -263,12 +263,16 @@ class RoadPoint:
         x: East (m).
         y: North (m).
         distance: From the pedestrian (m).
+        s: How far along the lanelet's centreline the point is (m), the
+            pedestrian's projection on it: where its location gate reads
+            the lanes ahead from (#2024).
     """
 
     lanelet: ConstLanelet
     x: float
     y: float
     distance: float
+    s: float
 
 
 @dataclass(frozen=True)
@@ -550,7 +554,7 @@ class Scene:
                 s, _t = _arc(lanelet, agent.x, agent.y)
                 cx, cy = _point_at(_centreline(lanelet), s)
                 road = RoadPoint(
-                    lanelet, cx, cy, math.hypot(cx - agent.x, cy - agent.y)
+                    lanelet, cx, cy, math.hypot(cx - agent.x, cy - agent.y), s
                 )
             if road is not None and near is not None:
                 break

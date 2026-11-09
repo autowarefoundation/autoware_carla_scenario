@@ -26,6 +26,7 @@ from autoware_carla_scenario.adversity.nade import (
     candidates,
     ego_command,
     is_probability,
+    stream_seed,
 )
 from autoware_carla_scenario.adversity.observation import AgentSnapshot, Scene
 from autoware_carla_scenario.adversity.geometry import PredictedState
@@ -76,9 +77,11 @@ def _step(
 # -- candidates and q ---------------------------------------------------------
 
 
-def test_the_candidates_are_the_nearest_vehicles_then_the_pedestrians(
+def test_the_candidates_are_nearest_first_whatever_their_kind(
     features: MapFeatures,
 ) -> None:
+    # #2024: the pedestrian 12 m away comes before the car 20 m away; the
+    # cap counts vehicles only.
     scene = _scene(
         features,
         _car("ego", -40.0),
@@ -90,9 +93,24 @@ def test_the_candidates_are_the_nearest_vehicles_then_the_pedestrians(
         AgentSnapshot("p", -40.0, -12.0, 0.0, 0.0, 0.0, PERSON),
     )
     controllable = {"far", "a", "b", "c", "p"}
-    assert candidates(scene, "ego", controllable) == ["a", "b", "c", "p"]
+    assert candidates(scene, "ego", controllable) == ["a", "b", "p", "c"]
     two = NadeSettings(max_controlled=2)
     assert candidates(scene, "ego", controllable, two) == ["a", "b", "p"]
+    one = NadeSettings(max_controlled=1)
+    assert candidates(scene, "ego", controllable, one) == ["a", "p"]
+    none = NadeSettings(max_controlled=0)
+    assert candidates(scene, "ego", controllable, none) == ["p"]
+
+
+def test_a_near_pedestrian_comes_before_a_far_car(features: MapFeatures) -> None:
+    # The issue's example: a car 45 m away, a pedestrian 4 m away.
+    scene = _scene(
+        features,
+        _car("ego", -40.0),
+        _car("car", 5.0),
+        AgentSnapshot("ped", -40.0, -5.75, 0.0, 0.0, 0.0, PERSON),
+    )
+    assert candidates(scene, "ego", {"car", "ped"}) == ["ped", "car"]
 
 
 @pytest.mark.parametrize(
@@ -336,6 +354,29 @@ def test_the_draws_are_seeded(features: MapFeatures) -> None:
     assert run(3) == run(3) != run(4)
 
 
+def test_the_streams_of_consecutive_seeds_do_not_coincide() -> None:
+    # #2024: seed + stream gave run k's trigger stream to run k + 1's draws.
+    seeds = {stream_seed(seed, stream) for seed in range(100) for stream in range(3)}
+    assert len(seeds) == 300
+    assert stream_seed(0, 0) == 0 and stream_seed(7, 2) == 23
+    with pytest.raises(ValueError, match="stream"):
+        stream_seed(1, 3)
+    for k in (0, 1, 41):
+        run = ImportanceSampler(k)
+        after = ImportanceSampler(k + 1)
+        streams = [run._draws, run._triggers, run._responses]
+        others = [after._draws, after._triggers, after._responses]
+        firsts = [[r.random() for _ in range(4)] for r in streams + others]
+        assert len({tuple(f) for f in firsts}) == 6
+    # Reproducible: the same seed gives the same streams.
+    a, b = ImportanceSampler(5), ImportanceSampler(5)
+    assert [a._draws.random(), a._triggers.random(), a._responses.random()] == [
+        b._draws.random(),
+        b._triggers.random(),
+        b._responses.random(),
+    ]
+
+
 def test_an_ego_off_the_lanes_is_challenged_by_nothing(features: MapFeatures) -> None:
     scene = _scene(features, _car("ego", -40.0, -30.0), _car("npc1", -25.0))
     sampler = ImportanceSampler(settings=ALWAYS)
@@ -419,7 +460,7 @@ def test_the_candidates_are_on_the_ego_s_level(stacked: MapFeatures) -> None:
         AgentSnapshot("p_above", 55.0, 3.0, 0.0, 1.0, 0.0, PERSON, z=8.9, height=1.8),
     )
     controllable = {"below", "above", "p_below", "p_above"}
-    assert candidates(scene, "ego", controllable) == ["above", "p_above"]
+    assert candidates(scene, "ego", controllable) == ["p_above", "above"]
 
 
 def test_a_vehicle_below_does_not_challenge_the_ego_on_the_deck(
