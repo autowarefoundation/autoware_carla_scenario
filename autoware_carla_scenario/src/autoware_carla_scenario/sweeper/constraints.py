@@ -60,6 +60,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional
 
+from ..lanelet_junction import TURN_DIRECTION_TAG, is_junction_lanelet
 from ..value_text import shown
 
 if TYPE_CHECKING:
@@ -398,8 +399,9 @@ class IsJunctionConstraint(Constraint):
     type: str = "is_junction"
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
-        """Return ``True`` if *lanelet* has a ``turn_direction`` attribute."""
-        return "turn_direction" in lanelet.attributes
+        """Return ``True`` if *lanelet* has a ``turn_direction`` attribute
+        (:func:`~..lanelet_junction.is_junction_lanelet`)."""
+        return is_junction_lanelet(lanelet)
 
 
 @dataclass(frozen=True)
@@ -437,9 +439,9 @@ class TurnDirectionConstraint(Constraint):
 
     def evaluate(self, lanelet: ConstLanelet) -> bool:
         """Return ``True`` if the lanelet turns the way this constraint says."""
-        if "turn_direction" not in lanelet.attributes:
+        if not is_junction_lanelet(lanelet):
             return False
-        return str(lanelet.attributes["turn_direction"]) == self.value
+        return str(lanelet.attributes[TURN_DIRECTION_TAG]) == self.value
 
 
 @dataclass(frozen=True)
@@ -662,7 +664,7 @@ def _lies_beside(
     import lanelet2.core
     import lanelet2.geometry
 
-    if other.id == lanelet.id or "turn_direction" in other.attributes:
+    if other.id == lanelet.id or is_junction_lanelet(other):
         return False
     points = [(float(p.x), float(p.y)) for p in other.centerline]
     if len(points) < 2:

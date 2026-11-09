@@ -62,7 +62,7 @@ def _at(
 @pytest.mark.parametrize(
     ("lanelet_id", "s", "expected"),
     [
-        # In a junction, signalised or not: the ODD's scenery.junction.
+        # In a junction, signalised or not: the ODD's junction_type.
         (JUNCTION, 0.0, INTERSECTION),
         (rm.J[("S", "N")], 0.0, INTERSECTION),
         # W_IN2 (50 m) ends at the junction: within 25 m of it from s = 25.

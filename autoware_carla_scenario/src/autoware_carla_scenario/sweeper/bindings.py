@@ -15,6 +15,7 @@ from typing import TYPE_CHECKING, Any, Optional, Protocol
 import lanelet2.core
 import lanelet2.geometry
 
+from ..lanelet_junction import is_junction_lanelet
 from ..utils.stop_line import _collect_stop_lines_from_reg_elems
 from ..value_text import shown
 
@@ -395,7 +396,7 @@ class RouteThroughBinding:
         current: ConstLanelet = lanelet_map.laneletLayer[lanelet_id]
         steps = 0
         while steps < self.depth or (
-            self.through_junction and "turn_direction" in current.attributes
+            self.through_junction and is_junction_lanelet(current)
         ):
             steps += 1
             following = sorted(routing_graph.following(current), key=lambda ll: ll.id)

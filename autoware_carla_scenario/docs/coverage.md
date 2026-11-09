@@ -171,7 +171,7 @@ categories; what tier4/taxonomy does not declare yet keeps an id of its own
 
 | Item | Buckets | Read from |
 |---|---|---|
-| `odd.scenery.junction` | false, true | Lanelet2 `turn_direction` tag of the ego's lanelet, else the ego's CARLA waypoint |
+| `odd.SE.drivable_area_geometry.junctions.intersection.junction_type` ² | intersection | Lanelet2 `turn_direction` tag of the ego's lanelet, else the ego's CARLA waypoint; nothing outside a junction, and Lanelet2 tells no branch or merge |
 | `odd.scenery.location` ² | urban, nonurban, private | Lanelet2 `location` tag of the ego's lanelet |
 | `odd.SE.road_infrastructure.road_type` ² | local_road, primary_road, highway | Lanelet2 `subtype` `highway`; Lanelet2 tells no local road from a primary one, so those are not measured |
 | `odd.SE.zones_and_areas.area.drivable_area_type` ² | lane, shoulder, parking_space, mixed_pedestrian_and_vehicular_traffic | Lanelet2 `subtype` tag of the ego's lanelet |

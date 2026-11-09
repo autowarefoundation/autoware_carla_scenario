@@ -17,6 +17,7 @@ from .coverage import (CoverItem, _expect_cover_expression, _expect_optional_ran
 
 
 NEARBY_RADIUS_M: float = 50.0
+JUNCTION_INTERSECTION: str = "intersection"
 TIMES_OF_DAY: List[str] = ["day", "dusk", "night", "dawn"]
 CLOUD_COVERS: List[str] = ["clear", "partly_cloudy", "overcast"]
 ROAD_SURFACE_CONDITIONS: List[str] = ["dry", "wet", "standing_water"]
@@ -501,6 +502,10 @@ def ego_speed_kph(world: carla.World) -> Optional[float]:
 
 
 def in_junction(world: carla.World) -> Optional[bool]:
+    raise NotImplementedError()
+
+
+def junction_type(world: carla.World) -> Optional[str]:
     raise NotImplementedError()
 
 

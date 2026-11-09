@@ -88,6 +88,8 @@ def _abreast_of(
 
 _SE = "scenery_elements.scenery_elements.scenery_element"
 SPEED_LIMIT = f"{_SE}.road_infrastructure.speed_limit"
+# tier4/taxonomy's junction type: intersection inside a junction, nothing outside.
+JUNCTION_TYPE = f"{_SE}.drivable_area_geometry.junctions.intersection.junction_type"
 LANE_COUNT = (
     f"{_SE}.lane_infrastructure.detailed_lane_structure.through_lanes.lane_count"
 )
@@ -683,8 +685,10 @@ class TestVerdict:
         self, nishishinjuku: tuple[Any, Any]
     ) -> None:
         odd = _map_odd()
-        junction = _attribute(odd, "scenery.junction")
-        odd = _map_odd(OddModule("no_junctions", include_and=[junction.equals(False)]))
+        junction = _attribute(odd, JUNCTION_TYPE)
+        odd = _map_odd(
+            OddModule("no_junctions", exclude_and=[junction.equals("intersection")])
+        )
         touching = PlannedRoute(start=LEFT_TURN.start, goal=Lanelet2Pose(411, 0.0))
         coverage = _cover(odd, touching, nishishinjuku)
         assert coverage.lanelets[-1].verdict == "outside"
@@ -729,9 +733,10 @@ class TestExpectedCoverage:
             "[60, 80)": pytest.approx(metres[203]),
         }
         assert list(speed) == ["[50, 60)", "[60, 80)"]  # in bucket order
-        assert coverage.expected_m["scenery.junction"] == {
-            "false": pytest.approx(metres[203] + metres[207]),
-            "true": pytest.approx(metres[411]),
+        # Outside a junction there is no junction type: those metres are missing.
+        assert coverage.expected_m[JUNCTION_TYPE] == {
+            "intersection": pytest.approx(metres[411]),
+            MISSING_BUCKET: pytest.approx(metres[203] + metres[207]),
         }
         # No lane count inside a junction, as at run time.
         assert coverage.expected_m[LANE_COUNT][MISSING_BUCKET] == pytest.approx(

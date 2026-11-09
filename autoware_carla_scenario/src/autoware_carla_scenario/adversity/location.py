@@ -4,7 +4,7 @@ TeraSim only lets an adversity fire where it was configured to: a vehicle
 "at an intersection" may run the light, one "on a highway" may cut in.  It
 answers from SUMO's network; the port answers from the Lanelet2 map by the
 same criteria the ODD's probes read (:mod:`..odd.probes`, the default ODD's
-``scenery.road_type`` and ``scenery.junction``), so an adversity gated to a
+road type and junction type), so an adversity gated to a
 location fires where coverage records that location.  TeraSim's precedence
 (highway, then intersection, then roundabout) and look-ahead are kept:
 
