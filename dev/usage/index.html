@@ -6279,7 +6279,12 @@ none, so its case stays PENDING until the batch is collected. A case whose
 recorded outcome holds no verdict, or a result that cannot be reported (no
 string <code>message</code>, no number <code>elapsed_seconds</code>, <code>condition_statuses</code> or a
 <code>failure</code> that cannot be read), shows as an error, as <code>scenario-slurm
-collect</code> reports it.</p>
+collect</code> reports it.
+A coverage file openodd cannot read -- one holding a number too long for a
+float (an integer of hundreds of digits, which Python's <code>json</code> reads) or
+<code>NaN</code> -- is left out of the matrix, the plot and the cases in a cell alike,
+and the page names it; <code>/compare</code> names the files each session's matrix left
+out the same way.</p>
 <h3 id="comparing-runs">Comparing runs<a class="headerlink" href="#comparing-runs" title="Permanent link">&para;</a></h3>
 <p><code>/compare</code> (the navigation bar's <em>Compare</em>, or <em>Compare with past runs</em> on a
 session's page) compares two or more sessions of the same scenarios
@@ -6784,7 +6789,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 08:05:23 UTC"><span class="timeago" datetime="2026-11-08T08:05:23+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 08:05:23 UTC">2026-11-08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 9, 2026 00:12:47 UTC"><span class="timeago" datetime="2026-11-09T00:12:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 9, 2026 00:12:47 UTC">2026-11-09</span>
   </span>
 
     
