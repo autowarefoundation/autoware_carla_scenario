@@ -111,4 +111,6 @@ autoware-carla-scenario = { workspace = true }
 ```
 
 then run `uv lock` and `uv sync`. This is optional — the package works as a
-plain editable install too.
+plain editable install too. Drop the `{ workspace = true }` source entry again
+when you move the package out of the monorepo: outside a workspace, uv refuses
+it.

@@ -227,35 +227,51 @@ def _reserved_scenario_names() -> frozenset[str]:
     return frozenset(name for name in reserved if name == name.lower())
 
 
+def _imported_modules(source: str) -> set[str]:
+    """Return the top-level modules *source* imports absolutely, anywhere in it.
+
+    By the first component of every ``import x.y`` and ``from x.y import z``
+    (a function body's imports too); relative imports and ``__future__`` are
+    left out.
+    """
+    modules: set[str] = set()
+    for node in ast.walk(ast.parse(source)):
+        if isinstance(node, ast.Import):
+            modules.update(alias.name.split(".", 1)[0] for alias in node.names)
+        elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+            modules.add(node.module.split(".", 1)[0])
+    modules.discard("__future__")
+    return modules
+
+
 @functools.cache
 def _template_imported_modules() -> frozenset[str]:
     """Return the top-level modules the generated import package imports.
 
-    Every absolute ``import x.y`` / ``from x.y import z`` of the Python
-    templates :data:`_FILE_MANIFEST` writes inside the import package, anywhere
-    in the module (a function body's imports too), by its first component:
-    ``math`` and ``dataclasses`` (``configs.py``), ``logging``
-    (``scenario.py``), ``autoware_carla_scenario``, ...  Codon resolves an
-    import to a module beside the importing one first, so a scenario module
-    named after one of these (``<pkg>/math.py``) replaces it for every other
-    module of the package, and the package fails its own static check
-    (#2031).  Read off the rendered templates, so it follows them.
+    Every absolute import of the Python templates :data:`_FILE_MANIFEST`
+    writes inside the import package -- ``math`` and ``dataclasses``
+    (``configs.py``), ``logging`` (``scenario.py``),
+    ``autoware_carla_scenario``, ... -- and of the prelude the static check
+    puts above every module it compiles (:data:`typecheck.transform.PRELUDE`:
+    ``enum``, ...).  Codon resolves an import to a module beside the importing
+    one first, so a scenario module named after one of these
+    (``<pkg>/math.py``, ``<pkg>/enum.py``) replaces it for every other module
+    of the package, and the package fails its own static check (#2031).  Read
+    off the rendered templates and the prelude, so it follows both.
     """
-    modules: set[str] = set()
+    # The checker's rewriter, imported here: scenario-new need not load it to
+    # write a package, only to know what the check will import.
+    from ..typecheck.transform import PRELUDE  # noqa: PLC0415
+
+    modules = _imported_modules(PRELUDE)
     for template_name, out_template in _FILE_MANIFEST.items():
         if not (out_template.startswith(_PACKAGE_DIR) and out_template.endswith(".py")):
             continue
-        source = (
+        modules |= _imported_modules(
             code_environment(TEMPLATES_DIR)
             .get_template(template_name)
             .render(**_PLACEHOLDER_NAMES)
         )
-        for node in ast.walk(ast.parse(source)):
-            if isinstance(node, ast.Import):
-                modules.update(alias.name.split(".", 1)[0] for alias in node.names)
-            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
-                modules.add(node.module.split(".", 1)[0])
-    modules.discard("__future__")
     return frozenset(modules)
 
 

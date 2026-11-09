@@ -441,13 +441,15 @@ names `__init__.py` defines (`register`, `register_scenario`,
 
 Nor can a scenario take the name of a module the generated package imports:
 `math` and `dataclasses` (`configs.py`), `logging` (`scenario.py`), `pathlib`
-(`__init__.py`) and `autoware_carla_scenario`. Codon resolves an import to a
-module beside the importing one first, so a scenario module `math.py` would
+(`__init__.py`), `autoware_carla_scenario`, and `enum`, which the static
+check's prelude (`typecheck.transform.PRELUDE`) imports into every module it
+compiles. Codon resolves an import to a module beside the importing one first,
+so a scenario module `math.py` would
 replace the standard library's `math` in `configs.py`, and the package would
 fail its own static check (`cannot import name 'isfinite' from
 '<pkg>.math'`). `scenario-new -s math` is refused with `Error: scenario name
 'math' is reserved: the generated package imports the module 'math' ...`. The
-list is read off the rendered templates, so it follows them; other
+list is read off the rendered templates and the prelude, so it follows them; other
 standard-library names (`signal`, `queue`, ...) are fine as scenario names.
 
 Nor can a scenario take the name of a built-in scenario (`adversity`,

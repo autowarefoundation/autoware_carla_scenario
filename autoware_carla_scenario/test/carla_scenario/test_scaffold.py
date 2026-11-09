@@ -550,11 +550,15 @@ class TestTemplateImportShadowing:
 
         imported = _template_imported_modules()
         assert {"math", "dataclasses", "logging", "autoware_carla_scenario"} <= imported
+        # The static check's prelude imports enum into every module it compiles.
+        assert "enum" in imported
         assert "__future__" not in imported
         # tests/test_typecheck.py is outside the import package.
         assert "pytest" not in imported
 
-    @pytest.mark.parametrize("scenario", ["math", "logging", "dataclasses", "Math"])
+    @pytest.mark.parametrize(
+        "scenario", ["math", "logging", "dataclasses", "enum", "Math"]
+    )
     def test_shadowing_scenario_name_raises(self, scenario: str) -> None:
         with pytest.raises(
             ValueError,
@@ -566,7 +570,7 @@ class TestTemplateImportShadowing:
         with pytest.raises(ValueError, match="imports the module 'logging'"):
             resolve_names("logging_pkg")
 
-    @pytest.mark.parametrize("scenario", ["math", "logging", "dataclasses"])
+    @pytest.mark.parametrize("scenario", ["math", "logging", "dataclasses", "enum"])
     def test_cli_reports_cleanly(
         self, tmp_path: Path, capsys: pytest.CaptureFixture[str], scenario: str
     ) -> None:
@@ -579,7 +583,8 @@ class TestTemplateImportShadowing:
         assert list(tmp_path.iterdir()) == []
 
     @pytest.mark.parametrize(
-        "scenario", ["signal", "queue", "math_check", "logging_run", "my_dataclasses"]
+        "scenario",
+        ["signal", "queue", "math_check", "logging_run", "my_dataclasses", "enums"],
     )
     def test_ordinary_names_still_work(self, tmp_path: Path, scenario: str) -> None:
         result = create_scenario_package(

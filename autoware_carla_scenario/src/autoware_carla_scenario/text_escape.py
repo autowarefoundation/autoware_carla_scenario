@@ -50,10 +50,12 @@ def single_line(text: str) -> str:
     ``project.description`` must be a single line (PEP 621, the core
     metadata's ``Summary``): a description with a newline, escaped by
     :func:`toml_string` into valid TOML all the same, made a package that
-    ``uv build`` refused (#2031).  Every boundary :meth:`str.splitlines`
-    knows counts -- ``\\n``, ``\\r``, ``\\r\\n``, ``\\v``, ``\\f``, the
-    separators ``\\x1c``-``\\x1e``, NEL (U+0085) and U+2028/U+2029 -- so
-    every line break an editor's text area can produce is folded.  Each line
+    ``uv build`` refused (#2031).  Every boundary CPython's
+    :meth:`str.splitlines` knows counts -- ``\\n``, ``\\r``, ``\\r\\n``,
+    ``\\v``, ``\\f``, the separators ``\\x1c``-``\\x1e``, NEL (U+0085) and
+    U+2028/U+2029 -- so every line break an editor's text area can produce is
+    folded.  These are CPython's boundaries: the generators run this under
+    CPython, and the static check only type-checks it with Codon.  Each line
     is stripped and blank lines dropped, so a paragraph break does not leave a
     run of spaces; a description without a line break only loses the
     whitespace around it.
