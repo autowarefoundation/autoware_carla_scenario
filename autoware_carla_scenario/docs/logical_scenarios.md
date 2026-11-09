@@ -74,9 +74,9 @@ entities:
 
 actions:
   # The oncoming car: brought in when the ego is 40 m short of the junction,
-  # at 8 m/s (a Spawn card; with no place of its own it enters where it was
-  # declared -- give lanelet_id/s for a place, shift_max to take a clear one
-  # further on); then its Set Goal card, triggered on the Spawn card
+  # at 8 m/s, where its route starts (a Spawn card; a hidden entity with no
+  # lanelet of its own needs a place: a route pose here, shift_max to take a
+  # clear one further on); then its Set Goal card, triggered on the Spawn card
   # completing, drives it FOLLOW mode from 30 m before the junction on the
   # opposite approach and waits at the junction entry until the ego is 5 m
   # from it.
@@ -88,6 +88,7 @@ actions:
       params: {value: -40.0, anchor: "junction:0:entry"}     # entity: ego (default)
     params:
       speed_ms: 8.0               # its speed as it enters
+      route_pose: "crossing junction=0 approach=opposite turn=straight distance=-30"
   - id: oncoming_drive
     type: routing
     actor: oncoming
@@ -119,6 +120,7 @@ actions:
       params: {value: 0.0, anchor: "junction:0:entry"}
     params:
       speed_ms: 1.3
+      route_pose: "crosswalk junction=0 leg=exit side=right along=-1.5"
   - id: walker_cross
     type: routing
     actor: walker
@@ -337,7 +339,17 @@ An entity spawned `hidden` is brought into the scene by a **Spawn** card
 set on its place (`lanelet_id`, `s`, `t`, `heading`; or `route_pose`, one
 route vertex as `route_vertices` takes them, placed on the scenario's route
 -- what keeps a logical scenario map-independent; none: where it was declared
-to spawn), physics on, facing its heading, moving at `speed_ms`.
+to spawn, its snapped spawn pose, through the same clearance check and
+`shift_max` as a place of its own), physics on, facing its heading, moving at
+`speed_ms`.  An entity spawned on lanelet 0 or less has no such place: a
+Spawn card with no place on it is a validation error, and the run refuses it
+with a warning rather than bringing the entity in somewhere else.  In a
+scenario with a `route` search, a hidden entity's lanelet above 0 names a
+lanelet of one map only: a Spawn card with no place on it draws a warning,
+and the run brings the entity in at that lanelet (snapped) where the map it
+runs on has it, and refuses it with a warning where it does not.  A Spawn
+card with no place on an entity that is not hidden puts it at its declared
+spawn too (it used to be lifted 500 m from where it stood).
 Its *Set Goal* card is triggered on the Spawn card completing (`action_state`
 `completeState`) and routes it from where it stands.  To wait until its place
 is clear, put a `place_clear` condition on the same place (`route_pose` too)
@@ -359,8 +371,12 @@ far enough away.
 * The **ego** needs no spawn lanelet and, with `ego_goal: true`, no goal: the
   route gives both. An Autoware ego is valid without its own goal then.
 * A **hidden** entity needs no spawn lanelet either: it is parked out of the
-  world -- 500 m under the ego's spawn, 10 m apart -- until an action brings it
-  in.
+  world -- 500 m under the ego's spawn -- until an action brings it in, which
+  then needs a place of its own (a `route_pose`).  Every hidden entity waits
+  on a spot of its own: one that would overlap another waiting under the
+  same spot (by its `size` and a margin, or its kind's longest -- 14 m for a
+  vehicle) waits 6 m deeper, so neither two long vehicles parked under the
+  ego's spawn nor two entities declared at one spawn are refused by CARLA.
 * A visible entity on a fixed lanelet draws a warning: that lanelet exists on
   one map only.
 * A route search and a lanelet constraint search cannot both drive the

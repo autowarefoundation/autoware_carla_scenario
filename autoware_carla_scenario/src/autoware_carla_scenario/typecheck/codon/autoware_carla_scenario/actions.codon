@@ -641,6 +641,10 @@ class SpawnAction(BaseAction):
     def entity_name(self) -> str:
         raise NotImplementedError()
 
+    def declare_spawn(self, pose: Optional[CarlaWorldPose],
+                      lane: Optional[Lanelet2Pose] = None) -> None:
+        raise NotImplementedError()
+
 
 class DespawnAction(BaseAction):
     def __init__(self, label):

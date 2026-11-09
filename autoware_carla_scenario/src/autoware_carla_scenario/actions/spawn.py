@@ -93,7 +93,9 @@ _ENTRY_GAP_M = 2.0
 #: What was brought in, by actor id: the frame and the speed (m/s) it
 #: entered at (_speed_ahead).
 _ENTERED: dict[int, tuple[int, float]] = {}
-#: How deep (m) under the map a hidden entity is parked (``HIDDEN_DEPTH_M``).
+#: How deep (m) under the map a hidden entity is parked (``HIDDEN_DEPTH_M``):
+#: an entity of a scenario that declares no spawn for it
+#: (:meth:`SpawnAction.declare_spawn`) is brought in this far above it.
 _PARKED_DEPTH_M: float = 500.0
 #: Where an entity was brought in, by ``(world id, role name)``: the frame and
 #: the CARLA pose it was put at.  A client sees an actor's new transform only
@@ -230,8 +232,10 @@ class SpawnAction(BaseAction):
             resolved (said): an entity is brought in where it was declared,
             a prop is not added.  An entity's
             ``None`` (or a Lanelet2 pose on lanelet 0 or less, what a card
-            leaves empty): where it was declared to spawn, which it waits
-            under.  A prop needs one.
+            leaves empty): where it was declared to spawn
+            (:meth:`declare_spawn`), through the same clearance check --
+            or, in a scenario that declares none, right above where it
+            waits under the map.  A prop needs one.
         shift_max: How far (m) on along its lane (a Lanelet2 place, or a
             route pose on a lane counted from an anchor) it may be
             put instead, at the nearest place clear of road users, when its
@@ -275,6 +279,9 @@ class SpawnAction(BaseAction):
     _width: float
     _lanes: list[int]
     _spawned: list[tuple[str, int]]
+    _declared_given: bool
+    _declared: Optional[TrajectoryVertex]
+    _declared_lane: Optional[Lanelet2Pose]
 
     def __init__(
         self,
@@ -377,11 +384,33 @@ class SpawnAction(BaseAction):
                 given_lanes.append(int(lanelet))
         self._lanes = given_lanes
         self._spawned = []
+        self._declared_given = False
+        self._declared = None
+        self._declared_lane = None
 
     @property
     def entity_name(self) -> str:
         """``role_name`` of the entity brought in; ``""`` for a prop."""
         return self._entity_name
+
+    def declare_spawn(
+        self, pose: Optional[CarlaWorldPose], lane: Optional[Lanelet2Pose] = None
+    ) -> None:
+        """Say where the entity was declared to spawn: the CARLA *pose* it is
+        brought in at with no place of its own (or one that cannot be
+        resolved), through the clearance check its own place would go
+        through, shifted along *lane* (its Lanelet2 spawn) within
+        *shift_max* where that is taken.  ``None``: it has no such place (a
+        spawn on lanelet 0 or less), and with no place of its own it is not
+        brought in (said).  Not called: right above where it waits under
+        the map, as a hand-written scenario hides it."""
+        self._declared_given = True
+        if pose is None:
+            self._declared = None
+        else:
+            declared: CarlaWorldPose = pose
+            self._declared = TrajectoryVertex(declared)
+        self._declared_lane = lane
 
     def reset(self) -> None:
         """Enter at the speed given again (:meth:`BaseAction.reset`): an
@@ -447,6 +476,36 @@ class SpawnAction(BaseAction):
         if self._width > 0.0:
             half_width = self._width / 2.0
         place = self._place(world, int(found.id), half_length, half_width)
+        if place is None and self._declared_given:
+            # Where it was declared to spawn, not where it waits: one parked
+            # under the ego's spawn (or deeper, under another) would come up
+            # off its road (#2014).
+            declared = self._declared
+            if declared is None:
+                # Branched: Codon types no conditional expression of two str.
+                why = "it has no place of its own"
+                if self._has_own_place():
+                    why = "its own place could not be resolved"
+                logger.warning(
+                    "%s: '%s' is not brought in: %s, and no spawn was declared "
+                    "for it here (lanelet 0 or less, or one this map does not "
+                    "have)",
+                    self.label,
+                    self._entity_name,
+                    why,
+                )
+                return False
+            at: TrajectoryVertex = declared
+            place = self._place_vertex(
+                world,
+                at,
+                self._declared_lane,
+                int(found.id),
+                half_length,
+                half_width,
+            )
+            if place is None:
+                return False
         if place is None:
             standing = found.get_transform()
             place = (
@@ -475,6 +534,21 @@ class SpawnAction(BaseAction):
             y,
             self._speed,
         )
+        return True
+
+    def _has_own_place(self) -> bool:
+        """Whether it was given a place of its own: not none, nor a Lanelet2
+        pose on lanelet 0 or less (an entity's declared spawn)."""
+        vertex = self._at
+        if vertex is None:
+            return False
+        at: TrajectoryVertex = vertex
+        position = at.position
+        if isinstance(position, Lanelet2Pose):
+            # Named as the class: Codon does not narrow a union by isinstance()
+            # (docs/typecheck.md).
+            given: Lanelet2Pose = position
+            return int(given.lanelet_id) > 0
         return True
 
     # -- a prop --------------------------------------------------------------
@@ -562,6 +636,20 @@ class SpawnAction(BaseAction):
             given: Lanelet2Pose = position
             if int(given.lanelet_id) <= 0:
                 return None  # an entity's declared spawn
+        return self._place_vertex(world, at, None, actor_id, half_length, half_width)
+
+    def _place_vertex(
+        self,
+        world: "carla.World",
+        at: TrajectoryVertex,
+        lane_given: Optional[Lanelet2Pose],
+        actor_id: int,
+        half_length: float,
+        half_width: float,
+    ) -> Optional[tuple[float, float, float, float]]:
+        """:meth:`_place` for the place *at*: shifted along *lane_given*
+        where given, else along the lane *at* is on."""
+        position = at.position
         # An entity parked under the map (spawned hidden, not brought in yet)
         # is not in the scene: nothing is placed against it, as against one
         # not in the world -- unless brought in on this very frame, which the
@@ -614,6 +702,8 @@ class SpawnAction(BaseAction):
             self._claim(world, actor_id, due, half_length, half_width)
             return due
         on_lane = lane_place(position)
+        if lane_given is not None:
+            on_lane = lane_given
         if on_lane is not None:
             lane: Lanelet2Pose = on_lane
             shift = SHIFT_STEP_M
