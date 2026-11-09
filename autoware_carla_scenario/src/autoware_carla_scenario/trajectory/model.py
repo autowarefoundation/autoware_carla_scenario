@@ -77,6 +77,12 @@ _EPSILON_M = 1e-6
 #: Durations shorter than this (s) are treated as an instant.
 _EPSILON_S = 1e-9
 
+#: How far (m) either side of a vertex without a yaw of its own the entity
+#: turns from the segment arriving there to the one leaving: at most this, and
+#: at most half of either segment, so a sparse path is driven along each leg
+#: and a dense one (a recording) turns all the way along, at its own rate.
+_CORNER_HALF_WIDTH_M = 1.0
+
 
 @dataclass(frozen=True)
 class MapPose:
@@ -941,13 +947,21 @@ class ResolvedTrajectory:
     Args:
         xs, ys, zs: Vertex positions in CARLA world coordinates (m).
         yaws: Vertex headings in CARLA degrees; ``None`` for a vertex whose
-            heading is taken from the path.  Between two vertices the yaw
-            turns only from one given heading to the other: along a segment
-            neither of whose ends was given one, the entity faces the
-            segment's own direction, with a yaw rate of ``0``; with one end
-            given, it turns from (or to) that heading to (or from) the
-            segment's direction.  A segment that does not move (a stop) turns
-            from one vertex's resolved heading to the next's.
+            heading is taken from the path.  Such a vertex is a corner: the
+            entity turns from the arriving segment's direction to the leaving
+            one's across a window centred on it, :data:`_CORNER_HALF_WIDTH_M`
+            either side or half of either segment if that is shorter, and the
+            vertex itself faces half way round.  Elsewhere along a segment it
+            faces the segment's own direction, with a yaw rate of ``0`` -- a
+            sparse path is driven along its legs, a dense one turns smoothly.
+            Given yaws interpolate between each other; between a given yaw and
+            a vertex without one the yaw turns from the given heading to the
+            segment's direction (or back) outside the corner window.  The
+            first and last vertices of an open path, and a vertex beside a
+            segment that does not move (a stop), are not corners: they face
+            along the path, a stop keeping the heading it arrived with, and a
+            segment that does not move turns from one vertex's heading to the
+            next's.
         times: Vertex times, or ``None`` for an untimed trajectory.
         closed: Whether the last vertex joins back to the first.
 
@@ -966,6 +980,8 @@ class ResolvedTrajectory:
     _arc: list[float] = field(init=False, repr=False)
     _headings: list[float] = field(init=False, repr=False)
     _given: list[bool] = field(init=False, repr=False)
+    _corner: list[float] = field(init=False, repr=False)
+    _corner_turn: list[float] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         count = len(self.xs)
@@ -1015,6 +1031,7 @@ class ResolvedTrajectory:
         self._arc = arc
         self._given = [yaw is not None for yaw in self.yaws]
         self._headings = self._fill_headings()
+        self._find_corners()
 
     # ------------------------------------------------------------------
     # Shape
@@ -1247,36 +1264,59 @@ class ResolvedTrajectory:
     ) -> TrajectorySample:
         """The point *fraction* of the way along segment *index*.
 
-        The yaw turns between the segment's two end headings: a vertex's own
-        (given) heading, or, for an end without one, the segment's direction --
-        not the vertex's resolved heading, which is the direction of the next
-        segment and would turn the entity across the whole segment.  So with
-        neither end given the yaw is the segment's direction throughout.  A
-        segment that does not move has no direction, and turns from one
-        vertex's resolved heading to the next's (a turn on the spot, or
+        Along a segment that moves the yaw is its direction, but for three
+        stretches: within a corner's window at either end (a vertex without a
+        yaw of its own, :meth:`_find_corners`) it turns half the corner's turn,
+        from the vertex's heading to the segment's direction or back; and
+        between the windows, where an end has a given yaw, it turns from that
+        yaw to the segment's direction or back (between both, if both ends have
+        one).  It never uses a derived vertex heading outside a window, which
+        would be the next segment's direction and turn the entity across the
+        whole segment.  A segment that does not move has no direction, and
+        turns from one vertex's heading to the next's (a turn on the spot, or
         nothing, where a stop kept its heading).
 
-        With a *duration* the velocity is the segment's, and the yaw rate that
-        turn over that time.
+        With a *duration* the velocity is the segment's, and the yaw rate the
+        rate of that turn at the segment's speed.
         """
         x0, y0, z0 = self.xs[index], self.ys[index], self.zs[index]
         x1, y1, z1 = self.xs[index + 1], self.ys[index + 1], self.zs[index + 1]
-        start = self._headings[index]
-        end = self._headings[index + 1]
+        span = self._arc[index + 1] - self._arc[index]
         direction = self._segment_heading(index)
-        if direction is not None:
+        # The yaw at *fraction*, and its rate of change per unit of fraction.
+        yaw = 0.0
+        slope = 0.0
+        if direction is None:
+            slope = _wrap_degrees(self._headings[index + 1] - self._headings[index])
+            yaw = self._headings[index] + fraction * slope
+        else:
             along = math.degrees(direction)
-            if not self._given[index]:
-                start = along
-            if not self._given[index + 1]:
-                end = along
-        turn = _wrap_degrees(end - start)
-        yaw = _wrap_degrees(start + fraction * turn)
+            start_window = self._corner[index] / span
+            end_window = self._corner[index + 1] / span
+            if fraction < start_window:
+                # Leaving a corner: from half way round to the segment's way.
+                slope = 0.5 * self._corner_turn[index] / start_window
+                yaw = along + (fraction - start_window) * slope
+            elif fraction > 1.0 - end_window:
+                # Arriving at a corner: from the segment's way to half way round.
+                slope = 0.5 * self._corner_turn[index + 1] / end_window
+                yaw = along + (fraction - (1.0 - end_window)) * slope
+            else:
+                first = self._headings[index] if self._given[index] else along
+                last = self._headings[index + 1] if self._given[index + 1] else along
+                stretch = 1.0 - start_window - end_window
+                turn = _wrap_degrees(last - first)
+                if stretch > _EPSILON_M and turn != 0.0:
+                    slope = turn / stretch
+                    yaw = first + (fraction - start_window) * slope
+                else:
+                    yaw = first
+        yaw = _wrap_degrees(yaw)
         if duration is None:
             vx = vy = yaw_rate = 0.0
         else:
             vx, vy = (x1 - x0) / duration, (y1 - y0) / duration
-            yaw_rate = turn / duration
+            yaw_rate = slope / duration
         return TrajectorySample(
             x0 + fraction * (x1 - x0),
             y0 + fraction * (y1 - y0),
@@ -1294,6 +1334,50 @@ class ResolvedTrajectory:
         if math.hypot(dx, dy) < _EPSILON_M:
             return None
         return math.atan2(dy, dx)
+
+    def _find_corners(self) -> None:
+        """Every vertex's corner window, and the vertex headings at corners.
+
+        A corner is a vertex without a yaw of its own between two segments
+        that move (on a closed path the first vertex too, between the closing
+        segment and the first).  Its window reaches :data:`_CORNER_HALF_WIDTH_M`
+        either side of it, or half of the shorter segment, so two windows
+        never overlap; the entity turns from the arriving segment's direction
+        to the leaving one's across it, and the vertex itself faces half way
+        round.  ``_corner`` holds each vertex's half-width (``0`` for none),
+        ``_corner_turn`` the turn (degrees, anticlockwise in CARLA's sense).
+        """
+        count = len(self.xs)
+        corner = [0.0] * count
+        corner_turn = [0.0] * count
+        for index in range(count):
+            if self._given[index]:
+                continue
+            arriving = index - 1
+            leaving = index
+            if index == 0:
+                if not self.closed:
+                    continue
+                arriving = count - 2
+            if index == count - 1:
+                if not self.closed:
+                    continue
+                leaving = 0
+            before = self._segment_heading(arriving)
+            after = self._segment_heading(leaving)
+            if before is None or after is None:
+                continue
+            half = min(
+                _CORNER_HALF_WIDTH_M,
+                0.5 * (self._arc[arriving + 1] - self._arc[arriving]),
+                0.5 * (self._arc[leaving + 1] - self._arc[leaving]),
+            )
+            turn = _wrap_degrees(math.degrees(after) - math.degrees(before))
+            corner[index] = half
+            corner_turn[index] = turn
+            self._headings[index] = _wrap_degrees(math.degrees(before) + 0.5 * turn)
+        self._corner = corner
+        self._corner_turn = corner_turn
 
     def _fill_headings(self) -> list[float]:
         """Every vertex's heading in CARLA degrees.

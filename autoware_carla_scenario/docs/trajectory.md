@@ -94,15 +94,22 @@ Positions are converted to CARLA world coordinates when the action first runs,
 through the loaded map. Vertices of different kinds may be mixed in one
 trajectory.
 
-Between two vertices the heading turns only from one **given** `yaw` to
-another. Along a segment neither of whose ends gives a `yaw`, the entity faces
-that segment's own direction, the direction it is moving, with a yaw rate of
-`0`, and turns to the next segment's at the vertex. Where one end gives a
-`yaw` and the other does not, it turns from the given heading to the
-segment's direction, or from the segment's direction to the given heading,
-across the segment. A segment that does not move (a stop: the same point
-twice) has no direction; a vertex there keeps the heading it arrived with,
-and over the stop the entity turns on the spot to the heading it leaves with.
+A vertex with no `yaw` of its own is a **corner**: the entity turns there
+from the direction of the segment arriving to that of the segment leaving,
+across a window centred on the vertex that reaches 1 m either side of it, or
+half of either segment if that is shorter, and the vertex itself faces half
+way round. Everywhere else along a segment it faces that segment's own
+direction -- the direction it is moving -- with a yaw rate of `0`. So a
+sparse path (a few hand-written points) is driven along each straight leg
+and turns only at the corners, and a dense one (a recording) turns smoothly
+all the way along, at its own rate. Given `yaw`s interpolate from one to the
+next across the segment between them; where one end of a segment gives a
+`yaw` and the other does not, the heading turns from the given one to the
+segment's direction (or back) up to the other end's corner window. The first
+and last vertices of an open trajectory, and a vertex beside a stop (the same
+point twice), are not corners: they face along the path, a vertex at a stop
+keeping the heading it arrived with, and over the stop the entity turns on
+the spot to the heading it leaves with.
 
 Every number of a `MapPose`, a `RelativeLanePose` or a route pose must be
 finite: `nan` and `inf` are refused when the pose is built, a `yaw` or `z`

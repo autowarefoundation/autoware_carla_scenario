@@ -252,16 +252,61 @@ class TestHeadings:
         first = corner.at_distance(50.0, speed=1.0)
         assert (first.yaw, first.vx, first.vy) == pytest.approx((0.0, 1.0, 0.0))
         assert first.yaw_rate == 0.0
-        # Just before the corner, still along the first leg.
-        assert corner.at_distance(99.0).yaw == pytest.approx(0.0)
+        # Up to the corner's window, still along the first leg.
+        assert corner.at_distance(98.9).yaw == pytest.approx(0.0)
         second = corner.at_distance(150.0, speed=1.0)
         assert (second.yaw, second.vx, second.vy) == pytest.approx((90.0, 0.0, 1.0))
+        assert corner.at_distance(101.1).yaw == pytest.approx(90.0)
+
+    def test_a_derived_corner_turns_only_within_its_window(self) -> None:
+        """The turn at a vertex without a yaw takes a metre either side of it,
+        the vertex itself facing half way round."""
+        corner = ResolvedTrajectory(
+            xs=[0.0, 100.0, 100.0],
+            ys=[0.0, 0.0, 100.0],
+            zs=[0.0] * 3,
+            yaws=[None] * 3,
+            times=[0.0, 10.0, 20.0],
+        )
+        assert corner.at_vertex(1).yaw == pytest.approx(45.0)
+        assert corner.at_distance(99.5).yaw == pytest.approx(22.5)
+        assert corner.at_distance(100.5).yaw == pytest.approx(67.5)
+        # 90 degrees over 2 m at 10 m/s.
+        assert corner.at_time(9.95).yaw_rate == pytest.approx(450.0)
+        assert corner.at_time(10.05).yaw_rate == pytest.approx(450.0)
+        assert corner.at_time(9.85).yaw_rate == 0.0
+        assert corner.at_time(10.15).yaw_rate == 0.0
+        # The vertex reads as both segments' ends do.
+        assert corner.at_time(10.0 - 1e-9).yaw == pytest.approx(45.0)
+        assert corner.vertices()[1].yaw == pytest.approx(45.0)
+
+    def test_a_dense_curve_turns_smoothly_at_its_own_rate(self) -> None:
+        """A recording of a quarter circle (r = 10 m, 41 points 0.1 s apart)
+        turns 90 degrees in 4 s: 22.5 degrees a second all the way, its yaw
+        within half a segment's turn of the tangent."""
+        count = 41
+        angles = [index * (math.pi / 2.0) / (count - 1) for index in range(count)]
+        curve = ResolvedTrajectory(
+            xs=[10.0 * math.sin(angle) for angle in angles],
+            ys=[10.0 - 10.0 * math.cos(angle) for angle in angles],
+            zs=[0.0] * count,
+            yaws=[None] * count,
+            times=[0.1 * index for index in range(count)],
+        )
+        step = 90.0 / (count - 1)
+        # The first and last half segments face along their segment.
+        for tenth in range(1, 390):
+            time = 0.05 + tenth * 0.01 + 0.003
+            sample = curve.at_time(time)
+            assert sample.yaw_rate == pytest.approx(22.5)
+            tangent = time / 4.0 * 90.0
+            assert abs(sample.yaw - tangent) <= step / 2.0 + 1e-9
 
     @pytest.mark.parametrize(
         ("time", "position", "yaw", "velocity"),
         [
             (2.5, (25.0, 0.0), 0.0, (10.0, 0.0)),
-            (4.9, (49.0, 0.0), 0.0, (10.0, 0.0)),
+            (4.5, (45.0, 0.0), 0.0, (10.0, 0.0)),
             (7.5, (50.0, 25.0), 90.0, (0.0, 10.0)),
             (12.5, (25.0, 50.0), 180.0, (-10.0, 0.0)),
         ],
@@ -318,7 +363,8 @@ class TestHeadings:
 
     def test_one_given_end_turns_to_or_from_the_segment_s_heading(self) -> None:
         """A given heading at one end and none at the other: the yaw turns
-        between the given heading and the segment's own direction."""
+        between the given heading and the segment's own direction, outside
+        the window of the corner at the other end."""
         given_first = ResolvedTrajectory(
             xs=[0.0, 10.0, 10.0],
             ys=[0.0, 0.0, 10.0],
@@ -326,11 +372,14 @@ class TestHeadings:
             yaws=[-60.0, None, None],
             times=[0.0, 2.0, 4.0],
         )
-        sample = given_first.at_time(1.0)
+        # -60 to 0 over the first 9 m (the last metre is the corner's).
+        sample = given_first.at_time(0.9)
         assert sample.yaw == pytest.approx(-30.0)
-        assert sample.yaw_rate == pytest.approx(30.0)
-        # The second vertex's resolved heading (90, the next leg's) plays no part.
-        assert given_first.at_time(1.9).yaw == pytest.approx(-3.0)
+        assert sample.yaw_rate == pytest.approx(60.0 / 1.8)
+        assert given_first.at_time(1.8).yaw == pytest.approx(0.0)
+        # Then the corner: half of its 90 degrees by the vertex.
+        assert given_first.at_vertex(1).yaw == pytest.approx(45.0)
+        assert given_first.at_time(1.9).yaw == pytest.approx(22.5)
         given_last = ResolvedTrajectory(
             xs=[0.0, 10.0],
             ys=[0.0, 0.0],
