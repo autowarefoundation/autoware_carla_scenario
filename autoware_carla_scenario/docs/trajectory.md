@@ -105,11 +105,23 @@ and turns only at the corners, and a dense one (a recording) turns smoothly
 all the way along, at its own rate. Given `yaw`s interpolate from one to the
 next across the segment between them; where one end of a segment gives a
 `yaw` and the other does not, the heading turns from the given one to the
-segment's direction (or back) up to the other end's corner window. The first
-and last vertices of an open trajectory, and a vertex beside a stop (the same
-point twice), are not corners: they face along the path, a vertex at a stop
-keeping the heading it arrived with, and over the stop the entity turns on
-the spot to the heading it leaves with.
+segment's direction (or back) up to the other end's corner window.
+
+A segment that does not move -- the same point written twice in a row, as a
+recording resampled onto a faster tick writes every sample, or a closed
+trajectory that repeats its first vertex at the end -- is looked past: the
+corner is between the nearest segments that move before and after it, with
+the same window, and every copy of the point faces half way round. On a timed
+trajectory the entity pauses there, and the turn is spread over the window's
+time and the pause's together, so a duplicated recording turns at its own rate
+rather than in bursts. Along the path (by distance) the pause takes no room,
+and the turn is half before the point and half after.
+
+A pause of half a second or longer is a **stop**, not part of a corner, and
+neither are the first and last vertices of an open trajectory, nor a point
+with a `yaw` of its own: they face along the path, a vertex at a stop keeping
+the heading it arrived with, and over the stop the entity turns on the spot to
+the heading it leaves with.
 
 Every number of a `MapPose`, a `RelativeLanePose` or a route pose must be
 finite: `nan` and `inf` are refused when the pose is built, a `yaw` or `z`
