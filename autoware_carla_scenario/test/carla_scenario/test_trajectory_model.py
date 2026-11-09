@@ -411,10 +411,25 @@ class TestHeadings:
         assert square.at_distance(0.0).yaw == pytest.approx(-45.0)
         assert square.at_distance(0.5).yaw == pytest.approx(-22.5)
         assert square.at_distance(40.5).yaw == pytest.approx(-22.5)
-        assert square.start().yaw == pytest.approx(-45.0)
-        assert square.end().yaw == pytest.approx(-45.0)
-        # Leaving the seam: half of 90 degrees over 1 m at 10 m/s.
-        assert square.at_time(0.05).yaw_rate == pytest.approx(450.0)
+        assert square.at_vertex(0).yaw == pytest.approx(-45.0)
+        # Its clock never drives the closing leg (#2030): it starts facing
+        # along the first leg and ends at the last vertex written facing
+        # along the leg arriving there, as an open path's do.
+        assert square.start().yaw == pytest.approx(0.0)
+        assert square.at_time(0.05).yaw == pytest.approx(0.0)
+        assert square.at_time(0.05).yaw_rate == 0.0
+        assert abs(square.end().yaw) == pytest.approx(180.0)
+        assert abs(square.at_time(2.95).yaw) == pytest.approx(180.0)
+        # Untimed, the path starts and ends half way round the seam.
+        untimed = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 0.0],
+            ys=[0.0, 0.0, 10.0, 10.0],
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+            closed=True,
+        )
+        assert untimed.start().yaw == pytest.approx(-45.0)
+        assert untimed.end().yaw == pytest.approx(-45.0)
 
     def test_given_headings_still_interpolate(self) -> None:
         trajectory = ResolvedTrajectory(
@@ -477,6 +492,152 @@ class TestHeadings:
         assert trajectory.at_time(0.5).yaw == pytest.approx(0.0)
         assert trajectory.at_time(3.5).yaw == pytest.approx(90.0)
 
+    def test_a_curve_with_every_sample_written_twice_turns_at_its_own_rate(
+        self,
+    ) -> None:
+        """A quarter circle (r = 10 m) recorded at 10 Hz and written onto a
+        20 Hz tick, every sample twice: the corners look past the segments
+        that do not move, so the yaw neither jumps along the path nor turns in
+        bursts on the clock, at the curve's 22.5 degrees a second (#2027)."""
+        count = 41
+        xs: list[float] = []
+        ys: list[float] = []
+        for index in range(count):
+            angle = index * (math.pi / 2.0) / (count - 1)
+            for _ in range(2):
+                xs.append(10.0 * math.sin(angle))
+                ys.append(10.0 - 10.0 * math.cos(angle))
+        times = [0.05 * index for index in range(len(xs))]
+        curve = ResolvedTrajectory(
+            xs=xs, ys=ys, zs=[0.0] * len(xs), yaws=[None] * len(xs), times=times
+        )
+        step = 90.0 / (count - 1)
+        previous = curve.at_distance(0.0).yaw
+        for millimetre in range(1, int(curve.length * 1000.0)):
+            yaw = curve.at_distance(millimetre / 1000.0).yaw
+            assert abs(yaw - previous) < 0.01
+            previous = yaw
+        # Between the first and last half segments, which face along theirs.
+        previous = curve.at_time(0.1).yaw
+        for tick in range(1, int((times[-1] - 0.2) / 0.0005)):
+            time = 0.1 + tick * 0.0005
+            sample = curve.at_time(time)
+            assert sample.yaw_rate == pytest.approx(22.5, rel=0.01)
+            assert abs(sample.yaw - previous) < 0.05
+            previous = sample.yaw
+            # Each chord's heading half way along it, 0.025 s before the
+            # sample it ends at was first written.
+            assert sample.yaw == pytest.approx((time - 0.025) * 22.5)
+        # Both copies of a sample face half way round its corner.
+        assert curve.at_vertex(40).yaw == pytest.approx(curve.at_vertex(41).yaw)
+        assert curve.at_vertex(40).yaw == pytest.approx(20 * step)
+
+    def test_an_untimed_duplicate_vertex_is_looked_past(self) -> None:
+        """An L whose corner is written twice turns across the same window as
+        one written once, both copies facing half way round."""
+        once = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0], ys=[0.0, 0.0, 10.0], zs=[0.0] * 3, yaws=[None] * 3
+        )
+        twice = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 10.0],
+            ys=[0.0, 0.0, 0.0, 10.0],
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+        )
+        for distance in (5.0, 9.0, 9.5, 10.0, 10.5, 11.0, 15.0):
+            assert twice.at_distance(distance).yaw == pytest.approx(
+                once.at_distance(distance).yaw
+            )
+        assert twice.at_vertex(1).yaw == pytest.approx(45.0)
+        assert twice.at_vertex(2).yaw == pytest.approx(45.0)
+
+    def test_a_closed_path_repeating_its_first_vertex_turns_across_its_seam(
+        self,
+    ) -> None:
+        """Written with its first vertex again at the end, a closed square
+        turns at the seam as one written without it, rather than jumping from
+        the closing leg's North to the first leg's East (#2027)."""
+        square = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 0.0, 0.0],
+            ys=[0.0, 0.0, 10.0, 10.0, 0.0],
+            zs=[0.0] * 5,
+            yaws=[None] * 5,
+            closed=True,
+        )
+        assert square.at_distance(39.5).yaw == pytest.approx(-67.5)
+        assert square.at_distance(40.0).yaw == pytest.approx(-45.0)
+        assert square.at_distance(0.5).yaw == pytest.approx(-22.5)
+        assert square.at_vertex(4).yaw == pytest.approx(-45.0)
+        assert square.at_vertex(0).yaw == pytest.approx(-45.0)
+        previous = square.at_distance(-2.0).yaw
+        for millimetre in range(-1999, 42001):
+            yaw = square.at_distance(millimetre / 1000.0).yaw
+            assert abs(math.remainder(yaw - previous, 360.0)) < 0.1
+            previous = yaw
+
+    def test_a_short_pause_at_a_corner_turns_through_it(self) -> None:
+        """A pause shorter than a stop between two legs is part of the
+        corner: the clock turns through the window and the pause at one steady
+        rate, and along the path the turn is continuous."""
+        corner = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 10.0],
+            ys=[0.0, 0.0, 0.0, 10.0],
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+            times=[0.0, 1.0, 1.2, 2.2],
+        )
+        # 1 m either side at 10 m/s, and the 0.2 s pause: 90 degrees in 0.4 s.
+        for time in (0.95, 1.1, 1.25):
+            assert corner.at_time(time).yaw_rate == pytest.approx(225.0)
+        assert corner.at_time(0.85).yaw_rate == 0.0
+        assert corner.at_time(1.35).yaw_rate == 0.0
+        assert corner.at_time(1.0).yaw == pytest.approx(22.5)
+        assert corner.at_time(1.1).yaw == pytest.approx(45.0)
+        assert corner.at_time(1.2).yaw == pytest.approx(67.5)
+        previous = corner.at_time(0.0).yaw
+        for tick in range(1, 2201):
+            yaw = corner.at_time(tick * 0.001).yaw
+            assert abs(yaw - previous) < 0.5
+            previous = yaw
+        assert corner.at_distance(9.5).yaw == pytest.approx(22.5)
+        assert corner.at_distance(10.0).yaw == pytest.approx(45.0)
+        assert corner.at_distance(10.5).yaw == pytest.approx(67.5)
+
+    def test_a_stop_at_a_corner_is_not_one(self) -> None:
+        """Half a second or more on one point is a stop: the legs either side
+        do not turn, the stopped vertex keeps its arriving heading and the
+        whole turn is on the spot."""
+        stop = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 10.0],
+            ys=[0.0, 0.0, 0.0, 10.0],
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+            times=[0.0, 1.0, 1.5, 2.5],
+        )
+        assert stop.at_time(0.99).yaw == pytest.approx(0.0)
+        assert stop.at_vertex(1).yaw == pytest.approx(0.0)
+        assert stop.at_time(1.25).yaw == pytest.approx(45.0)
+        assert stop.at_time(1.25).yaw_rate == pytest.approx(180.0)
+        assert stop.at_time(1.51).yaw == pytest.approx(90.0)
+
+    def test_a_stop_written_as_two_pauses_off_a_round_time_is_one(self) -> None:
+        """Two 0.25 s pauses written from a time base of 0.502 s add up a hair
+        short of 0.5 s in floating point: still a stop, not a corner."""
+        base = 0.502
+        arrived = base + 1.0
+        times = [base, arrived, arrived + 0.25, arrived + 0.25 + 0.25]
+        assert times[3] - times[1] < 0.5
+        stop = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 10.0, 10.0],
+            ys=[0.0, 0.0, 0.0, 0.0, 10.0],
+            zs=[0.0] * 5,
+            yaws=[None] * 5,
+            times=[*times, times[3] + 1.0],
+        )
+        assert stop.at_time(arrived - 0.01).yaw == pytest.approx(0.0)
+        assert stop.at_vertex(1).yaw == pytest.approx(0.0)
+        assert stop.at_time(times[3] + 0.01).yaw == pytest.approx(90.0)
+
 
 class TestAlongThePath:
     def test_at_distance(self) -> None:
@@ -497,6 +658,70 @@ class TestAlongThePath:
         assert square.length == pytest.approx(40.0)
         sample = square.at_distance(45.0)
         assert (sample.x, sample.y) == pytest.approx((5.0, 0.0))
+
+    def test_a_closed_timed_path_ends_its_clock_at_the_last_written_vertex(
+        self,
+    ) -> None:
+        """The closing segment has no time: at the last time the entity is at
+        the last vertex written, and stays there; the clock does not lap,
+        while the distance still wraps (#2030)."""
+        square = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 0.0],
+            ys=[0.0, 0.0, 10.0, 10.0],
+            zs=[0.0] * 4,
+            yaws=[None] * 4,
+            times=[0.0, 1.0, 2.0, 3.0],
+            closed=True,
+        )
+        last = square.at_time(3.0)
+        assert (last.x, last.y, last.speed) == pytest.approx((0.0, 10.0, 0.0))
+        # Along the last leg it drove, not round onto the closing one.
+        assert abs(last.yaw) == pytest.approx(180.0)
+        assert square.start().yaw == pytest.approx(0.0)
+        assert square.at_time(4.0) == last
+        assert square.end() == last
+        assert square.end_time == 3.0
+        vertices = square.vertices()
+        assert len(vertices) == 5
+        assert (vertices[1].x, vertices[1].vx, vertices[1].vy) == pytest.approx(
+            (10.0, 0.0, 10.0)
+        )
+        assert vertices[3] == last
+        assert (vertices[4].x, vertices[4].y) == pytest.approx((0.0, 0.0))
+        assert square.distance_at_time(3.0) == pytest.approx(30.0)
+        assert square.distance_at_time(99.0) == pytest.approx(30.0)
+        assert square.time_at_distance(25.0) == pytest.approx(2.5)
+        assert square.time_at_distance(35.0) == pytest.approx(3.0)
+        assert square.time_at_distance(45.0) == pytest.approx(3.0)
+        assert square.at_distance(45.0).x == pytest.approx(5.0)
+        previous = square.at_time(-1.0).yaw
+        for tick in range(1, 4001):
+            sample = square.at_time(-1.0 + tick * 0.00125)
+            assert abs(math.remainder(sample.yaw - previous, 360.0)) < 1.0
+            previous = sample.yaw
+
+    def test_a_closed_timed_path_repeating_its_first_vertex(self) -> None:
+        """Written back to its first vertex, the last written vertex is that
+        one: the clock ends there facing along the leg it arrived on, and
+        starts there facing along the first, never turning across the seam
+        it does not drive -- which, along the path, is a corner."""
+        square = ResolvedTrajectory(
+            xs=[0.0, 10.0, 10.0, 0.0, 0.0],
+            ys=[0.0, 0.0, 10.0, 10.0, 0.0],
+            zs=[0.0] * 5,
+            yaws=[None] * 5,
+            times=[0.0, 1.0, 2.0, 3.0, 4.0],
+            closed=True,
+        )
+        end = square.at_time(4.0)
+        assert (end.x, end.y, end.yaw) == pytest.approx((0.0, 0.0, -90.0))
+        assert square.at_time(0.0).yaw == pytest.approx(0.0)
+        assert square.at_time(0.05).yaw == pytest.approx(0.0)
+        assert square.at_time(3.95).yaw == pytest.approx(-90.0)
+        assert square.at_distance(39.5).yaw == pytest.approx(-67.5)
+        assert square.at_distance(40.0).yaw == pytest.approx(-45.0)
+        assert len(square.vertices()) == 6
+        assert square.distance_at_time(4.0) == pytest.approx(40.0)
 
     def test_time_and_distance_convert_both_ways(self) -> None:
         trajectory = _straight(times=(0.0, 1.0, 3.0))
