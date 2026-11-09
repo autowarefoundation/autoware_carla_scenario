@@ -49,6 +49,7 @@ class EgoVehicleConfig:
     goal_s: float = 0.0
     waypoint_lanelet_ids: List[int] = List[int]()
     entity: str = "autopilot"
+    native_autoware_interface: bool = False
 
 
 class NpcVehicleConfig:

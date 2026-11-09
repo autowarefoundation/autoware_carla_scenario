@@ -258,14 +258,15 @@ def test_an_entity_parked_under_the_map_is_not_in_the_scene(
 
     world = _parked_or_not(z)
     agents = snapshot.snapshot_world(world)
+    # The ego's role name "ego" reads as "Ego" (canonical_role_name, #2038).
     assert [agent.name for agent in agents] == (
-        ["ego", "npc1"] if challenger else ["ego"]
+        ["Ego", "npc1"] if challenger else ["Ego"]
     )
     lanelet_map = rm.crossroads()
     scene = Scene(MapFeatures(lanelet_map, rm.routing_graph(lanelet_map)), agents, {})
     sampler = ImportanceSampler(settings=NadeSettings(fixed_is_probability=1.0))
     brake = NadeAdversity(AdversityKind.BRAKE_CHECK, AdversityLocation.ANY, 0.01)
-    choice = sampler.step(scene, "ego", "", {"npc1"}, [brake], 0.0)
+    choice = sampler.step(scene, "Ego", "", {"npc1"}, [brake], 0.0)
     if challenger is None:
         assert choice is None
         assert sampler.weight == 1.0
