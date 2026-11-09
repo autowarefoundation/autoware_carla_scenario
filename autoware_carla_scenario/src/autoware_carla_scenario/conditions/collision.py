@@ -10,7 +10,7 @@ from typing import Any, ClassVar, Optional, Union
 import typesafe_carla.carla as carla
 
 from ..constants import EGO_ROLE_NAME
-from ..entity_role import EntityRole
+from ..entity_role import EntityRole, _role_name, canonical_role_name
 from .base import BaseCondition, ScenarioResult
 from ..failure import FailureCategory
 
@@ -186,9 +186,9 @@ class CollisionCondition(BaseCondition):
         collision the scenario is about would never be seen.
         """
         if self._target is not None:
-            attributes = other.attributes
-            # Codon's dict.get() takes a default (docs/typecheck.md).
-            return "role_name" in attributes and attributes["role_name"] == self._target
+            # The ego under any of its role names (canonical_role_name).
+            target: str = self._target
+            return _role_name(other) == canonical_role_name(target)
         return self._target_type.matches(other.type_id)
 
     def _on_collision(self, event: "carla.CollisionEvent") -> None:
@@ -247,13 +247,9 @@ class CollisionCondition(BaseCondition):
 
         actors = world.get_actors().filter("vehicle.*")
         ego_name = str(EGO_ROLE_NAME)
-        # The first vehicle with the ego's role name; Codon's dict.get() takes
-        # a default (docs/typecheck.md).
-        found = [
-            a
-            for a in actors
-            if "role_name" in a.attributes and a.attributes["role_name"] == ego_name
-        ]
+        # The first vehicle with the ego's role name, under any of its names
+        # (canonical_role_name: ``ego`` for CARLA's native Autoware interface).
+        found = [a for a in actors if _role_name(a) == ego_name]
         if not found:
             return
         ego = found[0]

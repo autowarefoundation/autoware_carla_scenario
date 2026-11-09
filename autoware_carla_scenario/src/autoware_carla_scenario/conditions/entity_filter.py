@@ -31,6 +31,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..coordinate.poses import CarlaWorldPose
+from ..entity_role import canonical_role_name
 from .entity_existence import HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
@@ -361,9 +362,10 @@ def name_matches(pattern: str, name: str) -> bool:
 
 
 def _role_name(actor: "carla.Actor") -> str:
+    # The ego's is "Ego" under any of its role names (canonical_role_name).
     attributes = actor.attributes
     if "role_name" in attributes:
-        return str(attributes["role_name"])
+        return canonical_role_name(str(attributes["role_name"]))
     return ""
 
 

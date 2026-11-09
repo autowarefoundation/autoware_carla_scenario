@@ -26,3 +26,9 @@ ego:
   waypoint_lanelet_ids: []
   # Which entity drives the ego: autopilot | autoware | carla_driver | ros2 | hils
   entity: autopilot
+  # entity: autoware only.  Spawn the ego for CARLA 1.0's native Autoware
+  # interface (a server started with -ros2): with ros2_autoware_control=true and
+  # the role name "ego", so the server applies Autoware's control and publishes
+  # the vehicle status itself.  The framework still finds the ego as "Ego".  A
+  # server without the attribute spawns it as "Ego", with a warning (docs/autoware.md).
+  native_autoware_interface: false

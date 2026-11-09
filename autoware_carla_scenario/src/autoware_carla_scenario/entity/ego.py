@@ -194,8 +194,17 @@ class EgoVehicle(BackendDriven):
             spawn_retry_t_step=config.spawn_retry_t_step,
             spawn_retry_z_step=config.spawn_retry_z_step,
             ground_projection=config.ground_projection,
+            ros2_autoware_role_name=self._ros2_autoware_role_name(),
         )
         return self._vehicle
+
+    def _ros2_autoware_role_name(self) -> Optional[str]:
+        """The role name to register the ego with CARLA's native Autoware
+        interface under, or ``None`` not to register it (the default).
+
+        See :func:`~autoware_carla_scenario.entity._spawn.spawn_vehicle_actor`.
+        """
+        return None
 
     # ------------------------------------------------------------------
     # Lifecycle hooks (no-ops by default)

@@ -114,6 +114,7 @@ from pathlib import Path
 from typing import Any, ClassVar, Collection, Optional
 
 from ...constants import EGO_ROLE_NAME
+from ...entity_role import canonical_role_name
 from ...coordinate.map_manager import run_carla_map
 from ...utils.clearance import actor_box_centre
 from ...utils.traffic_light import traffic_light_state_name
@@ -1146,7 +1147,9 @@ class SumoTrafficBackend(TrafficBackend):
             sumo_id = self._sumo_id(actor, entity)
             if not self._add_vehicle(sumo_id, actor):
                 continue
-            if actor.attributes.get("role_name") == str(EGO_ROLE_NAME):
+            if canonical_role_name(actor.attributes.get("role_name") or "") == str(
+                EGO_ROLE_NAME
+            ):
                 self._ego_actor = actor
             self._join(sumo_id, actor, entity, published=actor.id in skip)
         logger.info(

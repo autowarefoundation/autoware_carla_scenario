@@ -32,11 +32,34 @@ Role name: the framework identifies the ego by
 :data:`~autoware_carla_scenario.constants.EGO_ROLE_NAME` (``"Ego"``).  Launch
 the interface node with ``ego_vehicle_role_name:=Ego`` so it looks for the
 actor this entity spawns under that name.
+
+CARLA's native Autoware interface: a CARLA 1.0 server started with ``-ros2``
+applies ``/control/command/control_cmd`` and publishes ``/vehicle/status/*``
+itself, with no client in the control loop -- but only for a vehicle spawned
+with the blueprint attribute ``ros2_autoware_control=true`` and the role name
+``ego`` or ``hero``.  ``native_autoware_interface=True``
+(``ego.native_autoware_interface``) spawns the ego that way, as ``ego``
+(:data:`~autoware_carla_scenario.entity_role.NATIVE_AUTOWARE_EGO_ROLE_NAME`);
+the framework still finds it by ``EGO_ROLE_NAME``, which matches ``ego`` and
+``hero`` too (:func:`~autoware_carla_scenario.entity_role.canonical_role_name`).
+A server whose blueprints have no ``ros2_autoware_control`` spawns the ego as
+``Ego``, as without the setting, with a warning.
 """
 
 from __future__ import annotations
 
+from typing import TYPE_CHECKING, Optional
+
+from ..entity_role import NATIVE_AUTOWARE_EGO_ROLE_NAME
 from .bridged_ego import BridgedEgoEntity
+
+if TYPE_CHECKING:
+    from ..autoware_bridge.base import (
+        AutowareBridge,
+        AutowareBridgeConfig,
+        BridgePose,
+    )
+    from ..autoware_stack.launcher import AutowareLauncher
 
 __all__ = ["AutowareEgoEntity"]
 
@@ -50,6 +73,46 @@ class AutowareEgoEntity(BridgedEgoEntity):
     there for the arguments.  The ``bridge`` is a required keyword argument: the
     :class:`~autoware_carla_scenario.autoware_bridge.GrpcAutowareBridgeServer`
     ``autoware_carla_interface`` dials, or ``FakeAutowareBridge`` in tests.
+
+    Args:
+        native_autoware_interface: Spawn the ego for CARLA 1.0's native
+            Autoware interface: with ``ros2_autoware_control=true`` and the
+            role name ``ego``, when the server's blueprint has that attribute
+            (see the module docstring).  ``False`` (the default) spawns it as
+            ``Ego``, for an interface node that drives it from the client.
     """
 
     stack_name: str = "Autoware"
+
+    _native_autoware_interface: bool
+
+    def __init__(
+        self,
+        config: Optional["AutowareBridgeConfig"] = None,
+        *,
+        bridge: "AutowareBridge",
+        initial_pose: Optional["BridgePose"] = None,
+        goal_pose: Optional["BridgePose"] = None,
+        launcher: Optional["AutowareLauncher"] = None,
+        episode_name: str = "",
+        native_autoware_interface: bool = False,
+    ) -> None:
+        super().__init__(
+            config,
+            bridge=bridge,
+            initial_pose=initial_pose,
+            goal_pose=goal_pose,
+            launcher=launcher,
+            episode_name=episode_name,
+        )
+        self._native_autoware_interface = native_autoware_interface
+
+    @property
+    def native_autoware_interface(self) -> bool:
+        """Whether the ego is spawned for CARLA's native Autoware interface."""
+        return self._native_autoware_interface
+
+    def _ros2_autoware_role_name(self) -> Optional[str]:
+        if self._native_autoware_interface:
+            return NATIVE_AUTOWARE_EGO_ROLE_NAME
+        return None

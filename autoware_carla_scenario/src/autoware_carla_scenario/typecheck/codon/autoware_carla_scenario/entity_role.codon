@@ -3,6 +3,18 @@
 import typesafe_carla.carla as carla
 
 
+EGO_ROLE_ALIASES: Tuple[str, str] = ("ego", "hero")
+NATIVE_AUTOWARE_EGO_ROLE_NAME: str = "ego"
+
+
+def canonical_role_name(role_name: str) -> str:
+    lowered = role_name.lower()
+    for alias in EGO_ROLE_ALIASES:
+        if lowered == alias:
+            return "Ego"
+    return role_name
+
+
 class EntityRole:
     _value: str
 
