@@ -1699,6 +1699,45 @@ def _check_hidden_spawns(out: _Collector, document: ScenarioDocument) -> None:
             )
 
 
+def _check_declared_spawns(out: _Collector, document: ScenarioDocument) -> None:
+    """A Spawn card with no place brings its entity in where it was declared
+    to spawn, which a hidden entity on lanelet 0 or less does not have
+    (#2014): an error, as the run would refuse to bring it in.  In a scenario
+    whose route is found on any map, a hidden entity's lanelet names a
+    lanelet of one map only: a warning, as on another map the run refuses it
+    too.
+    """
+    for index, action in enumerate(document.actions):
+        if action.type != "spawn" or action.actor is None:
+            continue
+        if not _is_blank(action.params.get("name")) or _has_place(action):
+            continue
+        entity = document.entity(str(action.actor))
+        if entity is None or not entity.spawn.hidden:
+            continue
+        spawn = entity.spawn
+        path = f"actions[{index}].lanelet_id"
+        if spawn.mode == "fixed" and spawn.lanelet_id <= 0:
+            out.error(
+                path,
+                f"This Spawn card brings {entity.display_name} in where it was "
+                "declared to spawn, but it spawns on no lanelet of its own "
+                f"({spawn.lanelet_id}). Give the card a place: a lanelet (and "
+                "s) or a route pose.",
+                action.id,
+            )
+        elif document.route is not None:
+            out.warn(
+                path,
+                f"This Spawn card brings {entity.display_name} in where it was "
+                f"declared to spawn, lanelet {spawn.lanelet_id}, which names a "
+                "lanelet of one map, in a scenario whose route is found on any "
+                "map: on another it is not brought in. Give the card a route "
+                "pose.",
+                action.id,
+            )
+
+
 def _check_id(out: _Collector, scenario_id: str) -> None:
     """Check the package the id *scenario_id* exports as (#1695).
 
@@ -1771,6 +1810,7 @@ def validate_document(document: ScenarioDocument) -> ValidationReport:
     _check_init_triggers(out, document)
     _check_duplicate_ego_routing(out, document)
     _check_hidden_spawns(out, document)
+    _check_declared_spawns(out, document)
 
     for index, condition in enumerate(document.assertions.pass_conditions):
         _check_condition(out, f"assertions.pass[{index}]", condition, refs)

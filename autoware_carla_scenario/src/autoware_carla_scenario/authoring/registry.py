@@ -1797,7 +1797,8 @@ register_action_spec(
                 required=False,
                 help=(
                     "The lanelet of the place it enters at. None (0): where "
-                    "it was declared to spawn, which it waits under."
+                    "it was declared to spawn -- which an entity spawned on no "
+                    "lanelet of its own does not have."
                 ),
             ),
             FieldSpec(

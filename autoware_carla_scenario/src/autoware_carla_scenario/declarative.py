@@ -16,6 +16,7 @@ never imports it; only a live scenario run does.
 from __future__ import annotations
 
 import logging
+import math
 from collections.abc import Mapping
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -33,7 +34,13 @@ from .signals import (
     clear_signal_controllers,
     register_signal_controller,
 )
-from .coordinate import GroundProjectionConfig, Lanelet2Pose, snap_to_carla_road
+from .actions.spawn import SpawnAction
+from .coordinate import (
+    CarlaWorldPose,
+    GroundProjectionConfig,
+    Lanelet2Pose,
+    snap_to_carla_road,
+)
 from .entity._spawn import SpawnTransform
 from .entity.pedestrian_entity import PedestrianEntity, PedestrianEntityConfig
 from .entity.vehicle_entity import (
@@ -65,6 +72,26 @@ __all__ = [
 #: How far (m) before a route junction an ego the TrafficManager drives is told
 #: which way to turn there -- within the turn action's own search distance.
 TURN_LOOKAHEAD_M = 100.0
+
+#: How much deeper (m) a hidden entity waits than another one waiting where
+#: it would overlap it -- taller than any CARLA road user.
+HIDDEN_STACK_M = 6.0
+#: The room (m) kept between two hidden entities waiting side by side.
+_HIDDEN_GAP_M = 1.0
+#: The length (m) a hidden entity with no size of its own is taken to have
+#: where it waits, by kind: a vehicle's blueprint carries no bounding box, so
+#: one longer than any CARLA vehicle (a bus is about 10.3 m).
+_WAITING_LENGTH_M: dict[str, float] = {
+    "pedestrian": 1.0,
+    "motorcycle": 3.0,
+    "vehicle": 14.0,
+}
+#: How much longer (m) than the size it is to fill a ``vehicle_type: auto``
+#: vehicle is taken to be: the nearest one the server has may be longer.
+_SIZE_MARGIN_M = 4.0
+#: Where hidden entities wait: ``(x, y, z, radius)`` in CARLA world, the
+#: radius (m) of the circle each one's footprint fits in, whatever its yaw.
+WaitingSpots = list[tuple[float, float, float, float]]
 
 
 def document_digest(document: ScenarioDocument) -> str:
@@ -161,6 +188,11 @@ class DeclarativeScenario(BaseScenario):
             document_digest(self._document) if self._document.gate is not None else ""
         )
         self._route_match: Optional[RouteMatch] = None
+        # Filled as the entities spawn (_spawn_npcs): where each hidden one
+        # waits, and where each one was declared to spawn, by role -- None
+        # for one with no spawn of its own to bring it in at.
+        self._waiting: WaitingSpots = []
+        self._declared: dict[str, Optional[tuple["carla.Transform", Lanelet2Pose]]] = {}
         self._case_count = 0
         self._gate_probe: Optional[GateProbe] = None
         self._apply_spawn_overrides()
@@ -485,6 +517,8 @@ class DeclarativeScenario(BaseScenario):
             # condition -- possibly one built earlier, in another action's
             # trigger -- can find it.
             ctx.actions[compiled_action.node.id] = action
+            if isinstance(action, SpawnAction) and action.entity_name:
+                self._declare_spawn(action)
             # The phase is read from the document, not from the action: `init`
             # is not a tick position, and an action that has to happen before
             # the loop -- a goal the ego needs to become ready -- would never be
@@ -597,23 +631,59 @@ class DeclarativeScenario(BaseScenario):
         )
 
     def _parking_transform(self, entity: Entity) -> "carla.Transform":
-        """Where a parked entity waits: under the ego's spawn, 10 m apart."""
-        import typesafe_carla.carla as carla  # noqa: PLC0415
-
-        from .actions._trajectory_run import HIDDEN_DEPTH_M  # noqa: PLC0415
+        """Where a parked entity waits: under the ego's spawn, deeper than
+        any other waiting there (:func:`_hidden_if_asked`)."""
         from .coordinate.transform import to_carla_world  # noqa: PLC0415
 
         assert self._spawn_pose is not None  # noqa: S101 -- set before NPCs spawn
-        base = to_carla_world(self._spawn_pose)
-        slot = 1 + [e.id for e in self._compiled.npcs].index(entity.id)
-        return carla.Transform(
-            carla.Location(x=base.x + 10.0 * slot, y=base.y, z=base.z - HIDDEN_DEPTH_M),
-            carla.Rotation(yaw=base.yaw),
-        )
+        base = to_carla_world(self._spawn_pose).to_carla_transform()
+        return _hidden_if_asked(entity, base, self._waiting)
+
+    def _parked_declared(
+        self, entity: Entity, world: "object"
+    ) -> Optional[tuple["carla.Transform", Lanelet2Pose]]:
+        """Where a parked *entity* was declared to spawn, as a pose it is
+        brought in at would be (a vehicle snapped to the road, a pedestrian
+        not): ``None`` on lanelet 0 or less, or on one this map does not have
+        (said) -- a logical scenario's lanelet names a lanelet of one map."""
+        from .coordinate.transform import to_carla_world  # noqa: PLC0415
+
+        if entity.spawn.lanelet_id <= 0:
+            return None
+        pose = _spawn_pose(entity)
+        try:
+            if entity.kind == "pedestrian":
+                at = to_carla_world(pose)
+            else:
+                at = snap_to_carla_road(
+                    pose, world, ground_projection=self._ground_projection
+                )
+        except Exception:  # noqa: BLE001 -- said; it is just not brought in
+            logger.warning(
+                "%s: its spawn, lanelet %d, is not on this map: a Spawn card "
+                "with no place will not bring it in",
+                entity.id,
+                entity.spawn.lanelet_id,
+                exc_info=True,
+            )
+            return None
+        return (at.to_carla_transform(), pose)
+
+    def _declare_spawn(self, action: SpawnAction) -> None:
+        """Tell an entity's *action* where the entity was declared to spawn,
+        which it is brought in at with no place of its own (#2014)."""
+        declared = self._declared.get(action.entity_name)
+        if declared is None:
+            action.declare_spawn(None)
+            return
+        transform, lane = declared
+        action.declare_spawn(CarlaWorldPose.from_carla_transform(transform), lane)
 
     def _spawn_npcs(self) -> None:
         """Spawn every non-ego entity at its document spawn position."""
         world = self.world
+        self._waiting = []
+        self._declared = {}
         for entity in self._compiled.npcs:
             if entity.kind == "pedestrian":
                 walker = self._build_pedestrian(entity, world)
@@ -657,14 +727,15 @@ class DeclarativeScenario(BaseScenario):
         """
         from .coordinate.transform import to_carla_world  # noqa: PLC0415
 
-        del world
-        transform = (
-            self._parking_transform(entity)
-            if self._parked(entity)
-            else _hidden_if_asked(
-                entity, to_carla_world(_spawn_pose(entity)).to_carla_transform()
-            )
-        )
+        role = self._compiled.role_of(entity.id)
+        if self._parked(entity):
+            transform = self._parking_transform(entity)
+            self._declared[role] = self._parked_declared(entity, world)
+        else:
+            pose = _spawn_pose(entity)
+            declared = to_carla_world(pose).to_carla_transform()
+            self._declared[role] = (declared, pose)
+            transform = _hidden_if_asked(entity, declared, self._waiting)
         return PedestrianEntity(
             PedestrianEntityConfig(
                 role_name=self._compiled.role_of(entity.id),
@@ -680,7 +751,9 @@ class DeclarativeScenario(BaseScenario):
 
         vehicle_type = _vehicle_type(entity, world)
         npc_class = MotorcycleEntity if entity.kind == "motorcycle" else VehicleEntity
+        role = self._compiled.role_of(entity.id)
         if self._parked(entity):
+            self._declared[role] = self._parked_declared(entity, world)
             return npc_class(
                 VehicleEntityConfig(
                     role_name=self._compiled.role_of(entity.id),
@@ -702,6 +775,8 @@ class DeclarativeScenario(BaseScenario):
         snapped = snap_to_carla_road(
             pose, world, ground_projection=self._ground_projection
         )
+        declared = snapped.to_carla_transform()
+        self._declared[role] = (declared, pose)
         return npc_class(
             VehicleEntityConfig(
                 # The role the compiler already resolved every condition to.
@@ -709,7 +784,7 @@ class DeclarativeScenario(BaseScenario):
                 # spawned under a name no condition is watching.
                 role_name=self._compiled.role_of(entity.id),
                 spawn_location=SpawnTransform(
-                    _hidden_if_asked(entity, snapped.to_carla_transform())
+                    _hidden_if_asked(entity, declared, self._waiting)
                 ),
                 vehicle_type=vehicle_type,
                 initial_speed_kmh=entity.initial_speed_kmh,
@@ -757,8 +832,33 @@ def _vehicle_type(entity: Entity, world: "object") -> str:
     return fallback
 
 
-def _hidden_if_asked(entity: Entity, transform: "carla.Transform") -> "carla.Transform":
-    """*transform*, moved under the map when *entity* spawns out of the world."""
+def _waiting_radius(entity: Entity) -> float:
+    """The radius (m) of the circle *entity* fits in where it waits hidden:
+    half its size's length (and a margin, for the nearest vehicle the server
+    has) where it has one, else half its kind's longest."""
+    least = _WAITING_LENGTH_M.get(entity.kind, _WAITING_LENGTH_M["vehicle"])
+    size = entity.size
+    if size is None:
+        return least / 2.0
+    length = max(size.length, size.width) + _SIZE_MARGIN_M
+    if entity.kind == "pedestrian":
+        length = max(length, least)
+    return length / 2.0
+
+
+def _hidden_if_asked(
+    entity: Entity,
+    transform: "carla.Transform",
+    waiting: Optional[WaitingSpots] = None,
+) -> "carla.Transform":
+    """*transform*, moved under the map when *entity* spawns out of the world.
+
+    With *waiting* (where the hidden entities spawned before it wait), deeper
+    by :data:`HIDDEN_STACK_M` for as long as it would overlap one of them --
+    two declared at one spawn, or parked under the ego's, would otherwise be
+    spawned on one spot, and CARLA refuses the second (#2014) -- and noted
+    there.
+    """
     if not entity.spawn.hidden:
         return transform
     import typesafe_carla.carla as carla  # noqa: PLC0415
@@ -766,10 +866,25 @@ def _hidden_if_asked(entity: Entity, transform: "carla.Transform") -> "carla.Tra
     from .actions._trajectory_run import HIDDEN_DEPTH_M  # noqa: PLC0415
 
     location = transform.location
-    return carla.Transform(
-        carla.Location(x=location.x, y=location.y, z=location.z - HIDDEN_DEPTH_M),
-        transform.rotation,
-    )
+    x, y = float(location.x), float(location.y)
+    z = float(location.z) - HIDDEN_DEPTH_M
+    if waiting is not None:
+        radius = _waiting_radius(entity)
+        # Those it would overlap at its depth, the highest first: below each
+        # it meets, until one is far enough below it.
+        under = sorted(
+            (
+                wz
+                for wx, wy, wz, wr in waiting
+                if math.hypot(x - wx, y - wy) < radius + wr + _HIDDEN_GAP_M
+            ),
+            reverse=True,
+        )
+        for wz in under:
+            if abs(z - wz) < HIDDEN_STACK_M - 1e-6:
+                z = wz - HIDDEN_STACK_M
+        waiting.append((x, y, z, radius))
+    return carla.Transform(carla.Location(x=x, y=y, z=z), transform.rotation)
 
 
 def _spawn_pose(entity: Entity) -> Lanelet2Pose:

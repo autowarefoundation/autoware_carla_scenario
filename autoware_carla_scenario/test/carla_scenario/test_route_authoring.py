@@ -153,7 +153,9 @@ actions:
     trigger:
       type: route_progress
       params: {value: -40, anchor: "junction:0:entry"}
-    params: {speed_ms: 8.0}
+    params:
+      speed_ms: 8.0
+      route_pose: "crossing junction=0 approach=opposite turn=straight distance=-30"
   - id: walker_enters
     type: spawn
     actor: walker
@@ -416,6 +418,27 @@ class TestValidation:
     def test_a_hidden_entity_brought_in_by_a_spawn_card_is_not_stranded(self) -> None:
         warnings = _messages(_document(), "warning")
         assert not any("stays there for the run" in m for m in warnings)
+
+    def test_a_spawn_card_with_no_place_on_a_parked_entity_is_rejected(self) -> None:
+        # It has no spawn of its own to come up at (#2014).
+        raw = _raw()
+        card = next(a for a in raw["actions"] if a["id"] == "oncoming_enters")
+        del card["params"]["route_pose"]
+        errors = _messages(ScenarioDocument.model_validate(raw))
+        assert any(
+            "where it was declared" in m and "no lanelet of its own" in m
+            for m in errors
+        )
+
+    def test_one_on_a_lanelet_of_one_map_is_warned_about(self) -> None:
+        raw = _raw()
+        card = next(a for a in raw["actions"] if a["id"] == "oncoming_enters")
+        del card["params"]["route_pose"]
+        raw["entities"][1]["spawn"] = {"hidden": True, "lanelet_id": 5}
+        document = ScenarioDocument.model_validate(raw)
+        assert not any("where it was declared" in m for m in _messages(document))
+        warnings = _messages(document, "warning")
+        assert any("where it was declared" in m and "one map" in m for m in warnings)
 
 
 # ---------------------------------------------------------------------------

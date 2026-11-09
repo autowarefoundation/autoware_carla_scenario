@@ -109,6 +109,8 @@ def built_entities(document: ScenarioDocument) -> dict[str, Any]:
     scenario._document = document
     scenario._compiled = compile_document(document)
     scenario._ground_projection = None  # type: ignore[assignment]
+    scenario._waiting = []
+    scenario._declared = {}
     scenario.ego_config = SimpleNamespace(  # type: ignore[assignment]
         spawn_retry_max_count=0, spawn_retry_t_step=0.0, spawn_retry_z_step=0.0
     )
