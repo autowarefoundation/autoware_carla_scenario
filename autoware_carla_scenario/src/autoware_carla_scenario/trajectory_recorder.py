@@ -602,27 +602,32 @@ class TrajectoryRecorder:
 
     def record_collision(self, collision: Any) -> None:
         """Write a collision of a vehicle other than the ego
-        (:class:`~autoware_carla_scenario.npc_collisions.NpcCollision`)."""
+        (:class:`~autoware_carla_scenario.npc_collisions.NpcCollision`):
+        its ``frame`` and ``t`` are one tick's, the frame of the contact's
+        first event is ``start_frame`` (left out when unknown)."""
         if self._out is None:
             return
-        self._guarded(
-            "stopped",
-            lambda: self._emit(
-                {
-                    "type": "collision",
-                    "frame": int(collision.frame),
-                    "t": _r(collision.t),
-                    "actors": [str(name) for name in collision.actors],
-                    "ids": [int(i) for i in collision.ids],
-                    "impulse": _r(collision.impulse),
-                    "ego": bool(collision.ego),
-                    "phase": str(collision.phase),
-                    "duration": None
-                    if collision.duration is None
-                    else _r(collision.duration),
-                }
-            ),
-        )
+
+        def record() -> dict[str, Any]:
+            out: dict[str, Any] = {
+                "type": "collision",
+                "frame": int(collision.frame),
+                "t": _r(collision.t),
+                "actors": [str(name) for name in collision.actors],
+                "ids": [int(i) for i in collision.ids],
+                "impulse": _r(collision.impulse),
+                "ego": bool(collision.ego),
+                "phase": str(collision.phase),
+                "duration": None
+                if collision.duration is None
+                else _r(collision.duration),
+            }
+            start_frame = int(getattr(collision, "start_frame", -1))
+            if start_frame >= 0:
+                out["start_frame"] = start_frame
+            return out
+
+        self._guarded("stopped", lambda: self._emit(record()))
 
     def record_walker_fallen(self, fallen: Any) -> None:
         """Write a walker seen fallen over
