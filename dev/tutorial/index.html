@@ -3108,7 +3108,7 @@ no fork of <code>autoware_carla_scenario</code>.</p>
 <p>Instead of copying the template by hand, generate a fresh package (the files
 below are rendered from Jinja2 templates):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="c1"># scenario-new &lt;package-name&gt; [--scenario NAME] [--output-dir DIR] [--force]</span>
-<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>scenario-new<span class="w"> </span>reach_goal_pkg<span class="w"> </span>--scenario<span class="w"> </span>reach_goal
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-new<span class="w"> </span>reach_goal_pkg<span class="w"> </span>--scenario<span class="w"> </span>reach_goal
 </code></pre></div>
 <p>This writes a ready-to-install package:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>reach_goal_pkg/
@@ -3139,6 +3139,18 @@ importing it binds its name in <code>__init__.py</code>, so <code>configs</code>
 names <code>__init__.py</code> defines (<code>register</code>, <code>register_scenario</code>,
 <code>register_conf_dir</code>) cannot be scenario names; <code>scenario-new</code> refuses them
 (including when they come from the package name, as in <code>configs_package</code>).</p>
+<p>Nor can a scenario take the name of a module the generated package imports:
+<code>math</code> and <code>dataclasses</code> (<code>configs.py</code>), <code>logging</code> (<code>scenario.py</code>), <code>pathlib</code>
+(<code>__init__.py</code>), <code>autoware_carla_scenario</code>, and <code>enum</code>, which the static
+check's prelude (<code>typecheck.transform.PRELUDE</code>) imports into every module it
+compiles. Codon resolves an import to a module beside the importing one first,
+so a scenario module <code>math.py</code> would
+replace the standard library's <code>math</code> in <code>configs.py</code>, and the package would
+fail its own static check (<code>cannot import name 'isfinite' from
+'&lt;pkg&gt;.math'</code>). <code>scenario-new -s math</code> is refused with <code>Error: scenario name
+'math' is reserved: the generated package imports the module 'math' ...</code>. The
+list is read off the rendered templates and the prelude, so it follows them; other
+standard-library names (<code>signal</code>, <code>queue</code>, ...) are fine as scenario names.</p>
 <p>Nor can a scenario take the name of a built-in scenario (<code>adversity</code>,
 <code>cut_in</code>, <code>intersection_passing</code>, <code>lane_change</code>, <code>pedestrian_dart_out</code>,
 <code>temporary_stop</code>, <code>traffic_light_compliance</code>): once installed, the package's
@@ -3174,10 +3186,18 @@ what gets installed, so <code>scenario-new</code> also refuses one that would cl
 installed: the framework's own (<code>autoware_carla_scenario</code> /
 <code>autoware-carla-scenario</code>, in any spelling that normalises to it), which would
 make the package depend on itself and replace the framework on
-<code>uv pip install -e</code>; a standard-library module (<code>json</code>, <code>typing</code>, ...); and the
+<code>uv pip install -e</code>; another top-level module the framework ships
+(<code>hydra_plugins</code>, a namespace package: a regular package of that name hides
+the framework's Hydra searchpath plugin and sweeper once installed); a
+standard-library module (<code>json</code>, <code>typing</code>, ...); and the
 import name of one of the framework's run-time dependencies (<code>openodd</code>,
 <code>lanelet2</code>, <code>typesafe_carla</code>, <code>hydra</code>, <code>numpy</code>, ...). A name that only contains
 one of them, such as <code>openodd_scenarios_pkg</code>, is fine.</p>
+<p>A <code>--description</code> goes into <code>pyproject.toml</code> on one line: its line breaks
+(<code>\n</code>, <code>\r</code>, U+2028, ...) are folded into spaces, since <code>project.description</code>
+must be a single line and <code>uv build</code> refuses the package otherwise. The
+package's docstring keeps it as given. The Scenario Editor's package export
+folds a scenario's description the same way.</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a>uv<span class="w"> </span>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>reach_goal_pkg
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>reach_goal/default<span class="w"> </span><span class="nv">map</span><span class="o">=</span>nishishinjuku
 <a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a>
@@ -3311,7 +3331,7 @@ is only what lets the stock <code>scenario</code> CLI find you automatically.</p
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 04:55:43 UTC"><span class="timeago" datetime="2026-11-08T04:55:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 04:55:43 UTC">2026-11-08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 9, 2026 06:31:43 UTC"><span class="timeago" datetime="2026-11-09T06:31:43+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 9, 2026 06:31:43 UTC">2026-11-09</span>
   </span>
 
     
