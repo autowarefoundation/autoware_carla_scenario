@@ -482,11 +482,17 @@ class SpawnAction(BaseAction):
             # off its road (#2014).
             declared = self._declared
             if declared is None:
+                # Branched: Codon types no conditional expression of two str.
+                why = "it has no place of its own"
+                if self._has_own_place():
+                    why = "its own place could not be resolved"
                 logger.warning(
-                    "%s: '%s' has no place to be brought in at: no place of "
-                    "its own, and no spawn of its own (lanelet 0 or less)",
+                    "%s: '%s' is not brought in: %s, and no spawn was declared "
+                    "for it here (lanelet 0 or less, or one this map does not "
+                    "have)",
                     self.label,
                     self._entity_name,
+                    why,
                 )
                 return False
             at: TrajectoryVertex = declared
@@ -528,6 +534,21 @@ class SpawnAction(BaseAction):
             y,
             self._speed,
         )
+        return True
+
+    def _has_own_place(self) -> bool:
+        """Whether it was given a place of its own: not none, nor a Lanelet2
+        pose on lanelet 0 or less (an entity's declared spawn)."""
+        vertex = self._at
+        if vertex is None:
+            return False
+        at: TrajectoryVertex = vertex
+        position = at.position
+        if isinstance(position, Lanelet2Pose):
+            # Named as the class: Codon does not narrow a union by isinstance()
+            # (docs/typecheck.md).
+            given: Lanelet2Pose = position
+            return int(given.lanelet_id) > 0
         return True
 
     # -- a prop --------------------------------------------------------------

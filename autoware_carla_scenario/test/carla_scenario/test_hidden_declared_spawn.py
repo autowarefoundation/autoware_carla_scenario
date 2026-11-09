@@ -41,6 +41,7 @@ from autoware_carla_scenario.authoring.models import (
 )
 from autoware_carla_scenario.authoring.validator import validate_document
 from autoware_carla_scenario.coordinate.poses import CarlaWorldPose, Lanelet2Pose
+from autoware_carla_scenario.trajectory.model import RelativeLanePose
 from autoware_carla_scenario.entity import vehicle_entity
 
 from .test_entity_field_parity import _fake_world
@@ -399,7 +400,24 @@ class TestBroughtInWhereDeclared:
         with caplog.at_level(logging.WARNING, logger=spawn_module.__name__):
             assert not _declared(scenario, "p").apply(_World())  # type: ignore[arg-type]
         assert bring_in["put"] == {}
-        assert "no spawn of its own" in caplog.text
+        assert "it has no place of its own, and no spawn was declared" in caplog.text
+
+    def test_one_whose_own_place_fails_is_refused_saying_so(
+        self, maps: None, bring_in: dict[str, Any], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Its place is against an entity not in the scene, and it has no
+        # spawn of its own to fall back to.
+        scenario = _scenario(_document(_hidden("p")), unplaced=("p",))
+        _built(scenario)
+        action = SpawnAction(
+            scenario._compiled.role_of("p"),
+            position=RelativeLanePose(ds=5.0, entity_ref="npc77"),
+        )
+        scenario._declare_spawn(action)
+        with caplog.at_level(logging.WARNING, logger=spawn_module.__name__):
+            assert not action.apply(_World())  # type: ignore[arg-type]
+        assert bring_in["put"] == {}
+        assert "its own place could not be resolved, and no spawn" in caplog.text
 
     def test_one_whose_lanelet_this_map_lacks_is_refused(
         self, bring_in: dict[str, Any], caplog: pytest.LogCaptureFixture
@@ -424,6 +442,7 @@ class TestBroughtInWhereDeclared:
             _built(scenario)
             assert not _declared(scenario, "p").apply(_World())  # type: ignore[arg-type]
         assert "is not on this map" in caplog.text
+        assert "or one this map does not have" in caplog.text
         assert bring_in["put"] == {}
 
     def test_a_place_of_its_own_is_kept(

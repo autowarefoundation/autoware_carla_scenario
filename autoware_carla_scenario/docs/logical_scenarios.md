@@ -341,11 +341,15 @@ route vertex as `route_vertices` takes them, placed on the scenario's route
 -- what keeps a logical scenario map-independent; none: where it was declared
 to spawn, its snapped spawn pose, through the same clearance check and
 `shift_max` as a place of its own), physics on, facing its heading, moving at
-`speed_ms`.  An entity parked with no lanelet of its own -- spawn lanelet 0
-or less, or any hidden entity of a scenario with a `route` search, whose
-lanelet names one map only -- has no such place: a Spawn card with no place
-on it is a validation error, and the run refuses it with a warning rather
-than bringing the entity in somewhere else.
+`speed_ms`.  An entity spawned on lanelet 0 or less has no such place: a
+Spawn card with no place on it is a validation error, and the run refuses it
+with a warning rather than bringing the entity in somewhere else.  In a
+scenario with a `route` search, a hidden entity's lanelet above 0 names a
+lanelet of one map only: a Spawn card with no place on it draws a warning,
+and the run brings the entity in at that lanelet (snapped) where the map it
+runs on has it, and refuses it with a warning where it does not.  A Spawn
+card with no place on an entity that is not hidden puts it at its declared
+spawn too (it used to be lifted 500 m from where it stood).
 Its *Set Goal* card is triggered on the Spawn card completing (`action_state`
 `completeState`) and routes it from where it stands.  To wait until its place
 is clear, put a `place_clear` condition on the same place (`route_pose` too)
