@@ -303,6 +303,30 @@ but `autoware_carla_scenario.autoware_bridge`: `{scenario_bridge}` puts a
 directory on `PYTHONPATH` that holds that package alone
 (`~/.cache/autoware_carla_scenario/ros_bridge/`).
 
+## CARLA's native Autoware interface
+
+A CARLA 1.0 server started with `-ros2` drives Autoware without a bridge
+process ([CARLA docs: Autoware](https://github.com/carla-simulator/carla/blob/1.0/Docs/autoware.md)):
+it applies `/control/command/control_cmd` and publishes `/vehicle/status/*`
+itself. It does so only for a vehicle whose role name is `ego` or `hero` and
+that was spawned with the blueprint attribute `ros2_autoware_control=true`,
+which cannot be set afterwards.
+
+`ego.native_autoware_interface=true` (with `ego.entity=autoware`) spawns the
+ego that way: it sets `ros2_autoware_control=true` and spawns the ego as
+`ego`. Everything in the framework that looks the ego up by `Ego`
+(`EGO_ROLE_NAME`: conditions, measures, metrics, actions) still finds it --
+`ego` and `hero`, in any case, read as `Ego`
+(`autoware_carla_scenario.entity_role.canonical_role_name`) -- so a scenario
+does not change. An interface node running beside the scenario then only spawns
+the sensor kit, and looks for the ego as `ego`.
+
+A server whose blueprints have no `ros2_autoware_control` (one older than
+CARLA 1.0) spawns the ego as `Ego`, as without the setting, and the run logs a
+warning. The setting is off by default.
+
+From Python, `AutowareEgoEntity(config, bridge=..., native_autoware_interface=True)`.
+
 ## Starting Autoware yourself
 
 With `autoware.launcher.type=none`, start Autoware with `scenario_mode:=true`

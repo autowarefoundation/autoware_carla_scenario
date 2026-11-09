@@ -21,6 +21,34 @@ if TYPE_CHECKING:
 
 _PATTERN = re.compile(r"^(Ego|[a-z]+[1-9]\d*)$")
 
+#: The role names CARLA's native Autoware interface serves (CARLA 1.0,
+#: ``ros2_autoware_control``): it drives only a vehicle registered under one of
+#: them.  An actor with one of them, in any case, *is* the ego to the framework
+#: -- :func:`canonical_role_name` reads it as ``"Ego"`` -- so an ego spawned
+#: for that interface (#2038) is found by ``EGO_ROLE_NAME`` like any other.
+#: No :class:`EntityRole` can be one of them: the pattern has no ``ego`` or
+#: ``hero`` (an NPC's name ends in its number).
+EGO_ROLE_ALIASES: tuple[str, str] = ("ego", "hero")
+
+#: The role name an ego registered with CARLA's native Autoware interface is
+#: spawned under.
+NATIVE_AUTOWARE_EGO_ROLE_NAME: str = "ego"
+
+
+def canonical_role_name(role_name: str) -> str:
+    """*role_name* as the framework names it: ``"Ego"`` for the ego.
+
+    The ego is ``"Ego"`` (``EGO_ROLE_NAME``) and, spawned for CARLA's native
+    Autoware interface, ``ego`` or ``hero`` (:data:`EGO_ROLE_ALIASES`, matched
+    in any case); every one of them reads as ``"Ego"``.  Any other role name
+    is returned as it is.
+    """
+    lowered = role_name.lower()
+    for alias in EGO_ROLE_ALIASES:
+        if lowered == alias:
+            return "Ego"
+    return role_name
+
 
 class EntityRole:
     """Validated CARLA actor role name.
@@ -97,11 +125,18 @@ class EntityRole:
 
 
 def _role_name(actor: "carla.Actor") -> Optional[str]:
-    """The ``role_name`` attribute of *actor*, or ``None`` if it has none."""
+    """The ``role_name`` attribute of *actor*, or ``None`` if it has none.
+
+    As :func:`canonical_role_name` reads it: the ego's is ``"Ego"`` whether
+    it was spawned as ``Ego`` or, for CARLA's native Autoware interface, as
+    ``ego``.
+    """
     # Not attributes.get(): Codon's dict.get() requires a default of the
     # value type, and no string means "absent".
     attributes = actor.attributes
-    return attributes["role_name"] if "role_name" in attributes else None
+    if "role_name" not in attributes:
+        return None
+    return canonical_role_name(attributes["role_name"])
 
 
 def find_actor_in_list(
@@ -117,8 +152,10 @@ def find_actor_in_list(
 
     Returns:
         The matching actor, or ``None`` if no actor with that role name exists.
+        The ego is found by ``"Ego"`` under any of its role names
+        (:func:`canonical_role_name`).
     """
-    name = str(role_name)
+    name = canonical_role_name(str(role_name))
     return next(
         (a for a in actors if _role_name(a) == name),
         None,
@@ -151,7 +188,7 @@ def find_actor_in_world(
     Returns:
         The matching actor, or ``None`` if no actor with that role name exists.
     """
-    name = str(role_name)
+    name = canonical_role_name(str(role_name))
     key = (world.id, name)
     if key in _ACTOR_IDS:
         # get_actor() can still return an actor destroyed in this episode

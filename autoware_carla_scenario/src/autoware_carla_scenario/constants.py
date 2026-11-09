@@ -2,7 +2,7 @@
 
 import math
 
-from .entity_role import EntityRole
+from .entity_role import EGO_ROLE_ALIASES, EntityRole
 
 # CARLA role_name attribute value assigned to the ego vehicle actor.
 EGO_ROLE_NAME: EntityRole = EntityRole.ego()
@@ -19,8 +19,10 @@ DEFAULT_TM_PORT: int = 8100
 
 # The ``role_name`` values that make an actor the ego of a trajectory log: the
 # recorder logs their control inputs, and a reader of the log finds the ego by
-# them (t4_scene).
-EGO_ROLES = ("ego", "hero")
+# them (t4_scene).  They are also the role names CARLA's native Autoware
+# interface serves, and the framework finds its ego by them too
+# (entity_role.canonical_role_name).
+EGO_ROLES = EGO_ROLE_ALIASES
 
 # The simulation step the runner drives the world at (20 Hz).
 #

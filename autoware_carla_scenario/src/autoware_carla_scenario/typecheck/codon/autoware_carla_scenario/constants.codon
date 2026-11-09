@@ -1,9 +1,9 @@
 # Model of autoware_carla_scenario.constants (docs/typecheck.md).
 
-from .entity_role import EntityRole
+from .entity_role import EGO_ROLE_ALIASES, EntityRole
 
 EGO_ROLE_NAME: EntityRole = EntityRole.ego()
-EGO_ROLES = ("ego", "hero")
+EGO_ROLES = EGO_ROLE_ALIASES
 BUMPER_PROBE_ROLE_NAME: str = "bumper_probe"
 DEFAULT_TM_PORT: int = 8100
 FIXED_DELTA_SECONDS: float = 0.05
