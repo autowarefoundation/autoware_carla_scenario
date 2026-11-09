@@ -286,6 +286,7 @@ class TestBuiltinScenarioNames:
             "before = set(registry.get_scenario_registry())\n"
             "import autoware_carla_scenario.examples.run\n"
             "after = set(registry.get_scenario_registry())\n"
+            "assert set(registry._BUILTIN_SCENARIOS) == after - before\n"
             "print(json.dumps(sorted(after - before)))\n"
         )
         result = subprocess.run(  # noqa: S603

@@ -621,8 +621,9 @@ What happens to a name that is already taken depends on who took it:
   This holds whether or not the runner (`examples.run`, which registers the
   built-ins when it is imported) was imported before the plugins loaded: the
   viewer and `scenario-expand` load them first. The built-in names are known
-  without importing it, and a built-in registered after the plugins does not
-  take its name back from the plugin that replaced it.
+  without importing it, and the runner, imported later -- or by the plugin's
+  own `register()`, after it registered the name -- does not take the name
+  back from the plugin that replaced it.
 
 - **Another installed package**: the package loaded first keeps the name,
   and the later one is not loaded at all. Everything it registered with the
@@ -638,13 +639,15 @@ What happens to a name that is already taken depends on who took it:
   ('dup' from 'pkga' (pkga:register)) ...
   ```
 
-  Only what the refused package registered itself is undone: a built-in that
-  its `register()` registered as a side effect (importing anything under
-  `autoware_carla_scenario.examples`, such as `examples.configs` to subclass a
-  built-in config, imports the runner) stays, and so does the framework's
-  `conf/`. Nor is what it registered elsewhere when it was imported (traffic
-  backends, ODD builders, authoring specs, ...). Rename the scenario in one of
-  the packages to install both.
+  Only what the refused package registered itself is undone, and the
+  framework's state comes back whole: a built-in its `register()` registered
+  as a side effect (importing anything under `autoware_carla_scenario.examples`,
+  such as `examples.configs` to subclass a built-in config, imports the
+  runner) stays; a built-in it replaced gets the built-in back, even when its
+  own import of the runner is what registered it; and the framework's `conf/`
+  stays registered. What it registered elsewhere when it was imported (traffic
+  backends, ODD builders, authoring specs, ...) is not undone. Rename the
+  scenario in one of the packages to install both.
 
 Config paths are checked as well, in every group (`scenario/`, `map/`,
 `ego/`, ...): registering a `conf/` directory that ships a path an earlier

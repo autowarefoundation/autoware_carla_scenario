@@ -747,6 +747,70 @@ class TestPluginCollisions:
         (message,) = self._warnings(caplog)
         assert "'pkgb' (pkgb:register) replaced 'fake_builtin'" in message
 
+    def test_a_refused_plugin_that_replaced_a_built_in_its_import_registered(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The built-in comes back: the runner will not register it again."""
+        import importlib  # noqa: PLC0415
+
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        module = self._before_the_runner(monkeypatch, tmp_path)
+
+        class _Replacement(_DummyScenario):
+            pass
+
+        def register_d() -> None:
+            importlib.import_module(module)
+            registry.register_scenario("fake_builtin", _Replacement, _DummyConfig)
+            registry.register_scenario("dup", _Replacement, _DummyConfig)
+
+        self._load(
+            monkeypatch,
+            [
+                _entry_point(
+                    "a_pkg",
+                    lambda: registry.register_scenario(
+                        "dup", _DummyScenario, _DummyConfig
+                    ),
+                ),
+                _entry_point("d_pkg", register_d),
+            ],
+        )
+        fake = sys.modules[module]
+        assert registry.get_scenario_classes("fake_builtin") == (
+            fake.Scenario,
+            fake.Config,
+        )
+        assert registry.get_scenario_builder("fake_builtin") is not None
+        assert registry.get_scenario_classes("dup") == (_DummyScenario, _DummyConfig)
+
+    def test_a_plugin_registering_a_built_in_before_importing_the_runner(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        """Its import does not overwrite the plugin, and the warning fires."""
+        import importlib  # noqa: PLC0415
+
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        module = self._before_the_runner(monkeypatch, tmp_path)
+
+        def register_e() -> None:
+            registry.register_scenario("fake_builtin", _DummyScenario, _DummyConfig)
+            importlib.import_module(module)
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(monkeypatch, [_entry_point("e_pkg", register_e)])
+        assert registry.get_scenario_classes("fake_builtin") == (
+            _DummyScenario,
+            _DummyConfig,
+        )
+        (message,) = self._warnings(caplog)
+        assert "'e_pkg' (e_pkg:register) replaced 'fake_builtin'" in message
+
     def test_a_built_in_replaced_before_the_runner_is_imported(
         self,
         monkeypatch: pytest.MonkeyPatch,

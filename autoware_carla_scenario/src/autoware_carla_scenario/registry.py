@@ -398,6 +398,9 @@ _BUILTIN_SCENARIOS: dict[str, tuple[type[BaseScenario], type]] = {}
 #: it.
 _PLUGIN_SCENARIOS: dict[str, Any] = {}
 
+#: Whether :func:`load_scenario_plugins` is calling the plugins right now.
+_walking = False
+
 _MISSING = object()
 
 
@@ -412,13 +415,23 @@ def _register_builtin_scenario(
     ``scenario-expand`` load them first), and a plugin replacing a built-in
     is warned about when it does (#1802), not silently undone later.
     """
-    _BUILTIN_SCENARIOS[name] = (scenario_cls, config_cls)
+    builtin = (scenario_cls, config_cls)
+    _BUILTIN_SCENARIOS[name] = builtin
     if name in _PLUGIN_SCENARIOS and name in _SCENARIO_REGISTRY:
         logger.info(
             "The built-in scenario %r is not registered: the scenario plugin "
             "%s replaced it.",
             name,
             _describe(_PLUGIN_SCENARIOS[name]),
+        )
+        return
+    if _walking and name in _SCENARIO_REGISTRY and _scenario_entry(name) != builtin:
+        # The plugin being loaded registered the name before its import of
+        # the runner did: it keeps it, and the walk warns about it (#1802).
+        logger.info(
+            "The built-in scenario %r is not registered: the scenario plugin "
+            "being loaded registered that name first.",
+            name,
         )
         return
     register_scenario(name, scenario_cls, config_cls)
@@ -477,8 +490,13 @@ def load_scenario_plugins() -> None:
         importlib_metadata.entry_points(group=SCENARIO_ENTRY_POINT_GROUP),
         key=_entry_point_sort_key,
     )
-    for entry_point in entry_points:
-        _load_scenario_entry_point(entry_point, builtin_names)
+    global _walking
+    _walking = True
+    try:
+        for entry_point in entry_points:
+            _load_scenario_entry_point(entry_point, builtin_names)
+    finally:
+        _walking = False
 
 
 def _load_scenario_entry_point(entry_point: Any, builtin_names: set[str]) -> None:
@@ -503,11 +521,21 @@ def _load_scenario_entry_point(entry_point: Any, builtin_names: set[str]) -> Non
         _undo_plugin(own, saved, conf_dirs_before)
         _warn_about_refusal(entry_point, "scenario", taken, _PLUGIN_SCENARIOS)
         return
-    replaced = [name for name in registered if name in before or name in builtin_names]
+    replaced = [
+        name
+        for name in registered
+        # A built-in the runner registered (or skipped) during this step too.
+        if name in before or name in builtin_names or name in _BUILTIN_SCENARIOS
+    ]
     if replaced:
         _warn_about_replacements(entry_point, "scenario", replaced, False)
     for name in registered:
         _PLUGIN_SCENARIOS[name] = entry_point
+
+
+def _scenario_entry(name: str) -> object:
+    """What the registered scenario *name* stands for (see :func:`_scenario_snapshot`)."""
+    return _scenario_snapshot().get(name, _MISSING)
 
 
 def _scenario_tables() -> list[dict[str, Any]]:
@@ -520,7 +548,9 @@ def _undo_plugin(
 ) -> None:
     """Undo what a refused scenario plugin registered.
 
-    Puts *names* back as *saved* had them in every scenario table, and the
+    Puts *names* back as *saved* had them in every scenario table -- a name
+    *saved* lacks that is a built-in gets the built-in back, since the runner
+    the plugin imported registered it and will not again -- and the
     config directories as they were: those registered since are unregistered
     (never the framework's own) and those removed since are put back where
     they were.
@@ -531,6 +561,11 @@ def _undo_plugin(
                 table[name] = copy[name]
             else:
                 table.pop(name, None)
+    for name in names:
+        if name not in saved[0] and name in _BUILTIN_SCENARIOS:
+            # A built-in its import of the runner registered, then replaced:
+            # the runner is imported now and will not register it again.
+            register_scenario(name, *_BUILTIN_SCENARIOS[name])
     for conf_dir in list(_CONF_DIRS):
         if conf_dir not in conf_dirs_before and conf_dir != _FRAMEWORK_CONF_DIR:
             unregister_conf_dir(conf_dir)
