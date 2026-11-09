@@ -1008,11 +1008,15 @@ exporting. Every id the export accepts gets a package of its own.
     .venv/bin/pip install --no-index --find-links new_scenario_scenario_wheelhouse new-scenario-scenario
     ```
 
-    With both installed, both register a builder named `new_scenario` (the
-    one loaded last silently wins) and both put a `scenario/new_scenario.yaml`
-    on Hydra's search path (the one registered first wins), so a run can mix
-    one package's builder with the other's config, depending on the order the
-    entry points happen to load in.
+    With both installed, both register a builder named `new_scenario` and
+    both put a `scenario/new_scenario.yaml` on Hydra's search path. The entry
+    points load sorted by distribution name, so `new-scenario` loads before
+    `new-scenario-scenario`: the old package keeps the name, its builder
+    *and*, its conf directory being the earlier one on the search path, its
+    config. The new package's builder is dropped, and the run logs a warning
+    naming both entry points, and another naming both conf directories and
+    the one Hydra composes `scenario/new_scenario.yaml` from. The re-export
+    is not used until the old distribution is uninstalled.
 
     The id `autoware_carla_scenario`, refused before because it exported as
     the framework's own package, now exports as `autoware_carla_scenario_scenario`

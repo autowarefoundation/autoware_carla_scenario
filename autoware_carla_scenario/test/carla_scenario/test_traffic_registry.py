@@ -10,6 +10,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import Any, Mapping
+from unittest.mock import MagicMock
 
 import pytest
 from omegaconf import OmegaConf
@@ -89,12 +90,94 @@ class TestTheRegistry:
         monkeypatch.setattr(traffic_registry, "_plugins_loaded", False)
         monkeypatch.setattr(
             "autoware_carla_scenario.registry.load_entry_point_plugins",
-            lambda group, what: walks.append(group),
+            lambda group, what, *args, **kwargs: walks.append(group),
         )
 
         traffic_registry.load_traffic_backend_plugins()
         traffic_registry.load_traffic_backend_plugins()
         assert walks == [traffic_registry.TRAFFIC_BACKEND_ENTRY_POINT_GROUP]
+
+
+def _entry_point(name: str, register: Any, dist: str | None = None) -> Any:
+    """An entry point of the distribution *dist* that calls *register*."""
+    entry_point = MagicMock()
+    entry_point.name = name
+    entry_point.value = f"{name}:register"
+    entry_point.dist.name = dist or name
+    entry_point.load.return_value = register
+    return entry_point
+
+
+class TestPluginCollisions:
+    """Plugins that take a backend name already registered are reported (#2034)."""
+
+    @staticmethod
+    def _load(monkeypatch: pytest.MonkeyPatch, entry_points: list[Any]) -> None:
+        from autoware_carla_scenario.traffic import registry as traffic_registry
+
+        monkeypatch.setattr(
+            traffic_registry, "_BACKENDS", dict(traffic_registry._BACKENDS)
+        )
+        monkeypatch.setattr(
+            "importlib.metadata.entry_points", lambda *, group: list(entry_points)
+        )
+        monkeypatch.setattr(traffic_registry, "_plugins_loaded", False)
+        traffic_registry.load_traffic_backend_plugins()
+
+    @staticmethod
+    def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+        return [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_overriding_a_built_in_is_reported_softly(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                [
+                    _entry_point(
+                        "my_tm", lambda: register_backend("traffic_manager", _Fake)
+                    )
+                ],
+            )
+            assert isinstance(build_backend("traffic_manager", {}), _Fake)
+        (message,) = self._warnings(caplog)
+        assert "'my_tm' (my_tm:register) overrides 'traffic_manager'" in message
+        assert "now selects the plugin's traffic backend" in message
+
+    def test_two_plugins_with_one_name_are_reported_and_the_last_wins(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        class _Other(_Fake):
+            pass
+
+        from autoware_carla_scenario.traffic import registry as traffic_registry
+
+        builtins = dict(traffic_registry._BACKENDS)
+        first = _entry_point("sumo_a", lambda: register_backend("dup_sim", _Fake))
+        second = _entry_point("sumo_b", lambda: register_backend("dup_sim", _Other))
+        for order in ([first, second], [second, first]):
+            caplog.clear()
+            monkeypatch.setattr(traffic_registry, "_BACKENDS", dict(builtins))
+            with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+                self._load(monkeypatch, order)
+                # Sorted by distribution name: sumo_b loads last, whichever
+                # order the environment lists them in.
+                assert isinstance(build_backend("dup_sim", {}), _Other)
+            (message,) = self._warnings(caplog)
+            assert "'sumo_a' (sumo_a:register)" in message
+            assert "'sumo_b' (sumo_b:register)" in message
+            assert "'sumo_b' loaded last" in message
+
+    def test_a_plugin_adding_a_new_backend_is_quiet(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                [_entry_point("new", lambda: register_backend("brand_new", _Fake))],
+            )
+        assert not self._warnings(caplog)
 
 
 class TestTheConfig:

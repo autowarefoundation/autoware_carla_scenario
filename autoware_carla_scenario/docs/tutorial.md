@@ -595,15 +595,54 @@ panel lists your scenarios, matches them in globs such as `my_scenario/*`,
 and expands their sweeps.
 
 Scenario names share one registry, so give yours a name nothing else uses.
-A plugin that registers a name already taken -- a built-in scenario's, or
-another installed package's -- replaces that registration (the last entry
-point loaded wins, in an order that depends on the environment), and
-`load_scenario_plugins()` logs a warning naming the entry point and every
-scenario name it replaced:
+Entry points load in a fixed order, sorted by distribution name (normalised,
+so `my-pkg` and `my_pkg` sort together) and then entry-point name, and every
+`conf/` directory joins Hydra's search path in that order, behind the
+framework's own. Hydra composes a config path such as
+`scenario/my_scenario/default.yaml` from the first directory that has it.
+What happens to a name that is already taken depends on who took it:
+
+- **A built-in scenario** (or one registered explicitly before the plugins
+  load): the plugin replaces it, and `load_scenario_plugins()` logs a warning
+  naming the entry point and every scenario name it replaced. The built-in
+  configs are still composed from the framework's `conf/`, so
+  `scenario=lane_change/left` would hand `LaneChangeConfig`'s keys to the
+  plugin's class, which is why `scenario-new` refuses built-in names (#1802):
+
+  ```
+  WARNING ... The scenario plugin 'my_scenario_package' (my_scenario_package:register)
+  replaced 'lane_change', registered before the plugins loaded ...
+  ```
+
+- **Another installed package**: the package loaded first keeps the name. Its
+  scenario class builds the scenario, and its `conf/` directory, being the
+  earlier one on the search path, is the one Hydra reads wherever both
+  packages ship the same config path, so a run never mixes one package's class
+  with the other's YAML. The later package's registration of that name is
+  dropped, with a warning naming both entry points (#2034):
+
+  ```
+  WARNING ... The scenario plugins 'pkga' (pkga:register) and 'pkgb' (pkgb:register)
+  both register the scenario 'dup'. 'pkga' loaded first ... and keeps it ...
+  ```
+
+  A config of the later package's own that names the scenario (a path only it
+  ships) then builds the first package's class, so rename the scenario in one
+  of them.
+
+Config paths are checked as well, in every group (`scenario/`, `map/`,
+`ego/`, ...): registering a `conf/` directory that ships a path an earlier
+directory -- the framework's own, or another package's -- already provides
+logs a warning naming both directories and the one Hydra uses, since the later
+copy is never read. A package's `conf/scenario/lane_change/left.yaml` is
+shadowed by the built-in one, for example:
 
 ```
-WARNING ... The scenario plugin 'my_scenario_package' (my_scenario_package:register)
-replaced what was already registered as 'lane_change': ...
+WARNING ... The config directory /.../my_pkg/conf ships 1 config path(s) that
+/.../autoware_carla_scenario/examples/conf already provides:
+scenario/lane_change/left.yaml. Hydra composes a config from the first
+directory on its search path that has it, so it uses
+/.../autoware_carla_scenario/examples/conf for these ...
 ```
 
 !!! tip "No entry point? Register explicitly."
