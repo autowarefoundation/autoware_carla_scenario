@@ -21,6 +21,7 @@ from autoware_carla_scenario.adversity import (
     CommandKind,
     adversity_command,
 )
+from autoware_carla_scenario.adversity.location import location_of
 from autoware_carla_scenario.adversity.observation import (
     AgentSnapshot,
     Scene,
@@ -331,6 +332,77 @@ def test_a_pedestrian_is_located_by_the_road_nearest_it(features: MapFeatures) -
         )
         is None
     )
+
+
+def test_a_pedestrian_at_the_junction_end_of_a_long_approach_is_at_it(
+    features: MapFeatures,
+) -> None:
+    # #2024: beside the downstream end of S_IN (100 m long, its junction end
+    # at y = -10), the pedestrian's gate reads the lanes from its projection
+    # on S_IN (s ~ 96), not from S_IN's start, 25 m short of the look-ahead.
+    person = AgentSnapshot("p", 1.75 + 4.0, -14.0, 0.0, 0.0, 0.0, PERSON)
+    scene = _scene(features, person)
+    road = scene.pedestrian("p").nearest_road
+    assert road is not None and int(road.lanelet.id) == rm.S_IN
+    assert road.s == pytest.approx(96.0, abs=0.5)
+    assert location_of(features, road.lanelet, road.s) is AdversityLocation.INTERSECTION
+    assert location_of(features, road.lanelet, 0.0) is None
+    command = adversity_command(
+        AdversityKind.JAYWALKING,
+        scene,
+        "p",
+        AdversityLocation.INTERSECTION,
+        random.Random(0),
+    )
+    assert command is not None
+    assert (
+        adversity_command(
+            AdversityKind.JAYWALKING,
+            scene,
+            "p",
+            AdversityLocation.ROUNDABOUT,
+            random.Random(0),
+        )
+        is None
+    )
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("lane_change_duration", 0.0),
+        ("abort_resolution", 0.0),
+        ("jaywalk_resolution", 0.0),
+        ("pedestrian_max_speed", 0.0),
+        ("pedestrian_speed", 0.0),
+        ("duration", -1.0),
+        ("jaywalk_duration", math.nan),
+        ("standstill_speed", -0.1),
+        ("overlap_limit", math.inf),
+        ("pedestrian_speed_factor", (0.0, 0.0)),
+        ("pedestrian_speed_factor", (0.5, math.inf)),
+        ("pedestrian_speed_factor", (2.0, 0.5)),
+        ("stop_crossing_wait", (2.0, -0.5)),
+        ("stop_crossing_wait", (math.nan, 0.5)),
+    ],
+)
+def test_a_threshold_out_of_its_bounds_is_refused(field: str, value: object) -> None:
+    with pytest.raises(ValueError, match=field):
+        TriggerThresholds(**{field: value})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("standstill_speed", 0.0),
+        ("moving_speed", 0.0),
+        ("acceleration_gain", 0.0),
+        ("pedestrian_speed_factor", (1.0, 1.0)),
+        ("stop_crossing_wait", (-5.0, 0.0)),
+    ],
+)
+def test_a_threshold_on_its_bounds_is_accepted(field: str, value: object) -> None:
+    TriggerThresholds(**{field: value})  # type: ignore[arg-type]
 
 
 def test_the_thresholds_can_be_overridden(features: MapFeatures) -> None:

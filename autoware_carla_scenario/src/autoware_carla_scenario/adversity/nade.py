@@ -14,7 +14,8 @@ As TeraSim's ``NADE`` (``envs/nade.py``, ``envs/nade_with_av.py``):
 
 * **Candidates** are the agents within ``control_radius`` of the ego: the
   ``max_controlled`` nearest vehicles, and every pedestrian -- on the ego's
-  level of road, not on a bridge over it or under it (#1596).
+  level of road, not on a bridge over it or under it (#1596) -- nearest
+  first, whatever their kind (#2024).
 * **Adversity**: each candidate's is the first of the list whose trigger
   fires (:func:`~.triggers.adversity_command`, the location gate
   included), giving ``{normal: 1 - p, adversarial: p}``.
@@ -80,6 +81,7 @@ __all__ = [
     "candidates",
     "ego_command",
     "is_probability",
+    "stream_seed",
 ]
 
 
@@ -198,6 +200,28 @@ def is_probability(
     return min(max(probability * magnitude, 0.0), settings.max_is_probability)
 
 
+#: The sub-streams of a run's seed: :class:`ImportanceSampler`'s draws, its
+#: triggers' draws and its victims' responses.
+_DRAWS = 0
+_TRIGGERS = 1
+_RESPONSES = 2
+_STREAMS = 3
+
+
+def stream_seed(seed: int, stream: int) -> int:
+    """The seed of sub-stream *stream* (0 to 2) of a run seeded *seed*.
+
+    ``seed * 3 + stream``: one-to-one over the non-negative seeds a run
+    takes, so the three streams of a run never coincide with any stream of
+    another run -- not even of the next seed's, as ``seed + stream`` did
+    (#2024) -- and a run repeats from its seed.  An explicit integer
+    formula, not ``hash()``, which Codon and CPython do not share.
+    """
+    if not 0 <= stream < _STREAMS:
+        raise ValueError(f"stream must be 0 to {_STREAMS - 1}, not {stream}")
+    return seed * _STREAMS + stream
+
+
 def candidates(
     scene: Scene,
     ego: str,
@@ -207,9 +231,10 @@ def candidates(
     """The agents NADE considers, nearest first.
 
     The ``max_controlled`` nearest vehicles within ``control_radius`` of
-    *ego*, then every pedestrian there; only those named in
-    *controllable* (what an action can drive), never *ego*, and none on
-    another level of road than it (:func:`~.observation.on_another_level`).
+    *ego*, and every pedestrian there, in one list by distance whatever
+    their kind (#2024); only those named in *controllable* (what an action
+    can drive), never *ego*, and none on another level of road than it
+    (:func:`~.observation.on_another_level`).
     """
     me = scene.agents[ego]
     vehicles: list[tuple[float, str]] = []
@@ -225,9 +250,9 @@ def candidates(
         else:
             pedestrians.append((distance, name))
     vehicles.sort()
-    pedestrians.sort()
-    near = [name for _, name in vehicles[: max(settings.max_controlled, 0)]]
-    return near + [name for _, name in pedestrians]
+    near = vehicles[: max(settings.max_controlled, 0)] + pedestrians
+    near.sort()
+    return [name for _, name in near]
 
 
 def ego_command(
@@ -275,10 +300,11 @@ class ImportanceSampler:
         self.thresholds = thresholds
         self.weight = 1.0
         # Apart, so a trigger's draw (a jaywalker's speed, say) or a victim's
-        # response does not shift the sampling's sequence.
-        self._draws = random.Random(seed)
-        self._triggers = random.Random(seed + 1)
-        self._responses = random.Random(seed + 2)
+        # response does not shift the sampling's sequence; and apart across
+        # seeds, so no stream of one run is another run's (#2024).
+        self._draws = random.Random(stream_seed(seed, _DRAWS))
+        self._triggers = random.Random(stream_seed(seed, _TRIGGERS))
+        self._responses = random.Random(stream_seed(seed, _RESPONSES))
         self._sampled_at = -math.inf
 
     def cooling(self, elapsed: float) -> bool:
