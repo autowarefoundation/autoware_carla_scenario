@@ -1483,6 +1483,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#carlas-native-autoware-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CARLA's native Autoware interface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#starting-autoware-yourself" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2210,6 +2221,17 @@
 </li>
       
         <li class="md-nav__item">
+  <a href="#carlas-native-autoware-interface" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        CARLA's native Autoware interface
+      
+    </span>
+  </a>
+  
+</li>
+      
+        <li class="md-nav__item">
   <a href="#starting-autoware-yourself" class="md-nav__link">
     <span class="md-ellipsis">
       
@@ -2617,6 +2639,25 @@ beside the launch in Autoware's ROS 2 environment:</p>
 but <code>autoware_carla_scenario.autoware_bridge</code>: <code>{scenario_bridge}</code> puts a
 directory on <code>PYTHONPATH</code> that holds that package alone
 (<code>~/.cache/autoware_carla_scenario/ros_bridge/</code>).</p>
+<h2 id="carlas-native-autoware-interface">CARLA's native Autoware interface<a class="headerlink" href="#carlas-native-autoware-interface" title="Permanent link">&para;</a></h2>
+<p>A CARLA 1.0 server started with <code>-ros2</code> drives Autoware without a bridge
+process (<a href="https://github.com/carla-simulator/carla/blob/1.0/Docs/autoware.md">CARLA docs: Autoware</a>):
+it applies <code>/control/command/control_cmd</code> and publishes <code>/vehicle/status/*</code>
+itself. It does so only for a vehicle whose role name is <code>ego</code> or <code>hero</code> and
+that was spawned with the blueprint attribute <code>ros2_autoware_control=true</code>,
+which cannot be set afterwards.</p>
+<p><code>ego.native_autoware_interface=true</code> (with <code>ego.entity=autoware</code>) spawns the
+ego that way: it sets <code>ros2_autoware_control=true</code> and spawns the ego as
+<code>ego</code>. Everything in the framework that looks the ego up by <code>Ego</code>
+(<code>EGO_ROLE_NAME</code>: conditions, measures, metrics, actions) still finds it --
+<code>ego</code> and <code>hero</code>, in any case, read as <code>Ego</code>
+(<code>autoware_carla_scenario.entity_role.canonical_role_name</code>) -- so a scenario
+does not change. An interface node running beside the scenario then only spawns
+the sensor kit, and looks for the ego as <code>ego</code>.</p>
+<p>A server whose blueprints have no <code>ros2_autoware_control</code> (one older than
+CARLA 1.0) spawns the ego as <code>Ego</code>, as without the setting, and the run logs a
+warning. The setting is off by default.</p>
+<p>From Python, <code>AutowareEgoEntity(config, bridge=..., native_autoware_interface=True)</code>.</p>
 <h2 id="starting-autoware-yourself">Starting Autoware yourself<a class="headerlink" href="#starting-autoware-yourself" title="Permanent link">&para;</a></h2>
 <p>With <code>autoware.launcher.type=none</code>, start Autoware with <code>scenario_mode:=true</code>
 and the node beside it, once the scenario is waiting for Autoware:</p>
@@ -2677,7 +2718,7 @@ stack (<code>autoware_carla_scenario.autoware_stack.bridge_node</code> builds it
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 22:02:11 UTC"><span class="timeago" datetime="2026-11-07T22:02:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 22:02:11 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 9, 2026 23:31:29 UTC"><span class="timeago" datetime="2026-11-09T23:31:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 9, 2026 23:31:29 UTC">2026-11-09</span>
   </span>
 
     
