@@ -10,6 +10,7 @@ steps that need a live CARLA world.
 
 from __future__ import annotations
 
+import ast
 import importlib
 import math
 import os
@@ -19,6 +20,12 @@ from types import ModuleType
 from typing import Any
 
 import pytest
+
+# tomllib landed in 3.11; tomli is the framework's own dependency on 3.10.
+if sys.version_info >= (3, 11):
+    import tomllib
+else:  # pragma: no cover - only taken on 3.10
+    import tomli as tomllib
 
 from autoware_carla_scenario.scaffold import (
     create_scenario_package,
@@ -482,6 +489,152 @@ class TestScenarioModuleShadowing:
             encoding="utf-8"
         )
         assert f"class {result.names['scenario_class']}(BaseScenario)" in module
+
+
+class TestFrameworkTopLevelModules:
+    """A package may not hide another module the framework ships (#2031)."""
+
+    def test_the_list_matches_the_framework_wheel(self) -> None:
+        from autoware_carla_scenario.scaffold.generator import (  # noqa: PLC0415
+            _FRAMEWORK_TOP_LEVEL_MODULES,
+        )
+
+        pyproject = tomllib.loads(
+            (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(
+                encoding="utf-8"
+            )
+        )
+        shipped = {
+            module.split(".", 1)[0]
+            for module in pyproject["tool"]["uv"]["build-backend"]["module-name"]
+        }
+        assert shipped - {"autoware_carla_scenario"} == set(
+            _FRAMEWORK_TOP_LEVEL_MODULES
+        )
+
+    @pytest.mark.parametrize(
+        "package", ["hydra_plugins", "hydra-plugins", "HydraPlugins"]
+    )
+    def test_hydra_plugins_is_refused(self, package: str) -> None:
+        with pytest.raises(
+            ValueError,
+            match="'hydra_plugins' is reserved: autoware_carla_scenario ships",
+        ):
+            resolve_names(package)
+
+    def test_cli_reports_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main(["hydra_plugins", "-o", str(tmp_path)]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith("Error: package name 'hydra_plugins' is reserved")
+        assert "namespace package" in err
+        assert "Traceback" not in err
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize("package", ["hydra_plugins_pkg", "my_hydra_plugins"])
+    def test_ordinary_names_still_work(self, tmp_path: Path, package: str) -> None:
+        result = create_scenario_package(package, output_dir=tmp_path)
+        assert result.names["package_name"] == package
+
+
+class TestTemplateImportShadowing:
+    """A scenario module may not replace a module the package imports (#2031)."""
+
+    def test_the_imports_are_read_off_the_templates(self) -> None:
+        from autoware_carla_scenario.scaffold.generator import (  # noqa: PLC0415
+            _template_imported_modules,
+        )
+
+        imported = _template_imported_modules()
+        assert {"math", "dataclasses", "logging", "autoware_carla_scenario"} <= imported
+        assert "__future__" not in imported
+        # tests/test_typecheck.py is outside the import package.
+        assert "pytest" not in imported
+
+    @pytest.mark.parametrize("scenario", ["math", "logging", "dataclasses", "Math"])
+    def test_shadowing_scenario_name_raises(self, scenario: str) -> None:
+        with pytest.raises(
+            ValueError,
+            match=f"'{scenario.lower()}' is reserved: the generated package imports",
+        ):
+            resolve_names("my_pkg", scenario_name=scenario)
+
+    def test_derived_shadowing_name_raises(self) -> None:
+        with pytest.raises(ValueError, match="imports the module 'logging'"):
+            resolve_names("logging_pkg")
+
+    @pytest.mark.parametrize("scenario", ["math", "logging", "dataclasses"])
+    def test_cli_reports_cleanly(
+        self, tmp_path: Path, capsys: pytest.CaptureFixture[str], scenario: str
+    ) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main(["my_pkg", "-s", scenario, "-o", str(tmp_path)]) == 1
+        err = capsys.readouterr().err
+        assert err.startswith(f"Error: scenario name '{scenario}' is reserved")
+        assert "Traceback" not in err
+        assert list(tmp_path.iterdir()) == []
+
+    @pytest.mark.parametrize(
+        "scenario", ["signal", "queue", "math_check", "logging_run", "my_dataclasses"]
+    )
+    def test_ordinary_names_still_work(self, tmp_path: Path, scenario: str) -> None:
+        result = create_scenario_package(
+            "my_pkg", output_dir=tmp_path, scenario_name=scenario
+        )
+        assert (result.root / "src" / "my_pkg" / f"{scenario}.py").is_file()
+
+
+class TestOneLineDescription:
+    """``project.description`` must be a single line (PEP 621, #2031)."""
+
+    @pytest.mark.parametrize(
+        ("description", "expected"),
+        [
+            ("line one\nline two", "line one line two"),
+            ("line one\r\n\r\n  line two\r", "line one line two"),
+            ("a\u2028b\u2029c\x85d", "a b c d"),
+            ('one "line"', 'one "line"'),
+        ],
+    )
+    def test_the_pyproject_gets_one_line(
+        self, tmp_path: Path, description: str, expected: str
+    ) -> None:
+        result = create_scenario_package(
+            "desc_pkg", output_dir=tmp_path, description=description
+        )
+        pyproject = tomllib.loads(
+            (result.root / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        assert pyproject["project"]["description"] == expected
+        # The docstring keeps the description as given.
+        init = result.root / "src" / "desc_pkg" / "__init__.py"
+        docstring = ast.get_docstring(
+            ast.parse(init.read_text(encoding="utf-8")), clean=False
+        )
+        assert docstring is not None
+        assert docstring.startswith(description)
+
+    def test_the_cli_folds_it(self, tmp_path: Path) -> None:
+        from autoware_carla_scenario.scaffold.generator import main  # noqa: PLC0415
+
+        assert main(["desc_pkg", "-d", "line one\nline two", "-o", str(tmp_path)]) == 0
+        pyproject = tomllib.loads(
+            (tmp_path / "desc_pkg" / "pyproject.toml").read_text(encoding="utf-8")
+        )
+        assert pyproject["project"]["description"] == "line one line two"
+
+    @pytest.mark.parametrize("description", [None, "", "\n", " \r\n "])
+    def test_a_blank_description_gets_the_default(
+        self, description: str | None
+    ) -> None:
+        names = resolve_names("desc_pkg", description=description)
+        assert (
+            names["description"] == "Desc scenario package for autoware_carla_scenario"
+        )
 
 
 class TestCreateScenarioPackage:

@@ -227,6 +227,49 @@ def _reserved_scenario_names() -> frozenset[str]:
     return frozenset(name for name in reserved if name == name.lower())
 
 
+@functools.cache
+def _template_imported_modules() -> frozenset[str]:
+    """Return the top-level modules the generated import package imports.
+
+    Every absolute ``import x.y`` / ``from x.y import z`` of the Python
+    templates :data:`_FILE_MANIFEST` writes inside the import package, anywhere
+    in the module (a function body's imports too), by its first component:
+    ``math`` and ``dataclasses`` (``configs.py``), ``logging``
+    (``scenario.py``), ``autoware_carla_scenario``, ...  Codon resolves an
+    import to a module beside the importing one first, so a scenario module
+    named after one of these (``<pkg>/math.py``) replaces it for every other
+    module of the package, and the package fails its own static check
+    (#2031).  Read off the rendered templates, so it follows them.
+    """
+    modules: set[str] = set()
+    for template_name, out_template in _FILE_MANIFEST.items():
+        if not (out_template.startswith(_PACKAGE_DIR) and out_template.endswith(".py")):
+            continue
+        source = (
+            code_environment(TEMPLATES_DIR)
+            .get_template(template_name)
+            .render(**_PLACEHOLDER_NAMES)
+        )
+        for node in ast.walk(ast.parse(source)):
+            if isinstance(node, ast.Import):
+                modules.update(alias.name.split(".", 1)[0] for alias in node.names)
+            elif isinstance(node, ast.ImportFrom) and node.level == 0 and node.module:
+                modules.add(node.module.split(".", 1)[0])
+    modules.discard("__future__")
+    return frozenset(modules)
+
+
+#: The top-level modules the framework's wheel ships besides
+#: ``autoware_carla_scenario`` (``[tool.uv.build-backend] module-name`` in its
+#: ``pyproject.toml``; ``test_scaffold.py`` checks the two agree).
+#: ``hydra_plugins`` is a PEP 420 namespace package the framework shares with
+#: Hydra: a generated package of that name is a regular package, which Python
+#: prefers over every namespace portion, so installing it hides the
+#: framework's searchpath plugin and sweeper (#2031).  A plain constant, as an
+#: editable install maps ``hydra_plugins`` to no distribution.
+_FRAMEWORK_TOP_LEVEL_MODULES: tuple[str, ...] = ("hydra_plugins",)
+
+
 #: Import names of the framework's direct run-time dependencies, kept as a
 #: floor under what :func:`_dependency_import_names` reads off the installed
 #: metadata (which is absent when the framework runs from a bare source tree).
@@ -302,7 +345,8 @@ def _check_package_name(package_name: str) -> None:
     """Refuse a package name that would clash once the package is installed.
 
     A package named after the framework depends on itself and replaces the
-    installed framework on ``uv pip install -e``; one named after a stdlib
+    installed framework on ``uv pip install -e``; one named after another
+    top-level module the framework ships (``hydra_plugins``, #2031), a stdlib
     module or a dependency of the framework shadows it (#1451).
     """
     framework_import = _FRAMEWORK_DISTRIBUTION.replace("-", "_")
@@ -312,6 +356,15 @@ def _check_package_name(package_name: str) -> None:
             f"own ({framework_import!r} / {_FRAMEWORK_DISTRIBUTION!r}), so the "
             f"package would depend on itself and replace the installed "
             f"framework. Pass a different name."
+        )
+        raise ValueError(msg)
+    if package_name in _FRAMEWORK_TOP_LEVEL_MODULES:
+        msg = (
+            f"package name {package_name!r} is reserved: {framework_import} "
+            f"ships a {package_name!r} namespace package, which a package of "
+            f"that name would hide once installed (framework top-level "
+            f"modules: {', '.join(_FRAMEWORK_TOP_LEVEL_MODULES)}). Pass a "
+            f"different name."
         )
         raise ValueError(msg)
     if package_name in sys.stdlib_module_names:
@@ -379,6 +432,16 @@ def resolve_names(
             f"{', '.join(sorted(reserved))}). Pass a different --scenario."
         )
         raise ValueError(msg)
+    imported = _template_imported_modules()
+    if scenario in imported:
+        msg = (
+            f"scenario name {scenario!r} is reserved: the generated package "
+            f"imports the module {scenario!r}, which a scenario module "
+            f"{scenario}.py beside it would replace in the static check "
+            f"(imported modules: {', '.join(sorted(imported))}). Pass a "
+            f"different --scenario."
+        )
+        raise ValueError(msg)
     if scenario in BUILTIN_SCENARIO_NAMES:
         msg = (
             f"scenario name {scenario!r} is reserved: it names a built-in "
@@ -425,8 +488,12 @@ def resolve_names(
         # scaffolded package that refuses to install on the interpreter that
         # scaffolded it is a bad first five minutes.
         "requires_python": _requires_python(),
+        # A blank description (whitespace and line breaks alone, which the
+        # pyproject's one-line description would fold to nothing) gets the
+        # default too.
         "description": description
-        or f"{pascal} scenario package for autoware_carla_scenario",
+        if description and description.strip()
+        else f"{pascal} scenario package for autoware_carla_scenario",
     }
 
 
@@ -457,7 +524,9 @@ def create_scenario_package(
     output_dir:
         Parent directory in which the package directory is created.
     description:
-        Optional package description.
+        Optional package description.  ``pyproject.toml`` gets it on one
+        line, its line breaks folded into spaces (PEP 621 allows no other);
+        the package's docstring keeps it as given.
     force:
         Replace the target directory if it already exists.  The whole
         directory is replaced, as ``authoring.package_export.export_package``

@@ -1,7 +1,7 @@
 [project]
 name = "{{ distribution_name }}"
 version = "{{ package_version }}"
-description = {{ description | toml_string }}
+description = {{ description | single_line | toml_string }}
 # Matches the framework's own requirement -- the interpreters its CI tests --
 # so a scenario package cannot be looser than the framework it runs on. The
 # wheelhouse is resolved for each of them.

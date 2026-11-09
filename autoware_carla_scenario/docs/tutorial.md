@@ -401,7 +401,7 @@ below are rendered from Jinja2 templates):
 
 ```bash
 # scenario-new <package-name> [--scenario NAME] [--output-dir DIR] [--force]
-scenario-new reach_goal_pkg --scenario reach_goal
+uv run scenario-new reach_goal_pkg --scenario reach_goal
 ```
 
 This writes a ready-to-install package:
@@ -438,6 +438,17 @@ importing it binds its name in `__init__.py`, so `configs`, `conf` and the
 names `__init__.py` defines (`register`, `register_scenario`,
 `register_conf_dir`) cannot be scenario names; `scenario-new` refuses them
 (including when they come from the package name, as in `configs_package`).
+
+Nor can a scenario take the name of a module the generated package imports:
+`math` and `dataclasses` (`configs.py`), `logging` (`scenario.py`), `pathlib`
+(`__init__.py`) and `autoware_carla_scenario`. Codon resolves an import to a
+module beside the importing one first, so a scenario module `math.py` would
+replace the standard library's `math` in `configs.py`, and the package would
+fail its own static check (`cannot import name 'isfinite' from
+'<pkg>.math'`). `scenario-new -s math` is refused with `Error: scenario name
+'math' is reserved: the generated package imports the module 'math' ...`. The
+list is read off the rendered templates, so it follows them; other
+standard-library names (`signal`, `queue`, ...) are fine as scenario names.
 
 Nor can a scenario take the name of a built-in scenario (`adversity`,
 `cut_in`, `intersection_passing`, `lane_change`, `pedestrian_dart_out`,
@@ -477,10 +488,19 @@ what gets installed, so `scenario-new` also refuses one that would clash once
 installed: the framework's own (`autoware_carla_scenario` /
 `autoware-carla-scenario`, in any spelling that normalises to it), which would
 make the package depend on itself and replace the framework on
-`uv pip install -e`; a standard-library module (`json`, `typing`, ...); and the
+`uv pip install -e`; another top-level module the framework ships
+(`hydra_plugins`, a namespace package: a regular package of that name hides
+the framework's Hydra searchpath plugin and sweeper once installed); a
+standard-library module (`json`, `typing`, ...); and the
 import name of one of the framework's run-time dependencies (`openodd`,
 `lanelet2`, `typesafe_carla`, `hydra`, `numpy`, ...). A name that only contains
 one of them, such as `openodd_scenarios_pkg`, is fine.
+
+A `--description` goes into `pyproject.toml` on one line: its line breaks
+(`\n`, `\r`, U+2028, ...) are folded into spaces, since `project.description`
+must be a single line and `uv build` refuses the package otherwise. The
+package's docstring keeps it as given. The Scenario Editor's package export
+folds a scenario's description the same way.
 
 ```bash
 uv pip install -e reach_goal_pkg
