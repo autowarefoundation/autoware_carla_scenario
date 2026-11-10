@@ -1547,3 +1547,34 @@ def test_a_symlink_install_is_read_through_the_workspace_mount(
     launcher = _docker_launcher(ws, docker)
     launcher.prepare()
     assert launcher.has_scenario_support()
+
+
+def test_docker_launcher_accepts_a_launch_file_that_takes_scenario_mode(
+    tmp_path: Path, fake_docker
+) -> None:
+    """Another CARLA interface's own launch can carry scenario support."""
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=False)
+    launch = (
+        ws
+        / "install"
+        / "autoware_carla_interface_v2"
+        / "share"
+        / "autoware_carla_interface_v2"
+        / "launch"
+    )
+    launch.mkdir(parents=True)
+    (launch / "autoware_carla_scenario.launch.xml").write_text(
+        '<launch><arg name="scenario_mode" default="true"/></launch>'
+    )
+    launcher = _docker_launcher(
+        ws,
+        docker,
+        launch=(
+            "autoware_carla_interface_v2",
+            "autoware_carla_scenario.launch.xml",
+            "map_path:=/maps/Town10HD_Opt",
+        ),
+    )
+    assert launcher.has_scenario_support()
+    assert not _docker_launcher(ws, docker).has_scenario_support()

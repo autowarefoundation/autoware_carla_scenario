@@ -107,7 +107,8 @@ What happens:
     - A workspace whose `autoware_carla_interface` launch takes no
       `scenario_mode` -- one built from a branch without scenario support --
       is refused here, not after the first scenario has timed out waiting for
-      it.
+      it, unless the launch file `autoware.launcher.launch` names declares
+      `scenario_mode` itself (see [CARLA 1.0](#carla-10-autoware_carla_interface_v2)).
     - Containers left behind by a run of yours that was killed are removed.
       Each container carries the `autoware_carla_scenario.stack=uid-<your uid>`
       label, so another user's are left alone, and the
@@ -326,6 +327,35 @@ CARLA 1.0) spawns the ego as `Ego`, as without the setting, and the run logs a
 warning. The setting is off by default.
 
 From Python, `AutowareEgoEntity(config, bridge=..., native_autoware_interface=True)`.
+
+## CARLA 1.0: autoware_carla_interface_v2
+
+On CARLA 1.0 the server itself publishes the sensors and the vehicle status
+and applies Autoware's control commands, so the Python bridge of
+`autoware_carla_interface` is not needed.
+[`autoware_carla_interface_v2`](https://github.com/hakuturu583/autoware_carla_interface_v2)
+is the rclpy node that is left; its `autoware_carla_scenario.launch.xml` starts
+Autoware (`e2e_simulator.launch.xml` with `launch_simulator_interface:=false`)
+and the node in scenario mode, which attaches to the scenario's ego and spawns
+the sensor kit on it. With that package in the workspace's `src/`, point the
+launcher at its launch file:
+
+```bash
+uv run scenario 'scenario=intersection_passing/*' map=town10hd_opt \
+  ego.entity=autoware \
+  autoware.launcher.type=docker \
+  autoware.launcher.workspace=$HOME/autoware \
+  'autoware.launcher.launch=[autoware_carla_interface_v2,autoware_carla_scenario.launch.xml,"map_path:=/home/aw/autoware_map/Town10HD_Opt"]'
+```
+
+That launch file declares `scenario_mode`, which is what the docker launcher's
+workspace check accepts in place of `autoware_carla_interface`'s. Localization,
+routing and engaging stay with `scenario_bridge`, as above.
+
+Add `ego.native_autoware_interface=true` ([above](#carlas-native-autoware-interface))
+so the server applies Autoware's control and publishes the vehicle status; the
+node finds the ego as `Ego`, `ego` or `hero`. Without it, the node applies the
+control and publishes the status from the client.
 
 ## Starting Autoware yourself
 
