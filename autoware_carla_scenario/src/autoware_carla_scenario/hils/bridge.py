@@ -45,6 +45,7 @@ from __future__ import annotations
 
 import functools
 import logging
+import math
 import queue
 import threading
 import time
@@ -76,6 +77,8 @@ from .measurements import (
     camera_frame,
     lidar_points,
     lidar_scan_fields,
+    spin_lidar_points,
+    spin_timestamp,
 )
 from .signals import EgoState, ego_signals
 
@@ -335,6 +338,8 @@ class _SensorDevice:
         self.channel = channel
         self._hilspy = hilspy
         self._actor: Optional["carla.Actor"] = None
+        #: The ego the sensor rides (for its motion while a LiDAR turns).
+        self._ego: Optional["carla.Actor"] = None
         #: Gathers a LiDAR's arcs into revolutions (under :attr:`_convert_lock`).
         self._revolution: Optional[LidarRevolution] = None
         #: The attach generation (:meth:`attach`, :meth:`detach`); written by
@@ -347,7 +352,7 @@ class _SensorDevice:
         #: Held while a measurement is converted into a message.
         self._convert_lock = threading.Lock()
         #: What the callback copied, tagged with its generation.
-        self._received: "queue.Queue[Tuple[int, float, float, Any, int, int]]" = queue.Queue()
+        self._received: "queue.Queue[Tuple[int, float, Any, Any, int, int]]" = queue.Queue()
         self._failures = _Failures(spec.name)
         #: With the wall clock, the messages for the device's thread, tagged
         #: with their generation (``None`` stops the thread).
@@ -380,6 +385,7 @@ class _SensorDevice:
             carla_module.Rotation(roll=roll, pitch=pitch, yaw=yaw),
         )
         actor = world.spawn_actor(blueprint, transform, attach_to=ego)
+        self._ego = ego
         # Until it is the device's, a failure must not leave the sensor on the
         # ego, measuring for nobody: the caller only logs it (#1478).
         try:
@@ -458,28 +464,68 @@ class _SensorDevice:
             width = int(getattr(data, "width", 0))
             height = int(getattr(data, "height", 0))
             arrived = time.time()  # the wall clock's moment of the measurement, give or take the callback's delay
-            self._received.put((generation, float(data.timestamp), arrived, raw, width, height))
+            motion = self._sensor_motion(data) if self._outbox is not None and self._revolution is not None else None
+            self._received.put((generation, float(data.timestamp), (arrived, motion), raw, width, height))
         except Exception:  # noqa: BLE001 - a sensor thread must not die
             logger.exception("%s: failed to receive a measurement", self.spec.name)
 
-    def _message(self, measured: Tuple[float, float, Any, int, int]) -> Optional[Any]:
-        timestamp, arrived, raw, width, height = measured
+    def _sensor_motion(self, data: Any) -> Optional[Tuple[float, ...]]:
+        """The sensor's velocity and angular velocity (its frame; m/s, rad/s) as *data*
+        was measured.
+
+        The ego's motion from the client's last snapshot (no call to the
+        server), turned into the sensor's frame by the measurement's transform.
+        """
+        ego = self._ego
+        if ego is None:
+            return None
+        try:
+            v = ego.get_velocity()
+            w = ego.get_angular_velocity()
+            inverse = np.asarray(data.transform.get_inverse_matrix(), dtype=np.float64)[:3, :3]
+        except Exception:  # noqa: BLE001 - the ego may be gone; send the points as measured
+            return None
+        vs = inverse @ np.array([v.x, v.y, v.z], dtype=np.float64)
+        # A rotation turns the angular velocity (deg/s, world axes) as it does a vector.
+        ws = inverse @ np.radians(np.array([w.x, w.y, w.z], dtype=np.float64))
+        return (*(float(c) for c in vs), *(float(c) for c in ws))
+
+    def _message(self, measured: Tuple[float, Any, Any, int, int]) -> Optional[Any]:
+        timestamp, (arrived, motion), raw, width, height = measured
         spec = self.sensor_spec
         if self._revolution is not None:
-            revolution = self._revolution.add(timestamp, lidar_points(raw), stamp=arrived)
+            points = lidar_points(raw)
+            if self._outbox is not None:
+                # Tag each point with when its arc was measured and how the sensor moved
+                # (still, when the ego's motion could not be read).
+                motion = motion or (0.0,) * 6
+                tagged = np.empty((len(points), 11), np.float64)
+                tagged[:, :4] = points
+                tagged[:, 4] = arrived
+                tagged[:, 5:11] = motion
+                points = tagged
+            revolution = self._revolution.add(timestamp, points, stamp=arrived)
             if revolution is None:
                 return None
+            if self._outbox is None:
+                return ("scan", lidar_scan_fields(revolution, spec.intensity_scale))
+            # With the wall clock, date the revolution by when CARLA measured it, not by
+            # when it is sent: the send starts once the arc completing it arrived and takes
+            # a revolution, so packets dated by their send would be ~75 ms late on average
+            # plus the conversion.  hilspy dates each ray azimuth/360 of a revolution after
+            # ``timestamp``; CARLA cast each arc at once.  With the sensor's motion, each
+            # point is re-observed from where a turning sensor would have been at its ray's
+            # time, so the cloud is a spinning sensor's (#motion-correcting drivers undo it).
+            period = self._revolution.period
+            if revolution.shape[1] == 11:
+                start = spin_timestamp(revolution, period)
+                fields = lidar_scan_fields(spin_lidar_points(revolution, start, period), spec.intensity_scale)
+                fields["timestamp"] = start
+                return ("scan", fields)
             fields = lidar_scan_fields(revolution, spec.intensity_scale)
-            if self._outbox is not None:
-                # With the wall clock, date the revolution by when CARLA measured it, not by
-                # when it is sent: the send starts once the arc completing it arrived and takes
-                # a revolution, so packets dated by their send would be ~75 ms late on average
-                # plus the conversion.  hilspy spreads the packets over the revolution from
-                # ``timestamp``; centring that span on the points' measuring times leaves each
-                # point within half a world tick of its time (CARLA casts an arc at once).
-                captured = self._revolution.revolution_stamp
-                if captured is not None:
-                    fields["timestamp"] = captured - 0.5 * self._revolution.period
+            captured = self._revolution.revolution_stamp
+            if captured is not None:
+                fields["timestamp"] = captured - 0.5 * period
             return ("scan", fields)
         frame = camera_frame(raw, width, height, spec.encoding)
         return self._hilspy.Message(data=frame)
