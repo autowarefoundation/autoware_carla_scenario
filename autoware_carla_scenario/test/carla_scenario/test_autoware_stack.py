@@ -1527,7 +1527,12 @@ def test_the_host_python_root_replaces_a_stale_link(tmp_path: Path) -> None:
     link.unlink()
     link.symlink_to(tmp_path, target_is_directory=True)
 
+    import random
+
+    state = random.getstate()
     assert host_python_root(tmp_path) == root
+    # The temporary name's bits leave the module's (seedable) stream alone.
+    assert random.getstate() == state
     assert link.resolve() == bridge_package_dir()
     assert sorted(p.name for p in link.parent.iterdir()) == ["autoware_bridge"]
 

@@ -110,8 +110,10 @@ def host_python_root(cache_dir: Path | None = None) -> Path:
     if not link.is_symlink() or link.resolve() != package:
         link.parent.mkdir(parents=True, exist_ok=True)
         # Unique to this process: the pid, and random bits for a pid reused
-        # on another host sharing the cache (an NFS home).
-        unique = f"{os.getpid()}.{random.getrandbits(32)}"
+        # on another host sharing the cache (an NFS home).  A Random of its
+        # own, seeded afresh: the module's would advance a stream a scenario
+        # may have seeded, and repeat the same bits wherever it was seeded alike.
+        unique = f"{os.getpid()}.{random.Random().getrandbits(32)}"
         tmp = link.with_name(f".{link.name}.{unique}.tmp")
         tmp.symlink_to(package, target_is_directory=True)
         try:
