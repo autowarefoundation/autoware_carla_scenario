@@ -2073,6 +2073,17 @@
   
 </li>
         
+          <li class="md-nav__item">
+  <a href="#build-test-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build, test, push
+      
+    </span>
+  </a>
+  
+</li>
+        
       </ul>
     </nav>
   
@@ -2364,6 +2375,17 @@
     <span class="md-ellipsis">
       
         The smoke test
+      
+    </span>
+  </a>
+  
+</li>
+        
+          <li class="md-nav__item">
+  <a href="#build-test-push" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Build, test, push
       
     </span>
   </a>
@@ -2762,8 +2784,12 @@ packs for either. Run it on an arm64 runner to get an arm64 image:</p>
 multi-architecture tag, join the per-architecture tags in a later job with
 <code>docker buildx imagetools create</code>. Cross-building on one runner
 (<code>platforms: linux/amd64,linux/arm64</code> after <code>docker/setup-qemu-action</code>) also
-works, but emulated, and a multi-platform build cannot be loaded, so it needs
-<code>load: "false"</code> and <code>smoke-test: "false"</code>.</p>
+works, but emulated. A multi-platform build cannot be loaded, so with <code>load</code>
+or <code>smoke-test</code> on the action loads and smoke-tests a single-platform build
+first -- the runner's own platform if it is listed, the first one otherwise --
+and builds (and pushes) every listed platform only once that passed; see
+<a href="#build-test-push">Build, test, push</a>. <code>load: "false"</code> with
+<code>smoke-test: "false"</code> builds them all in one go, untested.</p>
 <h3 id="the-smoke-test">The smoke test<a class="headerlink" href="#the-smoke-test" title="Permanent link">&para;</a></h3>
 <p>With <code>smoke-test: "true"</code> the action runs its <code>smoke-test.py</code> inside the
 freshly built image and checks that</p>
@@ -2774,12 +2800,42 @@ freshly built image and checks that</p>
 <li>the scenario package's <code>autoware_carla_scenario.scenarios</code> entry point loads
    and registers at least one scenario,</li>
 <li>Hydra discovers <code>AutowareScenarioSearchPathPlugin</code>, so the package's
-   <code>conf/</code> directory reaches the config search path, and</li>
+   <code>conf/</code> directory reaches the config search path,</li>
+<li>a config directory registered by a scenario package -- the framework's own
+   does not count -- exists and holds a YAML under its <code>scenario/</code> group, so a
+   wheel that lost <code>conf/</code> fails here rather than at <code>scenario=&lt;name&gt;/...</code>,
+   and</li>
 <li><code>scenario --help</code> composes a config without a CARLA server.</li>
 </ol>
 <p>Check 3 is worth its keep: <code>hydra_plugins</code> is a namespace package that an
 editable install resolves via <code>src/</code>, so losing it from the wheel breaks every
 <code>scenario=&lt;name&gt;/…</code> override in the image while leaving development untouched.</p>
+<h3 id="build-test-push">Build, test, push<a class="headerlink" href="#build-test-push" title="Permanent link">&para;</a></h3>
+<p>The image is pushed only after its smoke test passed. The action builds it
+with <code>push: false</code> (loaded into the local daemon), smoke-tests it, and then
+runs the same build again with <code>push: true</code>: same builder, context, Dockerfile
+and arguments, so every step is a cache hit and the pushed layers are the ones
+the test ran. The <code>digest</code> output comes from that second run. For a
+multi-platform <code>platforms</code> list the first build covers the one platform that
+is smoke-tested and the second builds and pushes all of them, the tested one
+from cache. With <code>push: "true"</code>, <code>load: "false"</code> and <code>smoke-test: "false"</code>
+there is nothing to wait for, and the action builds and pushes in one run.</p>
+<p>Two caveats:</p>
+<ul>
+<li>The base images are referenced by tag. If an upstream tag is republished
+  between the two builds, the second one pulls the new base, misses the cache
+  from there on, and pushes an image that differs from the one tested. Pin
+  <code>RUNTIME_BASE</code> by digest (<code>build-args: RUNTIME_BASE=python@sha256:…</code>) to
+  rule that out for the runtime base. The uv build-stage images
+  (<code>ghcr.io/astral-sh/uv:&lt;UV_VERSION&gt;…</code>) take only a version, not a digest,
+  so the same applies to them: a republished uv tag can change what the
+  second build installs.</li>
+<li>A multi-platform build takes longer -- the tested platform is built twice
+  (once alone, then again from cache within the full build) and the others
+  usually run emulated -- and only one platform is smoke-tested. For every
+  platform tested, build each natively on its own runner as shown in
+  <a href="#architectures">Architectures</a>.</li>
+</ul>
 <h2 id="building-by-hand">Building by hand<a class="headerlink" href="#building-by-hand" title="Permanent link">&para;</a></h2>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="nv">ACTION</span><span class="o">=</span>.github/actions/pack-scenario-image
 <a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
@@ -2852,7 +2908,7 @@ the image runs as UID 1000, which must be able to write to it.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 5, 2026 08:39:41 UTC"><span class="timeago" datetime="2026-11-05T08:39:41+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 5, 2026 08:39:41 UTC">2026-11-05</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 12:49:15 UTC"><span class="timeago" datetime="2026-11-11T12:49:15+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 12:49:15 UTC">2026-11-11</span>
   </span>
 
     
