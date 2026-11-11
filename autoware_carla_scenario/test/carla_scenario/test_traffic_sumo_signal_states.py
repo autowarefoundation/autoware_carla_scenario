@@ -176,7 +176,8 @@ def _state(rng: random.Random, size: int, alphabet: str = "rRyYgGos") -> str:
     return "".join(rng.choice(alphabet) for _ in range(size))
 
 
-#: Link states but those of a signal switched off, which #2061 changed.
+#: Link states but those of a signal switched off, whose rides and crossings
+#: #2061 changed.
 _LIT = "rRyYgGs"
 
 
@@ -186,20 +187,27 @@ def test_link_states_sets_what_the_backend_set(seed: int) -> None:
     for _ in range(50):
         size = rng.randint(1, 12)
         links = list(range(size))
-        current = _state(rng, size, _LIT)
+        current = _state(rng, size)
         names = ["Red", "Yellow", "Green", "Unknown"]
         lights = {i: rng.choice(names) for i in rng.sample(links, rng.randint(0, size))}
         permissive = set(rng.sample(links, rng.randint(0, size)))
+        # A link SUMO shows switched off keeps it unless a light sets it; no
+        # ride or crossing goes by such a link, whose rules #2061 changed.
+        lit = [
+            i
+            for i in links
+            if current[i] not in "oO" or lights.get(i, "Unknown") != "Unknown"
+        ]
         rides: list[tuple[int, str, list[int]]] = [
             (
                 rng.choice(links),
                 rng.choice(["with", "clear"]),
-                rng.sample(links, rng.randint(0, size)),
+                rng.sample(lit, rng.randint(0, len(lit))),
             )
             for _ in range(rng.randint(0, 3))
         ]
         crossings: list[tuple[int, list[int]]] = [
-            (rng.choice(links), rng.sample(links, rng.randint(0, size)))
+            (rng.choice(links), rng.sample(lit, rng.randint(0, len(lit))))
             for _ in range(rng.randint(0, 3))
         ]
         args: tuple[Any, ...] = (current, lights, permissive, rides, crossings)

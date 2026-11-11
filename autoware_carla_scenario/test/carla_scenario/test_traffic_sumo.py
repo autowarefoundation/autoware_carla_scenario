@@ -5616,3 +5616,32 @@ def test_the_way_ahead_is_the_band_between_it_and_the_lanes_centre() -> None:
     assert safe(10.0, 3.5) < 0.0
     assert safe(-10.0, 0.0) < 0.0
     assert safe(7.0, 0.0) == 0.0
+
+
+@pytest.mark.parametrize(
+    ("state", "passes"),
+    [
+        ("G", True),
+        ("g", True),
+        # A dark junction (#2061): a CARLA light switched off sets `o`, and
+        # the queue model has no foe traffic to give way to.
+        ("o", True),
+        ("O", True),
+        ("r", False),
+        ("R", False),
+        ("u", False),
+        ("y", False),
+        ("s", False),
+    ],
+)
+def test_the_queue_model_passes_a_signal_switched_off(state: str, passes: bool) -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
+    backend._edge_signals = {("a", "b"): [("tls", 0), ("tls", 1)]}
+    backend._signal_states = {}
+    backend._traci = SimpleNamespace(
+        trafficlight=SimpleNamespace(getRedYellowGreenState=lambda tls: "r" + state)
+    )
+    assert backend._meso_gate("a", "b") is passes
+    assert backend._meso_gate("a", "c")  # no signal on the move

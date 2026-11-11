@@ -371,6 +371,50 @@ class TestStopLineWatch:
         assert run.watch.stopped_in_zone_at is None
         assert run.watch.green_seen_at == pytest.approx(3.05)
 
+    def test_the_watch_leaves_the_green_actions_trigger_to_the_action(
+        self, monkeypatch
+    ) -> None:
+        # The UI shows the trigger as the action last asked it; the watch
+        # judges by a twin of it, built from the same red_until.
+        run = _Run(monkeypatch, _LINE_X - _FRONT - 1.0)
+        assert run.hold(5.3) is None
+        assert run.watch.green._last_satisfied is False
+        assert run.watch._switch.duration_seconds == run.watch.green.duration_seconds
+
+    def test_a_reset_watch_starts_the_next_run_afresh(self, monkeypatch) -> None:
+        # A retry, or a second run_all(): the runner resets the conditions,
+        # and with them the watch they share.
+        run = _Run(monkeypatch, _LINE_X - _FRONT - 1.0)
+        assert run.hold(1.0) is None
+        failed = run.tick(run.ego.x + 2.0)
+        assert failed is not None and "ran the red" in failed.message
+        while run.elapsed < 6.0 - 1e-9:
+            run.tick(run.ego.x)
+        assert run.watch.green_seen_at is not None
+
+        run.violation.reset()
+        watch = run.watch
+        assert watch.crossed_at is None and not watch.crossed_on_red
+        assert watch.stopped_in_zone_at is None
+        assert watch.green_seen_at is None
+        assert watch.distance is None
+        assert watch.red_end_distance is None
+        assert watch._at == -math.inf
+        standstill: Any = watch._standstill
+        assert standstill.reset.called
+
+        # The next run's clock starts at 0 again, from where the ego stands.
+        run.elapsed = 0.0
+        run.still_since = None
+        run.ego.x = _LINE_X - _FRONT - 1.0
+        assert run.hold(5.0) is None
+        assert watch.stopped_in_zone_at is not None
+        assert watch.crossed_at is None
+        assert watch.distance == pytest.approx(1.0, abs=1e-4)
+
+        run.stopped.reset()
+        assert watch.stopped_in_zone_at is None
+
     def test_creeping_out_of_the_zone_over_the_line_fails(self, monkeypatch) -> None:
         # Starting in the zone, it has to stay there.
         run = _Run(monkeypatch, _LINE_X - _FRONT - 1.0)

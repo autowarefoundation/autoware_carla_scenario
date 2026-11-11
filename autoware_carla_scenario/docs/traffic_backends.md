@@ -1099,9 +1099,8 @@ vehicle links keep the indices CARLA's lights are matched to. With
 `traffic_light_authority=carla` a crossing is green while every vehicle link
 into or out of a road it crosses is red, gives way (`o`) while they are red or
 switched off and some are off (a dark junction), and is red otherwise; with
-`sumo`, SUMO's
-own program (which netconvert gives a pedestrian phase) drives it. A network
-given as `net_path` is used as it is.
+`sumo`, SUMO's own program (which netconvert gives a pedestrian phase) drives
+it. A network given as `net_path` is used as it is.
 
 ```bash
 uv run scenario ... traffic=sumo traffic.options.pedestrians.enabled=true \
@@ -1406,7 +1405,7 @@ uv run scenario ... traffic=sumo traffic.options.mesoscopic.enabled=true \
 | `update_interval_s` | `1.0` | simulated seconds between two decisions; the queue model steps every tick |
 | `scenario_vehicles` | `false` | let the scenario's vehicles SUMO drives (`scenario_vehicles=sumo`) leave CARLA too |
 | `headway_s`, `jam_spacing_m` | `1.5`, `7.5` | the queue model's capacity per lane, and the road a queued vehicle takes up |
-| `junction_control` | `true` | hold a mesoscopic vehicle at a red SUMO signal |
+| `junction_control` | `true` | hold a mesoscopic vehicle at a SUMO signal unless it is green (`G`, `g`) or switched off (`o`, `O`) on some lane of its move: red, red-yellow, yellow and a right turn on red (`s`) hold it |
 
 A vehicle leaves only from a normal edge, never from inside a junction, and
 comes back with its route, its type, length, width and top speed, and a speed

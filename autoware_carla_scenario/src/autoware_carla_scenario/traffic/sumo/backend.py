@@ -203,6 +203,7 @@ from .physics_control import (
     to_vehicle_frame,
 )
 from .signal_states import (
+    DARK_SIGNAL_STATES,
     carla_light_state,
     green_together,
     link_states,
@@ -3987,7 +3988,13 @@ class SumoTrafficBackend(TrafficBackend):
     def _meso_gate(self, from_edge: str, to_edge: str) -> bool:
         """Whether SUMO's signals let a vehicle from *from_edge* on to *to_edge*.
 
-        Green on any lane of the move will do: the queue model has no lanes.
+        Green (``G``, ``g``) or switched off (``o``, ``O``: a dark junction)
+        on any lane of the move will do: the queue model has no lanes.  A
+        signal switched off holds nobody: ``O`` has the right of way, and the
+        ``o`` that a CARLA light switched off sets gives way to foe traffic,
+        which the queue model has no model of to give way to -- holding it
+        instead would hold it for as long as the junction stays dark.  Every
+        other state (``r``, ``R``, ``u``, ``y``, ``Y``, ``s``) holds it.
         """
         links = self._edge_signals.get((from_edge, to_edge))
         if not links:
@@ -3997,7 +4004,9 @@ class SumoTrafficBackend(TrafficBackend):
             if state is None:
                 state = str(self._traci.trafficlight.getRedYellowGreenState(tls))
                 self._signal_states[tls] = state
-            if index < len(state) and state[index] in "Gg":
+            if index < len(state) and (
+                state[index] in "Gg" or state[index] in DARK_SIGNAL_STATES
+            ):
                 return True
         return False
 

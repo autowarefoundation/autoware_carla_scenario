@@ -122,11 +122,16 @@ class StopLineWatch:
     is switched before the world steps (a pre-tick action triggered by
     :attr:`green`) and conditions read the world after, so the tick that ends
     at ``red_until`` still ran under red, and the first that ran under green
-    ends one step later.  The tick's start is judged by :attr:`green` itself,
-    the :class:`~autoware_carla_scenario.ElapsedTimeCondition` the scenario
-    gives the green action, so the two agree on the boundary even when the
+    ends one step later.  The tick's start is judged by the same rule as
+    :attr:`green`, the :class:`~autoware_carla_scenario.ElapsedTimeCondition`
+    the scenario gives the green action -- a twin of it, built from the same
+    ``red_until``, so the action's trigger shows in the UI only what the
+    action asked of it -- and the two agree on the boundary even when the
     summed clock reads a hair short of ``red_until`` (``0.05 * 60`` sums to
     ``2.9999999999999973``): that tick already ran under green.
+
+    What a run left in the watch is cleared by :meth:`reset`, which the
+    conditions sharing it call when the runner resets them before a run.
 
     The pass and fail conditions share one watch; it updates once per
     ``elapsed``, whichever of them asks first, so it has to be asked every
@@ -176,6 +181,8 @@ class StopLineWatch:
     red_end_distance: Optional[float]
     red_end_still_for: Optional[float]
     _standstill: StandstillCondition
+    #: :attr:`green`'s twin, asked by the watch alone.
+    _switch: ElapsedTimeCondition
     _still_since: Optional[float]
     _at: float
     _has_front: bool
@@ -205,6 +212,21 @@ class StopLineWatch:
         self.standstill_seconds = standstill_seconds
         self.standstill_speed_mps = standstill_speed_mps
         self.green = ElapsedTimeCondition(red_until, label="light_switch")
+        self._switch = ElapsedTimeCondition(red_until, label="light_switch")
+        self._standstill = StandstillCondition(
+            entity_name=EGO_ROLE_NAME,
+            duration=standstill_seconds,
+            speed_threshold=standstill_speed_mps,
+            label="ego_standstill",
+        )
+        self.reset()
+
+    def reset(self) -> None:
+        """Forget what a run saw: the line, a crossing, a standstill latched,
+        the green, the last update's time.  Before each run, by the
+        conditions that share the watch."""
+        self._standstill.reset()
+        self._switch.reset()
         self.distance = None
         self.crossed_at = None
         self.crossed_by_m = 0.0
@@ -215,12 +237,6 @@ class StopLineWatch:
         self.green_seen_at = None
         self.red_end_distance = None
         self.red_end_still_for = None
-        self._standstill = StandstillCondition(
-            entity_name=EGO_ROLE_NAME,
-            duration=standstill_seconds,
-            speed_threshold=standstill_speed_mps,
-            label="ego_standstill",
-        )
         self._still_since = None
         self._at = -math.inf
         self._has_front = False
@@ -241,7 +257,7 @@ class StopLineWatch:
             return
         # The tick that ended now began at the last update: red if the green
         # action's trigger had not fired then.
-        on_red = self.green.check(world, self._at) is None
+        on_red = self._switch.check(world, self._at) is None
         self._at = elapsed
         if not on_red and self.green_seen_at is None:
             self.green_seen_at = elapsed
@@ -385,6 +401,10 @@ class StoppedInStopZoneCondition(BaseCondition):
         super().__init__(label=label)
         self._watch = watch
 
+    def reset(self) -> None:
+        super().reset()
+        self._watch.reset()
+
     def get_details(self) -> dict[str, Optional[float]]:
         return self._watch.details()
 
@@ -429,6 +449,10 @@ class RedLightViolationCondition(BaseCondition):
     def failure_category(self) -> Optional[FailureCategory]:
         """Running the red, or not stopping for it: :attr:`~FailureCategory.TRAFFIC_RULE`."""
         return FailureCategory.TRAFFIC_RULE
+
+    def reset(self) -> None:
+        super().reset()
+        self._watch.reset()
 
     def get_details(self) -> dict[str, Optional[float]]:
         return self._watch.details()
