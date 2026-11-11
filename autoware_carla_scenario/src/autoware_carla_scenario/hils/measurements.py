@@ -26,8 +26,8 @@ __all__ = [
     "camera_frame",
     "lidar_points",
     "lidar_scan_fields",
+    "ray_times",
     "spin_lidar_points",
-    "spin_timestamp",
 ]
 
 FloatPoints = np.ndarray[tuple[int, int], np.dtype[np.float32]]
@@ -46,48 +46,47 @@ def lidar_points(raw: bytes | memoryview | np.ndarray) -> FloatPoints:
     return np.frombuffer(raw, dtype=np.float32).reshape(-1, 4)
 
 
+def ray_times(points: np.ndarray, period: float) -> np.ndarray:
+    """Seconds after a revolution's start a turning sensor fires each point's ray.
+
+    hilspy dates the ray of azimuth ``atan2(y, x)`` (CARLA's sensor frame,
+    clockwise from forward) ``azimuth / 360`` of *period* after the scan's
+    timestamp, as the sensor fires it.
+    """
+    azimuth = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
+    return azimuth * (period / (2.0 * np.pi))
+
+
 def spin_lidar_points(
-    points: np.ndarray, timestamp: float, period: float
+    points: np.ndarray,
+    measured: np.ndarray,
+    motion: np.ndarray,
+    timestamp: float,
+    rays: np.ndarray,
 ) -> np.ndarray:
     """Re-observe a revolution's points as a spinning sensor would have seen them.
 
-    *points* is ``[N, 11]``: CARLA's ``x, y, z, intensity`` (the sensor frame,
-    x forward, y right, z up), then per point the time its arc was measured
-    (CARLA casts an arc at once, from where the sensor was then) and the
-    sensor's motion then in its own frame, ``vx, vy, vz`` (m/s) and the
-    angular velocity ``wx, wy, wz`` (rad/s, CARLA's: ``wz`` turns x toward y).
-    A sensor that turns fires the ray of azimuth ``atan2(y, x)`` (clockwise
-    from forward) ``azimuth / 360`` of *period* after *timestamp*, the time
-    hilspy dates it with; this moves each point, with the sensor's motion held
-    constant, to where the sensor would have seen it then, so a driver
-    correcting the motion over each point's time gets back a cloud of one
-    instant.  Returns ``[N, 4]``.
+    CARLA casts each tick's arc at once, from where the sensor was then
+    (*measured*, per point); a turning sensor fires each ray at
+    ``timestamp + rays`` (:func:`ray_times`).  Each point moves, with the
+    sensor's *motion* then held constant (per point ``vx, vy, vz`` in m/s and
+    ``wx, wy, wz`` in rad/s, CARLA's sensor frame, whose angular velocity
+    follows the left-hand rule: ``wz`` turns x toward y), to where the sensor
+    would have seen it at its ray's time -- small angles, first order -- so a
+    driver correcting the motion over each point's time gets back a cloud of
+    one instant.  *points* is CARLA's ``[N, 4]``; so is the result.
     """
-    # Work right-handed (y left): CARLA's frame mirrored in y; its angular
-    # velocity, a pseudo-vector, mirrors to (-wx, wy, -wz).
-    p = np.stack([points[:, 0], -points[:, 1], points[:, 2]], axis=1).astype(np.float64)
-    measured = points[:, 4]
-    v = np.stack([points[:, 5], -points[:, 6], points[:, 7]], axis=1)
-    w = np.stack([-points[:, 8], points[:, 9], -points[:, 10]], axis=1)
-    azimuth = np.mod(np.degrees(np.arctan2(points[:, 1], points[:, 0])), 360.0)
-    dt = (timestamp + azimuth / 360.0 * period - measured)[:, None]
-    # The world seen from a sensor that moved by v*dt and turned by w*dt
-    # (small angles: a revolution's dt is a fraction of a second).
-    shifted = p - v * dt
-    seen = shifted - np.cross(w * dt, shifted)
-    out = np.empty((len(points), 4), np.float64)
-    out[:, 0] = seen[:, 0]
-    out[:, 1] = -seen[:, 1]
-    out[:, 2] = seen[:, 2]
+    dt = timestamp + rays - measured
+    vx, vy, vz, wx, wy, wz = (motion[:, k] * dt for k in range(6))
+    a = points[:, 0] - vx
+    b = points[:, 1] - vy
+    c = points[:, 2] - vz
+    out = np.empty((len(points), 4), np.float32)
+    out[:, 0] = a - wy * c + wz * b
+    out[:, 1] = b - wz * a + wx * c
+    out[:, 2] = c - wx * b + wy * a
     out[:, 3] = points[:, 3]
     return out
-
-
-def spin_timestamp(points: np.ndarray, period: float) -> float:
-    """The revolution start that dates *points* (``[N, >=5]``, column 4 their
-    measuring time) closest to when they were measured on average."""
-    azimuth = np.mod(np.degrees(np.arctan2(points[:, 1], points[:, 0])), 360.0)
-    return float(np.mean(points[:, 4] - azimuth / 360.0 * period))
 
 
 def lidar_scan_fields(

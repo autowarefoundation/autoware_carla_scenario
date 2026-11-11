@@ -912,7 +912,9 @@ def test_lidar_revolutions_go_out_as_the_sensors_packets(world: _World) -> None:
         receiver.close()
 
 
-def test_wall_clock_lidar_revolutions_are_dated_by_their_measurement(world: _World) -> None:
+def test_wall_clock_lidar_revolutions_are_dated_by_their_measurement(
+    world: _World,
+) -> None:
     # Sent once the arc completing them arrived, over a revolution, they would
     # be dated by their send; hilspy dates the packets from the timestamp the
     # bridge gives instead: the arcs' arrival, centred on the revolution.
@@ -939,6 +941,7 @@ def test_wall_clock_lidar_revolutions_are_dated_by_their_measurement(world: _Wor
         world.tick()
         bridge.step()
         [sensor] = world.sensors
+        assert sensor.callback is not None
         first = time.time()
         sensor.callback(_lidar_measurement(0.05, 500, 0))
         world.tick()

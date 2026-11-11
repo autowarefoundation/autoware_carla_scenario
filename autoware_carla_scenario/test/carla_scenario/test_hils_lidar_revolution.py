@@ -776,56 +776,30 @@ def test_revolutions_start_where_the_sweep_did_whatever_was_lost(
         assert np.all(index == index[0])  # one sweep of the sensor's
 
 
-def test_a_revolution_is_stamped_with_its_points_mean_stamp() -> None:
-    # 10 Hz at 20 Hz ticks: two arcs a revolution; stamps on another clock.
-    lidar = _CarlaLidar(10.0, 1, 1.0)
-    revolution = LidarRevolution(10.0, 0.05)
-    assert revolution.period == pytest.approx(0.1)
-    assert revolution.add(0.05, lidar.arc(0.05), stamp=1000.05) is None
-    whole = revolution.add(0.10, lidar.arc(0.05), stamp=1000.10)
-    assert whole is not None
-    assert revolution.revolution_stamp == pytest.approx(1000.075)
-
-
-def test_a_split_arc_stamps_both_revolutions() -> None:
-    # 15 Hz at 20 Hz ticks: 270 degrees an arc, so arcs straddle revolutions;
-    # each revolution's stamp is the point-weighted mean of the stamps of
-    # the parts it holds, within the two arcs it spans.
-    lidar = _CarlaLidar(15.0, 1, 1.0)
-    revolution = LidarRevolution(15.0, 0.05)
-    stamps = []
-    for tick in range(1, 9):
-        whole = revolution.add(0.05 * tick, lidar.arc(0.05), stamp=100.0 + 0.05 * tick)
-        if whole is not None:
-            stamps.append(revolution.revolution_stamp)
-    assert len(stamps) == 6
-    assert all(b > a for a, b in zip(stamps, stamps[1:]))
-    tick_stamps = [100.0 + 0.05 * tick for tick in range(1, 9)]
-    assert all(min(tick_stamps) <= s <= max(tick_stamps) for s in stamps)
-
-
-def test_unstamped_measurements_leave_no_stamp() -> None:
-    lidar = _CarlaLidar(10.0, 1, 1.0)
-    revolution = LidarRevolution(10.0, 0.05)
-    revolution.add(0.05, lidar.arc(0.05), stamp=5.0)
-    assert revolution.add(0.10, lidar.arc(0.05)) is not None
-    assert revolution.revolution_stamp is None
-
-
-def _tagged(xyz: List[tuple], measured: float, motion: tuple) -> np.ndarray:
-    """Points tagged as the bridge does; *motion* is ``(vx, vy, vz, wz)`` or all six."""
+def _spin(
+    xyz: List[tuple], measured: float, motion: tuple, timestamp: float, period: float
+) -> np.ndarray:
+    """Re-observe points measured at once; *motion* is ``(vx, vy, vz, wz)`` or all six."""
     if len(motion) == 4:
         motion = (*motion[:3], 0.0, 0.0, motion[3])
-    rows = [[x, y, z, 0.5, measured, *motion] for x, y, z in xyz]
-    return np.array(rows, np.float64)
+    points = np.array([[x, y, z, 0.5] for x, y, z in xyz], np.float64)
+    n = len(points)
+    return measurements.spin_lidar_points(
+        points,
+        np.full(n, measured),
+        np.tile(np.array(motion, np.float64), (n, 1)),
+        timestamp,
+        measurements.ray_times(points, period),
+    )
 
 
 def test_a_moving_sensor_sees_points_from_where_it_was_at_their_ray() -> None:
     # Driving forward at 10 m/s: the ray straight ahead fires 50 ms before the
     # arc was measured, from 0.5 m further back; the one straight behind 50 ms
     # after (azimuth 180: half a 0.2 s revolution after the timestamp).
-    points = _tagged([(20.0, 0.0, 0.0), (-20.0, 0.0, 0.0)], 1.0, (10.0, 0.0, 0.0, 0.0))
-    out = measurements.spin_lidar_points(points, 0.95, 0.2)
+    out = _spin(
+        [(20.0, 0.0, 0.0), (-20.0, 0.0, 0.0)], 1.0, (10.0, 0.0, 0.0, 0.0), 0.95, 0.2
+    )
     assert out[0, 0] == pytest.approx(20.5)
     assert out[1, 0] == pytest.approx(-20.5)
     assert out[:, 3].tolist() == [0.5, 0.5]
@@ -834,54 +808,11 @@ def test_a_moving_sensor_sees_points_from_where_it_was_at_their_ray() -> None:
 def test_a_turning_sensor_sees_points_turned_the_other_way() -> None:
     # Turning x toward y (CARLA's right) at 0.1 rad/s; the ray ahead fires
     # 0.1 s after the arc: the sensor turned 0.01 rad right, the point is
-    # 0.01 rad to its left (negative y).
-    points = _tagged([(10.0, 0.0, 1.0)], 0.0, (0.0, 0.0, 0.0, 0.1))
-    out = measurements.spin_lidar_points(points, 0.1, 0.1)
-    # Small angles: first order in the turn.
+    # 0.01 rad to its left (negative y).  Small angles: first order.
+    out = _spin([(10.0, 0.0, 1.0)], 0.0, (0.0, 0.0, 0.0, 0.1), 0.1, 0.1)
     assert out[0, 0] == pytest.approx(10.0 * math.cos(0.01), abs=1e-3)
     assert out[0, 1] == pytest.approx(-10.0 * math.sin(0.01), abs=1e-4)
     assert out[0, 2] == pytest.approx(1.0)
-
-
-def test_a_spinning_sensor_s_cloud_round_trips() -> None:
-    # A static world seen by a sensor moving and turning steadily: the points
-    # CARLA casts at two instants, re-observed, are what a turning sensor sees
-    # at each ray's time.
-    v, w, period = (8.0, 0.5, 0.0), 0.2, 0.1
-    rng = np.random.default_rng(3)
-    world = rng.uniform(-30, 30, (200, 2))
-
-    def seen(t: float, xy: np.ndarray) -> np.ndarray:
-        # Sensor pose at t (start at the origin): position v*t, heading w*t.
-        th = w * t
-        rel = xy - np.array([v[0] * t, v[1] * t])
-        c, s = math.cos(-th), math.sin(-th)
-        return np.stack([c * rel[:, 0] - s * rel[:, 1], s * rel[:, 0] + c * rel[:, 1]], axis=1)
-
-    # The sensor's frame velocity is v rotated into it, constant here only to first order: keep dt small.
-    rows = []
-    for measured in (0.05, 0.10):
-        local = seen(measured, world)
-        th = w * measured
-        vs = (math.cos(-th) * v[0] - math.sin(-th) * v[1], math.sin(-th) * v[0] + math.cos(-th) * v[1], 0.0, w)
-        rows.append(_tagged([(x, y, 0.0) for x, y in local], measured, vs))
-    points = np.concatenate(rows)
-    start = measurements.spin_timestamp(points, period)
-    out = measurements.spin_lidar_points(points, start, period)
-    for row, o in zip(points, out):
-        az = math.degrees(math.atan2(o[1], o[0])) % 360.0
-        t = start + az / 360.0 * period
-        # Back to the world from the pose at the ray's time.
-        th = w * t
-        c, s = math.cos(th), math.sin(th)
-        wx = c * o[0] - s * o[1] + v[0] * t
-        wy = s * o[0] + c * o[1] + v[1] * t
-        mx, my = row[0], row[1]
-        th0 = w * row[4]
-        c0, s0 = math.cos(th0), math.sin(th0)
-        tx = c0 * mx - s0 * my + v[0] * row[4]
-        ty = s0 * mx + c0 * my + v[1] * row[4]
-        assert math.hypot(wx - tx, wy - ty) < 0.02
 
 
 def test_a_pitching_sensor_sees_points_ahead_move_vertically() -> None:
@@ -890,7 +821,53 @@ def test_a_pitching_sensor_sees_points_ahead_move_vertically() -> None:
     # follows the left-hand rule in its left-handed frame: positive about y
     # (right) turns z toward x, the nose down (its recorded pitch falls at
     # that rate).
-    points = _tagged([(10.0, 0.0, 0.0)], 0.0, (0.0, 0.0, 0.0, 0.0, 0.2, 0.0))
-    out = measurements.spin_lidar_points(points, 0.1, 0.1)
+    out = _spin([(10.0, 0.0, 0.0)], 0.0, (0.0, 0.0, 0.0, 0.0, 0.2, 0.0), 0.1, 0.1)
     assert out[0, 2] == pytest.approx(10.0 * 0.02, rel=1e-3)
     assert out[0, 0] == pytest.approx(10.0)
+
+
+def test_a_spinning_sensor_s_cloud_round_trips() -> None:
+    # A static world seen by a sensor moving and turning steadily: the points
+    # CARLA casts at two instants, re-observed, are what a turning sensor sees
+    # at each ray's time.
+    v, w, period = (8.0, 0.5), 0.2, 0.1
+    world = np.random.default_rng(3).uniform(-30, 30, (200, 2))
+
+    def pose(t: float) -> tuple:
+        return v[0] * t, v[1] * t, w * t
+
+    def to_sensor(t: float, xy: np.ndarray) -> np.ndarray:
+        px, py, th = pose(t)
+        c, s = math.cos(th), math.sin(th)
+        rel = xy - (px, py)
+        return np.stack(
+            [c * rel[:, 0] + s * rel[:, 1], -s * rel[:, 0] + c * rel[:, 1]], axis=1
+        )
+
+    pts, measured, motion = [], [], []
+    for t in (0.05, 0.10):
+        local = to_sensor(t, world)
+        th = w * t
+        vs = (
+            math.cos(th) * v[0] + math.sin(th) * v[1],
+            -math.sin(th) * v[0] + math.cos(th) * v[1],
+        )
+        pts.append(
+            np.column_stack([local, np.zeros(len(local)), np.full(len(local), 0.5)])
+        )
+        measured.append(np.full(len(local), t))
+        motion.append(np.tile([vs[0], vs[1], 0.0, 0.0, 0.0, w], (len(local), 1)))
+    points, measured_a, motion_a = (
+        np.concatenate(pts),
+        np.concatenate(measured),
+        np.concatenate(motion),
+    )
+    rays = measurements.ray_times(points, period)
+    start = float(np.mean(measured_a - rays))
+    out = measurements.spin_lidar_points(points, measured_a, motion_a, start, rays)
+    for o, r in zip(out, rays):
+        t = start + r
+        px, py, th = pose(t)
+        c, s = math.cos(th), math.sin(th)
+        wx, wy = c * o[0] - s * o[1] + px, s * o[0] + c * o[1] + py
+        assert np.min(np.hypot(world[:, 0] - wx, world[:, 1] - wy)) < 0.02
