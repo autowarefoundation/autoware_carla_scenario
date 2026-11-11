@@ -259,6 +259,22 @@ def test_the_map_is_converted_once(opendrive: str, tmp_path: Path) -> None:
     assert len([p for p in tmp_path.iterdir() if not p.name.startswith(".")]) == 1
 
 
+@pytest.mark.xfail(
+    strict=True,
+    raises=ValueError,
+    reason=(
+        "#2065: roadgen refuses the fixture map: 520 validation issues, "
+        "most of them lane links and junction connections in the OpenDRIVE "
+        "that join lanes which do not meet"
+    ),
+)
+def test_the_fixture_map_is_converted(tmp_path: Path) -> None:
+    pytest.importorskip("roadgen")
+    xodr = REPOSITORY / "data" / "nishishinjuku_carla.xodr"
+    path = commonroad_map(xodr.read_text(encoding="utf-8"), tmp_path)
+    assert path.read_text().count("<lanelet id=") > 0
+
+
 # ---------------------------------------------------------------------------
 # The worker
 # ---------------------------------------------------------------------------
