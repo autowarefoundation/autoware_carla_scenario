@@ -76,7 +76,13 @@ def test_the_playbook_variables() -> None:
 
 @pytest.mark.parametrize(
     ("query", "fd"),
-    [("fd", True), ("fd=1", True), ("fd=true", True), ("fd=off", False), ("echo", False)],
+    [
+        ("fd", True),
+        ("fd=1", True),
+        ("fd=true", True),
+        ("fd=off", False),
+        ("echo", False),
+    ],
 )
 def test_can_fd_is_read_as_hilspy_reads_it(query: str, fd: bool) -> None:
     setup = host_setup(_config(bus=f"can://vcan0?{query}"))
@@ -178,7 +184,9 @@ def test_run_with_nothing_to_do_needs_no_playbook(
     assert "nothing to set up" in out.getvalue()
 
 
-def test_the_ansible_runner_call(playbooks: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+def test_the_ansible_runner_call(
+    playbooks: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
     calls: List[Dict[str, Any]] = []
 
     def run(**kwargs: Any) -> Any:
@@ -209,7 +217,9 @@ def test_without_ansible_runner_it_says_which_extra(
         host_setup_module.AnsibleRunner()(playbooks, "vcan.yml", {})
 
 
-def test_a_hilspy_without_playbooks_is_reported(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+def test_a_hilspy_without_playbooks_is_reported(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
     class _Files:
         def joinpath(self, *parts: str) -> Any:
             return tmp_path.joinpath(*parts)

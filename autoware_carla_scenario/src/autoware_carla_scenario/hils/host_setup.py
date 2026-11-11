@@ -142,9 +142,7 @@ class HostSetup:
 
     def describe(self) -> str:
         """What the setup does, one device a line."""
-        lines = [
-            f"  vcan {i.name}" + (" (CAN FD)" if i.fd else "") for i in self.vcan
-        ]
+        lines = [f"  vcan {i.name}" + (" (CAN FD)" if i.fd else "") for i in self.vcan]
         lines += [
             f"  v4l2loopback /dev/video{c.number} ({c.label!r})" for c in self.cameras
         ]
@@ -266,8 +264,7 @@ def _become_password() -> Optional[str]:
         return None
     try:
         free = (
-            subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode
-            == 0
+            subprocess.run(["sudo", "-n", "true"], capture_output=True).returncode == 0
         )
     except FileNotFoundError as exc:
         raise HostSetupError("the setup needs root or sudo") from exc
@@ -352,7 +349,7 @@ def run_host_setup(
     if setup.cameras and not check:
         print(
             "v4l2:// needs hilspy built with its `v4l2` feature (hilspy's README, "
-            "\"Cameras\"); log out and in (or `newgrp video`) if you were just "
+            '"Cameras"); log out and in (or `newgrp video`) if you were just '
             "added to `video`",
             file=out,
         )
