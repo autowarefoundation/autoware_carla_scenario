@@ -3964,7 +3964,16 @@ not a condition of the domain but an effect: the nodes it adds to the rules
 the ODD names. A control without a <code>quantity</code> is still joined to the ODD on
 the measure key: an attribute the ODD maps onto measure <em>k</em> is drawn with the
 running scenario's control of <em>k</em>, and controls of measures the ODD does not
-map are unused. Attributes nothing sets are left open: a combination is
+map are unused. A control with a <code>quantity</code> is never an attribute's knob,
+in a Python ODD or a binding file alike (<code>CarlaBackend.knob</code>): an ODD that
+maps an attribute onto its measure (<code>headway: {measure: vehicle_ahead_gap_m,
+buckets: [0, 10, 20, 40]}</code> beside <code>cut_in/left</code>) draws the control as the
+scenario's effect, and the attribute measures what it drew; a case's
+settings file the control's key under the control, not the attribute
+(#2072). A sweep's knob for that attribute (<code>sweep.odd_sample.knobs</code>)
+replaces the control, as an explicit knob replaces any control: the
+attribute is drawn with the knob, and the control is not drawn as an
+effect. Attributes nothing sets are left open: a combination is
 admitted when the ODD can hold for some value of them.</p>
 <h3 id="a-scenarios-nodes">A scenario's nodes<a class="headerlink" href="#a-scenarios-nodes" title="Permanent link">&para;</a></h3>
 <p>A scenario adds nodes of its own to the shared rules (the
@@ -4307,6 +4316,23 @@ wheels (a share of the dry road's, 1.0) -- <code>None</code> when nothing set it
 its knob names it outright, as <code>visibility</code>'s names the visibility. <code>wind</code>
 and <code>cloudiness</code> read CARLA's 0-100 intensities as levels, as <code>rain</code> and
 <code>fog</code> do.</p>
+<p><strong>An ODD that names a condition and the CARLA field that follows from it</strong>
+-- the taxonomy's <code>rainfall_rate</code> beside <code>rain</code> or <code>road_wetness</code>,
+the cloud cover (<code>cloud_cover</code>) beside <code>cloudiness</code>, <code>wind_speed</code> beside
+<code>wind</code>, <code>fog_visibility_range</code> beside <code>fog</code> -- has the field drawn by the
+field's knob, not by the rules: the knob wins, and no effect writes that
+field or any field that follows from it in the rules (the precipitation's
+cloudiness, standing water and wetness), so every bucket a case records is
+the one the run reads back (#2072). The runner works those fields out from
+the value the knob wrote, at their median
+(<code>weather_rules.resolve_environment</code>, and <code>EnvironmentAction</code>'s road water,
+in which a field set wins), as it does for a config that sets the field
+itself; the case's <code>quantities</code> and the flaky search hold only the effects
+left. <code>illumination</code> beside <code>time_of_day</code> is refused when the cases are
+drawn: its knob sets the sun's altitude, which the time of day is read back
+from, so no run could keep the buckets drawn for both (<code>ValueError: ODD
+...: environment.illumination sets environment.sun_altitude_angle with its
+knob, which ...time_of_day is read back from ...</code>); an ODD names one of them.</p>
 <p>Every <code>environment.*</code> value must be a finite number -- an integer or a
 float, not a boolean or a string (<code>true</code> and <code>"15"</code> are refused, not read as
 1 and 15) -- but <code>time_of_day</code>, one of <code>day</code>, <code>dusk</code>, <code>night</code>, <code>dawn</code>, and
@@ -5273,7 +5299,7 @@ target.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 17:41:22 UTC"><span class="timeago" datetime="2026-11-11T17:41:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 17:41:22 UTC">2026-11-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 20:41:36 UTC"><span class="timeago" datetime="2026-11-11T20:41:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 20:41:36 UTC">2026-11-11</span>
   </span>
 
     

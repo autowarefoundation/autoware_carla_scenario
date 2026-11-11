@@ -2613,8 +2613,8 @@ over gRPC, so a scenario becomes a test of that policy rather than of TrafficMan
 <a href="https://github.com/hakuturu583/carla_driver_interface"><strong><code>carla-driver-interface</code></strong></a>
 (2.x), a light package (grpcio, protobuf, numpy, Pillow; Python 3.10+) a policy
 depends on without pulling in the scenario framework. It is versioned on its own: the
-framework accepts any <code>carla-driver-interface&gt;=2.1,&lt;3</code>, so a policy and a scenario
-package can share an environment whenever their majors agree.</p>
+framework requires <code>carla-driver-interface&gt;=2.4.2,&lt;3</code>, so a policy and a scenario
+package can share an environment when the policy accepts 2.4.2 or a later 2.x.</p>
 <p>A policy run as a separate process may be on another major. Each side declares the
 <strong>contract revision</strong> it speaks (carla-driver-interface's major) in gRPC metadata, and
 the framework declares its cameras in the policy's revision:</p>
@@ -2736,10 +2736,8 @@ or called in-process; only the transport's cost goes (a sweep's megabytes are no
 copied through the loopback twice per step). The one difference is a deadline
 (<code>driver.timeout_s</code>): the policy runs on the run's own thread, so an overrun is
 reported when its call returns rather than cut short.</p>
-<p><code>unix</code> with <code>driver.policy</code> and <code>direct</code> need carla-driver-interface 2.2 or later;
-with an older one the run stops as it sets up, naming the installed version, and
-<code>tcp</code> keeps working. Under the SLURM launcher every task serves its own policy, so
-neither uses a port of its slot (<a href="../slurm/">slurm.md</a>).</p>
+<p>Under the SLURM launcher every task serves its own policy, so neither <code>unix</code> nor
+<code>direct</code> uses a port of its slot (<a href="../slurm/">slurm.md</a>).</p>
 <p><code>ScenarioRunner</code> logs <code>Autopilot skipped for ego (id=…) — external control expected</code>
 when the policy has taken over. Pass and fail conditions, recording, the trajectory log,
 and sweeps all behave exactly as they do for a TrafficManager-driven ego.</p>
@@ -3264,6 +3262,14 @@ finds each light on the map instead (carla-driver-interface 2.3 and later):</p>
 <p>The map's <code>local_x</code> / <code>local_y</code> must be the <code>local</code> frame (CARLA's world with y
 mirrored, as carla-ue5-maps' are). Nothing checks that the file and the world's
 OpenDRIVE describe the same roads in the same frame.</p>
+<p>roadgen validates the OpenDRIVE before it writes any format and has no option to skip
+that: a map it refuses (<code>ValueError: the map failed validation (N issues): ...</code>) ends
+the run at scenario start, before the driver session opens. The nishishinjuku fixture
+map (<code>data/nishishinjuku_carla.xodr</code>) is one (#2065, <a href="../metrics/">metrics.md</a>). On such
+a map, hand the policy its Lanelet2 map with <code>driver.lanelet2_path</code>: with the default
+<code>driver.map_formats: [lanelet2]</code> nothing is left for roadgen to convert, so it is not
+run at all (the set's IR and read trace are left empty). Any other format in
+<code>driver.map_formats</code> still goes through roadgen, and fails the same way.</p>
 <h3 id="diagnostics-coming-back">Diagnostics coming back<a class="headerlink" href="#diagnostics-coming-back" title="Permanent link">&para;</a></h3>
 <p><code>DriveResponse.debug_info.unstructured_debug_info</code> is decoded as
 <code>carla_driver.v0.CarlaDriveDebugInfo</code> when it parses as one, surfacing the policy's name,
@@ -3437,39 +3443,15 @@ policy's CI runs (<code>carla-driver-interface demo --driver localhost:50051</co
 command line). The scenario framework is then the CARLA-backed runtime for the same
 server.</p>
 <h2 id="protobuf-definitions">Protobuf definitions<a class="headerlink" href="#protobuf-definitions" title="Permanent link">&para;</a></h2>
-<p>The protobuf definitions are <strong>vendored</strong>, not installed, in <code>carla_driver_interface</code>.
-alpasim's published <code>alpasim-grpc</code> requires Python ≥ 3.11, while this workspace supports
-3.10 onwards -- Autoware's own environment is 3.10 -- so depending on it would drop 3.10
-support. Instead the <code>.proto</code> files are copied verbatim from two upstreams (both
-Apache-2.0) and compiled locally:</p>
-<table>
-<thead>
-<tr>
-<th>Proto</th>
-<th>Source</th>
-<th>Carries</th>
-</tr>
-</thead>
-<tbody>
-<tr>
-<td><code>alpasim_grpc/v0/*</code></td>
-<td><code>NVlabs/alpasim@6870924</code></td>
-<td>The <code>egodriver</code> service and its messages</td>
-</tr>
-<tr>
-<td><code>carla_driver/v0/*</code></td>
-<td><code>hakuturu583/carla_driver_interface@af1dcd3</code></td>
-<td>The CARLA extension payloads</td>
-</tr>
-</tbody>
-</table>
-<p>Field numbers, package names, and import paths are preserved exactly, which is what
-keeps the messages wire compatible.</p>
-<p>Regenerate the committed modules after updating the vendored protos:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-17-1" name="__codelineno-17-1" href="#__codelineno-17-1"></a>uv<span class="w"> </span>run<span class="w"> </span>python<span class="w"> </span>autoware_carla_scenario/scripts/compile_protos.py
-</code></pre></div>
-<p><code>test_proto_generated.py</code> fails if the committed output drifts from the <code>.proto</code> files.
-See <code>carla_driver_interface/proto/README.md</code> for the full provenance.</p>
+<p>The alpasim <code>egodriver</code> contract and its CARLA extension payloads (<code>carla_driver.v0</code>)
+are not compiled here: carla-driver-interface vendors their <code>.proto</code> files, generates
+the Python modules and checks them, and the framework imports them from
+<code>carla_driver_interface.protocol</code>. Its own documentation gives their provenance.</p>
+<p><code>autoware_carla_scenario/scripts/compile_protos.py</code> compiles only the contracts this
+repository owns or vendors itself -- <code>AutowareBridge</code>, tier4/e2e-devkit's T4Scene and
+<code>PedestrianMotion</code> -- and <code>test_proto_generated.py</code> fails if their committed modules
+drift from the <code>.proto</code> files (<code>compile_protos.py --check</code> runs the same check). See
+<code>autoware_carla_scenario/proto/README.md</code>.</p>
 <h2 id="limitations">Limitations<a class="headerlink" href="#limitations" title="Permanent link">&para;</a></h2>
 <ul>
 <li>Only RGB cameras and ray-cast LiDARs are streamed.</li>
@@ -3520,7 +3502,7 @@ See <code>carla_driver_interface/proto/README.md</code> for the full provenance.
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 9, 2026 00:59:53 UTC"><span class="timeago" datetime="2026-11-09T00:59:53+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 9, 2026 00:59:53 UTC">2026-11-09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 21:14:14 UTC"><span class="timeago" datetime="2026-11-11T21:14:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 21:14:14 UTC">2026-11-11</span>
   </span>
 
     
