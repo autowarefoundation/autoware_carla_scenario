@@ -174,7 +174,7 @@ self.register_fail_condition(
 Fourteen more read how critical the frame is, with TU Munich's
 [CommonRoad](https://commonroad.in.tum.de/) tools:
 [CriMe](https://github.com/CommonRoad/CommonRoad-CriMe)'s criticality
-measures and [CommonRoad-Reach](https://github.com/CommonRoad/commonroad-reach)'s
+measures and [CommonRoad-Reach](https://pypi.org/project/commonroad-reach/)'s
 reachable set (`COMMONROAD_METRICS`). Each is read on the ego against the road
 users around it, every one going on as it goes -- its velocity and
 acceleration held, a braking one stopping -- over a 3 s horizon; the CriMe

@@ -1,8 +1,8 @@
 # T4 Scene
 
 A run's [trajectory log](trajectory_log.md) can be written as a **T4Scene**:
-the Protobuf exchange contract of [tier4/e2e-devkit](https://github.com/tier4/e2e-devkit)
-(`t4_scene.proto`, contract 0.1.0), which the devkit decodes into its
+the Protobuf exchange contract of tier4/e2e-devkit, TIER IV's repository (not
+public; `t4_scene.proto`, contract 0.1.0), which the devkit decodes into its
 `T4Scene` -- the scene its data lists, scorers and visualisations work on. It
 is not the [T4 dataset](t4_dataset.md), the nuScenes-style directory of
 sensor data `t4.enabled` writes during a run: a T4Scene is written from the

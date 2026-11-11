@@ -210,7 +210,7 @@ def normalize_repository_url(url: str) -> str:
     so credentials never survive:
 
     * ``git@host:owner/repo.git`` becomes ``https://host/owner/repo``;
-    * ``ssh://user@host:port/owner/repo.git`` becomes ``https://host/owner/repo``
+    * ``ssh://user@host:2222/owner/repo.git`` becomes ``https://host/owner/repo``
       -- the user and the SSH port mean nothing over HTTPS;
     * ``http(s)://`` URLs lose their userinfo (a token or ``user:password``),
       query and fragment, keep a non-default port, and lose a ``.git`` suffix;

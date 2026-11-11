@@ -53,6 +53,13 @@ exclude_path = [
     # are the web app's routes (`/maps`, `/static/editor.css`), not files.
     "autoware_carla_scenario/src/autoware_carla_scenario/editor/templates",
     "autoware_carla_scenario/src/autoware_carla_scenario/ui/templates",
+    # The test suites: their URLs are fixtures (repositories, map URLs, proxies
+    # and origins that exist nowhere), parsed and never fetched. lychee reads
+    # these values as regular expressions over the input's path.
+    "autoware_carla_scenario/test/",
+    "commonroad_metrics/tests/",
+    "stl_driver/tests/",
+    "examples/scenario_package_template/tests/",
 ]
 
 # GitHub token (set via environment variable GITHUB_TOKEN)
