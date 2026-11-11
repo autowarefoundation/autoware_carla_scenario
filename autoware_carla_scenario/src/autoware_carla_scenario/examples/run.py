@@ -175,6 +175,7 @@ from .cut_in import CutInScenario
 from .traffic_light_compliance import TrafficLightComplianceScenario
 
 if TYPE_CHECKING:
+    from autoware_carla_scenario import AutowareBridgeConfig
     from autoware_carla_scenario.driver import ControlConfig
 
 logger = logging.getLogger(__name__)
@@ -834,6 +835,62 @@ def _native_autoware_interface(cfg: DictConfig) -> bool:
     return native
 
 
+def _autoware_bridge_config(cfg: DictConfig) -> "AutowareBridgeConfig":
+    """The ``autoware`` group's bridge settings (all of it but ``launcher``).
+
+    Raises:
+        ValueError: naming the key, for one the group does not define
+            (``autoware.boot_timout_s``, a typo that would leave the default
+            in place) or a value :class:`AutowareBridgeConfig` refuses.
+    """
+    from autoware_carla_scenario import AutowareBridgeConfig  # noqa: PLC0415
+    from autoware_carla_scenario.utils.config import (  # noqa: PLC0415
+        checked_options,
+    )
+
+    autoware_cfg = cfg.get("autoware")
+    try:
+        bridge_options = checked_options(
+            AutowareBridgeConfig,
+            _to_dict(autoware_cfg) if autoware_cfg is not None else {},
+            ignore={"launcher"},
+        )
+    except ValueError as exc:
+        raise ValueError(f"autoware: {exc}") from None
+    try:
+        return AutowareBridgeConfig(**bridge_options)
+    except ValueError as exc:
+        raise ValueError(f"autoware.{exc}") from None
+
+
+def _check_autoware_liveness(
+    bridge_cfg: "AutowareBridgeConfig", launcher: AutowareLauncher | None
+) -> None:
+    """Refuse an ``autoware.liveness_timeout_s`` the launcher's node would trip.
+
+    The ``scenario_bridge`` node the launcher starts polls every
+    ``route_watch_period_s`` of its ``autoware.launcher.bridge_parameters``
+    (:func:`~autoware_carla_scenario.autoware_stack.bridge_node.liveness_timeout_problem`).
+    The entity refuses it too; this says so naming the group's keys, and
+    before anything starts.
+
+    Raises:
+        ValueError: headed ``autoware.``.
+    """
+    if launcher is None:
+        return
+    from autoware_carla_scenario.autoware_stack.bridge_node import (  # noqa: PLC0415
+        launcher_bridge_parameters,
+        liveness_timeout_problem,
+    )
+
+    problem = liveness_timeout_problem(
+        bridge_cfg.liveness_timeout_s, launcher_bridge_parameters(launcher)
+    )
+    if problem is not None:
+        raise ValueError(f"autoware.{problem}")
+
+
 def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     """Build the ego entity selected by ``cfg.ego.entity``.
 
@@ -868,31 +925,13 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         # from the scenario itself; an ego that ends ``setup()`` with neither is
         # refused there.
         from autoware_carla_scenario import (  # noqa: PLC0415
-            AutowareBridgeConfig,
             AutowareEgoEntity,
             GrpcAutowareBridgeServer,
         )
 
-        from autoware_carla_scenario.utils.config import (  # noqa: PLC0415
-            checked_options,
-        )
-
-        autoware_cfg = cfg.get("autoware")
-        # The group is the bridge's settings plus ``launcher``, which
-        # build_autoware_launcher reads; any other key is a typo
-        # (``+autoware.boot_timout_s=30``) that would leave the default in place.
-        try:
-            bridge_options = checked_options(
-                AutowareBridgeConfig,
-                _to_dict(autoware_cfg) if autoware_cfg is not None else {},
-                ignore={"launcher"},
-            )
-        except ValueError as exc:
-            raise ValueError(f"autoware: {exc}") from None
-        try:
-            bridge_cfg = AutowareBridgeConfig(**bridge_options)
-        except ValueError as exc:
-            raise ValueError(f"autoware.{exc}") from None
+        bridge_cfg = _autoware_bridge_config(cfg)
+        launcher = build_autoware_launcher(cfg)
+        _check_autoware_liveness(bridge_cfg, launcher)
         # autostart=False: in a batch every scenario is built before the first
         # one runs, and two bridges cannot hold the same address at once.  The
         # entity starts this one when its own scenario starts.
@@ -900,7 +939,7 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         return AutowareEgoEntity(
             bridge_cfg,
             bridge=GrpcAutowareBridgeServer(bridge_cfg, autostart=False),
-            launcher=build_autoware_launcher(cfg),
+            launcher=launcher,
             episode_name=str(scenario_cfg.get("name", "")),
             native_autoware_interface=native,
         )
@@ -2166,7 +2205,9 @@ def _check_batch_queue_settings(cfg: DictConfig) -> None:
     # server.fog_density_scale, checked whether or not a LiDAR reads it.
     server_extra_args(cfg)
     build_traffic_backend(cfg)
-    build_autoware_launcher(cfg)
+    launcher = build_autoware_launcher(cfg)
+    if launcher is not None:
+        _check_autoware_liveness(_autoware_bridge_config(cfg), launcher)
 
 
 def _check_batch_writer_settings(configs: list[DictConfig]) -> None:

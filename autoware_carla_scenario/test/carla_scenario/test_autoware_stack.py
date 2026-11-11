@@ -21,8 +21,13 @@ from pathlib import Path
 import pytest
 
 from autoware_carla_scenario.autoware_stack.bridge_node import (
+    MISSION_POLL_TIMEOUT_S,
+    ROUTE_WATCH_PERIOD_S,
     bridge_package_dir,
     host_python_root,
+    launcher_bridge_parameters,
+    liveness_timeout_problem,
+    min_liveness_timeout_s,
 )
 from autoware_carla_scenario.autoware_stack import (
     DEPENDENCY_IMAGE_REPOSITORY,
@@ -1578,3 +1583,56 @@ def test_docker_launcher_accepts_a_launch_file_that_takes_scenario_mode(
     )
     assert launcher.has_scenario_support()
     assert not _docker_launcher(ws, docker).has_scenario_support()
+
+
+# ---------------------------------------------------------------------------
+# #2051: liveness_timeout_s against the node's route_watch_period_s
+# ---------------------------------------------------------------------------
+
+
+def test_the_smallest_liveness_timeout_takes_one_lost_poll() -> None:
+    assert min_liveness_timeout_s(1.0, 1.0) == 4.0
+    assert min_liveness_timeout_s(60.0, 1.0) == 122.0
+    assert min_liveness_timeout_s(0.0, 1.0) == 0.0  # the node stops polling
+    assert min_liveness_timeout_s(-1.0, 1.0) == 0.0
+    assert (
+        min_liveness_timeout_s(ROUTE_WATCH_PERIOD_S, MISSION_POLL_TIMEOUT_S) < 30.0
+    ), "the defaults suit the default liveness_timeout_s"
+
+
+@pytest.mark.parametrize(
+    "parameters",
+    [
+        None,  # a node the framework does not start
+        {},
+        {"use_sim_time": True},
+        {"route_watch_period_s": 14.0},
+        {"route_watch_period_s": 0},
+        {"route_watch_period_s": "not a number"},  # the node refuses it itself
+        {"route_watch_period_s": True},
+        {"route_watch_period_s": float("nan")},
+    ],
+)
+def test_a_liveness_timeout_the_node_cannot_trip_is_no_problem(parameters) -> None:
+    assert liveness_timeout_problem(30.0, parameters) is None
+
+
+def test_a_liveness_timeout_the_node_would_trip_is_a_problem() -> None:
+    problem = liveness_timeout_problem(30.0, {"route_watch_period_s": "60"})
+    assert problem is not None
+    assert "route_watch_period_s (60 s)" in problem
+    assert "122 s" in problem
+    assert liveness_timeout_problem(0.0, {"route_watch_period_s": 60}) is None
+    assert liveness_timeout_problem(3.0, {}) is not None  # under the defaults' 4 s
+
+
+def test_the_launchers_parameters_are_found(tmp_path: Path) -> None:
+    command = CommandAutowareLauncher(["true"], bridge_parameters={"a": 1})
+    docker = DockerAutowareLauncher(
+        DockerAutowareConfig(
+            workspace=tmp_path, launch=["x"], bridge_parameters={"b": 2}
+        )
+    )
+    assert launcher_bridge_parameters(command) == {"a": 1}
+    assert launcher_bridge_parameters(docker) == {"b": 2}
+    assert launcher_bridge_parameters(object()) is None

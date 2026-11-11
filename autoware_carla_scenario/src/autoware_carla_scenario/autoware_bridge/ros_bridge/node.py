@@ -11,21 +11,30 @@ scenario runner:
    state (when the node initializes localization) or a route state other
    than UNKNOWN (when it does not) -- poll
    ``GetMission`` until the scenario hands over an initial pose, a goal and
-   the waypoints on the way there.  Not before: the first ``GetMission`` is
-   how the scenario knows the stack is up (it paces the world to real time
-   until then, under ``boot_timeout_s``), and the node starts long before
-   the rest of the stack, beside ``ros2 launch``;
+   the waypoints on the way there.  Not before: the node starts long before
+   the rest of the stack, beside ``ros2 launch``, and a stack whose AD API
+   went away must stop asking (the scenario's liveness check, below);
 2. initialize localization at the initial pose (``/api/localization/initialize``) --
    skipped when ``initialize_localization`` is False (ground-truth / E2E stacks);
-3. set the route through the waypoints to the goal
+   retried while it is rejected, which on an NDT stack it is until the
+   pointcloud map has loaded;
+3. once Autoware can be routed -- localization INITIALIZED, or, when it is
+   not initialized here, straight away -- report ``ReportReadiness(False)``
+   once.  That is how the scenario knows the stack has booted: it paces the
+   world to about real time until then, under ``boot_timeout_s``, and only
+   then counts ``ready_timeout_ticks``.  Not the first ``GetMission``, which
+   comes as soon as the AD API is up -- on an NDT stack long before its map is
+   loaded -- and has to, since the mission carries the pose localization is
+   initialized at;
+4. set the route through the waypoints to the goal
    (``/api/routing/set_route_points``), but only once
    localization has reached INITIALIZED (the mission planner starts the route from
    the current odometry pose and rejects requests before that);
-4. once localization is satisfied, the route is SET, and autonomous mode is
+5. once localization is satisfied, the route is SET, and autonomous mode is
    available, engage once (``/api/operation_mode/change_to_autonomous``), gated
    behind ``auto_engage`` (scenario/sim only);
-5. aggregate localization/routing/operation-mode state into a single readiness
-   flag and push it back with ``ReportReadiness``.  ``require_localization_initialized``
+6. aggregate localization/routing/operation-mode state into a single readiness
+   flag and push it back with ``ReportReadiness(True)``.  ``require_localization_initialized``
    controls whether localization is part of "ready".
 
 Once readiness is reported it keeps polling ``GetMission``, every
@@ -200,6 +209,10 @@ class ScenarioBridgeNode(Node):
         self._engage_requested = False
         self._readiness_inflight = False
         self._readiness_reported = False
+        # The not-ready ReportReadiness that tells the scenario the stack has
+        # booted (it can be routed), and its in-flight latch.
+        self._booted_inflight = False
+        self._booted_reported = False
         # Re-routing (after readiness). Versions are the server's mission_version:
         # the one whose route Autoware took from this bridge, the one the route
         # request in flight is for, and one given up on after
@@ -403,6 +416,7 @@ class ScenarioBridgeNode(Node):
         # ReportReadiness makes a blocking gRPC call, so it runs only here on the
         # tick -- never on the AD API state-callback path, where it would stall the
         # executor worker servicing that subscription.
+        self._maybe_report_booted()
         self._maybe_report_ready()
         if self._readiness_reported:
             self._stop_tick()
@@ -502,11 +516,10 @@ class ScenarioBridgeNode(Node):
     def _ad_api_up(self) -> bool:
         """Whether the AD API is up, so the node may ask for the mission.
 
-        ``GetMission`` is what tells the scenario the stack is up (and, once
-        it is ready, alive), so it is asked only while the AD API is: before
-        that the scenario keeps the world at about real time while Autoware
-        boots, and once it is ready the silence ends a run whose stack died.
-        Logs each change.
+        ``GetMission`` is what tells the scenario, once Autoware is ready,
+        that the stack is alive, so it is asked only while the AD API is:
+        the silence ends a run whose stack died.  Before that the AD API is
+        what the startup's steps call.  Logs each change.
         """
         with self._lock:
             missing = self._ad_api_missing()
@@ -854,6 +867,46 @@ class ScenarioBridgeNode(Node):
             ChangeOperationMode.Request(),
             "_engage_requested",
             "change_to_autonomous",
+        )
+
+    def _maybe_report_booted(self) -> None:
+        """Push ``ReportReadiness(False)`` once Autoware can be routed, retrying.
+
+        Tells the scenario the stack has booted, which ends its paced boot
+        phase (``boot_timeout_s``) and starts its ``ready_timeout_ticks``:
+        localization is INITIALIZED (by this node from the mission's initial
+        pose, or by a GNSS pose initializer), or, when this node does not
+        initialize localization, the mission planner is up, which
+        :meth:`_ad_api_missing` already waited for.  So the paced phase lasts
+        through the pointcloud map loading and NDT aligning, however long
+        they take, and the ticks count only routing and engaging.
+
+        Nothing on this side waits for it: the mission is fetched, and
+        localization initialized, whether the scenario has heard it or not.
+        A ready report makes it moot -- it reaches the bridge as well.
+        """
+        with self._lock:
+            if self._booted_reported or self._booted_inflight:
+                return
+            if self._readiness_reported or self._readiness_inflight:
+                return
+            if self._mission is None or not self._localization_ready_for_routing():
+                return
+            self._booted_inflight = True
+        try:
+            self._client.report_readiness(False, timeout=self._rpc_timeout_s)
+        except grpc.RpcError as error:
+            with self._lock:
+                self._booted_inflight = False
+            self.get_logger().warning(
+                f"ReportReadiness (booted) failed ({error.code()}); will retry"
+            )
+            return
+        with self._lock:
+            self._booted_reported = True
+            self._booted_inflight = False
+        self.get_logger().info(
+            "Autoware can be routed; told the scenario it has booted"
         )
 
     def _claim_readiness_report(self) -> bool:

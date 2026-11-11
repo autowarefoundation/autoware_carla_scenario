@@ -177,12 +177,14 @@ map:
 autoware:
   # The bridge server the scenario_bridge node dials for the mission.
   address: localhost:50052
-  # Ticks Autoware has to localize, route and engage once it reached the bridge.
+  # Ticks Autoware has to route and engage once it reached the bridge.
   ready_timeout_ticks: 1200
-  # Wall-clock seconds a launched stack has to reach the bridge.
+  # Wall-clock seconds a launched stack has to reach the bridge: to start,
+  # load its maps and localize (the world is paced to about real time).
   boot_timeout_s: 300.0
   # Wall-clock seconds a ready stack may go without asking for the mission
   # before the run ends (its scenario_bridge node or AD API is gone); 0 is off.
+  # At least 2 * (route_watch_period_s + mission_poll_timeout_s) of the node.
   liveness_timeout_s: 30.0
   # Who starts Autoware for each scenario, and removes it after:
   #   none    - someone else does, by hand, with the scenario_bridge node
@@ -208,7 +210,8 @@ autoware:
     # from the dev container's (rebuilt when a package.xml changes).
     rosdep: true
     # ROS parameters of the scenario_bridge node, besides its address:
-    # auto_engage, initialize_localization, require_localization_initialized.
+    # auto_engage, initialize_localization, require_localization_initialized,
+    # route_watch_period_s, mission_poll_timeout_s (see liveness_timeout_s).
     bridge_parameters:
       use_sim_time: true
     colcon_args: [--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]

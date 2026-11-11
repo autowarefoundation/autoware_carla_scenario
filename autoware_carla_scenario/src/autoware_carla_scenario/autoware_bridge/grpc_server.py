@@ -16,17 +16,26 @@ initiates, the two RPCs are direction-inverted from a "framework pushes" model:
   initialized, routed, engaged, and driving.  The value is latched so
   :meth:`is_ready` can be polled once per world tick by
   :class:`~autoware_carla_scenario.entity.autoware_entity.AutowareEgoEntity`.
+  The ``scenario_bridge`` node also reports ``ready=False`` once, as soon as
+  Autoware can be routed (localization INITIALIZED), which is how the
+  scenario knows the stack has booted.
 * ``ReportTurnIndicators`` - the client pushes Autoware's turn-indicator command
   when it changes; :meth:`take_turn_indicators` hands the newest to the entity,
   which lights the ego's indicators.
 
 The stack has reached the bridge (:attr:`client_connected`) once the client
-asks for the mission or reports its readiness, which the ``scenario_bridge``
-node does only once Autoware's AD API is up.  A turn-indicator report does not
-count: Autoware's control publishes the command whatever state the AD API is
-in.  When the client last asked for the mission is kept too
+reports its readiness, ready or not, which the ``scenario_bridge`` node first
+does once Autoware can be routed: its localization is INITIALIZED (or, when the
+node does not initialize localization, the mission planner is up).  Asking for
+the mission does not count: the node asks as soon as the AD API is up, which
+on an NDT stack is long before its pointcloud map has loaded and localization
+can be initialized -- and it has to, since the mission carries the initial
+pose localization is initialized at.  Nor does a turn-indicator report:
+Autoware's control publishes the command whatever state the AD API is in.
+When the client last asked for the mission is kept
 (:meth:`seconds_since_mission_poll`), which is how a stack that stopped
-answering is told from one that is driving.
+answering is told from one that is driving, and how a booting one that has the
+mission is told from one that has not reached the bridge at all.
 
 The framework never imports ROS 2 / rclpy: all ROS 2 / Autoware AD API I/O lives
 on the client, inside the interface node.  This class only serves the mission and
@@ -213,9 +222,10 @@ class GrpcAutowareBridgeServer(AutowareBridge):
 
     @property
     def client_connected(self) -> bool:
-        """Whether the client has asked for the mission or reported readiness yet.
+        """Whether the client has reported its readiness yet, ready or not.
 
-        A turn-indicator report alone does not count (see the module docstring).
+        Neither ``GetMission`` nor a turn-indicator report counts (see the
+        module docstring).
         """
         with self._lock:
             return self._contacted
@@ -251,7 +261,6 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         with self._lock:
             mission = self._mission
             version = self._mission_version
-            self._contacted = True
             self._last_mission_poll = time.monotonic()
         if mission is None:
             return pb2.GetMissionResponse(available=False)
@@ -274,12 +283,17 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         sides consistent and robust to report ordering.
         """
         with self._lock:
+            first = not self._contacted
             self._contacted = True
             if self._ready:
                 return
             self._ready = ready
         if ready:
             logger.info("Autoware reported ready via ReportReadiness")
+        elif first:
+            logger.info(
+                "Autoware reported in via ReportReadiness (localized, not ready yet)"
+            )
 
     def _record_turn_indicators(self, command: int) -> None:
         """Keep the newest turn-indicator command for the tick loop to take.

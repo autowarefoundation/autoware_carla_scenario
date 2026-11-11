@@ -144,20 +144,37 @@ What happens:
     output directory.
 3. **While the stack starts** (until `scenario_bridge` first reaches the
     bridge), the world ticks at about real time and the wait is measured in
-    wall-clock seconds, `autoware.boot_timeout_s`. The node starts beside
-    `ros2 launch`, long before the rest of Autoware, so it does not ask for
-    the mission -- which is what reaching the bridge means -- until the AD
-    API is up: the services it calls (`/api/routing/set_route_points`, and
-    `/api/localization/initialize` and
-    `/api/operation_mode/change_to_autonomous` when it calls them) are
-    reachable and the AD API is publishing its state: a localization
-    initialization state from the pose initializer, which is up early (the
-    mission planner reports UNKNOWN until localization is initialized, from
-    the mission's initial pose, so it cannot be waited for), or -- with
-    `initialize_localization:=false` -- a route state other than UNKNOWN.
-    The route itself still waits for UNSET. Once it
-    has reached the bridge, localizing, routing and engaging is measured in
-    ticks, `autoware.ready_timeout_ticks`, as before.
+    wall-clock seconds, `autoware.boot_timeout_s`. Reaching the bridge means
+    the node's first `ReportReadiness`, which it sends, not ready, once
+    Autoware can be routed:
+    - The node starts beside `ros2 launch`, long before the rest of
+      Autoware, and asks for the mission only once the AD API is up: the
+      services it calls (`/api/routing/set_route_points`, and
+      `/api/localization/initialize` and
+      `/api/operation_mode/change_to_autonomous` when it calls them) are
+      reachable and the AD API is publishing its state -- a localization
+      initialization state from the pose initializer, which is up early, or,
+      with `initialize_localization:=false`, a route state other than
+      UNKNOWN.
+    - It initializes localization at the mission's initial pose, retrying
+      while that is rejected. On an NDT stack it is until the pointcloud map
+      has loaded and `ndt_scan_matcher` can align, which on a large map takes
+      a minute or more after the pose initializer is up. A GNSS pose
+      initializer may initialize it first; that counts as well.
+    - Once localization is INITIALIZED -- or straight away with
+      `initialize_localization:=false`, whose gate already waited for the
+      mission planner -- it reports in. The mission planner leaves UNKNOWN
+      only once localization is initialized, from the mission's initial pose,
+      so the node takes the mission while the world is still paced: nothing
+      waits on the scenario hearing from it.
+
+    Once it has reached the bridge, routing and engaging are measured in
+    ticks, `autoware.ready_timeout_ticks`. The route itself waits for UNSET.
+    A stack that takes the mission but never localizes fails at
+    `boot_timeout_s` with `took the mission but did not report in`; one that
+    never asks for it, with `did not reach the bridge`. A `scenario_bridge`
+    node older than this, or a client of your own, that reports only once
+    ready keeps the whole startup paced, under `boot_timeout_s`.
 4. **When the scenario ends**, however it ends, the stack is stopped (`SIGINT`
     to `ros2 launch`, through `docker run --init`) and its container removed
     with `docker rm --force` once it has stopped or `stop_timeout_s` has
@@ -189,6 +206,38 @@ asking then (`route_watch_period_s` of 0 or less) is not taken for a dead one;
 `autoware.liveness_timeout_s=0` turns it off. What it sees is the
 `scenario_bridge` node and the AD API behind it: an `autoware_carla_interface`
 that dies on its own, while `ros2 launch` keeps running, goes unnoticed.
+
+`liveness_timeout_s` must be comfortably above the longest gap between two
+polls of a healthy node. Each poll comes `route_watch_period_s` after the last
+and may take up to `mission_poll_timeout_s`, so the timeout must be at least
+twice their sum, which leaves room for one lost poll:
+
+```text
+liveness_timeout_s >= 2 * (route_watch_period_s + mission_poll_timeout_s)
+```
+
+With the node's defaults, that is 4 s, well below the 30 s default. When the
+framework starts the node (`autoware.launcher.type=docker` or `command`), it
+compares `autoware.liveness_timeout_s` with the
+`autoware.launcher.bridge_parameters` it starts the node with, using the
+node's defaults for those that are not set, and refuses a pair that breaks
+this rule when the ego is built, before Autoware or the scenario starts:
+`bridge_parameters: {route_watch_period_s: 60}` with the default 30 s would
+otherwise end every healthy run about 30 s after Autoware turned ready. A
+`route_watch_period_s` of 0 or less, or `liveness_timeout_s: 0`, is not
+checked. A node you start yourself is not seen, so check its parameters
+yourself.
+
+The node must poll on a steady clock. The liveness timeout is wall-clock time,
+and so are the periods of `scenario_bridge`'s timers, whatever `use_sim_time`
+says. An older `scenario_bridge`, or a node of your own, whose route watch runs
+on a ROS timer under `use_sim_time:=true` polls in simulated time. When the
+world runs slower than real time, its polls spread out in wall-clock time.
+With the defaults (a 1 s period and a 30 s timeout), a world slower than about
+1/30 of real time, or one stalled between ticks for 30 s, gets the stack
+falsely failed as `stopped answering the bridge`. Run such a node on a
+steady-clock timer (`create_timer(..., clock=Clock(clock_type=ClockType.STEADY_TIME))`
+in rclpy), or set `autoware.liveness_timeout_s=0`.
 
 The `autoware` group holds the bridge's settings (`AutowareBridgeConfig`:
 `address`, `ready_timeout_ticks`, `boot_timeout_s`, `boot_tick_period_s`,
@@ -260,7 +309,7 @@ such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
 | `workspace_mount` | `null` | Where to mount the workspace instead of where the dev container does |
 | `build` | `auto` | `auto` / `always` / `never` |
 | `rosdep` | `true` | Also install the workspace's dependencies into the image the stack runs in. `true` or `false`, or one of their spellings as [the run's switches](usage.md#the-switches) take (`"false"`, `"off"`, `"no"`, `0` are false); anything else (`ture`, `2`) is refused, naming `autoware.launcher.rosdep` |
-| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, `rpc_timeout_s`, `mission_poll_timeout_s`, ... |
+| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, `rpc_timeout_s`, `mission_poll_timeout_s`, ... `route_watch_period_s` and `mission_poll_timeout_s` must suit `autoware.liveness_timeout_s` ([above](#a-local-workspace-in-its-dev-container)) |
 | `colcon_args` | `[--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]` | Arguments to `colcon build` |
 | `launch` | (required) | `ros2 launch` package, file and `name:=value` arguments |
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |

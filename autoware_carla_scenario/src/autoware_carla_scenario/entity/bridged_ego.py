@@ -90,6 +90,14 @@ class BridgeHandshake:
         launcher: Starts the stack when the scenario starts and stops it when
             it ends.  ``None`` leaves the stack to whoever started it.
         episode_name: The scenario's name, for the launcher's logs.
+
+    Raises:
+        ValueError: When *launcher* runs the ``scenario_bridge`` node with a
+            ``route_watch_period_s`` and ``mission_poll_timeout_s`` (its
+            ``bridge_parameters``, or the node's defaults) that the config's
+            ``liveness_timeout_s`` is not comfortably above, so it would end
+            a healthy run
+            (:func:`~autoware_carla_scenario.autoware_stack.bridge_node.liveness_timeout_problem`).
     """
 
     _config: AutowareBridgeConfig
@@ -108,6 +116,7 @@ class BridgeHandshake:
     _ready_ticks: int
     _ready_at: float
     _liveness_armed: bool
+    _mission_taken_logged: bool
     _base_link_offset_m: float
 
     def __init__(
@@ -139,7 +148,24 @@ class BridgeHandshake:
         #: Whether the stack asked for the mission after it turned ready, which
         #: is what says it keeps asking and its silence can be watched.
         self._liveness_armed: bool = False
+        #: Whether the booting stack's first ask for the mission was logged.
+        self._mission_taken_logged: bool = False
         self._base_link_offset_m: float = 0.0
+        if TYPE_CHECKING:
+            # The node's parameters are a `Mapping[str, Any]`, which Codon
+            # cannot express (typecheck/library.py: UNCALLED).
+            pass
+        elif launcher is not None:
+            from ..autoware_stack.bridge_node import (  # noqa: PLC0415 - wanted only with a launcher
+                launcher_bridge_parameters,
+                liveness_timeout_problem,
+            )
+
+            problem = liveness_timeout_problem(
+                self._config.liveness_timeout_s, launcher_bridge_parameters(launcher)
+            )
+            if problem is not None:
+                raise ValueError(problem)
 
     # ------------------------------------------------------------------
     # Properties
@@ -345,6 +371,7 @@ class BridgeHandshake:
         self._ready_ticks = 0
         self._ready_at = 0.0
         self._liveness_armed = False
+        self._mission_taken_logged = False
         self._stack_running = False
         self._boot_started = None
         if self._goal_pose is None:
@@ -501,9 +528,14 @@ class BridgeHandshake:
         The stack only makes progress while simulation time advances, so
         readiness is awaited here rather than blocking in :meth:`start`.  A
         launched stack that has not reached the bridge yet -- its interface
-        node has not asked for the mission, which it does once the AD API is
-        up -- is waited for in wall-clock time, under ``boot_timeout_s``, with
-        each tick paced to about real time.  Once ready this watches the
+        node has not reported its readiness, which the ``scenario_bridge``
+        node first does, not ready, once localization is INITIALIZED (or,
+        when it does not initialize localization, once the mission planner is
+        up) -- is waited for in wall-clock time, under ``boot_timeout_s``,
+        with each tick paced to about real time.  So is the time between the
+        node taking the mission and localizing, which on an NDT stack is the
+        pointcloud map loading: ``ready_timeout_ticks`` counts only routing
+        and engaging.  Once ready this watches the
         launched stack and that the stack keeps asking for the mission
         (:meth:`_check_liveness`).
 
@@ -528,10 +560,25 @@ class BridgeHandshake:
         if self._stack_running and not self._bridge.client_connected:
             assert self._boot_started is not None  # noqa: S101 - set when it started
             booting_s = time.monotonic() - self._boot_started
+            has_mission = self._bridge.seconds_since_mission_poll() is not None
             if booting_s > self._config.boot_timeout_s:
+                if has_mission:
+                    return self._fail(
+                        f"The {self._stack_name} stack took the mission but did "
+                        "not report in (localized, ready to be routed) within "
+                        f"{self._config.boot_timeout_s:.0f} s of being started"
+                    )
                 return self._fail(
                     f"The {self._stack_name} stack did not reach the bridge within "
                     f"{self._config.boot_timeout_s:.0f} s of being started"
+                )
+            if has_mission and not self._mission_taken_logged:
+                self._mission_taken_logged = True
+                logger.info(
+                    "The %s stack took the mission after %.1f s; waiting, still "
+                    "at about real time, for it to localize",
+                    self._stack_name,
+                    booting_s,
                 )
             if self._config.boot_tick_period_s > 0:
                 time.sleep(self._config.boot_tick_period_s)

@@ -60,7 +60,7 @@ class AutowareBridgeServicer(object):
     def ReportReadiness(self, request, context):
         """Report the single readiness flag once Autoware is initialized, routed,
         engaged, and driving. The framework latches it so the entity can poll it
-        per tick.
+        per tick. A not-ready report before that says the stack has booted.
         """
         context.set_code(grpc.StatusCode.UNIMPLEMENTED)
         context.set_details('Method not implemented!')
