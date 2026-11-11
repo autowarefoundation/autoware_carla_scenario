@@ -404,6 +404,23 @@ class TestInitialPoseIsCheckedAgainstTheEgo:
 
         assert "where the scenario expected it" not in caplog.text
 
+    @pytest.mark.parametrize("role", [str(EGO_ROLE_NAME), "ego", "hero"])
+    def test_the_attach_log_names_the_role_the_ego_has(self, caplog, role) -> None:
+        # #2044: an ego spawned for CARLA's native Autoware interface is
+        # ``ego``, and the log says so rather than the framework's ``Ego``.
+        entity = _make_entity()
+        actor = _FakeActor(1, role)
+        with mock.patch(
+            "autoware_carla_scenario.entity.ego.spawn_vehicle_actor",
+            return_value=actor,
+        ):
+            entity.spawn(_FakeWorld([actor]), _spawn_config())
+
+        with caplog.at_level("INFO"):
+            entity.on_scenario_start(_FakeWorld([actor]))
+
+        assert f"attach to the ego: id=1 role_name={role}" in caplog.text
+
     def test_an_ego_somewhere_else_is_reported(self, caplog) -> None:
         # The interface node's spawn_point and the scenario's spawn are set on
         # opposite sides of the run; when they disagree, that is said out loud

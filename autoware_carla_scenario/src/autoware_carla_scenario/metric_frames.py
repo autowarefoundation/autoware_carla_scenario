@@ -15,6 +15,7 @@ from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
 from .constants import EGO_ROLE_NAME
+from .entity_role import canonical_role_name
 from .kinematics.walker_motion import WalkerVelocities
 
 if TYPE_CHECKING:
@@ -32,7 +33,12 @@ __all__ = [
 @dataclass(frozen=True)
 class ActorFrame:
     """A road user in a recorded frame, in CARLA's frame and units (degrees,
-    deg/s)."""
+    deg/s).
+
+    *role* is the actor's ``role_name`` as :func:`canonical_role_name` reads
+    it: the ego's is ``"Ego"`` even when it was spawned as ``ego`` or ``hero``
+    for CARLA's native Autoware interface.
+    """
 
     id: int
     type_id: str
@@ -109,7 +115,7 @@ class FrameRecorder:
             box = actor.bounding_box
             self._static[key] = (
                 str(actor.type_id),
-                str(attributes.get("role_name", "")),
+                canonical_role_name(str(attributes.get("role_name", ""))),
                 str(attributes.get("base_type", "")),
                 (float(box.extent.x), float(box.extent.y), float(box.extent.z)),
                 (float(box.location.x), float(box.location.y), float(box.location.z)),

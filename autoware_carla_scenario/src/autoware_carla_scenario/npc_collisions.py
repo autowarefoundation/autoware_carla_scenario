@@ -39,6 +39,7 @@ from dataclasses import dataclass
 from typing import TYPE_CHECKING, Optional, Union
 
 from .constants import EGO_ROLE_NAME
+from .entity_role import canonical_role_name
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -230,7 +231,11 @@ class NpcCollisionMonitor:
         despawn_fallen_after_s: Optional[float] = FALLEN_DESPAWN_S,
         traffic_backend: Optional["TrafficBackend"] = None,
     ) -> None:
-        self._ego_role = str(EGO_ROLE_NAME) if ego_role is None else ego_role
+        # As _name_of() names the actors: an ego spawned as ``ego`` or
+        # ``hero`` (CARLA's native Autoware interface) is ``"Ego"``.
+        self._ego_role = canonical_role_name(
+            str(EGO_ROLE_NAME) if ego_role is None else ego_role
+        )
         self._ticks = 0
         #: The world frame of the latest tick, which its records are of.
         self._frame = 0
@@ -596,10 +601,16 @@ _ACTIVE: Optional[NpcCollisionMonitor] = None
 
 
 def _name_of(actor: "carla.Actor") -> str:
-    """*actor*'s ``role_name``, or its type id when it has none."""
+    """*actor*'s ``role_name``, or its type id when it has none.
+
+    The role name as :func:`canonical_role_name` reads it, so the ego is
+    ``"Ego"`` even when it was spawned as ``ego`` or ``hero`` for CARLA's
+    native Autoware interface: the monitor leaves it alone and its contacts
+    are marked as the ego's.
+    """
     attributes = actor.attributes
     role = attributes.get("role_name", "") if hasattr(attributes, "get") else ""
-    return str(role) if role else str(actor.type_id)
+    return canonical_role_name(str(role)) if role else str(actor.type_id)
 
 
 def _entity_actor_id(role: str) -> int:

@@ -319,8 +319,24 @@ ego that way: it sets `ros2_autoware_control=true` and spawns the ego as
 (`EGO_ROLE_NAME`: conditions, measures, metrics, actions) still finds it --
 `ego` and `hero`, in any case, read as `Ego`
 (`autoware_carla_scenario.entity_role.canonical_role_name`) -- so a scenario
-does not change. An interface node running beside the scenario then only spawns
-the sensor kit, and looks for the ego as `ego`.
+does not change.
+
+Three role names are in play, and they are not the same:
+
+| Who | Role name |
+| --- | --- |
+| CARLA's server, applying the control and publishing the status | `ego` or `hero` only |
+| The framework, spawning the ego | `ego` with the setting, `Ego` without |
+| The framework, looking the ego up | `Ego`, `ego` or `hero`, all read as `Ego` |
+
+An interface node running beside the scenario then only spawns the sensor kit,
+and must look for the role name the ego was spawned with: `ego` with the
+setting, `Ego` without (for `autoware_carla_interface`,
+`ego_vehicle_role_name:=ego` or `ego_vehicle_role_name:=Ego`).
+
+The setting is read only with `ego.entity=autoware`. The run-config check
+refuses a value that is not `true` or `false`, and refuses `true` with any
+other entity, before any scenario starts.
 
 A server whose blueprints have no `ros2_autoware_control` (one older than
 CARLA 1.0) spawns the ego as `Ego`, as without the setting, and the run logs a
@@ -354,8 +370,9 @@ routing and engaging stay with `scenario_bridge`, as above.
 
 Add `ego.native_autoware_interface=true` ([above](#carlas-native-autoware-interface))
 so the server applies Autoware's control and publishes the vehicle status; the
-node finds the ego as `Ego`, `ego` or `hero`. Without it, the node applies the
-control and publishes the status from the client.
+ego is then spawned as `ego`, the name the server serves, and the node attaches
+to it under that name (as `Ego` without the setting). Without it, the node
+applies the control and publishes the status from the client.
 
 ## Starting Autoware yourself
 
