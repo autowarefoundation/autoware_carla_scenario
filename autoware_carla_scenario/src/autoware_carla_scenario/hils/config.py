@@ -61,6 +61,7 @@ from pathlib import Path
 from typing import Any, Dict, Mapping, Optional, Tuple, Union
 
 from ..constants import EGO_ROLE_NAME
+from ..entity_role import canonical_role_name
 from ..value_text import huge_integer
 from .measurements import CAMERA_ENCODINGS
 from .protocol import (
@@ -785,6 +786,14 @@ def _device(name: str, value: Any, base: Path, mode: str) -> DeviceSpec:
     if sensor is not None and (messages or inputs):
         raise HilsConfigError(
             f"{where}: a device with a sensor has no messages or inputs"
+        )
+    if sensor is not None and canonical_role_name(name) == str(EGO_ROLE_NAME):
+        # The sensor is spawned under the device's name, and the framework
+        # reads 'Ego', 'ego' and 'hero' (any case) as the ego (#2046).
+        raise HilsConfigError(
+            f"{where}: a device with a sensor names its sensor's role_name, "
+            "which cannot be one the framework reads as the ego ('Ego', "
+            "'ego' or 'hero', in any case)"
         )
     return DeviceSpec(
         name=name,

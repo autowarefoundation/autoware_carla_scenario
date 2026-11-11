@@ -340,7 +340,8 @@ networks, SOME/IP, SBF, NMEA, UBX, RTCM).
 ### Sensor devices
 
 The bridge spawns the sensor on the ego (its `role_name` is the device's
-name), listens to it, and sends each measurement. A blueprint attribute is
+name, so it cannot be `Ego`, `ego` or `hero` in any case, which the framework
+reads as the ego), listens to it, and sends each measurement. A blueprint attribute is
 text, a number or a bool; an empty value (YAML's null), a list or a mapping
 is refused. A sensor that fails to attach is destroyed, not left on the ego:
 

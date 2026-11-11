@@ -50,6 +50,32 @@ def canonical_role_name(role_name: str) -> str:
     return role_name
 
 
+def _refuse_ego_role_name(role_name: str, what: str, allow_ego: bool = False) -> None:
+    """Refuse *role_name* for *what* (``"an NPC vehicle"``, say) if
+    :func:`canonical_role_name` reads it as the ego's.
+
+    A name given as a plain string skips :class:`EntityRole`'s pattern, so
+    an NPC could be named ``ego`` or ``hero`` (:data:`EGO_ROLE_ALIASES`, in
+    any case) -- and then be taken for the ego by every lookup, condition,
+    metric and the end-of-run sweep, with no warning (#2046).  With
+    *allow_ego*, ``"Ego"`` itself passes, as :class:`EntityRole` lets it: a
+    config the ego's own is built on (``VehicleEntityConfig``) names the ego
+    that way; every alias is still refused.
+
+    Raises:
+        ValueError: naming *what* and the role name.
+    """
+    if canonical_role_name(role_name) != "Ego":
+        return
+    if allow_ego and role_name == "Ego":
+        return
+    raise ValueError(
+        f"Invalid role name {role_name!r} for {what}: the framework reads "
+        "'Ego', 'ego' and 'hero', in any case, as the ego. Name it "
+        "<lowercase-category><positive-integer> (e.g. 'npc1', 'vehicle2')."
+    )
+
+
 class EntityRole:
     """Validated CARLA actor role name.
 
