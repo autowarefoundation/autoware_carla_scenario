@@ -351,6 +351,22 @@ is smoke-tested and the second builds and pushes all of them, the tested one
 from cache. With `push: "true"`, `load: "false"` and `smoke-test: "false"`
 there is nothing to wait for, and the action builds and pushes in one run.
 
+Two caveats:
+
+- The base images are referenced by tag. If an upstream tag is republished
+  between the two builds, the second one pulls the new base, misses the cache
+  from there on, and pushes an image that differs from the one tested. Pin
+  `RUNTIME_BASE` by digest (`build-args: RUNTIME_BASE=python@sha256:…`) to
+  rule that out for the runtime base. The uv build-stage images
+  (`ghcr.io/astral-sh/uv:<UV_VERSION>…`) take only a version, not a digest,
+  so the same applies to them: a republished uv tag can change what the
+  second build installs.
+- A multi-platform build takes longer -- the tested platform is built twice
+  (once alone, then again from cache within the full build) and the others
+  usually run emulated -- and only one platform is smoke-tested. For every
+  platform tested, build each natively on its own runner as shown in
+  [Architectures](#architectures).
+
 ## Building by hand
 
 ```bash

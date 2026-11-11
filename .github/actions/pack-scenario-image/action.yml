@@ -285,11 +285,11 @@ runs:
         # Fed on stdin rather than bind-mounted: GITHUB_ACTION_PATH is not a
         # host path on a container job, where a volume mount would silently
         # bring in an empty directory.
-        docker run --rm -i "${platform[@]}" --entrypoint python "${IMAGE_REF}" - \
+        docker run --rm -i ${platform[@]+"${platform[@]}"} --entrypoint python "${IMAGE_REF}" - \
           < "${GITHUB_ACTION_PATH}/smoke-test.py"
 
         # Hydra must be able to compose a config with no CARLA server around.
-        docker run --rm "${platform[@]}" "${IMAGE_REF}" --help > /dev/null
+        docker run --rm ${platform[@]+"${platform[@]}"} "${IMAGE_REF}" --help > /dev/null
 
         echo "Smoke test passed for ${IMAGE_REF}${SMOKE_PLATFORM:+ (${SMOKE_PLATFORM})}"
 
