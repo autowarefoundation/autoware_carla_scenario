@@ -50,8 +50,8 @@ Runs autonomous driving scenario tests in CARLA. Uses [Hydra](https://hydra.cc/)
     scenario starts on a clean world. After the last one, a server the run
     launched itself is stopped; one that was already running is reset once
     more and handed back asynchronous, as the first scenario found it (its
-    world settings put back, the TrafficManager out of synchronous mode, the
-    scenarios' actors destroyed), so that other clients -- a viewer, a
+    world settings put back, the scenarios' actors destroyed; each scenario
+    already shut its TrafficManager down), so that other clients -- a viewer, a
     bridge, a manual tool -- do not find it frozen at the last tick. That
     clean-up is best effort: a failure is logged, and the run's results stand
 

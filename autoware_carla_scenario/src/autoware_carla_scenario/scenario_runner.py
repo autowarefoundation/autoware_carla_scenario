@@ -1540,11 +1540,15 @@ class ScenarioRunner:
         1. :meth:`reset_world` -- a map reload, or a soft reset -- which
            destroys what the runs left (their NPCs, sensors, props) and puts
            the weather and traffic lights back;
-        2. the TrafficManager on the runs' port is put out of synchronous
-           mode, then shut down, as each run's traffic backend shuts it down;
-        3. the world gets back the settings the first run found it with
+        2. the world gets back the settings the first run found it with
            (asynchronous, with no fixed time step, unless it was not),
            whatever the reset left.
+
+        No TrafficManager is touched: each run's traffic backend already shut
+        its own down when the run closed it (``TrafficManagerBackend.close``),
+        and ``client.get_trafficmanager()`` here would start a new one on that
+        port -- or, for a run that used none (``NullTrafficBackend``), take
+        over another client's on the default port -- only to shut it down.
 
         A runner that never ran a scenario changed nothing, and does nothing.
         """
@@ -1556,16 +1560,6 @@ class ScenarioRunner:
         except Exception:
             logger.warning(
                 "[%s] Resetting the world after the last run failed",
-                scenario_name,
-                exc_info=True,
-            )
-        try:
-            tm = self._client.get_trafficmanager(self._backend_tm_port)
-            tm.set_synchronous_mode(False)
-            tm.shut_down()
-        except Exception:
-            logger.warning(
-                "[%s] Putting the TrafficManager out of synchronous mode failed",
                 scenario_name,
                 exc_info=True,
             )

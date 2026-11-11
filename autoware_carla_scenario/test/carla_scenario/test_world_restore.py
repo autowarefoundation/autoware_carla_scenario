@@ -1,7 +1,7 @@
 """The world handed back when a queue stops on a server it does not stop (#2067).
 
-Every queued run leaves the world synchronous at 20 Hz, its TrafficManager
-synchronous and its NPCs in place, for the queue to reset before the next
+Every queued run leaves the world synchronous at 20 Hz with its NPCs in place
+(its TrafficManager it shuts down itself), for the queue to reset before the next
 attempt.  After the last one nothing ticks it: on a server that outlives the
 queue (one already running, or given) the world would be frozen for every
 other client.  No CARLA here: the server is test_world_soft_reset's fake.
@@ -23,31 +23,17 @@ from .test_scenario_queue import _make_ego_config, _NullScenario
 from .test_world_soft_reset import _play_a_case, _runner, _Server
 
 
-class _TrafficManager:
-    def __init__(self, events: list[str]) -> None:
-        self.events = events
-        self.synchronous = True
-
-    def set_synchronous_mode(self, enabled: bool) -> None:
-        self.events.append(f"tm sync {enabled}")
-        self.synchronous = enabled
-
-    def shut_down(self) -> None:
-        self.events.append("tm shut down")
-
-
 class _ServerWithTm(_Server):
-    """The fake server, with the TrafficManager a run put in step with it."""
+    """The fake server, counting the TrafficManagers asked for: asking starts
+    one on the port, or connects to another client's there."""
 
     def __init__(self) -> None:
         super().__init__()
-        self.tm_events: list[str] = []
         self.tm_ports: list[int] = []
-        self.tm = _TrafficManager(self.tm_events)
 
-    def get_trafficmanager(self, port: int) -> _TrafficManager:
+    def get_trafficmanager(self, port: int) -> MagicMock:
         self.tm_ports.append(port)
-        return self.tm
+        return MagicMock()
 
 
 @pytest.fixture()
@@ -79,8 +65,9 @@ class TestRunnerRestoreWorld:
         assert world.settings.fixed_delta_seconds is None
         assert len(world.actors) == map_actors
         assert all(actor.id not in world.actors for actor in left[:1])
-        assert server.tm_ports == [8123]
-        assert server.tm_events == ["tm sync False", "tm shut down"]
+        # Each run's backend shut its TrafficManager down: none is asked for,
+        # which would start one on that port, or take over another client's.
+        assert server.tm_ports == []
         assert runner._world is world
 
     def test_settings_found_synchronous_are_put_back_as_found(
@@ -134,7 +121,7 @@ class TestRunnerRestoreWorld:
         ]
         assert world.settings.synchronous_mode is False
         assert world.settings.fixed_delta_seconds is None
-        assert server.tm_events == ["tm sync False", "tm shut down"]
+        assert server.tm_ports == []
         assert any("Reloading the map failed" in r.getMessage() for r in caplog.records)
 
     def test_each_failure_is_logged_and_the_next_step_runs(
@@ -144,9 +131,6 @@ class TestRunnerRestoreWorld:
         runner.load_map_by_name("Town10HD_Opt")
         _after_a_run(runner, server)
         runner.reset_world = MagicMock(side_effect=RuntimeError("reset broke"))  # type: ignore[method-assign]
-        server.get_trafficmanager = MagicMock(  # type: ignore[method-assign]
-            side_effect=RuntimeError("no TM")
-        )
 
         with caplog.at_level(logging.WARNING):
             runner.restore_world("Case0")
@@ -154,7 +138,7 @@ class TestRunnerRestoreWorld:
         assert server.world.settings.synchronous_mode is False
         messages = [r.getMessage() for r in caplog.records]
         assert any("Resetting the world after the last run" in m for m in messages)
-        assert any("TrafficManager out of synchronous mode" in m for m in messages)
+        assert server.tm_ports == []
 
     def test_a_failure_to_restore_the_settings_is_logged(
         self, server: _ServerWithTm, caplog: pytest.LogCaptureFixture
