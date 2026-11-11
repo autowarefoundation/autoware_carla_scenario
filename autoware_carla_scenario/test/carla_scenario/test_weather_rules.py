@@ -1216,3 +1216,64 @@ class TestRoadWater:
         with caplog.at_level("WARNING"):
             road_water({"precipitation": 100.0})
         assert "names no condition" not in caplog.text
+
+
+def _wetness_by_rate_file(path: Path) -> Path:
+    """A rule file whose wetness follows the rain and the rainfall rate, the
+    drier of the two."""
+    path.write_text(
+        "version: 3\nquantities:\n  carla_wetness:\n    combine: min\n"
+        "    parts:\n"
+        "      rain:\n        at: {carla_precipitation: [0, 100]}\n"
+        "        uniform:\n          low: [0, 95]\n          high: [0, 100]\n"
+        "      rate:\n        at: {rainfall_rate: [0, 25]}\n"
+        "        uniform:\n          low: [0, 10]\n          high: [0, 20]\n"
+    )
+    return path
+
+
+class TestRoadWaterAtTheRunsConditions:
+    """Rules whose water reads a condition read the run's, the action's own
+    or the config's, as the config's ``environment`` does (#2063)."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh(self, tmp_path) -> object:
+        from autoware_carla_scenario.actions.environment import (
+            forget_weather_conditions,
+        )
+
+        forget_weather_conditions()
+        use_weather_rules(str(_wetness_by_rate_file(tmp_path / "wet.yaml")))
+        yield
+        forget_weather_conditions()
+
+    def _configured(self) -> float:
+        resolved = resolve_environment(
+            {"precipitation": 100.0, "rainfall_rate_mm_h": 25.0}
+        )
+        assert resolved["wetness"] == pytest.approx(15.0)
+        return float(resolved["wetness"])
+
+    def test_road_water_reads_the_conditions_given(self) -> None:
+        wetness = self._configured()
+        assert road_water({"precipitation": 100.0}, {"rainfall_rate_mm_h": 25.0}) == {
+            "wetness": pytest.approx(wetness),
+            "precipitation_deposits": pytest.approx(90.0),
+        }
+        # Not given, the rate reads the rules' default: no rain falls.
+        assert road_water({"precipitation": 100.0})["wetness"] == pytest.approx(0.0)
+
+    def test_an_action_reads_its_own_rate(self) -> None:
+        world = _world()
+        EnvironmentAction(precipitation=100.0, rainfall_rate_mm_h=25.0).execute(world)
+        assert world.get_weather.return_value.wetness == pytest.approx(
+            self._configured()
+        )
+
+    def test_a_later_action_reads_the_rate_the_run_was_set_to(self) -> None:
+        world = _world()
+        EnvironmentAction(rainfall_rate_mm_h=25.0).execute(world)
+        EnvironmentAction(precipitation=100.0).execute(world)
+        assert world.get_weather.return_value.wetness == pytest.approx(
+            self._configured()
+        )

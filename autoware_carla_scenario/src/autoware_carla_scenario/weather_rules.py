@@ -395,22 +395,38 @@ def _work_out(
 _ROAD_WATER_FIELDS: tuple[str, ...] = ("wetness", "precipitation_deposits")
 
 
-def road_water(fields: Mapping[str, float]) -> dict[str, float]:
+def road_water(
+    fields: Mapping[str, float],
+    conditions: Optional[Mapping[str, float]] = None,
+    labels: Optional[Mapping[str, str]] = None,
+) -> dict[str, float]:
     """The road's water -- CARLA's ``wetness`` and standing water
     (``precipitation_deposits``) -- the weather rules give the CARLA weather
     fields *fields* sets (by default, its ``precipitation``), each at its
     median: the ones *fields* does not set itself and the rules lead to, by
     field name.
 
+    *conditions* and *labels* are the conditions the run is set to, by their
+    ``environment`` key (:data:`CAUSE_SETTINGS`): the numbers
+    (``rainfall_rate_mm_h``, ...) and the labels (``cloud_cover``,
+    ``time_of_day``).  A rule file whose water reads one reads the run's, as
+    it does before the run; one not given reads the rules' default.
+
     What :func:`resolve_environment` gives a config's ``environment`` for the
-    same fields, and so what an
+    same fields and conditions, and so what an
     :class:`~autoware_carla_scenario.EnvironmentAction` that sets the rain
     and not the water applies (#2063): the same rain leaves the same grip
     however it is set.  A field *fields* sets itself wins.
     """
-    worked_out, _ = _work_out(
-        {f: float(v) for f, v in fields.items() if f in CARLA_QUANTITIES}
-    )
+    known: dict[str, Any] = {
+        f: float(v) for f, v in fields.items() if f in CARLA_QUANTITIES
+    }
+    for given in (conditions, labels):
+        if given is not None:
+            for key, value in given.items():
+                if key in CAUSE_SETTINGS:
+                    known[key] = value
+    worked_out, _ = _work_out(known)
     return {
         field: float(worked_out[field])
         for field in _ROAD_WATER_FIELDS

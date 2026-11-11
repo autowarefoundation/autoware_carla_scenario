@@ -1152,8 +1152,11 @@ that sets `precipitation` and not `wetness` or `precipitation_deposits` --
 a scenario's own, or the editor's "Set Weather" card -- sets those to what
 the rules give that rain, at their median (`weather_rules.road_water`), as
 the config's `environment` does before the run: `precipitation=100` leaves a
-wetness of 97.5, standing water of 90 and a grip of 0.56 either way. A
-`wetness` or `precipitation_deposits` the action gives wins.
+wetness of 97.5, standing water of 90 and a grip of 0.56 either way. Rules
+whose water reads a condition read the run's: the rainfall rate, fog
+visibility, wind speed or cloud cover the action names, else the one the run
+was set to (the config's `environment`, or an earlier action). A `wetness` or
+`precipitation_deposits` the action gives wins.
 
 The grip is the one quantity the action reads off the rules, during the run:
 it may differ by vehicle ([Rules by vehicle](#weather-rules)), and a vehicle

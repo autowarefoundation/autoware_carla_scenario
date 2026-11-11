@@ -787,15 +787,36 @@ class EnvironmentAction(BaseAction):
             or "precipitation_deposits" in self._settings
         )
 
-    def _applied(self) -> dict[str, float]:
-        """The CARLA fields the action applies: its settings, and the road's
-        water the rules give the rain it sets where it sets none
+    def _applied(self, world_id: int) -> dict[str, float]:
+        """The CARLA fields the action applies in the world *world_id*: its
+        settings, and the road's water the rules give the rain it sets where
+        it sets none
         (:func:`~autoware_carla_scenario.weather_rules.road_water`).  Worked
-        out when it runs, under the rules the run follows then."""
+        out when it runs, under the rules the run follows then, at the
+        conditions the run is set to -- this action's, else the ones an
+        earlier action (the config's ``environment``) recorded -- as the
+        config's are worked out at its own."""
         applied = dict(self._settings)
-        if "precipitation" in applied:
-            for name, value in road_water(self._settings).items():
-                applied[name] = value
+        if "precipitation" not in applied:
+            return applied
+        conditions: dict[str, float] = {}
+        for key, store, own in (
+            ("rainfall_rate_mm_h", _RAINFALL, self._rainfall_rate_mm_h),
+            ("fog_visibility_range_m", _FOG_VISIBILITY, self._fog_visibility_range_m),
+            ("wind_speed_kmh", _WIND_SPEED, self._wind_speed_kmh),
+        ):
+            if own is not None:
+                conditions[key] = own
+            elif world_id in store:
+                conditions[key] = store[world_id]
+        labels: dict[str, str] = {}
+        sky = self._cloud_cover
+        if sky is not None:
+            labels["cloud_cover"] = sky
+        elif world_id in _CLOUD_COVER:
+            labels["cloud_cover"] = _CLOUD_COVER[world_id]
+        for name, value in road_water(self._settings, conditions, labels).items():
+            applied[name] = value
         return applied
 
     @property
@@ -837,7 +858,7 @@ class EnvironmentAction(BaseAction):
             return
 
         weather = world.get_weather()
-        applied = self._applied()
+        applied = self._applied(world.id)
         if len(applied) > 0:
             for name, value in applied.items():
                 _set_weather_field(weather, name, value)
