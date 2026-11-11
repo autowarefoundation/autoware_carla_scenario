@@ -3365,6 +3365,14 @@ without an import anywhere in this repository:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="k">[project.entry-points.</span><span class="s2">"autoware_carla_scenario.traffic_backends"</span><span class="k">]</span>
 <a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a><span class="n">my_simulator</span><span class="w"> </span><span class="o">=</span><span class="w"> </span><span class="s2">"my_package:register"</span>
 </code></pre></div>
+<p>Registering a name that is already taken replaces it, which is how a package
+overrides a built-in backend (<code>traffic_manager</code>, <code>sumo</code>, ...). It is still
+reported: <code>load_traffic_backend_plugins()</code> logs a warning naming the entry point
+and the backend it overrides. Two installed packages that register the same name
+are reported as well, with a warning naming both entry points; the one loaded
+last wins. Entry points load sorted by distribution name (normalised, so
+<code>my-package</code> and <code>my_package</code> sort together) and then entry-point name, so which
+one that is does not depend on the environment.</p>
 <h3 id="answering-manoeuvre-intents">Answering manoeuvre intents<a class="headerlink" href="#answering-manoeuvre-intents" title="Permanent link">&para;</a></h3>
 <p>A backend that can steer the vehicles it drives overrides the intent
 methods. They receive the entity, so a backend can read the actor and record its
@@ -4309,7 +4317,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 12:21:17 UTC"><span class="timeago" datetime="2026-11-08T12:21:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 12:21:17 UTC">2026-11-08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 05:06:29 UTC"><span class="timeago" datetime="2026-11-11T05:06:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 05:06:29 UTC">2026-11-11</span>
   </span>
 
     
