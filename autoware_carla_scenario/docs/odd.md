@@ -842,7 +842,10 @@ maps an attribute onto its measure (`headway: {measure: vehicle_ahead_gap_m,
 buckets: [0, 10, 20, 40]}` beside `cut_in/left`) draws the control as the
 scenario's effect, and the attribute measures what it drew; a case's
 settings file the control's key under the control, not the attribute
-(#2072). Attributes nothing sets are left open: a combination is
+(#2072). A sweep's knob for that attribute (`sweep.odd_sample.knobs`)
+replaces the control, as an explicit knob replaces any control: the
+attribute is drawn with the knob, and the control is not drawn as an
+effect. Attributes nothing sets are left open: a combination is
 admitted when the ODD can hold for some value of them.
 
 ### A scenario's nodes

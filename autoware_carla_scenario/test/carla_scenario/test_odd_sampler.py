@@ -2269,6 +2269,38 @@ def test_a_measure_whose_control_writes_a_quantity_is_the_scenarios_effect(
         assert "quantile(vehicle_ahead_gap)" in case.values
 
 
+def test_a_sweeps_knob_for_a_measured_effect_replaces_the_control(
+    tmp_path: Path,
+) -> None:
+    """A sweep's knob for the attribute that measures cut_in's gap replaces
+    the gap's control, as any explicit knob replaces a control: the gap is
+    not drawn as the scenario's effect too, over what the knob drew."""
+    from autoware_carla_scenario.examples.run import _compose_config
+    from autoware_carla_scenario.odd import load_odd_binding
+    from autoware_carla_scenario.sweeper.expand import scenario_controls
+
+    odd = load_odd_binding(_headway_binding(tmp_path))
+    (headway,) = odd.attributes
+    cfg = _compose_config("cut_in/left", [])
+    sampler, _ = sampler_from_config(
+        {
+            "count": 6,
+            "seed": 1,
+            "knobs": {headway.name: {"key": "scenario.npc_gap_m", "range": [5, 30]}},
+        },
+        odd=odd,
+        controls=scenario_controls(cfg),
+        rules=scenario_rules(cfg),
+    )
+
+    assert "vehicle_ahead_gap" not in sampler.effects
+    for case in sampler.sample(6):
+        assert sum(o.startswith("scenario.npc_gap_m=") for o in case.overrides) == 1
+        gap = _value(case.overrides, "scenario.npc_gap_m")
+        assert gap == pytest.approx(case.values[headway.name])
+        assert "vehicle_ahead_gap" not in case.quantities
+
+
 @pytest.mark.usefixtures("at_repo_root")
 def test_a_shipped_quantity_control_scenario_expands_with_an_odd_measuring_it(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]

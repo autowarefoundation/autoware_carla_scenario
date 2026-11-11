@@ -84,7 +84,13 @@ from ..route.model import _whole_number
 from ..seed import DEFAULT_SEED, check_seed
 from openodd import Rules, RulesError
 
-from .backend import CARLA_BACKEND, DEFAULT_KNOBS, CarlaBackend, weather_effects
+from .backend import (
+    CARLA_BACKEND,
+    DEFAULT_KNOBS,
+    CarlaBackend,
+    _effect_control,
+    weather_effects,
+)
 from .control_fields import (
     CONTROL_TARGETS,
     FLAKY_FIELDS,
@@ -156,6 +162,27 @@ class OddSampler(_OddSampler):
         from ..coverage.collector import current_measure_coverage  # noqa: PLC0415
 
         kw.setdefault("backend", CARLA_BACKEND)
+        controls = kw.get("controls")
+        if knobs and controls and isinstance(kw["backend"], CarlaBackend):
+            # A sweep's knob for an attribute that measures a scenario's
+            # effect (a control writing a node of the rules) replaces that
+            # control, as it replaces any control an attribute reads: the
+            # control is no knob of the attribute (CarlaBackend.knob), so
+            # openodd would draw it as an effect too, writing the same
+            # setting over the knob's value (#2072).
+            replaced = {
+                id(control)
+                for attribute in odd.attributes
+                if attribute.name in knobs
+                for control in [_effect_control(attribute, controls)]
+                if control is not None
+            }
+            if replaced:
+                kw["controls"] = {
+                    name: control
+                    for name, control in controls.items()
+                    if id(control) not in replaced
+                }
         if "effects" not in kw:
             kw["effects"] = weather_effects(
                 odd,

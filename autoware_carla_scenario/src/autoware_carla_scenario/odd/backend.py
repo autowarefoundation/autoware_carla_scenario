@@ -250,6 +250,7 @@ _READ_BACK_FIELDS: dict[Callable[..., Any], tuple[str, ...]] = {
     probes.road_wetness: ("wetness",),
     probes.wind: ("wind_intensity",),
     probes.cloudiness: ("cloudiness",),
+    probes.road_surface_condition: ("wetness", "precipitation_deposits"),
 }
 
 
