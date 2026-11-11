@@ -36,6 +36,7 @@ from ..entity_role import _role_name
 from ..weather_inputs import cloud_cover_level, time_of_day_level
 from ..weather_rules import (
     custom_rules_in_use,
+    road_water,
     vehicle_at,
     vehicle_rules_in_use,
     weather_at,
@@ -80,7 +81,18 @@ _POSITIVE_ARGUMENTS: tuple[str, ...] = (
     "fog_visibility_range_m",
 )
 #: The arguments that must not be negative.
-_NON_NEGATIVE_ARGUMENTS: tuple[str, ...] = ("rainfall_rate_mm_h", "wind_speed_kmh")
+_NON_NEGATIVE_ARGUMENTS: tuple[str, ...] = (
+    "fog_distance",
+    "rainfall_rate_mm_h",
+    "wind_speed_kmh",
+)
+#: The sun's angles, degrees, and the range each takes: CARLA's own
+#: (``carla.WeatherParameters``).  Refused outside it, not wrapped: an angle
+#: out of range is a typo more often than a sun meant elsewhere (#2063).
+_SUN_ANGLE_RANGES: dict[str, tuple[float, float]] = {
+    "sun_altitude_angle": (-90.0, 90.0),
+    "sun_azimuth_angle": (0.0, 360.0),
+}
 #: The arguments that are quantiles, 0-1.
 _QUANTILE_ARGUMENTS: tuple[str, ...] = ("tire_friction_quantile", "visibility_quantile")
 #: The cloud covers *cloud_cover* takes: the taxonomy's cloudiness
@@ -95,8 +107,10 @@ def _refusal(name: str, value: float) -> str:
 
     Every value must be finite; the weather fields of :data:`_PERCENT_FIELDS`
     within [0, 100], *tire_friction*, *visibility_m* and
-    *fog_visibility_range_m* positive, *rainfall_rate_mm_h* and
-    *wind_speed_kmh* not negative, the quantiles within [0, 1].
+    *fog_visibility_range_m* positive, *fog_distance*, *rainfall_rate_mm_h*
+    and *wind_speed_kmh* not negative, *sun_altitude_angle* within [-90, 90]
+    and *sun_azimuth_angle* within [0, 360] (:data:`_SUN_ANGLE_RANGES`), the
+    quantiles within [0, 1].
     """
     if not math.isfinite(value):
         return f"must be finite, got {value}"
@@ -108,6 +122,10 @@ def _refusal(name: str, value: float) -> str:
         return f"must not be negative, got {value}"
     if name in _QUANTILE_ARGUMENTS and not (0.0 <= value <= 1.0):
         return f"must be within [0, 1], got {value}"
+    if name in _SUN_ANGLE_RANGES:
+        low, high = _SUN_ANGLE_RANGES[name]
+        if not (low <= value <= high):
+            return f"must be within [{low:g}, {high:g}], got {value}"
     return ""
 
 
@@ -596,6 +614,13 @@ class EnvironmentAction(BaseAction):
     to it, and the TrafficManager with ``follow_visibility: true``.
 
     **The road's grip follows the water on it.**  An action that sets the
+    rain (*precipitation*) and not the road's *wetness* or standing water
+    (*precipitation_deposits*) sets those to what the weather rules give the
+    rain, at their median
+    (:func:`~autoware_carla_scenario.weather_rules.road_water`, as a config's
+    ``environment`` does before the run): the same rain leaves the same grip
+    however it is set (#2063).  A *wetness* or *precipitation_deposits* given
+    wins.  An action that sets the rain, the
     ``wetness`` or the standing water, or names a tire friction, scales every
     vehicle's wheel friction to the share of the dry road's grip the
     resulting weather leaves (:func:`tire_friction`): *tire_friction* if
@@ -621,9 +646,10 @@ class EnvironmentAction(BaseAction):
         wetness: Surface wetness, 0-100.
         wind_intensity: 0-100.
         fog_density: 0-100.
-        fog_distance: Metres before fog starts.
-        sun_altitude_angle: Degrees above the horizon; negative is night.
-        sun_azimuth_angle: Degrees.
+        fog_distance: Metres before fog starts, not negative.
+        sun_altitude_angle: Degrees above the horizon, -90 to 90; negative
+            is night.
+        sun_azimuth_angle: Degrees, 0 to 360.
         rainfall_rate_mm_h: The rainfall rate the run is set to, mm/h:
             recorded, not applied.  Keyword-only.
         fog_visibility_range_m: The visibility through the fog the run is set
@@ -653,8 +679,10 @@ class EnvironmentAction(BaseAction):
             weather field given as 0-100 (*cloudiness*, *precipitation*,
             *precipitation_deposits*, *wetness*, *wind_intensity*,
             *fog_density*) is outside it; *tire_friction*, *visibility_m* or
-            *fog_visibility_range_m* is not positive; *rainfall_rate_mm_h* or
-            *wind_speed_kmh* is negative; *tire_friction_quantile* is outside
+            *fog_visibility_range_m* is not positive; *fog_distance*,
+            *rainfall_rate_mm_h* or *wind_speed_kmh* is negative;
+            *sun_altitude_angle* is outside [-90, 90] or *sun_azimuth_angle*
+            outside [0, 360]; *tire_friction_quantile* is outside
             [0, 1]; or *cloud_cover* is none of its labels.  The message names
             the argument.
     """
@@ -750,19 +778,31 @@ class EnvironmentAction(BaseAction):
 
     def _names_grip(self) -> bool:
         """Whether the action names a tire friction or its quantile, or sets
-        the road's water."""
+        the rain or the road's water."""
         return (
             self._tire_friction is not None
             or self._tire_friction_quantile is not None
+            or "precipitation" in self._settings
             or "wetness" in self._settings
             or "precipitation_deposits" in self._settings
         )
 
+    def _applied(self) -> dict[str, float]:
+        """The CARLA fields the action applies: its settings, and the road's
+        water the rules give the rain it sets where it sets none
+        (:func:`~autoware_carla_scenario.weather_rules.road_water`).  Worked
+        out when it runs, under the rules the run follows then."""
+        applied = dict(self._settings)
+        if "precipitation" in applied:
+            for name, value in road_water(self._settings).items():
+                applied[name] = value
+        return applied
+
     @property
     def sets_tire_friction(self) -> bool:
         """Whether the action sets the vehicles' grip: it names a tire
-        friction or sets the road's water, or the run follows rules other
-        than the default ones
+        friction or sets the rain or the road's water, or the run follows
+        rules other than the default ones
         (:func:`~autoware_carla_scenario.weather_rules.custom_rules_in_use`),
         whose grip may differ from CARLA's whatever the action sets."""
         return self._names_grip() or custom_rules_in_use()
@@ -797,16 +837,15 @@ class EnvironmentAction(BaseAction):
             return
 
         weather = world.get_weather()
-        if len(self._settings) > 0:
-            for name, value in self._settings.items():
+        applied = self._applied()
+        if len(applied) > 0:
+            for name, value in applied.items():
                 _set_weather_field(weather, name, value)
             world.set_weather(weather)
             logger.info(
                 "EnvironmentAction '%s' applied %s",
                 self.label,
-                ", ".join(
-                    f"{name}={value:g}" for name, value in self._settings.items()
-                ),
+                ", ".join(f"{name}={value:g}" for name, value in applied.items()),
             )
         rainfall = self._rainfall_rate_mm_h
         if rainfall is not None:

@@ -341,8 +341,10 @@ controls: {}
 # Every value must be a finite number (NaN or infinity fails the run at its
 # start, naming the key); cloudiness, precipitation, precipitation_deposits,
 # wetness, wind_intensity and fog_density are 0-100, tire_friction,
-# visibility_m and fog_visibility_range_m positive, rainfall_rate_mm_h and
-# wind_speed_kmh not negative, the quantiles 0-1. CARLA renders no snow and
+# visibility_m and fog_visibility_range_m positive, fog_distance,
+# rainfall_rate_mm_h and wind_speed_kmh not negative, sun_altitude_angle
+# -90 to 90 and sun_azimuth_angle 0 to 360 degrees (refused outside, not
+# wrapped), the quantiles 0-1. CARLA renders no snow and
 # has no temperature: an ODD that measures or restricts them is refused.
 #
 # The road's grip follows its water (EnvironmentAction, docs/odd.md): a run

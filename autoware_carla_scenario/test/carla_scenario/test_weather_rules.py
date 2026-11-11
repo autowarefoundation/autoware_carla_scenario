@@ -28,6 +28,7 @@ from autoware_carla_scenario.weather_rules import (
     RulesError,
     check_weather_rules,
     resolve_environment,
+    road_water,
     use_weather_rules,
     vehicle_at,
     vehicle_range,
@@ -1174,3 +1175,44 @@ class TestWindAndClouds:
         # A cloud cover alone leaves the rain to the world.
         out = resolve_environment({"cloud_cover": "partly_cloudy"})
         assert "precipitation" not in out and 20.0 <= out["cloudiness"] < 70.0
+
+
+class TestRoadWater:
+    """The road's water the rain leaves: what an EnvironmentAction that sets
+    the rain alone applies, the config's own (#2063)."""
+
+    @pytest.mark.parametrize("precipitation", [0.0, 30.0, 45.0, 100.0])
+    def test_it_is_what_the_config_gets(self, precipitation: float) -> None:
+        resolved = resolve_environment({"precipitation": precipitation})
+        assert road_water({"precipitation": precipitation}) == {
+            "wetness": pytest.approx(resolved["wetness"]),
+            "precipitation_deposits": pytest.approx(resolved["precipitation_deposits"]),
+        }
+
+    def test_heavy_rain_floods_the_road(self) -> None:
+        assert road_water({"precipitation": 100.0}) == {
+            "wetness": pytest.approx(97.5),
+            "precipitation_deposits": pytest.approx(90.0),
+        }
+
+    def test_water_given_is_kept(self) -> None:
+        assert road_water({"precipitation": 100.0, "wetness": 5.0}) == {
+            "precipitation_deposits": pytest.approx(90.0)
+        }
+        assert (
+            road_water(
+                {"precipitation": 100.0, "wetness": 5.0, "precipitation_deposits": 0.0}
+            )
+            == {}
+        )
+
+    def test_no_rain_names_no_water(self) -> None:
+        assert road_water({"fog_density": 50.0}) == {}
+        assert road_water({}) == {}
+
+    def test_it_does_not_warn_of_no_condition(
+        self, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        with caplog.at_level("WARNING"):
+            road_water({"precipitation": 100.0})
+        assert "names no condition" not in caplog.text
