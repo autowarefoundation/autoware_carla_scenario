@@ -105,7 +105,8 @@ class ScenarioQueue:
     _runner: Optional[ScenarioRunner]
     #: Whether the world holds what a run left (its actors, weather, traffic
     #: light and light states), unreset: the next attempt -- the next case's,
-    #: a retry's, or the first of a later run_all() -- resets it first.
+    #: a retry's, or the first of a later run_all() -- resets it first, and
+    #: stop() restores it on a server the queue does not stop.
     _world_dirty: bool
     #: Whether a restart of the owned server began and did not finish: the
     #: server may be up, but the runner and the map are not yet the new ones.
@@ -492,8 +493,10 @@ class ScenarioQueue:
                         # that raises is this attempt's failure, retried (or
                         # erroring this case), and the next attempt resets
                         # again; the case that ran before keeps its verdict.
-                        # After the last case there is no next attempt, and a
-                        # later run_all() resets it or a new queue loads it.
+                        # After the last case there is no next attempt: a
+                        # later run_all() resets it, a new queue loads it, or
+                        # stop() restores it on a server the queue does not
+                        # stop (#2067).
                         self._runner.reset_world(type(scenario).__name__)
                         self._world_dirty = False
                     # Cooldown between consecutive scenarios, after the reset
@@ -803,8 +806,61 @@ class ScenarioQueue:
         return written
 
     def stop(self) -> None:
-        """Stop any Autoware stack left running, the backends, and the server
-        if owned."""
+        """Hand the world back, then stop any Autoware stack left running, the
+        backends, and the server if owned.
+
+        A server the queue does not stop -- one it was given, or one its own
+        manager found already running and reused -- outlives the runs, and
+        the last run left its world synchronous, with its actors in it: when
+        the world is dirty, it is restored (:meth:`_restore_world`), best
+        effort, before anything else stops.  A server the queue stops needs
+        none.
+        """
+        try:
+            self._restore_world()
+        finally:
+            self._stop()
+
+    def _restore_world(self) -> None:
+        """Restore the world the last run left on a server the queue does not
+        stop (:meth:`ScenarioRunner.restore_world`): logs a failure, never
+        raises one."""
+        if not self._world_dirty or self._runner is None:
+            return
+        if self._owns_server and not self._server.reused:
+            # Stopped below: nothing is left to restore.
+            return
+        runner: ScenarioRunner = self._runner
+        self._world_dirty = False
+        # Asked first, in a few seconds (CarlaServerManager._ping): a server
+        # that died or hangs would hold each of the restore's calls for the
+        # client's timeout (60 s), and on arm64 a call on a refused
+        # connection can abort the process -- before the Autoware launcher
+        # and the backends below are stopped, on the way out of a Ctrl-C or
+        # a SIGTERM too.
+        try:
+            alive = self._server.is_alive()
+        except Exception:
+            alive = False
+        if not alive:
+            logger.warning(
+                "The CARLA server at %s:%d does not answer: the world the runs "
+                "left on it is not restored",
+                self._server.host,
+                self._server.port,
+            )
+            return
+        logger.info("Restoring the world the runs left on the CARLA server")
+        try:
+            runner.restore_world("ScenarioQueue")
+        except Exception:
+            logger.warning(
+                "Restoring the world the runs left on the CARLA server failed",
+                exc_info=True,
+            )
+
+    def _stop(self) -> None:
+        """:meth:`stop`, after the world is restored."""
         self._runner = None
         self._restart_pending = False
         # The map loaded for this queue's runs is not the next queue's: one

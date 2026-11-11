@@ -996,6 +996,10 @@ class ScenarioRunner:
     _batch_xodr: Optional[Path]
     #: The episode this runner last loaded _batch_map into, if it knows it.
     _batch_episode: Optional[int]
+    #: The world's settings as the first run found them, before it made the
+    #: world synchronous: what restore_world() puts back (#2067).  None
+    #: until a run has begun.
+    _settings_before_runs: Optional[carla.WorldSettings]
     #: How the world is reset between runs: RESET_RELOAD or RESET_SOFT.
     _world_reset: str
     #: With RESET_SOFT, load the map instead on every this many-th reset (0:
@@ -1127,6 +1131,7 @@ class ScenarioRunner:
         self._batch_map = ""
         self._batch_xodr = None
         self._batch_episode = None
+        self._settings_before_runs = None
 
     @property
     def traffic_backend(self) -> TrafficBackend:
@@ -1523,6 +1528,57 @@ class ScenarioRunner:
             return
         self._reload_world(scenario_name)
 
+    def restore_world(self, scenario_name: str = "") -> None:
+        """Hand the world back to the server's other clients after the last run.
+
+        For a server that outlives the runs (one already running, or given):
+        nothing ticks a synchronous world once the runs are over, so viewers,
+        a bridge or a manual tool would find it frozen, with the last run's
+        actors in it.  In this order, each step best effort (a failure is
+        logged, and the next step still runs; nothing is raised):
+
+        1. :meth:`reset_world` -- a map reload, or a soft reset -- which
+           destroys what the runs left (their NPCs, sensors, props) and puts
+           the weather and traffic lights back;
+        2. the world gets back the settings the first run found it with
+           (asynchronous, with no fixed time step, unless it was not),
+           whatever the reset left.
+
+        No TrafficManager is touched: each run's traffic backend already shut
+        its own down when the run closed it (``TrafficManagerBackend.close``),
+        and ``client.get_trafficmanager()`` here would start a new one on that
+        port -- or, for a run that used none (``NullTrafficBackend``), take
+        over another client's on the default port -- only to shut it down.
+
+        A runner that never ran a scenario changed nothing, and does nothing.
+        """
+        if self._settings_before_runs is None:
+            return
+        before: carla.WorldSettings = self._settings_before_runs
+        try:
+            self.reset_world(scenario_name)
+        except Exception:
+            logger.warning(
+                "[%s] Resetting the world after the last run failed",
+                scenario_name,
+                exc_info=True,
+            )
+        try:
+            world = self._client.get_world()
+            world.apply_settings(before)
+            self._world = world
+            logger.info(
+                "[%s] World settings restored (synchronous mode: %s)",
+                scenario_name,
+                before.synchronous_mode,
+            )
+        except Exception:
+            logger.warning(
+                "[%s] Restoring the world's settings failed",
+                scenario_name,
+                exc_info=True,
+            )
+
     def _reload_world(self, scenario_name: str) -> None:
         """Load the map again (see :meth:`reset_world`)."""
         # Reload the world to guarantee a completely clean state (all
@@ -1743,10 +1799,13 @@ class ScenarioRunner:
         )
 
         # Enable synchronous mode so we control the simulation tick rate.
-        # Original settings are not saved because the reset after the run
-        # (this method's, or the queue's before the next attempt: a map
-        # reload, or a soft reset to the settings the map was loaded with)
-        # puts them back.
+        # The reset after the run (this method's, or the queue's before the
+        # next attempt: a map reload, or a soft reset to the settings the map
+        # was loaded with) puts the settings back.  The first run's are kept
+        # all the same, for restore_world(): after the last run of a queue
+        # on a server it does not stop, nothing resets the world (#2067).
+        if self._settings_before_runs is None:
+            self._settings_before_runs = world.get_settings()
         settings = world.get_settings()
         settings.synchronous_mode = True
         settings.fixed_delta_seconds = FIXED_DELTA_SECONDS
@@ -1776,6 +1835,13 @@ class ScenarioRunner:
         last_frame = -1
         # The log the Rerun converter takes once the result JSON is written.
         rerun_log: Optional[Path] = None
+        # Whether the run got past the tick loop, the MetricConditions and
+        # the coverage's end: only then is ``result`` the run's verdict, which
+        # the trajectory log ends with and the code after the cleanup writes.
+        # Until then an error is on its way (a dead CommonRoad worker, a
+        # Ctrl-C during the metrics), and ``result`` may still be the verdict
+        # of the tick loop alone (#2067).
+        verdict_final = False
         # The scenario's seed is the run's (autoware_carla_scenario.seed): what
         # setup() builds with no seed of its own draws from it.  The one before
         # comes back when the run ends.
@@ -2322,6 +2388,7 @@ class ScenarioRunner:
 
                 # Sampled before teardown, while the ego still exists.
                 coverage.end(world, clock.simulated)
+                verdict_final = True
 
         finally:
             set_run_seed(previous_seed)
@@ -2419,7 +2486,7 @@ class ScenarioRunner:
                 lidar_recording: RerunConverter = self.rerun
                 lidar_recording.stop_sensors()
             if trajectory.active:
-                if result is not None:
+                if result is not None and verdict_final:
                     trajectory.record_result(result)
                 trajectory.close()
                 logger.info(
@@ -2433,11 +2500,13 @@ class ScenarioRunner:
                     # run with a result hands its log over once that is
                     # written, below: handed over now, the converter could
                     # read it while it is written.
-                    if result is not None:
+                    if result is not None and verdict_final:
                         result.rerun_recording = str(recording_path(trajectory.path))
                         rerun_log = trajectory.path
                     else:
-                        # An exception is on its way: no result is written.
+                        # An exception is on its way: no result is written,
+                        # and the log, without its result record, is
+                        # converted now.
                         converter: RerunConverter = self.rerun
                         converter.submit(trajectory.path, file_stem)
                 if self.t4scene is not None:

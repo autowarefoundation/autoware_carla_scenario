@@ -49,7 +49,7 @@ then one `traffic_light` line per light and one `warmup` line. After that come t
 an `actor_gone` line for every one that has gone since the last, and followed
 by a `turn_indicators` line when a vehicle's turn indicators changed on it, a `markers` line when the ego's plan changed on it (and a `plan` line after
 it, the plan timed), a `condition` line for
-each condition that changed and an `action` line for each action that moved on. A run judged on a `MetricCondition` then has, after its last tick, a `metric` line for each frame its metrics were computed for and `condition` lines for each metric condition, whether its metric was NG, all in frame order ([Metrics](metrics.md#how-metrics-are-computed)). A run that reached a verdict ends with `result`.
+each condition that changed and an `action` line for each action that moved on. A run judged on a `MetricCondition` then has, after its last tick, a `metric` line for each frame its metrics were computed for and `condition` lines for each metric condition, whether its metric was NG, all in frame order ([Metrics](metrics.md#how-metrics-are-computed)). A run that reached a verdict ends with `result`: its final one, the one `_result.json` holds, after the `MetricCondition`s are judged. A run that raises before that -- in its tick loop, or after it (a CommonRoad worker that died while the metrics were computed, a Ctrl-C) -- writes no `_result.json` and ends without a `result` line (#2067).
 
 ```json
 {"type":"world","schema_version":2,"map":"Carla/Maps/Town10HD_Opt","episode":7}
