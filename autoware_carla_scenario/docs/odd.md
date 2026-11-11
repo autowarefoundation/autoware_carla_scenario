@@ -836,7 +836,13 @@ not a condition of the domain but an effect: the nodes it adds to the rules
 the ODD names. A control without a `quantity` is still joined to the ODD on
 the measure key: an attribute the ODD maps onto measure *k* is drawn with the
 running scenario's control of *k*, and controls of measures the ODD does not
-map are unused. Attributes nothing sets are left open: a combination is
+map are unused. A control with a `quantity` is never an attribute's knob,
+in a Python ODD or a binding file alike (`CarlaBackend.knob`): an ODD that
+maps an attribute onto its measure (`headway: {measure: vehicle_ahead_gap_m,
+buckets: [0, 10, 20, 40]}` beside `cut_in/left`) draws the control as the
+scenario's effect, and the attribute measures what it drew; a case's
+settings file the control's key under the control, not the attribute
+(#2072). Attributes nothing sets are left open: a combination is
 admitted when the ODD can hold for some value of them.
 
 ### A scenario's nodes
@@ -1093,6 +1099,24 @@ wheels (a share of the dry road's, 1.0) -- `None` when nothing set it -- and
 its knob names it outright, as `visibility`'s names the visibility. `wind`
 and `cloudiness` read CARLA's 0-100 intensities as levels, as `rain` and
 `fog` do.
+
+**An ODD that names a condition and the CARLA field that follows from it**
+-- the taxonomy's `rainfall_rate` beside `rain` or `road_wetness`,
+the cloud cover (`cloud_cover`) beside `cloudiness`, `wind_speed` beside
+`wind`, `fog_visibility_range` beside `fog` -- has the field drawn by the
+field's knob, not by the rules: the knob wins, and no effect writes that
+field or any field that follows from it in the rules (the precipitation's
+cloudiness, standing water and wetness), so every bucket a case records is
+the one the run reads back (#2072). The runner works those fields out from
+the value the knob wrote, at their median
+(`weather_rules.resolve_environment`, and `EnvironmentAction`'s road water,
+in which a field set wins), as it does for a config that sets the field
+itself; the case's `quantities` and the flaky search hold only the effects
+left. `illumination` beside `time_of_day` is refused when the cases are
+drawn: its knob sets the sun's altitude, which the time of day is read back
+from, so no run could keep the buckets drawn for both (`ValueError: ODD
+...: environment.illumination sets environment.sun_altitude_angle with its
+knob, which ...time_of_day is read back from ...`); an ODD names one of them.
 
 Every `environment.*` value must be a finite number -- an integer or a
 float, not a boolean or a string (`true` and `"15"` are refused, not read as

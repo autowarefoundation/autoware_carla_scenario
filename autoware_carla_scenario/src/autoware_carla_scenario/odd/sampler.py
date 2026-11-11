@@ -157,7 +157,13 @@ class OddSampler(_OddSampler):
 
         kw.setdefault("backend", CARLA_BACKEND)
         if "effects" not in kw:
-            kw["effects"] = weather_effects(odd, kw["backend"].active_rules)
+            kw["effects"] = weather_effects(
+                odd,
+                kw["backend"].active_rules,
+                knobs=knobs,
+                controls=kw.get("controls"),
+                backend=kw["backend"],
+            )
         if kw.get("coverage") is not None:
             kw["coverage"] = current_measure_coverage(kw["coverage"], odd)
         super().__init__(odd, knobs, **kw)
@@ -608,7 +614,13 @@ def case_settings(
     for name, control in controls.items():
         if control.quantity is not None:
             settings.setdefault(control.key, ("control", name))
-    for effect in weather_effects(definition, backend.active_rules):
+    for effect in weather_effects(
+        definition,
+        backend.active_rules,
+        knobs=knobs,
+        controls=controls,
+        backend=backend,
+    ):
         settings.setdefault(effect.key, ("weather", str(effect.quantity)))
     return settings
 
