@@ -79,13 +79,18 @@ abbreviation names is used, exactly as a branch is resolved to its commit. The
 answer is remembered beside the cache entry and, since the commit an
 abbreviation names never moves, used from then on without asking the remote
 again: a sweep over it looks the commits up once, and it resolves offline.
+Once expanded, an abbreviation **stays pinned to that commit** on this machine,
+even if the repository later gains another commit it abbreviates: only a
+machine that has not expanded it yet reports it as ambiguous.
 An abbreviation is matched in any case, but kept as written in the source: a
 branch may be spelled with hex digits, and `CAFE` and `cafe` are two
 branches. An abbreviation that matches no commit, or several, is an error
 saying so; a commit reachable only from another ref (a pull request's) needs
 its full hash. An abbreviation is not a pin -- it can grow ambiguous as the
 repository does -- so **Pin to commit** rewrites it to the full hash; like a
-pin, it never resolves to an unpacked directory (see below).
+pin, it never resolves to an unpacked directory (see below). Neither does a
+branch or tag whose name is 4 or more hex digits (`@cafe`, `@2024`): it is
+spelled like an abbreviation, and the shortcut cannot tell it from one.
 
 A repository URL may carry credentials (`https://oauth2:TOKEN@host/o/r`).
 They are passed to git as written, but every log line, error message and
@@ -237,7 +242,9 @@ That holds across processes too -- a sweep or a SLURM array resolving several
 towns of one dataset at once, the editor beside a run. Every clone, fetch and
 checkout of an entry is made holding its lock file (`<entry>.lock` beside it
 under `.repos/`, taken with `flock`), so a second process waits for the first
-and then adds its own directory. The lock file is close-on-exec, and a process
+and then adds its own directory. Each directory is checked out by a pattern
+anchored at the repository root (`/Town10HD_Opt`), so `#Town10HD_Opt` does
+not also bring a directory of the same name deeper in the tree. The lock file is close-on-exec, and a process
 forked while it is held lets go of its copy at once, so a child never keeps an
 entry locked.
 

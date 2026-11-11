@@ -753,8 +753,18 @@ class GitMapCache:
         ``core.sparseCheckout`` on and cone mode off -- rather than with
         ``git sparse-checkout set --no-cone``, whose ``--no-cone`` git 2.34
         (Ubuntu 22.04's) does not take, and which with no pattern checks the
-        top-level files out.  Every git from 2.27 reads it the same way; the files leave the working tree with
-        the next command that updates it (a ``checkout``, or ``add``).
+        top-level files out.  Every git from 2.27 reads it the same way; the
+        files leave the working tree with the next command that updates it
+        (a ``checkout``, or ``add``).
+
+        The two settings go where ``git sparse-checkout`` itself reads them:
+        the worktree's own configuration (``config --worktree``), which is
+        where it keeps them once worktree configuration is on (``disable``
+        turns it on, and an entry an older version made with ``set`` has it
+        on), and otherwise the repository's.  With linked worktrees and
+        worktree configuration off, ``--worktree`` is refused; there is no
+        ``config.worktree`` to override anything then, so the repository's
+        configuration is written instead.
         """
         git_dir = worktree / ".git"
         if not git_dir.is_dir():
@@ -764,12 +774,15 @@ class GitMapCache:
         info = git_dir / "info"
         info.mkdir(exist_ok=True)
         _write_atomically(info / "sparse-checkout", "")
-        # `--worktree`: where `git sparse-checkout` keeps them once it has
-        # turned worktree configuration on (`disable` does, and an entry an
-        # older version made with `set` has it), and the repository's own
-        # configuration where it has not (git 2.20).
-        self._git(worktree, "config", "--worktree", "core.sparseCheckoutCone", "false")
-        self._git(worktree, "config", "--worktree", "core.sparseCheckout", "true")
+        for key, value in (
+            ("core.sparseCheckoutCone", "false"),
+            ("core.sparseCheckout", "true"),
+        ):
+            try:
+                self._git(worktree, "config", "--worktree", key, value)
+            except MapCacheError:
+                # Linked worktrees, and no worktree configuration to win.
+                self._git(worktree, "config", key, value)
 
     def _fetch(self, cached: CachedRepo) -> None:
         """Update an existing checkout to the tip of its ref.
@@ -805,20 +818,20 @@ class GitMapCache:
     ) -> CachedRepo:
         """Check out *source*'s directory and pull the LFS content asked for.
 
-        The sparse checkout only grows: the first directory is ``set``, every
-        later one ``add``-ed, and the root (``""``) is the pattern ``/*``, which
-        checks the whole tree out.  A directory checked out for one map
-        therefore stays on disk while another map of the same repository is
-        resolved, and the entry's ``meta.json`` records all of them.
+        The sparse checkout only grows: every directory is ``add``-ed, as a
+        pattern anchored at the repository root (:func:`_sparse_pattern`),
+        and the root (``""``) is the pattern ``/*``, which checks the whole
+        tree out.  A directory checked out for one map therefore stays on
+        disk while another map of the same repository is resolved, and the
+        entry's ``meta.json`` records all of them.
 
-        Whether to ``set`` or ``add`` is read from git, not from ``meta.json``:
-        sparse checkout is never turned off again once on, so ``set`` -- the
-        one command that drops directories -- runs only on a checkout no
-        directory has been checked out in yet, even when another process's
-        record of one was lost.  The record only decides whether anything has
-        to run at all.  An entry this version cloned is a sparse checkout from
-        birth (:meth:`_sparse_nothing`); one an older version left without is
-        made one here, under the entry's lock, which :meth:`checkout` holds
+        ``set`` -- the one command that drops directories -- is never run.
+        Whether the checkout is sparse yet is read from git, not from
+        ``meta.json``, so a lost record never makes it start over.  The
+        record only decides whether anything has to run at all.  An entry
+        this version cloned is a sparse checkout from birth
+        (:meth:`_sparse_nothing`); one an older version left without is made
+        one here, under the entry's lock, which :meth:`checkout` holds
         around this, and the directory is then added to it like any other.
 
         Nothing runs when the directory is already checked out and its content
@@ -846,7 +859,7 @@ class GitMapCache:
             if not wanted or self._content_present(worktree, wanted):
                 return replace(cached, materialised=done)
 
-        pattern = path or _WHOLE_TREE
+        pattern = _sparse_pattern(path)
         if not self._is_sparse(worktree):
             self._sparse_nothing(worktree)
         # The map's path may begin with '-' (a directory may be named so);
@@ -957,8 +970,10 @@ class GitMapCache:
             raise MapCacheError(
                 "git is not installed, so a map repository cannot be cloned."
             ) from exc
-        except subprocess.TimeoutExpired as exc:
-            raise MapCacheError(f"git {args[0]} timed out.") from exc
+        except subprocess.TimeoutExpired:
+            # Not chained: the timeout's message is the whole command line,
+            # whose URL may carry a token.
+            raise MapCacheError(f"git {args[0]} timed out.") from None
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "").strip()
             raise MapCacheError(
@@ -1072,6 +1087,28 @@ def _exact_tip(listing: str, ref: str) -> str:
         if direct:
             return direct
     return ""
+
+
+def _sparse_pattern(path: str) -> str:
+    """The sparse-checkout pattern that checks the directory *path* out.
+
+    Anchored at the repository root with a leading ``/``: a non-cone pattern
+    is a gitignore pattern, and one with no ``/`` but at its end
+    (``Town10HD_Opt``) matches that name at any depth, so a map's checkout
+    would bring every directory of the same name elsewhere in the tree.  The
+    characters a pattern reads as glob or escape (``\\``, ``*``, ``?``,
+    ``[``) are escaped, and so is a trailing space, which gitignore drops; a
+    leading ``!`` or ``#`` is harmless behind the ``/``.  The root is
+    :data:`_WHOLE_TREE`.
+    """
+    if not path:
+        return _WHOLE_TREE
+    escaped = "".join(
+        f"\\{character}" if character in "\\*?[" else character for character in path
+    )
+    if escaped.endswith(" "):
+        escaped = escaped[:-1] + "\\ "
+    return "/" + escaped
 
 
 def _git_error_line(detail: str) -> str:
@@ -1267,20 +1304,24 @@ def _release_fork_guard() -> None:
 
 
 def _forget_locks() -> None:
-    """After a fork, in the child: let go of every lock file the parent holds.
+    """After a fork, in the child: let go of every lock the parent holds.
 
     The child shares each locked open file with the parent; closing its own
     descriptors leaves the parent the only holder, and its ``__exit__`` the
-    one that lets go.  The child's copy of the thread locks is not touched:
-    a child that resolves a map the parent was resolving at the fork waits
-    for a thread that does not exist in it, as any copied lock would.
+    one that lets go.  The thread locks are copied as they were, held by
+    threads that do not exist in the child, so the child starts with fresh
+    ones: without that, a child resolving a map the parent was resolving at
+    the fork would wait for ever.
     """
+    global _ENTRY_LOCKS_GUARD
     for fd in list(_HELD_LOCK_FDS):
         try:
             os.close(fd)
         except OSError:
             pass
     _HELD_LOCK_FDS.clear()
+    _ENTRY_LOCKS.clear()
+    _ENTRY_LOCKS_GUARD = threading.Lock()
     _FORK_GUARD.release()
 
 

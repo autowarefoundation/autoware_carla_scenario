@@ -846,8 +846,9 @@ class TestOneEntryManyMaps:
         ``list_maps`` leaves the entry cloned with nothing checked out, which
         is where every process used to run ``sparse-checkout set`` with its
         own directory and so delete the others'.  An entry an older version
-        listed is not a sparse checkout yet, so one of them still runs
-        ``set``: the entry's lock is what keeps the others after it.
+        listed is not a sparse checkout yet, so the first of them makes it one
+        (an empty one, never ``set`` with its directory): the entry's lock is
+        what keeps the others after it.
         """
         names = [chr(ord("A") + index) for index in range(12)]
         repo = tmp_path / "many"
@@ -3512,3 +3513,133 @@ class TestReviewFollowUps:
         assert repr(MapSource.parse("https://example.com/o/r")) == (
             "MapSource(repo_url='https://example.com/o/r', ref='', path='')"
         )
+
+
+class TestSecondReviewFollowUps:
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork()")
+    def test_a_child_forked_while_a_thread_holds_an_entry_can_take_it(
+        self, tmp_path: Path
+    ) -> None:
+        import signal
+        import threading
+        import warnings
+
+        from autoware_carla_scenario.maps.cache import _EntryLock
+
+        entry = tmp_path / ".repos" / "entry"
+        held, done = threading.Event(), threading.Event()
+
+        def _hold() -> None:
+            with _EntryLock(entry):
+                held.set()
+                done.wait(30)
+
+        thread = threading.Thread(target=_hold)
+        thread.start()
+        try:
+            assert held.wait(30)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                child = os.fork()
+            if child == 0:  # pragma: no cover -- the child
+                # Killed by the alarm if it waits on the parent's thread.
+                signal.alarm(10)
+                with _EntryLock(entry):
+                    pass
+                os._exit(0)
+            # The parent's thread lets go, as the repro's does; the child then
+            # takes the lock file after it, and its own fresh thread lock.
+            done.set()
+            _, status = os.waitpid(child, 0)
+        finally:
+            done.set()
+            thread.join(30)
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+
+    def test_a_timed_out_git_does_not_chain_its_command_line(
+        self, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import traceback
+
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        url = "https://oauth2:TOKEN@example.invalid/o/r"
+
+        def _hang(args: list[str], **kwargs: Any) -> Any:
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout") or 1.0)
+
+        monkeypatch.setattr(cache_module.subprocess, "run", _hang)
+        with pytest.raises(MapCacheError, match="timed out") as caught:
+            cache._git(None, "ls-remote", "--", url, "main")
+        assert caught.value.__cause__ is None
+        assert caught.value.__suppress_context__
+        shown = "".join(traceback.format_exception(caught.value))
+        assert "TOKEN" not in shown
+
+    def test_a_linked_worktree_does_not_stop_a_sparse_checkout(
+        self, origin_repo: Path, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        _git(origin_repo, "worktree", "add", "--quiet", str(tmp_path / "linked"))
+        cache._sparse_nothing(origin_repo)
+        value = subprocess.run(
+            ["git", "config", "--bool", "core.sparseCheckout"],
+            cwd=str(origin_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert value == "true"
+
+    def test_a_directory_does_not_bring_its_namesakes_deeper_down(
+        self, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        repo = tmp_path / "nested"
+        for directory in ("TownA", "archive/TownA", "maps/TownA"):
+            (repo / directory).mkdir(parents=True)
+            (repo / directory / "lanelet2_map.osm").write_text(_OSM)
+        _git(repo, "init", "--quiet", "--initial-branch", "main", ".")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--quiet", "-m", "Namesakes")
+
+        resolved = resolve_map(_uri(repo, "TownA"), cache=cache)
+        worktree = resolved.directory.parent
+        assert resolved.lanelet2_path.read_text() == _OSM
+        assert not (worktree / "archive").exists()
+        assert not (worktree / "maps").exists()
+
+    def test_an_entry_with_unanchored_patterns_still_grows(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """What an older version wrote is kept, and added to."""
+        town_a = resolve_map(_uri(origin_repo, "autoware_maps/TownA"), cache=cache)
+        listed = cache.peek(MapSource.parse(_uri(origin_repo, ref=town_a.commit)))
+        assert listed is not None
+        patterns = listed.worktree / ".git" / "info" / "sparse-checkout"
+        assert patterns.read_text().split() == ["/autoware_maps/TownA"]
+        patterns.write_text("autoware_maps/TownA\n")
+
+        town_b = resolve_map(_uri(origin_repo, "autoware_maps/TownB"), cache=cache)
+        assert town_a.lanelet2_path.read_text() == _OSM
+        assert town_b.lanelet2_path.read_text() == _OSM
+        assert patterns.read_text().split() == [
+            "autoware_maps/TownA",
+            "/autoware_maps/TownB",
+        ]
+
+    @pytest.mark.parametrize(
+        ("path", "pattern"),
+        [
+            ("", "/*"),
+            ("Town10HD_Opt", "/Town10HD_Opt"),
+            ("maps/T", "/maps/T"),
+            ("!odd", "/!odd"),
+            ("#odd", "/#odd"),
+            ("a*b?c[d]", "/a\\*b\\?c\\[d]"),
+            ("back\\slash", "/back\\\\slash"),
+            ("trailing ", "/trailing\\ "),
+        ],
+    )
+    def test_sparse_pattern(self, path: str, pattern: str) -> None:
+        from autoware_carla_scenario.maps.cache import _sparse_pattern
+
+        assert _sparse_pattern(path) == pattern
