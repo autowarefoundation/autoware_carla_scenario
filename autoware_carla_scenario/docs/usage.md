@@ -46,7 +46,7 @@ Runs autonomous driving scenario tests in CARLA. Uses [Hydra](https://hydra.cc/)
 9. Executes the main tick loop, checking pass/fail conditions each tick
 10. Writes the results as JSON, and the run's trajectory log as it goes
 11. Resets the CARLA world (a map reload, or a soft reset with
-    `world_reset: soft`) right before each scenario after the first, so every
+    `server.world_reset=soft`) right before each scenario after the first, so every
     scenario starts on a clean world. After the last one, a server the run
     launched itself is stopped; one that was already running is reset once
     more and handed back asynchronous, as the first scenario found it (its
