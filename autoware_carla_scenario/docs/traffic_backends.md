@@ -590,6 +590,15 @@ without an import anywhere in this repository:
 my_simulator = "my_package:register"
 ```
 
+Registering a name that is already taken replaces it, which is how a package
+overrides a built-in backend (`traffic_manager`, `sumo`, ...). It is still
+reported: `load_traffic_backend_plugins()` logs a warning naming the entry point
+and the backend it overrides. Two installed packages that register the same name
+are reported as well, with a warning naming both entry points; the one loaded
+last wins. Entry points load sorted by distribution name (normalised, so
+`my-package` and `my_package` sort together) and then entry-point name, so which
+one that is does not depend on the environment.
+
 ### Answering manoeuvre intents
 
 A backend that can steer the vehicles it drives overrides the intent

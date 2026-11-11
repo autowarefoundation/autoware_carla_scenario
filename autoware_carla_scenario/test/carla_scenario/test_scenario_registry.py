@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import sys
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -192,6 +193,7 @@ class TestPluginReplacement:
             "importlib.metadata.entry_points", lambda *, group: [entry_point]
         )
         monkeypatch.setattr(registry, "_plugins_loaded", False)
+        monkeypatch.setattr(registry, "_PLUGIN_SCENARIOS", {})
         registry.load_scenario_plugins()
 
     @staticmethod
@@ -332,6 +334,643 @@ class TestPluginReplacement:
         warnings = [r for r in caplog.records if r.levelname == "WARNING"]
         assert len(warnings) == 1
         assert f"'{name}'" in warnings[0].getMessage()
+
+
+def _entry_point(name: str, register: Any, dist: str | None = None) -> Any:
+    """An entry point of the distribution *dist* that calls *register*."""
+    entry_point = MagicMock()
+    entry_point.name = name
+    entry_point.value = f"{name}:register"
+    entry_point.dist.name = dist or name
+    entry_point.load.return_value = register
+    return entry_point
+
+
+def _conf_dir(root: Path, name: str, configs: dict[str, str]) -> Path:
+    """A throwaway package config directory holding *configs*."""
+    conf_dir = root / name / "conf"
+    for relative, text in configs.items():
+        (conf_dir / relative).parent.mkdir(parents=True, exist_ok=True)
+        (conf_dir / relative).write_text(text)
+    return conf_dir
+
+
+def _isolate_conf_dirs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Keep the conf-dir registry and its index from outliving a test."""
+    import autoware_carla_scenario.examples.run  # noqa: F401, PLC0415
+    from autoware_carla_scenario import registry  # noqa: PLC0415
+
+    monkeypatch.setattr(registry, "_CONF_DIRS", list(registry._CONF_DIRS))
+    monkeypatch.setattr(registry, "_CONFIG_INDEX", dict(registry._CONFIG_INDEX))
+    monkeypatch.setattr(registry, "_INDEXED_DIRS", list(registry._INDEXED_DIRS))
+    monkeypatch.setattr(registry, "_DIR_CONFIG_PATHS", dict(registry._DIR_CONFIG_PATHS))
+
+
+class TestPluginCollisions:
+    """Two packages that provide the same scenario (#2034)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Keep every registration a test makes from outliving it.
+
+        The runner is imported first: importing it registers the built-ins,
+        which must land in the real tables, not in this test's copies.
+        """
+        import autoware_carla_scenario.examples.run  # noqa: F401, PLC0415
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        for table in (
+            "_SCENARIO_REGISTRY",
+            "_SCENARIO_CLASSES",
+            "_SCENARIO_DOCUMENTS",
+            "_BUILTIN_SCENARIOS",
+        ):
+            monkeypatch.setattr(registry, table, dict(getattr(registry, table)))
+        monkeypatch.setattr(registry, "_PLUGIN_SCENARIOS", {})
+        _isolate_conf_dirs(monkeypatch)
+
+    @staticmethod
+    def _load(monkeypatch: pytest.MonkeyPatch, entry_points: list[Any]) -> None:
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        monkeypatch.setattr(
+            "importlib.metadata.entry_points", lambda *, group: list(entry_points)
+        )
+        monkeypatch.setattr(registry, "_plugins_loaded", False)
+        registry.load_scenario_plugins()
+
+    @staticmethod
+    def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+        return [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+
+    @staticmethod
+    def _packages(
+        tmp_path: Path, fail_b: bool = False
+    ) -> tuple[Any, Any, type, type, Path, Path]:
+        """Packages ``pkga`` and ``pkgb``, both providing scenario ``dup``.
+
+        ``pkgb`` also provides ``b_only``, and a config only it ships that
+        names ``dup``.
+        """
+        from autoware_carla_scenario import (  # noqa: PLC0415
+            register_conf_dir,
+            register_scenario,
+        )
+
+        class _ScenarioA(_DummyScenario):
+            pass
+
+        class _ScenarioB(_DummyScenario):
+            pass
+
+        conf_a = _conf_dir(
+            tmp_path, "pkga", {"scenario/dup/default.yaml": "name: dup\nfrom_a: 42\n"}
+        )
+        conf_b = _conf_dir(
+            tmp_path,
+            "pkgb",
+            {
+                "scenario/dup/default.yaml": "name: dup\nfrom_b: 7\n",
+                "scenario/dup/b_only.yaml": "name: dup\nfrom_b: 1\n",
+            },
+        )
+
+        def register_a() -> None:
+            register_scenario("dup", _ScenarioA, _DummyConfig)
+            register_conf_dir(conf_a)
+
+        def register_b() -> None:
+            register_scenario("b_only", _ScenarioB, _DummyConfig)
+            register_conf_dir(conf_b)
+            register_scenario("dup", _ScenarioB, _DummyConfig)
+            if fail_b:
+                raise RuntimeError("boom")
+
+        return (
+            _entry_point("pkga", register_a, dist="plugtest-a"),
+            _entry_point("pkgb", register_b, dist="plugtest_b"),
+            _ScenarioA,
+            _ScenarioB,
+            conf_a.resolve(),
+            conf_b.resolve(),
+        )
+
+    @pytest.mark.parametrize("reverse", [False, True])
+    @pytest.mark.parametrize("fail_b", [False, True])
+    def test_the_later_package_is_refused_as_a_whole(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+        reverse: bool,
+        fail_b: bool,
+    ) -> None:
+        """Whatever order the environment lists them in, even if it raised."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        first, second, scenario_a, _, conf_a, conf_b = self._packages(
+            tmp_path, fail_b=fail_b
+        )
+        listed = [second, first] if reverse else [first, second]
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(monkeypatch, listed)
+
+        assert registry.get_scenario_classes("dup") == (scenario_a, _DummyConfig)
+        # Everything pkgb registered here is gone: its other scenario and its
+        # conf dir, so no config of its own reaches Hydra.
+        assert registry.get_scenario_builder("b_only") is None
+        assert conf_a in registry.get_conf_dirs()
+        assert conf_b not in registry.get_conf_dirs()
+
+        warnings = self._warnings(caplog)
+        refusal = next(w for w in warnings if "was not loaded" in w)
+        assert "'pkgb' (pkgb:register) was not loaded" in refusal
+        assert "'dup' from 'pkga' (pkga:register)" in refusal
+        assert "traffic backends" in refusal
+
+    def test_the_composed_config_and_the_class_agree(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        tmp_path: Path,
+    ) -> None:
+        """End to end through Hydra's search path (the issue's reproduction)."""
+        from hydra.errors import MissingConfigException  # noqa: PLC0415
+
+        import autoware_carla_scenario.examples.run as run  # noqa: PLC0415
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        first, second, scenario_a, _, _, _ = self._packages(tmp_path)
+        self._load(monkeypatch, [second, first])
+        cfg = run._compose_config("dup/default", [])
+        assert cfg.scenario.name == "dup"
+        assert cfg.scenario.from_a == 42
+        assert "from_b" not in cfg.scenario
+        assert registry.get_scenario_classes("dup") == (scenario_a, _DummyConfig)
+        # The refused package's own config cannot be selected at all.
+        with pytest.raises(MissingConfigException):
+            run._compose_config("dup/b_only", [])
+
+    def test_the_first_document_is_kept(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """A declarative scenario keeps the document of the package that won."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        builder_a = MagicMock()
+        builder_b = MagicMock()
+        document_a = MagicMock()
+
+        def register_a() -> None:
+            registry.register_scenario_builder("decl", builder_a)
+            registry.register_scenario_document("decl", lambda: document_a)
+
+        def register_b() -> None:
+            registry.register_scenario_builder("decl", builder_b)
+            registry.register_scenario_document("decl", MagicMock)
+
+        self._load(
+            monkeypatch,
+            [_entry_point("b_pkg", register_b), _entry_point("a_pkg", register_a)],
+        )
+        assert registry.get_scenario_builder("decl") is builder_a
+        assert registry.get_scenario_document("decl") is document_a
+
+    def test_a_document_alone_for_another_plugins_name_is_refused(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        builder_a = MagicMock()
+
+        def register_b() -> None:
+            registry.register_scenario_document("decl", MagicMock)
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                [
+                    _entry_point(
+                        "a_pkg",
+                        lambda: registry.register_scenario_builder("decl", builder_a),
+                    ),
+                    _entry_point("b_pkg", register_b),
+                ],
+            )
+        assert registry.get_scenario_builder("decl") is builder_a
+        assert registry.get_scenario_document("decl") is None
+        (message,) = self._warnings(caplog)
+        assert "'b_pkg' (b_pkg:register) was not loaded" in message
+
+    def test_a_package_registered_twice_with_a_document_is_quiet(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """A new loader closure per ``register()`` is still the same document."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        builder = MagicMock()
+        document = MagicMock()
+
+        def register() -> None:
+            registry.register_scenario_builder("decl", builder)
+            registry.register_scenario_document("decl", lambda: document)
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                [_entry_point("pkg", register), _entry_point("pkg", register)],
+            )
+        assert not self._warnings(caplog)
+
+    def test_a_plugin_replacing_a_built_in_still_replaces_it(
+        self, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        """#1802's behaviour: a name registered before the plugins is taken."""
+        import autoware_carla_scenario.examples.run  # noqa: F401, PLC0415
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                [
+                    _entry_point(
+                        "my_pkg",
+                        lambda: registry.register_scenario(
+                            "lane_change", _DummyScenario, _DummyConfig
+                        ),
+                    )
+                ],
+            )
+        assert registry.get_scenario_classes("lane_change") == (
+            _DummyScenario,
+            _DummyConfig,
+        )
+        (message,) = self._warnings(caplog)
+        # The text says which config is used: the framework's, not the plugin's.
+        assert "Hydra still composes" in message
+        assert "framework's conf directory" in message
+        assert "gets the plugin's" not in message
+
+    @staticmethod
+    def _before_the_runner(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> str:
+        """A process that has not imported ``examples.run``.
+
+        Empties the registry, and writes a module ``fake_run_<n>`` that, like
+        ``examples.run``, registers the framework's conf dir and a built-in
+        scenario ``fake_builtin`` when it is imported; returns its name.
+        """
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        for table in (
+            "_SCENARIO_REGISTRY",
+            "_SCENARIO_CLASSES",
+            "_SCENARIO_DOCUMENTS",
+            "_BUILTIN_SCENARIOS",
+        ):
+            monkeypatch.setattr(registry, table, {})
+        monkeypatch.setattr(registry, "_CONF_DIRS", [])
+        module = f"fake_run_{tmp_path.name.replace('-', '_')}"
+        (tmp_path / f"{module}.py").write_text(
+            "from autoware_carla_scenario import registry\n"
+            "class Scenario: pass\n"
+            "class Config: pass\n"
+            "registry.register_conf_dir(registry._FRAMEWORK_CONF_DIR)\n"
+            "registry._register_builtin_scenario('fake_builtin', Scenario, Config)\n"
+        )
+        monkeypatch.syspath_prepend(str(tmp_path))
+        monkeypatch.delitem(sys.modules, module, raising=False)
+        return module
+
+    def test_a_refused_plugin_keeps_the_built_ins_its_import_registered(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        """Only what the plugin registered itself is undone."""
+        import importlib  # noqa: PLC0415
+
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        module = self._before_the_runner(monkeypatch, tmp_path)
+        conf_b = _conf_dir(tmp_path, "pkgb", {"scenario/dup/b.yaml": "name: dup\n"})
+
+        def register_b() -> None:
+            importlib.import_module(module)  # e.g. examples.configs
+            registry.register_scenario("dup", _DummyScenario, _DummyConfig)
+            registry.register_conf_dir(conf_b)
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                [
+                    _entry_point(
+                        "pkga",
+                        lambda: registry.register_scenario_builder("dup", MagicMock()),
+                    ),
+                    _entry_point("pkgb", register_b),
+                ],
+            )
+        refused = "'pkgb' (pkgb:register) was not loaded"
+        assert any(refused in w for w in self._warnings(caplog))
+        fake = sys.modules[module]
+        assert registry.get_scenario_classes("fake_builtin") == (
+            fake.Scenario,
+            fake.Config,
+        )
+        assert registry.get_scenario_classes("dup") is None  # pkga's builder
+        assert registry._FRAMEWORK_CONF_DIR in registry.get_conf_dirs()
+        assert conf_b.resolve() not in registry.get_conf_dirs()
+
+    def test_the_framework_conf_dir_survives_a_refusal_that_registered_it(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        self._before_the_runner(monkeypatch, tmp_path)
+        real_register = registry.register_conf_dir
+        framework_first: list[bool] = []
+
+        def register_b() -> None:
+            # As if the walk had not registered it before (an older caller).
+            registry._CONF_DIRS.remove(registry._FRAMEWORK_CONF_DIR)
+            real_register(registry._FRAMEWORK_CONF_DIR)
+            registry.register_scenario("dup", _DummyScenario, _DummyConfig)
+
+        def register_a() -> None:
+            first = registry.get_conf_dirs()[:1]
+            framework_first.append(first == [registry._FRAMEWORK_CONF_DIR])
+            registry.register_scenario_builder("dup", MagicMock())
+
+        self._load(
+            monkeypatch,
+            [_entry_point("pkga", register_a), _entry_point("pkgb", register_b)],
+        )
+        # The walk registered the framework's conf dir before any plugin.
+        assert framework_first == [True]
+        assert registry.get_conf_dirs() == [registry._FRAMEWORK_CONF_DIR]
+
+    def test_a_winner_importing_the_built_ins_does_not_own_them(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        """A later plugin replacing that built-in replaces it (#1802)."""
+        import importlib  # noqa: PLC0415
+
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        module = self._before_the_runner(monkeypatch, tmp_path)
+
+        class _Replacement(_DummyScenario):
+            pass
+
+        def register_a() -> None:
+            importlib.import_module(module)
+            registry.register_scenario("dup", _DummyScenario, _DummyConfig)
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                [
+                    _entry_point("pkga", register_a),
+                    _entry_point(
+                        "pkgb",
+                        lambda: registry.register_scenario(
+                            "fake_builtin", _Replacement, _DummyConfig
+                        ),
+                    ),
+                ],
+            )
+        assert registry.get_scenario_classes("fake_builtin") == (
+            _Replacement,
+            _DummyConfig,
+        )
+        (message,) = self._warnings(caplog)
+        assert "'pkgb' (pkgb:register) replaced 'fake_builtin'" in message
+
+    def test_a_refused_plugin_that_replaced_a_built_in_its_import_registered(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """The built-in comes back: the runner will not register it again."""
+        import importlib  # noqa: PLC0415
+
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        module = self._before_the_runner(monkeypatch, tmp_path)
+
+        class _Replacement(_DummyScenario):
+            pass
+
+        def register_d() -> None:
+            importlib.import_module(module)
+            registry.register_scenario("fake_builtin", _Replacement, _DummyConfig)
+            registry.register_scenario("dup", _Replacement, _DummyConfig)
+
+        self._load(
+            monkeypatch,
+            [
+                _entry_point(
+                    "a_pkg",
+                    lambda: registry.register_scenario(
+                        "dup", _DummyScenario, _DummyConfig
+                    ),
+                ),
+                _entry_point("d_pkg", register_d),
+            ],
+        )
+        fake = sys.modules[module]
+        assert registry.get_scenario_classes("fake_builtin") == (
+            fake.Scenario,
+            fake.Config,
+        )
+        assert registry.get_scenario_builder("fake_builtin") is not None
+        assert registry.get_scenario_classes("dup") == (_DummyScenario, _DummyConfig)
+
+    def test_a_plugin_registering_a_built_in_before_importing_the_runner(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        """Its import does not overwrite the plugin, and the warning fires."""
+        import importlib  # noqa: PLC0415
+
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        module = self._before_the_runner(monkeypatch, tmp_path)
+
+        def register_e() -> None:
+            registry.register_scenario("fake_builtin", _DummyScenario, _DummyConfig)
+            importlib.import_module(module)
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(monkeypatch, [_entry_point("e_pkg", register_e)])
+        assert registry.get_scenario_classes("fake_builtin") == (
+            _DummyScenario,
+            _DummyConfig,
+        )
+        (message,) = self._warnings(caplog)
+        assert "'e_pkg' (e_pkg:register) replaced 'fake_builtin'" in message
+
+    def test_a_built_in_replaced_before_the_runner_is_imported(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+        tmp_path: Path,
+    ) -> None:
+        """Warned about then, and not silently undone by the import later."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        self._before_the_runner(monkeypatch, tmp_path)
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            self._load(
+                monkeypatch,
+                [
+                    _entry_point(
+                        "my_pkg",
+                        lambda: registry.register_scenario(
+                            "lane_change", _DummyScenario, _DummyConfig
+                        ),
+                    )
+                ],
+            )
+        (message,) = self._warnings(caplog)
+        assert "'my_pkg' (my_pkg:register) replaced 'lane_change'" in message
+
+        class _BuiltIn(_DummyScenario):
+            pass
+
+        # What importing examples.run now does.
+        registry._register_builtin_scenario("lane_change", _BuiltIn, _DummyConfig)
+        assert registry.get_scenario_classes("lane_change") == (
+            _DummyScenario,
+            _DummyConfig,
+        )
+        # A built-in no plugin took is registered as usual.
+        registry._register_builtin_scenario("cut_in", _BuiltIn, _DummyConfig)
+        assert registry.get_scenario_classes("cut_in") == (_BuiltIn, _DummyConfig)
+
+    def test_entry_points_load_sorted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """By normalised distribution name, then entry-point name."""
+        calls: list[str] = []
+        entry_points = [
+            _entry_point(name, lambda name=name: calls.append(name), dist=dist)
+            for name, dist in [
+                ("c", "Plugtest_C"),
+                ("a2", "plugtest-a"),
+                ("b", "plugtest.b"),
+                ("a1", "plugtest_a"),
+            ]
+        ]
+        self._load(monkeypatch, entry_points)
+        assert calls == ["a1", "a2", "b", "c"]
+
+
+class TestConfDirCollisions:
+    """A config path two directories provide is reported (#2034)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        _isolate_conf_dirs(monkeypatch)
+
+    @staticmethod
+    def _warnings(caplog: pytest.LogCaptureFixture) -> list[str]:
+        return [r.getMessage() for r in caplog.records if r.levelname == "WARNING"]
+
+    def test_a_config_only_shadow_of_a_built_in_path_warns(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        """Even before the framework's own directory is registered."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        conf = _conf_dir(
+            tmp_path,
+            "pkg",
+            {
+                "scenario/lane_change/left.yaml": "name: lane_change\n",
+                "scenario/mine/default.yaml": "name: mine\n",
+            },
+        )
+        registry._CONF_DIRS.clear()
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            registry.register_conf_dir(conf)
+        (message,) = self._warnings(caplog)
+        assert "scenario/lane_change/left.yaml" in message
+        assert "scenario/mine" not in message
+        assert f"already provided by {registry._FRAMEWORK_CONF_DIR}," in message
+        assert message.count(str(conf.resolve())) == 1
+
+    def test_other_groups_are_compared_too(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        first = _conf_dir(tmp_path, "one", {"map/my_map.yaml": "a: 1\n"})
+        second = _conf_dir(tmp_path, "two", {"map/my_map.yaml": "a: 2\n"})
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            registry.register_conf_dir(first)
+            assert not self._warnings(caplog)
+            registry.register_conf_dir(second)
+            registry.register_conf_dir(second)  # a no-op, and quiet
+        (message,) = self._warnings(caplog)
+        assert "map/my_map.yaml" in message
+        assert f"already provided by {first.resolve()}," in message
+
+    def test_an_unregistered_directory_shadows_nothing(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        first = _conf_dir(tmp_path, "one", {"map/my_map.yaml": "a: 1\n"})
+        second = _conf_dir(tmp_path, "two", {"map/my_map.yaml": "a: 2\n"})
+        registry.register_conf_dir(first)
+        registry.unregister_conf_dir(first)
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            registry.register_conf_dir(second)
+        assert not self._warnings(caplog)
+
+    def test_distinct_paths_are_quiet(
+        self, caplog: pytest.LogCaptureFixture, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
+            registry.register_conf_dir(registry._FRAMEWORK_CONF_DIR)
+            registry.register_conf_dir(
+                _conf_dir(tmp_path, "pkg", {"scenario/mine/a.yaml": "name: mine\n"})
+            )
+            registry.register_conf_dir(tmp_path / "missing")
+        assert not self._warnings(caplog)
+
+    def test_each_directory_is_scanned_once(
+        self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+    ) -> None:
+        """Registering a directory does not rescan the ones before it."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        monkeypatch.setattr(registry, "_CONF_DIRS", [])
+        monkeypatch.setattr(registry, "_CONFIG_INDEX", {})
+        monkeypatch.setattr(registry, "_INDEXED_DIRS", [])
+        monkeypatch.setattr(registry, "_DIR_CONFIG_PATHS", {})
+        scanned: list[Path] = []
+        scan = registry._config_paths
+
+        def counting(directory: Path) -> frozenset[str]:
+            scanned.append(directory)
+            return scan(directory)
+
+        monkeypatch.setattr(registry, "_config_paths", counting)
+        registry.register_conf_dir(registry._FRAMEWORK_CONF_DIR)
+        dirs = [
+            _conf_dir(tmp_path, f"pkg{i}", {f"scenario/s{i}/a.yaml": "{}\n"})
+            for i in range(20)
+        ]
+        for conf_dir in dirs:
+            registry.register_conf_dir(conf_dir)
+        # Unregistering one rebuilds the index from what was scanned.
+        registry.unregister_conf_dir(dirs[3])
+        registry.register_conf_dir(_conf_dir(tmp_path, "last", {"x/y.yaml": "{}\n"}))
+        assert len(scanned) == len(set(scanned)) == 22
+        assert registry._FRAMEWORK_CONF_DIR in scanned
 
 
 # ---------------------------------------------------------------------------

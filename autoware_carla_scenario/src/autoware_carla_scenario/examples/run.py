@@ -135,13 +135,13 @@ from autoware_carla_scenario.traffic import (
 )
 from autoware_carla_scenario.registry import (
     BuildScenarioFn,
+    _register_builtin_scenario,
     get_conf_dirs,
     get_scenario_builder,
     get_scenario_classes,
     get_scenario_registry,
     load_scenario_plugins,
     register_conf_dir,
-    register_scenario,
 )
 from autoware_carla_scenario.scenario_glob import resolve_scenario_glob, scenario_dirs
 from autoware_carla_scenario.scenario_runner import _run_file_stem
@@ -195,22 +195,25 @@ _CONF_DIR = Path(__file__).resolve().parent / "conf"
 register_conf_dir(_CONF_DIR)
 
 
-# Register built-in scenarios.
-register_scenario(
+# Register built-in scenarios.  As built-ins: a scenario plugin that replaced
+# one before this module was imported (the viewer and ``scenario-expand`` load
+# the plugins first) keeps it, and the plugin walk does not take a built-in an
+# import of this module registers for the importing plugin's own (#2034).
+_register_builtin_scenario(
     "intersection_passing", IntersectionPassingScenario, IntersectionPassingConfig
 )
-register_scenario(
+_register_builtin_scenario(
     "traffic_light_compliance",
     TrafficLightComplianceScenario,
     TrafficLightComplianceConfig,
 )
-register_scenario("lane_change", LaneChangeScenario, LaneChangeConfig)
-register_scenario("temporary_stop", TemporaryStopScenario, TemporaryStopConfig)
-register_scenario(
+_register_builtin_scenario("lane_change", LaneChangeScenario, LaneChangeConfig)
+_register_builtin_scenario("temporary_stop", TemporaryStopScenario, TemporaryStopConfig)
+_register_builtin_scenario(
     "pedestrian_dart_out", PedestrianDartOutScenario, PedestrianDartOutConfig
 )
-register_scenario("cut_in", CutInScenario, CutInConfig)
-register_scenario("adversity", AdversityScenario, AdversityConfig)
+_register_builtin_scenario("cut_in", CutInScenario, CutInConfig)
+_register_builtin_scenario("adversity", AdversityScenario, AdversityConfig)
 
 
 # ---------------------------------------------------------------------------
