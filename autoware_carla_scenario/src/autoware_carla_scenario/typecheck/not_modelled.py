@@ -631,7 +631,9 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "socket, so the library check does not compile it",
     ),
     "MapSource": _members(
-        "at directory name parse pinned repo_name uri with_path", _MAP_CACHE
+        "at directory name names_commit parse pinned redacted_uri repo_name uri "
+        "with_path",
+        _MAP_CACHE,
     ),
     "OddAttribute": {
         "probe": _PROBE,
