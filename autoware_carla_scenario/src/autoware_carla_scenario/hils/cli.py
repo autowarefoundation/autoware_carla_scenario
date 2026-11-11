@@ -6,6 +6,12 @@
     uvx --from 'autoware-carla-scenario[hils]' scenario-hils hils.yaml
     uvx --from 'autoware-carla-scenario[hils]' --with 'carla-canvas[client]>=0.2' \\
         scenario-hils hils.yaml          # with `canvas:` in hils.yaml
+    uvx --from 'autoware-carla-scenario[hils-setup]' scenario-hils --setup hils.yaml
+
+``--setup`` prepares the PC for the configuration's virtual devices first
+(vcan interfaces, v4l2loopback cameras: :mod:`.host_setup`), running hilspy's
+ansible playbooks with the variables it derives; ``--setup-vars`` prints those
+variables and runs nothing.
 
 It is meant to stay up on the HILS PC (a systemd service, say): it runs its
 ``startup`` steps, serves scenario runs one after another -- each one's
@@ -17,6 +23,7 @@ from __future__ import annotations
 
 import argparse
 import dataclasses
+import json
 import logging
 import signal
 import sys
@@ -73,6 +80,20 @@ def _parser() -> argparse.ArgumentParser:
         help="check the configuration, print what it runs, and exit",
     )
     parser.add_argument(
+        "--setup",
+        action="store_true",
+        help=(
+            "set this PC up for the configuration's virtual devices (vcan, "
+            "v4l2loopback) with hilspy's ansible playbooks, and exit; with "
+            "--check, show what would change"
+        ),
+    )
+    parser.add_argument(
+        "--setup-vars",
+        action="store_true",
+        help="print the playbooks --setup runs and their variables (JSON), and exit",
+    )
+    parser.add_argument(
         "--example", action="store_true", help="print an example configuration"
     )
     parser.add_argument(
@@ -112,6 +133,20 @@ def _describe(config: HilsConfig) -> str:
             lines.append(f"  {phase}:")
             lines.extend(f"    {step.describe()}" for step in steps)
     return "\n".join(lines)
+
+
+def _setup(config: HilsConfig, *, check: bool, only_vars: bool) -> int:
+    from .host_setup import HostSetupError, host_setup, run_host_setup  # noqa: PLC0415
+
+    try:
+        if only_vars:
+            runs = host_setup(config).playbooks()
+            print(json.dumps(dict(runs), indent=2))
+            return 0
+        return run_host_setup(config, check=check)
+    except HostSetupError as exc:
+        print(f"scenario-hils: --setup: {exc}", file=sys.stderr)
+        return 1
 
 
 def main(argv: Optional[List[str]] = None) -> int:
@@ -158,6 +193,8 @@ def main(argv: Optional[List[str]] = None) -> int:
     config = dataclasses.replace(
         config, **{k: v for k, v in overrides.items() if v is not None}
     )
+    if args.setup or args.setup_vars:
+        return _setup(config, check=args.check, only_vars=args.setup_vars)
     if args.check:
         print(_describe(config))
         return 0
