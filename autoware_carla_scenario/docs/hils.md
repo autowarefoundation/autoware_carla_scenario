@@ -108,6 +108,62 @@ uv run scenario ego.entity=hils hils.host=hils-pc
 | `stale_s` | `0.5` | a command older than this (wall clock) is stale |
 | `on_stale` | `brake` | `brake`, or `hold` the last command, once stale; before any command the ego brakes |
 
+### Setting up the HILS PC
+
+The virtual devices the bridge writes to must exist before it opens them: a
+`can://vcan0` device needs the interface `vcan0`, a `v4l2:///dev/video10`
+camera the v4l2loopback device `/dev/video10`. `--setup` creates them from the
+configuration: it derives the variables of
+[hilspy](https://github.com/hakuturu583/hilspy)'s ansible playbooks (shipped in
+the hilspy wheel, `hilspy/ansible/`, from hilspy 0.17) from the `devices`, and
+runs them on this PC through
+[ansible-runner](https://ansible.readthedocs.io/projects/runner/). They need a
+Debian or Ubuntu host and sudo (its password is asked for once, when needed),
+and are idempotent: run `--setup` again after editing the devices.
+
+```bash
+# What --setup would run, as JSON: each playbook and its variables.
+uvx --from 'autoware-carla-scenario[hils-setup]' scenario-hils hils.yaml --setup-vars
+
+# Show what would change (ansible --check --diff), change nothing.
+uvx --from 'autoware-carla-scenario[hils-setup]' scenario-hils hils.yaml --setup --check
+
+# Create the devices, now and at every boot.
+uvx --from 'autoware-carla-scenario[hils-setup]' scenario-hils hils.yaml --setup
+```
+
+| Device `url` | Playbook | Variables |
+| --- | --- | --- |
+| `can://vcanN` (`?fd`: CAN FD) | `vcan.yml` | `vcan_interfaces: [{name: vcanN, fd: ...}]`: the `vcan` module, the interface with the CAN FD MTU (72) or the classic one (16), kept by the systemd unit `hilspy-vcan.service`; an interface that two devices share is FD if one of them is; one no longer named is deleted |
+| `v4l2:///dev/videoN` | `v4l2loopback.yml` | `v4l2loopback_numbers: [N, ...]`, `v4l2loopback_labels: [<device name>, ...]` (cut to 31 bytes, `"` and `,` made `_`): GStreamer, v4l2loopback (DKMS) and its devices with `exclusive_caps`, and the user who ran it (`SUDO_USER`) in the `video` group |
+| anything else | -- | left alone, and listed as such: a CAN adapter (`can://can0`: its bitrate is the adapter's), the network of `udp://` and `tcp://` devices, a serial port |
+
+For the example configuration:
+
+```console
+$ scenario-hils hils.yaml --setup-vars
+{
+  "vcan.yml": {
+    "vcan_interfaces": [{"name": "vcan0", "fd": false}]
+  },
+  "v4l2loopback.yml": {
+    "v4l2loopback_numbers": [10],
+    "v4l2loopback_labels": ["front_camera"],
+    "v4l2loopback_exclusive_caps": true,
+    "hilspy_user": "hils",
+    "hilspy_build": false
+  }
+}
+```
+
+A `v4l2://` path that is not `/dev/videoN`, two cameras on one device, or a
+`vcan` name Linux does not take (at most 15 letters, digits, `_`, `.` or `-`)
+stops `--setup` with status 1 before anything runs. The cameras also need
+hilspy built with its `v4l2` feature, which the published wheels are not
+(hilspy's README, "Cameras"); `--setup` prepares the devices and GStreamer,
+not that build. With ansible of your own (another inventory, a fleet of HILS
+PCs), run the playbooks with the variables `--setup-vars` prints.
+
 ### Keeping it resident
 
 The bridge waits for a CARLA server that is not up yet, and for runs, for as

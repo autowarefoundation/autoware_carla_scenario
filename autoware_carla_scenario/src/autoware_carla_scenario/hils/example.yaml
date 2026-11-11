@@ -1,6 +1,10 @@
 # scenario-hils configuration (docs/hils.md).
 #
+#   uvx --from 'autoware-carla-scenario[hils-setup]' scenario-hils hils.yaml --setup
 #   uvx --from 'autoware-carla-scenario[hils]' scenario-hils hils.yaml
+#
+# --setup (once, and after editing the devices) creates the virtual devices
+# below on this PC -- vcan0, /dev/video10 -- with hilspy's ansible playbooks.
 #
 # The bridge stays up on the HILS PC. It is a CARLA client beside the scenario
 # runner: it follows the ego the runner spawns, streams it to the devices
