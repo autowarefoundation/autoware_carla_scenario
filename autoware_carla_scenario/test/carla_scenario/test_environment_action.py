@@ -461,6 +461,16 @@ class TestTireFriction:
         # What the action was given is unchanged.
         assert action.settings == {"precipitation": 100.0}
 
+    def test_stopping_the_rain_dries_the_road_at_once(self) -> None:
+        """#2063: as a config's ``precipitation: 0`` does (docs/odd.md)."""
+        world = _world_with(_Vehicle(1))
+        EnvironmentAction(precipitation=100.0).execute(world)
+        assert world.fleet[0].frictions == pytest.approx([3.5 * 0.56] * 4)
+        EnvironmentAction(precipitation=0.0).execute(world)
+        weather = world.set_weather.call_args[0][0]
+        assert (weather.wetness, weather.precipitation_deposits) == (0.0, 0.0)
+        assert world.fleet[0].frictions == pytest.approx([3.5] * 4)
+
     def test_rain_gives_the_grip_the_config_gives(self) -> None:
         """The same rain, set by the config or by an action, the same grip."""
         from omegaconf import OmegaConf

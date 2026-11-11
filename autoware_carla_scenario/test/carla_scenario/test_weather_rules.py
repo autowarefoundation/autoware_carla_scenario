@@ -1277,3 +1277,50 @@ class TestRoadWaterAtTheRunsConditions:
         assert world.get_weather.return_value.wetness == pytest.approx(
             self._configured()
         )
+
+
+def _wetness_by_night_file(path: Path) -> Path:
+    """A rule file whose wetness follows the rain, and is low by day."""
+    path.write_text(
+        "version: 3\nquantities:\n  carla_wetness:\n    combine: min\n"
+        "    parts:\n"
+        "      rain:\n        at: {carla_precipitation: [0, 100]}\n"
+        "        uniform:\n          low: [0, 95]\n          high: [0, 100]\n"
+        "      night:\n        at: {time_of_day: [day, night]}\n"
+        "        uniform:\n          low: [0, 90]\n          high: [0, 100]\n"
+    )
+    return path
+
+
+class TestRoadWaterAtTheRunsTimeOfDay:
+    """The config's time of day is recorded only as the sun it gives: an
+    action reads the time of day off the sun, as the grip does (#2063)."""
+
+    @pytest.fixture(autouse=True)
+    def _fresh(self, tmp_path) -> object:
+        from autoware_carla_scenario.actions.environment import (
+            forget_weather_conditions,
+        )
+
+        forget_weather_conditions()
+        use_weather_rules(str(_wetness_by_night_file(tmp_path / "night.yaml")))
+        yield
+        forget_weather_conditions()
+
+    def test_rain_at_night_gives_the_configs_water(self) -> None:
+        resolved = resolve_environment({"precipitation": 100.0, "time_of_day": "night"})
+        world = _world()
+        weather = world.get_weather.return_value
+        weather.sun_altitude_angle = float(resolved["sun_altitude_angle"])
+        weather.sun_azimuth_angle = float(resolved["sun_azimuth_angle"])
+        EnvironmentAction(precipitation=100.0).execute(world)
+        assert weather.wetness == pytest.approx(resolved["wetness"])
+        assert weather.wetness == pytest.approx(95.0)
+
+    def test_the_actions_own_sun_holds(self) -> None:
+        world = _world()  # The sun is up.
+        EnvironmentAction(precipitation=100.0).execute(world)
+        assert world.get_weather.return_value.wetness == pytest.approx(0.0)
+        world = _world()
+        EnvironmentAction(precipitation=100.0, sun_altitude_angle=-60.0).execute(world)
+        assert world.get_weather.return_value.wetness == pytest.approx(95.0)

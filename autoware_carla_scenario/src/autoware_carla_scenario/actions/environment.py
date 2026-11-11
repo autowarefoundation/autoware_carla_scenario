@@ -619,8 +619,9 @@ class EnvironmentAction(BaseAction):
     rain, at their median
     (:func:`~autoware_carla_scenario.weather_rules.road_water`, as a config's
     ``environment`` does before the run): the same rain leaves the same grip
-    however it is set (#2063).  A *wetness* or *precipitation_deposits* given
-    wins.  An action that sets the rain, the
+    however it is set (#2063), and stopping it (``precipitation=0``) dries
+    the road at once.  A *wetness* or *precipitation_deposits* given wins:
+    give them to keep the road wet after the rain.  An action that sets the rain, the
     ``wetness`` or the standing water, or names a tire friction, scales every
     vehicle's wheel friction to the share of the dry road's grip the
     resulting weather leaves (:func:`tire_friction`): *tire_friction* if
@@ -787,15 +788,20 @@ class EnvironmentAction(BaseAction):
             or "precipitation_deposits" in self._settings
         )
 
-    def _applied(self, world_id: int) -> dict[str, float]:
-        """The CARLA fields the action applies in the world *world_id*: its
-        settings, and the road's water the rules give the rain it sets where
-        it sets none
+    def _applied(
+        self, world_id: int, weather: "carla.WeatherParameters"
+    ) -> dict[str, float]:
+        """The CARLA fields the action applies in the world *world_id*, its
+        weather *weather* before it: its settings, and the road's water the
+        rules give the rain it sets where it sets none
         (:func:`~autoware_carla_scenario.weather_rules.road_water`).  Worked
         out when it runs, under the rules the run follows then, at the
         conditions the run is set to -- this action's, else the ones an
-        earlier action (the config's ``environment``) recorded -- as the
-        config's are worked out at its own."""
+        earlier action (the config's ``environment``) recorded, and the time
+        of day the sun renders once the action has set it (the config's
+        ``time_of_day`` is recorded only as the sun it gives; the grip reads
+        it so too, :func:`_weather_labels`) -- as the config's are worked out
+        at its own."""
         applied = dict(self._settings)
         if "precipitation" not in applied:
             return applied
@@ -815,6 +821,13 @@ class EnvironmentAction(BaseAction):
             labels["cloud_cover"] = sky
         elif world_id in _CLOUD_COVER:
             labels["cloud_cover"] = _CLOUD_COVER[world_id]
+        altitude = float(weather.sun_altitude_angle)
+        if "sun_altitude_angle" in applied:
+            altitude = applied["sun_altitude_angle"]
+        azimuth = float(weather.sun_azimuth_angle)
+        if "sun_azimuth_angle" in applied:
+            azimuth = applied["sun_azimuth_angle"]
+        labels["time_of_day"] = time_of_day_level(altitude, azimuth)
         for name, value in road_water(self._settings, conditions, labels).items():
             applied[name] = value
         return applied
@@ -858,7 +871,7 @@ class EnvironmentAction(BaseAction):
             return
 
         weather = world.get_weather()
-        applied = self._applied(world.id)
+        applied = self._applied(world.id, weather)
         if len(applied) > 0:
             for name, value in applied.items():
                 _set_weather_field(weather, name, value)

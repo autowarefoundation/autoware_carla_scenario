@@ -1155,8 +1155,17 @@ the config's `environment` does before the run: `precipitation=100` leaves a
 wetness of 97.5, standing water of 90 and a grip of 0.56 either way. Rules
 whose water reads a condition read the run's: the rainfall rate, fog
 visibility, wind speed or cloud cover the action names, else the one the run
-was set to (the config's `environment`, or an earlier action). A `wetness` or
+was set to (the config's `environment`, or an earlier action), and the time
+of day the sun renders once the action has set it. A `wetness` or
 `precipitation_deposits` the action gives wins.
+
+So stopping the rain dries the road at once: under the default rules,
+`EnvironmentAction(precipitation=0)` sets `wetness` and
+`precipitation_deposits` to 0 and the grip back to the dry road's, as a
+config's `precipitation: 0` does. CARLA does not let a road dry over time;
+a scenario whose road should stay wet after the rain gives the water
+itself, `EnvironmentAction(precipitation=0, wetness=60,
+precipitation_deposits=30)`.
 
 The grip is the one quantity the action reads off the rules, during the run:
 it may differ by vehicle ([Rules by vehicle](#weather-rules)), and a vehicle
