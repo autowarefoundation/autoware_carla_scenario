@@ -9,6 +9,7 @@ and the server end to end without needing a live Autoware stack or CARLA.
 from __future__ import annotations
 
 import math
+import time
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -146,7 +147,10 @@ def test_the_newest_turn_indicator_command_is_taken_once(
                 pb2.ReportTurnIndicatorsRequest(command=command),
                 timeout=_RPC_TIMEOUT_S,
             )
-    assert bridge.client_connected
+    # Autoware's control publishes the command before the AD API is up: it
+    # says nothing about whether the stack has reached the bridge (#2049).
+    assert not bridge.client_connected
+    assert bridge.seconds_since_mission_poll() is None
     assert bridge.take_turn_indicators() == 3
     assert bridge.take_turn_indicators() is None
 
@@ -217,6 +221,30 @@ def test_client_connected_once_the_client_calls(
     assert bridge.client_connected
 
 
+def test_readiness_is_contact_too(bridge: GrpcAutowareBridgeServer) -> None:
+    with _client(bridge) as stub:
+        stub.ReportReadiness(
+            pb2.ReportReadinessRequest(ready=False), timeout=_RPC_TIMEOUT_S
+        )
+    assert bridge.client_connected
+
+
+def test_the_time_since_the_last_mission_poll_is_kept(
+    bridge: GrpcAutowareBridgeServer,
+) -> None:
+    assert bridge.seconds_since_mission_poll() is None
+    with _client(bridge) as stub:
+        stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+        first = bridge.seconds_since_mission_poll()
+        assert first is not None and 0.0 <= first < _RPC_TIMEOUT_S
+        time.sleep(0.05)
+        quiet = bridge.seconds_since_mission_poll()
+        assert quiet is not None and quiet >= first + 0.05
+        stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+    again = bridge.seconds_since_mission_poll()
+    assert again is not None and again < quiet
+
+
 def test_client_address_is_the_bound_port(bridge: GrpcAutowareBridgeServer) -> None:
     assert bridge.client_address == f"localhost:{bridge.port}"
 
@@ -250,6 +278,7 @@ def test_a_closed_bridge_starts_afresh() -> None:
 
         assert not server.is_ready()
         assert not server.client_connected
+        assert server.seconds_since_mission_poll() is None
         with _client(server) as stub:
             response = stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
         assert not response.available

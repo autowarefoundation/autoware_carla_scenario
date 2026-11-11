@@ -6,8 +6,13 @@ Autoware's ROS 2 environment -- by the launcher, next to the stack it starts
 sequence through the AD API and exposes only a single readiness flag back to the
 scenario runner:
 
-1. poll ``GetMission`` until the scenario hands over an initial pose, a goal and
-   the waypoints on the way there;
+1. once Autoware's AD API is up -- the services the startup calls are
+   reachable and the mission planner has published a route state -- poll
+   ``GetMission`` until the scenario hands over an initial pose, a goal and
+   the waypoints on the way there.  Not before: the first ``GetMission`` is
+   how the scenario knows the stack is up (it paces the world to real time
+   until then, under ``boot_timeout_s``), and the node starts long before
+   the rest of the stack, beside ``ros2 launch``;
 2. initialize localization at the initial pose (``/api/localization/initialize``) --
    skipped when ``initialize_localization`` is False (ground-truth / E2E stacks);
 3. set the route through the waypoints to the goal
@@ -27,7 +32,9 @@ else part-way through the run (a ``RoutingAction`` in its tick loop) is served
 as a new ``mission_version``, and the node changes Autoware's route to it with
 ``/api/routing/change_route_points`` -- once the route is SET, retrying a
 rejected change on the next poll and giving up on that version, with an error
-in the log, after ``reroute_max_attempts`` rejections.  The initial pose of a
+in the log, after ``reroute_max_attempts`` rejections.  Those polls are also
+how the scenario knows the stack is alive (its ``liveness_timeout_s``), so
+they stop while the AD API is down.  The initial pose of a
 re-route is not used: localization is already running.  A re-route after the
 ego has reached its goal (the route ARRIVED, which neither routing service
 takes, and Autoware stopped) clears the route (``/api/routing/clear_route``),
@@ -72,6 +79,7 @@ from .ad_api import OPERATION_MODE_STATE_TOPIC
 from .ad_api import ROUTING_CHANGE_ROUTE_POINTS_SERVICE
 from .ad_api import ROUTING_CLEAR_ROUTE_SERVICE
 from .ad_api import ROUTING_SET_ROUTE_POINTS_SERVICE
+from .ad_api import ROUTE_STATE_UNKNOWN
 from .ad_api import ROUTING_STATE_TOPIC
 from .ad_api import ReadinessAggregator
 from .ad_api import check_enum_values
@@ -200,6 +208,8 @@ class ScenarioBridgeNode(Node):
         self._reroute_rejections = 0
         self._abandoned_version: Optional[int] = None
         self._route_watch_timer = None
+        # Whether the AD API was up at the last check, for logging its changes.
+        self._ad_api_was_up = False
 
         group = ReentrantCallbackGroup()
         self._callback_group = group
@@ -378,6 +388,8 @@ class ScenarioBridgeNode(Node):
         handing over to the slower route watch (:meth:`_watch_route`).
         """
         if self._mission is None:
+            if not self._ad_api_up():
+                return
             self._poll_mission()
             if self._mission is None:
                 return
@@ -429,6 +441,56 @@ class ScenarioBridgeNode(Node):
     # Mission acquisition
     # ------------------------------------------------------------------
 
+    def _ad_api_missing(self) -> list[str]:
+        """What of the AD API the startup needs is not up; empty once all of it is.
+
+        The services the startup calls (localization's only when it
+        initializes localization, the engage only when it engages), and a
+        route state from the mission planner: the AD API reports UNKNOWN, or
+        nothing, until the planner is up.
+        """
+        missing: list[str] = []
+        if self._init_localization and not self._init_cli.service_is_ready():
+            missing.append(LOCALIZATION_INITIALIZE_SERVICE)
+        if not self._route_cli.service_is_ready():
+            missing.append(ROUTING_SET_ROUTE_POINTS_SERVICE)
+        if self._auto_engage and not self._engage_cli.service_is_ready():
+            missing.append(OPERATION_MODE_CHANGE_TO_AUTONOMOUS_SERVICE)
+        if self._aggregator.route_state == ROUTE_STATE_UNKNOWN:
+            missing.append(f"{ROUTING_STATE_TOPIC} (no route state yet)")
+        return missing
+
+    def _ad_api_up(self) -> bool:
+        """Whether the AD API is up, so the node may ask for the mission.
+
+        ``GetMission`` is what tells the scenario the stack is up (and, once
+        it is ready, alive), so it is asked only while the AD API is: before
+        that the scenario keeps the world at about real time while Autoware
+        boots, and once it is driving the silence ends a run whose stack died.
+        Logs each change.
+        """
+        missing = self._ad_api_missing()
+        if not missing:
+            if not self._ad_api_was_up:
+                self._ad_api_was_up = True
+                self.get_logger().info(
+                    "Autoware's AD API is up; asking the scenario for the mission"
+                )
+            return True
+        if self._ad_api_was_up:
+            self._ad_api_was_up = False
+            self.get_logger().error(
+                "Autoware's AD API went away (" + ", ".join(missing) + "); "
+                "not asking the scenario for the mission until it is back"
+            )
+        else:
+            self.get_logger().info(
+                "Waiting for Autoware's AD API before asking the scenario for "
+                "the mission: " + ", ".join(missing),
+                throttle_duration_sec=10.0,
+            )
+        return False
+
     def _poll_mission(self) -> None:
         """Poll the scenario server once; store the mission when it is available."""
         try:
@@ -451,7 +513,11 @@ class ScenarioBridgeNode(Node):
 
         Runs on the route-watch timer, after readiness.  A failed poll is retried
         on the next one, and so is a change the AD API could not take yet.
+        Nothing is asked while the AD API is down: the scenario's liveness
+        check then sees the stack is gone.
         """
+        if not self._ad_api_up():
+            return
         try:
             mission = self._client.get_mission(timeout=self._mission_poll_timeout_s)
         except grpc.RpcError as error:

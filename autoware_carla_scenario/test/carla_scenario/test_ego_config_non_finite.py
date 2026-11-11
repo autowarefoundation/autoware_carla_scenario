@@ -9,6 +9,7 @@ value is refused when the config is built, naming its key.
 from __future__ import annotations
 
 import dataclasses
+import logging
 import math
 from pathlib import Path
 from typing import Any, Dict, List
@@ -64,6 +65,9 @@ def _composed(overrides: List[str]) -> Any:
         ("boot_tick_period_s", _NAN),
         ("boot_tick_period_s", _INF),
         ("boot_tick_period_s", -0.05),
+        ("liveness_timeout_s", _NAN),
+        ("liveness_timeout_s", _INF),
+        ("liveness_timeout_s", -1.0),
         ("base_link_offset_m", _NAN),
         ("base_link_offset_m", -_INF),
     ],
@@ -87,6 +91,22 @@ def test_the_autoware_bridge_config_keeps_every_valid_value() -> None:
     assert AutowareBridgeConfig(base_link_offset_m=-1.425).base_link_offset_m == -1.425
 
 
+def test_timeout_s_is_deprecated(caplog: pytest.LogCaptureFixture) -> None:
+    """It never had an effect (#2049): accepted, so a config that sets it still
+    runs, and said to be ignored, naming the node parameter that does it."""
+    logger = "autoware_carla_scenario.autoware_bridge.base"
+    with caplog.at_level(logging.WARNING, logger=logger):
+        AutowareBridgeConfig()
+        AutowareBridgeConfig(liveness_timeout_s=0.0)
+    assert caplog.records == []
+
+    with caplog.at_level(logging.WARNING, logger=logger):
+        AutowareBridgeConfig(timeout_s=10.0)
+    (record,) = caplog.records
+    assert "deprecated" in record.getMessage()
+    assert "rpc_timeout_s" in record.getMessage()
+
+
 @pytest.mark.parametrize(
     "override",
     [
@@ -95,6 +115,7 @@ def test_the_autoware_bridge_config_keeps_every_valid_value() -> None:
         "autoware.boot_timeout_s=inf",
         "+autoware.boot_tick_period_s=nan",
         "+autoware.timeout_s=nan",
+        "autoware.liveness_timeout_s=nan",
         "+autoware.base_link_offset_m=nan",
     ],
 )

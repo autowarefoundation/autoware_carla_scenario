@@ -144,9 +144,15 @@ What happens:
     output directory.
 3. **While the stack starts** (until `scenario_bridge` first reaches the
     bridge), the world ticks at about real time and the wait is measured in
-    wall-clock seconds, `autoware.boot_timeout_s`. Once it has reached the
-    bridge, localizing, routing and engaging is measured in ticks,
-    `autoware.ready_timeout_ticks`, as before.
+    wall-clock seconds, `autoware.boot_timeout_s`. The node starts beside
+    `ros2 launch`, long before the rest of Autoware, so it does not ask for
+    the mission -- which is what reaching the bridge means -- until the AD
+    API is up: the services it calls (`/api/routing/set_route_points`, and
+    `/api/localization/initialize` and
+    `/api/operation_mode/change_to_autonomous` when it calls them) are
+    reachable and the mission planner has published a route state. Once it
+    has reached the bridge, localizing, routing and engaging is measured in
+    ticks, `autoware.ready_timeout_ticks`, as before.
 4. **When the scenario ends**, however it ends, the stack is stopped (`SIGINT`
     to `ros2 launch`, through `docker run --init`) and its container removed
     with `docker rm --force` once it has stopped or `stop_timeout_s` has
@@ -163,11 +169,32 @@ on it is refused).
 A stack that exits during a scenario ends it: the result's message says
 `The Autoware stack exited with code <n>`.
 
+So does a stack that stops answering once it is driving, launched or not.
+`scenario_bridge` keeps asking for the mission every `route_watch_period_s`
+(1 s) while the AD API is up, and stops while it is down; once Autoware is
+ready, `autoware.liveness_timeout_s` (30 s) of silence ends the run with
+`The Autoware stack stopped answering the bridge: ...` rather than letting
+CARLA drive the ego on the last control Autoware gave it until the scenario
+times out. Like an exited stack, it is a `driver` failure. It is watched only
+once the node has asked after Autoware turned ready, so a node that stops
+asking then (`route_watch_period_s` of 0 or less) is not taken for a dead one;
+`autoware.liveness_timeout_s=0` turns it off. What it sees is the
+`scenario_bridge` node and the AD API behind it: an `autoware_carla_interface`
+that dies on its own, while `ros2 launch` keeps running, goes unnoticed.
+
 The `autoware` group holds the bridge's settings (`AutowareBridgeConfig`:
-`address`, `timeout_s`, `ready_timeout_ticks`, `boot_timeout_s`,
-`boot_tick_period_s`, `base_link_offset_m`) and `launcher`. Any other key is
-refused when the ego is built, with an error naming it: `+autoware.timout_s=30`
-fails the run rather than leaving the default timeout in place.
+`address`, `ready_timeout_ticks`, `boot_timeout_s`, `boot_tick_period_s`,
+`liveness_timeout_s`, `base_link_offset_m`) and `launcher`. Any other key is
+refused when the ego is built, with an error naming it:
+`+autoware.boot_timout_s=30` fails the run rather than leaving the default
+timeout in place.
+
+`timeout_s` is still accepted but deprecated: it never had an effect, and
+setting it only logs a warning. The `scenario_bridge` node's RPC timeouts are
+its own ROS parameters, `rpc_timeout_s` (5 s, `ReportReadiness`) and
+`mission_poll_timeout_s` (1 s, `GetMission` and `ReportTurnIndicators`): set
+them in `autoware.launcher.bridge_parameters`, or on the node you start
+yourself.
 
 `autoware.launcher` is checked the same way. It holds the keys of both launcher
 types at once (the shipped config does), and each type reads its own: `type`,
@@ -225,7 +252,7 @@ such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
 | `workspace_mount` | `null` | Where to mount the workspace instead of where the dev container does |
 | `build` | `auto` | `auto` / `always` / `never` |
 | `rosdep` | `true` | Also install the workspace's dependencies into the image the stack runs in. `true` or `false`, or one of their spellings as [the run's switches](usage.md#the-switches) take (`"false"`, `"off"`, `"no"`, `0` are false); anything else (`ture`, `2`) is refused, naming `autoware.launcher.rosdep` |
-| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, ... |
+| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, `rpc_timeout_s`, `mission_poll_timeout_s`, ... |
 | `colcon_args` | `[--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]` | Arguments to `colcon build` |
 | `launch` | (required) | `ros2 launch` package, file and `name:=value` arguments |
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |

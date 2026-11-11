@@ -20,6 +20,14 @@ initiates, the two RPCs are direction-inverted from a "framework pushes" model:
   when it changes; :meth:`take_turn_indicators` hands the newest to the entity,
   which lights the ego's indicators.
 
+The stack has reached the bridge (:attr:`client_connected`) once the client
+asks for the mission or reports its readiness, which the ``scenario_bridge``
+node does only once Autoware's AD API is up.  A turn-indicator report does not
+count: Autoware's control publishes the command whatever state the AD API is
+in.  When the client last asked for the mission is kept too
+(:meth:`seconds_since_mission_poll`), which is how a stack that stopped
+answering is told from one that is driving.
+
 The framework never imports ROS 2 / rclpy: all ROS 2 / Autoware AD API I/O lives
 on the client, inside the interface node.  This class only serves the mission and
 latches the reported readiness behind a lock, since the RPCs are handled on the
@@ -31,6 +39,7 @@ from __future__ import annotations
 
 import logging
 import threading
+import time
 from concurrent import futures
 from collections.abc import Sequence
 from typing import Optional, Tuple
@@ -131,6 +140,8 @@ class GrpcAutowareBridgeServer(AutowareBridge):
         self._mission_version: int = 0
         self._ready: bool = False
         self._contacted: bool = False
+        #: time.monotonic() of the newest GetMission; None before the first.
+        self._last_mission_poll: Optional[float] = None
         #: The newest turn-indicator command not yet taken.
         self._turn_indicators: Optional[int] = None
         self._closed: bool = False
@@ -167,6 +178,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
             self._mission = None
             self._ready = False
             self._contacted = False
+            self._last_mission_poll = None
             self._turn_indicators = None
         self._closed = False
         self._port = None
@@ -201,9 +213,20 @@ class GrpcAutowareBridgeServer(AutowareBridge):
 
     @property
     def client_connected(self) -> bool:
-        """Whether the interface node has called either RPC yet."""
+        """Whether the client has asked for the mission or reported readiness yet.
+
+        A turn-indicator report alone does not count (see the module docstring).
+        """
         with self._lock:
             return self._contacted
+
+    def seconds_since_mission_poll(self) -> Optional[float]:
+        """Seconds since the newest ``GetMission``; ``None`` before the first."""
+        with self._lock:
+            last = self._last_mission_poll
+        if last is None:
+            return None
+        return time.monotonic() - last
 
     @property
     def client_address(self) -> Optional[str]:
@@ -229,6 +252,7 @@ class GrpcAutowareBridgeServer(AutowareBridge):
             mission = self._mission
             version = self._mission_version
             self._contacted = True
+            self._last_mission_poll = time.monotonic()
         if mission is None:
             return pb2.GetMissionResponse(available=False)
         initial, goal, waypoints = mission
@@ -258,9 +282,12 @@ class GrpcAutowareBridgeServer(AutowareBridge):
             logger.info("Autoware reported ready via ReportReadiness")
 
     def _record_turn_indicators(self, command: int) -> None:
-        """Keep the newest turn-indicator command for the tick loop to take."""
+        """Keep the newest turn-indicator command for the tick loop to take.
+
+        Not contact (:attr:`client_connected`): Autoware's control publishes
+        the command before the AD API is up.
+        """
         with self._lock:
-            self._contacted = True
             self._turn_indicators = command
 
     # ------------------------------------------------------------------

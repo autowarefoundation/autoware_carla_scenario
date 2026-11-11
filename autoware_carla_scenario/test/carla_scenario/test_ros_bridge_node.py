@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import importlib
 import sys
+import time
 import types
 from types import SimpleNamespace
 from typing import Any, Callable, Iterator
@@ -27,8 +28,10 @@ from autoware_carla_scenario.autoware_bridge import (
     BridgePose,
     GrpcAutowareBridgeServer,
 )
+from autoware_carla_scenario.constants import EGO_ROLE_NAME
 from autoware_carla_scenario.autoware_bridge.ros_bridge.ad_api import (
     OPERATION_MODE_AUTONOMOUS,
+    ROUTE_STATE_UNKNOWN,
     ROUTE_STATE_ARRIVED,
     ROUTE_STATE_CHANGING,
     ROUTE_STATE_SET,
@@ -83,9 +86,11 @@ class _ServiceClient:
         self.srv_type = srv_type
         self.name = name
         self.calls: list[tuple[Any, _Future]] = []
+        #: What service_is_ready() says: whether the AD API serves it.
+        self.ready = True
 
     def service_is_ready(self) -> bool:
-        return True
+        return self.ready
 
     def call_async(self, request: Any) -> _Future:
         future = _Future()
@@ -348,8 +353,8 @@ def _operation_mode(mode: int, engaged: bool) -> SimpleNamespace:
 
 def _drive_to_ready(node: Any) -> None:
     """Route, engage and report ready, as Autoware would answer."""
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001 - AD API up
     node._tick()  # noqa: SLF001 - the mission
-    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
     _route_calls(node)[-1][1].answer(True)
     node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001
     node._on_operation_mode_state(_operation_mode(1, False))  # noqa: SLF001
@@ -378,9 +383,9 @@ def test_the_route_asked_for_passes_through_the_scenarios_waypoints(
 ) -> None:
     bridge.configure(_INITIAL, _GOAL, _WAYPOINTS)
     node = _node(node_module, bridge)
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001 - AD API up
 
     node._tick()  # noqa: SLF001
-    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
 
     ((request, _future),) = _route_calls(node)
     assert _xs(request) == ([30.0, 60.0], 90.0)
@@ -392,9 +397,9 @@ def test_a_mission_without_waypoints_asks_for_none(
 ) -> None:
     bridge.configure(_INITIAL, _GOAL)
     node = _node(node_module, bridge)
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001 - AD API up
 
     node._tick()  # noqa: SLF001
-    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
 
     ((request, _future),) = _route_calls(node)
     assert _xs(request) == ([], 90.0)
@@ -456,8 +461,8 @@ def test_no_route_change_before_readiness(
     """The startup routes whatever the mission is; only after it is a change a change."""
     bridge.configure(_INITIAL, _GOAL)
     node = _node(node_module, bridge)
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001 - AD API up
     node._tick()  # noqa: SLF001
-    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
     _route_calls(node)[-1][1].answer(True)
     node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001
 
@@ -572,3 +577,141 @@ def test_the_node_checks_every_route_state_it_relies_on(
     monkeypatch.setattr(node_module.rclpy, "init", _init)
     with pytest.raises(_Started):
         node_module.main()
+
+
+# ---------------------------------------------------------------------------
+# #2049: the mission is asked for only while the AD API is up
+# ---------------------------------------------------------------------------
+
+
+def _set_services_ready(node: Any, ready: bool) -> None:
+    for client in node.clients.values():
+        client.ready = ready
+
+
+def test_the_node_does_not_ask_for_the_mission_before_the_ad_api_is_up(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer
+) -> None:
+    """Started beside ros2 launch, the node would otherwise reach the bridge
+    seconds in, and the scenario would stop waiting for Autoware to boot."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, bridge)
+    _set_services_ready(node, False)
+
+    for _ in range(5):
+        node._tick()  # noqa: SLF001
+    assert not bridge.client_connected
+    assert bridge.seconds_since_mission_poll() is None
+    waiting = [m for _level, m in node.logger.records if "Waiting for" in m]
+    assert waiting and ROUTING_SET_ROUTE_POINTS_SERVICE in waiting[-1]
+
+    # The services are there, but the mission planner has not said a word.
+    _set_services_ready(node, True)
+    node._on_route_state(_route_state(ROUTE_STATE_UNKNOWN))  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+    assert not bridge.client_connected
+
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+    assert bridge.client_connected
+    assert len(_route_calls(node)) == 1
+
+
+def test_the_node_waits_only_for_the_services_it_calls(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer
+) -> None:
+    """Localizing outside the AD API, the node needs no localization service."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, bridge)
+    node.clients["/api/localization/initialize"].ready = False
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+
+    node._tick()  # noqa: SLF001
+
+    assert bridge.client_connected
+
+
+def test_the_node_stops_asking_while_the_ad_api_is_down(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer
+) -> None:
+    """Its silence is how the scenario knows the stack is gone."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, bridge)
+    _drive_to_ready(node)
+    _watch(node)
+    asked = bridge.seconds_since_mission_poll()
+    assert asked is not None
+
+    node.clients[ROUTING_SET_ROUTE_POINTS_SERVICE].ready = False
+    time.sleep(0.05)
+    _watch(node)
+    _watch(node)
+    silent = bridge.seconds_since_mission_poll()
+    assert silent is not None and silent >= asked + 0.05
+    errors = [m for level, m in node.logger.records if level == "error"]
+    assert len(errors) == 1 and "went away" in errors[0]
+
+    node.clients[ROUTING_SET_ROUTE_POINTS_SERVICE].ready = True
+    _watch(node)
+    back = bridge.seconds_since_mission_poll()
+    assert back is not None and back < silent
+
+
+def test_a_stack_whose_ad_api_is_not_up_stays_in_the_paced_boot_phase(
+    node_module: types.ModuleType, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The issue's probe, with the node: it polls from its first tick, but the
+    scenario keeps pacing the world under boot_timeout_s until the AD API is up,
+    and only then counts ready_timeout_ticks."""
+    from .test_autoware_ego_entity import (
+        _FakeActor,
+        _FakeLauncher,
+        _FakeWorld,
+        _launched_entity,
+        _place,
+    )
+
+    # Where the ego is in the map frame does not matter here: no map is loaded.
+    monkeypatch.setattr(
+        "autoware_carla_scenario.entity.bridged_ego.to_map_frame",
+        lambda _pose: _INITIAL,
+    )
+    bridge = GrpcAutowareBridgeServer(
+        AutowareBridgeConfig(address="localhost:0"), autostart=False
+    )
+    entity = _launched_entity(
+        bridge,
+        _FakeLauncher(),
+        ready_timeout_ticks=5,
+        boot_timeout_s=60.0,
+        boot_tick_period_s=0.01,
+    )
+    world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+    _place(entity, world)
+    node = None
+    try:
+        entity.on_scenario_start(world)
+        node = _node(node_module, bridge)
+        _set_services_ready(node, False)
+
+        started = time.monotonic()
+        for _ in range(20):
+            node._tick()  # noqa: SLF001
+            entity.on_tick(world, 0.0)
+        paced_s = time.monotonic() - started
+
+        assert not entity.termination_requested, entity.termination_reason
+        assert not bridge.client_connected
+        assert paced_s >= 20 * 0.01
+
+        _set_services_ready(node, True)
+        node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+        node._tick()  # noqa: SLF001
+        assert bridge.client_connected
+        for _ in range(5):
+            entity.on_tick(world, 0.0)
+        assert entity.termination_reason == "The Autoware stack not ready after 5 ticks"
+    finally:
+        if node is not None:
+            node.destroy_node()
+        entity.on_scenario_end(world)

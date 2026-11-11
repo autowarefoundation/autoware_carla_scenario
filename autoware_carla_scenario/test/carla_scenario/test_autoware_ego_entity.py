@@ -726,6 +726,117 @@ class TestLaunchedStack:
         assert entity.launcher is None
 
 
+# ---------------------------------------------------------------------------
+# #2049: a ready stack that stops asking for the mission ends the run
+# ---------------------------------------------------------------------------
+
+
+def _ready_entity(bridge: FakeAutowareBridge, **config_kwargs):
+    entity = _make_entity(bridge=bridge, **config_kwargs)
+    world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+    _place(entity, world)
+    _drive_to_ready(entity, world)
+    assert entity.is_initialized
+    return entity, world
+
+
+class TestLiveness:
+    def test_a_stack_that_goes_quiet_ends_the_run(self) -> None:
+        bridge = FakeAutowareBridge()
+        entity, world = _ready_entity(bridge, liveness_timeout_s=30.0)
+
+        bridge.mission_poll_age_s = 0.0  # asked after it turned ready
+        entity.on_tick(world, 0.0)
+        bridge.mission_poll_age_s = 29.0
+        entity.on_tick(world, 0.0)
+        assert not entity.termination_requested
+
+        bridge.mission_poll_age_s = 31.0
+        entity.on_tick(world, 0.0)
+
+        assert entity.termination_requested
+        reason = entity.termination_reason
+        assert reason is not None
+        assert reason.startswith("The Autoware stack stopped answering the bridge")
+        assert "31.0 s" in reason and "liveness_timeout_s=30.0" in reason
+
+    def test_a_stack_that_stops_asking_once_ready_is_not_watched(self) -> None:
+        """route_watch_period_s <= 0: the node's last poll was before it was ready."""
+        bridge = FakeAutowareBridge()
+        entity, world = _ready_entity(bridge, liveness_timeout_s=30.0)
+        bridge.mission_poll_age_s = 3600.0
+
+        with mock.patch("time.monotonic", return_value=time.monotonic() + 600.0):
+            entity.on_tick(world, 0.0)
+
+        assert not entity.termination_requested
+
+    def test_a_liveness_timeout_of_0_turns_it_off(self) -> None:
+        bridge = FakeAutowareBridge()
+        entity, world = _ready_entity(bridge, liveness_timeout_s=0.0)
+        bridge.mission_poll_age_s = 0.0
+        entity.on_tick(world, 0.0)
+        bridge.mission_poll_age_s = 3600.0
+        entity.on_tick(world, 0.0)
+
+        assert not entity.termination_requested
+
+    def test_a_bridge_that_cannot_tell_is_not_watched(self) -> None:
+        entity, world = _ready_entity(FakeAutowareBridge())
+        for _ in range(100):
+            entity.on_tick(world, 0.0)
+        assert not entity.termination_requested
+
+    def test_over_the_real_bridge(self) -> None:
+        import grpc
+
+        from autoware_carla_scenario.autoware_bridge import GrpcAutowareBridgeServer
+        from autoware_carla_scenario.autoware_bridge._proto import (
+            autoware_bridge_pb2 as pb2,
+            autoware_bridge_pb2_grpc as pb2_grpc,
+        )
+
+        config = AutowareBridgeConfig(address="localhost:0", liveness_timeout_s=30.0)
+        bridge = GrpcAutowareBridgeServer(config, autostart=False)
+        entity = AutowareEgoEntity(
+            config, bridge=bridge, initial_pose=_INITIAL, goal_pose=_GOAL
+        )
+        world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+        try:
+            entity.on_scenario_start(world)
+            assert bridge.client_address is not None
+            channel = grpc.insecure_channel(bridge.client_address)
+            try:
+                stub = pb2_grpc.AutowareBridgeStub(channel)
+                stub.GetMission(pb2.GetMissionRequest(), timeout=5.0)
+                stub.ReportReadiness(
+                    pb2.ReportReadinessRequest(ready=True), timeout=5.0
+                )
+                entity.on_tick(world, 0.0)
+                assert entity.is_initialized
+
+                # The poll before readiness does not count: not watched yet.
+                with mock.patch("time.monotonic", return_value=time.monotonic() + 60.0):
+                    entity.on_tick(world, 0.0)
+                assert not entity.termination_requested
+
+                stub.GetMission(pb2.GetMissionRequest(), timeout=5.0)
+                entity.on_tick(world, 0.0)
+                assert not entity.termination_requested
+            finally:
+                channel.close()
+
+            with mock.patch("time.monotonic", return_value=time.monotonic() + 31.0):
+                entity.on_tick(world, 0.0)
+
+            assert entity.termination_requested
+            assert entity.termination_reason is not None
+            assert "stopped answering the bridge" in entity.termination_reason
+        finally:
+            entity.on_scenario_end(world)
+
+
 _FAKE_AUTOWARE = """
 import os, sys, time
 import grpc

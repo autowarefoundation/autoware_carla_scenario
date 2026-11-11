@@ -181,6 +181,9 @@ autoware:
   ready_timeout_ticks: 1200
   # Wall-clock seconds a launched stack has to reach the bridge.
   boot_timeout_s: 300.0
+  # Wall-clock seconds a ready stack may go without asking for the mission
+  # before the run ends (its scenario_bridge node or AD API is gone); 0 is off.
+  liveness_timeout_s: 30.0
   # Who starts Autoware for each scenario, and removes it after:
   #   none    - someone else does, by hand, with the scenario_bridge node
   #             (docs/autoware.md)

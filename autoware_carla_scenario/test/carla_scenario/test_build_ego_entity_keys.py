@@ -54,6 +54,7 @@ def test_every_known_autoware_key_is_applied() -> None:
                 "autoware.address=localhost:50099",
                 "autoware.ready_timeout_ticks=600",
                 "autoware.boot_timeout_s=120",
+                "autoware.liveness_timeout_s=12",
                 "+autoware.timeout_s=30",
                 "+autoware.boot_tick_period_s=0.1",
                 "+autoware.base_link_offset_m=-1.4",
@@ -69,6 +70,7 @@ def test_every_known_autoware_key_is_applied() -> None:
         base_link_offset_m=-1.4,
         boot_timeout_s=120.0,
         boot_tick_period_s=0.1,
+        liveness_timeout_s=12.0,
     )
 
 
