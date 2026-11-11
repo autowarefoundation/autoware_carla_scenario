@@ -2301,6 +2301,39 @@ def test_a_sweeps_knob_for_a_measured_effect_replaces_the_control(
         assert "vehicle_ahead_gap" not in case.quantities
 
 
+def test_case_settings_drop_a_control_a_sweeps_knob_replaces(tmp_path: Path) -> None:
+    """case_settings files what the sampler draws: a control a sweep's knob
+    replaces is not filed as drawn, even when the knob writes another key."""
+    from autoware_carla_scenario.examples.run import _compose_config
+    from autoware_carla_scenario.odd import load_odd_binding
+    from autoware_carla_scenario.odd.sampler import case_settings, scenario_backend
+    from autoware_carla_scenario.sweeper.expand import scenario_controls
+
+    odd = load_odd_binding(_headway_binding(tmp_path))
+    (headway,) = odd.attributes
+    cfg = _compose_config("cut_in/left", [])
+    raw_knobs = {headway.name: {"key": "scenario.other_gap_m", "range": [5, 30]}}
+    written = case_settings(
+        odd,
+        controls_from_mapping(raw_knobs),
+        controls_from_mapping(scenario_controls(cfg)),
+        scenario_backend(scenario_rules(cfg)),
+    )
+    sampler, _ = sampler_from_config(
+        {"count": 4, "seed": 1, "knobs": raw_knobs},
+        odd=odd,
+        controls=scenario_controls(cfg),
+        rules=scenario_rules(cfg),
+    )
+
+    assert "scenario.npc_gap_m" not in written
+    assert written["scenario.other_gap_m"] == ("attribute", headway.name)
+    for case in sampler.sample(4):
+        drawn = {o.partition("=")[0] for o in case.overrides}
+        assert "scenario.npc_gap_m" not in drawn
+        assert set(written) <= drawn
+
+
 @pytest.mark.usefixtures("at_repo_root")
 def test_a_shipped_quantity_control_scenario_expands_with_an_odd_measuring_it(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
