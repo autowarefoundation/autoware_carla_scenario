@@ -561,3 +561,150 @@ def test_writes_to_descriptor_1_do_not_break_into_the_answers() -> None:
     assert answers == [{"ok": True, "op": "evaluate"}, {"ok": True, "op": "close"}]
     assert done.stderr.count("from C++ on descriptor 1") == 2
     assert done.stderr.count("from print()") == 2
+
+
+# ----------------------------------------------------------------------
+# Curved lanes
+# ----------------------------------------------------------------------
+
+
+Line = list[tuple[float, float]]
+Bends = dict[tuple[float, int], tuple[Evaluator, Line]]
+
+
+def _bend(radius: float, sign: int, heading: float = 0.3, n: int = 301) -> Line:
+    """The centre line of a lane bending left (*sign* +1) or right (-1) at
+    *radius* metres, a vertex every metre, from the origin heading *heading*."""
+    cx, cy = -sign * radius * math.sin(heading), sign * radius * math.cos(heading)
+    start = heading - sign * math.pi / 2
+    angles = [start + sign * s / radius for s in range(n)]
+    return [(cx + radius * math.cos(a), cy + radius * math.sin(a)) for a in angles]
+
+
+def _write_lane(path: Path, centre: Line) -> None:
+    """One 3.5 m lanelet around *centre*, as a CommonRoad scenario."""
+    import numpy as np
+    from commonroad.common.file_writer import CommonRoadFileWriter, OverwriteExistingFile
+    from commonroad.planning.planning_problem import PlanningProblemSet
+    from commonroad.scenario.lanelet import Lanelet, LaneletNetwork, LaneletType
+    from commonroad.scenario.scenario import Scenario, ScenarioID
+
+    c = np.asarray(centre)
+    d = np.gradient(c, axis=0)
+    d /= np.linalg.norm(d, axis=1)[:, None]
+    normal = np.stack([-d[:, 1], d[:, 0]], axis=1)
+    lanelet = Lanelet(c + 1.75 * normal, c, c - 1.75 * normal, 1, lanelet_type={LaneletType.URBAN})
+    network = LaneletNetwork()
+    network.add_lanelet(lanelet)
+    scenario = Scenario(0.1, ScenarioID(country_id="ZAM", map_name="Bend", map_id=1))
+    scenario.add_objects(network)
+    writer = CommonRoadFileWriter(scenario, PlanningProblemSet(), "test", "test", "test", set())
+    writer.write_to_file(str(path), OverwriteExistingFile.ALWAYS)
+
+
+def _on_line(centre: Line, at: float, speed: float, actor_id: int) -> Actor:
+    """A car on the centre line *at* vertices along it (a fraction is that far
+    into the segment), heading along that segment at *speed* m/s."""
+    i = int(at)
+    (ax, ay), (bx, by) = centre[i], centre[i + 1]
+    yaw = math.atan2(by - ay, bx - ax)
+    f = at - i
+    return Actor(
+        actor_id,
+        "car",
+        ax + f * (bx - ax),
+        ay + f * (by - ay),
+        yaw,
+        vx=speed * math.cos(yaw),
+        vy=speed * math.sin(yaw),
+        length=4.5,
+        width=1.8,
+    )
+
+
+@pytest.fixture(scope="module")
+def bends(tmp_path_factory: pytest.TempPathFactory) -> Bends:
+    made: Bends = {}
+    for radius in (100.0, 300.0):
+        for sign in (1, -1):
+            centre = _bend(radius, sign)
+            path = tmp_path_factory.mktemp("bend") / "bend.xml"
+            _write_lane(path, centre)
+            made[radius, sign] = Evaluator(str(path)), centre
+    return made
+
+
+@pytest.mark.parametrize(
+    ("radius", "sign", "into"),
+    [
+        # On a vertex, and inside a segment where CriMe's headings either
+        # side of the ego straddle 0 and its interpolation read ~2pi off:
+        # TTC 66.65 or inf, ALongReq and BTN 0, on the right bend at R=300;
+        # TTC inf or 4.22 on the left bend at R=100.
+        (300.0, -1, 0.0),
+        (300.0, -1, 0.5),
+        (300.0, -1, 0.75),
+        (300.0, 1, 0.0),
+        (300.0, 1, 0.5),
+        (100.0, -1, 0.75),
+        (100.0, 1, 0.0),
+        (100.0, 1, 0.6),
+        (100.0, 1, 0.75),
+    ],
+)
+def test_following_a_slower_car_round_a_bend(
+    bends: Bends,
+    radius: float,
+    sign: int,
+    into: float,
+) -> None:
+    """The lead 30 m ahead along the lane less how far the ego is into its
+    segment: on a gentle bend, nearly what the same gap reads on a straight."""
+    evaluator, centre = bends[radius, sign]
+    ego = _on_line(centre, 100 + into, 15.0, 1)
+    lead = _on_line(centre, 130, 5.0, 2)
+    keys = ["crime_ttc_s", "crime_a_long_req_mps2", "crime_btn"]
+    values, errors = evaluator.evaluate(ego, [lead], keys)
+    assert errors == {}
+    gap = 25.5 - into  # bumper to bumper, along the lane
+    assert values["crime_ttc_s"] == pytest.approx(gap / 10.0, abs=0.1)
+    assert values["crime_a_long_req_mps2"] == pytest.approx(-(10.0**2) / (2 * gap), abs=0.15)
+    assert values["crime_btn"] == pytest.approx(-values["crime_a_long_req_mps2"] / 11.5, abs=1e-3)
+    assert values["crime_btn"] > 0.1
+
+
+def test_a_lane_heading_is_read_across_zero() -> None:
+    """Two segments either side of heading 0, as CriMe stores them in
+    [0, 2pi): halfway between them is 0, not pi."""
+    from commonroad_metrics.evaluator import _lane_heading
+
+    path_length = [0.0, 1.0, 2.0]
+    orientation = [2 * math.pi - 0.002, 0.002, 0.006]
+    heading = _lane_heading(0.5, path_length, orientation)
+    assert math.cos(heading) == pytest.approx(1.0, abs=1e-9)
+    assert math.sin(heading) == pytest.approx(0.0, abs=1e-9)
+    assert _lane_heading(1.5, path_length, orientation) == pytest.approx(0.004)
+    # Off the ends the end headings hold.
+    assert _lane_heading(-1.0, path_length, orientation) == pytest.approx(2 * math.pi - 0.002)
+    assert _lane_heading(3.0, path_length, orientation) == pytest.approx(0.006)
+
+
+def test_a_lane_heading_of_exactly_zero_is_a_heading(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With the ego's lane turned exactly onto +x, CriMe reads its heading as
+    0.0: ALongReq still reads the closing lead rather than none."""
+    import commonroad_metrics.evaluator as evaluator_module
+
+    monkeypatch.setattr(evaluator_module, "_TILT", 0.0)
+    path = tmp_path / "long.xml"
+    path.write_text(_LONG_STRAIGHT)
+    evaluator = Evaluator(str(path), EvaluatorSettings(radius_m=100.0))
+    ego = Actor(1, "car", 200.0, 1.75, 0.0, vx=15.0)
+    lead = Actor(2, "car", 230.0, 1.75, 0.0, vx=5.0)
+    keys = ["crime_ttc_s", "crime_a_long_req_mps2", "crime_btn"]
+    values, errors = evaluator.evaluate(ego, [lead], keys)
+    assert errors == {}
+    assert values["crime_ttc_s"] == pytest.approx(2.55, abs=0.05)
+    assert values["crime_a_long_req_mps2"] == pytest.approx(-1.96, abs=0.05)
+    assert values["crime_btn"] > 0.1

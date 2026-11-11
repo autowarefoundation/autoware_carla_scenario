@@ -198,7 +198,7 @@ of the collisions.
 | `crime_btn` | ratio | The deceleration the ego needs not to hit the road user ahead over the most it can brake (11.5 m/s^2); above `1` braking alone no longer avoids it, `inf` when no braking avoids a contact within the prediction horizon (`horizon_s`, 3 s) (CriMe BTN) | max |
 | `crime_stn` | ratio | The lateral acceleration the ego needs to steer clear of a road user over the most it can steer (8 m/s^2); above `1` steering alone no longer avoids it (CriMe STN) | max |
 | `crime_ttr_s` | s | How long the ego can go on as it goes before no evasive manoeuvre -- braking, kick-down, steering left or right, each simulated -- avoids the collision (CriMe TTR); at or under WTTR; `inf` when it hits no one, `0` when none does even now. Evaluated every 0.5 s by default | min |
-| `crime_wttr_s` | s | How long the ego can go on as it goes before no way it can go is free of collisions to the end of the horizon, by CommonRoad-Reach's reachable set (CriMe WTTR); `inf` when it hits no one, `0` when no way is left even now | min |
+| `crime_wttr_s` | s | How long the ego can go on as it goes before no way it can go is free of collisions to the end of the horizon, by CommonRoad-Reach's reachable set (CriMe WTTR); `inf` when it hits no one, `0` when no way is left even now. Every road user is predicted in a straight line along its velocity, so on a bend it can read `inf` with a lead closing fast (see the straight-line predictions below) | min |
 | `reach_drivable_area_m2` | m^2 | The road the ego can still reach without a collision at the end of the horizon (CommonRoad-Reach); `0` when every way it can go meets a road user: a collision it can no longer avoid | min |
 | `reach_drivable_area_sum_m2` | m^2 | The same, summed over the horizon's steps (CriMe's DA) | min |
 
@@ -237,6 +237,11 @@ extra) converts the world's OpenDRIVE once per machine, cached under
 the map. A worker evaluates each frame moved to the ego and turned so the lane
 under it runs along +x: CriMe projects speeds onto a lane with the cosine of
 the lane's own heading, which is the speed along the lane only there. CriMe
+0.4 stores a lane's headings in [0, 2pi) and interpolates between them as
+plain numbers, so on a bend, where the headings either side of the ego
+straddle 0, it read a heading as much as 2pi off -- TTC `inf` and ALongReq
+`0` with a lead closing fast; the worker interpolates them unwrapped, for
+every CriMe measure that reads a lane's heading. CriMe
 0.4 also drops the sign of the other road user's velocity and acceleration
 along the lane, reading a braking lead as speeding up and a car coming the
 other way in the ego's lane as going its way; the worker reads TTC and
@@ -274,6 +279,18 @@ about 95 ms together, BTN and STN 170 ms more, the drivable area about 155 ms
 (over 2 s instead of 3, 45 ms), and WTTR about 110 ms on a frame with a
 collision ahead, next to nothing on one without. TTR simulates the ego's
 manoeuvres: about 2 s a frame with a collision ahead.
+
+The worker predicts every road user -- the ego's own trajectory too, though
+not its reachable set -- in a straight line along its velocity, each holding
+its acceleration until it stops; no prediction follows its lane. TTC, HW, THW
+and ALongReq (and BTN, ALatReq and STN) measure along the lane and follow a
+bend, but what is read from where the predictions meet does not: WTTR, the
+drivable area, TTCE and DCE. On a bend
+the two straight paths part sideways before the road users would touch: with
+the ego at 15 m/s 30 m behind a lead at 5 m/s round a 300 m bend, TTC is
+2.5 s but WTTR reads `inf` and DCE 0.7 m, where on a straight road WTTR is
+2.2 s and DCE `0`. A WTTR of `inf` on a curved road is not evidence that
+nothing closes in; watch TTC there.
 
 A slow metric is evaluated less often than every `period_s` (0.1 s): at its
 own period, `metric_periods_s`, by default 0.5 s for `crime_ttr_s`
