@@ -29,9 +29,11 @@ Tick ownership: the scenario framework remains the tick master; the interface
 node runs as a non-ticking, asynchronous I/O bridge (``sync_mode:=false``).
 
 Role name: the framework identifies the ego by
-:data:`~autoware_carla_scenario.constants.EGO_ROLE_NAME` (``"Ego"``).  Launch
-the interface node with ``ego_vehicle_role_name:=Ego`` so it looks for the
-actor this entity spawns under that name.
+:data:`~autoware_carla_scenario.constants.EGO_ROLE_NAME` (``"Ego"``), and spawns
+it as ``Ego`` -- or as ``ego`` with ``native_autoware_interface`` (below).
+Launch the interface node with the role name the ego is spawned with
+(``ego_vehicle_role_name:=Ego``, or ``ego_vehicle_role_name:=ego`` with
+``native_autoware_interface``) so it looks for the actor this entity spawns.
 
 CARLA's native Autoware interface: a CARLA 1.0 server started with ``-ros2``
 applies ``/control/command/control_cmd`` and publishes ``/vehicle/status/*``

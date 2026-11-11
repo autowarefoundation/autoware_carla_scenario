@@ -803,6 +803,37 @@ def _launcher_ros_domain_ids(settings: dict[str, Any]) -> tuple[int, ...]:
     return tuple(value)
 
 
+def _native_autoware_interface(cfg: DictConfig) -> bool:
+    """``ego.native_autoware_interface``, refused unless ``true`` or ``false``,
+    and refused ``true`` unless ``ego.entity`` is ``autoware``.
+
+    Only :class:`~autoware_carla_scenario.AutowareEgoEntity` spawns its ego
+    for CARLA's native Autoware interface (``ros2_autoware_control=true``,
+    role name ``ego``).  ``true`` with another entity is refused rather than
+    ignored with a warning: the run it would start is not the one asked for --
+    the ego would not be served by the server -- and a refusal before CARLA
+    starts costs one edit of the config, where a warning is easily lost in a
+    batch's logs.
+
+    Raises:
+        ValueError: naming ``ego.native_autoware_interface``.
+    """
+    ego_cfg = cfg.get("ego") or {}
+    native = ego_cfg.get("native_autoware_interface", False)
+    if not isinstance(native, bool):
+        raise ValueError(
+            f"ego.native_autoware_interface must be true or false, got {native!r}"
+        )
+    entity = str(ego_cfg.get("entity", "autopilot"))
+    if native and entity != "autoware":
+        raise ValueError(
+            "ego.native_autoware_interface=true needs ego.entity=autoware "
+            f"(got ego.entity={entity}): only the Autoware ego is spawned for "
+            "CARLA's native Autoware interface"
+        )
+    return native
+
+
 def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     """Build the ego entity selected by ``cfg.ego.entity``.
 
@@ -814,10 +845,13 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     Raises:
         ValueError: If ``cfg.ego.entity`` names an unknown entity, or a setting
             of the entity's group is out of range (a NaN timeout, say) or not
-            one the group defines (``autoware.timout_s``), naming the key.
+            one the group defines (``autoware.timout_s``), naming the key, or
+            ``ego.native_autoware_interface`` is refused
+            (:func:`_native_autoware_interface`).
     """
     ego_cfg = cfg.get("ego") or {}
     entity = str(ego_cfg.get("entity", "autopilot"))
+    native = _native_autoware_interface(cfg)
 
     if entity == "autopilot":
         return None
@@ -863,12 +897,6 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         # one runs, and two bridges cannot hold the same address at once.  The
         # entity starts this one when its own scenario starts.
         scenario_cfg = cfg.get("scenario") or {}
-        native = ego_cfg.get("native_autoware_interface", False)
-        if not isinstance(native, bool):
-            raise ValueError(
-                "ego.native_autoware_interface must be true or false, "
-                f"got {native!r}"
-            )
         return AutowareEgoEntity(
             bridge_cfg,
             bridge=GrpcAutowareBridgeServer(bridge_cfg, autostart=False),
@@ -2322,7 +2350,8 @@ def check_batch_configs(
     class refuses (:func:`_check_scenario_config`), the ego's and entities'
     numbers (``ego.initial_speed_kmh``, the spawn and goal poses,
     ``entity.spawn_retry_*_step`` and ``entity.spawn_retry_max_count``:
-    :func:`_check_ego_numbers`), ``odd_case``
+    :func:`_check_ego_numbers`), ``ego.native_autoware_interface``
+    (:func:`_native_autoware_interface`), ``odd_case``
     and ``metrics.heavy`` (:func:`metrics_heavy`); and the server, traffic and Autoware launcher settings its
     queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
     each distinct set of them.  A batch is refused for these before any
@@ -2367,6 +2396,7 @@ def check_batch_configs(
             _odd_case(cfg)
             build_ground_projection(cfg)
             _check_ego_numbers(cfg)
+            _native_autoware_interface(cfg)
             # Every case's, though apply_metrics reads only the first set.
             metrics_heavy(cfg)
             # Once a distinct setting: a sweep's cases mostly share them.  The

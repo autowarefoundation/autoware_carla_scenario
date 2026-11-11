@@ -317,11 +317,17 @@ class BridgeHandshake:
         Raises:
             ValueError: If the goal pose is missing.
         """
+        # The role name the actor really has: ``ego`` for CARLA's native
+        # Autoware interface, ``Ego`` otherwise.
+        attributes = actor.attributes
+        role_name = str(EGO_ROLE_NAME)
+        if "role_name" in attributes:
+            role_name = str(attributes["role_name"])
         logger.info(
             "The %s stack is to attach to the ego: id=%d role_name=%s",
             self._stack_name,
             actor.id,
-            EGO_ROLE_NAME,
+            role_name,
         )
         self._configured = False
         self._ready = False
