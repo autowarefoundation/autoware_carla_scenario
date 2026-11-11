@@ -329,6 +329,15 @@ Three role names are in play, and they are not the same:
 | The framework, spawning the ego | `ego` with the setting, `Ego` without |
 | The framework, looking the ego up | `Ego`, `ego` or `hero`, all read as `Ego` |
 
+Since those names all mean the ego, no other entity may take one. A
+`VehicleEntityConfig`, `MotorcycleEntityConfig`,
+`EmergencyVehicleEntityConfig` or `PedestrianEntityConfig` whose plain-string
+`role_name` is `ego` or `hero`, in any case, is refused with a `ValueError`,
+as an `EntityRole` is (the motorcycle, emergency vehicle and pedestrian
+configs refuse `Ego` too; `EgoConfig` is built on `VehicleEntityConfig`).
+A HILS device with a sensor, whose name is that sensor's `role_name`, is
+refused the same way ([hils.md](hils.md)).
+
 An interface node running beside the scenario then only spawns the sensor kit,
 and must look for the role name the ego was spawned with: `ego` with the
 setting, `Ego` without (for `autoware_carla_interface`,

@@ -12,6 +12,7 @@ if TYPE_CHECKING:
     from ..coordinate.poses import OpenDrivePose
     from ..coordinate.snap import GroundProjectionConfig
 
+from ..entity_role import _refuse_ego_role_name
 from ..traffic.base import DrivenEntity
 from ..traffic.driven import BackendDriven
 from ..utils.vehicles import is_emergency_vehicle_type, set_siren_lights
@@ -83,6 +84,9 @@ class VehicleEntityConfig:
         # it to one anyway, and the static check (docs/typecheck.md) needs an
         # attribute of one type.
         self.role_name = str(self.role_name)
+        # An NPC named ``ego`` or ``hero`` would be read as the ego (#2046);
+        # ``Ego`` itself is the ego's own (EgoConfig builds on this config).
+        _refuse_ego_role_name(self.role_name, "a vehicle", allow_ego=True)
         # A speed is never below zero: a negative or NaN one is skipped by the
         # runner's `> 0.0` and the vehicle starts still with no error, an
         # infinite one breaks the actor's physics.  A retry step is shifted by
@@ -309,6 +313,8 @@ class MotorcycleEntityConfig(VehicleEntityConfig):
             od_pose=od_pose,
             ground_projection=ground_projection,
         )
+        # Never the ego, so not ``Ego`` either (#2046).
+        _refuse_ego_role_name(self.role_name, "a motorcycle")
 
 
 class MotorcycleEntity(VehicleEntity):
@@ -423,6 +429,8 @@ class EmergencyVehicleEntityConfig(VehicleEntityConfig):
             od_pose=od_pose,
             ground_projection=ground_projection,
         )
+        # Never the ego, so not ``Ego`` either (#2046).
+        _refuse_ego_role_name(self.role_name, "an emergency vehicle")
         self.emergency = emergency
 
 

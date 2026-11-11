@@ -9,6 +9,7 @@ from typing import TYPE_CHECKING, Optional, Sequence
 
 import typesafe_carla.carla as carla
 
+from ..entity_role import _refuse_ego_role_name
 from ..traffic.base import TrafficBackend, WalkedEntity
 
 if TYPE_CHECKING:
@@ -189,6 +190,9 @@ class PedestrianEntityConfig:
         # it to one anyway, and the static check (docs/typecheck.md) needs an
         # attribute of one type.
         self.role_name = str(self.role_name)
+        # A pedestrian is never the ego: one named ``Ego``, ``ego`` or
+        # ``hero`` would be read as it (#2046).
+        _refuse_ego_role_name(self.role_name, "a pedestrian")
 
 
 class PedestrianEntity(WalkedEntity):
