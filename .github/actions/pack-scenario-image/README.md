@@ -21,7 +21,9 @@ meant to be referenced from other repositories:
 Your repository needs to contain only your scenario package: the framework
 comes from the ref you reference the action by, so pin a release tag
 (`vX.Y.Z`) for a reproducible framework version. Push to a registry with
-`docker/login-action` first; this action does not handle credentials.
+`docker/login-action` first; this action does not handle credentials. The
+image is pushed only after its smoke test passed: the action builds and tests
+it locally, then pushes the same build from the builder's cache.
 
 The virtualenv ships as four layers -- the CARLA client (typesafe-carla with
 its prebuilt CPython package, and its Codon toolchain), the rest of the

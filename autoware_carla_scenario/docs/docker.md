@@ -310,8 +310,12 @@ Each leg builds, loads and smoke-tests its own image natively. To publish one
 multi-architecture tag, join the per-architecture tags in a later job with
 `docker buildx imagetools create`. Cross-building on one runner
 (`platforms: linux/amd64,linux/arm64` after `docker/setup-qemu-action`) also
-works, but emulated, and a multi-platform build cannot be loaded, so it needs
-`load: "false"` and `smoke-test: "false"`.
+works, but emulated. A multi-platform build cannot be loaded, so with `load`
+or `smoke-test` on the action loads and smoke-tests a single-platform build
+first -- the runner's own platform if it is listed, the first one otherwise --
+and builds (and pushes) every listed platform only once that passed; see
+[Build, test, push](#build-test-push). `load: "false"` with
+`smoke-test: "false"` builds them all in one go, untested.
 
 ### The smoke test
 
@@ -324,12 +328,44 @@ freshly built image and checks that
 2. the scenario package's `autoware_carla_scenario.scenarios` entry point loads
    and registers at least one scenario,
 3. Hydra discovers `AutowareScenarioSearchPathPlugin`, so the package's
-   `conf/` directory reaches the config search path, and
-4. `scenario --help` composes a config without a CARLA server.
+   `conf/` directory reaches the config search path,
+4. a config directory registered by a scenario package -- the framework's own
+   does not count -- exists and holds a YAML under its `scenario/` group, so a
+   wheel that lost `conf/` fails here rather than at `scenario=<name>/...`,
+   and
+5. `scenario --help` composes a config without a CARLA server.
 
 Check 3 is worth its keep: `hydra_plugins` is a namespace package that an
 editable install resolves via `src/`, so losing it from the wheel breaks every
 `scenario=<name>/…` override in the image while leaving development untouched.
+
+### Build, test, push
+
+The image is pushed only after its smoke test passed. The action builds it
+with `push: false` (loaded into the local daemon), smoke-tests it, and then
+runs the same build again with `push: true`: same builder, context, Dockerfile
+and arguments, so every step is a cache hit and the pushed layers are the ones
+the test ran. The `digest` output comes from that second run. For a
+multi-platform `platforms` list the first build covers the one platform that
+is smoke-tested and the second builds and pushes all of them, the tested one
+from cache. With `push: "true"`, `load: "false"` and `smoke-test: "false"`
+there is nothing to wait for, and the action builds and pushes in one run.
+
+Two caveats:
+
+- The base images are referenced by tag. If an upstream tag is republished
+  between the two builds, the second one pulls the new base, misses the cache
+  from there on, and pushes an image that differs from the one tested. Pin
+  `RUNTIME_BASE` by digest (`build-args: RUNTIME_BASE=python@sha256:…`) to
+  rule that out for the runtime base. The uv build-stage images
+  (`ghcr.io/astral-sh/uv:<UV_VERSION>…`) take only a version, not a digest,
+  so the same applies to them: a republished uv tag can change what the
+  second build installs.
+- A multi-platform build takes longer -- the tested platform is built twice
+  (once alone, then again from cache within the full build) and the others
+  usually run emulated -- and only one platform is smoke-tested. For every
+  platform tested, build each natively on its own runner as shown in
+  [Architectures](#architectures).
 
 ## Building by hand
 

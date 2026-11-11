@@ -81,8 +81,11 @@ inputs:
       arm64 one (e.g. ubuntu-24.04-arm). typesafe-carla and its Codon
       toolchain ship wheels for both. Naming a platform other than the runner's
       cross-builds under QEMU, which has to be set up first
-      (docker/setup-qemu-action), and a multi-platform build cannot be loaded,
-      so it needs load=false and smoke-test=false.
+      (docker/setup-qemu-action). A multi-platform build cannot be loaded, so
+      with load or smoke-test on, the action loads and smoke-tests a separate
+      single-platform build -- the runner's own platform if it is listed, the
+      first one otherwise -- and builds (and pushes) every listed platform
+      only after that.
     required: false
     default: ""
   cache-scope:
@@ -105,7 +108,7 @@ outputs:
     value: ${{ steps.plan.outputs.tags }}
   digest:
     description: "Image digest (empty unless the image was pushed)"
-    value: ${{ steps.build.outputs.digest }}
+    value: ${{ steps.push.outputs.digest }}
   cache-scope:
     description: >
       The cache scope this build used, given or derived. Pass it to a second
@@ -133,6 +136,45 @@ runs:
         if [ "${SMOKE_TEST}" = "true" ] && [ "${LOAD}" != "true" ]; then
           echo "::error::smoke-test=true requires load=true -- the test runs the built image."
           exit 1
+        fi
+
+        # The build that is loaded and smoke-tested never pushes: an image
+        # that fails the test must not reach the registry (#2055). A second
+        # build, every step of it a cache hit in the same builder, pushes the
+        # tested image afterwards. A multi-platform build cannot be loaded,
+        # so the loaded build then covers one platform: the runner's own if
+        # it is listed, else the first (run under the QEMU the cross-build
+        # needs anyway).
+        native=linux/amd64
+        if [ "${RUNNER_ARCH}" = "ARM64" ]; then
+          native=linux/arm64
+        fi
+        mapfile -t listed < <(printf '%s' "${PLATFORMS}" | tr ',' '\n' \
+          | sed 's/^[[:space:]]*//;s/[[:space:]]*$//;/^$/d')
+
+        # The local build (never pushed) runs when something consumes it --
+        # load or the smoke test -- or when nothing is pushed: then it is the
+        # whole job, as before.
+        local_build=false
+        if [ "${LOAD}" = "true" ] || [ "${SMOKE_TEST}" = "true" ] || [ "${PUSH}" != "true" ]; then
+          local_build=true
+        fi
+        local_platforms="${PLATFORMS}"
+        smoke_platform=""
+        if [ "${#listed[@]}" -gt 1 ] && { [ "${LOAD}" = "true" ] || [ "${SMOKE_TEST}" = "true" ]; }; then
+          local_platforms="${listed[0]}"
+          for candidate in "${listed[@]}"; do
+            if [ "${candidate}" = "${native}" ]; then
+              local_platforms="${candidate}"
+            fi
+          done
+          smoke_platform="${local_platforms}"
+        fi
+        # The final build pushes, or builds every listed platform when the
+        # local build covered only one of them.
+        final_build=false
+        if [ "${PUSH}" = "true" ] || [ "${local_platforms}" != "${PLATFORMS}" ]; then
+          final_build=true
         fi
 
         tags="$(printf '%s\n' "${TAGS_IN}" | sed '/^[[:space:]]*$/d')"
@@ -169,6 +211,10 @@ runs:
           echo "__TAGS__"
           echo "image-ref=$(printf '%s\n' "${tags}" | head -n 1)"
           echo "cache-scope=${scope}"
+          echo "local-build=${local_build}"
+          echo "local-platforms=${local_platforms}"
+          echo "smoke-platform=${smoke_platform}"
+          echo "final-build=${final_build}"
         } >> "${GITHUB_OUTPUT}"
 
         echo "Building ${IMAGE} (push=${PUSH})"
@@ -199,15 +245,18 @@ runs:
 
     - name: Build image
       id: build
+      if: steps.plan.outputs.local-build == 'true'
       uses: docker/build-push-action@v6
       with:
         context: ${{ runner.temp }}/scenario-image-context
         file: ${{ github.action_path }}/Dockerfile
         tags: ${{ steps.plan.outputs.tags }}
         # Empty is the runner's own platform. typesafe-carla and its Codon
-        # toolchain ship x86_64 and aarch64 wheels, so either works.
-        platforms: ${{ inputs.platforms }}
-        push: ${{ inputs.push }}
+        # toolchain ship x86_64 and aarch64 wheels, so either works. Only one
+        # platform of a multi-platform list when this build is loaded.
+        platforms: ${{ steps.plan.outputs.local-platforms }}
+        # Never pushed here: the push waits for the smoke test.
+        push: false
         load: ${{ inputs.load }}
         provenance: false
         build-args: |
@@ -223,16 +272,50 @@ runs:
       shell: bash
       env:
         IMAGE_REF: ${{ steps.plan.outputs.image-ref }}
+        SMOKE_PLATFORM: ${{ steps.plan.outputs.smoke-platform }}
       run: |
         set -euo pipefail
+
+        # Set when the loaded image is one platform of a multi-platform list.
+        platform=()
+        if [ -n "${SMOKE_PLATFORM}" ]; then
+          platform=(--platform "${SMOKE_PLATFORM}")
+        fi
 
         # Fed on stdin rather than bind-mounted: GITHUB_ACTION_PATH is not a
         # host path on a container job, where a volume mount would silently
         # bring in an empty directory.
-        docker run --rm -i --entrypoint python "${IMAGE_REF}" - \
+        docker run --rm -i ${platform[@]+"${platform[@]}"} --entrypoint python "${IMAGE_REF}" - \
           < "${GITHUB_ACTION_PATH}/smoke-test.py"
 
         # Hydra must be able to compose a config with no CARLA server around.
-        docker run --rm "${IMAGE_REF}" --help > /dev/null
+        docker run --rm ${platform[@]+"${platform[@]}"} "${IMAGE_REF}" --help > /dev/null
 
-        echo "Smoke test passed for ${IMAGE_REF}"
+        echo "Smoke test passed for ${IMAGE_REF}${SMOKE_PLATFORM:+ (${SMOKE_PLATFORM})}"
+
+    # Runs only once the smoke test passed, so a failing image never reaches
+    # the registry. The same build again, in the same builder and from the
+    # same context: every step is a cache hit (the builder's own cache, not
+    # only the gha one), so it exports the layers the smoke test ran -- for
+    # every listed platform -- and pushes them. build-push-action rather than
+    # a `docker push` of the loaded image, which would recompress the layers
+    # in the daemon and report no digest.
+    - name: Push image
+      id: push
+      if: steps.plan.outputs.final-build == 'true'
+      uses: docker/build-push-action@v6
+      with:
+        context: ${{ runner.temp }}/scenario-image-context
+        file: ${{ github.action_path }}/Dockerfile
+        tags: ${{ steps.plan.outputs.tags }}
+        platforms: ${{ inputs.platforms }}
+        push: ${{ inputs.push }}
+        load: false
+        provenance: false
+        build-args: |
+          PYTHON_VERSION=${{ inputs.python-version }}
+          SLIM=${{ inputs.slim }}
+          ${{ inputs.build-args }}
+        labels: ${{ inputs.labels }}
+        cache-from: ${{ inputs.cache == 'true' && format('type=gha,scope={0}', steps.plan.outputs.cache-scope) || '' }}
+        cache-to: ${{ inputs.cache == 'true' && format('type=gha,mode=max,scope={0},ignore-error=true', steps.plan.outputs.cache-scope) || '' }}
