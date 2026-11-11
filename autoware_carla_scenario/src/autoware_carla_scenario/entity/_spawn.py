@@ -19,6 +19,12 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
+#: The blueprint attribute that registers a vehicle with CARLA's native
+#: Autoware interface (CARLA 1.0, a server started with ``-ros2``): the server
+#: then applies ``/control/command/control_cmd`` to it and publishes its
+#: ``/vehicle/status/*`` itself.  It has to be set before the vehicle spawns.
+ROS2_AUTOWARE_CONTROL_ATTRIBUTE: str = "ros2_autoware_control"
+
 
 @dataclass(frozen=True)
 class SpawnTransform:
@@ -68,6 +74,7 @@ def spawn_vehicle_actor(
     spawn_retry_t_step: float = 0.1,
     spawn_retry_z_step: float = 0.5,
     ground_projection: Optional["GroundProjectionConfig"] = None,
+    ros2_autoware_role_name: Optional[str] = None,
 ) -> "carla.Actor":
     """Spawn a vehicle actor in the CARLA world.
 
@@ -95,6 +102,14 @@ def spawn_vehicle_actor(
         spawn_retry_z_step: Vertical shift (metres) per retry attempt.
         ground_projection: Accepted for compatibility; unused now that the
             retries offset the resolved spawn transform instead of re-snapping.
+        ros2_autoware_role_name: Register the vehicle with CARLA's native
+            Autoware interface, under this role name (one the interface
+            serves: ``ego`` or ``hero``).  When the server's blueprint has
+            :data:`ROS2_AUTOWARE_CONTROL_ATTRIBUTE`, it is set to ``true`` and
+            the vehicle spawns under this role name instead of *role_name*;
+            when it has not (a server older than CARLA 1.0), a warning says so
+            and the vehicle spawns as it would without it.  ``None`` (the
+            default) does neither.
 
     Returns:
         The spawned vehicle actor.
@@ -141,6 +156,25 @@ def spawn_vehicle_actor(
     vehicle_bp = bp_lib.find(vehicle_type)
     if vehicle_bp is None:
         raise RuntimeError(f"Blueprint not found: {vehicle_type}")
+    if ros2_autoware_role_name is not None:
+        native_role: str = ros2_autoware_role_name
+        if vehicle_bp.has_attribute(ROS2_AUTOWARE_CONTROL_ATTRIBUTE):
+            vehicle_bp.set_attribute(ROS2_AUTOWARE_CONTROL_ATTRIBUTE, "true")
+            role_name = native_role
+            logger.info(
+                "Registering '%s' with CARLA's native Autoware interface (%s=true)",
+                role_name,
+                ROS2_AUTOWARE_CONTROL_ATTRIBUTE,
+            )
+        else:
+            logger.warning(
+                "Blueprint %r has no %r attribute: the server has no native "
+                "Autoware interface (CARLA 1.0 started with -ros2), so '%s' "
+                "spawns without it",
+                vehicle_type,
+                ROS2_AUTOWARE_CONTROL_ATTRIBUTE,
+                role_name,
+            )
     vehicle_bp.set_attribute("role_name", role_name)
 
     # try_spawn_actor returns None on collision / out-of-bounds instead of

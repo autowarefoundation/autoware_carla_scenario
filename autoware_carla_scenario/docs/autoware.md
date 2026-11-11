@@ -107,7 +107,8 @@ What happens:
     - A workspace whose `autoware_carla_interface` launch takes no
       `scenario_mode` -- one built from a branch without scenario support --
       is refused here, not after the first scenario has timed out waiting for
-      it.
+      it, unless the launch file `autoware.launcher.launch` names declares
+      `scenario_mode` itself (see [CARLA 1.0](#carla-10-autoware_carla_interface_v2)).
     - Containers left behind by a run of yours that was killed are removed.
       Each container carries the `autoware_carla_scenario.stack=uid-<your uid>`
       label, so another user's are left alone, and the
@@ -302,6 +303,59 @@ The node runs on the ROS 2 distribution's own `python3`, which needs
 but `autoware_carla_scenario.autoware_bridge`: `{scenario_bridge}` puts a
 directory on `PYTHONPATH` that holds that package alone
 (`~/.cache/autoware_carla_scenario/ros_bridge/`).
+
+## CARLA's native Autoware interface
+
+A CARLA 1.0 server started with `-ros2` drives Autoware without a bridge
+process ([CARLA docs: Autoware](https://github.com/carla-simulator/carla/blob/1.0/Docs/autoware.md)):
+it applies `/control/command/control_cmd` and publishes `/vehicle/status/*`
+itself. It does so only for a vehicle whose role name is `ego` or `hero` and
+that was spawned with the blueprint attribute `ros2_autoware_control=true`,
+which cannot be set afterwards.
+
+`ego.native_autoware_interface=true` (with `ego.entity=autoware`) spawns the
+ego that way: it sets `ros2_autoware_control=true` and spawns the ego as
+`ego`. Everything in the framework that looks the ego up by `Ego`
+(`EGO_ROLE_NAME`: conditions, measures, metrics, actions) still finds it --
+`ego` and `hero`, in any case, read as `Ego`
+(`autoware_carla_scenario.entity_role.canonical_role_name`) -- so a scenario
+does not change. An interface node running beside the scenario then only spawns
+the sensor kit, and looks for the ego as `ego`.
+
+A server whose blueprints have no `ros2_autoware_control` (one older than
+CARLA 1.0) spawns the ego as `Ego`, as without the setting, and the run logs a
+warning. The setting is off by default.
+
+From Python, `AutowareEgoEntity(config, bridge=..., native_autoware_interface=True)`.
+
+## CARLA 1.0: autoware_carla_interface_v2
+
+On CARLA 1.0 the server itself publishes the sensors and the vehicle status
+and applies Autoware's control commands, so the Python bridge of
+`autoware_carla_interface` is not needed.
+[`autoware_carla_interface_v2`](https://github.com/hakuturu583/autoware_carla_interface_v2)
+is the rclpy node that is left; its `autoware_carla_scenario.launch.xml` starts
+Autoware (`e2e_simulator.launch.xml` with `launch_simulator_interface:=false`)
+and the node in scenario mode, which attaches to the scenario's ego and spawns
+the sensor kit on it. With that package in the workspace's `src/`, point the
+launcher at its launch file:
+
+```bash
+uv run scenario 'scenario=intersection_passing/*' map=town10hd_opt \
+  ego.entity=autoware \
+  autoware.launcher.type=docker \
+  autoware.launcher.workspace=$HOME/autoware \
+  'autoware.launcher.launch=[autoware_carla_interface_v2,autoware_carla_scenario.launch.xml,"map_path:=/home/aw/autoware_map/Town10HD_Opt"]'
+```
+
+That launch file declares `scenario_mode`, which is what the docker launcher's
+workspace check accepts in place of `autoware_carla_interface`'s. Localization,
+routing and engaging stay with `scenario_bridge`, as above.
+
+Add `ego.native_autoware_interface=true` ([above](#carlas-native-autoware-interface))
+so the server applies Autoware's control and publishes the vehicle status; the
+node finds the ego as `Ego`, `ego` or `hero`. Without it, the node applies the
+control and publishes the status from the client.
 
 ## Starting Autoware yourself
 

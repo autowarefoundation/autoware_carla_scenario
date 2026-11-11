@@ -291,6 +291,27 @@ def _map_overrides(document: ScenarioDocument) -> dict[str, Any]:
     return overrides
 
 
+def _map_group_file(name: str) -> Path | None:
+    """Return the ``map/<name>.yaml`` a run would compose, or ``None``.
+
+    The framework's config directory is searched first, then every scenario
+    package's, which are loaded only when the framework has no such group:
+    a built-in group needs no plugin import.
+    """
+    path = _FRAMEWORK_CONF_DIR / "map" / f"{name}.yaml"
+    if path.is_file():
+        return path
+
+    from ..registry import get_conf_dirs, load_scenario_plugins  # noqa: PLC0415
+
+    load_scenario_plugins()
+    for conf_dir in get_conf_dirs():
+        path = Path(conf_dir) / "map" / f"{name}.yaml"
+        if path.is_file():
+            return path
+    return None
+
+
 def map_group_no_3d_model_lanelet_ids(group: str) -> list[int] | None:
     """Return the ``no_3d_model_lanelet_ids`` the ``map`` group *group* sets.
 
@@ -300,38 +321,40 @@ def map_group_no_3d_model_lanelet_ids(group: str) -> list[int] | None:
     searches them in.  Nothing is composed: the list is read as written,
     under the file's ``map:`` section when it has one.
 
+    A group the framework does not ship loads the scenario packages first
+    (:func:`~autoware_carla_scenario.registry.load_scenario_plugins`, once
+    per process): a process that never did -- the scenario editor -- would
+    otherwise not see the package's conf dir, and its map preview would match
+    lanelets a run of the package excludes (#2035).
+
     Returns:
         The ids, or ``None`` when no such group is found or it sets no literal
         list (an interpolation, say) -- nothing this side of Hydra can resolve.
     """
-    from ..registry import get_conf_dirs  # noqa: PLC0415
-
     name = (group or "").strip()
     if not name or "/" in name or "\\" in name or name.startswith("."):
         return None
-    for conf_dir in (_FRAMEWORK_CONF_DIR, *get_conf_dirs()):
-        path = Path(conf_dir) / "map" / f"{name}.yaml"
-        if not path.is_file():
-            continue
-        try:
-            data = yaml.safe_load(path.read_text(encoding="utf-8"))
-        except (OSError, yaml.YAMLError):
-            _logger.debug("map group %s: %s did not load", name, path, exc_info=True)
-            return None
-        if not isinstance(data, dict):
-            return None
-        nested = data.get("map")
-        section: dict[Any, Any] = nested if isinstance(nested, dict) else data
-        ids = section.get("no_3d_model_lanelet_ids")
-        if ids is None:
-            return []
-        if not isinstance(ids, list):
-            return None
-        try:
-            return [int(value) for value in ids]
-        except (TypeError, ValueError):
-            return None
-    return None
+    path = _map_group_file(name)
+    if path is None:
+        return None
+    try:
+        data = yaml.safe_load(path.read_text(encoding="utf-8"))
+    except (OSError, yaml.YAMLError):
+        _logger.debug("map group %s: %s did not load", name, path, exc_info=True)
+        return None
+    if not isinstance(data, dict):
+        return None
+    nested = data.get("map")
+    section: dict[Any, Any] = nested if isinstance(nested, dict) else data
+    ids = section.get("no_3d_model_lanelet_ids")
+    if ids is None:
+        return []
+    if not isinstance(ids, list):
+        return None
+    try:
+        return [int(value) for value in ids]
+    except (TypeError, ValueError):
+        return None
 
 
 def effective_no_3d_model_lanelet_ids(document: ScenarioDocument) -> list[int]:

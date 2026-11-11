@@ -32,7 +32,7 @@ and the image do not change.
 A workspace whose ``autoware_carla_interface`` has no ``scenario_mode`` -- one
 built from a branch without scenario support -- cannot run a scenario at all,
 and is refused by :meth:`DockerAutowareLauncher.prepare` before any scenario
-starts.
+starts, unless the configured launch file declares ``scenario_mode`` itself.
 """
 
 from __future__ import annotations
@@ -397,8 +397,8 @@ class DockerAutowareLauncher:
         if not self.has_scenario_support():
             raise AutowareStackError(
                 f"{self._workspace} was built without scenario support: the launch "
-                f"file of {_INTERFACE_PACKAGE} takes no scenario_mode. Build a "
-                "branch that has it."
+                f"file of {_INTERFACE_PACKAGE} takes no scenario_mode, and neither "
+                "does the configured launch file. Build a branch that has it."
             )
         self._prepared = True
 
@@ -488,20 +488,44 @@ class DockerAutowareLauncher:
     # ------------------------------------------------------------------
 
     def has_scenario_support(self) -> bool:
-        """Whether the built ``autoware_carla_interface`` launch takes ``scenario_mode``."""
-        launch = (
+        """Whether the workspace can follow a scenario's world, ego and clock.
+
+        True when the built ``autoware_carla_interface`` launch takes
+        ``scenario_mode``, or when the configured launch file itself declares
+        it -- a launch that brings up Autoware and another CARLA interface
+        (``autoware_carla_interface_v2``'s ``autoware_carla_scenario.launch.xml``,
+        say) in scenario mode.
+        """
+        candidates = [
+            self._installed_launch(
+                _INTERFACE_PACKAGE, f"{_INTERFACE_PACKAGE}.launch.xml"
+            )
+        ]
+        launch_args = list(self._config.launch)
+        if (
+            len(launch_args) >= 2
+            and ":=" not in launch_args[0]
+            and ":=" not in launch_args[1]
+        ):
+            candidates.append(self._installed_launch(launch_args[0], launch_args[1]))
+        for launch in candidates:
+            try:
+                if 'name="scenario_mode"' in self._on_host(launch).read_text():
+                    return True
+            except OSError:
+                continue
+        return False
+
+    def _installed_launch(self, package: str, launch_file: str) -> Path:
+        return (
             self._workspace
             / "install"
-            / _INTERFACE_PACKAGE
+            / package
             / "share"
-            / _INTERFACE_PACKAGE
+            / package
             / "launch"
-            / f"{_INTERFACE_PACKAGE}.launch.xml"
+            / launch_file
         )
-        try:
-            return 'name="scenario_mode"' in self._on_host(launch).read_text()
-        except OSError:
-            return False
 
     def _on_host(self, path: Path) -> Path:
         """*path*, its links into the workspace's mount followed on this host.

@@ -261,6 +261,13 @@ class EgoVehicleConfig:
     #:   group (the ``ros2`` extra).
     entity: str = "autopilot"
 
+    #: ``entity: autoware`` only: spawn the ego for CARLA 1.0's native
+    #: Autoware interface -- with ``ros2_autoware_control=true`` and the role
+    #: name ``ego``, so the server applies Autoware's control and publishes the
+    #: vehicle status itself (docs/autoware.md).  The framework still finds the
+    #: ego as ``Ego``.
+    native_autoware_interface: bool = False
+
 
 @dataclass
 class NpcVehicleConfig:
