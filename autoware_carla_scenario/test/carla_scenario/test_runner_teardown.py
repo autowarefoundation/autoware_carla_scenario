@@ -63,6 +63,8 @@ def _run(
     rerun: Any = None,
     npc_monitor: Any = None,
     tick_error: BaseException | None = None,
+    coverage_end_error: BaseException | None = None,
+    settings_before: Any = None,
 ) -> ScenarioRunner:
     """Run a scenario of three ticks through run_scenario, on stand-ins."""
     with patch("autoware_carla_scenario.scenario_runner.carla.Client"):
@@ -79,6 +81,9 @@ def _run(
         frame["n"] += 1
 
     world.tick.side_effect = tick
+    if settings_before is not None:
+        found = settings_before
+        world.get_settings.side_effect = lambda: SimpleNamespace(**vars(found))
     world.get_snapshot.side_effect = lambda: SimpleNamespace(frame=frame["n"])
     runner._world = world
     runner._pace_tick = lambda: None  # type: ignore[method-assign]
@@ -103,7 +108,7 @@ def _run(
         scenario_out.append(scenario)
     with (
         patch("autoware_carla_scenario.scenario_runner.prepare_measures"),
-        patch("autoware_carla_scenario.scenario_runner.CoverageCollector"),
+        patch("autoware_carla_scenario.scenario_runner.CoverageCollector") as cov,
         patch(
             "autoware_carla_scenario.scenario_runner._write_result",
             new=write_result or MagicMock(),
@@ -120,6 +125,8 @@ def _run(
         ),
     ):
         clock.return_value.simulated = 0.1
+        if coverage_end_error is not None:
+            cov.return_value.end.side_effect = coverage_end_error
         result = runner.run_scenario(scenario, reset_world=False)
     assert result is not None and result.passed
     return runner
@@ -209,6 +216,76 @@ def test_the_log_goes_to_rerun_when_the_result_cannot_be_written(
             rerun=rerun,
         )
     rerun.submit.assert_called_once_with(trajectory.path, ANY)
+
+
+@pytest.mark.parametrize(
+    "error", [RuntimeError("CommonRoad worker died"), KeyboardInterrupt()]
+)
+def test_a_run_whose_metrics_raise_ends_its_log_without_the_loop_verdict(
+    tmp_path: Path, error: BaseException
+) -> None:
+    # The verdict of the tick loop alone is not the run's: a MetricCondition
+    # judged after it may fail the run.  No result is written, so the log
+    # mirrors that and ends without one, and is still converted (#2067).
+    trajectory = MagicMock()
+    trajectory.active = True
+    trajectory.path = tmp_path / "S.trajectory.jsonl"
+    rerun = MagicMock()
+    write_result = MagicMock()
+    with (
+        patch(
+            "autoware_carla_scenario.scenario_runner._judge_metrics",
+            new=MagicMock(side_effect=error),
+        ),
+        pytest.raises(type(error)),
+    ):
+        _run(tmp_path, trajectory, write_result=write_result, rerun=rerun)
+    trajectory.record_result.assert_not_called()
+    trajectory.close.assert_called_once()
+    rerun.submit.assert_called_once_with(trajectory.path, ANY)
+    write_result.assert_not_called()
+
+
+def test_a_run_whose_coverage_end_raises_ends_its_log_without_a_verdict(
+    tmp_path: Path,
+) -> None:
+    trajectory = MagicMock()
+    trajectory.active = True
+    trajectory.path = tmp_path / "S.trajectory.jsonl"
+    rerun = MagicMock()
+    write_result = MagicMock()
+    with pytest.raises(ValueError, match="coverage broke"):
+        _run(
+            tmp_path,
+            trajectory,
+            write_result=write_result,
+            rerun=rerun,
+            coverage_end_error=ValueError("coverage broke"),
+        )
+    trajectory.record_result.assert_not_called()
+    trajectory.close.assert_called_once()
+    rerun.submit.assert_called_once_with(trajectory.path, ANY)
+    write_result.assert_not_called()
+
+
+def test_the_log_ends_with_the_verdict_the_metrics_returned(tmp_path: Path) -> None:
+    # A MetricCondition judged after the loop decides the log's result, as
+    # it does the result JSON's.
+    trajectory = MagicMock()
+    trajectory.active = True
+    judged = MagicMock(
+        side_effect=lambda scenario, recorder, world, result, *_: type(result)(
+            passed=False, message="metric NG", elapsed_seconds=0.1
+        )
+    )
+    with (
+        patch("autoware_carla_scenario.scenario_runner._judge_metrics", new=judged),
+        pytest.raises(AssertionError),
+    ):
+        # _run asserts a passing result; this one is not.
+        _run(tmp_path, trajectory)
+    trajectory.record_result.assert_called_once()
+    assert trajectory.record_result.call_args.args[0].message == "metric NG"
 
 
 def test_a_failing_recorder_stop_still_ends_the_trajectory_log(tmp_path: Path) -> None:
