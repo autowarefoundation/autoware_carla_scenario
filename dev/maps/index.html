@@ -2488,10 +2488,42 @@ there the filesystem decides:</p>
 </ol>
 <p>To take the filesystem out of it, write the <code>@</code> of a directory name as <code>%40</code>
 in a <code>file://</code> URL (<code>file:///srv/maps%402/repo@main</code>); git decodes it.</p>
+<p>A full commit hash is stored in lower case, as git spells it, so
+<code>@DEA2CFEA...</code> and <code>@dea2cfea...</code> are one pin and one cache entry.</p>
+<p>An <strong>abbreviated commit hash</strong> (4 to 39 hex digits, <code>@dea2cfe</code>) works too: when
+the remote has no branch or tag of that name, the commits of its branches and
+tags are fetched (commits only, where the server can filter) and the one the
+abbreviation names is used, exactly as a branch is resolved to its commit. The
+answer is remembered beside the cache entry and, since the commit an
+abbreviation names never moves, used from then on without asking the remote
+again: a sweep over it looks the commits up once, and it resolves offline.
+Once expanded, an abbreviation <strong>stays pinned to that commit</strong> on this machine,
+even if the repository later gains another commit it abbreviates: only a
+machine that has not expanded it yet reports it as ambiguous.
+An abbreviation is matched in any case, but kept as written in the source: a
+branch may be spelled with hex digits, and <code>CAFE</code> and <code>cafe</code> are two
+branches. An abbreviation that matches no commit, or several, is an error
+saying so; a commit reachable only from another ref (a pull request's) needs
+its full hash. An abbreviation is not a pin -- it can grow ambiguous as the
+repository does -- so <strong>Pin to commit</strong> rewrites it to the full hash; like a
+pin, it never resolves to an unpacked directory (see below). Neither does a
+branch or tag whose name is 4 or more hex digits (<code>@cafe</code>, <code>@2024</code>): it is
+spelled like an abbreviation, and the shortcut cannot tell it from one.</p>
+<p>A repository URL may carry credentials (<code>https://oauth2:TOKEN@host/o/r</code>).
+They are passed to git as written, but every log line, error message and
+<code>meta.json</code> / <code>.tip.json</code> this framework writes shows them redacted
+(<code>https://oauth2:***@host/o/r</code>; an http(s) user name with no password, which
+is how a token is often passed, as <code>***</code>). The cache entry is keyed on the URL
+without its password, so a replaced token reuses the entry, and <strong>Refresh</strong>
+fetches with the token now in the source.</p>
 <p>The URL you actually have is the one in your browser's address bar, and that is
 accepted as-is and normalised — GitHub's <code>/tree/&lt;ref&gt;/&lt;path&gt;</code> and HuggingFace's
 <code>/tree/</code>, <code>/resolve/</code> and <code>/raw/</code> forms all parse. Paste the page you are
-looking at.</p>
+looking at. The anchor such a URL may end in is the page's, not a path: on a
+<code>/tree/</code>, <code>/blob/</code> (or other view) URL the view's own path wins over any <code>#</code>,
+and on any other <code>https://</code> page a line anchor (<code>#L10</code>, <code>#L10-L20</code>) or a
+README's (<code>#readme</code>, <code>#readme-ov-file</code>, <code>#user-content-...</code>) is dropped. A
+source written with <code>git+</code> takes its <code>#PATH</code> as written.</p>
 <p>Any git server works: HuggingFace, GitHub, GitLab, an internal host, a
 <code>file://</code> path on a shared filesystem.</p>
 <h2 id="what-a-map-directory-holds">What a map directory holds<a class="headerlink" href="#what-a-map-directory-holds" title="Permanent link">&para;</a></h2>
@@ -2505,7 +2537,10 @@ Autoware publishes, and the one the editor's Map library looks for:</p>
 <p>Only the files this framework reads are pulled out of git-lfs — the <code>.osm</code>, the
 <code>.xodr</code> if there is one, and the YAML beside them. The point cloud stays a
 pointer file of a few hundred bytes, which is what keeps fetching a 2 MB map
-from costing 22 MB.</p>
+from costing 22 MB. <code>git lfs pull</code> runs only while one of those files is still
+a pointer -- not for a repository without LFS, and not on <strong>Refresh</strong> or <strong>Pin
+to commit</strong> when nothing changed -- so git-lfs is needed only for a map that
+keeps its files in LFS, and then a missing one is reported as such.</p>
 <p>A repository can carry symlinks, so each file is checked for where it really
 is. The <code>.osm</code>, the <code>.xodr</code> and <code>map_projector_info.yaml</code> are used only when
 they resolve to a regular file inside the map directory: a link within the
@@ -2589,6 +2624,23 @@ a machine that has run the Autoware setup, the map is <strong>already there</str
 <p>and a source naming that path resolves to it in about a millisecond, cloning
 nothing. A map this framework did fetch itself lands under <code>.repos/</code> in the same
 root, so the two never collide and the copy Autoware provisioned always wins.</p>
+<p>An unpacked directory records no origin, and another repository can keep a map
+at the same path, so the shortcut is taken only for a source naming a
+repository that was unpacked there: the dataset Autoware's setup downloads
+(<code>https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps</code>, however
+it is spelled -- with or without <code>.git</code>, a user name or a trailing <code>/</code>). A root
+that holds another dataset says so in a <code>.provisioned_from</code> file, one
+repository URL per line (blank lines and <code>#</code> comments ignored), which then
+replaces that default:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="gp">$ </span>cat<span class="w"> </span>~/autoware_data/maps/.provisioned_from
+<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a><span class="gp"># </span>Unpacked<span class="w"> </span>here<span class="w"> </span>by<span class="w"> </span>our<span class="w"> </span>own<span class="w"> </span>setup
+<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="go">https://huggingface.co/datasets/OUR_ORG/our-maps</span>
+</code></pre></div>
+<p>An empty <code>.provisioned_from</code> (or one holding only comments) lists no
+repository, which turns the shortcut off for that root. A source naming any
+other repository is cloned under <code>.repos/</code>, whatever is unpacked at its path;
+the log says so once per directory, at INFO, naming the file to list the
+repository in.</p>
 <p>Nothing re-reads a map's <em>contents</em> over the network once it is cached;
 <code>refresh</code> is the only way to make it fetch again.</p>
 <p>One entry under <code>.repos/</code> holds one repository at one commit, and every map
@@ -2598,6 +2650,33 @@ rather than replacing it, so a map resolved earlier -- held by the editor, a
 running case or a sweep over both -- keeps its files. The repository root (a
 source with no <code>#path</code>) checks the whole tree out. The entry's <code>meta.json</code>
 lists every directory checked out in it under <code>materialised</code>.</p>
+<p>That holds across processes too -- a sweep or a SLURM array resolving several
+towns of one dataset at once, the editor beside a run. Every clone, fetch and
+checkout of an entry is made holding its lock file (<code>&lt;entry&gt;.lock</code> beside it
+under <code>.repos/</code>, taken with <code>flock</code>), so a second process waits for the first
+and then adds its own directory. Each directory is checked out by a pattern
+anchored at the repository root (<code>/Town10HD_Opt</code>), so <code>#Town10HD_Opt</code> does
+not also bring a directory of the same name deeper in the tree. The lock file is close-on-exec, and a process
+forked while it is held lets go of its copy at once, so a child never keeps an
+entry locked.</p>
+<p>The lock is only as good as the filesystem's <code>flock</code>:</p>
+<ul>
+<li>Where it cannot be taken at all (no <code>fcntl</code>, a read-only root, a filesystem
+  that refuses <code>flock</code>), a warning says so once and the entry is changed
+  without it. That is <strong>best effort</strong>: git's own lock files are retried, but
+  two processes can still race and one lose its directory.</li>
+<li>On NFS mounted with <code>nolock</code>, <code>flock</code> succeeds but is local to each node:
+  processes on one host exclude each other, processes on different hosts do
+  not, and nothing warns. A SLURM array whose tasks run on several nodes over
+  one shared cache root should either give each node a cache root of its own
+  on local disk (<code>AUTOWARE_CARLA_SCENARIO_MAP_CACHE</code>), or resolve its maps
+  once, serially, before the array starts (a <code>resolve_map</code> per map in the
+  submitting job), so the tasks find them checked out and change nothing.</li>
+</ul>
+<p>The cache needs <strong>git 2.27 or later</strong> (<code>git sparse-checkout add</code>, and a
+sparse checkout that may hold nothing yet), so Ubuntu 22.04's 2.34 is enough:
+it writes an entry's sparse-checkout file and settings itself rather than use
+<code>sparse-checkout set --no-cone</code>, which only git 2.35 takes.</p>
 <p>One question is asked, though, and it is asked before anything is fetched: when
 the ref is a branch, a single <code>git ls-remote</code> resolves it to the commit it
 points at right now, and everything after that runs as if the source had been
@@ -2614,10 +2693,10 @@ same scenario a month apart are then two runs against two different maps, and
 the result of one says nothing about the other.</p>
 <p>A source naming a <strong>full commit hash</strong> is pinned: the same URI names the same
 bytes forever.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-4-1" name="__codelineno-4-1" href="#__codelineno-4-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.maps</span><span class="w"> </span><span class="kn">import</span> <span class="n">pin_source</span>
-<a id="__codelineno-4-2" name="__codelineno-4-2" href="#__codelineno-4-2"></a>
-<a id="__codelineno-4-3" name="__codelineno-4-3" href="#__codelineno-4-3"></a><span class="n">pin_source</span><span class="p">(</span><span class="s2">"https://huggingface.co/datasets/OWNER/NAME/tree/main/maps/T"</span><span class="p">)</span>
-<a id="__codelineno-4-4" name="__codelineno-4-4" href="#__codelineno-4-4"></a><span class="c1"># 'git+https://huggingface.co/datasets/OWNER/NAME@&lt;40-hex commit&gt;#maps/T'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.maps</span><span class="w"> </span><span class="kn">import</span> <span class="n">pin_source</span>
+<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
+<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">pin_source</span><span class="p">(</span><span class="s2">"https://huggingface.co/datasets/OWNER/NAME/tree/main/maps/T"</span><span class="p">)</span>
+<a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="c1"># 'git+https://huggingface.co/datasets/OWNER/NAME@&lt;40-hex commit&gt;#maps/T'</span>
 </code></pre></div>
 <p>In the editor this is the <strong>Pin to commit</strong> button in the Scenario inspector,
 which also tells you when a source is still unpinned.</p>
@@ -2655,40 +2734,40 @@ loaded world's OpenDRIVE into the cache the first time a scenario runs on it.</p
 <p>To fetch it ahead of time, use <strong>Fetch OpenDRIVE</strong> in the Scenario inspector
 (a CARLA port outside 1-65535 is refused beside the form, before anything
 connects), or:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.maps</span><span class="w"> </span><span class="kn">import</span> <span class="n">ensure_xodr</span><span class="p">,</span> <span class="n">resolve_map</span>
-<a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a>
-<a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="n">ensure_xodr</span><span class="p">(</span><span class="n">resolve_map</span><span class="p">(</span><span class="n">uri</span><span class="p">),</span> <span class="n">host</span><span class="o">=</span><span class="s2">"localhost"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">2000</span><span class="p">)</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.maps</span><span class="w"> </span><span class="kn">import</span> <span class="n">ensure_xodr</span><span class="p">,</span> <span class="n">resolve_map</span>
+<a id="__codelineno-6-2" name="__codelineno-6-2" href="#__codelineno-6-2"></a>
+<a id="__codelineno-6-3" name="__codelineno-6-3" href="#__codelineno-6-3"></a><span class="n">ensure_xodr</span><span class="p">(</span><span class="n">resolve_map</span><span class="p">(</span><span class="n">uri</span><span class="p">),</span> <span class="n">host</span><span class="o">=</span><span class="s2">"localhost"</span><span class="p">,</span> <span class="n">port</span><span class="o">=</span><span class="mi">2000</span><span class="p">)</span>
 </code></pre></div>
 <h2 id="in-the-library">In the library<a class="headerlink" href="#in-the-library" title="Permanent link">&para;</a></h2>
 <h3 id="selecting-a-published-map">Selecting a published map<a class="headerlink" href="#selecting-a-published-map" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-6-1" name="__codelineno-6-1" href="#__codelineno-6-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt
+<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/left<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt
 </code></pre></div>
 <p><code>conf/map/town10hd_opt.yaml</code> is a normal map group whose <code>map.source</code> names the
 published map at a pinned commit. Override it like any other key:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-7-1" name="__codelineno-7-1" href="#__codelineno-7-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
-<a id="__codelineno-7-2" name="__codelineno-7-2" href="#__codelineno-7-2"></a><span class="w">  </span>map.source<span class="o">=</span><span class="s1">'git+https://huggingface.co/datasets/OWNER/NAME@REF#maps/T'</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span><span class="se">\</span>
+<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a><span class="w">  </span>map.source<span class="o">=</span><span class="s1">'git+https://huggingface.co/datasets/OWNER/NAME@REF#maps/T'</span>
 </code></pre></div>
 <p><code>map.xodr_path</code> and <code>map.lanelet2_path</code> still win where they are set, so a
 single file can be overridden without abandoning the source.</p>
 <h3 id="from-python">From Python<a class="headerlink" href="#from-python" title="Permanent link">&para;</a></h3>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-8-1" name="__codelineno-8-1" href="#__codelineno-8-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.maps</span><span class="w"> </span><span class="kn">import</span> <span class="n">list_maps</span><span class="p">,</span> <span class="n">resolve_map</span>
-<a id="__codelineno-8-2" name="__codelineno-8-2" href="#__codelineno-8-2"></a>
-<a id="__codelineno-8-3" name="__codelineno-8-3" href="#__codelineno-8-3"></a><span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">list_maps</span><span class="p">(</span><span class="s2">"https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@main"</span><span class="p">):</span>
-<a id="__codelineno-8-4" name="__codelineno-8-4" href="#__codelineno-8-4"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">entry</span><span class="o">.</span><span class="n">uri</span><span class="p">)</span>
-<a id="__codelineno-8-5" name="__codelineno-8-5" href="#__codelineno-8-5"></a>
-<a id="__codelineno-8-6" name="__codelineno-8-6" href="#__codelineno-8-6"></a><span class="n">hd_map</span> <span class="o">=</span> <span class="n">resolve_map</span><span class="p">(</span>
-<a id="__codelineno-8-7" name="__codelineno-8-7" href="#__codelineno-8-7"></a>    <span class="s2">"git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps"</span>
-<a id="__codelineno-8-8" name="__codelineno-8-8" href="#__codelineno-8-8"></a>    <span class="s2">"@main#autoware_maps/Town10HD_Opt"</span>
-<a id="__codelineno-8-9" name="__codelineno-8-9" href="#__codelineno-8-9"></a><span class="p">)</span>
-<a id="__codelineno-8-10" name="__codelineno-8-10" href="#__codelineno-8-10"></a><span class="n">hd_map</span><span class="o">.</span><span class="n">lanelet2_path</span>   <span class="c1"># -&gt; Path to the .osm, downloaded if it was not there</span>
-<a id="__codelineno-8-11" name="__codelineno-8-11" href="#__codelineno-8-11"></a><span class="n">hd_map</span><span class="o">.</span><span class="n">commit</span>          <span class="c1"># -&gt; the revision it is at</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.maps</span><span class="w"> </span><span class="kn">import</span> <span class="n">list_maps</span><span class="p">,</span> <span class="n">resolve_map</span>
+<a id="__codelineno-9-2" name="__codelineno-9-2" href="#__codelineno-9-2"></a>
+<a id="__codelineno-9-3" name="__codelineno-9-3" href="#__codelineno-9-3"></a><span class="k">for</span> <span class="n">entry</span> <span class="ow">in</span> <span class="n">list_maps</span><span class="p">(</span><span class="s2">"https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@main"</span><span class="p">):</span>
+<a id="__codelineno-9-4" name="__codelineno-9-4" href="#__codelineno-9-4"></a>    <span class="nb">print</span><span class="p">(</span><span class="n">entry</span><span class="o">.</span><span class="n">name</span><span class="p">,</span> <span class="n">entry</span><span class="o">.</span><span class="n">uri</span><span class="p">)</span>
+<a id="__codelineno-9-5" name="__codelineno-9-5" href="#__codelineno-9-5"></a>
+<a id="__codelineno-9-6" name="__codelineno-9-6" href="#__codelineno-9-6"></a><span class="n">hd_map</span> <span class="o">=</span> <span class="n">resolve_map</span><span class="p">(</span>
+<a id="__codelineno-9-7" name="__codelineno-9-7" href="#__codelineno-9-7"></a>    <span class="s2">"git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps"</span>
+<a id="__codelineno-9-8" name="__codelineno-9-8" href="#__codelineno-9-8"></a>    <span class="s2">"@main#autoware_maps/Town10HD_Opt"</span>
+<a id="__codelineno-9-9" name="__codelineno-9-9" href="#__codelineno-9-9"></a><span class="p">)</span>
+<a id="__codelineno-9-10" name="__codelineno-9-10" href="#__codelineno-9-10"></a><span class="n">hd_map</span><span class="o">.</span><span class="n">lanelet2_path</span>   <span class="c1"># -&gt; Path to the .osm, downloaded if it was not there</span>
+<a id="__codelineno-9-11" name="__codelineno-9-11" href="#__codelineno-9-11"></a><span class="n">hd_map</span><span class="o">.</span><span class="n">commit</span>          <span class="c1"># -&gt; the revision it is at</span>
 </code></pre></div>
 <p><code>autoware_carla_scenario.maps</code> imports neither CARLA nor Lanelet2, so it is safe
 to use from any process.</p>
 <h3 id="from-a-local-directory">From a local directory<a class="headerlink" href="#from-a-local-directory" title="Permanent link">&para;</a></h3>
 <p>A map that is on this machine but in no repository -- a copy handed over on a
 USB stick, a map still being edited -- is named by its directory:</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-9-1" name="__codelineno-9-1" href="#__codelineno-9-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span>map.directory<span class="o">=</span>/path/to/autoware_maps/Town10HD_Opt
+<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span><span class="nv">map</span><span class="o">=</span>town10hd_opt<span class="w"> </span>map.directory<span class="o">=</span>/path/to/autoware_maps/Town10HD_Opt
 </code></pre></div>
 <p>The directory is read exactly as a map directory in a repository is: its <code>.osm</code>
 (<code>lanelet2_map.osm</code> when there are several), <code>map_projector_info.yaml</code>, and any
@@ -2703,11 +2782,11 @@ local copy without first clearing the source its map group selects.
 <p>An OpenDRIVE taken from CARLA for it is cached under
 <code>.derived/local/&lt;name&gt;-&lt;hash&gt;</code> in the map root rather than written into the
 directory, which may well be read-only.</p>
-<div class="highlight"><pre><span></span><code><a id="__codelineno-10-1" name="__codelineno-10-1" href="#__codelineno-10-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.maps</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_directory</span>
-<a id="__codelineno-10-2" name="__codelineno-10-2" href="#__codelineno-10-2"></a>
-<a id="__codelineno-10-3" name="__codelineno-10-3" href="#__codelineno-10-3"></a><span class="n">hd_map</span> <span class="o">=</span> <span class="n">resolve_directory</span><span class="p">(</span><span class="s2">"~/maps/Town10HD_Opt"</span><span class="p">)</span>
-<a id="__codelineno-10-4" name="__codelineno-10-4" href="#__codelineno-10-4"></a><span class="n">hd_map</span><span class="o">.</span><span class="n">lanelet2_path</span>   <span class="c1"># -&gt; ~/maps/Town10HD_Opt/lanelet2_map.osm</span>
-<a id="__codelineno-10-5" name="__codelineno-10-5" href="#__codelineno-10-5"></a><span class="n">hd_map</span><span class="o">.</span><span class="n">local</span>           <span class="c1"># -&gt; True</span>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-11-1" name="__codelineno-11-1" href="#__codelineno-11-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.maps</span><span class="w"> </span><span class="kn">import</span> <span class="n">resolve_directory</span>
+<a id="__codelineno-11-2" name="__codelineno-11-2" href="#__codelineno-11-2"></a>
+<a id="__codelineno-11-3" name="__codelineno-11-3" href="#__codelineno-11-3"></a><span class="n">hd_map</span> <span class="o">=</span> <span class="n">resolve_directory</span><span class="p">(</span><span class="s2">"~/maps/Town10HD_Opt"</span><span class="p">)</span>
+<a id="__codelineno-11-4" name="__codelineno-11-4" href="#__codelineno-11-4"></a><span class="n">hd_map</span><span class="o">.</span><span class="n">lanelet2_path</span>   <span class="c1"># -&gt; ~/maps/Town10HD_Opt/lanelet2_map.osm</span>
+<a id="__codelineno-11-5" name="__codelineno-11-5" href="#__codelineno-11-5"></a><span class="n">hd_map</span><span class="o">.</span><span class="n">local</span>           <span class="c1"># -&gt; True</span>
 </code></pre></div>
 <h2 id="in-the-editor">In the editor<a class="headerlink" href="#in-the-editor" title="Permanent link">&para;</a></h2>
 <p><strong>Map library</strong> in the header browses a repository and lists every map in it.
@@ -2756,6 +2835,14 @@ without one. A map whose CARLA assets need it installed is run with
 <td>git-lfs did not pull it. Install <code>git-lfs</code>, then <strong>Refresh</strong>.</td>
 </tr>
 <tr>
+<td><code>holds git-lfs pointers in place of its map files, and git-lfs is not installed</code></td>
+<td>The map keeps its files in LFS. Install <code>git-lfs</code> (and put it on <code>PATH</code>), then resolve it again.</td>
+</tr>
+<tr>
+<td><code>is ambiguous in</code> / <code>names no branch, tag or commit in</code></td>
+<td>An abbreviated commit hash matches several commits, or none of the remote's branches and tags. Write more of it, or the full hash.</td>
+</tr>
+<tr>
 <td><code>does not name a directory in the repository</code></td>
 <td>The <code>#path</code> is wrong for that ref. Browse the repository in the Map library.</td>
 </tr>
@@ -2799,7 +2886,7 @@ without one. A map whose CARLA assets need it installed is run with
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 03:38:29 UTC"><span class="timeago" datetime="2026-11-08T03:38:29+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 03:38:29 UTC">2026-11-08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 14:50:50 UTC"><span class="timeago" datetime="2026-11-11T14:50:50+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 14:50:50 UTC">2026-11-11</span>
   </span>
 
     
