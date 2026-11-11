@@ -234,7 +234,16 @@ among several workers at once (four, or as many as the machine has cores).
 The workers read the world's map as CommonRoad: roadgen (>= 0.42.0, the `map`
 extra) converts the world's OpenDRIVE once per machine, cached under
 `~/.cache/autoware_carla_scenario/commonroad`, and stay up for the next run on
-the map. A worker evaluates each frame moved to the ego and turned so the lane
+the map. roadgen validates the map before it writes it and has no option to
+skip that: a map it refuses fails the run with "roadgen could not convert ...
+to CommonRoad". The nishishinjuku fixture map (`data/nishishinjuku_carla.xodr`)
+is one (#2065): roadgen reports 520 issues on it, nearly all of them in the
+OpenDRIVE itself -- road links one way only, lane links and junction
+connections joining lanes that do not meet (as far as 66 m apart, where a
+junction names a connecting road that does not touch its incoming road), and
+reference lines of linked roads up to 6.6 m apart -- and 18 lanes whose ends
+are 2 to 7 cm narrower or wider than their boundaries. Until the map is
+regenerated, no CommonRoad metric can be judged on it. A worker evaluates each frame moved to the ego and turned so the lane
 under it runs along +x: CriMe projects speeds onto a lane with the cosine of
 the lane's own heading, which is the speed along the lane only there. CriMe
 0.4 stores a lane's headings in [0, 2pi) and interpolates between them as
