@@ -148,20 +148,18 @@ jobs:
             const labels = pr.labels.map(label => label.name);
             console.log(`PR Labels: ${labels.join(', ')}`);
 
-            // Check if any of the required labels exist
-            if (labels.includes('bump patch')) {
-              console.log('✅ Found "bump patch" label');
-              return;
-            } else if (labels.includes('bump minor')) {
-              console.log('✅ Found "bump minor" label');
-              return;
-            } else if (labels.includes('bump major')) {
-              console.log('✅ Found "bump major" label');
-              return;
-            } else {
-              core.setFailed('❌ ERROR: PR must have one of the following labels:\n' +
-                '  - bump patch\n' +
-                '  - bump minor\n' +
-                '  - bump major\n\n' +
+            // Exactly one: release.yml picks the largest bump among several,
+            // so a second label would change the release silently.
+            const bumpLabels = ['bump patch', 'bump minor', 'bump major'];
+            const found = labels.filter(label => bumpLabels.includes(label));
+            if (found.length === 1) {
+              console.log(`✅ Found "${found[0]}" label`);
+            } else if (found.length === 0) {
+              core.setFailed('❌ ERROR: PR must have exactly one of the following labels:\n' +
+                bumpLabels.map(label => `  - ${label}\n`).join('') + '\n' +
                 'Please add the appropriate label to indicate the version bump type.');
+            } else {
+              core.setFailed(`❌ ERROR: PR has ${found.length} version bump labels ` +
+                `(${found.join(', ')}); it must have exactly one.\n\n` +
+                'Remove all but the one that matches the change.');
             }

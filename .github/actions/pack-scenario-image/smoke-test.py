@@ -10,7 +10,7 @@ It asserts the properties the image exists to guarantee: the CARLA client,
 typesafe_carla's prebuilt CPython package, is in the image and loads
 without compiling anything, the official `carla` package is not there, the
 scenario package's entry point registers its scenario, and Hydra can reach
-that package's config directory.
+that package's config directory, which exists and holds its scenario configs.
 """
 
 from __future__ import annotations
@@ -18,7 +18,38 @@ from __future__ import annotations
 import importlib.util
 import os
 import sys
+from collections.abc import Sequence
 from importlib.metadata import version
+from pathlib import Path
+
+
+def check_conf_dirs(conf_dirs: Sequence[Path], framework_conf_dir: Path) -> str | None:
+    """Return why the registered config directories fall short, or None.
+
+    The framework's own directory is always registered and always holds
+    YAML, so it proves nothing about the scenario package and is ignored.
+    ``register_conf_dir`` does not check that a path exists, and a generated
+    package registers ``Path(__file__).parent / "conf"`` whether or not its
+    wheel shipped it, so a directory merely being registered proves nothing
+    either: at least one plugin directory has to exist and hold a YAML under
+    its ``scenario/`` group, the one ``scenario=<name>/...`` selects from.
+    """
+    framework = framework_conf_dir.resolve()
+    plugin_dirs = [dir_ for dir_ in conf_dirs if dir_.resolve() != framework]
+    if not plugin_dirs:
+        return (
+            "No scenario package registered a config directory: only the "
+            f"framework's own ({framework}) is on the search path."
+        )
+    for dir_ in plugin_dirs:
+        scenario_group = dir_ / "scenario"
+        if scenario_group.is_dir() and any(scenario_group.rglob("*.yaml")):
+            return None
+    shown = ", ".join(str(dir_) for dir_ in plugin_dirs)
+    return (
+        "No config directory registered by a scenario package holds a YAML "
+        f"under scenario/ -- is conf/ missing from the wheel? Registered: {shown}"
+    )
 
 
 def main(argv: list[str]) -> int:
@@ -52,6 +83,7 @@ def main(argv: list[str]) -> int:
 
     # Imported lazily so a client problem is reported before the heavier import.
     from autoware_carla_scenario.registry import (
+        _FRAMEWORK_CONF_DIR,
         get_conf_dirs,
         get_scenario_registry,
         load_scenario_plugins,
@@ -85,11 +117,9 @@ def main(argv: list[str]) -> int:
         return 1
 
     conf_dirs = get_conf_dirs()
-    if not any(dir_.is_dir() and any(dir_.rglob("*.yaml")) for dir_ in conf_dirs):
-        print(
-            f"None of the registered config directories holds a YAML: {conf_dirs}",
-            file=sys.stderr,
-        )
+    problem = check_conf_dirs(conf_dirs, _FRAMEWORK_CONF_DIR)
+    if problem is not None:
+        print(problem, file=sys.stderr)
         return 1
 
     print(f"CARLA client: {installed}")

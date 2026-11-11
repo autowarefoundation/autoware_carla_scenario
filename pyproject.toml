@@ -69,6 +69,9 @@ dev = [
     "autoware-carla-scenario-t4>=0.1,<0.2",
     "t4-devkit>=0.8.0,<0.9; python_version < '3.13'",
     "colorama>=0.4.6; python_version < '3.13'",
+    # `uv run ruff` must be the ruff CI runs, the pre-commit hook's: pinned to
+    # its rev, which test_ruff_pin.py keeps in step.
+    "ruff==0.7.4",
 ]
 
 [tool.ruff]
