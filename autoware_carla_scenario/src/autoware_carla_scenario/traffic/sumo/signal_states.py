@@ -16,9 +16,11 @@ from typing import Optional
 
 __all__ = [
     "CARLA_TO_SUMO_SIGNAL",
+    "DARK_SIGNAL_STATES",
     "SECONDARY_SIGNAL_STATES",
     "SUMO_TO_CARLA_SIGNAL",
     "carla_light_state",
+    "clear_state",
     "green_together",
     "link_states",
     "permissive_links",
@@ -27,7 +29,21 @@ __all__ = [
 ]
 
 #: CARLA's light state names -> the SUMO link state a CARLA light sets.
-CARLA_TO_SUMO_SIGNAL: dict[str, str] = {"Red": "r", "Yellow": "y", "Green": "G"}
+#:
+#: A light switched ``Off`` (a dark junction: the ``off`` phase of a signal
+#: controller, ``TrafficSignalAction(state=Off)``) is SUMO's ``o``, "off,
+#: blinking": the link is a minor one, whose vehicles give way by the
+#: junction's right-of-way rules, as drivers do at a dark signal.  Not ``O``,
+#: "off, no signal", which gives the link the right of way: set on every link
+#: of a junction, it would let crossing streams drive as if each had priority.
+#: ``Unknown`` has no SUMO state -- it says nothing of what the light shows --
+#: so the link keeps the state it has (:func:`link_states`).
+CARLA_TO_SUMO_SIGNAL: dict[str, str] = {
+    "Red": "r",
+    "Yellow": "y",
+    "Green": "G",
+    "Off": "o",
+}
 #: SUMO's link states -> the CARLA light state name each shows as: red-yellow
 #: (``u``, the light about to turn green) and a green right-turn arrow a
 #: driver must stop at first (``s``, a right turn on red) stop a driver as
@@ -44,6 +60,10 @@ SUMO_TO_CARLA_SIGNAL: dict[str, str] = {
     "O": "Off",
 }
 
+
+#: SUMO's link states of a signal switched off: ``o`` blinking (give way),
+#: ``O`` no signal (right of way).
+DARK_SIGNAL_STATES = "oO"
 
 #: The link states :func:`carla_light_state` lets any other state of the same
 #: light win over: a light switched off, and a right turn on red, say nothing
@@ -132,15 +152,33 @@ def permissive_links(phases: list[str], switched: set[int]) -> set[int]:
     return permissive
 
 
+def clear_state(states: list[str]) -> str:
+    """The state of a link that may go only while the vehicle links it
+    crosses, in *states*, are held: ``G`` while every one is red; ``o``
+    (give way) while every one is red or switched off and some are off, as
+    at a dark junction, where nothing holds them; ``r`` otherwise."""
+    dark = False
+    for state in states:
+        if state in DARK_SIGNAL_STATES:
+            dark = True
+        elif state not in "rR":
+            return "r"
+    return "o" if dark else "G"
+
+
 def ride_state(follows: str, states: list[str]) -> str:
     """The state of a bicycle ride's signal link, from the *states* of the
-    vehicle links it *follows* (``with``) or must be clear of (``clear``)."""
+    vehicle links it *follows* (``with``) or must be clear of (``clear``,
+    :func:`clear_state`).  Riding with traffic switched off, it gives way as
+    that traffic does (``o``)."""
     if follows == "clear":
-        return "G" if all(state in "rR" for state in states) else "r"
+        return clear_state(states)
     if any(state in "Gg" for state in states):
         return "g"  # with the traffic, giving way as a bicycle does
     if any(state in "yY" for state in states):
         return "y"
+    if any(state in DARK_SIGNAL_STATES for state in states):
+        return "o"
     return "r"
 
 
@@ -155,15 +193,18 @@ def link_states(
 
     Args:
         current: The state SUMO shows now, kept where nothing below sets one.
-        carla: Link index -> the state name of the CARLA light switching it;
-            a name with no SUMO state (``Off``, ``Unknown``) keeps the link's.
+        carla: Link index -> the state name of the CARLA light switching it
+            (:data:`CARLA_TO_SUMO_SIGNAL`); ``Unknown``, which has no SUMO
+            state, keeps the link's.
         permissive: The links a CARLA Green sets to a permissive green
             (``g``), as some phase of SUMO's own program shows them
             (:func:`permissive_links`); the rest get ``G``.
         rides: Each bicycle ride's link, how it follows (``with`` or
             ``clear``) and the vehicle links it follows (:func:`ride_state`).
         crossings: Each pedestrian crossing's link and the vehicle links over
-            the road it crosses: it walks while every one of them is red.
+            the road it crosses: it walks while every one of them is red, and
+            gives way while they are red or switched off
+            (:func:`clear_state`).
     """
     state = list(current)
     for index, name in carla.items():
@@ -181,6 +222,5 @@ def link_states(
     # A crossing walks while nothing drives over the road it crosses: the
     # CARLA lights decide the vehicles, and with them the people.
     for index, foes in crossings:
-        clear = all(state[foe] in "rR" for foe in foes)
-        state[index] = "G" if clear else "r"
+        state[index] = clear_state([state[foe] for foe in foes])
     return "".join(state)

@@ -1097,9 +1097,10 @@ vehicles yield to them — instead of jumping between footways. At a signalised
 junction netconvert appends the crossings' links after the vehicle links, so the
 vehicle links keep the indices CARLA's lights are matched to. With
 `traffic_light_authority=carla` a crossing is green while every vehicle link
-into or out of a road it crosses is red, and red otherwise; with `sumo`, SUMO's
-own program (which netconvert gives a pedestrian phase) drives it. A network
-given as `net_path` is used as it is.
+into or out of a road it crosses is red, gives way (`o`) while they are red or
+switched off and some are off (a dark junction), and is red otherwise; with
+`sumo`, SUMO's own program (which netconvert gives a pedestrian phase) drives
+it. A network given as `net_path` is used as it is.
 
 ```bash
 uv run scenario ... traffic=sumo traffic.options.pedestrians.enabled=true \
@@ -1121,7 +1122,8 @@ program gives such a bicycle a green of its own ahead of the traffic; with
 bicycle coming onto the road goes with the traffic of the road beside its
 sidewalk (and gives way), one getting off the road goes with the traffic it
 leaves, and one riding across a road goes while every vehicle link SUMO's own
-program never lets go with it is red. Off, sidewalks are the pedestrians' and
+program never lets go with it is red. Where those links are switched off, the
+bicycle gives way (`o`), as the traffic does. Off, sidewalks are the pedestrians' and
 bicycles keep to the carriageway and the cycle lanes. The network is cached
 apart from one built without, and a network given as `net_path` is used as it
 is.
@@ -1352,6 +1354,15 @@ signals the states of CARLA's lights every step, so a scenario that sets the
 lights sets them for SUMO's traffic too; `sumo` drives CARLA's lights from
 SUMO's programs; `none` leaves each alone. CARLA's lights are applied while
 SUMO warms up too, so the queues it starts with are the ones they would build.
+Under `carla`, `Red`, `Yellow` and `Green` set SUMO's `r`, `y` and `G` (`g`
+where SUMO's own program has a permissive green), and a light switched `Off` --
+a dark junction, as a signal controller's `off` phase or
+`TrafficSignalAction(state=Off)` makes one -- sets `o`, SUMO's "off, blinking":
+its vehicles give way by the junction's right-of-way rules, as drivers do at a
+dark signal. Not `O`, "off, no signal", which gives a link the right of way and,
+on every link of a junction, would let crossing streams drive as if each had
+priority. `Unknown` says nothing of what a light shows, so its links keep the state they
+have.
 Under `sumo`, SUMO's red-yellow (`u`) and its green right-turn arrow that a
 driver must stop at first (`s`, a right turn on red) show as CARLA's `Red`, and
 a signal switched off (`o` blinking, `O` dark) as `Off`. A CARLA light
@@ -1394,7 +1405,7 @@ uv run scenario ... traffic=sumo traffic.options.mesoscopic.enabled=true \
 | `update_interval_s` | `1.0` | simulated seconds between two decisions; the queue model steps every tick |
 | `scenario_vehicles` | `false` | let the scenario's vehicles SUMO drives (`scenario_vehicles=sumo`) leave CARLA too |
 | `headway_s`, `jam_spacing_m` | `1.5`, `7.5` | the queue model's capacity per lane, and the road a queued vehicle takes up |
-| `junction_control` | `true` | hold a mesoscopic vehicle at a red SUMO signal |
+| `junction_control` | `true` | hold a mesoscopic vehicle at a SUMO signal unless it is green (`G`, `g`) or switched off (`o`, `O`) on some lane of its move: red, red-yellow, yellow and a right turn on red (`s`) hold it |
 
 A vehicle leaves only from a normal edge, never from inside a junction, and
 comes back with its route, its type, length, width and top speed, and a speed
