@@ -472,3 +472,17 @@ class TestAction:
     def test_a_negative_distance_is_refused(self, kwargs: dict) -> None:
         with pytest.raises(ValueError):
             LaneChangeAction("npc", LaneChangeDirection.LEFT, **kwargs)
+
+    @pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+    @pytest.mark.parametrize("option", ["start_after_m", "lane_change_length_m"])
+    def test_a_non_finite_distance_is_refused(self, option: str, value: float) -> None:
+        # #2077: NaN passed `< 0` and changed lanes at once; infinity held the
+        # lateral domain for the rest of the run.
+        with pytest.raises(ValueError, match=f"{option} must be finite"):
+            options: dict[str, Any] = {option: value}
+            LaneChangeAction("npc", LaneChangeDirection.LEFT, **options)
+
+    @pytest.mark.parametrize("option", ["start_after_m", "lane_change_length_m"])
+    def test_zero_is_taken(self, option: str) -> None:
+        options: dict[str, Any] = {option: 0.0}
+        LaneChangeAction("npc", LaneChangeDirection.LEFT, **options)

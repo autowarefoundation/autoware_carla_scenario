@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Optional, Union
 
 from ..conditions.base import BaseCondition
@@ -107,11 +108,16 @@ class LaneChangeAction(BaseAction):
         start_after_m: float = 0.0,
         lane_change_length_m: float = 0.0,
     ) -> None:
-        if start_after_m < 0.0:
-            raise ValueError(f"start_after_m must not be negative: {start_after_m}")
-        if lane_change_length_m < 0.0:
+        # #2077: NaN passed `< 0` and changed lanes at once; infinity held
+        # the vehicle (and its lateral domain) for the rest of the run.
+        if not math.isfinite(start_after_m) or start_after_m < 0.0:
             raise ValueError(
-                f"lane_change_length_m must not be negative: {lane_change_length_m}"
+                f"start_after_m must be finite and not negative, not {start_after_m!r}"
+            )
+        if not math.isfinite(lane_change_length_m) or lane_change_length_m < 0.0:
+            raise ValueError(
+                "lane_change_length_m must be finite and not negative, "
+                f"not {lane_change_length_m!r}"
             )
         if until is None:
             settled: BaseCondition = LaneChangeSettledCondition(

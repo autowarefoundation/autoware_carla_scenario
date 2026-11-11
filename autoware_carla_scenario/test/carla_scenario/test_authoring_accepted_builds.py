@@ -924,6 +924,9 @@ def test_validator_refuses_a_bound_the_condition_refuses(
         ("smart_pedestrian", "ped", {"prompts": [{"time_s": -1.0}]}, "time_s"),
         ("set_speed", "car", {"target_speed_kmh": -1.0}, "target_speed_kmh"),
         ("set_speed", "car", {"rate_kmh_s": 0.0}, "rate_kmh_s"),
+        # #2077: a turn searched for over no distance is refused as it builds.
+        ("turn", "car", {"search_distance": 0.0}, "search_distance"),
+        ("lane_change", "car", {"start_after_m": -1.0}, "start_after_m"),
         ("spawn", "car", {"length": -1.0}, "length"),
         (
             "stalled_object",

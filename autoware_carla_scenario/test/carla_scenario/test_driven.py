@@ -13,7 +13,8 @@ the test slower.
 
 from __future__ import annotations
 
-from typing import Optional
+import math
+from typing import Any, Optional
 
 import pytest
 
@@ -731,6 +732,35 @@ class TestTheTurnActionDelegates:
                 _World(_Map(None))
             )
         assert "not found" in caplog.text
+
+
+class TestTheTurnActionRefusesBadDistances:
+    @pytest.mark.parametrize("value", [0.0, -1.0, math.nan, math.inf, -math.inf])
+    @pytest.mark.parametrize(
+        "option", ["search_distance", "waypoint_step", "post_junction_distance"]
+    )
+    def test_a_distance_not_finite_and_positive_is_refused(
+        self, option: str, value: float
+    ) -> None:
+        # #2077: a step of 0 failed mid-run; a NaN search set no turn.
+        from autoware_carla_scenario.actions import TurnAction
+        from autoware_carla_scenario.traffic import TurnDirection
+
+        with pytest.raises(ValueError, match=f"{option} must be finite and positive"):
+            options: dict[str, Any] = {option: value}
+            TurnAction("npc1", TurnDirection.LEFT, **options)
+
+    def test_a_small_positive_distance_is_taken(self) -> None:
+        from autoware_carla_scenario.actions import TurnAction
+        from autoware_carla_scenario.traffic import TurnDirection
+
+        TurnAction(
+            "npc1",
+            TurnDirection.LEFT,
+            search_distance=0.5,
+            waypoint_step=0.5,
+            post_junction_distance=0.5,
+        )
 
 
 class TestFollowRoute:

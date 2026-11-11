@@ -14,6 +14,7 @@ from ..coordinate.map_manager import run_carla_map
 from ..entity.pedestrian_entity import PedestrianEntity
 from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
 from ..entity_role import EntityRole
+from ..metrics import _driving_lane_at
 from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M, STEP_BACK_M, road_threat
 from ..control_domain import ControlDomain, movement_of
 from .base import BaseAction, TickTiming
@@ -375,15 +376,22 @@ class WalkStraightAction(BaseAction):
         return False
 
     def _on_road(self, world: "carla.World", location: carla.Location) -> bool:
-        """Whether a driving lane is under *location*."""
+        """Whether a driving lane is under *location*, as
+        :class:`~autoware_carla_scenario.conditions.OffRoadFractionCondition`
+        reads it (:func:`~autoware_carla_scenario.metrics._driving_lane_at`):
+        the band inside a lane that CARLA's point query misses, next to the
+        lane beside it, is on the road, not the kerb (#2077)."""
         held = self._carla_map
         if held is None:
             # The run's: get_map() builds a whole new map on every call.
             held = run_carla_map(world)
             self._carla_map = held
         carla_map: carla.Map = held
-        waypoint = carla_map.get_waypoint(
-            location, project_to_road=False, lane_type=int(carla.LaneType.Driving)
+        waypoint = _driving_lane_at(
+            carla_map,
+            (location.x, location.y),
+            location.z,
+            int(carla.LaneType.Driving),
         )
         return waypoint is not None
 
