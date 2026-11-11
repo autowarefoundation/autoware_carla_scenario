@@ -115,7 +115,9 @@ def list_maps(
     # `at_tip` falls back to the commit last resolved, or to the ref itself.
     files = store.list_files(store.at_tip(parsed.with_path("")), refresh=refresh)
 
-    prefix = f"{parsed.path}/" if parsed.path else ""
+    # The directory, not the path: a source naming the `.osm` itself (a file
+    # URL copied out of a repository browser) lists the maps beside it.
+    prefix = f"{parsed.directory}/" if parsed.directory else ""
     by_directory: dict[str, list[str]] = {}
     for path in files:
         if not path.startswith(prefix):

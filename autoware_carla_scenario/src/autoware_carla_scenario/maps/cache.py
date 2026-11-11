@@ -59,7 +59,13 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..atomic_file import write_text_atomically
-from .source import MapSource, MapSourceError
+from .source import (
+    MapSource,
+    MapSourceError,
+    looks_like_commit,
+    redacted_url,
+    url_without_password,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -253,9 +259,12 @@ class GitMapCache:
 
         The slug is readable so that a person can find a map in the cache by
         eye; the digest after it is what actually keeps two repositories apart,
-        since sanitising a URL is not injective.
+        since sanitising a URL is not injective.  The digest is of the URL
+        without its password (:func:`~...maps.source.url_without_password`):
+        the same repository reached with another token is the same entry, and
+        a URL with no password keys the entry it always did.
         """
-        identity = f"{source.repo_url}\n{source.ref}"
+        identity = f"{url_without_password(source.repo_url)}\n{source.ref}"
         digest = hashlib.sha256(identity.encode("utf-8")).hexdigest()[:10]
         slug = _SLUG_UNSAFE.sub("-", f"{source.repo_name}-{source.ref or 'HEAD'}")
         return self.root / REPOS_SUBDIR / f"{slug.strip('-').lower()}-{digest}"
@@ -278,7 +287,8 @@ class GitMapCache:
         the same map cloned here.  A stale file is replaced the way it always
         was, by fetching again with ``refresh``.
         """
-        digest = hashlib.sha256(source.repo_url.encode("utf-8")).hexdigest()[:10]
+        url = url_without_password(source.repo_url)
+        digest = hashlib.sha256(url.encode("utf-8")).hexdigest()[:10]
         slug = _SLUG_UNSAFE.sub("-", source.repo_name).strip("-").lower() or "repo"
         return self.root / DERIVED_SUBDIR / f"{slug}-{digest}" / (source.path or "root")
 
@@ -344,6 +354,15 @@ class GitMapCache:
         asked to fetch, so it fails soft: a machine with no route to the remote
         gets the source back unchanged and carries on with whatever it cached,
         which is what it would have done before.
+
+        A ref the remote has no branch or tag of, but that is spelled like an
+        abbreviated commit hash, is expanded to the full one
+        (:meth:`_expand_commit`), and remembered like a branch's commit, so it
+        resolves offline afterwards too.
+
+        Raises:
+            MapCacheError: If the ref is an abbreviated hash that matches no
+                commit of the remote's branches and tags, or more than one.
         """
         if source.pinned:
             return source
@@ -371,15 +390,18 @@ class GitMapCache:
             remembered = self.last_tip(source)
             logger.warning(
                 "Could not ask %s which commit %s is at; using %s.",
-                source.repo_url,
+                redacted_url(source.repo_url),
                 ref,
                 f"the cached {remembered[:10]}" if remembered else "what is cached",
             )
             return source.at(remembered) if remembered else source
         commit = _exact_tip(listing, ref)
+        if not commit and source.ref and looks_like_commit(source.ref):
+            # No branch or tag of that name: the commit it abbreviates.
+            commit = self._expand_commit(source)
         at_commit = source.at(commit) if commit else source
         if not at_commit.pinned:
-            logger.warning("%s names no ref in %s.", ref, source.repo_url)
+            logger.warning("%s names no ref in %s.", ref, redacted_url(source.repo_url))
             return source
         self.remember_tip(source, at_commit.ref)
         return at_commit
@@ -397,13 +419,76 @@ class GitMapCache:
             path,
             _json_object(
                 [
-                    ("repo_url", json.dumps(source.repo_url)),
+                    ("repo_url", json.dumps(redacted_url(source.repo_url))),
                     ("ref", json.dumps(source.ref)),
                     ("commit", json.dumps(commit)),
                     ("resolved_at", json.dumps(time.time())),
                 ]
             ),
         )
+
+    def _expand_commit(self, source: MapSource) -> str:
+        """Return the full commit hash *source*'s abbreviated ref names.
+
+        A remote serves no object by an abbreviation, so the commits of every
+        branch and tag are fetched -- commits only (``--filter=tree:0``)
+        where the server can filter -- into a scratch repository beside the
+        entries, the abbreviation is looked up among them, and the scratch
+        repository is removed.  A commit only reachable from elsewhere (a
+        pull request's ref) is not found; its full hash is.
+
+        Raises:
+            MapCacheError: If no commit, or more than one, starts with it.
+        """
+        prefix = source.ref.lower()
+        where = redacted_url(source.repo_url)
+        parent = self.root / REPOS_SUBDIR
+        parent.mkdir(parents=True, exist_ok=True)
+        scratch = Path(tempfile.mkdtemp(prefix=".expand.", dir=str(parent)))
+        try:
+            self._git(scratch, "init", "--quiet", "--bare", ".")
+            self._git(scratch, "remote", "add", "--", "origin", source.repo_url)
+            self._git(scratch, "config", "remote.origin.promisor", "true")
+            self._git(scratch, "config", "remote.origin.partialclonefilter", "tree:0")
+            self._git(
+                scratch,
+                "fetch",
+                "--quiet",
+                "--filter=tree:0",
+                "--no-tags",
+                "--",
+                "origin",
+                "+refs/heads/*:refs/heads/*",
+                "+refs/tags/*:refs/tags/*",
+            )
+            try:
+                listed = self._git(
+                    scratch, "rev-parse", f"--disambiguate={prefix}", capture=True
+                )
+            except MapCacheError:
+                listed = ""
+            commits: list[str] = []
+            for name in listed.split():
+                kind = self._git(scratch, "cat-file", "-t", name, capture=True)
+                if kind.strip() == "commit":
+                    commits.append(name.strip().lower())
+        finally:
+            shutil.rmtree(scratch, ignore_errors=True)
+        if not commits:
+            raise MapCacheError(
+                f"{source.ref} names no branch, tag or commit in {where}. An "
+                "abbreviated commit hash is looked up among the commits of its "
+                "branches and tags; write the full 40-character hash for any "
+                "other."
+            )
+        if len(commits) > 1:
+            raise MapCacheError(
+                f"{source.ref} is ambiguous in {where}: it abbreviates "
+                f"{', '.join(sorted(commits))}. Write more of the hash, or all "
+                "40 characters."
+            )
+        logger.info("%s in %s is commit %s", source.ref, where, commits[0])
+        return commits[0]
 
     def last_tip(self, source: MapSource) -> str:
         """Return the commit *source*'s ref last resolved to, or ``""``.
@@ -531,15 +616,20 @@ class GitMapCache:
                 # copy is as good as ours, so keep whichever landed first.
                 if not (entry / "repo" / ".git").exists():
                     raise
-                logger.debug("Discarding a concurrent clone of %s", source.repo_url)
+                logger.debug(
+                    "Discarding a concurrent clone of %s", redacted_url(source.repo_url)
+                )
         finally:
             shutil.rmtree(staging, ignore_errors=True)
 
         cached = self.peek(source)
         if cached is None:
-            raise MapCacheError(f"Could not clone {source.repo_url}.")
+            raise MapCacheError(f"Could not clone {redacted_url(source.repo_url)}.")
         logger.info(
-            "Cloned %s@%s into %s", source.repo_url, source.ref or "HEAD", cached.root
+            "Cloned %s@%s into %s",
+            redacted_url(source.repo_url),
+            source.ref or "HEAD",
+            cached.root,
         )
         return cached
 
@@ -600,6 +690,9 @@ class GitMapCache:
         if source.pinned and cached.commit == source.ref:
             return
         ref = source.ref or "HEAD"
+        # The URL as written now: a token in it may have been replaced since
+        # the entry was cloned, and the entry is keyed without it.
+        self._git(cached.worktree, "remote", "set-url", "--", "origin", source.repo_url)
         self._git(cached.worktree, "fetch", "--depth", "1", "--", "origin", ref)
         self._git(cached.worktree, "checkout", "--detach", "FETCH_HEAD")
         commit = self._git(cached.worktree, "rev-parse", "HEAD", capture=True).strip()
@@ -609,7 +702,9 @@ class GitMapCache:
                 cached.root,
                 replace(self._read_meta(cached.root), materialised=cached.materialised),
             )
-        logger.info("Refreshed %s@%s to %s", source.repo_url, ref, commit[:10])
+        logger.info(
+            "Refreshed %s@%s to %s", redacted_url(source.repo_url), ref, commit[:10]
+        )
 
     def _materialise(
         self, cached: CachedRepo, *, include: Optional[Sequence[str]], refresh: bool
@@ -668,7 +763,11 @@ class GitMapCache:
             )
         self._git_waiting(worktree, "checkout")
 
-        if wanted and (refresh or not self._content_present(worktree, wanted)):
+        # Only for content that is still a pointer, refreshed or not: a fetch
+        # that changed a file leaves it a pointer again, and one it did not
+        # change has nothing to pull -- nor does a repository with no LFS.
+        if wanted and not self._content_present(worktree, wanted):
+            self._require_lfs(worktree, source)
             self._git(worktree, "lfs", "pull", f"--include={','.join(wanted)}")
         # Re-read again: what was recorded is still checked out, whoever
         # recorded it, since nothing here takes a directory away.
@@ -712,6 +811,24 @@ class GitMapCache:
             time.sleep(delay)
             delay *= 2
 
+    def _require_lfs(self, worktree: Path, source: MapSource) -> None:
+        """Say plainly that git-lfs is missing, if it is.
+
+        Without it ``git lfs pull`` fails with git's "not a git command" and a
+        list of commands it might have meant.
+
+        Raises:
+            MapCacheError: If ``git lfs`` does not run.
+        """
+        try:
+            self._git(worktree, "lfs", "version", capture=True)
+        except MapCacheError as exc:
+            raise MapCacheError(
+                f"{source.redacted_uri} holds git-lfs pointers in place of its "
+                "map files, and git-lfs is not installed (or not on PATH) to "
+                "fetch them: install git-lfs (https://git-lfs.com)."
+            ) from exc
+
     @staticmethod
     def _content_present(worktree: Path, wanted: Sequence[str]) -> bool:
         """Whether every matched file holds real content rather than a pointer."""
@@ -753,9 +870,8 @@ class GitMapCache:
             raise MapCacheError(f"git {args[0]} timed out.") from exc
         if completed.returncode != 0:
             detail = (completed.stderr or completed.stdout or "").strip()
-            lines = detail.splitlines()
             raise MapCacheError(
-                f"git {args[0]} failed: {lines[-1] if lines else 'no output'}"
+                f"git {args[0]} failed: {redacted_url(_git_error_line(detail))}"
             )
         return completed.stdout if capture else ""
 
@@ -782,7 +898,9 @@ class GitMapCache:
         cls._write_entry_meta(
             entry,
             _EntryMeta(
-                repo_url=source.repo_url,
+                # Redacted: the file is read by people, and by nothing that
+                # clones (the entry's own git config has the URL).
+                repo_url=redacted_url(source.repo_url),
                 ref=source.ref,
                 commit=commit,
                 fetched_at=time.time(),
@@ -863,6 +981,19 @@ def _exact_tip(listing: str, ref: str) -> str:
         if direct:
             return direct
     return ""
+
+
+def _git_error_line(detail: str) -> str:
+    """The line of git's *detail* (its stderr) that says what went wrong.
+
+    The first ``fatal:`` or ``error:`` line, which is git's own; otherwise
+    the last line -- not the first, which is often progress, nor a hint.
+    """
+    lines = [line.strip() for line in detail.splitlines() if line.strip()]
+    for line in lines:
+        if line.startswith("fatal:") or line.startswith("error:"):
+            return line
+    return lines[-1] if lines else "no output"
 
 
 def _json_field(raw: str, key: str) -> Optional[str]:

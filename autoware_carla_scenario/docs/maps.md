@@ -69,10 +69,36 @@ there the filesystem decides:
 To take the filesystem out of it, write the `@` of a directory name as `%40`
 in a `file://` URL (`file:///srv/maps%402/repo@main`); git decodes it.
 
+A full commit hash is stored in lower case, as git spells it, so
+`@DEA2CFEA...` and `@dea2cfea...` are one pin and one cache entry.
+
+An **abbreviated commit hash** (4 to 39 hex digits, `@dea2cfe`) works too: when
+the remote has no branch or tag of that name, the commits of its branches and
+tags are fetched (commits only, where the server can filter) and the one the
+abbreviation names is used, exactly as a branch is resolved to its commit. The
+answer is remembered beside the cache entry, so the source resolves offline
+afterwards. An abbreviation that matches no commit, or several, is an error
+saying so; a commit reachable only from another ref (a pull request's) needs
+its full hash. An abbreviation is not a pin -- it can grow ambiguous as the
+repository does -- so **Pin to commit** rewrites it to the full hash; like a
+pin, it never resolves to an unpacked directory (see below).
+
+A repository URL may carry credentials (`https://oauth2:TOKEN@host/o/r`).
+They are passed to git as written, but every log line, error message and
+`meta.json` / `.tip.json` this framework writes shows them redacted
+(`https://oauth2:***@host/o/r`; an http(s) user name with no password, which
+is how a token is often passed, as `***`). The cache entry is keyed on the URL
+without its password, so a replaced token reuses the entry, and **Refresh**
+fetches with the token now in the source.
+
 The URL you actually have is the one in your browser's address bar, and that is
 accepted as-is and normalised — GitHub's `/tree/<ref>/<path>` and HuggingFace's
 `/tree/`, `/resolve/` and `/raw/` forms all parse. Paste the page you are
-looking at.
+looking at. The anchor such a URL may end in is the page's, not a path: on a
+`/tree/`, `/blob/` (or other view) URL the view's own path wins over any `#`,
+and on any other `https://` page a line anchor (`#L10`, `#L10-L20`) or a
+README's (`#readme`, `#readme-ov-file`, `#user-content-...`) is dropped. A
+source written with `git+` takes its `#PATH` as written.
 
 Any git server works: HuggingFace, GitHub, GitLab, an internal host, a
 `file://` path on a shared filesystem.
@@ -92,7 +118,10 @@ autoware_maps/Town10HD_Opt
 Only the files this framework reads are pulled out of git-lfs — the `.osm`, the
 `.xodr` if there is one, and the YAML beside them. The point cloud stays a
 pointer file of a few hundred bytes, which is what keeps fetching a 2 MB map
-from costing 22 MB.
+from costing 22 MB. `git lfs pull` runs only while one of those files is still
+a pointer -- not for a repository without LFS, and not on **Refresh** or **Pin
+to commit** when nothing changed -- so git-lfs is needed only for a map that
+keeps its files in LFS, and then a missing one is reported as such.
 
 A repository can carry symlinks, so each file is checked for where it really
 is. The `.osm`, the `.xodr` and `map_projector_info.yaml` are used only when
@@ -393,6 +422,8 @@ without one. A map whose CARLA assets need it installed is run with
 | --- | --- |
 | `git is not installed` | The cache clones with `git`; install it. |
 | A map resolves but the `.osm` is a few hundred bytes | git-lfs did not pull it. Install `git-lfs`, then **Refresh**. |
+| `holds git-lfs pointers in place of its map files, and git-lfs is not installed` | The map keeps its files in LFS. Install `git-lfs` (and put it on `PATH`), then resolve it again. |
+| `is ambiguous in` / `names no branch, tag or commit in` | An abbreviated commit hash matches several commits, or none of the remote's branches and tags. Write more of it, or the full hash. |
 | `does not name a directory in the repository` | The `#path` is wrong for that ref. Browse the repository in the Map library. |
 | `names a directory outside the repository` / `names a link to a directory outside the repository` | The `#path` contains `..`, or is a symlink leading out of the checkout. Point it at the real directory. |
 | `map directory cannot be read` | The `#path` names a directory the process cannot look at under the map root: a path component longer than the file system allows, a permission it lacks, or an I/O error. The editor shows the map as not downloaded. |

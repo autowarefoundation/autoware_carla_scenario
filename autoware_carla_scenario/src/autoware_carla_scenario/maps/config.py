@@ -26,6 +26,7 @@ from .resolver import (
     resolve_directory,
     resolve_map,
 )
+from .source import redacted_url
 
 logger = logging.getLogger(__name__)
 
@@ -193,7 +194,7 @@ def _resolve(
             logger.info(
                 "map.directory %s takes precedence over map.source %s",
                 directory,
-                source,
+                redacted_url(source),
             )
         local = resolve_directory(directory)
         resolved = local
