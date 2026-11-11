@@ -178,7 +178,8 @@ def create_app(
     application = FastAPI(title="Scenario Editor")
     # Refuses cross-site state changes and foreign Host names (DNS
     # rebinding): binding loopback keeps other machines out, not other
-    # sites' pages (#1844, web_guard).
+    # sites' pages (#1844, web_guard).  It also forbids framing the app on
+    # every response (clickjacking, #2053).
     application.add_middleware(RequestGuard, hosts=HostAllowlist(host))
     application.mount(
         "/static", _RevalidatedStatics(directory=str(_STATIC_DIR)), name="static"

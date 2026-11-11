@@ -1215,6 +1215,11 @@ draft is left as it was.
       forwarder that serves it under another name or over HTTPS, the editor
       refuses requests unless it is bound to every interface; an SSH `-L`
       tunnel to a loopback port keeps working.
+    * Against clickjacking, every response carries `X-Frame-Options: DENY`
+      and `Content-Security-Policy: frame-ancestors 'none'`, errors and
+      static files included, so no page can load the editor in a hidden frame
+      and trick you into clicking Export. The editor never frames its own
+      pages either.
 
 ## Running an authored scenario
 

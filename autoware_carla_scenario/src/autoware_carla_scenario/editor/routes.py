@@ -29,7 +29,7 @@ from starlette.types import Receive, Scope, Send
 
 from ..authoring.models import ScenarioDocument
 from ..authoring.package_export import PackageExportError
-from ..authoring.persistence import Draft, dump_document_yaml
+from ..authoring.persistence import Draft, DraftStore, dump_document_yaml
 from ..authoring.registry import TRUTHY_VALUES
 from ..maps import opendrive
 from ..web_guard import refuse_cross_site
@@ -407,6 +407,23 @@ async def use_map(request: Request, draft_id: str) -> HTMLResponse:
 # ---------------------------------------------------------------------------
 
 
+def _known_draft_id(store: DraftStore, draft_id: str) -> str:
+    """*draft_id* when it is a valid id naming a stored draft, else ``""``.
+
+    The id is checked against the store's id pattern
+    (:meth:`~autoware_carla_scenario.authoring.persistence.DraftStore.path_for`)
+    and its file must exist, so a value from the URL never reaches a page
+    unless it is one of the drafts the editor itself lists (#2053).
+    """
+    if not draft_id:
+        return ""
+    try:
+        path = store.path_for(draft_id)
+    except ValueError:
+        return ""
+    return draft_id if path.is_file() else ""
+
+
 @router.get(
     "/maps",
     response_class=HTMLResponse,
@@ -426,8 +443,13 @@ def map_library(
     run ``git ls-remote`` (and may clone or fetch) against whatever repository
     the URL names: a request another site sends is refused with 403
     (:func:`~autoware_carla_scenario.web_guard.refuse_cross_site`).
+
+    ``draft`` comes from the URL, so it is kept only when it is a valid draft
+    id naming a stored draft (:func:`_known_draft_id`); anything else is
+    dropped, and the page offers new scenarios instead (#2053).
     """
     service = _service(request)
+    draft = _known_draft_id(service.store, draft)
     entries: list[Any] = []
     error = ""
     if repo:

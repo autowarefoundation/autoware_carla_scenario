@@ -31,7 +31,7 @@
       <input type="radio" name="{{ group }}" value="fixed"
              {% if slot.choice.mode == 'fixed' %}checked{% endif %}
              hx-post="/draft/{{ draft.id }}/lanelet-mode"
-             hx-vals='{"slot": "{{ slot.key }}", "mode": "fixed"}'
+             hx-vals='{"slot": {{ slot.key|tojson }}, "mode": "fixed"}'
              hx-target="#editor-body" hx-swap="innerHTML">
       <span>Fixed</span>
     </label>
@@ -39,7 +39,7 @@
       <input type="radio" name="{{ group }}" value="constraint_search"
              {% if slot.searching %}checked{% endif %}
              hx-post="/draft/{{ draft.id }}/lanelet-mode"
-             hx-vals='{"slot": "{{ slot.key }}", "mode": "constraint_search"}'
+             hx-vals='{"slot": {{ slot.key|tojson }}, "mode": "constraint_search"}'
              hx-target="#editor-body" hx-swap="innerHTML">
       <span>Constraint search</span>
     </label>
@@ -47,7 +47,7 @@
       <input type="radio" name="{{ group }}" value="derived"
              {% if slot.deriving %}checked{% endif %}
              hx-post="/draft/{{ draft.id }}/lanelet-mode"
-             hx-vals='{"slot": "{{ slot.key }}", "mode": "derived"}'
+             hx-vals='{"slot": {{ slot.key|tojson }}, "mode": "derived"}'
              hx-target="#editor-body" hx-swap="innerHTML">
       <span>From the search</span>
     </label>
@@ -90,7 +90,7 @@
        them ask the server about a map nobody is looking at. #}
     <div id="{{ picker_matches_id(slot.key) }}"
          hx-post="/draft/{{ draft.id }}/lanelet-preview"
-         hx-vals='{"slot": "{{ slot.key }}"}'
+         hx-vals='{"slot": {{ slot.key|tojson }}}'
          hx-trigger="picker-open"
          hx-swap="innerHTML">
       <p class="ed-help">Loading&hellip;</p>

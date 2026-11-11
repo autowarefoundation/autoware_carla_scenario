@@ -110,7 +110,8 @@
       {% for item in items %}
       <tr class="hover:bg-gray-50 cursor-pointer transition-colors {% if item.passed == false %}bg-red-50{% endif %}"
           data-result="{% if item.passed is none %}na{% elif item.passed %}pass{% else %}fail{% endif %}"
-          onclick="window.location='/session/{{ session_type }}/{{ date }}/{{ time }}/{{ item.index }}'">
+          data-href="/session/{{ session_type|urlencode }}/{{ date|urlencode }}/{{ time|urlencode }}/{{ item.index|urlencode }}"
+          onclick="window.location = this.dataset.href">
         <td class="px-6 py-4 whitespace-nowrap">
           <a href="/session/{{ session_type }}/{{ date }}/{{ time }}/{{ item.index }}"
              class="text-blue-600 hover:text-blue-800 font-mono font-medium">

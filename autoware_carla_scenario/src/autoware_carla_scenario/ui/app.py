@@ -88,6 +88,7 @@ HOSTS = HostAllowlist()
 app = FastAPI(title="Scenario Result Viewer", lifespan=_lifespan)
 # Refuses cross-site state changes and foreign Host names (DNS rebinding):
 # binding loopback keeps other machines out, not other sites' pages (#1844).
+# It also forbids framing either app on every response (clickjacking, #2053).
 app.add_middleware(RequestGuard, hosts=HOSTS)
 app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 templates = Jinja2Templates(directory=str(_TEMPLATES_DIR))
