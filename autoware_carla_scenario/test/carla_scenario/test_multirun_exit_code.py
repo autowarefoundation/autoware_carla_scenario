@@ -35,10 +35,15 @@ import pytest
 #: ``SIGKILL``, as the OOM killer would.  With ``+gated=true`` each case, as
 #: ``ScenarioRunner`` does, takes the first free stem and writes its coverage
 #: file, its gate record (``gate_pass.json`` in the working directory, its
-#: ``STEM`` replaced by the stem) and a passing result under it.
+#: ``STEM`` replaced by the stem) and a passing result under it.  With
+#: ``+service_logs_once=true`` each case appends to the logs services write
+#: into its directory, takes the first free stem and writes a CARLA recorder
+#: log and a result under it, and raises the first time it runs.  With
+#: ``+unremovable=true`` the sweeper cannot remove a run's outputs.
 _SWEEPER_APP = """
 import json
 import os
+import sys
 from pathlib import Path
 
 from autoware_carla_scenario import hydra_compat  # noqa: F401
@@ -49,6 +54,12 @@ from omegaconf import DictConfig
 
 import autoware_carla_scenario.sweeper.lanelet_constraint_sweeper as lcs
 from autoware_carla_scenario.run_outputs import run_outputs_exist
+
+if "+unremovable=true" in sys.argv:
+    def remove_run_outputs(directory, stem):
+        raise PermissionError(f"cannot remove {stem}")
+
+    lcs.remove_run_outputs = remove_run_outputs
 
 lcs.check_constraint_keys = lambda sweep: None
 lcs.load_sweep_map = lambda map_cfg, **_: object()
@@ -92,6 +103,27 @@ def task(cfg: DictConfig) -> None:
         if first:
             raised.write_text("yes")
             raise RuntimeError("the world reset after the result raised")
+        return
+    if cfg.get("service_logs_once", False):
+        output_dir = Path(HydraConfig.get().runtime.output_dir)
+        for name in (
+            "backend_sumo.log",
+            "autoware-000-ego.log",
+            "autoware-build.log",
+            "raw_output.log",
+        ):
+            with (output_dir / name).open("a") as log:
+                log.write("attempt\\n")
+        stem, n = "App", 0
+        while run_outputs_exist(output_dir, stem):
+            n += 1
+            stem = f"App-{n}"
+        (output_dir / f"{stem}.log").write_text("")
+        result = {"passed": True, "message": stem, "elapsed_seconds": 1.0}
+        (output_dir / f"{stem}_result.json").write_text(json.dumps(result))
+        if not raised.exists():
+            raised.write_text("yes")
+            raise RuntimeError("CARLA went away")
         return
     if cfg.get("gated", False):
         output_dir = Path(HydraConfig.get().runtime.output_dir)
@@ -1574,6 +1606,67 @@ def test_an_earlier_sweeps_service_logs_are_not_removed(tmp_path: Path) -> None:
     (tmp_path / "Old.t4").mkdir()
     _remove_earlier_outputs((tmp_path, "app.log"), "1/1")
     assert sorted(p.name for p in tmp_path.iterdir()) == sorted(kept)
+
+
+def test_a_retry_keeps_the_failed_attempts_service_logs(tmp_path: Path) -> None:
+    """Before a retry the sweeper removes the failed attempt's run (its
+    CARLA recorder log, its result) but not the logs services append to in
+    the job's directory: they explain the failed attempt (#2070)."""
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+server.cooldown_max_retries=1",
+        "+service_logs_once=true",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    assert "2/2 succeeded, 0 failed" in output, output
+    for job in ("0", "1"):
+        directory = tmp_path / "multirun" / job
+        assert sorted(p.name for p in directory.iterdir() if p.name != ".hydra") == [
+            "App.log",  # the retry's, under the stem the failed attempt took
+            "App_result.json",
+            "app.log",  # Hydra's job log
+            "autoware-000-ego.log",
+            "autoware-build.log",
+            "backend_sumo.log",
+            "raw_output.log",
+        ]
+        # Both attempts' lines: the failed attempt's were kept.
+        for name in ("backend_sumo.log", "autoware-000-ego.log", "raw_output.log"):
+            assert (directory / name).read_text() == "attempt\nattempt\n", name
+
+
+def test_an_output_a_retry_cannot_remove_is_logged_and_the_retry_runs(
+    tmp_path: Path,
+) -> None:
+    """An ``OSError`` removing the failed attempt's outputs is logged, as
+    before a job's first attempt, and the retry runs under the next free
+    stem: it neither aborts the sweep nor leaves the job unfinished (#2070)."""
+    proc = _run(
+        _SWEEPER_APP,
+        tmp_path,
+        "hydra/sweeper=lanelet_constraint",
+        "+sweep.constraints={}",
+        "+server.cooldown_max_retries=1",
+        "+service_logs_once=true",
+        "+unremovable=true",
+    )
+    output = proc.stdout + proc.stderr
+    assert proc.returncode == 0, output
+    assert output.count("case 1") == 2, output
+    assert output.count("case 2") == 2, output
+    assert "2/2 succeeded, 0 failed" in output, output
+    assert "Cannot remove the outputs of the failed attempt App" in output, output
+    assert _markers(tmp_path / "multirun") == {}
+    for job in ("0", "1"):
+        directory = tmp_path / "multirun" / job
+        assert sorted(p.name for p in directory.glob("App*_result.json")) == [
+            "App-1_result.json",
+            "App_result.json",
+        ]
 
 
 def test_only_a_directory_one_job_of_the_sweep_maps_to_is_owned(

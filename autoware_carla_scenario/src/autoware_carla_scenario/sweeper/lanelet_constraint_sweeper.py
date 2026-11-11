@@ -878,11 +878,16 @@ class LaneletConstraintSweeper(Sweeper):
                     # which then takes the same stem.  Left behind, the
                     # viewer, which shows a job's first stem, and the
                     # coverage merge, which reads every coverage file, would
-                    # read the failed attempt's (#1373).
+                    # read the failed attempt's (#1373).  The services'
+                    # logs, appended to, stay to explain the failed attempt,
+                    # and an output that cannot be removed is logged, not raised,
+                    # as before the first attempt (#2070).
                     directory, job_log = job_dir
                     for stem in sorted(
                         _run_output_stems(directory, job_log) - stems_before
                     ):
+                        if _is_service_log(directory, stem):
+                            continue
                         logger.info(
                             "[%d/%d] Removing the outputs of the failed "
                             "attempt %s in %s before the retry.",
@@ -891,7 +896,16 @@ class LaneletConstraintSweeper(Sweeper):
                             stem,
                             directory,
                         )
-                        remove_run_outputs(directory, stem)
+                        try:
+                            remove_run_outputs(directory, stem)
+                        except OSError as exc:
+                            logger.warning(
+                                "Cannot remove the outputs of the failed "
+                                "attempt %s in %s (%s).",
+                                stem,
+                                directory,
+                                exc,
+                            )
 
                 if attempt == 0 and job_dir is not None:
                     if job_dir[0] in owned_dirs:

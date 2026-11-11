@@ -464,7 +464,12 @@ A retry runs in the case's job directory, and before it starts the sweeper
 removes what the failed attempt wrote there (its result, coverage file,
 trajectory log, recordings ...), as a batch and a SLURM worker do: the retry
 takes the same file stem, so the viewer and the coverage merge read the
-retry's outputs alone.
+retry's outputs alone. The logs of the services a run starts there
+(`backend_<name>.log`, `autoware-*.log`; a backend's and each Autoware
+stack's are appended to by each attempt) are kept, so a case given up still
+has the logs that explain it; an output that
+cannot be removed is logged and the retry runs anyway, under the next free
+stem.
 
 A case run again into a job directory an earlier sweep wrote in
 (`hydra.sweep.dir=` naming it again, a `--resume-from` rerun) replaces that
@@ -482,8 +487,8 @@ to is cleaned: one several cases share (a `hydra.sweep.subdir=` that does not
 tell the jobs apart) holds the runs of the cases a `--resume-from` skips,
 and is left as it is -- so an earlier run of a case run again there stays
 beside the new one, and `scenario-gate` and the coverage merge read both.
-(A retry still removes every output its failed attempt left, the services'
-logs among them.)
+(A retry still removes every output its failed attempt left there, but for
+the services' logs.)
 
 A case given up -- it raised, timed out or crashed on every attempt, or was
 refused -- leaves `case_errored.json` in its job directory (its overrides,
