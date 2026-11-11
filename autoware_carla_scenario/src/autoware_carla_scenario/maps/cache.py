@@ -23,7 +23,8 @@ to browse a repository with.
 The root is ``~/autoware_data/maps``, where Autoware's own ``demo_artifacts``
 role downloads map datasets to, unpacked at their repository-relative paths.
 That is not a coincidence to be tidied away: a machine that has run the Autoware
-setup already has the map, and :meth:`GitMapCache.provisioned` finds it there.
+setup already has the map, and :meth:`GitMapCache.provisioned` finds it there --
+for a source naming the repository that was unpacked there, and no other.
 A map this cache cloned itself lands under ``.repos/`` in the same root.
 
 One entry -- one repository at one commit -- serves every directory in it, and
@@ -32,6 +33,13 @@ disk for the life of the entry, so a :class:`CachedRepo` handed out for one map
 of a repository keeps pointing at real files while another map of the same
 repository is resolved.  The repository root (``path == ""``) is the pattern
 ``/*``, which checks the whole tree out.
+
+Several processes share one root -- a sweep, a SLURM array, the editor beside a
+run -- so every change to an entry is made holding its **lock file**
+(``<entry>.lock`` beside it, ``flock``-ed) as well as a lock of this process's
+threads.  An entry is born a sparse checkout of nothing, before it is renamed
+into place, so the one command that can take a directory away (``git
+sparse-checkout set``) never runs on an entry another process can see.
 """
 
 from __future__ import annotations
@@ -48,7 +56,7 @@ import threading
 import time
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Optional, Sequence
+from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..atomic_file import write_text_atomically
 from .source import MapSource, MapSourceError
@@ -96,15 +104,38 @@ TIP_SUFFIX = ".tip.json"
 _LOCKED_ATTEMPTS = 5
 _LOCKED_BACKOFF_SECONDS = 0.2
 
-#: One lock per cache entry (by its path), held while that entry's sparse
-#: checkout is changed, so that two threads of one process (the editor serves
-#: requests on several) neither race git's lock files nor drop each other's
-#: directory from ``meta.json``.  Per entry, so that a long LFS pull of one
-#: repository does not hold up a resolve from another.  Another process is
-#: kept apart by git's own lock files, and :meth:`GitMapCache._materialise`
-#: retries while one is held.
+#: One lock per cache entry (by its path), held while that entry is cloned,
+#: fetched or has its sparse checkout changed, so that two threads of one
+#: process (the editor serves requests on several) neither race git's lock
+#: files nor drop each other's directory from ``meta.json``.  Per entry, so
+#: that a long LFS pull of one repository does not hold up a resolve from
+#: another.  Another process is kept apart by the entry's lock file
+#: (:data:`LOCK_SUFFIX`), always taken *after* this lock, so the two never
+#: wait on each other in opposite orders.
 _ENTRY_LOCKS: dict[str, threading.Lock] = {}
 _ENTRY_LOCKS_GUARD = threading.Lock()
+
+#: Suffix of the file beside an entry that processes ``flock`` while they
+#: change it (#2058).  Beside rather than inside, because the entry itself
+#: appears in one rename and the lock has to be held before it exists.
+LOCK_SUFFIX = ".lock"
+
+#: Lock files that could not be taken -- a read-only root, a filesystem with
+#: no ``flock`` -- by path, so a cache used that way says so once.
+_UNLOCKED: dict[str, int] = {}
+
+#: The repositories Autoware's ``demo_artifacts`` role unpacks under the map
+#: root, which :meth:`GitMapCache.provisioned` takes a directory there to be
+#: a copy of when the root names none itself (:data:`PROVISIONED_FROM`).
+PROVISIONED_REPOSITORIES: tuple[str, ...] = (
+    "https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps",
+)
+
+#: A file in the map root naming the repositories unpacked there, one URL per
+#: line (blank lines and ``#`` comments ignored).  Where it exists, it
+#: replaces :data:`PROVISIONED_REPOSITORIES`: a root holding another dataset
+#: says which.
+PROVISIONED_FROM = ".provisioned_from"
 
 #: The sparse-checkout pattern of the repository root: every path.
 _WHOLE_TREE = "/*"
@@ -258,8 +289,17 @@ class GitMapCache:
         --local-dir``, which is what Autoware's setup runs -- leaves a map at
         exactly ``<root>/<path>``.  Finding one there means no git command runs
         and the ref is not consulted: what the machine has is what gets used.
+
+        Only for a source naming a repository that was unpacked there: the
+        directory records no origin, and any repository can have a map at
+        the same path (#2058).  Those are the ones :data:`PROVISIONED_FROM`
+        lists in the root, or, without that file,
+        :data:`PROVISIONED_REPOSITORIES`, the dataset Autoware's setup
+        downloads.
         """
         if not source.path:
+            return None
+        if not self._is_provisioned_repository(source.repo_url):
             return None
         directory = self.root / source.path
         if directory.is_file():
@@ -267,6 +307,22 @@ class GitMapCache:
         if not directory.is_dir():
             return None
         return directory if any(True for _ in directory.glob("*.osm")) else None
+
+    def _is_provisioned_repository(self, repo_url: str) -> bool:
+        """Whether *repo_url* is a repository unpacked under the root."""
+        origins: list[str] = list(PROVISIONED_REPOSITORIES)
+        try:
+            raw = (self.root / PROVISIONED_FROM).read_text(encoding="utf-8")
+        except OSError:
+            raw = ""
+        else:
+            origins = []
+            for line in raw.splitlines():
+                text = line.split("#", 1)[0].strip()
+                if text:
+                    origins.append(text)
+        wanted = _repository_key(repo_url)
+        return any(_repository_key(origin) == wanted for origin in origins)
 
     def tip_file(self, source: MapSource) -> Path:
         """Return where *source*'s ref-to-commit note is kept."""
@@ -422,18 +478,22 @@ class GitMapCache:
         Raises:
             MapCacheError: If git is unavailable, or the clone or fetch failed.
         """
-        cached = self.peek(source)
-        if cached is None:
-            cached = self._clone(source)
-        elif refresh:
-            self._fetch(cached)
-            # Re-read: the fetch moved the checkout, and `cached` still
-            # describes the commit it was at before.
-            cached = self.peek(source) or cached
+        # Held from the first look to the last write: another thread or
+        # process cloning, fetching or checking out the same entry finishes
+        # first, and what it left is what is looked at (#2058).
+        with _EntryLock(self.entry_dir(source)):
+            cached = self.peek(source)
+            if cached is None:
+                cached = self._clone(source)
+            elif refresh:
+                self._fetch(cached)
+                # Re-read: the fetch moved the checkout, and `cached` still
+                # describes the commit it was at before.
+                cached = self.peek(source) or cached
 
-        if materialise:
-            cached = self._materialise(cached, include=include, refresh=refresh)
-        return cached
+            if materialise:
+                cached = self._materialise(cached, include=include, refresh=refresh)
+            return cached
 
     # -- git ------------------------------------------------------------
 
@@ -460,6 +520,7 @@ class GitMapCache:
                     source.repo_url,
                     str(worktree),
                 )
+                self._sparse_nothing(worktree)
 
             commit = self._git(worktree, "rev-parse", "HEAD", capture=True).strip()
             self._write_meta(staging, source, commit)
@@ -510,7 +571,21 @@ class GitMapCache:
             "origin",
             ref,
         )
+        # Before the checkout, so it checks nothing out (and fetches no blob).
+        self._sparse_nothing(worktree)
         self._git(worktree, "checkout", "--detach", "FETCH_HEAD")
+
+    def _sparse_nothing(self, worktree: Path) -> None:
+        """Make the fresh repository at *worktree* a sparse checkout of nothing.
+
+        Run in the staging directory, before the entry is renamed into place:
+        every directory is then *added* to the checkout, and ``set`` -- which
+        replaces the patterns, and deletes every directory another resolve
+        checked out -- never runs on an entry another process can see (#2058).
+        No pattern at all (``--stdin`` reading none), rather than the
+        top-level files ``set`` with no argument would check out.
+        """
+        self._git(worktree, "sparse-checkout", "set", "--no-cone", "--stdin")
 
     def _fetch(self, cached: CachedRepo) -> None:
         """Update an existing checkout to the tip of its ref.
@@ -552,7 +627,10 @@ class GitMapCache:
         one command that drops directories -- runs only on a checkout no
         directory has been checked out in yet, even when another process's
         record of one was lost.  The record only decides whether anything has
-        to run at all.
+        to run at all.  An entry this version cloned is a sparse checkout from
+        birth (:meth:`_sparse_nothing`), so ``set`` only ever runs on one an
+        older version left, and then under the entry's lock, which
+        :meth:`checkout` holds around this.
 
         Nothing runs when the directory is already checked out and its content
         is real rather than pointers.  That matters because this is on the
@@ -570,36 +648,35 @@ class GitMapCache:
         if include is not None:
             wanted = [pattern for pattern in include if pattern]
 
-        with _entry_lock(cached.root):
-            # Re-read rather than trust *cached*: another thread may have
-            # checked a directory out since it was peeked.
-            done = self._read_meta(cached.root).materialised
-            whole = "" in done
-            present = (whole or path in done) and (worktree / path).exists()
-            if not refresh and present:
-                if not wanted or self._content_present(worktree, wanted):
-                    return replace(cached, materialised=done)
+        # Re-read rather than trust *cached*: another thread or process may
+        # have checked a directory out since it was peeked.
+        done = self._read_meta(cached.root).materialised
+        whole = "" in done
+        present = (whole or path in done) and (worktree / path).exists()
+        if not refresh and present:
+            if not wanted or self._content_present(worktree, wanted):
+                return replace(cached, materialised=done)
 
-            pattern = path or _WHOLE_TREE
-            if self._is_sparse(worktree):
-                self._git_waiting(worktree, "sparse-checkout", "add", "--", pattern)
-            else:
-                # The map's path may begin with '-' (a directory may be named
-                # so); `--` keeps it a pattern (#1848).
-                self._git_waiting(
-                    worktree, "sparse-checkout", "set", "--no-cone", "--", pattern
-                )
-            self._git_waiting(worktree, "checkout")
-
-            if wanted and (refresh or not self._content_present(worktree, wanted)):
-                self._git(worktree, "lfs", "pull", f"--include={','.join(wanted)}")
-            # Re-read again: what was recorded is still checked out, whoever
-            # recorded it, since nothing here takes a directory away.
-            recorded = self._read_meta(cached.root)
-            materialised = _sorted_paths(list(recorded.materialised) + [path])
-            self._write_entry_meta(
-                cached.root, replace(recorded, materialised=materialised)
+        pattern = path or _WHOLE_TREE
+        if self._is_sparse(worktree):
+            self._git_waiting(worktree, "sparse-checkout", "add", "--", pattern)
+        else:
+            # The map's path may begin with '-' (a directory may be named
+            # so); `--` keeps it a pattern (#1848).
+            self._git_waiting(
+                worktree, "sparse-checkout", "set", "--no-cone", "--", pattern
             )
+        self._git_waiting(worktree, "checkout")
+
+        if wanted and (refresh or not self._content_present(worktree, wanted)):
+            self._git(worktree, "lfs", "pull", f"--include={','.join(wanted)}")
+        # Re-read again: what was recorded is still checked out, whoever
+        # recorded it, since nothing here takes a directory away.
+        recorded = self._read_meta(cached.root)
+        materialised = _sorted_paths(list(recorded.materialised) + [path])
+        self._write_entry_meta(
+            cached.root, replace(recorded, materialised=materialised)
+        )
         return replace(cached, materialised=materialised)
 
     def _is_sparse(self, worktree: Path) -> bool:
@@ -616,9 +693,11 @@ class GitMapCache:
     def _git_waiting(self, worktree: Path, *args: str) -> None:
         """Run one git command in *worktree*, waiting out another git process.
 
-        A second process resolving a map of the same entry holds its index or
-        sparse-checkout file while it runs, and git refuses to touch either
-        then; the checkout it makes only grows, so going after it is safe.
+        The entry's lock keeps this framework's own processes apart, but not
+        one on a host whose filesystem has no ``flock``, nor a person's
+        ``git`` in the checkout: either holds the index, the sparse-checkout
+        file or ``config.worktree`` while it runs, and git refuses to touch
+        them then.  The checkout only grows, so going after it is safe.
         """
         delay = _LOCKED_BACKOFF_SECONDS
         for attempt in range(_LOCKED_ATTEMPTS):
@@ -658,6 +737,8 @@ class GitMapCache:
                 ["git", *args],
                 cwd=str(cwd) if cwd is not None else None,
                 env=env,
+                # Nothing is ever typed into git; `--stdin` reads no input.
+                stdin=subprocess.DEVNULL,
                 capture_output=True,
                 encoding="utf-8",
                 errors="replace",
@@ -843,15 +924,135 @@ def _git_locked(worktree: Path, message: str) -> bool:
     """Whether a git command failed because another held a lock in *worktree*.
 
     Read from git's message (``Unable to create '.../index.lock': File
-    exists``, whose last line is ``remove the file manually to continue``) or,
-    when the message says neither, from a lock file still being there.
+    exists``, whose last line is ``remove the file manually to continue``;
+    ``could not lock config file .git/config.worktree: File exists``, which
+    ``sparse-checkout set`` says) or, when the message says none of them,
+    from a lock file still being there.
     """
-    if ".lock" in message or "remove the file manually" in message:
+    if (
+        ".lock" in message
+        or "remove the file manually" in message
+        or "could not lock" in message
+    ):
         return True
     git_dir = worktree / ".git"
-    return (git_dir / "index.lock").exists() or (
-        git_dir / "info" / "sparse-checkout.lock"
-    ).exists()
+    for name in ("index.lock", "config.lock", "config.worktree.lock"):
+        if (git_dir / name).exists():
+            return True
+    return (git_dir / "info" / "sparse-checkout.lock").exists()
+
+
+class _EntryLock:
+    """Holds one cache entry against other threads and other processes.
+
+    The thread lock first, then the lock file, released the other way round:
+    one order everywhere, so two holders never wait on each other.  Not
+    re-entrant -- :meth:`GitMapCache.checkout` takes it once, around
+    everything that changes the entry.
+    """
+
+    _thread_lock: threading.Lock
+    _path: Path
+    _fd: int
+
+    def __init__(self, entry: Path) -> None:
+        self._thread_lock = _entry_lock(entry)
+        self._path = entry.parent / f"{entry.name}{LOCK_SUFFIX}"
+        self._fd = -1
+
+    def __enter__(self) -> "_EntryLock":
+        self._thread_lock.acquire()
+        try:
+            self._fd = _lock_file(self._path)
+        except BaseException:
+            self._thread_lock.release()
+            raise
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        fd = self._fd
+        self._fd = -1
+        try:
+            if fd >= 0:
+                # Closing the descriptor is what lets the flock go.
+                os.close(fd)
+        finally:
+            self._thread_lock.release()
+
+
+def _lock_file(path: Path) -> int:
+    """``flock`` *path* (created if missing); its descriptor, or -1 if unlocked.
+
+    Waits for another process holding it.  Where it cannot be taken at all --
+    no ``fcntl`` (not Linux or macOS), a root that is not writable, a
+    filesystem that refuses ``flock`` -- the entry is changed without it, as
+    before the lock existed, and git's own lock files are what is left to
+    keep processes apart (:meth:`GitMapCache._git_waiting`).
+    """
+    if TYPE_CHECKING:
+        # fcntl and os.open() have no model (typecheck/library.py).
+        return -1
+    else:
+        try:
+            import fcntl  # noqa: PLC0415 -- POSIX only; unlocked without it
+        except ImportError:
+            return -1
+        key = str(path)
+        try:
+            path.parent.mkdir(parents=True, exist_ok=True)
+            fd = os.open(key, os.O_RDWR | os.O_CREAT, 0o644)
+        except OSError as exc:
+            _warn_unlocked(key, exc)
+            return -1
+        try:
+            try:
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError:
+                logger.info("Waiting for another process to finish with %s", key)
+                fcntl.flock(fd, fcntl.LOCK_EX)
+        except OSError as exc:
+            os.close(fd)
+            _warn_unlocked(key, exc)
+            return -1
+        return fd
+
+
+def _warn_unlocked(key: str, exc: OSError) -> None:
+    """Say, once per lock file, that an entry is changed without its lock."""
+    if key in _UNLOCKED:
+        return
+    _UNLOCKED[key] = 1
+    logger.warning(
+        "Changing the map cache entry beside %s without its lock (%s): another "
+        "process changing it at the same time may race it",
+        key,
+        exc,
+    )
+
+
+def _repository_key(url: str) -> str:
+    """*url* reduced to what names the repository, for comparing two spellings.
+
+    ``git+``, the user name and password, a trailing ``/`` and ``.git`` are
+    dropped, and the scheme and host are compared in lower case:
+    ``https://user@HuggingFace.co/datasets/o/n.git/`` is
+    ``https://huggingface.co/datasets/o/n``.  The path keeps its case.
+    """
+    text = url.strip()
+    if text.startswith("git+"):
+        text = text[len("git+") :]
+    text = text.rstrip("/")
+    if text.endswith(".git"):
+        text = text[: -len(".git")]
+    scheme_end = text.find("://")
+    if scheme_end == -1:
+        return text
+    authority_start = scheme_end + 3
+    slash = text.find("/", authority_start)
+    authority_end = len(text) if slash == -1 else slash
+    authority = text[authority_start:authority_end]
+    host = authority[authority.rfind("@") + 1 :]
+    return text[:scheme_end].lower() + "://" + host.lower() + text[authority_end:]
 
 
 def _json_number(raw: str, key: str) -> Optional[float]:

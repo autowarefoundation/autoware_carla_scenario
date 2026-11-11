@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import errno
 import json
+import multiprocessing
 import os
 import socket
 import subprocess
@@ -134,6 +135,17 @@ def _head(repo: Path) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def _resolve_in_child(root: str, uri: str, barrier: Any, results: Any) -> None:
+    """Resolve *uri* in a process of its own, once every sibling is ready."""
+    barrier.wait(60)
+    try:
+        resolved = resolve_map(uri, cache=GitMapCache(Path(root)))
+    except Exception as exc:  # noqa: BLE001 -- reported to the parent
+        results.put((uri, "", repr(exc)))
+    else:
+        results.put((uri, str(resolved.lanelet2_path), ""))
 
 
 # ---------------------------------------------------------------------------
@@ -823,6 +835,59 @@ class TestOneEntryManyMaps:
         assert peeked is not None
         assert peeked.materialised == ("autoware_maps/TownA", "autoware_maps/TownB")
 
+    @pytest.mark.parametrize("older_entry", [False, True])
+    def test_processes_resolving_different_maps_keep_every_one(
+        self, tmp_path: Path, cache: GitMapCache, older_entry: bool
+    ) -> None:
+        """Twelve processes, twelve maps, one freshly listed entry (#2058).
+
+        ``list_maps`` leaves the entry cloned with nothing checked out, which
+        is where every process used to run ``sparse-checkout set`` with its
+        own directory and so delete the others'.  An entry an older version
+        listed is not a sparse checkout yet, so one of them still runs
+        ``set``: the entry's lock is what keeps the others after it.
+        """
+        names = [chr(ord("A") + index) for index in range(12)]
+        repo = tmp_path / "many"
+        for name in names:
+            (repo / "maps" / name).mkdir(parents=True)
+            (repo / "maps" / name / "lanelet2_map.osm").write_text(_OSM)
+        _git(repo, "init", "--quiet", "--initial-branch", "main", ".")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--quiet", "-m", "Twelve maps")
+        assert len(list_maps(f"git+file://{repo}@main", cache=cache)) == len(names)
+        if older_entry:
+            listed = cache.peek(MapSource.parse(_uri(repo, ref=_head(repo))))
+            assert listed is not None
+            _git(listed.worktree, "sparse-checkout", "disable")
+
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(len(names))
+        results = context.Queue()
+        children = [
+            context.Process(
+                target=_resolve_in_child,
+                args=(str(cache.root), _uri(repo, f"maps/{name}"), barrier, results),
+            )
+            for name in names
+        ]
+        for child in children:
+            child.start()
+        try:
+            outcomes = [results.get(timeout=120) for _ in children]
+        finally:
+            for child in children:
+                child.join(30)
+
+        assert [error for _, _, error in outcomes if error] == []
+        for _, lanelet2_path, _ in outcomes:
+            assert Path(lanelet2_path).read_text() == _OSM
+        peeked = cache.peek(MapSource.parse(_uri(repo, ref=_head(repo))))
+        assert peeked is not None
+        assert peeked.materialised == tuple(f"maps/{name}" for name in names)
+        for directory in peeked.materialised:
+            assert (peeked.worktree / directory / "lanelet2_map.osm").is_file()
+
 
 class TestCachedMap:
     """What the editor asks on every render: is it here already?"""
@@ -1092,21 +1157,79 @@ class TestLinksInAMapDirectory:
 class TestProvisionedMaps:
     """A map Autoware's own setup already downloaded is a map we have."""
 
-    def _provision(self, cache: GitMapCache, path: str) -> Path:
+    def _provision(
+        self, cache: GitMapCache, path: str, origin: Path | None = None
+    ) -> Path:
         directory = cache.root / path
         directory.mkdir(parents=True)
         (directory / "lanelet2_map.osm").write_text(_OSM)
+        if origin is not None:
+            (cache.root / ".provisioned_from").write_text(
+                f"# what the setup unpacked here\n\nfile://{origin}.git/\n"
+            )
         return directory
 
     def test_is_used_without_cloning_anything(
         self, origin_repo: Path, cache: GitMapCache
     ) -> None:
-        directory = self._provision(cache, "autoware_maps/TownA")
+        directory = self._provision(cache, "autoware_maps/TownA", origin_repo)
         (origin_repo / ".git").rename(origin_repo.parent / "gone")
 
         resolved = resolve_map(_uri(origin_repo), cache=cache)
         assert resolved.provisioned
         assert resolved.lanelet2_path == directory / "lanelet2_map.osm"
+        cached = cached_map(_uri(origin_repo), cache=cache)
+        assert cached is not None and cached.provisioned
+
+    def test_another_repository_never_resolves_to_it(
+        self, origin_repo: Path, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        """Only the repository unpacked there owns the path (#2058)."""
+        other = tmp_path / "other"
+        (other / "autoware_maps" / "TownA").mkdir(parents=True)
+        (other / "autoware_maps" / "TownA" / "lanelet2_map.osm").write_text(
+            _OSM.replace('lat="0.0"', 'lat="2.0"')
+        )
+        _git(other, "init", "--quiet", "--initial-branch", "main", ".")
+        _git(other, "add", "-A")
+        _git(other, "commit", "--quiet", "-m", "Another dataset")
+        directory = self._provision(cache, "autoware_maps/TownA", origin_repo)
+
+        assert cached_map(_uri(other), cache=cache) is None
+        resolved = resolve_map(_uri(other), cache=cache)
+        assert not resolved.provisioned
+        assert resolved.directory != directory
+        assert 'lat="2.0"' in resolved.lanelet2_path.read_text()
+        # Offline, a remote that is not the one unpacked there is no map.
+        unknown = "https://example.invalid/other@main#autoware_maps/TownA"
+        assert cached_map(unknown, cache=cache) is None
+        with pytest.raises(MapCacheError):
+            resolve_map(unknown, cache=cache)
+
+    def test_without_a_record_only_autowares_dataset_is_provisioned(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        directory = self._provision(cache, "autoware_maps/TownA")
+        dataset = "https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps"
+        for spelling in (
+            f"{dataset}@main#autoware_maps/TownA",
+            f"git+{dataset}.git#autoware_maps/TownA",
+            "https://user@huggingface.co/datasets/AutowareFoundation/"
+            "carla-ue5-maps/tree/main/autoware_maps/TownA",
+            "git+HTTPS://HuggingFace.co/datasets/AutowareFoundation/"
+            "carla-ue5-maps/#autoware_maps/TownA",
+        ):
+            assert cache.provisioned(MapSource.parse(spelling)) == directory
+        assert cache.provisioned(MapSource.parse(_uri(origin_repo))) is None
+        assert (
+            cache.provisioned(
+                MapSource.parse(
+                    "https://huggingface.co/datasets/someone/carla-ue5-maps"
+                    "#autoware_maps/TownA"
+                )
+            )
+            is None
+        )
 
     def test_a_pinned_source_ignores_it(
         self, origin_repo: Path, cache: GitMapCache
@@ -1114,7 +1237,7 @@ class TestProvisionedMaps:
         # An unpacked directory records no revision, so honouring it for a
         # pinned source would answer a question about one commit with the bytes
         # of an unknown other.
-        self._provision(cache, "autoware_maps/TownA")
+        self._provision(cache, "autoware_maps/TownA", origin_repo)
 
         resolved = resolve_map(_uri(origin_repo, ref=_head(origin_repo)), cache=cache)
         assert not resolved.provisioned
@@ -1130,6 +1253,9 @@ class TestProvisionedMaps:
         (origin_repo / ".git").rename(origin_repo.parent / "gone")
         # The root has to exist: a lookup under a missing one stops at ENOENT.
         cache.root.mkdir(parents=True, exist_ok=True)
+        # And the repository has to be the one unpacked there, or the map
+        # root is never looked in.
+        (cache.root / ".provisioned_from").write_text(f"file://{origin_repo}\n")
         try:
             (cache.root / ("a" * 300)).is_file()
         except OSError:
@@ -1149,7 +1275,7 @@ class TestProvisionedMaps:
         cache: GitMapCache,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        directory = self._provision(cache, "autoware_maps/TownA")
+        directory = self._provision(cache, "autoware_maps/TownA", origin_repo)
         error = PermissionError(errno.EACCES, "Permission denied")
         is_file = Path.is_file
 

@@ -409,6 +409,10 @@ def test_no_include_pattern_checks_the_directory_out_without_lfs(
     peeked = cache.peek(source)
     assert peeked is not None
     assert peeked.materialised == ("map",)
-    # Nothing but the entry (no clone staging, no scratch meta.json) is left.
-    assert [p.name for p in peeked.root.parent.iterdir()] == [peeked.root.name]
+    # Nothing but the entry and its lock file (no clone staging, no scratch
+    # meta.json) is left.
+    assert sorted(p.name for p in peeked.root.parent.iterdir()) == [
+        peeked.root.name,
+        f"{peeked.root.name}.lock",
+    ]
     assert sorted(p.name for p in peeked.root.iterdir()) == ["meta.json", "repo"]

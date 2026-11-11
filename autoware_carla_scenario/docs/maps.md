@@ -168,6 +168,24 @@ and a source naming that path resolves to it in about a millisecond, cloning
 nothing. A map this framework did fetch itself lands under `.repos/` in the same
 root, so the two never collide and the copy Autoware provisioned always wins.
 
+An unpacked directory records no origin, and another repository can keep a map
+at the same path, so the shortcut is taken only for a source naming a
+repository that was unpacked there: the dataset Autoware's setup downloads
+(`https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps`, however
+it is spelled -- with or without `.git`, a user name or a trailing `/`). A root
+that holds another dataset says so in a `.provisioned_from` file, one
+repository URL per line (blank lines and `#` comments ignored), which then
+replaces that default:
+
+```console
+$ cat ~/autoware_data/maps/.provisioned_from
+# Unpacked here by our own setup
+https://huggingface.co/datasets/OUR_ORG/our-maps
+```
+
+A source naming any other repository is cloned under `.repos/`, whatever is
+unpacked at its path.
+
 Nothing re-reads a map's *contents* over the network once it is cached;
 `refresh` is the only way to make it fetch again.
 
@@ -178,6 +196,14 @@ rather than replacing it, so a map resolved earlier -- held by the editor, a
 running case or a sweep over both -- keeps its files. The repository root (a
 source with no `#path`) checks the whole tree out. The entry's `meta.json`
 lists every directory checked out in it under `materialised`.
+
+That holds across processes too -- a sweep or a SLURM array resolving several
+towns of one dataset at once, the editor beside a run. Every clone, fetch and
+checkout of an entry is made holding its lock file (`<entry>.lock` beside it
+under `.repos/`, taken with `flock`), so a second process waits for the first
+and then adds its own directory. Where the lock cannot be taken (a read-only
+root, a filesystem without `flock`) a warning says so once and the entry is
+changed without it, retrying while git's own lock files are held.
 
 One question is asked, though, and it is asked before anything is fetched: when
 the ref is a branch, a single `git ls-remote` resolves it to the commit it
