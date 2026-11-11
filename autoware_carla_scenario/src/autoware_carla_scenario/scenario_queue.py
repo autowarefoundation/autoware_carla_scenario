@@ -831,6 +831,25 @@ class ScenarioQueue:
             # Stopped below: nothing is left to restore.
             return
         runner: ScenarioRunner = self._runner
+        self._world_dirty = False
+        # Asked first, in a few seconds (CarlaServerManager._ping): a server
+        # that died or hangs would hold each of the restore's calls for the
+        # client's timeout (60 s), and on arm64 a call on a refused
+        # connection can abort the process -- before the Autoware launcher
+        # and the backends below are stopped, on the way out of a Ctrl-C or
+        # a SIGTERM too.
+        try:
+            alive = self._server.is_alive()
+        except Exception:
+            alive = False
+        if not alive:
+            logger.warning(
+                "The CARLA server at %s:%d does not answer: the world the runs "
+                "left on it is not restored",
+                self._server.host,
+                self._server.port,
+            )
+            return
         logger.info("Restoring the world the runs left on the CARLA server")
         try:
             runner.restore_world("ScenarioQueue")
@@ -839,7 +858,6 @@ class ScenarioQueue:
                 "Restoring the world the runs left on the CARLA server failed",
                 exc_info=True,
             )
-        self._world_dirty = False
 
     def _stop(self) -> None:
         """:meth:`stop`, after the world is restored."""

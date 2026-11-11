@@ -268,6 +268,30 @@ class TestQueueStop:
         assert queue._runner is None
         assert any("failed" in r.getMessage() for r in caplog.records)
 
+    @pytest.mark.parametrize("answer", [False, RuntimeError("refused")])
+    def test_a_server_that_does_not_answer_is_not_restored(
+        self, answer: object, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        # Each call of the restore would wait for the client's timeout, or
+        # abort the process (arm64), before the launcher is stopped.
+        events: list[str] = []
+        queue, server, runner = _queue(given=True, events=events)
+        queue.run_all()
+        if isinstance(answer, BaseException):
+            server.is_alive.side_effect = answer
+        else:
+            server.is_alive.return_value = answer
+        server.host = "localhost"
+        server.port = 2000
+
+        with caplog.at_level(logging.WARNING):
+            queue.stop()
+
+        runner.restore_world.assert_not_called()
+        assert events == ["launcher close"]
+        assert not queue._world_dirty
+        assert any("does not answer" in r.getMessage() for r in caplog.records)
+
     def test_a_run_all_that_raised_leaves_a_world_that_is_restored(self) -> None:
         queue, _server, runner = _queue(given=True)
         runner.run_scenario.side_effect = KeyboardInterrupt()
