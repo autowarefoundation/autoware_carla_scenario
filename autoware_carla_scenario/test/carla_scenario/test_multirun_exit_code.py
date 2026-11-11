@@ -598,6 +598,7 @@ def test_lanelet_sweeper_refuses_a_bad_resume_point_before_any_case(
     output = proc.stdout + proc.stderr
     assert proc.returncode == 2, output
     assert message in output, output
+    assert "Traceback" not in output, output
     assert "case 1" not in output, output
     assert "case 2" not in output, output
 
@@ -769,6 +770,7 @@ def test_lanelet_sweeper_refuses_an_invalid_sweep_with_one_line(
     line = "Error: cut_in/left: OddSampler: ODD default has no module urban"
     assert proc.returncode == 1, output
     assert proc.stderr.splitlines() == [line], output
+    assert "Traceback" not in output, output
     assert "case 1" not in output, output
     assert "Launching" not in output, output
 
@@ -808,6 +810,7 @@ def test_lanelet_sweeper_refuses_a_sweep_before_expanding_it_with_one_line(
     lines = proc.stderr.splitlines()
     assert len(lines) == 1, output
     assert lines[0].startswith(f"Error: cut_in/left: {message}"), output
+    assert "Traceback" not in output, output
     assert "Launching" not in output, output
 
 
@@ -827,6 +830,7 @@ def test_lanelet_sweeper_refuses_an_invalid_sweep_without_a_scenario(
     assert proc.stderr.splitlines() == [
         "Error: OddSampler: ODD default has no module urban"
     ], output
+    assert "Traceback" not in output, output
 
 
 def test_lanelet_sweeper_keeps_the_traceback_of_an_unexpected_error(
@@ -866,6 +870,7 @@ def test_lanelet_sweeper_refuses_a_bad_job_timeout_before_any_case(
     output = proc.stdout + proc.stderr
     assert proc.returncode == 2, output
     assert "Error: sweep.job_timeout_seconds must be a whole number" in output, output
+    assert "Traceback" not in output, output
     assert "Launching" not in output, output
     assert "succeeded" not in output, output
 

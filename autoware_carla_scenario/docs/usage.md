@@ -465,8 +465,9 @@ removes what the failed attempt wrote there (its result, coverage file,
 trajectory log, recordings ...), as a batch and a SLURM worker do: the retry
 takes the same file stem, so the viewer and the coverage merge read the
 retry's outputs alone. The logs of the services a run starts there
-(`backend_<name>.log`, `autoware-*.log`), appended to by each attempt, are
-kept, so a case given up still has the logs that explain it; an output that
+(`backend_<name>.log`, `autoware-*.log`; a backend's and each Autoware
+stack's are appended to by each attempt) are kept, so a case given up still
+has the logs that explain it; an output that
 cannot be removed is logged and the retry runs anyway, under the next free
 stem.
 
