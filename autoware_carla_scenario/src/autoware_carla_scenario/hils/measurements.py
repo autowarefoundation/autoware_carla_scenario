@@ -53,8 +53,8 @@ def ray_times(points: np.ndarray, period: float) -> np.ndarray:
     clockwise from forward) ``azimuth / 360`` of *period* after the scan's
     timestamp, as the sensor fires it.
     """
-    azimuth = np.mod(np.arctan2(points[:, 1], points[:, 0]), 2.0 * np.pi)
-    return azimuth * (period / (2.0 * np.pi))
+    y, x = points[:, 1].astype(np.float64), points[:, 0].astype(np.float64)
+    return np.mod(np.arctan2(y, x), 2.0 * np.pi) * (period / (2.0 * np.pi))
 
 
 def spin_lidar_points(
@@ -76,7 +76,8 @@ def spin_lidar_points(
     driver correcting the motion over each point's time gets back a cloud of
     one instant.  *points* is CARLA's ``[N, 4]``; so is the result.
     """
-    dt = timestamp + rays - measured
+    # Differences first: epoch seconds do not fit a float32 (CARLA's points are).
+    dt = (timestamp - np.asarray(measured, np.float64)) + np.asarray(rays, np.float64)
     vx, vy, vz, wx, wy, wz = (motion[:, k] * dt for k in range(6))
     a = points[:, 0] - vx
     b = points[:, 1] - vy

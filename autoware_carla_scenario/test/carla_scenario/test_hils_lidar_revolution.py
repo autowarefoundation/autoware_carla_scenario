@@ -871,3 +871,18 @@ def test_a_spinning_sensor_s_cloud_round_trips() -> None:
         c, s = math.cos(th), math.sin(th)
         wx, wy = c * o[0] - s * o[1] + px, s * o[0] + c * o[1] + py
         assert np.min(np.hypot(world[:, 0] - wx, world[:, 1] - wy)) < 0.02
+
+
+def test_float32_points_on_epoch_times_keep_their_time() -> None:
+    # CARLA's points are float32; the wall clock's times are epoch seconds,
+    # which a float32 holds to 128 s: the arithmetic must stay in float64.
+    points = np.array([[20.0, 0.0, 0.0, 0.5]], np.float32)
+    now = 1794402883.08
+    out = measurements.spin_lidar_points(
+        points,
+        np.array([now + 0.05]),
+        np.array([[10.0, 0.0, 0.0, 0.0, 0.0, 0.0]]),
+        now,
+        measurements.ray_times(points, 0.1),
+    )
+    assert out[0, 0] == pytest.approx(20.5)
