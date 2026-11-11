@@ -10,7 +10,12 @@ from unittest.mock import MagicMock
 import pytest
 
 import typesafe_carla.carla as carla
-from autoware_carla_scenario import EgoConfig, Lanelet2Pose, SpawnTransform
+from autoware_carla_scenario import (
+    EgoConfig,
+    ElapsedTimeCondition,
+    Lanelet2Pose,
+    SpawnTransform,
+)
 from autoware_carla_scenario.examples.configs import TrafficLightComplianceConfig
 from autoware_carla_scenario.examples.traffic_light_compliance import (
     TrafficLightComplianceScenario,
@@ -179,8 +184,10 @@ def _straight(beyond: Any) -> Any:
 
 class _Run:
     """Drives a :class:`StopLineWatch` and the scenario's two conditions
-    tick by tick (0.1 s), with the ego, its standstill and the stop-line
-    measure faked.  *read* is the measure, from the front bumper."""
+    tick by tick (*step*, 0.1 s), with the ego, its standstill and the
+    stop-line measure faked.  *read* is the measure, from the front bumper.
+    With *summed*, the clock is a plain running sum of *step*, as CARLA's
+    is, instead of rounded to the microsecond."""
 
     def __init__(
         self,
@@ -191,6 +198,8 @@ class _Run:
         read: Any = None,
         red_until: float = 5.0,
         tolerance_m: float = 0.0,
+        step: float = 0.1,
+        summed: bool = False,
     ) -> None:
         from autoware_carla_scenario.examples import traffic_light_compliance as module
         from autoware_carla_scenario.measures import Bumpers
@@ -232,10 +241,14 @@ class _Run:
             self.watch, label="violation"
         )
         self.elapsed = 0.0
+        self.step = step
+        self.summed = summed
 
     def tick(self, x: float, *, standing: bool = False) -> Any:
-        """Move the ego to *x*, advance 0.1 s, and return the fail result."""
-        self.elapsed = round(self.elapsed + 0.1, 6)
+        """Move the ego to *x*, advance a step, and return the fail result."""
+        self.elapsed = self.elapsed + self.step
+        if not self.summed:
+            self.elapsed = round(self.elapsed, 6)
         self.ego.x = x
         self.ego.speed = 0.0 if standing else 1.0
         if not standing:
@@ -305,6 +318,58 @@ class TestStopLineWatch:
         assert run.hold(5.0) is None
         assert run.tick(run.ego.x + 2.0) is None
         assert run.watch.crossed_at == pytest.approx(5.1)
+
+    def test_a_summed_clock_judges_the_switch_tick_as_the_action_does(
+        self, monkeypatch
+    ) -> None:
+        # 60 steps of 0.05 s sum to 2.9999999999999973: the green action's
+        # ElapsedTimeCondition fires at that tick's start (with its 1e-9 s
+        # tolerance), so the tick after it ran under green.
+        start = 0.0
+        for _ in range(60):
+            start += 0.05
+        assert start < 3.0
+        green = ElapsedTimeCondition(3.0, label="light_switch")
+        assert green.check(MagicMock(), start) is not None
+
+        def run_to_switch() -> _Run:
+            run = _Run(
+                monkeypatch,
+                _LINE_X - _FRONT - 1.0,
+                red_until=3.0,
+                step=0.05,
+                summed=True,
+            )
+            assert run.watch.green.check(MagicMock(), start) is not None
+            assert run.hold(start) is None
+            assert run.elapsed == start
+            return run
+
+        # Pulling away exactly at the change is not running the red.
+        run = run_to_switch()
+        assert run.watch.stopped_in_zone_at is not None
+        assert run.tick(run.ego.x + 2.0) is None
+        assert run.watch.crossed_at is not None
+        assert not run.watch.crossed_on_red
+
+        # The standstill completing on the switch tick is not latched as
+        # stopped on red, and the verdict comes on that tick, not one later.
+        run = _Run(
+            monkeypatch,
+            _LINE_X - _FRONT - 16.0,
+            red_until=3.0,
+            step=0.05,
+            summed=True,
+        )
+        while run.elapsed < start - 0.5 - 1e-9:
+            assert run.tick(run.ego.x + 0.3) is None
+        assert run.ego.x + _FRONT < _LINE_X
+        failed = run.hold(3.2)
+        assert failed is not None
+        assert failed.elapsed_seconds == pytest.approx(3.05)
+        assert "only 0.45s before the green" in failed.message
+        assert run.watch.stopped_in_zone_at is None
+        assert run.watch.green_seen_at == pytest.approx(3.05)
 
     def test_creeping_out_of_the_zone_over_the_line_fails(self, monkeypatch) -> None:
         # Starting in the zone, it has to stay there.
@@ -493,6 +558,12 @@ class TestStopLineWatch:
             c for c in scenario._fail_conditions if c.label == "ego_red_light_violation"
         ]
         details = fail.get_details()
+        # The green action is triggered by the watch's own condition, so the
+        # two agree on which tick ran under green.
+        (green,) = [
+            a for a in scenario._pre_tick_actions if a.label == "switch_to_green"
+        ]
+        assert green._condition is fail._watch.green
         assert details["stop_zone_min_m"] == 0.5
         assert details["stop_zone_max_m"] == 4.0
         assert details["green_at_seconds"] == 3.0

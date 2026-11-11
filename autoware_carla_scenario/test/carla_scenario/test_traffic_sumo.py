@@ -2929,10 +2929,12 @@ def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
     backend._signals = {
         ("tls", 0): light(carla.TrafficLightState.Green),
         ("tls", 1): light(carla.TrafficLightState.Yellow),
-        ("tls", 3): light(carla.TrafficLightState.Off),  # no SUMO state: kept
+        ("tls", 2): light(carla.TrafficLightState.Unknown),  # no SUMO state: kept
+        # A dark light is SUMO's "off, blinking": its vehicles give way (#2061).
+        ("tls", 3): light(carla.TrafficLightState.Off),
     }
     backend._signals_to_sumo()
-    assert backend._traci.trafficlight.states["tls"] == "Gyrr"
+    assert backend._traci.trafficlight.states["tls"] == "Gyro"
 
 
 def test_a_crossing_walks_only_while_the_roads_it_crosses_are_red() -> None:

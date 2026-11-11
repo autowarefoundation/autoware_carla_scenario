@@ -2,7 +2,10 @@
 
 Each ``_before_*`` below is the code as it stood in ``traffic/sumo/backend.py``
 before it moved out (#811), verbatim but for reading the CARLA light's state
-name and SUMO's state from arguments instead of the light and TraCI.
+name and SUMO's state from arguments instead of the light and TraCI.  A CARLA
+light switched ``Off`` and the links switched off by one (``o``, ``O``) are
+handled since (#2061), so the comparisons leave them out and the tests at the
+end cover them.
 """
 
 from __future__ import annotations
@@ -18,6 +21,7 @@ from autoware_carla_scenario.traffic.sumo.signal_states import (
     SUMO_TO_CARLA_SIGNAL,
     carla_light_state,
     green_together,
+    clear_state,
     link_states,
     permissive_links,
     ride_state,
@@ -89,7 +93,8 @@ def _before_signals_to_sumo(
 
 
 def test_the_signal_tables_are_unchanged() -> None:
-    assert CARLA_TO_SUMO_SIGNAL == _CARLA_TO_SUMO_SIGNAL
+    # Off is SUMO's "off, blinking" since #2061.
+    assert CARLA_TO_SUMO_SIGNAL == {**_CARLA_TO_SUMO_SIGNAL, "Off": "o"}
     assert SUMO_TO_CARLA_SIGNAL == _SUMO_TO_CARLA_SIGNAL
 
 
@@ -167,8 +172,12 @@ def test_a_carla_light_over_several_sumo_links_shows_their_regular_state() -> No
         assert int(light.state) == int(shown), links
 
 
-def _state(rng: random.Random, size: int) -> str:
-    return "".join(rng.choice("rRyYgGos") for _ in range(size))
+def _state(rng: random.Random, size: int, alphabet: str = "rRyYgGos") -> str:
+    return "".join(rng.choice(alphabet) for _ in range(size))
+
+
+#: Link states but those of a signal switched off, which #2061 changed.
+_LIT = "rRyYgGs"
 
 
 @pytest.mark.parametrize("seed", range(20))
@@ -177,8 +186,8 @@ def test_link_states_sets_what_the_backend_set(seed: int) -> None:
     for _ in range(50):
         size = rng.randint(1, 12)
         links = list(range(size))
-        current = _state(rng, size)
-        names = ["Red", "Yellow", "Green", "Off", "Unknown"]
+        current = _state(rng, size, _LIT)
+        names = ["Red", "Yellow", "Green", "Unknown"]
         lights = {i: rng.choice(names) for i in rng.sample(links, rng.randint(0, size))}
         permissive = set(rng.sample(links, rng.randint(0, size)))
         rides: list[tuple[int, str, list[int]]] = [
@@ -225,5 +234,60 @@ def test_the_program_reads_are_what_the_backend_read(seed: int) -> None:
 def test_ride_state_is_unchanged(follows: str) -> None:
     rng = random.Random(follows)
     for _ in range(200):
-        states = list(_state(rng, rng.randint(0, 5)))
+        states = list(_state(rng, rng.randint(0, 5), _LIT))
         assert ride_state(follows, states) == _before_ride_state(follows, states)
+
+
+def test_a_carla_light_switched_off_is_off_in_sumo() -> None:
+    """#2061: a dark junction is SUMO's "off, blinking" (``o``), whose
+    vehicles give way, not the colour the link had last; Unknown says
+    nothing, so the link keeps its state."""
+    assert link_states("GGrr", {0: "Off", 2: "Off"}, set(), [], []) == "oGor"
+    # A permissive link is off as any other.
+    assert link_states("rrgG", {0: "Off", 2: "Off"}, {2}, [], []) == "oroG"
+    assert link_states("Gr", {0: "Unknown", 1: "Unknown"}, set(), [], []) == "Gr"
+    # And back on.
+    assert link_states("oo", {0: "Green", 1: "Red"}, set(), [], []) == "Gr"
+
+
+def test_off_round_trips_between_carla_and_sumo() -> None:
+    assert SUMO_TO_CARLA_SIGNAL[CARLA_TO_SUMO_SIGNAL["Off"]] == "Off"
+    assert carla_light_state(CARLA_TO_SUMO_SIGNAL["Off"]) == "Off"
+
+
+@pytest.mark.parametrize(
+    ("states", "shown"),
+    [
+        ([], "G"),
+        (["r", "R"], "G"),
+        (["o"], "o"),
+        (["r", "O"], "o"),
+        (["o", "G"], "r"),
+        (["o", "y"], "r"),
+        (["g"], "r"),
+    ],
+)
+def test_a_crossing_gives_way_at_a_dark_junction(states: list[str], shown: str) -> None:
+    """A crossing, or a bicycle riding across, walks while the traffic it
+    crosses is red, and gives way while that traffic is red or dark."""
+    assert clear_state(states) == shown
+    assert ride_state("clear", states) == shown
+    crossings = [(len(states), list(range(len(states))))]
+    assert link_states("".join(states) + "r", {}, set(), [], crossings)[-1] == shown
+
+
+@pytest.mark.parametrize(
+    ("states", "shown"),
+    [
+        (["o"], "o"),
+        (["o", "r"], "o"),
+        (["o", "G"], "g"),
+        (["O", "y"], "y"),
+        (["r"], "r"),
+        ([], "r"),
+    ],
+)
+def test_a_bicycle_riding_with_dark_traffic_gives_way(
+    states: list[str], shown: str
+) -> None:
+    assert ride_state("with", states) == shown

@@ -52,7 +52,10 @@ The light turns green before the world steps from 5 s, so the step that ends at
 5 s still ran under red (a crossing on it runs the red), and the verdict at the
 green is given on the first step driven under green, from where the ego was on
 the last red one: a standstill that only completes on the green step does not
-count.
+count. Which step that is, the judge asks the green action's own trigger (an
+`ElapsedTimeCondition`, with its 1e-9 s clock tolerance): CARLA's clock is a
+running sum of the tick, so 60 steps of 0.05 s read 2.9999999999999973 s, and
+with a 3 s red the step that begins there already runs under green.
 
 ## Parameters
 

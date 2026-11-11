@@ -118,11 +118,15 @@ class StopLineWatch:
     reached -- the line is carried on the ego's travel alone, and a crossing
     reads as a negative distance however the measure reads then.
 
-    A tick counts as red when it began before the green: the light is switched
-    before the world steps (a pre-tick action at ``elapsed >= red_until``) and
-    conditions read the world after, so the tick that ends at ``red_until``
-    still ran under red, and the first that ran under green ends one step
-    later.
+    A tick counts as red when the green had not fired at its start: the light
+    is switched before the world steps (a pre-tick action triggered by
+    :attr:`green`) and conditions read the world after, so the tick that ends
+    at ``red_until`` still ran under red, and the first that ran under green
+    ends one step later.  The tick's start is judged by :attr:`green` itself,
+    the :class:`~autoware_carla_scenario.ElapsedTimeCondition` the scenario
+    gives the green action, so the two agree on the boundary even when the
+    summed clock reads a hair short of ``red_until`` (``0.05 * 60`` sums to
+    ``2.9999999999999973``): that tick already ran under green.
 
     The pass and fail conditions share one watch; it updates once per
     ``elapsed``, whichever of them asks first, so it has to be asked every
@@ -147,6 +151,9 @@ class StopLineWatch:
     tolerance_m: float
     standstill_seconds: float
     standstill_speed_mps: float
+    #: What turns the light green: ``elapsed >= red_until``, with the clock's
+    #: tolerance.  The scenario triggers its green action with it.
+    green: ElapsedTimeCondition
     #: Signed metres from the front bumper to the stop line; ``None`` until
     #: the ego is found with a stop line ahead of it.
     distance: Optional[float]
@@ -197,6 +204,7 @@ class StopLineWatch:
         self.tolerance_m = tolerance_m
         self.standstill_seconds = standstill_seconds
         self.standstill_speed_mps = standstill_speed_mps
+        self.green = ElapsedTimeCondition(red_until, label="light_switch")
         self.distance = None
         self.crossed_at = None
         self.crossed_by_m = 0.0
@@ -231,9 +239,9 @@ class StopLineWatch:
         """Read the ego at *elapsed*; once per ``elapsed``."""
         if elapsed <= self._at:
             return
-        # The tick that ended now began at the last update: red if that was
-        # before the green (TrafficSignalAction's ElapsedTimeCondition).
-        on_red = self._at < self.red_until
+        # The tick that ended now began at the last update: red if the green
+        # action's trigger had not fired then.
+        on_red = self.green.check(world, self._at) is None
         self._at = elapsed
         if not on_red and self.green_seen_at is None:
             self.green_seen_at = elapsed
@@ -516,17 +524,8 @@ class TrafficLightComplianceScenario(BaseScenario):
         )
 
         # --- Register action to switch lights to green after delay ---
-        green_action = TrafficSignalAction(
-            state=carla.TrafficLightState.Green,
-            lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
-            condition=ElapsedTimeCondition(
-                cfg.light_switch_delay_seconds, label="light_switch"
-            ),
-            label="switch_to_green",
-        )
-        self.register_pre_tick(green_action)
-
-        # --- Pass and fail conditions: where the ego stops ---
+        # Triggered by the watch's own condition, so the watch counts a tick
+        # as green exactly when the action switched the lights before it.
         watch = StopLineWatch(
             red_until=cfg.light_switch_delay_seconds,
             stop_zone_min_m=cfg.stop_zone_min_m,
@@ -535,6 +534,15 @@ class TrafficLightComplianceScenario(BaseScenario):
             standstill_seconds=cfg.standstill_seconds,
             standstill_speed_mps=cfg.standstill_speed_mps,
         )
+        green_action = TrafficSignalAction(
+            state=carla.TrafficLightState.Green,
+            lanelet2_traffic_light_ids=TrafficLightTarget.ALL,
+            condition=watch.green,
+            label="switch_to_green",
+        )
+        self.register_pre_tick(green_action)
+
+        # --- Pass and fail conditions: where the ego stops ---
 
         # 1) The ego stood still in the stop zone before the green.  An AND
         #    checks every child on every tick, so the watch is asked every tick.
