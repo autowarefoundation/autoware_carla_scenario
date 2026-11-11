@@ -150,7 +150,12 @@ What happens:
     API is up: the services it calls (`/api/routing/set_route_points`, and
     `/api/localization/initialize` and
     `/api/operation_mode/change_to_autonomous` when it calls them) are
-    reachable and the mission planner has published a route state. Once it
+    reachable and the AD API is publishing its state: a localization
+    initialization state from the pose initializer, which is up early (the
+    mission planner reports UNKNOWN until localization is initialized, from
+    the mission's initial pose, so it cannot be waited for), or -- with
+    `initialize_localization:=false` -- a route state other than UNKNOWN.
+    The route itself still waits for UNSET. Once it
     has reached the bridge, localizing, routing and engaging is measured in
     ticks, `autoware.ready_timeout_ticks`, as before.
 4. **When the scenario ends**, however it ends, the stack is stopped (`SIGINT`
@@ -169,9 +174,12 @@ on it is refused).
 A stack that exits during a scenario ends it: the result's message says
 `The Autoware stack exited with code <n>`.
 
-So does a stack that stops answering once it is driving, launched or not.
+So does a stack that stops answering once it is ready, launched or not.
 `scenario_bridge` keeps asking for the mission every `route_watch_period_s`
-(1 s) while the AD API is up, and stops while it is down; once Autoware is
+(1 s) while the AD API is up, and stops while it is down. Its timers run on the
+steady clock, whatever `use_sim_time` says, so the period is wall-clock time,
+which is what the timeout is measured in: a world ticking slower than real
+time, or stalled between ticks, is not taken for a dead stack. Once Autoware is
 ready, `autoware.liveness_timeout_s` (30 s) of silence ends the run with
 `The Autoware stack stopped answering the bridge: ...` rather than letting
 CARLA drive the ego on the last control Autoware gave it until the scenario

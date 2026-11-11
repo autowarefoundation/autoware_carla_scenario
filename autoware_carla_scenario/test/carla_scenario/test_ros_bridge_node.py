@@ -99,9 +99,12 @@ class _ServiceClient:
 
 
 class _Timer:
-    def __init__(self, period: float, callback: Callable[[], None]) -> None:
+    def __init__(
+        self, period: float, callback: Callable[[], None], clock: Any = None
+    ) -> None:
         self.period = period
         self.callback = callback
+        self.clock = clock
         self.cancelled = False
 
     def cancel(self) -> None:
@@ -160,9 +163,13 @@ class _Node:
         return None
 
     def create_timer(
-        self, period: float, callback: Callable[[], None], **_kwargs: Any
+        self,
+        period: float,
+        callback: Callable[[], None],
+        clock: Any = None,
+        **_kwargs: Any,
     ) -> _Timer:
-        timer = _Timer(period, callback)
+        timer = _Timer(period, callback, clock)
         self.timers.append(timer)
         return timer
 
@@ -251,6 +258,11 @@ def _fake_ros_modules() -> dict[str, types.ModuleType]:
             "rclpy.callback_groups", ReentrantCallbackGroup=object
         ),
         "rclpy.executors": _module("rclpy.executors", MultiThreadedExecutor=object),
+        "rclpy.clock": _module(
+            "rclpy.clock",
+            Clock=lambda clock_type=None: SimpleNamespace(clock_type=clock_type),
+            ClockType=SimpleNamespace(STEADY_TIME="steady", ROS_TIME="ros"),
+        ),
         "rclpy.node": _module("rclpy.node", Node=_Node),
         "rclpy.qos": qos,
         "autoware_adapi_v1_msgs": _module("autoware_adapi_v1_msgs"),
@@ -314,10 +326,12 @@ def _node(
     """A node dialling *bridge*, localizing outside the AD API to keep it short."""
     _PARAMETERS.clear()
     _PARAMETERS.update(
-        bridge_address=bridge.client_address,
-        initialize_localization=False,
-        require_localization_initialized=False,
-        **parameters,
+        {
+            "bridge_address": bridge.client_address,
+            "initialize_localization": False,
+            "require_localization_initialized": False,
+            **parameters,
+        }
     )
     try:
         node = node_module.ScenarioBridgeNode()
@@ -715,3 +729,63 @@ def test_a_stack_whose_ad_api_is_not_up_stays_in_the_paced_boot_phase(
         if node is not None:
             node.destroy_node()
         entity.on_scenario_end(world)
+
+
+#: LocalizationInitializationState values the pose initializer publishes.
+_UNINITIALIZED = 1
+_INITIALIZED = 3
+
+
+def test_initializing_localization_does_not_wait_for_a_route_state(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer
+) -> None:
+    """The mission planner reports UNKNOWN until localization is initialized,
+    from the mission's initial pose: waiting for its state would deadlock."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(
+        node_module,
+        bridge,
+        initialize_localization=True,
+        require_localization_initialized=True,
+    )
+    initialize = node.clients["/api/localization/initialize"].calls
+
+    node._on_route_state(_route_state(ROUTE_STATE_UNKNOWN))  # noqa: SLF001
+    node._tick()  # noqa: SLF001 - the pose initializer is not up yet
+    assert not bridge.client_connected
+    waiting = [m for _level, m in node.logger.records if "Waiting for" in m]
+    assert waiting and "localization state" in waiting[-1]
+
+    node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+    assert bridge.client_connected
+    assert len(initialize) == 1
+    assert _route_calls(node) == []  # the planner is still UNKNOWN
+
+    initialize[-1][1].answer(True)
+    node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
+    assert _route_calls(node) == []
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+    assert len(_route_calls(node)) == 1
+
+    _route_calls(node)[-1][1].answer(True)
+    node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001
+    node._on_operation_mode_state(_operation_mode(1, False))  # noqa: SLF001
+    node.clients["/api/operation_mode/change_to_autonomous"].calls[-1][1].answer(True)
+    node._on_operation_mode_state(  # noqa: SLF001
+        _operation_mode(OPERATION_MODE_AUTONOMOUS, True)
+    )
+    node._tick()  # noqa: SLF001
+    assert bridge.is_ready()
+
+
+def test_the_node_polls_on_the_steady_clock(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer
+) -> None:
+    """Liveness is wall-clock time: the polls must not follow a slow /clock."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, bridge, use_sim_time=True)
+    _drive_to_ready(node)
+
+    assert len(node.timers) == 2  # the startup tick, then the route watch
+    assert all(timer.clock.clock_type == "steady" for timer in node.timers)

@@ -65,8 +65,10 @@ class AutowareBridgeConfig:
             whatever the world does meanwhile, so it is not measured in ticks.
             The stack reaches the bridge when its interface node first asks for
             the mission, which the ``scenario_bridge`` node does only once
-            Autoware's AD API is up (its services, and a route state from the
-            mission planner) -- not as soon as the node itself has started.
+            Autoware's AD API is up (the services it calls, and a localization
+            initialization state -- or, when it does not initialize
+            localization, a route state from the mission planner) -- not as
+            soon as the node itself has started.
         boot_tick_period_s: How long each tick waits while the stack is still
             starting, so the world advances at about real time rather than
             hundreds of simulated seconds before Autoware is there to see them.
@@ -81,8 +83,10 @@ class AutowareBridgeConfig:
         liveness_timeout_s: Once the stack is ready, the wall-clock seconds it
             may go without asking for the mission before the run ends: the
             ``scenario_bridge`` node keeps asking every ``route_watch_period_s``
-            while the AD API is up, so silence means the node, or the AD API
-            behind it, is gone, and the ego would drive on the last control it
+            of wall-clock time (a steady-clock timer, whatever
+            ``use_sim_time`` says, so a world slower than real time is not
+            taken for a dead stack) while the AD API is up, so silence means
+            the node, or the AD API behind it, is gone, and the ego would drive on the last control it
             was given.  Watched only once the stack has asked after it became
             ready, so a node that stops asking then (``route_watch_period_s``
             of 0 or less) is not mistaken for a dead one.  ``0`` turns it off.
