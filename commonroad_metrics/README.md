@@ -3,7 +3,7 @@
 The CommonRoad worker of `autoware_carla_scenario`: it reads how critical a
 frame of a run is with TU Munich's CommonRoad tools --
 [CriMe](https://github.com/CommonRoad/CommonRoad-CriMe)'s criticality measures
-and [CommonRoad-Reach](https://github.com/CommonRoad/commonroad-reach)'s
+and [CommonRoad-Reach](https://pypi.org/project/commonroad-reach/)'s
 reachable set -- for the framework's CommonRoad metrics (`crime_ttc_s`,
 `reach_drivable_area_m2`, ...; `autoware_carla_scenario/docs/metrics.md`,
 "CommonRoad metrics").
