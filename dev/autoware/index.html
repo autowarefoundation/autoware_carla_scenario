@@ -2448,9 +2448,20 @@ given:</p>
     output directory.</li>
 <li><strong>While the stack starts</strong> (until <code>scenario_bridge</code> first reaches the
     bridge), the world ticks at about real time and the wait is measured in
-    wall-clock seconds, <code>autoware.boot_timeout_s</code>. Once it has reached the
-    bridge, localizing, routing and engaging is measured in ticks,
-    <code>autoware.ready_timeout_ticks</code>, as before.</li>
+    wall-clock seconds, <code>autoware.boot_timeout_s</code>. The node starts beside
+    <code>ros2 launch</code>, long before the rest of Autoware, so it does not ask for
+    the mission -- which is what reaching the bridge means -- until the AD
+    API is up: the services it calls (<code>/api/routing/set_route_points</code>, and
+    <code>/api/localization/initialize</code> and
+    <code>/api/operation_mode/change_to_autonomous</code> when it calls them) are
+    reachable and the AD API is publishing its state: a localization
+    initialization state from the pose initializer, which is up early (the
+    mission planner reports UNKNOWN until localization is initialized, from
+    the mission's initial pose, so it cannot be waited for), or -- with
+    <code>initialize_localization:=false</code> -- a route state other than UNKNOWN.
+    The route itself still waits for UNSET. Once it
+    has reached the bridge, localizing, routing and engaging is measured in
+    ticks, <code>autoware.ready_timeout_ticks</code>, as before.</li>
 <li><strong>When the scenario ends</strong>, however it ends, the stack is stopped (<code>SIGINT</code>
     to <code>ros2 launch</code>, through <code>docker run --init</code>) and its container removed
     with <code>docker rm --force</code> once it has stopped or <code>stop_timeout_s</code> has
@@ -2465,11 +2476,33 @@ the command line, not in a scenario's config (a batch whose scenarios disagree
 on it is refused).</p>
 <p>A stack that exits during a scenario ends it: the result's message says
 <code>The Autoware stack exited with code &lt;n&gt;</code>.</p>
+<p>So does a stack that stops answering once it is ready, launched or not.
+<code>scenario_bridge</code> keeps asking for the mission every <code>route_watch_period_s</code>
+(1 s) while the AD API is up, and stops while it is down. Its timers run on the
+steady clock, whatever <code>use_sim_time</code> says, so the period is wall-clock time,
+which is what the timeout is measured in: a world ticking slower than real
+time, or stalled between ticks, is not taken for a dead stack. Once Autoware is
+ready, <code>autoware.liveness_timeout_s</code> (30 s) of silence ends the run with
+<code>The Autoware stack stopped answering the bridge: ...</code> rather than letting
+CARLA drive the ego on the last control Autoware gave it until the scenario
+times out. Like an exited stack, it is a <code>driver</code> failure. It is watched only
+once the node has asked after Autoware turned ready, so a node that stops
+asking then (<code>route_watch_period_s</code> of 0 or less) is not taken for a dead one;
+<code>autoware.liveness_timeout_s=0</code> turns it off. What it sees is the
+<code>scenario_bridge</code> node and the AD API behind it: an <code>autoware_carla_interface</code>
+that dies on its own, while <code>ros2 launch</code> keeps running, goes unnoticed.</p>
 <p>The <code>autoware</code> group holds the bridge's settings (<code>AutowareBridgeConfig</code>:
-<code>address</code>, <code>timeout_s</code>, <code>ready_timeout_ticks</code>, <code>boot_timeout_s</code>,
-<code>boot_tick_period_s</code>, <code>base_link_offset_m</code>) and <code>launcher</code>. Any other key is
-refused when the ego is built, with an error naming it: <code>+autoware.timout_s=30</code>
-fails the run rather than leaving the default timeout in place.</p>
+<code>address</code>, <code>ready_timeout_ticks</code>, <code>boot_timeout_s</code>, <code>boot_tick_period_s</code>,
+<code>liveness_timeout_s</code>, <code>base_link_offset_m</code>) and <code>launcher</code>. Any other key is
+refused when the ego is built, with an error naming it:
+<code>+autoware.boot_timout_s=30</code> fails the run rather than leaving the default
+timeout in place.</p>
+<p><code>timeout_s</code> is still accepted but deprecated: it never had an effect, and
+setting it only logs a warning. The <code>scenario_bridge</code> node's RPC timeouts are
+its own ROS parameters, <code>rpc_timeout_s</code> (5 s, <code>ReportReadiness</code>) and
+<code>mission_poll_timeout_s</code> (1 s, <code>GetMission</code> and <code>ReportTurnIndicators</code>): set
+them in <code>autoware.launcher.bridge_parameters</code>, or on the node you start
+yourself.</p>
 <p><code>autoware.launcher</code> is checked the same way. It holds the keys of both launcher
 types at once (the shipped config does), and each type reads its own: <code>type</code>,
 <code>command</code> and every <code>DockerAutowareConfig</code> field (<code>workspace</code>, <code>launch</code>,
@@ -2557,7 +2590,7 @@ such a <code>stop_timeout_s</code>, <code>DockerAutowareConfig</code> such a dom
 <tr>
 <td><code>bridge_parameters</code></td>
 <td><code>{use_sim_time: true}</code></td>
-<td>ROS parameters of the <code>scenario_bridge</code> node: <code>auto_engage</code>, <code>initialize_localization</code>, <code>require_localization_initialized</code>, <code>route_watch_period_s</code>, <code>reroute_max_attempts</code>, ...</td>
+<td>ROS parameters of the <code>scenario_bridge</code> node: <code>auto_engage</code>, <code>initialize_localization</code>, <code>require_localization_initialized</code>, <code>route_watch_period_s</code>, <code>reroute_max_attempts</code>, <code>rpc_timeout_s</code>, <code>mission_poll_timeout_s</code>, ...</td>
 </tr>
 <tr>
 <td><code>colcon_args</code></td>
@@ -2802,7 +2835,7 @@ stack (<code>autoware_carla_scenario.autoware_stack.bridge_node</code> builds it
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 08:18:32 UTC"><span class="timeago" datetime="2026-11-11T08:18:32+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 08:18:32 UTC">2026-11-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 10:34:18 UTC"><span class="timeago" datetime="2026-11-11T10:34:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 10:34:18 UTC">2026-11-11</span>
   </span>
 
     
