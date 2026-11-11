@@ -84,7 +84,13 @@ from ..route.model import _whole_number
 from ..seed import DEFAULT_SEED, check_seed
 from openodd import Rules, RulesError
 
-from .backend import CARLA_BACKEND, DEFAULT_KNOBS, CarlaBackend, weather_effects
+from .backend import (
+    CARLA_BACKEND,
+    DEFAULT_KNOBS,
+    CarlaBackend,
+    _effect_control,
+    weather_effects,
+)
 from .control_fields import (
     CONTROL_TARGETS,
     FLAKY_FIELDS,
@@ -156,11 +162,50 @@ class OddSampler(_OddSampler):
         from ..coverage.collector import current_measure_coverage  # noqa: PLC0415
 
         kw.setdefault("backend", CARLA_BACKEND)
+        if kw.get("controls"):
+            kw["controls"] = _unreplaced_controls(
+                odd, knobs or {}, kw["controls"], kw["backend"]
+            )
         if "effects" not in kw:
-            kw["effects"] = weather_effects(odd, kw["backend"].active_rules)
+            kw["effects"] = weather_effects(
+                odd,
+                kw["backend"].active_rules,
+                knobs=knobs,
+                controls=kw.get("controls"),
+                backend=kw["backend"],
+            )
         if kw.get("coverage") is not None:
             kw["coverage"] = current_measure_coverage(kw["coverage"], odd)
         super().__init__(odd, knobs, **kw)
+
+
+def _unreplaced_controls(
+    odd: OddDefinition,
+    knobs: Mapping[str, OddKnob],
+    controls: Mapping[str, OddKnob],
+    backend: Any,
+) -> dict[str, OddKnob]:
+    """*controls* (the scenario's) less those a sweep's knob (*knobs*, by
+    attribute) replaces: a control writing a node of the rules that an
+    attribute with a knob of *knobs* measures.  Such a control is no knob of
+    the attribute (:meth:`CarlaBackend.knob`), so openodd would draw it as an
+    effect too, writing its setting over the knob's value; an explicit knob
+    replaces it, as it replaces any control an attribute reads (#2072).
+    The sampler and :func:`case_settings` both draw with what is left."""
+    if not knobs or not isinstance(backend, CarlaBackend):
+        return dict(controls)
+    replaced = {
+        id(control)
+        for attribute in odd.attributes
+        if attribute.name in knobs
+        for control in [_effect_control(attribute, controls)]
+        if control is not None
+    }
+    return {
+        name: control
+        for name, control in controls.items()
+        if id(control) not in replaced
+    }
 
 
 def scenario_backend(
@@ -597,10 +642,12 @@ def case_settings(
     effect, each with what draws it, ``(kind, name)``: ``("attribute",
     <attribute>)`` for an attribute's knob (one of *knobs*, a sweep's, else
     the backend's for it, which *controls*, the scenario's, may give),
-    ``("control", <name>)`` for a control that writes a node of the rules,
+    ``("control", <name>)`` for a control that writes a node of the rules
+    and no knob of *knobs* replaces (:func:`_unreplaced_controls`),
     and ``("weather", <quantity>)`` for a CARLA weather field that follows
     from the conditions the ODD names (:func:`~.backend.weather_effects`)."""
     settings: dict[str, tuple[str, str]] = {}
+    controls = _unreplaced_controls(definition, knobs, controls, backend)
     for attribute in definition.attributes:
         knob = knobs.get(attribute.name) or backend.knob(attribute, controls)
         if knob is not None:
@@ -608,7 +655,13 @@ def case_settings(
     for name, control in controls.items():
         if control.quantity is not None:
             settings.setdefault(control.key, ("control", name))
-    for effect in weather_effects(definition, backend.active_rules):
+    for effect in weather_effects(
+        definition,
+        backend.active_rules,
+        knobs=knobs,
+        controls=controls,
+        backend=backend,
+    ):
         settings.setdefault(effect.key, ("weather", str(effect.quantity)))
     return settings
 

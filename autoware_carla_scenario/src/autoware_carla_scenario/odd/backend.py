@@ -238,13 +238,94 @@ UNSUPPORTED_CONCEPTS: dict[str, str] = {
 }
 
 
-def weather_effects(odd: Any, rules: Optional[Rules] = None) -> list[OddKnob]:
+#: The built-in probes that read a drawn attribute back from CARLA's weather
+#: fields -> those fields.  The conditions read the setting the run recorded
+#: (the rainfall rate, the cloud cover, ...), not CARLA's fields -- but for the
+#: time of day, which the sun renders.
+_READ_BACK_FIELDS: dict[Callable[..., Any], tuple[str, ...]] = {
+    probes.time_of_day: ("sun_altitude_angle", "sun_azimuth_angle"),
+    probes.illumination: ("sun_altitude_angle",),
+    probes.rain: ("precipitation",),
+    probes.fog: ("fog_density",),
+    probes.road_wetness: ("wetness",),
+    probes.wind: ("wind_intensity",),
+    probes.cloudiness: ("cloudiness",),
+    probes.road_surface_condition: ("wetness", "precipitation_deposits"),
+}
+
+
+def _attribute_knobs(
+    odd: Any,
+    knobs: Optional[Mapping[str, OddKnob]],
+    controls: Optional[Mapping[str, OddKnob]],
+    backend: Optional[Backend],
+) -> list[tuple[Any, OddKnob]]:
+    """Each attribute of *odd* a case sets, with its knob: one of *knobs* (a
+    sweep's, by attribute name), else the backend's for it, which *controls*
+    (the scenario's) may give -- as the sampler picks them."""
+    backend = backend if backend is not None else CARLA_BACKEND
+    given = knobs or {}
+    out: list[tuple[Any, OddKnob]] = []
+    for attribute in odd.attributes:
+        knob = given.get(attribute.name) or backend.knob(attribute, controls or {})
+        if knob is not None:
+            out.append((attribute, knob))
+    return out
+
+
+def _refuse_unreadable(
+    odd: Any, chosen: Sequence[tuple[Any, OddKnob]], clashing: set[str]
+) -> None:
+    """Refuse *odd* when a field one of its knobs writes over an effect
+    (*clashing*, by key) is the one another of its attributes is read back
+    from: that attribute's bucket would not read back from the run."""
+    writers = {knob.key: attribute.name for attribute, knob in chosen}
+    for attribute, knob in chosen:
+        try:
+            fields = _READ_BACK_FIELDS.get(attribute.probe, ())
+        except TypeError:  # an unhashable probe reads no field back
+            fields = ()
+        for setting in fields:
+            key = f"environment.{setting}"
+            if key in clashing and knob.key != key:
+                raise ValueError(
+                    f"ODD {odd.name}: {writers[key]} sets {key} with its knob, "
+                    f"which {attribute.name} is read back from (CARLA's "
+                    f"{', '.join(fields)}): a run cannot keep the buckets drawn "
+                    "for both; the ODD may name one of them, not both"
+                )
+
+
+def weather_effects(
+    odd: Any,
+    rules: Optional[Rules] = None,
+    *,
+    knobs: Optional[Mapping[str, OddKnob]] = None,
+    controls: Optional[Mapping[str, OddKnob]] = None,
+    backend: Optional[Backend] = None,
+) -> list[OddKnob]:
     """The CARLA weather fields a case drawn from *odd* sets through the
     weather *rules* (the backend's): an effect (``OddKnob(quantity=...)``) for
     each field that follows from a condition *odd* names -- an attribute that
     is a cause's concept -- so the sampler draws it with the case, at a
     quantile of its own the flaky search can move.  A field nothing *odd*
-    names leads to is left to the world."""
+    names leads to is left to the world.
+
+    A field one of *odd*'s own attributes sets with its knob (*knobs*, a
+    sweep's, else *backend*'s for it, which *controls*, the scenario's, may
+    give) is the knob's: no effect writes it, so the bucket drawn for that
+    attribute reads back from the run (#2072).  Nor does an effect write a
+    field that follows from such a field in the rules (the standing water the
+    rain brings): the sampler would draw it from a value the run never
+    has.  The runner works those out from the value the knob wrote
+    (:func:`~autoware_carla_scenario.weather_rules.resolve_environment`).
+
+    Raises:
+        ValueError: When a field a knob of *odd* writes is one another of
+            its attributes is read back from (``illumination`` sets the sun's
+            altitude, which ``time_of_day`` is read from): the run cannot keep
+            the buckets drawn for both.
+    """
     rules = rules if rules is not None else CARLA_BACKEND.active_rules
     if rules is None:
         return []
@@ -268,7 +349,18 @@ def weather_effects(odd: Any, rules: Optional[Rules] = None) -> list[OddKnob]:
             effects.append(
                 OddKnob(f"environment.{setting}", quantity=quantity, limits=limits)
             )
-    return effects
+    chosen = _attribute_knobs(odd, knobs, controls, backend)
+    taken = {knob.key for _attribute, knob in chosen}
+    clashing = {effect.key for effect in effects if effect.key in taken}
+    if not clashing:
+        return effects
+    _refuse_unreadable(odd, chosen, clashing)
+    # The quantities a knob writes, and every one that follows from them.
+    dropped = {str(e.quantity) for e in effects if e.key in clashing}
+    for quantity in rules.order:
+        if set(rules.inputs(quantity)) & dropped:
+            dropped.add(quantity)
+    return [e for e in effects if str(e.quantity) not in dropped]
 
 
 def _measure(key: str) -> tuple[ScenarioMeasure, str]:
@@ -284,6 +376,26 @@ def _knob_for(attribute: Any, controls: Mapping[str, OddKnob]) -> Optional[OddKn
     if isinstance(probe, ScenarioMeasure):
         control = controls.get(probe.key)
         if control is not None and control.quantity is None:
+            return control
+    return None
+
+
+def _effect_control(
+    attribute: Any, controls: Mapping[str, OddKnob]
+) -> Optional[OddKnob]:
+    """The scenario's control that writes a node of the rules (``quantity``)
+    and measures *attribute*: the scenario's effect, which no attribute's
+    knob is (``None`` when *attribute* reads no such control)."""
+    keys: list[str] = []
+    probe = getattr(attribute, "probe", None)
+    if isinstance(probe, ScenarioMeasure):
+        keys.append(probe.key)
+    source = getattr(attribute, "source", None)
+    if isinstance(source, tuple) and len(source) == 2 and source[0] == "measure":
+        keys.append(str(source[1]))
+    for key in keys:
+        control = controls.get(key)
+        if control is not None and control.quantity is not None:
             return control
     return None
 
@@ -316,6 +428,21 @@ class CarlaBackend(Backend):
     unsupported: Mapping[str, str] = field(
         default_factory=lambda: dict(UNSUPPORTED_CONCEPTS)
     )
+
+    def knob(
+        self, attribute: Any, controls: Mapping[str, OddKnob]
+    ) -> Optional[OddKnob]:
+        """How a run sets *attribute*, as openodd's ``Backend.knob`` -- but
+        none for an attribute that measures a scenario measure whose control
+        writes a node of the rules (``quantity``): that control is the
+        scenario's effect, drawn with every case at the values drawn for the
+        ODD's conditions, and the attribute measures what it drew (#2072).
+        openodd's own lookup would fall back to the control by the measure's
+        key and make it the attribute's knob, which no rule input stands
+        for."""
+        if _effect_control(attribute, controls) is not None:
+            return None
+        return super().knob(attribute, controls)
 
     def position(self, context: Any) -> Optional[tuple[float, float, float]]:
         """The ego's location in the CARLA world, in metres."""

@@ -2211,3 +2211,327 @@ def test_the_quantiles_alone_do_not_make_an_odd_drawable() -> None:
 
     with pytest.raises(ValueError, match="nothing of ODD"):
         sampler_from_config({"seed": 1}, odd=probe_odd)
+
+
+# ---------------------------------------------------------------------------
+# A scenario's effects and the ODD's own knobs (#2072)
+# ---------------------------------------------------------------------------
+
+
+def _headway_binding(directory: Path) -> Path:
+    """A binding that measures the gap cut_in sets up, as docs/odd.md maps it."""
+    (directory / "taxonomy.yml").write_text(
+        "TAXONOMY:\n  dynamic_elements:\n    headway: float length\n"
+    )
+    binding = directory / "gap.binding.yaml"
+    binding.write_text(
+        "openodd: [taxonomy.yml]\n"
+        "name: gap\n"
+        "probes:\n"
+        "  headway: {measure: vehicle_ahead_gap_m, buckets: [0, 10, 20, 40]}\n"
+    )
+    return binding
+
+
+def test_a_measure_whose_control_writes_a_quantity_is_the_scenarios_effect(
+    tmp_path: Path,
+) -> None:
+    """An ODD that measures cut_in's gap draws the gap as the scenario's
+    effect: the control is no knob of the attribute, which no input of the
+    rules stands for (#2072)."""
+    from autoware_carla_scenario.examples.run import _compose_config
+    from autoware_carla_scenario.odd import load_odd_binding
+    from autoware_carla_scenario.odd.sampler import case_settings, scenario_backend
+    from autoware_carla_scenario.sweeper.expand import scenario_controls
+
+    odd = load_odd_binding(_headway_binding(tmp_path))
+    (headway,) = odd.attributes
+    assert headway.source == ("measure", VEHICLE_AHEAD_GAP_M)
+    cfg = _compose_config("cut_in/left", [])
+    controls = controls_from_mapping(scenario_controls(cfg))
+    backend = scenario_backend(scenario_rules(cfg))
+
+    assert backend.knob(headway, controls) is None
+    # The gap is filed as the control's, not as the attribute's.
+    written = case_settings(odd, {}, controls, backend)
+    assert written["scenario.npc_gap_m"] == ("control", VEHICLE_AHEAD_GAP_M)
+
+    sampler, _ = sampler_from_config(
+        {"count": 3, "seed": 1},
+        odd=odd,
+        controls=scenario_controls(cfg),
+        rules=scenario_rules(cfg),
+    )
+    assert "vehicle_ahead_gap" in sampler.effects
+    for case in sampler.sample(3):
+        gap = _value(case.overrides, "scenario.npc_gap_m")
+        assert gap == pytest.approx(case.quantities["vehicle_ahead_gap"])
+        assert "quantile(vehicle_ahead_gap)" in case.values
+
+
+def test_a_sweeps_knob_for_a_measured_effect_replaces_the_control(
+    tmp_path: Path,
+) -> None:
+    """A sweep's knob for the attribute that measures cut_in's gap replaces
+    the gap's control, as any explicit knob replaces a control: the gap is
+    not drawn as the scenario's effect too, over what the knob drew."""
+    from autoware_carla_scenario.examples.run import _compose_config
+    from autoware_carla_scenario.odd import load_odd_binding
+    from autoware_carla_scenario.sweeper.expand import scenario_controls
+
+    odd = load_odd_binding(_headway_binding(tmp_path))
+    (headway,) = odd.attributes
+    cfg = _compose_config("cut_in/left", [])
+    sampler, _ = sampler_from_config(
+        {
+            "count": 6,
+            "seed": 1,
+            "knobs": {headway.name: {"key": "scenario.npc_gap_m", "range": [5, 30]}},
+        },
+        odd=odd,
+        controls=scenario_controls(cfg),
+        rules=scenario_rules(cfg),
+    )
+
+    assert "vehicle_ahead_gap" not in sampler.effects
+    for case in sampler.sample(6):
+        assert sum(o.startswith("scenario.npc_gap_m=") for o in case.overrides) == 1
+        gap = _value(case.overrides, "scenario.npc_gap_m")
+        assert gap == pytest.approx(case.values[headway.name])
+        assert "vehicle_ahead_gap" not in case.quantities
+
+
+def test_case_settings_drop_a_control_a_sweeps_knob_replaces(tmp_path: Path) -> None:
+    """case_settings files what the sampler draws: a control a sweep's knob
+    replaces is not filed as drawn, even when the knob writes another key."""
+    from autoware_carla_scenario.examples.run import _compose_config
+    from autoware_carla_scenario.odd import load_odd_binding
+    from autoware_carla_scenario.odd.sampler import case_settings, scenario_backend
+    from autoware_carla_scenario.sweeper.expand import scenario_controls
+
+    odd = load_odd_binding(_headway_binding(tmp_path))
+    (headway,) = odd.attributes
+    cfg = _compose_config("cut_in/left", [])
+    raw_knobs = {headway.name: {"key": "scenario.other_gap_m", "range": [5, 30]}}
+    written = case_settings(
+        odd,
+        controls_from_mapping(raw_knobs),
+        controls_from_mapping(scenario_controls(cfg)),
+        scenario_backend(scenario_rules(cfg)),
+    )
+    sampler, _ = sampler_from_config(
+        {"count": 4, "seed": 1, "knobs": raw_knobs},
+        odd=odd,
+        controls=scenario_controls(cfg),
+        rules=scenario_rules(cfg),
+    )
+
+    assert "scenario.npc_gap_m" not in written
+    assert written["scenario.other_gap_m"] == ("attribute", headway.name)
+    for case in sampler.sample(4):
+        drawn = {o.partition("=")[0] for o in case.overrides}
+        assert "scenario.npc_gap_m" not in drawn
+        assert set(written) <= drawn
+
+
+@pytest.mark.usefixtures("at_repo_root")
+def test_a_shipped_quantity_control_scenario_expands_with_an_odd_measuring_it(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """`scenario-expand scenario=cut_in/left odd=<binding>` used to fail:
+    "no input of the rules stands for dynamic_elements.headway" (#2072)."""
+    from autoware_carla_scenario.examples.expand import main
+
+    binding = _headway_binding(tmp_path)
+    assert (
+        main(["scenario=cut_in/left", f"odd={binding}", "+sweep.odd_sample.count=2"])
+        == 0
+    )
+    (listing,) = [json.loads(line) for line in capsys.readouterr().out.splitlines()]
+    assert listing["cases"]
+    for case in listing["cases"]:
+        assert any(o.startswith("scenario.npc_gap_m=") for o in case)
+
+
+def _rain_and_wetness_odd() -> OddDefinition:
+    """The taxonomy's rainfall rate, with CARLA's rain and road wetness."""
+    from autoware_carla_scenario.odd import road_wetness
+
+    (rainfall,) = [a for a in default_odd().attributes if a.name == _RAINFALL]
+    return OddDefinition(
+        "rain_and_wetness",
+        [
+            rainfall,
+            OddAttribute("environment.rain", rain, values=INTENSITY_LEVELS),
+            OddAttribute(
+                "environment.road_wetness", road_wetness, values=INTENSITY_LEVELS
+            ),
+        ],
+    )
+
+
+def _environment_of(overrides: list[str]) -> dict[str, Any]:
+    environment: dict[str, Any] = {}
+    for override in overrides:
+        name, _, value = override.partition("=")
+        if not name.startswith("environment."):
+            continue
+        key = name.removeprefix("environment.")
+        if key in ("time_of_day", "cloud_cover"):
+            environment[key] = value
+        else:
+            environment[key] = float(value)
+    return environment
+
+
+def _run_weather(overrides: list[str], world_id: int) -> Any:
+    """A world with the weather the run applies for *overrides* (the config's
+    ``environment``, worked out and applied by its EnvironmentAction)."""
+    from unittest.mock import MagicMock
+
+    import typesafe_carla.carla as carla
+
+    from autoware_carla_scenario.actions.environment import (
+        forget_weather_conditions,
+    )
+    from autoware_carla_scenario.examples.run import add_environment
+    from autoware_carla_scenario.odd import probes
+
+    registered: list = []
+    add_environment(
+        OmegaConf.create({"environment": _environment_of(overrides)}),
+        SimpleNamespace(register_init=registered.append),  # type: ignore[arg-type]
+    )
+    (action,) = registered
+    world = MagicMock()
+    world.id = world_id
+    world.get_weather.return_value = carla.WeatherParameters()
+    forget_weather_conditions()
+    probes.reset_probes()
+    action.execute(world)
+    (applied,) = world.set_weather.call_args.args
+    world.get_weather.return_value = applied
+    probes.reset_probes()
+    return world
+
+
+def test_an_odds_own_knob_wins_over_the_weather_effect() -> None:
+    """The ODD of #2072: the rain and the wetness its knobs draw are what the
+    run gets, so their buckets read back; no effect overwrites them."""
+    from autoware_carla_scenario.actions.environment import (
+        forget_weather_conditions,
+    )
+    from autoware_carla_scenario.odd import probes
+
+    sampler = OddSampler(_rain_and_wetness_odd(), seed=3)
+
+    # Every effect follows the precipitation, which the rain's knob writes.
+    assert sampler.effects == []
+    try:
+        for case in sampler.sample(20):
+            for key in ("environment.precipitation", "environment.wetness"):
+                assert [o for o in case.overrides if o.startswith(f"{key}=")], key
+                assert sum(o.startswith(f"{key}=") for o in case.overrides) == 1
+            precipitation = _value(case.overrides, "environment.precipitation")
+            wetness = _value(case.overrides, "environment.wetness")
+            assert intensity_level(precipitation) == case.buckets["environment.rain"]
+            assert intensity_level(wetness) == case.buckets["environment.road_wetness"]
+
+            world = _run_weather(case.overrides, 300 + case.index)
+            applied = world.get_weather.return_value
+            assert applied.precipitation == pytest.approx(precipitation)
+            assert applied.wetness == pytest.approx(wetness)
+            assert probes.rain(world) == case.buckets["environment.rain"]
+            assert (
+                probes.road_wetness(world) == case.buckets["environment.road_wetness"]
+            )
+            assert probes.rainfall_rate_mm_h(world) == pytest.approx(
+                case.values[_RAINFALL]
+            )
+    finally:
+        forget_weather_conditions()
+        probes.reset_probes()
+
+
+def test_the_settings_an_odds_knob_writes_are_filed_as_its_attributes() -> None:
+    from autoware_carla_scenario.odd.backend import CARLA_BACKEND
+    from autoware_carla_scenario.odd.sampler import case_settings
+
+    written = case_settings(_rain_and_wetness_odd(), {}, {}, CARLA_BACKEND)
+
+    assert written == {
+        "environment.rainfall_rate_mm_h": ("attribute", _RAINFALL),
+        "environment.precipitation": ("attribute", "environment.rain"),
+        "environment.wetness": ("attribute", "environment.road_wetness"),
+    }
+
+
+@pytest.mark.parametrize(
+    ("cause", "name", "probe", "field"),
+    [
+        (_RAINFALL, "environment.rain", "rain", "precipitation"),
+        (_RAINFALL, "environment.road_wetness", "road_wetness", "wetness"),
+        (_CLOUD, "environment.cloudiness", "cloudiness", "cloudiness"),
+        (_WIND, "environment.wind", "wind", "wind_intensity"),
+        (_FOG, "environment.fog", "fog", "fog_density"),
+    ],
+)
+def test_a_carla_field_knob_beside_its_condition_reads_back(
+    cause: str, name: str, probe: str, field: str
+) -> None:
+    """Each condition beside the CARLA field that follows from it: the
+    field's knob wins, and both buckets read back from the run."""
+    from autoware_carla_scenario.actions.environment import (
+        forget_weather_conditions,
+    )
+    from autoware_carla_scenario.odd import probes
+
+    (condition,) = [a for a in default_odd().attributes if a.name == cause]
+    odd = OddDefinition(
+        "pair",
+        [
+            condition,
+            OddAttribute(name, getattr(probes, probe), values=INTENSITY_LEVELS),
+        ],
+    )
+    sampler = OddSampler(odd, seed=3)
+
+    assert f"carla_{field}" not in sampler.effects
+    try:
+        for case in sampler.sample(12):
+            value = _value(case.overrides, f"environment.{field}")
+            world = _run_weather(case.overrides, 400 + case.index)
+            applied = world.get_weather.return_value
+            assert getattr(applied, field) == pytest.approx(value)
+            assert getattr(probes, probe)(world) == case.buckets[name]
+            drawn = case.values[cause]
+            if isinstance(drawn, str):
+                assert condition.probe(world) == drawn
+            else:
+                assert condition.probe(world) == pytest.approx(drawn)
+    finally:
+        forget_weather_conditions()
+        probes.reset_probes()
+
+
+def test_an_odd_whose_knob_sets_what_another_attribute_reads_is_refused() -> None:
+    """The illumination's knob sets the sun's altitude, which the time of
+    day is read back from: no run keeps both buckets, so the ODD is refused,
+    not drawn with buckets the run never has (#2072)."""
+    (time_of_day,) = [a for a in default_odd().attributes if a.name == _TIME]
+    odd = OddDefinition(
+        "sun",
+        [
+            time_of_day,
+            OddAttribute(
+                "environment.illumination",
+                illumination,
+                values=["day", "low_sun", "twilight", "night"],
+            ),
+        ],
+    )
+
+    with pytest.raises(ValueError, match="time_of_day is read back from"):
+        OddSampler(odd, seed=3)
+    with pytest.raises(ValueError, match="environment.sun_altitude_angle"):
+        sampler_from_config({"count": 1, "seed": 3}, odd=odd)
