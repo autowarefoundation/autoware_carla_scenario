@@ -1442,17 +1442,8 @@ class SumoTrafficBackend(TrafficBackend):
         actors += [self._external.get(sumo_id) for sumo_id in self._approaches]
         self._approaches = {}
         for actor in actors:
-            if actor is None:
-                continue
-            self._constant_speed.pop(actor.id, None)
-            self._physics.pop(actor.id, None)
-            try:
-                actor.disable_constant_velocity()
-                actor.apply_control(
-                    carla.VehicleControl(throttle=0.0, steer=0.0, brake=1.0)
-                )
-            except RuntimeError as exc:  # destroyed meanwhile
-                logger.debug("SUMO: stopping %s: %s", actor.id, exc)
+            if actor is not None:
+                self._stop_vehicle(actor)
         for entity in self._walked.values():
             actor = getattr(entity, "actor", None)
             if actor is None:
@@ -1462,6 +1453,21 @@ class SumoTrafficBackend(TrafficBackend):
             except RuntimeError as exc:
                 logger.debug("SUMO: halting %s: %s", actor.id, exc)
         self._walking = {}
+
+    def _stop_vehicle(self, actor: Any) -> None:
+        """Brake *actor*, which SUMO no longer drives, to a stop: off its
+        constant velocity (``teleport``) and its last control (``physics``)."""
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        self._constant_speed.pop(actor.id, None)
+        self._physics.pop(actor.id, None)
+        try:
+            actor.disable_constant_velocity()
+            actor.apply_control(
+                carla.VehicleControl(throttle=0.0, steer=0.0, brake=1.0)
+            )
+        except RuntimeError as exc:  # destroyed meanwhile
+            logger.debug("SUMO: stopping %s: %s", actor.id, exc)
 
     def _destroy_mirrors(self) -> None:
         """Destroy the CARLA mirrors of SUMO's own vehicles and pedestrians."""
@@ -2355,6 +2361,17 @@ class SumoTrafficBackend(TrafficBackend):
             return
         self._released.discard(id(entity))
         handed = self._handed.pop(id(entity), None)
+        actor = getattr(entity, "actor", None)
+        if (
+            self._gave_up_at is not None
+            and actor is not None
+            and (handed is not None or self._id_of(entity) is not None)
+        ):
+            # Handed back after SUMO failed for good (_give_up): nothing
+            # drives it on, so it stops rather than keeping what the action
+            # last gave it (#2082).
+            self._stop_vehicle(actor)
+            return
         if handed is None or not self._running:
             # Never released while SUMO drove it: start() drives it, or it
             # was never SUMO's to drive.
@@ -2565,9 +2582,10 @@ class SumoTrafficBackend(TrafficBackend):
             return
         modes = self._handed_ambient.pop(sumo_id)
         overrides = self._released_overrides.pop(sumo_id, None)
-        if not self._take_back(sumo_id, modes, -1.0):
-            # Gone from SUMO while CARLA drove it (its route ended): the
-            # mirror has nothing left to follow.
+        if self._gave_up_at is not None or not self._take_back(sumo_id, modes, -1.0):
+            # Gone from SUMO while CARLA drove it (its route ended), or SUMO
+            # failed for good meanwhile (_give_up destroyed the other
+            # mirrors): the mirror has nothing left to follow.
             try:
                 actor.destroy()
             except RuntimeError:

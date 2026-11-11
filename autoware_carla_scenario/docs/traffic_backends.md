@@ -1019,7 +1019,9 @@ destroyed, every scenario vehicle SUMO drove (`scenario_vehicles=sumo`) loses
 its constant velocity (`vehicle_control=teleport`) or its last control
 (`physics`) and brakes to a stop, and every scenario pedestrian it walked
 stands still. Vehicles it does not drive (the ego, the TrafficManager's, those
-an action took over) are left alone. It logs an error, and the run goes on
+an action took over) are left alone; one an action hands back afterwards
+brakes to a stop too, and a SUMO vehicle's mirror an action hands back is
+destroyed. It logs an error, and the run goes on
 without traffic rather than failing: the result records when it gave up
 (`traffic.gave_up_at_s`, simulated seconds; `null` in a run where it did not),
 so a batch can tell such runs apart.

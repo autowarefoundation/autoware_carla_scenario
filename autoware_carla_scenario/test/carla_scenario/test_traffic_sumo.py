@@ -2157,6 +2157,40 @@ def test_a_backend_that_gives_up_leaves_no_actor_driving_on(
 
 
 @needs_sumo
+def test_a_vehicle_handed_back_after_the_backend_gave_up_stops(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An NPC an action drove while SUMO gave up is handed back to nothing:
+    it brakes to a stop rather than keeping what the action last gave it
+    (#2082)."""
+    import typesafe_carla.carla as carla
+
+    backend, world, npc, _ego = _prepared(crossroads, tmp_path)
+    _sumo_id, entity = next(iter(backend._driven.items()))
+    tc = backend._traci
+    try:
+        backend.tick(world, 0.0)
+        backend.release(entity, world)
+        # The action drives it on.
+        npc.apply_control(carla.VehicleControl(throttle=0.6))
+
+        def broken() -> None:
+            raise RuntimeError("SUMO is gone")
+
+        monkeypatch.setattr(tc, "simulationStep", broken)
+        for i in range(20):
+            backend.tick(world, (1 + i) * 0.05)
+        assert not backend._running
+        # Not SUMO's when it gave up: left to the action.
+        assert npc.control.throttle == pytest.approx(0.6)
+        backend.resume(entity, world)
+        assert npc.constant_velocity is None
+        assert npc.control.brake == 1.0 and npc.control.throttle == 0.0
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_sumo_traffic_drives_no_faster_than_its_drivers_see(
     crossroads: Path, tmp_path: Path
 ) -> None:
