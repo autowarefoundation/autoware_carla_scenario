@@ -68,11 +68,12 @@ def _t_of(location: Any) -> float:
 
 class _RoadMap:
     """A CARLA map with a driving lane wherever the fixture road is within
-    the kerb."""
+    the kerb, and none to project a point off it onto."""
 
     def get_waypoint(self, location: Any, project_to_road: bool, lane_type: int) -> Any:
-        assert not project_to_road
         assert lane_type == int(carla.LaneType.Driving)
+        if project_to_road:
+            return None
         return object() if abs(_t_of(location)) < -KERB_T else None
 
 
@@ -383,3 +384,41 @@ def test_a_vehicle_parked_under_the_map_is_no_threat(loaded_map: MapManager) -> 
             lambda pattern, v=vehicle: [v] if pattern == "vehicle.*" else []
         )
         assert road_threat(world, location, 0.0, 0.0, 10.0, 2.0) == expected
+
+
+@pytest.mark.parametrize("right_m", [1.45, 1.55, 1.65])
+def test_the_band_carla_s_point_query_misses_is_on_the_road_not_the_kerb(
+    right_m: float,
+) -> None:
+    """#2077: on the fixture map, road 98 lane 2 at s = 50, CARLA's point
+    query finds no lane 1.45 to 1.65 m right of the lane's centre, next to
+    the lane beside it (#1997).  The pedestrian reads that band as
+    OffRoadFractionCondition does -- on the road -- so it is not taken for
+    the kerb a turn-back would walk to, inside the first lane."""
+    carla_map = carla.Map("nishishinjuku", XODR_PATH.read_text())
+    waypoint = next(
+        w
+        for w in carla_map.generate_waypoints(5.0)
+        if w.road_id == 98 and w.lane_id == 2 and abs(w.s - 50.0) < 0.01
+    )
+    t = waypoint.transform
+    yaw = math.radians(t.rotation.yaw)
+    location = carla.Location(
+        x=t.location.x - right_m * math.sin(yaw),
+        y=t.location.y + right_m * math.cos(yaw),
+        z=t.location.z,
+    )
+    # The band is there: CARLA's own point query misses it.
+    assert (
+        carla_map.get_waypoint(
+            location, project_to_road=False, lane_type=int(carla.LaneType.Driving)
+        )
+        is None
+    )
+    action = _action(turn_back_distance_m=10.0, turn_back_within_m=5.0)
+    action._carla_map = carla_map
+    world = MagicMock()
+
+    assert action._on_road(world, location)
+    assert action._mark_kerb(world, location)
+    assert not action._has_kerb

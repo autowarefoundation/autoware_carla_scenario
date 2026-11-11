@@ -1338,6 +1338,7 @@ register_action_spec(
                 name="search_distance",
                 label="Search distance",
                 kind="number",
+                exclusive_minimum=0.0,
                 default=200.0,
                 unit="m",
                 required=False,

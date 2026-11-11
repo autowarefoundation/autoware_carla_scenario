@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Optional, Union
 
 from ..conditions.base import BaseCondition
@@ -73,6 +74,21 @@ class TurnAction(BaseAction):
         waypoint_step: float = 2.0,
         post_junction_distance: float = 20.0,
     ) -> None:
+        # #2077: a step of 0 (or less) failed mid-run in the waypoint walk,
+        # and a NaN search distance silently set no turn.
+        if not math.isfinite(search_distance) or search_distance <= 0.0:
+            raise ValueError(
+                f"search_distance must be finite and positive, not {search_distance!r}"
+            )
+        if not math.isfinite(waypoint_step) or waypoint_step <= 0.0:
+            raise ValueError(
+                f"waypoint_step must be finite and positive, not {waypoint_step!r}"
+            )
+        if not math.isfinite(post_junction_distance) or post_junction_distance <= 0.0:
+            raise ValueError(
+                "post_junction_distance must be finite and positive, "
+                f"not {post_junction_distance!r}"
+            )
         super().__init__(
             label=label,
             condition=condition,
