@@ -1611,6 +1611,11 @@ class TestBuildAutowareLauncher:
             ("docker", "mounts", "/data:/data", r"mounts must be a mapping"),
             ("docker", "env", {"A": None}, r"env\.A must be a string or a number"),
             ("command", "env", {"A": [1]}, r"env\.A must be a string or a number"),
+            # #2079: what no process can be handed, refused before it starts.
+            ("command", "env", {"A=B": "1"}, r"env: 'A=B' is not an environment"),
+            ("docker", "env", {"": "1"}, r"env: '' is not an environment"),
+            ("command", "env", {"A": "x\0y"}, r"env: 'A': 'x\\x00y' holds a NUL"),
+            ("docker", "mounts", {"/a\0": "/b"}, r"mounts: '/a\\x00': '/b' holds"),
             (
                 "docker",
                 "bridge_parameters",
