@@ -1102,8 +1102,10 @@ other value, NaN or infinity is refused before the run starts, naming the key
 (`environment.rainfall_rate_mm_h must be finite, got nan`). `cloudiness`,
 `precipitation`, `precipitation_deposits`, `wetness`, `wind_intensity` and
 `fog_density` must be within 0-100, `tire_friction`, `visibility_m` and
-`fog_visibility_range_m` positive, `rainfall_rate_mm_h` not negative, and the
-two quantiles within 0-1. `EnvironmentAction` refuses the same values with a
+`fog_visibility_range_m` positive, `fog_distance`, `rainfall_rate_mm_h` and
+`wind_speed_kmh` not negative, `sun_altitude_angle` within -90 to 90 degrees
+and `sun_azimuth_angle` within 0 to 360 (CARLA's ranges; a value outside is
+refused, not wrapped or clamped), and the two quantiles within 0-1. `EnvironmentAction` refuses the same values with a
 `ValueError` naming its argument.
 
 Fog is drawn as `fog_density` alone. How thick that looks is the server's: a
@@ -1124,8 +1126,9 @@ its own `EnvironmentAction`, with numbers -- worked out from conditions with
 ### Tire friction follows the weather
 
 CARLA draws rain but does not drive on it: a vehicle grips a soaked road as
-it grips a dry one. So an `EnvironmentAction` that sets the road's water --
-`wetness` or `precipitation_deposits`, which rain brings -- also scales every
+it grips a dry one. So an `EnvironmentAction` that sets the rain or the
+road's water -- `wetness` or `precipitation_deposits`, which rain brings --
+also scales every
 vehicle's wheel friction (`friction_force_multiplier`) to a share of the dry
 road's grip, within the range the resulting water leaves
 (`tire_friction_range`). The default [weather rules](#weather-rules) give it
@@ -1144,7 +1147,28 @@ film; each range spans what tires, their wear and the asphalt make of the
 same water, and a dry road's is centred on CARLA's own grip, so a dry run
 drives as it did before.
 
-The grip is the one quantity the action reads off the rules, during the run:
+Rain brings the water with it however it is set. An `EnvironmentAction`
+that sets `precipitation` and not `wetness` or `precipitation_deposits` --
+a scenario's own, or the editor's "Set Weather" card -- sets those to what
+the rules give that rain, at their median (`weather_rules.road_water`), as
+the config's `environment` does before the run: `precipitation=100` leaves a
+wetness of 97.5, standing water of 90 and a grip of 0.56 either way. Rules
+whose water reads a condition read the run's: the rainfall rate, fog
+visibility, wind speed or cloud cover the action names, else the one the run
+was set to (the config's `environment`, or an earlier action), and the time
+of day the sun renders once the action has set it. A `wetness` or
+`precipitation_deposits` the action gives wins.
+
+So stopping the rain dries the road at once: under the default rules,
+`EnvironmentAction(precipitation=0)` sets `wetness` and
+`precipitation_deposits` to 0 and the grip back to the dry road's, as a
+config's `precipitation: 0` does. CARLA does not let a road dry over time;
+a scenario whose road should stay wet after the rain gives the water
+itself, `EnvironmentAction(precipitation=0, wetness=60,
+precipitation_deposits=30)`.
+
+Besides the water the rain brings (above), the grip is the one quantity the
+action reads off the rules during the run:
 it may differ by vehicle ([Rules by vehicle](#weather-rules)), and a vehicle
 spawned later gets its own. It reads every CARLA field of the weather the
 action leaves -- the water the run's conditions gave before it started --

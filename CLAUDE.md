@@ -261,7 +261,7 @@ If pre-commit hooks fail:
   openodd_py, not here. The weather rules -- the distributions of the road's
   grip and of the drivers' visibility -- are the backend's conditional
   distributions (`CarlaBackend.rules`, `weather_rules.yaml`, docs/odd.md
-  "Weather rules"), which openodd reads (rules version 2) and a run replaces with
+  "Weather rules"), which openodd reads (rules version 3) and a run replaces with
   `environment.rules`. Tune them there, not in code.
 - Python 3.10 through 3.14. `autoware_carla_scenario` declares
   `requires-python = ">=3.10,<3.15"` -- the comment on that line is the

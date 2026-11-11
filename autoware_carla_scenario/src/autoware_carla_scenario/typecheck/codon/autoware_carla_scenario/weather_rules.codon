@@ -34,3 +34,11 @@ def vehicle_at(
     labels: Optional[Dict[str, str]] = None,
 ) -> float:
     raise NotImplementedError()
+
+
+def road_water(
+    fields: Dict[str, float],
+    conditions: Optional[Dict[str, float]] = None,
+    labels: Optional[Dict[str, str]] = None,
+) -> Dict[str, float]:
+    raise NotImplementedError()
