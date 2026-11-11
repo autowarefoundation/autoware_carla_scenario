@@ -8,6 +8,7 @@ the right port.
 
 from __future__ import annotations
 
+import threading
 from pathlib import Path
 from typing import Any, Mapping
 from unittest.mock import MagicMock
@@ -178,6 +179,83 @@ class TestPluginCollisions:
                 [_entry_point("new", lambda: register_backend("brand_new", _Fake))],
             )
         assert not self._warnings(caplog)
+
+
+class TestConcurrentPluginLoading:
+    """Callers that make the first call at the same time (#2037)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        from autoware_carla_scenario.traffic import registry as traffic_registry
+
+        monkeypatch.setattr(
+            traffic_registry, "_BACKENDS", dict(traffic_registry._BACKENDS)
+        )
+        monkeypatch.setattr(traffic_registry, "_plugins_loaded", False)
+
+    def test_every_first_caller_returns_with_the_backends_loaded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.traffic import registry as traffic_registry
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def register() -> None:
+            started.set()
+            assert release.wait(10)
+            register_backend("slow_sim", _Fake)
+
+        entry_point = _entry_point("slow", register)
+        monkeypatch.setattr(
+            "importlib.metadata.entry_points", lambda *, group: [entry_point]
+        )
+        seen: dict[str, bool] = {}
+
+        def call(caller: str) -> None:
+            traffic_registry.load_traffic_backend_plugins()
+            seen[caller] = "slow_sim" in available_backends()
+
+        first = threading.Thread(target=call, args=("first",))
+        second = threading.Thread(target=call, args=("second",))
+        first.start()
+        assert started.wait(10)
+        second.start()
+        second.join(0.2)
+        assert second.is_alive()
+        release.set()
+        first.join(10)
+        second.join(10)
+        assert not first.is_alive() and not second.is_alive()
+        assert seen == {"first": True, "second": True}
+        entry_point.load.assert_called_once()
+
+    def test_a_plugin_that_loads_the_plugins_again_does_not_deadlock(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Nor one that loads the scenario plugins, which share the lock."""
+        from autoware_carla_scenario import registry
+        from autoware_carla_scenario.traffic import registry as traffic_registry
+
+        monkeypatch.setattr(registry, "_plugins_loaded", True)
+
+        def register() -> None:
+            traffic_registry.load_traffic_backend_plugins()
+            registry.load_scenario_plugins()
+            register_backend("reentrant_sim", _Fake)
+
+        entry_point = _entry_point("reentrant", register)
+        monkeypatch.setattr(
+            "importlib.metadata.entry_points", lambda *, group: [entry_point]
+        )
+        loader = threading.Thread(
+            target=traffic_registry.load_traffic_backend_plugins, daemon=True
+        )
+        loader.start()
+        loader.join(10)
+        assert not loader.is_alive()
+        assert "reentrant_sim" in available_backends()
+        entry_point.load.assert_called_once()
 
 
 class TestTheConfig:

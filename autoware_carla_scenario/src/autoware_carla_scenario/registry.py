@@ -36,6 +36,7 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Callable
 
@@ -382,7 +383,27 @@ def get_conf_dirs() -> list[Path]:
 # Entry-point based plugin discovery
 # ---------------------------------------------------------------------------
 
+#: Whether :func:`load_scenario_plugins` has finished its walk in this
+#: process.  Set only once the walk is over (#2037), so a caller that sees it
+#: set sees every plugin registered.
 _plugins_loaded = False
+
+#: Whether :func:`load_scenario_plugins` is walking the entry points right
+#: now, on the thread holding :data:`_PLUGIN_LOAD_LOCK` -- the only thread
+#: that can see it set, since the flag is read and written under the lock.  A
+#: plugin whose import calls :func:`load_scenario_plugins` again returns at
+#: once rather than walking the entry points a second time.
+_plugins_loading = False
+
+#: Serializes the entry-point walks of :func:`load_scenario_plugins` and
+#: :func:`~autoware_carla_scenario.traffic.registry.load_traffic_backend_plugins`
+#: (#2037).  The first caller walks while the others wait for it, so no caller
+#: returns before the plugins are registered.  Re-entrant, so that a plugin
+#: whose import calls a loader again on the same thread does not deadlock;
+#: one lock for both groups, so that a scenario plugin loading the traffic
+#: backends and a traffic plugin loading the scenarios, on two threads, cannot
+#: wait on each other.
+_PLUGIN_LOAD_LOCK = threading.RLock()
 
 #: The built-in scenarios, as :func:`_register_builtin_scenario` registered
 #: them (``(scenario_cls, config_cls)``), by name -- whether or not a plugin
@@ -472,12 +493,35 @@ def load_scenario_plugins() -> None:
     Loading is idempotent: subsequent calls are no-ops within a single process.
     A failing plugin is logged and skipped so that one broken package cannot
     prevent the others (or the built-in scenarios) from running.
+
+    Loading is thread-safe (#2037): callers that make the first call at the
+    same time wait for the one that walks, and every one of them returns with
+    the plugins registered.  A call a plugin makes while it is being loaded
+    (its import calls this again, on the same thread) returns at once, with
+    the plugins loaded so far.  A walk that fails outright (not a plugin,
+    which is logged and skipped) still counts as done: it is not retried,
+    since re-running the plugins that did load would register their
+    scenarios twice.
     """
-    global _plugins_loaded
+    global _plugins_loaded, _plugins_loading
     if _plugins_loaded:
         return
-    _plugins_loaded = True
+    with _PLUGIN_LOAD_LOCK:
+        if _plugins_loaded or _plugins_loading:
+            return
+        _plugins_loading = True
+        try:
+            _walk_scenario_plugins()
+        finally:
+            _plugins_loaded = True
+            _plugins_loading = False
 
+
+def _walk_scenario_plugins() -> None:
+    """Register the framework's conf dir and load every scenario plugin.
+
+    The body of :func:`load_scenario_plugins`, called under its lock.
+    """
     import importlib.metadata as importlib_metadata  # noqa: PLC0415
 
     # A plain constant (no runner, no CARLA); a test holds it to the registry.
