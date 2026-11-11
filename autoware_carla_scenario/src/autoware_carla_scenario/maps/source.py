@@ -560,3 +560,12 @@ class MapSource:
 
     def __str__(self) -> str:
         return self.uri
+
+    def __repr__(self) -> str:
+        # The dataclass's own repr, with the repository URL redacted: a repr
+        # lands in tracebacks, log lines and test reports.  A dataclass keeps
+        # a __repr__ the class defines.
+        return (
+            f"MapSource(repo_url={redacted_url(self.repo_url)!r}, "
+            f"ref={self.ref!r}, path={self.path!r})"
+        )

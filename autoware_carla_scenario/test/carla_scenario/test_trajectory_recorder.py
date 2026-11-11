@@ -536,7 +536,7 @@ def test_the_map_record_names_and_hashes_the_files_the_run_read(tmp_path: Path) 
     xodr.write_bytes(b"<OpenDRIVE/>")
     recorder = TrajectoryRecorder(
         tmp_path / "s.trajectory.jsonl",
-        "git+https://example.org/maps@abc#Town10HD_Opt",
+        "git+https://oauth2:TOKEN@example.org/maps@abc#Town10HD_Opt",
         osm,
         xodr,
         None,
@@ -546,7 +546,11 @@ def test_the_map_record_names_and_hashes_the_files_the_run_read(tmp_path: Path) 
 
     [record] = [r for r in _lines(recorder.path) if r["type"] == "map"]
     assert record["name"] == "Town10HD_Opt"
-    assert record["source"] == "git+https://example.org/maps@abc#Town10HD_Opt"
+    # The token in the source is not written into the log (#2059).
+    assert (
+        record["source"] == "git+https://oauth2:***@example.org/maps@abc#Town10HD_Opt"
+    )
+    assert "TOKEN" not in recorder.path.read_text()
     assert record["lanelet2"] == {
         "path": str(osm.resolve()),
         "sha256": hashlib.sha256(b"<osm/>").hexdigest(),

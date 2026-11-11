@@ -38,8 +38,8 @@ Several processes share one root -- a sweep, a SLURM array, the editor beside a
 run -- so every change to an entry is made holding its **lock file**
 (``<entry>.lock`` beside it, ``flock``-ed) as well as a lock of this process's
 threads.  An entry is born a sparse checkout of nothing, before it is renamed
-into place, so the one command that can take a directory away (``git
-sparse-checkout set``) never runs on an entry another process can see.
+into place, and directories are only ever added to it: the one command that
+can take a directory away (``git sparse-checkout set``) is never run.
 """
 
 from __future__ import annotations
@@ -129,6 +129,19 @@ LOCK_SUFFIX = ".lock"
 #: Lock files that could not be taken -- a read-only root, a filesystem with
 #: no ``flock`` -- by path, so a cache used that way says so once.
 _UNLOCKED: dict[str, int] = {}
+
+#: The descriptors of the lock files this process has open (as keys), which a
+#: child forked while one is held closes at once (:func:`_forget_locks`): an
+#: ``flock`` belongs to the open file, which a fork shares, so the child
+#: would otherwise hold the entry until it exits.  :data:`_FORK_GUARD` is
+#: held while one is opened and registered, or unregistered and closed, and
+#: across a fork, so a child never gets a descriptor that is not listed.
+_HELD_LOCK_FDS: dict[int, int] = {}
+_FORK_GUARD = threading.Lock()
+
+#: Map directories found unpacked under the root for a repository not listed
+#: as unpacked there, so the log says why each was passed over once.
+_UNLISTED: dict[str, int] = {}
 
 #: The repositories Autoware's ``demo_artifacts`` role unpacks under the map
 #: root, which :meth:`GitMapCache.provisioned` takes a directory there to be
@@ -310,6 +323,7 @@ class GitMapCache:
         if not source.path:
             return None
         if not self._is_provisioned_repository(source.repo_url):
+            self._note_unlisted(source)
             return None
         directory = self.root / source.path
         if directory.is_file():
@@ -317,6 +331,36 @@ class GitMapCache:
         if not directory.is_dir():
             return None
         return directory if any(True for _ in directory.glob("*.osm")) else None
+
+    def _note_unlisted(self, source: MapSource) -> None:
+        """Say, once, that a map unpacked at *source*'s path is not its map.
+
+        A person who unpacked a dataset under the root and sees it cloned
+        again is told what to add to :data:`PROVISIONED_FROM`.  Looking
+        never fails the resolve: a path that cannot be looked at is simply
+        not reported.
+        """
+        directory = self.root / source.path
+        key = str(directory)
+        if key in _UNLISTED:
+            return
+        try:
+            if directory.is_file():
+                directory = directory.parent
+            found = directory.is_dir() and any(True for _ in directory.glob("*.osm"))
+        except (OSError, RuntimeError):
+            return
+        if not found:
+            return
+        _UNLISTED[key] = 1
+        logger.info(
+            "Not using the map unpacked at %s for %s: that repository is not "
+            "listed as unpacked under %s (add it to %s there if it is)",
+            key,
+            source.redacted_uri,
+            str(self.root),
+            PROVISIONED_FROM,
+        )
 
     def _is_provisioned_repository(self, repo_url: str) -> bool:
         """Whether *repo_url* is a repository unpacked under the root."""
@@ -360,12 +404,21 @@ class GitMapCache:
         (:meth:`_expand_commit`), and remembered like a branch's commit, so it
         resolves offline afterwards too.
 
+        An expansion is remembered for good, and used from then on without
+        asking the remote again: unlike a branch's, the commit an abbreviation
+        names never moves, and expanding one fetches every commit of the
+        remote -- once per resolve of a sweep over it would be one fetch per
+        case.
+
         Raises:
             MapCacheError: If the ref is an abbreviated hash that matches no
                 commit of the remote's branches and tags, or more than one.
         """
         if source.pinned:
             return source
+        expanded = self._expanded_tip(source)
+        if expanded:
+            return source.at(expanded)
         ref = source.ref or "HEAD"
         try:
             # `<ref>^{}` as well: ls-remote lists an annotated tag's peeled
@@ -396,14 +449,16 @@ class GitMapCache:
             )
             return source.at(remembered) if remembered else source
         commit = _exact_tip(listing, ref)
+        expansion = False
         if not commit and source.ref and looks_like_commit(source.ref):
             # No branch or tag of that name: the commit it abbreviates.
             commit = self._expand_commit(source)
+            expansion = True
         at_commit = source.at(commit) if commit else source
         if not at_commit.pinned:
             logger.warning("%s names no ref in %s.", ref, redacted_url(source.repo_url))
             return source
-        self.remember_tip(source, at_commit.ref)
+        self._write_tip(source, at_commit.ref, expansion)
         return at_commit
 
     def remember_tip(self, source: MapSource, commit: str) -> None:
@@ -413,19 +468,40 @@ class GitMapCache:
         without a network call: the checkout is filed under the commit, so
         looking under the branch's own name would report nothing.
         """
+        self._write_tip(source, commit, False)
+
+    def _expanded_tip(self, source: MapSource) -> str:
+        """The commit *source*'s abbreviated ref was expanded to, or ``""``.
+
+        Only a note :meth:`at_tip` wrote when it expanded the abbreviation
+        counts -- not one recording where a branch spelled like a hash
+        (``cafe``) pointed, which moves -- and only a commit that does
+        begin with the abbreviation.
+        """
+        if not source.ref or not looks_like_commit(source.ref):
+            return ""
+        try:
+            raw = self.tip_file(source).read_text(encoding="utf-8")
+        except OSError:
+            return ""
+        if _json_field(raw, "expanded") != "True":
+            return ""
+        commit = self.last_tip(source)
+        return commit if commit.startswith(source.ref.lower()) else ""
+
+    def _write_tip(self, source: MapSource, commit: str, expanded: bool) -> None:
+        """Write *source*'s ref-to-commit note; *expanded* for an abbreviation."""
         path = self.tip_file(source)
         path.parent.mkdir(parents=True, exist_ok=True)
-        _write_atomically(
-            path,
-            _json_object(
-                [
-                    ("repo_url", json.dumps(redacted_url(source.repo_url))),
-                    ("ref", json.dumps(source.ref)),
-                    ("commit", json.dumps(commit)),
-                    ("resolved_at", json.dumps(time.time())),
-                ]
-            ),
-        )
+        fields: list[tuple[str, str]] = [
+            ("repo_url", json.dumps(redacted_url(source.repo_url))),
+            ("ref", json.dumps(source.ref)),
+            ("commit", json.dumps(commit)),
+            ("resolved_at", json.dumps(time.time())),
+        ]
+        if expanded:
+            fields.append(("expanded", "true"))
+        _write_atomically(path, _json_object(fields))
 
     def _expand_commit(self, source: MapSource) -> str:
         """Return the full commit hash *source*'s abbreviated ref names.
@@ -666,16 +742,34 @@ class GitMapCache:
         self._git(worktree, "checkout", "--detach", "FETCH_HEAD")
 
     def _sparse_nothing(self, worktree: Path) -> None:
-        """Make the fresh repository at *worktree* a sparse checkout of nothing.
+        """Make the repository at *worktree* a sparse checkout of nothing.
 
         Run in the staging directory, before the entry is renamed into place:
         every directory is then *added* to the checkout, and ``set`` -- which
         replaces the patterns, and deletes every directory another resolve
-        checked out -- never runs on an entry another process can see (#2058).
-        No pattern at all (``--stdin`` reading none), rather than the
-        top-level files ``set`` with no argument would check out.
+        checked out -- never runs on an entry this framework uses (#2058).
+
+        Written directly -- an empty ``info/sparse-checkout``, then
+        ``core.sparseCheckout`` on and cone mode off -- rather than with
+        ``git sparse-checkout set --no-cone``, whose ``--no-cone`` git 2.34
+        (Ubuntu 22.04's) does not take, and which with no pattern checks the
+        top-level files out.  Every git from 2.27 reads it the same way; the files leave the working tree with
+        the next command that updates it (a ``checkout``, or ``add``).
         """
-        self._git(worktree, "sparse-checkout", "set", "--no-cone", "--stdin")
+        git_dir = worktree / ".git"
+        if not git_dir.is_dir():
+            # Nothing was cloned; what comes next says so, and no `.git`
+            # made here should make it look as if something had been.
+            return
+        info = git_dir / "info"
+        info.mkdir(exist_ok=True)
+        _write_atomically(info / "sparse-checkout", "")
+        # `--worktree`: where `git sparse-checkout` keeps them once it has
+        # turned worktree configuration on (`disable` does, and an entry an
+        # older version made with `set` has it), and the repository's own
+        # configuration where it has not (git 2.20).
+        self._git(worktree, "config", "--worktree", "core.sparseCheckoutCone", "false")
+        self._git(worktree, "config", "--worktree", "core.sparseCheckout", "true")
 
     def _fetch(self, cached: CachedRepo) -> None:
         """Update an existing checkout to the tip of its ref.
@@ -723,9 +817,9 @@ class GitMapCache:
         directory has been checked out in yet, even when another process's
         record of one was lost.  The record only decides whether anything has
         to run at all.  An entry this version cloned is a sparse checkout from
-        birth (:meth:`_sparse_nothing`), so ``set`` only ever runs on one an
-        older version left, and then under the entry's lock, which
-        :meth:`checkout` holds around this.
+        birth (:meth:`_sparse_nothing`); one an older version left without is
+        made one here, under the entry's lock, which :meth:`checkout` holds
+        around this, and the directory is then added to it like any other.
 
         Nothing runs when the directory is already checked out and its content
         is real rather than pointers.  That matters because this is on the
@@ -753,14 +847,11 @@ class GitMapCache:
                 return replace(cached, materialised=done)
 
         pattern = path or _WHOLE_TREE
-        if self._is_sparse(worktree):
-            self._git_waiting(worktree, "sparse-checkout", "add", "--", pattern)
-        else:
-            # The map's path may begin with '-' (a directory may be named
-            # so); `--` keeps it a pattern (#1848).
-            self._git_waiting(
-                worktree, "sparse-checkout", "set", "--no-cone", "--", pattern
-            )
+        if not self._is_sparse(worktree):
+            self._sparse_nothing(worktree)
+        # The map's path may begin with '-' (a directory may be named so);
+        # `--` keeps it a pattern (#1848).
+        self._git_waiting(worktree, "sparse-checkout", "add", "--", pattern)
         self._git_waiting(worktree, "checkout")
 
         # Only for content that is still a pointer, refreshed or not: a fetch
@@ -1105,8 +1196,10 @@ class _EntryLock:
         self._fd = -1
         try:
             if fd >= 0:
-                # Closing the descriptor is what lets the flock go.
-                os.close(fd)
+                with _FORK_GUARD:
+                    _HELD_LOCK_FDS.pop(fd, 0)
+                    # Closing the descriptor is what lets the flock go.
+                    os.close(fd)
         finally:
             self._thread_lock.release()
 
@@ -1119,6 +1212,14 @@ def _lock_file(path: Path) -> int:
     filesystem that refuses ``flock`` -- the entry is changed without it, as
     before the lock existed, and git's own lock files are what is left to
     keep processes apart (:meth:`GitMapCache._git_waiting`).
+
+    ``flock`` rather than ``lockf``: a POSIX record lock is not inherited by a
+    fork, but any ``close()`` of any descriptor of the file in the process
+    drops it, which a second resolve of the same entry through another
+    spelling of the root would do.  What a fork inherits is dealt with
+    instead: the descriptor is close-on-exec, so a process git or anything
+    else ``exec``-s never holds it, and a plain fork closes it at once
+    (:func:`_forget_locks`).
     """
     if TYPE_CHECKING:
         # fcntl and os.open() have no model (typecheck/library.py).
@@ -1129,9 +1230,12 @@ def _lock_file(path: Path) -> int:
         except ImportError:
             return -1
         key = str(path)
+        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
         try:
             path.parent.mkdir(parents=True, exist_ok=True)
-            fd = os.open(key, os.O_RDWR | os.O_CREAT, 0o644)
+            with _FORK_GUARD:
+                fd = os.open(key, flags, 0o644)
+                _HELD_LOCK_FDS[fd] = 1
         except OSError as exc:
             _warn_unlocked(key, exc)
             return -1
@@ -1141,11 +1245,53 @@ def _lock_file(path: Path) -> int:
             except BlockingIOError:
                 logger.info("Waiting for another process to finish with %s", key)
                 fcntl.flock(fd, fcntl.LOCK_EX)
-        except OSError as exc:
-            os.close(fd)
+        except BaseException as exc:
+            with _FORK_GUARD:
+                _HELD_LOCK_FDS.pop(fd, 0)
+                os.close(fd)
+            if not isinstance(exc, OSError):
+                raise
             _warn_unlocked(key, exc)
             return -1
         return fd
+
+
+def _hold_fork_guard() -> None:
+    """Before a fork: no lock file is half opened or half closed."""
+    _FORK_GUARD.acquire()
+
+
+def _release_fork_guard() -> None:
+    """After a fork, in the parent."""
+    _FORK_GUARD.release()
+
+
+def _forget_locks() -> None:
+    """After a fork, in the child: let go of every lock file the parent holds.
+
+    The child shares each locked open file with the parent; closing its own
+    descriptors leaves the parent the only holder, and its ``__exit__`` the
+    one that lets go.  The child's copy of the thread locks is not touched:
+    a child that resolves a map the parent was resolving at the fork waits
+    for a thread that does not exist in it, as any copied lock would.
+    """
+    for fd in list(_HELD_LOCK_FDS):
+        try:
+            os.close(fd)
+        except OSError:
+            pass
+    _HELD_LOCK_FDS.clear()
+    _FORK_GUARD.release()
+
+
+if not TYPE_CHECKING:
+    # os.register_at_fork() has no model; POSIX only, like the lock.
+    if hasattr(os, "register_at_fork"):
+        os.register_at_fork(
+            before=_hold_fork_guard,
+            after_in_parent=_release_fork_guard,
+            after_in_child=_forget_locks,
+        )
 
 
 def _warn_unlocked(key: str, exc: OSError) -> None:

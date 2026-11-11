@@ -76,8 +76,12 @@ An **abbreviated commit hash** (4 to 39 hex digits, `@dea2cfe`) works too: when
 the remote has no branch or tag of that name, the commits of its branches and
 tags are fetched (commits only, where the server can filter) and the one the
 abbreviation names is used, exactly as a branch is resolved to its commit. The
-answer is remembered beside the cache entry, so the source resolves offline
-afterwards. An abbreviation that matches no commit, or several, is an error
+answer is remembered beside the cache entry and, since the commit an
+abbreviation names never moves, used from then on without asking the remote
+again: a sweep over it looks the commits up once, and it resolves offline.
+An abbreviation is matched in any case, but kept as written in the source: a
+branch may be spelled with hex digits, and `CAFE` and `cafe` are two
+branches. An abbreviation that matches no commit, or several, is an error
 saying so; a commit reachable only from another ref (a pull request's) needs
 its full hash. An abbreviation is not a pin -- it can grow ambiguous as the
 repository does -- so **Pin to commit** rewrites it to the full hash; like a
@@ -212,8 +216,11 @@ $ cat ~/autoware_data/maps/.provisioned_from
 https://huggingface.co/datasets/OUR_ORG/our-maps
 ```
 
-A source naming any other repository is cloned under `.repos/`, whatever is
-unpacked at its path.
+An empty `.provisioned_from` (or one holding only comments) lists no
+repository, which turns the shortcut off for that root. A source naming any
+other repository is cloned under `.repos/`, whatever is unpacked at its path;
+the log says so once per directory, at INFO, naming the file to list the
+repository in.
 
 Nothing re-reads a map's *contents* over the network once it is cached;
 `refresh` is the only way to make it fetch again.
@@ -230,9 +237,28 @@ That holds across processes too -- a sweep or a SLURM array resolving several
 towns of one dataset at once, the editor beside a run. Every clone, fetch and
 checkout of an entry is made holding its lock file (`<entry>.lock` beside it
 under `.repos/`, taken with `flock`), so a second process waits for the first
-and then adds its own directory. Where the lock cannot be taken (a read-only
-root, a filesystem without `flock`) a warning says so once and the entry is
-changed without it, retrying while git's own lock files are held.
+and then adds its own directory. The lock file is close-on-exec, and a process
+forked while it is held lets go of its copy at once, so a child never keeps an
+entry locked.
+
+The lock is only as good as the filesystem's `flock`:
+
+- Where it cannot be taken at all (no `fcntl`, a read-only root, a filesystem
+  that refuses `flock`), a warning says so once and the entry is changed
+  without it. That is **best effort**: git's own lock files are retried, but
+  two processes can still race and one lose its directory.
+- On NFS mounted with `nolock`, `flock` succeeds but is local to each node:
+  processes on one host exclude each other, processes on different hosts do
+  not, and nothing warns. A SLURM array whose tasks run on several nodes over
+  one shared cache root should either give each node a cache root of its own
+  on local disk (`AUTOWARE_CARLA_SCENARIO_MAP_CACHE`), or resolve its maps
+  once, serially, before the array starts (a `resolve_map` per map in the
+  submitting job), so the tasks find them checked out and change nothing.
+
+The cache needs **git 2.27 or later** (`git sparse-checkout add`, and a
+sparse checkout that may hold nothing yet), so Ubuntu 22.04's 2.34 is enough:
+it writes an entry's sparse-checkout file and settings itself rather than use
+`sparse-checkout set --no-cone`, which only git 2.35 takes.
 
 One question is asked, though, and it is asked before anything is fetched: when
 the ref is a branch, a single `git ls-remote` resolves it to the commit it
