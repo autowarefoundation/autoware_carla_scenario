@@ -429,7 +429,8 @@ class Evaluator:
         config = self._crime_config()
         config.update(ego_id=ego_id, sce=scenario)
         signed = _signed_crime_measures()
-        with _shared_frame() if self.settings.share_frame else nullcontext():
+        shared = _shared_frame() if self.settings.share_frame else nullcontext()
+        with _unwrapped_lane_headings(), shared:
             for key in wanted:
                 name = CRIME_MEASURES[key]
                 try:
@@ -675,6 +676,45 @@ class _ReachFrame:
         return None if step < 0 or step > horizon else int(step)
 
 
+def _lane_heading(position: float, path_length: Any, orientation: Any) -> float:
+    """The lane's heading *position* (m) along it, from the headings of its
+    centre line's segments: CriMe's ``get_orientation_point``, wrap-safe.
+
+    CriMe 0.4 stores those headings in [0, 2pi) (``convert_to_0_2pi``) and
+    interpolates between two of them linearly, so where they straddle 0 --
+    on any bend of a lane the frame turned to run along +x, next to the ego
+    -- it reads anything between the two, ~3 rad off (and a heading of
+    ``2pi - 0.001`` in place of ``0.001``, not just the same angle).  Its own
+    wrap handling only looks for the jump in [-pi, pi], where they never are.
+    Here the headings are unwrapped first, so the interpolation runs between
+    neighbours; the result is put back in [0, 2pi), as CriMe returns them.
+    Off either end the end heading holds, as ``np.interp`` holds it.
+    """
+    headings = np.unwrap(np.asarray(orientation, dtype=float))
+    heading = float(np.interp(position, path_length, headings))
+    return heading % (2.0 * math.pi)
+
+
+@contextmanager
+def _unwrapped_lane_headings() -> Iterator[None]:
+    """Make CriMe read lane headings with :func:`_lane_heading`.
+
+    Every CriMe reading of a lane's heading at a point goes through
+    ``compute_lanelet_width_orientation``, which looks ``get_orientation_point``
+    up in its module when it runs: replacing it there covers TTC, ALongReq,
+    ALatReq, MSD, the jerk measures, the simulations behind TTR, and the
+    signed measures here (:func:`_signed_crime_measures`).
+    """
+    import commonroad_crime.utility.solver as solver
+
+    original = solver.get_orientation_point
+    solver.get_orientation_point = _lane_heading
+    try:
+        yield
+    finally:
+        solver.get_orientation_point = original
+
+
 @contextmanager
 def _shared_frame() -> Iterator[None]:
     """Let CriMe's measures share one frame's scenario instead of copying it.
@@ -904,7 +944,8 @@ def _signed_crime_measures() -> dict[str, type]:
 
     def heading_at(lanelet: Any, position: Any) -> Any:
         # The lane's heading where *position* projects onto it, as CriMe reads
-        # it (None out of its domain, for ALongReq).
+        # it (None out of its domain); wrap-safe under
+        # _unwrapped_lane_headings, which Evaluator._crime holds.
         return utils_sol.compute_lanelet_width_orientation(lanelet, position)[1]
 
     def ego_along(state: Any, heading: float, name: str) -> float:
@@ -935,11 +976,15 @@ def _signed_crime_measures() -> dict[str, type]:
             try:
                 ego_heading = heading_at(lanelet, state.position)
             except ValueError:
+                ego_heading = None
+            if ego_heading is None:
                 self.value = math.nan
                 return self.value
             try:
                 other_heading = heading_at(lanelet, state_other.position)
             except ValueError:
+                other_heading = None
+            if other_heading is None:
                 # Out of the projection's domain: the other is far away.
                 self.value = math.inf
                 return self.value
@@ -968,8 +1013,9 @@ def _signed_crime_measures() -> dict[str, type]:
             )
             ego_heading = heading_at(lanelet, state.position)
             other_heading = heading_at(lanelet, state_other.position)
-            if not ego_heading or not other_heading:
-                # Out of the projection's domain: the other is far away.
+            if ego_heading is None or other_heading is None:
+                # Out of the projection's domain: the other is far away.  (A
+                # heading of exactly 0.0 is a heading, not a missing one.)
                 a_req = 0.0
             else:
                 a_req = _required_deceleration(
