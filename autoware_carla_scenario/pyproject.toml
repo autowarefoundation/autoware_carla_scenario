@@ -182,6 +182,7 @@ hils = [
 # runs through ansible-runner.
 hils-setup = [
     "autoware-carla-scenario[hils]",
+    "hilspy>=0.17,<0.18",
     "ansible-runner>=2.4",
     "ansible-core>=2.15",
 ]
