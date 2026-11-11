@@ -10,8 +10,10 @@ JSON routes refuse a body that is not sent as ``application/json`` (the
 
 from __future__ import annotations
 
+import asyncio
 import re
 from pathlib import Path
+from types import SimpleNamespace
 from typing import Any
 
 import pytest
@@ -25,6 +27,7 @@ from autoware_carla_scenario.editor import scenario_map
 from autoware_carla_scenario.editor import service as service_module
 from autoware_carla_scenario.maps import cache as cache_module
 from autoware_carla_scenario.web_guard import (
+    FRAME_HEADERS,
     HostAllowlist,
     RequestGuard,
     cross_site_refusal,
@@ -450,6 +453,200 @@ def test_the_cross_site_refusal_of_a_get(
 ) -> None:
     scope = {"type": "http", "method": "GET", "scheme": "http", "headers": headers}
     assert cross_site_refusal(scope) == expected
+
+
+# ── Script injection through /maps?draft= (#2053) ─────────────────────────
+
+#: The issue's payload: it breaks out of a single-quoted JS string.
+PAYLOAD = "x';alert(document.domain);'"
+
+
+@pytest.fixture
+def one_map(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The map library lists one map (no repository is read)."""
+    entry = SimpleNamespace(
+        name="town",
+        path="town",
+        lanelet2_name="lanelet2_map.osm",
+        has_projector_info=False,
+        has_xodr=False,
+        uri="git+https://github.com/example/maps@main#town",
+    )
+
+    def _list_maps(uri: str, *, refresh: bool = False) -> list[Any]:
+        return [entry]
+
+    monkeypatch.setattr(service_module, "list_maps", _list_maps)
+
+
+def _maps(editor: TestClient, draft: str) -> str:
+    response = editor.get(
+        "/maps",
+        params={"repo": REPO, "draft": draft},
+        headers={"Sec-Fetch-Site": "none"},
+    )
+    assert response.status_code == 200
+    return response.text
+
+
+def test_the_issue_s_draft_payload_is_dropped(
+    editor: TestClient, one_map: None
+) -> None:
+    page = _maps(editor, PAYLOAD)
+    assert "alert" not in page
+    assert "document.domain" not in page
+    # Dropped, so the page offers a new scenario rather than this one.
+    assert "Use in this scenario" not in page
+    assert 'action="/maps/new"' in page
+
+
+@pytest.mark.parametrize(
+    "draft",
+    [
+        "no-such-draft",  # a valid id naming no stored draft
+        "../drafts/x",
+        "a b",
+        'x"onmouseover="alert(1)',
+    ],
+)
+def test_a_draft_that_is_not_stored_is_dropped(
+    editor: TestClient, one_map: None, draft: str
+) -> None:
+    page = _maps(editor, draft)
+    assert "Use in this scenario" not in page
+    assert 'name="draft"' not in page
+    assert "&draft=" not in page
+
+
+def test_a_stored_draft_is_kept_out_of_inline_script(
+    editor: TestClient, one_map: None
+) -> None:
+    draft_id = _draft(editor)
+    page = _maps(editor, draft_id)
+    assert "Use in this scenario" in page
+    assert f'data-href="/draft/{draft_id}"' in page
+    assert 'hx-on::after-request="window.location = this.dataset.href"' in page
+    assert f'<input type="hidden" name="draft" value="{draft_id}">' in page
+    # No inline handler carries the id itself.
+    for handler in re.findall(r'\s(?:on\w+|hx-on[^=]*)="([^"]*)"', page):
+        assert draft_id not in handler
+
+
+TEMPLATES = ROOT / "autoware_carla_scenario" / "src" / "autoware_carla_scenario"
+
+
+@pytest.mark.parametrize("app", ["ui", "editor"])
+def test_no_inline_handler_interpolates_a_value(app: str) -> None:
+    """Request and disk data go in data-* attributes, never in inline JS."""
+    handler = re.compile(r"\s(?:on\w+|hx-on[^=]*)=(\"[^\"]*\"|'[^']*')")
+    found = [
+        f"{path.name}: {match.group(0).strip()}"
+        for path in sorted((TEMPLATES / app / "templates").rglob("*.html"))
+        for match in handler.finditer(path.read_text(encoding="utf-8"))
+        if "{{" in match.group(1) or "{%" in match.group(1)
+    ]
+    assert found == []
+
+
+@pytest.mark.parametrize("app", ["ui", "editor"])
+def test_the_cdn_scripts_carry_an_integrity_hash(app: str) -> None:
+    base = (TEMPLATES / app / "templates" / "base.html").read_text(encoding="utf-8")
+    tags = re.findall(r"<script[^>]*src=\"https://unpkg\.com/[^>]*>", base)
+    assert tags
+    for tag in tags:
+        assert 'integrity="sha384-' in tag and 'crossorigin="anonymous"' in tag
+
+
+# ── Framing (clickjacking, #2053) ────────────────────────────────────────
+
+
+def _assert_unframeable(response: Any) -> None:
+    assert response.headers["x-frame-options"] == "DENY"
+    assert response.headers["content-security-policy"] == "frame-ancestors 'none'"
+    assert response.headers.get_list("x-frame-options") == ["DENY"]
+
+
+def test_every_viewer_response_forbids_framing(
+    started: list[Any], viewer: TestClient
+) -> None:
+    responses = {
+        "page": viewer.get("/"),
+        "static": viewer.get("/static/style.css"),
+        "404": viewer.get("/no/such/page"),
+        "403": viewer.post("/api/refresh", headers={"Origin": FOREIGN}),
+        "400": viewer.get("/", headers={"Host": "evil.example"}),
+    }
+    statuses = {name: r.status_code for name, r in responses.items()}
+    assert statuses == {
+        "page": 200,
+        "static": 200,
+        "404": 404,
+        "403": 403,
+        "400": 400,
+    }
+    for response in responses.values():
+        _assert_unframeable(response)
+
+
+def test_every_editor_response_forbids_framing(editor: TestClient) -> None:
+    draft_id = _draft(editor)
+    responses = {
+        "page": editor.get("/"),
+        "draft": editor.get(f"/draft/{draft_id}"),
+        "static": editor.get("/static/editor.css"),
+        "404": editor.get("/draft/no-such-draft"),
+        "guard 403": editor.post("/new", headers={"Sec-Fetch-Site": "cross-site"}),
+        "route 403": editor.get(
+            "/maps", params={"repo": REPO}, headers={"Origin": FOREIGN}
+        ),
+        "400": editor.get("/", headers={"Host": "evil.example"}),
+    }
+    statuses = {name: r.status_code for name, r in responses.items()}
+    assert statuses == {
+        "page": 200,
+        "draft": 200,
+        "static": 200,
+        "404": 404,
+        "guard 403": 403,
+        "route 403": 403,
+        "400": 400,
+    }
+    for response in responses.values():
+        _assert_unframeable(response)
+
+
+def test_an_application_s_own_frame_option_is_replaced() -> None:
+    """The guard's headers win; a CSP the application set is kept beside them."""
+
+    async def app(scope: Any, receive: Any, send: Any) -> None:
+        await send(
+            {
+                "type": "http.response.start",
+                "status": 200,
+                "headers": [
+                    (b"x-frame-options", b"SAMEORIGIN"),
+                    (b"content-security-policy", b"default-src 'self'"),
+                ],
+            }
+        )
+        await send({"type": "http.response.body", "body": b""})
+
+    sent: list[Any] = []
+
+    async def send(message: Any) -> None:
+        sent.append(message)
+
+    async def receive() -> Any:
+        return {"type": "http.request"}
+
+    guard = RequestGuard(app, hosts=HostAllowlist())
+    scope = {"type": "http", "method": "GET", "headers": [(b"host", b"127.0.0.1")]}
+    asyncio.run(guard(scope, receive, send))
+    headers = sent[0]["headers"]
+    assert (b"x-frame-options", b"SAMEORIGIN") not in headers
+    assert (b"content-security-policy", b"default-src 'self'") in headers
+    for header in FRAME_HEADERS:
+        assert headers.count(header) == 1
 
 
 # ── Docs ─────────────────────────────────────────────────────────────────

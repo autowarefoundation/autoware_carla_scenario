@@ -55,10 +55,11 @@
           </div>
           {% if draft_id %}
             <button class="ed-btn-primary ed-btn-sm"
-                    hx-post="/draft/{{ draft_id }}/map/use"
+                    hx-post="/draft/{{ draft_id|urlencode }}/map/use"
                     hx-vals='{"uri": {{ entry.uri|tojson }}}'
                     hx-target="body" hx-swap="none"
-                    hx-on::after-request="window.location = '/draft/{{ draft_id }}'">
+                    data-href="/draft/{{ draft_id|urlencode }}"
+                    hx-on::after-request="window.location = this.dataset.href">
               {{ ic.icon('check', 13) }} Use in this scenario
             </button>
           {% else %}
@@ -128,7 +129,7 @@
       <li class="ed-draft">
         <div style="min-width:0">
           <a class="ed-draft-name"
-             href="/maps?repo={{ known.uri|urlencode }}{% if draft_id %}&draft={{ draft_id }}{% endif %}">
+             href="/maps?repo={{ known.uri|urlencode }}{% if draft_id %}&draft={{ draft_id|urlencode }}{% endif %}">
             {{ known.label }}
           </a>
           <div class="ed-draft-meta">{{ known.description }}</div>

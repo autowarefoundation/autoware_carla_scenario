@@ -1819,6 +1819,11 @@ is recorded as failed, and the jobs after it do not start.
       forwarder that serves it under another name or over HTTPS, the viewer
       refuses requests unless it is bound to every interface; an SSH `-L`
       tunnel to a loopback port keeps working.
+    * Against clickjacking, every response carries `X-Frame-Options: DENY`
+      and `Content-Security-Policy: frame-ancestors 'none'`, errors and
+      static files included, so no page can load the viewer in a hidden frame
+      and trick you into clicking Run, Rerun or a SLURM resubmit or cancel. The viewer never frames its own
+      pages either.
 
 ### Seeing a run in the viewer
 

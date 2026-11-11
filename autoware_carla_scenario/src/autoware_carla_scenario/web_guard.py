@@ -28,6 +28,18 @@ clone a git repository, parse a map, or write a file -- declares the
 :func:`refuse_cross_site` dependency, which refuses a cross-site request to it
 with 403 by the same rules (#1850).  ``Sec-Fetch-Site: none`` (a URL typed in
 the address bar, a bookmark) is served, as is a request with neither header.
+
+**Framing.** Every response the guard passes on -- a page, a partial, a
+static file, a 403, 404 or other error the application answers, and the
+guard's own refusals -- carries ``X-Frame-Options: DENY`` and
+``Content-Security-Policy: frame-ancestors 'none'`` (:data:`FRAME_HEADERS`),
+so no page, the applications' own included, can load either one in a frame
+and trick a click on Run, Rerun or Export (clickjacking, #2053).  Neither
+application frames its own pages: the rerun viewer and the Lanelet2 map
+viewer are wasm modules drawn on a canvas of the page itself.  The one
+response without them is the plain-text 500 of an unhandled exception, which
+Starlette's outermost ``ServerErrorMiddleware`` answers: it has nothing to
+click.
 """
 
 from __future__ import annotations
@@ -43,6 +55,7 @@ from starlette.responses import PlainTextResponse
 from .serve_cli import DEFAULT_HOST, is_loopback
 
 __all__ = [
+    "FRAME_HEADERS",
     "HostAllowlist",
     "RequestGuard",
     "cross_site_refusal",
@@ -64,6 +77,13 @@ STATE_CHANGING_METHODS = frozenset({"POST", "PUT", "PATCH", "DELETE"})
 #: sibling origin (another port or subdomain), which is not this application
 #: either.
 _FOREIGN_FETCH_SITES = frozenset({"cross-site", "same-site"})
+
+#: The headers every response carries so that no page can frame it (#2053):
+#: ``X-Frame-Options`` for browsers that predate CSP's ``frame-ancestors``.
+FRAME_HEADERS: tuple[tuple[bytes, bytes], ...] = (
+    (b"x-frame-options", b"DENY"),
+    (b"content-security-policy", b"frame-ancestors 'none'"),
+)
 
 _DEFAULT_PORTS = {"http": 80, "https": 443, "ws": 80, "wss": 443}
 
@@ -201,9 +221,31 @@ def refuse_cross_site(request: Request) -> None:
         raise HTTPException(status_code=status, detail=message)
 
 
+def _unframeable(send: Send) -> Send:
+    """*send*, adding :data:`FRAME_HEADERS` to the response's start.
+
+    An ``X-Frame-Options`` the application set itself is replaced.  A
+    ``Content-Security-Policy`` it set is kept: a browser enforces every
+    policy a response carries, so the ``frame-ancestors`` one adds to it.
+    """
+
+    async def _send(message: Message) -> None:
+        if message.get("type") == "http.response.start":
+            kept = [
+                (name, value)
+                for name, value in message.get("headers", ())
+                if bytes(name).lower() != b"x-frame-options"
+            ]
+            message["headers"] = [*kept, *FRAME_HEADERS]
+        await send(message)
+
+    return _send
+
+
 class RequestGuard:
     """ASGI middleware refusing cross-site state changes and foreign ``Host`` names.
 
+    It also adds :data:`FRAME_HEADERS` to every HTTP response it lets out.
     See the module's docstring for what is refused, and why.
     """
 
@@ -217,6 +259,7 @@ class RequestGuard:
         if scope["type"] != "http":
             await self.app(scope, receive, send)
             return
+        send = _unframeable(send)
         refusal = self.refusal(scope)
         if refusal is not None:
             status, message = refusal

@@ -18,7 +18,8 @@
     <tbody class="bg-white divide-y divide-gray-200">
       {% for s in sessions %}
       <tr class="hover:bg-gray-50 cursor-pointer transition-colors"
-          onclick="window.location='/session/{{ s.session_type }}/{{ s.date }}/{{ s.time }}'">
+          data-href="/session/{{ s.session_type|urlencode }}/{{ s.date|urlencode }}/{{ s.time|urlencode }}"
+          onclick="window.location = this.dataset.href">
         <td class="px-6 py-4 whitespace-nowrap">
           <a href="/session/{{ s.session_type }}/{{ s.date }}/{{ s.time }}"
              class="text-blue-600 hover:text-blue-800 font-medium">
