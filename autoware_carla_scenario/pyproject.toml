@@ -85,9 +85,10 @@ dependencies = [
     # Speaks the alpasim `egodriver` gRPC contract to an external driver policy:
     # the contract (vendored protos, geometry, the policy-side server) is
     # hakuturu583/carla_driver_interface. A range, not a pin: a policy and a
-    # scenario package share an environment whenever their majors agree. A policy
-    # in another process may be on another major: the contract revision each side
-    # declares on the wire (`carla_driver_interface.contract`) covers that.
+    # scenario package share an environment whenever the policy accepts this
+    # floor or a later 2.x. A policy in another process may be on another
+    # major: the contract revision each side declares on the wire
+    # (`carla_driver_interface.contract`) covers that.
     # 2.4.2: its T4SceneDriver reads the T4Scene codec from tier4/e2e-devkit's
     # t4_scene_proto (2.4.1), which this package's vendored contract matches,
     # and names a policy by a devkit T4Driver's name attribute.
