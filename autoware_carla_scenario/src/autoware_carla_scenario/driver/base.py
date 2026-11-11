@@ -360,9 +360,6 @@ class DriverClientConfig:
       :attr:`policy` it serves through ``carla_driver_interface.inprocess``, with
       the same messages serialized to the same bytes as on the wire. Only with
       :attr:`policy`: a policy in another process has to be dialled.
-
-    ``unix`` with :attr:`policy` and ``direct`` need carla-driver-interface 2.2 or
-    later; the run says so when it starts if it is older.
     """
 
     timeout_s: float = 60.0

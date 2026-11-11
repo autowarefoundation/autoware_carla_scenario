@@ -2,17 +2,13 @@
 
 A policy the run serves itself (``driver.policy``) is reached over a TCP port, a
 Unix socket, or by calling its servicer directly; whichever it is, the policy must
-see the same requests and the run the same answers and the same errors. The unix
-and direct paths need carla-driver-interface 2.2 (``carla_driver_interface.inprocess``);
-on an older one they are refused, which is tested here too.
+see the same requests and the run the same answers and the same errors.
 """
 
 from __future__ import annotations
 
-import importlib.util
 import shutil
 import stat
-import sys
 import tempfile
 from concurrent import futures
 from pathlib import Path
@@ -41,11 +37,6 @@ from autoware_carla_scenario.driver.egodriver_client import EgoDriverGrpcClient
 from autoware_carla_scenario.driver.geometry import Pose, Trajectory
 
 from .test_egodriver_client import _StubPolicy
-
-_IN_PROCESS = importlib.util.find_spec("carla_driver_interface.inprocess") is not None
-needs_in_process = pytest.mark.skipif(
-    not _IN_PROCESS, reason="carla-driver-interface < 2.2 has no in-process transports"
-)
 
 _DEFAULT_YAML = (
     Path(egodriver_client.__file__).parents[1]
@@ -218,7 +209,6 @@ def test_unix_without_a_policy_dials_a_unix_address() -> None:
 # -- the same policy, however reached -------------------------------------------------
 
 
-@needs_in_process
 def test_every_transport_hands_the_policy_and_the_run_the_same(
     policies: Dict[str, BaseDriver],
 ) -> None:
@@ -243,7 +233,6 @@ def _proto(raw: bytes):  # noqa: ANN202
     return common_pb2.Trajectory.FromString(raw)
 
 
-@needs_in_process
 def test_every_transport_reports_a_refused_session_alike(
     policies: Dict[str, BaseDriver],
 ) -> None:
@@ -257,7 +246,6 @@ def test_every_transport_reports_a_refused_session_alike(
     }
 
 
-@needs_in_process
 def test_direct_keeps_one_policy_for_every_scenario(
     policies: Dict[str, BaseDriver],
 ) -> None:
@@ -269,7 +257,6 @@ def test_direct_keeps_one_policy_for_every_scenario(
     assert len(starts) == 2
 
 
-@needs_in_process
 def test_the_runs_unix_socket_is_its_own(policies: Dict[str, BaseDriver]) -> None:
     address = egodriver_client._serve_on_unix_socket("records")
     path = Path(address.removeprefix("unix://"))
@@ -283,14 +270,13 @@ def test_the_runs_unix_socket_is_its_own(policies: Dict[str, BaseDriver]) -> Non
 
 @pytest.fixture
 def short_tmpdir(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Path]:
-    """*tmp_path* as ``$TMPDIR``, with the unix transport's checks out of the way.
+    """*tmp_path* as ``$TMPDIR``, with the unix transport's socket path check out of the way.
 
     The socket path limit is lifted so a long *tmp_path* never falls back to a real
     ``/tmp`` directory.
     """
     monkeypatch.setattr(tempfile, "tempdir", str(tmp_path))
     monkeypatch.setattr(egodriver_client, "_MAX_SOCKET_PATH", 1 << 16)
-    monkeypatch.setattr(egodriver_client, "_require_in_process_support", lambda t: None)
     yield tmp_path
 
 
@@ -358,31 +344,3 @@ def test_unix_dials_a_policy_in_another_process() -> None:
         shutil.rmtree(directory, ignore_errors=True)
     assert len(outcome.trajectory.poses) == 4
     assert [s.session_uuid for s in stub.sessions] == ["session-1"]
-
-
-# -- an older carla-driver-interface ---------------------------------------------------
-
-
-@pytest.mark.parametrize("transport", ["unix", "direct"])
-def test_an_older_carla_driver_interface_is_refused_up_front(
-    transport: str, monkeypatch: pytest.MonkeyPatch, policies: Dict[str, BaseDriver]
-) -> None:
-    import carla_driver_interface
-
-    # carla-driver-interface 2.1: no in-process module (None in sys.modules makes
-    # the import fail) and a build_server that cannot bind a Unix socket.
-    monkeypatch.setitem(sys.modules, "carla_driver_interface.inprocess", None)
-    monkeypatch.delattr(egodriver_client._cdi_server, "bind_address", raising=False)
-    config = DriverClientConfig(policy="records", transport=transport)
-    with pytest.raises(RuntimeError) as error:
-        EgoDriverGrpcClient(config)
-    message = str(error.value)
-    assert (
-        f"driver.transport={transport} with driver.policy needs carla-driver-interface>=2.2"
-        in message
-    )
-    assert carla_driver_interface.__version__ in message
-    assert "driver.transport=tcp" in message
-    assert policies == {}  # refused before anything was loaded
-    # tcp needs nothing new.
-    EgoDriverGrpcClient(DriverClientConfig(policy="records"))

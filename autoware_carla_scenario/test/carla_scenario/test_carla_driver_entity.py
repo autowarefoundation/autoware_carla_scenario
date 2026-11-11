@@ -7,7 +7,6 @@ server.
 
 from __future__ import annotations
 
-import importlib.util
 import math
 from concurrent import futures
 from types import SimpleNamespace
@@ -1124,11 +1123,6 @@ def test_the_run_up_keeps_the_spawn_pose_s_offset_from_its_lane() -> None:
 # A policy served by the scenario itself
 # ---------------------------------------------------------------------------
 
-_NEEDS_IN_PROCESS = pytest.mark.skipif(
-    importlib.util.find_spec("carla_driver_interface.inprocess") is None,
-    reason="carla-driver-interface < 2.2 has no in-process transports",
-)
-
 
 def _served_plans(transport: str) -> list:
     config = DriverClientConfig(
@@ -1158,8 +1152,8 @@ def _served_plans(transport: str) -> list:
     "transport",
     [
         "tcp",
-        pytest.param("unix", marks=_NEEDS_IN_PROCESS),
-        pytest.param("direct", marks=_NEEDS_IN_PROCESS),
+        "unix",
+        "direct",
     ],
 )
 def test_a_named_policy_is_served_by_the_run(transport: str) -> None:

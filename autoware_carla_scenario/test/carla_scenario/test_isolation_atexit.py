@@ -14,7 +14,6 @@ nothing it serves outlives the test.
 
 from __future__ import annotations
 
-import importlib.util
 import os
 import shutil
 import subprocess
@@ -28,10 +27,6 @@ import pytest
 pytestmark = [
     pytest.mark.skipif(
         sys.platform != "linux", reason="the sweeper forks its cases (Linux)"
-    ),
-    pytest.mark.skipif(
-        importlib.util.find_spec("carla_driver_interface.inprocess") is None,
-        reason="carla-driver-interface < 2.2 has no in-process transports",
     ),
 ]
 

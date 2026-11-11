@@ -1098,20 +1098,9 @@ def _tire_steering_angle(actor: "carla.Actor") -> float:
 def _live_t4_scene(
     config: DriverClientConfig, rear_axle_offset_m: float
 ) -> "LiveT4Scene":
-    """The run's T4Scenes, as ``driver.t4_scene*`` asks for them.
-
-    Raises:
-        RuntimeError: If carla-driver-interface is too old to carry a scene.
-    """
-    from carla_driver_interface.protocol import carla_driver_pb2  # noqa: PLC0415
-
+    """The run's T4Scenes, as ``driver.t4_scene*`` asks for them."""
     from ..t4_scene.live import LiveT4Scene  # noqa: PLC0415
 
-    if "t4_scene" not in carla_driver_pb2.CarlaRendererData.DESCRIPTOR.fields_by_name:
-        raise RuntimeError(
-            "driver.t4_scene needs carla-driver-interface 2.4 or later, which "
-            "carries CarlaRendererData.t4_scene"
-        )
     return LiveT4Scene(
         round(config.t4_scene_history_s / 0.1) + 1,
         rear_axle_offset_m=rear_axle_offset_m,
