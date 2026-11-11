@@ -2675,8 +2675,37 @@ ego that way: it sets <code>ros2_autoware_control=true</code> and spawns the ego
 (<code>EGO_ROLE_NAME</code>: conditions, measures, metrics, actions) still finds it --
 <code>ego</code> and <code>hero</code>, in any case, read as <code>Ego</code>
 (<code>autoware_carla_scenario.entity_role.canonical_role_name</code>) -- so a scenario
-does not change. An interface node running beside the scenario then only spawns
-the sensor kit, and looks for the ego as <code>ego</code>.</p>
+does not change.</p>
+<p>Three role names are in play, and they are not the same:</p>
+<table>
+<thead>
+<tr>
+<th>Who</th>
+<th>Role name</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td>CARLA's server, applying the control and publishing the status</td>
+<td><code>ego</code> or <code>hero</code> only</td>
+</tr>
+<tr>
+<td>The framework, spawning the ego</td>
+<td><code>ego</code> with the setting, <code>Ego</code> without</td>
+</tr>
+<tr>
+<td>The framework, looking the ego up</td>
+<td><code>Ego</code>, <code>ego</code> or <code>hero</code>, all read as <code>Ego</code></td>
+</tr>
+</tbody>
+</table>
+<p>An interface node running beside the scenario then only spawns the sensor kit,
+and must look for the role name the ego was spawned with: <code>ego</code> with the
+setting, <code>Ego</code> without (for <code>autoware_carla_interface</code>,
+<code>ego_vehicle_role_name:=ego</code> or <code>ego_vehicle_role_name:=Ego</code>).</p>
+<p>The setting is read only with <code>ego.entity=autoware</code>. The run-config check
+refuses a value that is not <code>true</code> or <code>false</code>, and refuses <code>true</code> with any
+other entity, before any scenario starts.</p>
 <p>A server whose blueprints have no <code>ros2_autoware_control</code> (one older than
 CARLA 1.0) spawns the ego as <code>Ego</code>, as without the setting, and the run logs a
 warning. The setting is off by default.</p>
@@ -2702,8 +2731,9 @@ workspace check accepts in place of <code>autoware_carla_interface</code>'s. Loc
 routing and engaging stay with <code>scenario_bridge</code>, as above.</p>
 <p>Add <code>ego.native_autoware_interface=true</code> (<a href="#carlas-native-autoware-interface">above</a>)
 so the server applies Autoware's control and publishes the vehicle status; the
-node finds the ego as <code>Ego</code>, <code>ego</code> or <code>hero</code>. Without it, the node applies the
-control and publishes the status from the client.</p>
+ego is then spawned as <code>ego</code>, the name the server serves, and the node attaches
+to it under that name (as <code>Ego</code> without the setting). Without it, the node
+applies the control and publishes the status from the client.</p>
 <h2 id="starting-autoware-yourself">Starting Autoware yourself<a class="headerlink" href="#starting-autoware-yourself" title="Permanent link">&para;</a></h2>
 <p>With <code>autoware.launcher.type=none</code>, start Autoware with <code>scenario_mode:=true</code>
 and the node beside it, once the scenario is waiting for Autoware:</p>
@@ -2764,7 +2794,7 @@ stack (<code>autoware_carla_scenario.autoware_stack.bridge_node</code> builds it
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 10, 2026 00:58:08 UTC"><span class="timeago" datetime="2026-11-10T00:58:08+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 10, 2026 00:58:08 UTC">2026-11-10</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 07:25:33 UTC"><span class="timeago" datetime="2026-11-11T07:25:33+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 07:25:33 UTC">2026-11-11</span>
   </span>
 
     
