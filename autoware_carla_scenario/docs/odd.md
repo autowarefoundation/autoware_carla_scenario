@@ -1167,7 +1167,8 @@ a scenario whose road should stay wet after the rain gives the water
 itself, `EnvironmentAction(precipitation=0, wetness=60,
 precipitation_deposits=30)`.
 
-The grip is the one quantity the action reads off the rules, during the run:
+Besides the water the rain brings (above), the grip is the one quantity the
+action reads off the rules during the run:
 it may differ by vehicle ([Rules by vehicle](#weather-rules)), and a vehicle
 spawned later gets its own. It reads every CARLA field of the weather the
 action leaves -- the water the run's conditions gave before it started --

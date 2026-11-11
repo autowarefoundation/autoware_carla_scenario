@@ -19,8 +19,11 @@ the wind speed, the cloud cover), which it records for the ODD's probes
 :func:`world_wind_speed`, :func:`world_cloud_cover`).  What follows from the conditions is
 worked out before the run, once
 (:func:`~autoware_carla_scenario.weather_rules.resolve_environment`); only
-the grip, which may differ by vehicle, is read off the rules here, from the
-CARLA weather the action leaves and the conditions the run was set to.
+the road's water an action that sets the rain and not the water leaves
+(:func:`~autoware_carla_scenario.weather_rules.road_water`, as the config's
+gets it) and the grip, which may differ by vehicle, are read off the rules
+here, from the CARLA weather the action leaves and the conditions the run
+was set to.
 """
 
 from __future__ import annotations
