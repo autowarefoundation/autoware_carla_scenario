@@ -25,6 +25,9 @@ class FakeAutowareBridge(AutowareBridge):
     ready_after: int = 0
     #: What :attr:`client_connected` says.
     connected: bool = True
+    #: What :meth:`seconds_since_mission_poll` says: ``None``, as a bridge
+    #: that cannot tell, until a test sets it.
+    mission_poll_age_s: Optional[float] = None
 
     #: Ordered log of method names invoked, for assertions.
     calls: List[str] = field(default_factory=list)
@@ -88,6 +91,9 @@ class FakeAutowareBridge(AutowareBridge):
     @property
     def client_connected(self) -> bool:
         return self.connected
+
+    def seconds_since_mission_poll(self) -> Optional[float]:
+        return self.mission_poll_age_s
 
     def close(self) -> None:
         self.calls.append("close")

@@ -845,7 +845,7 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     Raises:
         ValueError: If ``cfg.ego.entity`` names an unknown entity, or a setting
             of the entity's group is out of range (a NaN timeout, say) or not
-            one the group defines (``autoware.timout_s``), naming the key, or
+            one the group defines (``autoware.boot_timout_s``), naming the key, or
             ``ego.native_autoware_interface`` is refused
             (:func:`_native_autoware_interface`).
     """
@@ -880,7 +880,7 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         autoware_cfg = cfg.get("autoware")
         # The group is the bridge's settings plus ``launcher``, which
         # build_autoware_launcher reads; any other key is a typo
-        # (``+autoware.timout_s=30``) that would leave the default in place.
+        # (``+autoware.boot_timout_s=30``) that would leave the default in place.
         try:
             bridge_options = checked_options(
                 AutowareBridgeConfig,
