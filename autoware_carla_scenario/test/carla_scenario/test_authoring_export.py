@@ -1015,6 +1015,17 @@ class TestRunOnTheDocumentsMap:
         other = {"name": "Town10HD_Opt", "source": _MAP_SOURCE}
         assert "map.source" in (own_map_mismatch(document, other) or "")
 
+    def test_a_mismatch_does_not_show_a_token(self) -> None:
+        from autoware_carla_scenario.authoring.hydra_config import own_map_mismatch
+
+        document = _document_on_own_map("source")
+        document.map.source = "https://oauth2:MINE@example.com/o/r@main#m"
+        other = {"name": "Town10HD_Opt", "source": "https://u:THEIRS@example.com/x"}
+        said = own_map_mismatch(document, other) or ""
+        assert "map.source" in said
+        assert "MINE" not in said and "THEIRS" not in said
+        assert "oauth2:***@example.com" in said
+
 
 class TestEveryPathRefusesAnotherMapBeforeReadingIt:
     """The own-map refusal (#1424) comes before any map is resolved, fetched or

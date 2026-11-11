@@ -10,7 +10,10 @@ mock-based test could establish.
 from __future__ import annotations
 
 import errno
+import hashlib
 import json
+import logging
+import multiprocessing
 import os
 import socket
 import subprocess
@@ -134,6 +137,17 @@ def _head(repo: Path) -> str:
         capture_output=True,
         text=True,
     ).stdout.strip()
+
+
+def _resolve_in_child(root: str, uri: str, barrier: Any, results: Any) -> None:
+    """Resolve *uri* in a process of its own, once every sibling is ready."""
+    barrier.wait(60)
+    try:
+        resolved = resolve_map(uri, cache=GitMapCache(Path(root)))
+    except Exception as exc:  # noqa: BLE001 -- reported to the parent
+        results.put((uri, "", repr(exc)))
+    else:
+        results.put((uri, str(resolved.lanelet2_path), ""))
 
 
 # ---------------------------------------------------------------------------
@@ -823,6 +837,60 @@ class TestOneEntryManyMaps:
         assert peeked is not None
         assert peeked.materialised == ("autoware_maps/TownA", "autoware_maps/TownB")
 
+    @pytest.mark.parametrize("older_entry", [False, True])
+    def test_processes_resolving_different_maps_keep_every_one(
+        self, tmp_path: Path, cache: GitMapCache, older_entry: bool
+    ) -> None:
+        """Twelve processes, twelve maps, one freshly listed entry (#2058).
+
+        ``list_maps`` leaves the entry cloned with nothing checked out, which
+        is where every process used to run ``sparse-checkout set`` with its
+        own directory and so delete the others'.  An entry an older version
+        listed is not a sparse checkout yet, so the first of them makes it one
+        (an empty one, never ``set`` with its directory): the entry's lock is
+        what keeps the others after it.
+        """
+        names = [chr(ord("A") + index) for index in range(12)]
+        repo = tmp_path / "many"
+        for name in names:
+            (repo / "maps" / name).mkdir(parents=True)
+            (repo / "maps" / name / "lanelet2_map.osm").write_text(_OSM)
+        _git(repo, "init", "--quiet", "--initial-branch", "main", ".")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--quiet", "-m", "Twelve maps")
+        assert len(list_maps(f"git+file://{repo}@main", cache=cache)) == len(names)
+        if older_entry:
+            listed = cache.peek(MapSource.parse(_uri(repo, ref=_head(repo))))
+            assert listed is not None
+            _git(listed.worktree, "sparse-checkout", "disable")
+
+        context = multiprocessing.get_context("spawn")
+        barrier = context.Barrier(len(names))
+        results = context.Queue()
+        children = [
+            context.Process(
+                target=_resolve_in_child,
+                args=(str(cache.root), _uri(repo, f"maps/{name}"), barrier, results),
+            )
+            for name in names
+        ]
+        for child in children:
+            child.start()
+        try:
+            outcomes = [results.get(timeout=120) for _ in children]
+        finally:
+            for child in children:
+                child.join(30)
+
+        assert [error for _, _, error in outcomes if error] == []
+        for _, lanelet2_path, _ in outcomes:
+            assert Path(lanelet2_path).read_text() == _OSM
+        peeked = cache.peek(MapSource.parse(_uri(repo, ref=_head(repo))))
+        assert peeked is not None
+        assert peeked.materialised == tuple(f"maps/{name}" for name in names)
+        for directory in peeked.materialised:
+            assert (peeked.worktree / directory / "lanelet2_map.osm").is_file()
+
 
 class TestCachedMap:
     """What the editor asks on every render: is it here already?"""
@@ -1092,21 +1160,79 @@ class TestLinksInAMapDirectory:
 class TestProvisionedMaps:
     """A map Autoware's own setup already downloaded is a map we have."""
 
-    def _provision(self, cache: GitMapCache, path: str) -> Path:
+    def _provision(
+        self, cache: GitMapCache, path: str, origin: Path | None = None
+    ) -> Path:
         directory = cache.root / path
         directory.mkdir(parents=True)
         (directory / "lanelet2_map.osm").write_text(_OSM)
+        if origin is not None:
+            (cache.root / ".provisioned_from").write_text(
+                f"# what the setup unpacked here\n\nfile://{origin}.git/\n"
+            )
         return directory
 
     def test_is_used_without_cloning_anything(
         self, origin_repo: Path, cache: GitMapCache
     ) -> None:
-        directory = self._provision(cache, "autoware_maps/TownA")
+        directory = self._provision(cache, "autoware_maps/TownA", origin_repo)
         (origin_repo / ".git").rename(origin_repo.parent / "gone")
 
         resolved = resolve_map(_uri(origin_repo), cache=cache)
         assert resolved.provisioned
         assert resolved.lanelet2_path == directory / "lanelet2_map.osm"
+        cached = cached_map(_uri(origin_repo), cache=cache)
+        assert cached is not None and cached.provisioned
+
+    def test_another_repository_never_resolves_to_it(
+        self, origin_repo: Path, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        """Only the repository unpacked there owns the path (#2058)."""
+        other = tmp_path / "other"
+        (other / "autoware_maps" / "TownA").mkdir(parents=True)
+        (other / "autoware_maps" / "TownA" / "lanelet2_map.osm").write_text(
+            _OSM.replace('lat="0.0"', 'lat="2.0"')
+        )
+        _git(other, "init", "--quiet", "--initial-branch", "main", ".")
+        _git(other, "add", "-A")
+        _git(other, "commit", "--quiet", "-m", "Another dataset")
+        directory = self._provision(cache, "autoware_maps/TownA", origin_repo)
+
+        assert cached_map(_uri(other), cache=cache) is None
+        resolved = resolve_map(_uri(other), cache=cache)
+        assert not resolved.provisioned
+        assert resolved.directory != directory
+        assert 'lat="2.0"' in resolved.lanelet2_path.read_text()
+        # Offline, a remote that is not the one unpacked there is no map.
+        unknown = "https://example.invalid/other@main#autoware_maps/TownA"
+        assert cached_map(unknown, cache=cache) is None
+        with pytest.raises(MapCacheError):
+            resolve_map(unknown, cache=cache)
+
+    def test_without_a_record_only_autowares_dataset_is_provisioned(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        directory = self._provision(cache, "autoware_maps/TownA")
+        dataset = "https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps"
+        for spelling in (
+            f"{dataset}@main#autoware_maps/TownA",
+            f"git+{dataset}.git#autoware_maps/TownA",
+            "https://user@huggingface.co/datasets/AutowareFoundation/"
+            "carla-ue5-maps/tree/main/autoware_maps/TownA",
+            "git+HTTPS://HuggingFace.co/datasets/AutowareFoundation/"
+            "carla-ue5-maps/#autoware_maps/TownA",
+        ):
+            assert cache.provisioned(MapSource.parse(spelling)) == directory
+        assert cache.provisioned(MapSource.parse(_uri(origin_repo))) is None
+        assert (
+            cache.provisioned(
+                MapSource.parse(
+                    "https://huggingface.co/datasets/someone/carla-ue5-maps"
+                    "#autoware_maps/TownA"
+                )
+            )
+            is None
+        )
 
     def test_a_pinned_source_ignores_it(
         self, origin_repo: Path, cache: GitMapCache
@@ -1114,7 +1240,7 @@ class TestProvisionedMaps:
         # An unpacked directory records no revision, so honouring it for a
         # pinned source would answer a question about one commit with the bytes
         # of an unknown other.
-        self._provision(cache, "autoware_maps/TownA")
+        self._provision(cache, "autoware_maps/TownA", origin_repo)
 
         resolved = resolve_map(_uri(origin_repo, ref=_head(origin_repo)), cache=cache)
         assert not resolved.provisioned
@@ -1130,6 +1256,9 @@ class TestProvisionedMaps:
         (origin_repo / ".git").rename(origin_repo.parent / "gone")
         # The root has to exist: a lookup under a missing one stops at ENOENT.
         cache.root.mkdir(parents=True, exist_ok=True)
+        # And the repository has to be the one unpacked there, or the map
+        # root is never looked in.
+        (cache.root / ".provisioned_from").write_text(f"file://{origin_repo}\n")
         try:
             (cache.root / ("a" * 300)).is_file()
         except OSError:
@@ -1149,7 +1278,7 @@ class TestProvisionedMaps:
         cache: GitMapCache,
         monkeypatch: pytest.MonkeyPatch,
     ) -> None:
-        directory = self._provision(cache, "autoware_maps/TownA")
+        directory = self._provision(cache, "autoware_maps/TownA", origin_repo)
         error = PermissionError(errno.EACCES, "Permission denied")
         is_file = Path.is_file
 
@@ -2873,3 +3002,644 @@ def test_an_installed_xodr_is_copied_byte_for_byte(
     assert written.stat().st_mtime_ns == asset.stat().st_mtime_ns
     assert stat.S_IMODE(written.stat().st_mode) == 0o640
     assert [p.name for p in written.parent.iterdir()] == [written.name]
+
+
+# ---------------------------------------------------------------------------
+# Commit spellings, git-lfs, credentials, page anchors (#2059)
+# ---------------------------------------------------------------------------
+
+
+def _many_commits(repo: Path, count: int) -> list[str]:
+    """Add *count* commits to *repo*'s ``main``, deterministically; their hashes.
+
+    One ``git fast-import`` with fixed dates, so the same hashes every time.
+    """
+    lines: list[str] = []
+    for index in range(count):
+        message = f"commit {index}\n"
+        lines.append("commit refs/heads/main")
+        lines.append(f"committer Test <test@example.com> {1700000000 + index} +0000")
+        lines.append(f"data {len(message)}")
+        lines.append(message)
+        if index == 0:
+            lines.append("from refs/heads/main^0")
+    subprocess.run(
+        ["git", "fast-import", "--quiet"],
+        cwd=str(repo),
+        input="\n".join(lines) + "\n",
+        text=True,
+        check=True,
+        capture_output=True,
+    )
+    listed = subprocess.run(
+        ["git", "rev-list", "main"],
+        cwd=str(repo),
+        check=True,
+        capture_output=True,
+        text=True,
+    ).stdout.split()
+    return listed
+
+
+class TestCommitSpellings:
+    """A commit hash however it is written: abbreviated, in upper case."""
+
+    def test_an_abbreviated_hash_resolves_to_its_commit(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        head = _head(origin_repo)
+        uri = _uri(origin_repo, ref=head[:7])
+        assert MapSource.parse(uri).names_commit
+        assert not MapSource.parse(uri).pinned
+
+        resolved = resolve_map(uri, cache=cache)
+        assert resolved.commit == head
+        assert resolved.lanelet2_path.read_text() == _OSM
+        assert pin_source(uri, cache=cache) == MapSource.parse(uri).at(head).uri
+
+        # Remembered: offline, and on the editor's render path, it is found.
+        (origin_repo / ".git").rename(origin_repo.parent / "gone")
+        cached = cached_map(uri, cache=cache)
+        assert cached is not None and cached.commit == head
+        assert resolve_map(uri, cache=cache).commit == head
+
+    def test_an_abbreviated_hash_never_takes_the_provisioned_copy(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        directory = cache.root / "autoware_maps" / "TownA"
+        directory.mkdir(parents=True)
+        (directory / "lanelet2_map.osm").write_text(_OSM)
+        (cache.root / ".provisioned_from").write_text(f"file://{origin_repo}\n")
+        uri = _uri(origin_repo, ref=_head(origin_repo)[:8])
+
+        assert cached_map(uri, cache=cache) is None
+        resolved = resolve_map(uri, cache=cache)
+        assert not resolved.provisioned
+        assert resolved.commit == _head(origin_repo)
+
+    def test_a_branch_spelled_like_a_hash_is_the_branch(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        _git(origin_repo, "branch", "cafe")
+        resolved = resolve_map(_uri(origin_repo, ref="cafe"), cache=cache)
+        assert resolved.commit == _head(origin_repo)
+
+    def test_an_ambiguous_or_unknown_abbreviation_says_so(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        commits = _many_commits(origin_repo, 2000)
+        prefixes: dict[str, int] = {}
+        for commit in commits:
+            prefixes[commit[:4]] = prefixes.get(commit[:4], 0) + 1
+        ambiguous = next(prefix for prefix, seen in prefixes.items() if seen > 1)
+        unknown = next(
+            f"{number:04x}"
+            for number in range(65536)
+            if f"{number:04x}" not in prefixes
+        )
+
+        with pytest.raises(MapCacheError, match=f"{ambiguous} is ambiguous"):
+            resolve_map(_uri(origin_repo, ref=ambiguous), cache=cache)
+        with pytest.raises(MapCacheError, match="names no branch, tag or commit"):
+            resolve_map(_uri(origin_repo, ref=unknown), cache=cache)
+        # A longer, unique spelling of one of them still resolves.
+        target = next(commit for commit in commits if commit.startswith(ambiguous))
+        unique = MapSource.parse(_uri(origin_repo, "", ref=target[:12]))
+        assert cache.at_tip(unique).ref == target
+        # Nothing is left behind by the lookups.
+        assert not list((cache.root / ".repos").glob(".expand.*"))
+
+    def test_an_upper_case_hash_is_the_lower_case_one(
+        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        head = _head(origin_repo)
+        upper = _uri(origin_repo, ref=head.upper())
+        lower = _uri(origin_repo, ref=head)
+        assert MapSource.parse(upper) == MapSource.parse(lower)
+        assert MapSource.parse(lower).at(head.upper()).ref == head
+        assert cache.entry_dir(MapSource.parse(upper)) == cache.entry_dir(
+            MapSource.parse(lower)
+        )
+
+        resolved = resolve_map(upper, cache=cache)
+        assert resolved.commit == head
+        assert MapSource.parse(pin_source(upper, cache=cache)).ref == head
+        cached = cached_map(upper, cache=cache)
+        assert cached is not None and cached.commit == head
+        # A refresh of the pin it already is fetches nothing.
+        calls = _git_calls(monkeypatch)
+        resolve_map(upper, cache=cache, refresh=True)
+        assert "fetch" not in calls
+
+
+def _git_only_path(tmp_path: Path) -> str:
+    """A ``PATH`` holding git (and a shell for it) but no git-lfs."""
+    import shutil  # noqa: PLC0415
+
+    bin_dir = tmp_path / "git-only-bin"
+    bin_dir.mkdir()
+    for tool in ("git", "sh"):
+        found = shutil.which(tool)
+        assert found is not None
+        (bin_dir / tool).symlink_to(found)
+    return str(bin_dir)
+
+
+class TestGitLfs:
+    """git-lfs is needed for the maps that keep their files in it, and no others."""
+
+    def test_refresh_and_pin_need_no_git_lfs_without_pointers(
+        self,
+        origin_repo: Path,
+        cache: GitMapCache,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        resolve_map(_uri(origin_repo), cache=cache)
+        monkeypatch.setenv("PATH", _git_only_path(tmp_path))
+        calls = _git_calls(monkeypatch)
+
+        resolved = resolve_map(_uri(origin_repo), cache=cache, refresh=True)
+        assert resolved.lanelet2_path.read_text() == _OSM
+        pinned = pin_source(_uri(origin_repo), cache=cache, refresh=True)
+        assert MapSource.parse(pinned).ref == _head(origin_repo)
+        assert "lfs" not in calls
+
+    def test_pointers_without_git_lfs_say_to_install_it(
+        self,
+        tmp_path: Path,
+        cache: GitMapCache,
+        monkeypatch: pytest.MonkeyPatch,
+    ) -> None:
+        repo = tmp_path / "lfs"
+        (repo / "maps" / "T").mkdir(parents=True)
+        (repo / "maps" / "T" / "lanelet2_map.osm").write_text(
+            "version https://git-lfs.github.com/spec/v1\n"
+            "oid sha256:" + "0" * 64 + "\nsize 1\n"
+        )
+        _git(repo, "init", "--quiet", "--initial-branch", "main", ".")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--quiet", "-m", "A map in LFS")
+        monkeypatch.setenv("PATH", _git_only_path(tmp_path))
+
+        with pytest.raises(MapCacheError, match="install git-lfs") as caught:
+            resolve_map(_uri(repo, "maps/T"), cache=cache)
+        assert "not a git command" not in str(caught.value)
+
+    def test_a_git_error_names_gits_own_line(self) -> None:
+        from autoware_carla_scenario.maps.cache import _git_error_line
+
+        assert (
+            _git_error_line(
+                "remote: Enumerating objects\n"
+                "fatal: couldn't find remote ref nope\n"
+                "hint: something\n"
+            )
+            == "fatal: couldn't find remote ref nope"
+        )
+        assert _git_error_line("first\nerror: it broke\nlast\n") == "error: it broke"
+        assert _git_error_line("first\n\tlast\n\n") == "last"
+        assert _git_error_line("") == "no output"
+
+
+class TestCredentials:
+    """A token in a source URL is used, and never written down or logged."""
+
+    _SECRET = "s3cr3t-T0KEN"
+
+    @pytest.fixture
+    def token_uri(self, origin_repo: Path, tmp_path: Path, monkeypatch: Any) -> str:
+        """An https URL with a token that git rewrites to the local origin."""
+        remote = f"https://oauth2:{self._SECRET}@maps.example.invalid/o/maps"
+        config = tmp_path / "gitconfig"
+        config.write_text(f'[url "file://{origin_repo}"]\n\tinsteadOf = {remote}\n')
+        monkeypatch.setenv("GIT_CONFIG_GLOBAL", str(config))
+        return f"git+{remote}@main#autoware_maps/TownA"
+
+    def test_no_token_in_logs_metadata_or_errors(
+        self,
+        token_uri: str,
+        cache: GitMapCache,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        caplog.set_level(logging.DEBUG, logger="autoware_carla_scenario")
+        resolved = resolve_map(token_uri, cache=cache)
+        assert resolved.lanelet2_path.read_text() == _OSM
+        resolve_map(token_uri, cache=cache, refresh=True)
+        assert list_maps(token_uri, cache=cache)
+
+        errors: list[str] = []
+        for bad in (
+            token_uri.replace("#autoware_maps/TownA", "#autoware_maps/Nowhere"),
+            token_uri.replace("@main", "@no-such-branch"),
+            token_uri.replace("@main", "@abcd"),
+            token_uri.replace("@main", "@"),
+        ):
+            with pytest.raises(
+                (MapCacheError, MapResolutionError, MapSourceError)
+            ) as e:
+                resolve_map(bad, cache=cache)
+            errors.append(str(e.value))
+
+        assert caplog.text
+        assert self._SECRET not in caplog.text
+        assert all(self._SECRET not in error for error in errors), errors
+        assert any("oauth2:***@maps.example.invalid" in error for error in errors)
+        written = list(cache.root.rglob("meta.json")) + list(
+            cache.root.rglob("*.tip.json")
+        )
+        assert written
+        for path in written:
+            text = path.read_text(encoding="utf-8")
+            assert self._SECRET not in text
+            assert "oauth2:***@maps.example.invalid" in text
+
+    def test_the_entry_is_keyed_without_the_password(
+        self, token_uri: str, cache: GitMapCache
+    ) -> None:
+        source = MapSource.parse(token_uri)
+        other_token = MapSource.parse(token_uri.replace(self._SECRET, "rotated"))
+        assert cache.entry_dir(source) == cache.entry_dir(other_token)
+        assert cache.derived_dir(source) == cache.derived_dir(other_token)
+        assert self._SECRET not in str(cache.entry_dir(source))
+
+    def test_a_url_without_credentials_keeps_its_entry(
+        self, cache: GitMapCache
+    ) -> None:
+        """Entries cached before the key dropped passwords are still found."""
+        for url in ("https://example.com/o/maps", "https://user@example.com/o/maps"):
+            source = MapSource(repo_url=url, ref="main", path="m")
+            digest = hashlib.sha256(f"{url}\nmain".encode()).hexdigest()[:10]
+            assert cache.entry_dir(source).name == f"maps-main-{digest}"
+            derived = hashlib.sha256(url.encode()).hexdigest()[:10]
+            assert cache.derived_dir(source).parent.name == f"maps-{derived}"
+
+    @pytest.mark.parametrize(
+        ("url", "redacted"),
+        [
+            ("https://oauth2:TOKEN@host/o/r", "https://oauth2:***@host/o/r"),
+            ("https://TOKEN@github.com/o/r", "https://***@github.com/o/r"),
+            ("git+https://u:p@h/o/r@main#m", "git+https://u:***@h/o/r@main#m"),
+            ("ssh://git@host/o/r", "ssh://git@host/o/r"),
+            ("ssh://git:pw@host/o/r", "ssh://git:***@host/o/r"),
+            ("git@github.com:o/r.git", "git@github.com:o/r.git"),
+            ("https://host/o/a@v1", "https://host/o/a@v1"),
+            ("file:///srv/maps@main#T", "file:///srv/maps@main#T"),
+            (
+                "fatal: unable to access 'https://u:p@h/o/r/': 403",
+                "fatal: unable to access 'https://u:***@h/o/r/': 403",
+            ),
+        ],
+    )
+    def test_redacted_url(self, url: str, redacted: str) -> None:
+        from autoware_carla_scenario.maps.source import redacted_url
+
+        assert redacted_url(url) == redacted
+
+    def test_url_without_password(self) -> None:
+        from autoware_carla_scenario.maps.source import url_without_password
+
+        assert url_without_password("https://u:p@h/o/r") == "https://u@h/o/r"
+        assert url_without_password("https://u@h/o/r") == "https://u@h/o/r"
+        assert url_without_password("https://h/o/r") == "https://h/o/r"
+
+    def test_a_source_error_redacts_the_uri(self) -> None:
+        with pytest.raises(MapSourceError) as caught:
+            MapSource.parse("https://oauth2:TOKEN@example.com/o/r@")
+        assert "TOKEN" not in str(caught.value)
+
+
+class TestPageAnchors:
+    """The ``#...`` of a pasted browser URL is the page's, not a path."""
+
+    @pytest.mark.parametrize(
+        ("uri", "path"),
+        [
+            (
+                "https://github.com/o/n/blob/main/maps/town/lanelet2_map.osm#L10",
+                "maps/town/lanelet2_map.osm",
+            ),
+            (
+                "https://github.com/o/n/blob/main/maps/town/lanelet2_map.osm"
+                "#L10-L20",
+                "maps/town/lanelet2_map.osm",
+            ),
+            ("https://github.com/o/n/tree/main/maps/town#readme", "maps/town"),
+            ("https://github.com/o/n/tree/main#maps", ""),
+            ("https://github.com/o/n#readme", ""),
+            ("https://github.com/o/n#readme-ov-file", ""),
+            ("https://github.com/o/n#L3", ""),
+            ("https://github.com/o/n#user-content-maps", ""),
+            ("https://huggingface.co/datasets/o/n/tree/main/m#x", "m"),
+            # A path, not an anchor: kept.
+            ("https://example.com/maps.git#town", "town"),
+            ("https://github.com/o/n@main#maps/T", "maps/T"),
+            # Written as a source: the path is what was written.
+            ("git+https://github.com/o/n#readme", "readme"),
+            ("git+https://github.com/o/n@main#L10", "L10"),
+            ("file:///srv/maps@main#readme", "readme"),
+        ],
+    )
+    def test_the_path(self, uri: str, path: str) -> None:
+        assert MapSource.parse(uri).path == path
+
+
+class TestListMapsOfAFile:
+    def test_a_source_naming_an_osm_lists_its_directory(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        entries = list_maps(
+            _uri(origin_repo, "autoware_maps/TownA/lanelet2_map.osm"), cache=cache
+        )
+        assert [entry.path for entry in entries] == ["autoware_maps/TownA"]
+        entries = list_maps(_uri(origin_repo, "autoware_maps"), cache=cache)
+        assert [entry.path for entry in entries] == [
+            "autoware_maps/TownA",
+            "autoware_maps/TownB",
+        ]
+
+
+# ---------------------------------------------------------------------------
+# Review follow-ups (#2058, #2059)
+# ---------------------------------------------------------------------------
+
+
+class TestReviewFollowUps:
+    def test_an_abbreviation_is_expanded_once(
+        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """A sweep over ``@<abbreviation>`` fetches the remote's commits once."""
+        head = _head(origin_repo)
+        expansions: list[str] = []
+        original = GitMapCache._expand_commit
+
+        def _counted(self: GitMapCache, source: MapSource) -> str:
+            expansions.append(source.ref)
+            return original(self, source)
+
+        monkeypatch.setattr(GitMapCache, "_expand_commit", _counted)
+        uri = _uri(origin_repo, ref=head[:7])
+        for _ in range(3):
+            assert resolve_map(uri, cache=cache).commit == head
+        assert expansions == [head[:7]]
+
+    def test_a_branch_spelled_like_a_hash_still_moves(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """Its note is a branch's, not an expansion, so it is asked again."""
+        _git(origin_repo, "branch", "cafe")
+        first = resolve_map(_uri(origin_repo, ref="cafe"), cache=cache).commit
+        (origin_repo / "autoware_maps" / "TownA" / "lanelet2_map.osm").write_text(
+            _OSM.replace('lat="0.0"', 'lat="3.0"')
+        )
+        _git(origin_repo, "commit", "--quiet", "-am", "Move")
+        _git(origin_repo, "branch", "-f", "cafe", "main")
+        second = resolve_map(_uri(origin_repo, ref="cafe"), cache=cache).commit
+        assert second != first and second == _head(origin_repo)
+
+    def test_no_git_command_needs_cone_mode_options(
+        self, origin_repo: Path, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """``--no-cone`` is git 2.35's; Ubuntu 22.04 ships 2.34."""
+        seen: list[tuple[str, ...]] = []
+        original = GitMapCache._git
+
+        def _spy(self: Any, cwd: Any, *args: str, **kwargs: Any) -> str:
+            seen.append(args)
+            return str(original(self, cwd, *args, **kwargs))
+
+        monkeypatch.setattr(GitMapCache, "_git", _spy)
+        list_maps(f"git+file://{origin_repo}", cache=cache)
+        list_maps(f"git+file://{origin_repo}@main", cache=cache)
+        town_a = resolve_map(_uri(origin_repo, "autoware_maps/TownA"), cache=cache)
+        town_b = resolve_map(_uri(origin_repo, "autoware_maps/TownB"), cache=cache)
+        unpinned = resolve_map(
+            f"git+file://{origin_repo}#autoware_maps/TownB", cache=cache
+        )
+
+        assert not [args for args in seen if "--no-cone" in args or "set" in args]
+        assert town_a.lanelet2_path.read_text() == _OSM
+        assert town_b.lanelet2_path.read_text() == _OSM
+        assert unpinned.lanelet2_path.read_text() == _OSM
+        # Nothing but what was asked for is checked out.
+        assert not (town_a.directory.parent.parent / "docs").exists()
+
+    def test_an_entry_an_older_version_left_gains_its_directories(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """Fully checked out, not sparse: made sparse, then added to."""
+        list_maps(f"git+file://{origin_repo}@main", cache=cache)
+        listed = cache.peek(MapSource.parse(_uri(origin_repo, ref=_head(origin_repo))))
+        assert listed is not None
+        _git(listed.worktree, "sparse-checkout", "disable")
+        assert (listed.worktree / "docs" / "README.md").is_file()
+
+        town_a = resolve_map(_uri(origin_repo, "autoware_maps/TownA"), cache=cache)
+        town_b = resolve_map(_uri(origin_repo, "autoware_maps/TownB"), cache=cache)
+        assert town_a.lanelet2_path.read_text() == _OSM
+        assert town_b.lanelet2_path.read_text() == _OSM
+        assert not (listed.worktree / "docs").exists()
+
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork()")
+    def test_a_forked_child_does_not_keep_the_entry_locked(
+        self, tmp_path: Path
+    ) -> None:
+        import fcntl
+        import time
+        import warnings
+
+        from autoware_carla_scenario.maps.cache import _EntryLock
+
+        entry = tmp_path / ".repos" / "entry"
+        forked, ready = os.pipe()
+        with _EntryLock(entry):
+            with warnings.catch_warnings():
+                # Python 3.12+ warns about forking a process with threads.
+                warnings.simplefilter("ignore", DeprecationWarning)
+                child = os.fork()
+            if child == 0:  # pragma: no cover -- the child
+                # Past fork(): the child's at-fork handlers have run.
+                os.write(ready, b"x")
+                time.sleep(10)
+                os._exit(0)
+        os.close(ready)
+        try:
+            assert os.read(forked, 1) == b"x"
+            fd = os.open(str(tmp_path / ".repos" / "entry.lock"), os.O_RDWR)
+            try:
+                # Fails with BlockingIOError while the child shares the lock.
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+            finally:
+                os.close(fd)
+        finally:
+            os.close(forked)
+            os.kill(child, 9)
+            os.waitpid(child, 0)
+
+    def test_the_lock_file_is_not_inherited_by_what_is_executed(
+        self, tmp_path: Path
+    ) -> None:
+        from autoware_carla_scenario.maps.cache import _EntryLock, _HELD_LOCK_FDS
+
+        with _EntryLock(tmp_path / ".repos" / "entry"):
+            [fd] = list(_HELD_LOCK_FDS)
+            assert not os.get_inheritable(fd)
+        assert not _HELD_LOCK_FDS
+
+    def test_an_empty_record_turns_the_shortcut_off(
+        self, origin_repo: Path, cache: GitMapCache, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        directory = cache.root / "autoware_maps" / "TownA"
+        directory.mkdir(parents=True)
+        (directory / "lanelet2_map.osm").write_text(_OSM)
+        (cache.root / ".provisioned_from").write_text("# nothing unpacked here\n")
+        dataset = (
+            "https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps"
+            "#autoware_maps/TownA"
+        )
+        caplog.set_level(logging.INFO, logger="autoware_carla_scenario")
+
+        assert cache.provisioned(MapSource.parse(dataset)) is None
+        assert "not listed as unpacked" in caplog.text
+        assert ".provisioned_from" in caplog.text
+
+    def test_a_sources_repr_hides_its_token(self) -> None:
+        source = MapSource.parse("https://oauth2:TOKEN@example.com/o/r@main#m")
+        assert "TOKEN" not in repr(source)
+        assert repr(source) == (
+            "MapSource(repo_url='https://oauth2:***@example.com/o/r', "
+            "ref='main', path='m')"
+        )
+        assert repr(MapSource.parse("https://example.com/o/r")) == (
+            "MapSource(repo_url='https://example.com/o/r', ref='', path='')"
+        )
+
+
+class TestSecondReviewFollowUps:
+    @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork()")
+    def test_a_child_forked_while_a_thread_holds_an_entry_can_take_it(
+        self, tmp_path: Path
+    ) -> None:
+        import signal
+        import threading
+        import warnings
+
+        from autoware_carla_scenario.maps.cache import _EntryLock
+
+        entry = tmp_path / ".repos" / "entry"
+        held, done = threading.Event(), threading.Event()
+
+        def _hold() -> None:
+            with _EntryLock(entry):
+                held.set()
+                done.wait(30)
+
+        thread = threading.Thread(target=_hold)
+        thread.start()
+        try:
+            assert held.wait(30)
+            with warnings.catch_warnings():
+                warnings.simplefilter("ignore", DeprecationWarning)
+                child = os.fork()
+            if child == 0:  # pragma: no cover -- the child
+                # Killed by the alarm if it waits on the parent's thread.
+                signal.alarm(10)
+                with _EntryLock(entry):
+                    pass
+                os._exit(0)
+            # The parent's thread lets go, as the repro's does; the child then
+            # takes the lock file after it, and its own fresh thread lock.
+            done.set()
+            _, status = os.waitpid(child, 0)
+        finally:
+            done.set()
+            thread.join(30)
+        assert os.WIFEXITED(status) and os.WEXITSTATUS(status) == 0
+
+    def test_a_timed_out_git_does_not_chain_its_command_line(
+        self, cache: GitMapCache, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import traceback
+
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        url = "https://oauth2:TOKEN@example.invalid/o/r"
+
+        def _hang(args: list[str], **kwargs: Any) -> Any:
+            raise subprocess.TimeoutExpired(args, kwargs.get("timeout") or 1.0)
+
+        monkeypatch.setattr(cache_module.subprocess, "run", _hang)
+        with pytest.raises(MapCacheError, match="timed out") as caught:
+            cache._git(None, "ls-remote", "--", url, "main")
+        assert caught.value.__cause__ is None
+        assert caught.value.__suppress_context__
+        shown = "".join(traceback.format_exception(caught.value))
+        assert "TOKEN" not in shown
+
+    def test_a_linked_worktree_does_not_stop_a_sparse_checkout(
+        self, origin_repo: Path, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        _git(origin_repo, "worktree", "add", "--quiet", str(tmp_path / "linked"))
+        cache._sparse_nothing(origin_repo)
+        value = subprocess.run(
+            ["git", "config", "--bool", "core.sparseCheckout"],
+            cwd=str(origin_repo),
+            check=True,
+            capture_output=True,
+            text=True,
+        ).stdout.strip()
+        assert value == "true"
+
+    def test_a_directory_does_not_bring_its_namesakes_deeper_down(
+        self, tmp_path: Path, cache: GitMapCache
+    ) -> None:
+        repo = tmp_path / "nested"
+        for directory in ("TownA", "archive/TownA", "maps/TownA"):
+            (repo / directory).mkdir(parents=True)
+            (repo / directory / "lanelet2_map.osm").write_text(_OSM)
+        _git(repo, "init", "--quiet", "--initial-branch", "main", ".")
+        _git(repo, "add", "-A")
+        _git(repo, "commit", "--quiet", "-m", "Namesakes")
+
+        resolved = resolve_map(_uri(repo, "TownA"), cache=cache)
+        worktree = resolved.directory.parent
+        assert resolved.lanelet2_path.read_text() == _OSM
+        assert not (worktree / "archive").exists()
+        assert not (worktree / "maps").exists()
+
+    def test_an_entry_with_unanchored_patterns_still_grows(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """What an older version wrote is kept, and added to."""
+        town_a = resolve_map(_uri(origin_repo, "autoware_maps/TownA"), cache=cache)
+        listed = cache.peek(MapSource.parse(_uri(origin_repo, ref=town_a.commit)))
+        assert listed is not None
+        patterns = listed.worktree / ".git" / "info" / "sparse-checkout"
+        assert patterns.read_text().split() == ["/autoware_maps/TownA"]
+        patterns.write_text("autoware_maps/TownA\n")
+
+        town_b = resolve_map(_uri(origin_repo, "autoware_maps/TownB"), cache=cache)
+        assert town_a.lanelet2_path.read_text() == _OSM
+        assert town_b.lanelet2_path.read_text() == _OSM
+        assert patterns.read_text().split() == [
+            "autoware_maps/TownA",
+            "/autoware_maps/TownB",
+        ]
+
+    @pytest.mark.parametrize(
+        ("path", "pattern"),
+        [
+            ("", "/*"),
+            ("Town10HD_Opt", "/Town10HD_Opt"),
+            ("maps/T", "/maps/T"),
+            ("!odd", "/!odd"),
+            ("#odd", "/#odd"),
+            ("a*b?c[d]", "/a\\*b\\?c\\[d]"),
+            ("back\\slash", "/back\\\\slash"),
+            ("trailing ", "/trailing\\ "),
+        ],
+    )
+    def test_sparse_pattern(self, path: str, pattern: str) -> None:
+        from autoware_carla_scenario.maps.cache import _sparse_pattern
+
+        assert _sparse_pattern(path) == pattern

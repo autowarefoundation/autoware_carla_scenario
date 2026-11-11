@@ -111,6 +111,7 @@ from .constants import EGO_ROLES
 from .adversity_event import AdversityEvent
 from .coordinate.map_manager import MapManager, run_carla_map
 from .ego_plan import PlanMarkers
+from .maps.source import redacted_url
 from .kinematics.walker_motion import WalkerVelocities, is_walker
 from .utils.traffic_light import traffic_light_state_name
 from .utils.turn_indicator import turn_indicator_state
@@ -299,7 +300,8 @@ class TrajectoryRecorder:
     Args:
         path: The ``.jsonl`` file to write.
         map_source: Where the map came from (the run's ``map.source``), for
-            the ``map`` record.
+            the ``map`` record, which holds it with any credentials in it
+            redacted (:func:`~.maps.source.redacted_url`).
         lanelet2_path: The Lanelet2 map the run read.
         opendrive_path: The OpenDRIVE the run read.
         projector_type: The projection the config overrode the Lanelet2
@@ -321,7 +323,8 @@ class TrajectoryRecorder:
         projector_type: Optional[str] = None,
     ) -> None:
         self.path = path
-        self._map_source = map_source
+        # A log is shared and archived; a token in the source URL is not.
+        self._map_source = None if map_source is None else redacted_url(map_source)
         self._lanelet2_path = lanelet2_path
         self._opendrive_path = opendrive_path
         self._projector_type = projector_type

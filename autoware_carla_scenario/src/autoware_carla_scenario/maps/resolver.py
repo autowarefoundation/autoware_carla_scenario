@@ -11,9 +11,11 @@ from the CARLA asset; :mod:`~autoware_carla_scenario.maps.opendrive` fetches
 that one and leaves it in the map root's ``derived`` directory.
 
 A map already unpacked under the map root -- what Autoware's setup leaves behind
--- is used as it stands.  That shortcut is off for a *pinned* source: a
-directory carries no record of which revision it was downloaded at, so honouring
-it would answer a question about one revision with the bytes of another.
+-- is used as it stands, for a source naming the repository unpacked there
+(:meth:`~...maps.cache.GitMapCache.provisioned`).  That shortcut is off for a
+source naming a commit, *pinned* or abbreviated: a directory carries no record
+of which revision it was downloaded at, so honouring it would answer a question
+about one revision with the bytes of another.
 
 Past that shortcut, every source is pinned.  A branch is replaced by the commit
 it names right now -- :meth:`~...maps.cache.GitMapCache.at_tip` -- so a ref
@@ -283,7 +285,10 @@ def _find_lanelet2(
 def _lanelet2_of(directory: Path, source: MapSource) -> Path:
     """Return the Lanelet2 map *source* names in *directory*."""
     return _find_lanelet2(
-        directory, named=source.path, label=source.uri, where=source.path or "/"
+        directory,
+        named=source.path,
+        label=source.redacted_uri,
+        where=source.path or "/",
     )
 
 
@@ -366,7 +371,7 @@ def resolve_map(
     parsed = source if isinstance(source, MapSource) else MapSource.parse(source)
     if _climbs_out(parsed.directory):
         raise MapResolutionError(
-            f"{parsed.uri} names a directory outside the repository ('..')."
+            f"{parsed.redacted_uri} names a directory outside the repository ('..')."
         )
     store = cache or GitMapCache()
     at_directory = parsed.with_path(parsed.directory)
@@ -374,7 +379,9 @@ def resolve_map(
 
     try:
         directory = (
-            None if (refresh or parsed.pinned) else store.provisioned(at_directory)
+            None
+            if (refresh or parsed.names_commit)
+            else store.provisioned(at_directory)
         )
         if directory is not None:
             return _describe(parsed, directory, derived, provisioned=True)
@@ -407,13 +414,14 @@ def resolve_map(
     try:
         if not directory.is_dir():
             raise MapResolutionError(
-                f"{parsed.uri} does not name a directory in the repository."
+                f"{parsed.redacted_uri} does not name a directory in the repository."
             )
         if not _is_within(repo.worktree, directory):
             # A map directory that is a symlink out of the checkout would make
             # every file check below pass against the link's target.
             raise MapResolutionError(
-                f"{parsed.uri} names a link to a directory outside the repository."
+                f"{parsed.redacted_uri} names a link to a directory outside the "
+                "repository."
             )
         return _describe(parsed, directory, derived, commit=repo.commit)
     except OSError as exc:
@@ -422,7 +430,9 @@ def resolve_map(
 
 def _unreadable(source: MapSource, exc: OSError) -> MapResolutionError:
     """The error for *source*'s map directory raising *exc* when looked at."""
-    return MapResolutionError(f"{source.uri}: map directory cannot be read: {exc}")
+    return MapResolutionError(
+        f"{source.redacted_uri}: map directory cannot be read: {exc}"
+    )
 
 
 def resolve_directory(
@@ -557,7 +567,7 @@ def cached_map(
         # (EACCES) or an I/O error instead of answering False.  A map that
         # cannot be looked at is not one the machine has; resolve_map, which
         # the caller is sent to next, says why (#1974).
-        logger.warning("Map %s cannot be looked up", parsed.uri, exc_info=True)
+        logger.warning("Map %s cannot be looked up", parsed.redacted_uri, exc_info=True)
         return None
 
 
@@ -569,7 +579,7 @@ def _cached_map(
     at_directory = parsed.with_path(parsed.directory)
     derived = store.derived_dir(at_directory)
 
-    directory = None if parsed.pinned else store.provisioned(at_directory)
+    directory = None if parsed.names_commit else store.provisioned(at_directory)
     provisioned = directory is not None
     commit = ""
     if directory is None:
@@ -639,8 +649,8 @@ def pin_source(
     resolved = resolve_map(parsed, cache=cache, refresh=refresh)
     if not resolved.commit:
         raise MapResolutionError(
-            f"{parsed.uri} resolved to a copy already on disk, which records no "
-            "revision, so it cannot be pinned. Refresh it to clone the "
+            f"{parsed.redacted_uri} resolved to a copy already on disk, which "
+            "records no revision, so it cannot be pinned. Refresh it to clone the "
             "repository and read the commit from git."
         )
     return parsed.at(resolved.commit).uri

@@ -485,12 +485,24 @@ def own_map_mismatch(document: ScenarioDocument, map_config: Any) -> str | None:
         return None
     if want_directory is not None:
         return (
-            f"map.directory is unset (map.source {source!r}), not the "
+            f"map.directory is unset (map.source {_shown(source)!r}), not the "
             f"document's {want_directory!r}"
         )
     if not _same_source(source, want_source):
-        return f"map.source is {source!r}, not the document's {want_source!r}"
+        return (
+            f"map.source is {_shown(source)!r}, not the document's "
+            f"{_shown(want_source)!r}"
+        )
     return None
+
+
+def _shown(source: str | None) -> str | None:
+    """*source* as a message shows it: any credentials in it redacted."""
+    if source is None:
+        return None
+    from ..maps.source import redacted_url  # noqa: PLC0415
+
+    return redacted_url(source)
 
 
 def _same_source(source: str | None, want: str | None) -> bool:

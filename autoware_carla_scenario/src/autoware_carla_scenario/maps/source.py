@@ -17,12 +17,19 @@ is chosen by what exists on disk (see :func:`_split_trailing_ref`).  A ref that
 is a full commit hash *pins* the map -- the same URI names the same bytes forever, which is what makes a
 scenario's result reproducible -- so :meth:`MapSource.pinned` is what the rest
 of this package asks before taking any shortcut that could hand back a different
-revision.
+revision.  A full hash is kept in lower case, as git spells the commit.  An
+abbreviated one is a ref like a branch: the cache expands it to the commit it
+names (:meth:`~...maps.cache.GitMapCache.at_tip`).
 
 :meth:`MapSource.parse` also accepts the ``/tree/<ref>/<path>`` URLs of both
 hosts (and GitHub's ``/blob/``, HuggingFace's ``/resolve/``), and GitLab's
 ``/-/tree/``, ``/-/blob/`` and ``/-/raw/`` ones, subgroups included.  Pasting the page
-you are looking at is the intended way in.
+you are looking at is the intended way in, so the anchor such a page's URL may
+end in (``#L10``, ``#readme``) is not taken for a path.
+
+A repository URL may carry credentials (``https://oauth2:TOKEN@host/...``).
+:func:`redacted_url` is what every message, log line and file of this package
+writes instead of the URL itself.
 """
 
 from __future__ import annotations
@@ -32,7 +39,7 @@ import re
 from dataclasses import dataclass
 from urllib.parse import unquote, urlsplit, urlunsplit
 
-__all__ = ["MapSource", "MapSourceError"]
+__all__ = ["MapSource", "MapSourceError", "redacted_url", "url_without_password"]
 
 
 class MapSourceError(ValueError):
@@ -70,6 +77,109 @@ _SCP_HOST = re.compile(r"^[A-Za-z0-9_.+-]+@[A-Za-z0-9_.-]+:")
 #: A full git object name.  Abbreviated hashes are deliberately not pins: they
 #: are not guaranteed to stay unambiguous as a repository grows.
 _FULL_COMMIT = re.compile(r"^[0-9a-fA-F]{40}$")
+
+#: What could be an abbreviated commit hash: git takes no fewer than four
+#: digits.  A branch or a tag can be spelled so as well, and is what such a
+#: ref names when the remote has one.
+_ABBREVIATED_COMMIT = re.compile(r"^[0-9a-fA-F]{4,39}$")
+
+#: The fragment of a browser page's URL that is an anchor on the page rather
+#: than a path in the repository, matched in lower case: a line or a range of
+#: them (GitHub's ``#L10``, ``#L10-L20``, ``#L10C2-L12C5``) and a README's
+#: (``#readme``, ``#readme-ov-file``, a heading's ``#user-content-...``).
+_PAGE_ANCHOR = re.compile(
+    r"^(l[0-9]+(c[0-9]+)?(-l[0-9]+(c[0-9]+)?)?|readme|readme-ov-file|user-content-.*)$"
+)
+
+#: What redacted credentials read as.
+_REDACTED = "***"
+
+#: The schemes whose user name alone can be a secret: a token can stand in
+#: for it (``https://TOKEN@github.com/...``).  An ssh user name is not one.
+_TOKEN_USER_SCHEMES = ("http", "https", "git+http", "git+https", "ftp", "ftps")
+
+#: Characters that end a URL's authority (``user@host:port``) in a text.
+_AUTHORITY_END = "/?# \t\r\n'\"<>"
+
+
+def _scheme_before(text: str, mark: int) -> str:
+    """The scheme that ends at *mark* (the ``://`` at that index) in *text*."""
+    start = mark
+    while start > 0 and (text[start - 1].isalnum() or text[start - 1] in "+.-"):
+        start -= 1
+    return text[start:mark]
+
+
+def _rewrite_userinfo(text: str, redact: bool) -> str:
+    """*text* with the userinfo of every ``scheme://user:password@host`` in it
+    rewritten.
+
+    With *redact*, a password becomes ``***``, and so does a user name with
+    no password where a token can stand in for one (:data:`_TOKEN_USER_SCHEMES`).
+    Without, only the password goes, with its ``:``.
+    """
+    pieces: list[str] = []
+    start = 0
+    while True:
+        mark = text.find("://", start)
+        if mark == -1:
+            break
+        authority_start = mark + 3
+        end = authority_start
+        while end < len(text) and text[end] not in _AUTHORITY_END:
+            end += 1
+        authority = text[authority_start:end]
+        at = authority.rfind("@")
+        pieces.append(text[start:authority_start])
+        if at == -1:
+            pieces.append(authority)
+        else:
+            userinfo = authority[:at]
+            user, colon, _ = userinfo.partition(":")
+            if not redact:
+                rewritten = user
+            elif colon:
+                rewritten = f"{user}:{_REDACTED}"
+            elif _scheme_before(text, mark).lower() in _TOKEN_USER_SCHEMES:
+                rewritten = _REDACTED
+            else:
+                rewritten = userinfo
+            pieces.append(rewritten + authority[at:])
+        start = end
+    pieces.append(text[start:])
+    return "".join(pieces)
+
+
+def redacted_url(text: str) -> str:
+    """*text* -- a URL, or a message holding some -- safe to show or write.
+
+    The password of every ``scheme://user:password@host`` becomes ``***``, as
+    does an http(s) user name with no password, which is how a token is
+    often passed (``https://TOKEN@github.com/...``).  An ssh user name
+    (``ssh://git@host``, ``git@host:o/r``) is kept: it is not a secret.  A
+    URL without credentials comes back unchanged.
+    """
+    return _rewrite_userinfo(text, True)
+
+
+def url_without_password(url: str) -> str:
+    """*url* without the password of its userinfo, the user name kept.
+
+    What a cache entry is keyed on: the same repository reached with another
+    token is the same entry, and a URL with no password -- every URL the
+    cache was keyed on before -- is its own key, unchanged.
+    """
+    return _rewrite_userinfo(url, False)
+
+
+def looks_like_commit(ref: str) -> bool:
+    """Whether *ref* is spelled like a commit hash, full or abbreviated."""
+    return bool(_ABBREVIATED_COMMIT.match(ref)) or bool(_FULL_COMMIT.match(ref))
+
+
+def _canonical_ref(ref: str) -> str:
+    """*ref*, a full commit hash in lower case as git spells it."""
+    return ref.lower() if _FULL_COMMIT.match(ref) else ref
 
 
 #: Characters ``git check-ref-format`` refuses anywhere in a ref name.
@@ -257,6 +367,21 @@ def _normalise_web_url(url: str) -> tuple[str, str, str]:
     return repo_url, ref, path
 
 
+def _is_page_anchor(url: str, fragment: str, web_ref: str) -> bool:
+    """Whether *fragment* of the browser URL *url* is an anchor, not a path.
+
+    Only an ``http(s)`` URL is a page.  On a web view of a ref
+    (``/tree/<ref>/...``, *web_ref* found) the page's own path names the
+    directory, so any fragment is the page's; on any other page, only one
+    :data:`_PAGE_ANCHOR` matches -- ``https://example.com/maps.git#town``
+    still names ``town``.
+    """
+    scheme = url.split("://", 1)[0].lower() if "://" in url else ""
+    if scheme not in ("http", "https"):
+        return False
+    return bool(web_ref) or bool(_PAGE_ANCHOR.match(fragment.lower()))
+
+
 def _is_repository(url: str) -> bool:
     """Whether *url* is something git could clone.
 
@@ -299,7 +424,8 @@ class MapSource:
         # where it was written rather than in the middle of a fetch (#1848).
         if self.repo_url.startswith("-"):
             raise MapSourceError(
-                f"{self.repo_url!r} is not a repository URL: it begins with '-'."
+                f"{redacted_url(self.repo_url)!r} is not a repository URL: it "
+                "begins with '-'."
             )
         if self.ref:
             problem = _ref_problem(self.ref)
@@ -321,7 +447,8 @@ class MapSource:
         text = (uri or "").strip()
         if not text:
             raise MapSourceError("A map source needs a repository URL.")
-        if text.startswith("git+"):
+        written_as_source = text.startswith("git+")
+        if written_as_source:
             text = text[len("git+") :]
 
         path = ""
@@ -334,18 +461,26 @@ class MapSource:
         text, ref = _split_trailing_ref(text)
         if not ref and len(text) < len(written):
             # `repo@` with nothing after it: a ref was meant, and none given.
-            raise MapSourceError(f"{uri!r} has an '@' but names no ref after it.")
+            raise MapSourceError(
+                f"{redacted_url(uri)!r} has an '@' but names no ref after it."
+            )
         repo_url, web_ref, web_path = _normalise_web_url(text)
+        if path and not written_as_source and _is_page_anchor(text, path, web_ref):
+            path = ""
         ref = ref or web_ref
         path = path.strip("/") or web_path
 
         if not _is_repository(repo_url):
             raise MapSourceError(
-                f"{uri!r} is not a repository URL. Expected something like "
-                "https://huggingface.co/datasets/OWNER/NAME@REF#PATH"
+                f"{redacted_url(uri)!r} is not a repository URL. Expected "
+                "something like https://huggingface.co/datasets/OWNER/NAME@REF#PATH"
             )
 
-        return cls(repo_url=repo_url.rstrip("/"), ref=ref, path=path.strip("/"))
+        return cls(
+            repo_url=repo_url.rstrip("/"),
+            ref=_canonical_ref(ref),
+            path=path.strip("/"),
+        )
 
     # -- rendering ------------------------------------------------------
 
@@ -360,6 +495,14 @@ class MapSource:
         return text
 
     @property
+    def redacted_uri(self) -> str:
+        """:attr:`uri` with its credentials redacted (:func:`redacted_url`).
+
+        What a message or a log line names the source by.
+        """
+        return redacted_url(self.uri)
+
+    @property
     def pinned(self) -> bool:
         """Whether this source names one immutable revision.
 
@@ -369,9 +512,21 @@ class MapSource:
         """
         return bool(_FULL_COMMIT.match(self.ref))
 
+    @property
+    def names_commit(self) -> bool:
+        """Whether the ref is spelled like a commit hash, full or abbreviated.
+
+        An abbreviated hash is not :attr:`pinned` -- the cache still has to
+        find the commit it abbreviates -- but it names one revision all the
+        same, so nothing that ignores the ref may answer for it.
+        """
+        return looks_like_commit(self.ref)
+
     def at(self, ref: str) -> "MapSource":
         """Return this source pinned to *ref*."""
-        return MapSource(repo_url=self.repo_url, ref=ref, path=self.path)
+        return MapSource(
+            repo_url=self.repo_url, ref=_canonical_ref(ref), path=self.path
+        )
 
     @property
     def repo_name(self) -> str:
@@ -405,3 +560,12 @@ class MapSource:
 
     def __str__(self) -> str:
         return self.uri
+
+    def __repr__(self) -> str:
+        # The dataclass's own repr, with the repository URL redacted: a repr
+        # lands in tracebacks, log lines and test reports.  A dataclass keeps
+        # a __repr__ the class defines.
+        return (
+            f"MapSource(repo_url={redacted_url(self.repo_url)!r}, "
+            f"ref={self.ref!r}, path={self.path!r})"
+        )

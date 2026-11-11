@@ -69,10 +69,45 @@ there the filesystem decides:
 To take the filesystem out of it, write the `@` of a directory name as `%40`
 in a `file://` URL (`file:///srv/maps%402/repo@main`); git decodes it.
 
+A full commit hash is stored in lower case, as git spells it, so
+`@DEA2CFEA...` and `@dea2cfea...` are one pin and one cache entry.
+
+An **abbreviated commit hash** (4 to 39 hex digits, `@dea2cfe`) works too: when
+the remote has no branch or tag of that name, the commits of its branches and
+tags are fetched (commits only, where the server can filter) and the one the
+abbreviation names is used, exactly as a branch is resolved to its commit. The
+answer is remembered beside the cache entry and, since the commit an
+abbreviation names never moves, used from then on without asking the remote
+again: a sweep over it looks the commits up once, and it resolves offline.
+Once expanded, an abbreviation **stays pinned to that commit** on this machine,
+even if the repository later gains another commit it abbreviates: only a
+machine that has not expanded it yet reports it as ambiguous.
+An abbreviation is matched in any case, but kept as written in the source: a
+branch may be spelled with hex digits, and `CAFE` and `cafe` are two
+branches. An abbreviation that matches no commit, or several, is an error
+saying so; a commit reachable only from another ref (a pull request's) needs
+its full hash. An abbreviation is not a pin -- it can grow ambiguous as the
+repository does -- so **Pin to commit** rewrites it to the full hash; like a
+pin, it never resolves to an unpacked directory (see below). Neither does a
+branch or tag whose name is 4 or more hex digits (`@cafe`, `@2024`): it is
+spelled like an abbreviation, and the shortcut cannot tell it from one.
+
+A repository URL may carry credentials (`https://oauth2:TOKEN@host/o/r`).
+They are passed to git as written, but every log line, error message and
+`meta.json` / `.tip.json` this framework writes shows them redacted
+(`https://oauth2:***@host/o/r`; an http(s) user name with no password, which
+is how a token is often passed, as `***`). The cache entry is keyed on the URL
+without its password, so a replaced token reuses the entry, and **Refresh**
+fetches with the token now in the source.
+
 The URL you actually have is the one in your browser's address bar, and that is
 accepted as-is and normalised — GitHub's `/tree/<ref>/<path>` and HuggingFace's
 `/tree/`, `/resolve/` and `/raw/` forms all parse. Paste the page you are
-looking at.
+looking at. The anchor such a URL may end in is the page's, not a path: on a
+`/tree/`, `/blob/` (or other view) URL the view's own path wins over any `#`,
+and on any other `https://` page a line anchor (`#L10`, `#L10-L20`) or a
+README's (`#readme`, `#readme-ov-file`, `#user-content-...`) is dropped. A
+source written with `git+` takes its `#PATH` as written.
 
 Any git server works: HuggingFace, GitHub, GitLab, an internal host, a
 `file://` path on a shared filesystem.
@@ -92,7 +127,10 @@ autoware_maps/Town10HD_Opt
 Only the files this framework reads are pulled out of git-lfs — the `.osm`, the
 `.xodr` if there is one, and the YAML beside them. The point cloud stays a
 pointer file of a few hundred bytes, which is what keeps fetching a 2 MB map
-from costing 22 MB.
+from costing 22 MB. `git lfs pull` runs only while one of those files is still
+a pointer -- not for a repository without LFS, and not on **Refresh** or **Pin
+to commit** when nothing changed -- so git-lfs is needed only for a map that
+keeps its files in LFS, and then a missing one is reported as such.
 
 A repository can carry symlinks, so each file is checked for where it really
 is. The `.osm`, the `.xodr` and `map_projector_info.yaml` are used only when
@@ -168,6 +206,27 @@ and a source naming that path resolves to it in about a millisecond, cloning
 nothing. A map this framework did fetch itself lands under `.repos/` in the same
 root, so the two never collide and the copy Autoware provisioned always wins.
 
+An unpacked directory records no origin, and another repository can keep a map
+at the same path, so the shortcut is taken only for a source naming a
+repository that was unpacked there: the dataset Autoware's setup downloads
+(`https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps`, however
+it is spelled -- with or without `.git`, a user name or a trailing `/`). A root
+that holds another dataset says so in a `.provisioned_from` file, one
+repository URL per line (blank lines and `#` comments ignored), which then
+replaces that default:
+
+```console
+$ cat ~/autoware_data/maps/.provisioned_from
+# Unpacked here by our own setup
+https://huggingface.co/datasets/OUR_ORG/our-maps
+```
+
+An empty `.provisioned_from` (or one holding only comments) lists no
+repository, which turns the shortcut off for that root. A source naming any
+other repository is cloned under `.repos/`, whatever is unpacked at its path;
+the log says so once per directory, at INFO, naming the file to list the
+repository in.
+
 Nothing re-reads a map's *contents* over the network once it is cached;
 `refresh` is the only way to make it fetch again.
 
@@ -178,6 +237,35 @@ rather than replacing it, so a map resolved earlier -- held by the editor, a
 running case or a sweep over both -- keeps its files. The repository root (a
 source with no `#path`) checks the whole tree out. The entry's `meta.json`
 lists every directory checked out in it under `materialised`.
+
+That holds across processes too -- a sweep or a SLURM array resolving several
+towns of one dataset at once, the editor beside a run. Every clone, fetch and
+checkout of an entry is made holding its lock file (`<entry>.lock` beside it
+under `.repos/`, taken with `flock`), so a second process waits for the first
+and then adds its own directory. Each directory is checked out by a pattern
+anchored at the repository root (`/Town10HD_Opt`), so `#Town10HD_Opt` does
+not also bring a directory of the same name deeper in the tree. The lock file is close-on-exec, and a process
+forked while it is held lets go of its copy at once, so a child never keeps an
+entry locked.
+
+The lock is only as good as the filesystem's `flock`:
+
+- Where it cannot be taken at all (no `fcntl`, a read-only root, a filesystem
+  that refuses `flock`), a warning says so once and the entry is changed
+  without it. That is **best effort**: git's own lock files are retried, but
+  two processes can still race and one lose its directory.
+- On NFS mounted with `nolock`, `flock` succeeds but is local to each node:
+  processes on one host exclude each other, processes on different hosts do
+  not, and nothing warns. A SLURM array whose tasks run on several nodes over
+  one shared cache root should either give each node a cache root of its own
+  on local disk (`AUTOWARE_CARLA_SCENARIO_MAP_CACHE`), or resolve its maps
+  once, serially, before the array starts (a `resolve_map` per map in the
+  submitting job), so the tasks find them checked out and change nothing.
+
+The cache needs **git 2.27 or later** (`git sparse-checkout add`, and a
+sparse checkout that may hold nothing yet), so Ubuntu 22.04's 2.34 is enough:
+it writes an entry's sparse-checkout file and settings itself rather than use
+`sparse-checkout set --no-cone`, which only git 2.35 takes.
 
 One question is asked, though, and it is asked before anything is fetched: when
 the ref is a branch, a single `git ls-remote` resolves it to the commit it
@@ -367,6 +455,8 @@ without one. A map whose CARLA assets need it installed is run with
 | --- | --- |
 | `git is not installed` | The cache clones with `git`; install it. |
 | A map resolves but the `.osm` is a few hundred bytes | git-lfs did not pull it. Install `git-lfs`, then **Refresh**. |
+| `holds git-lfs pointers in place of its map files, and git-lfs is not installed` | The map keeps its files in LFS. Install `git-lfs` (and put it on `PATH`), then resolve it again. |
+| `is ambiguous in` / `names no branch, tag or commit in` | An abbreviated commit hash matches several commits, or none of the remote's branches and tags. Write more of it, or the full hash. |
 | `does not name a directory in the repository` | The `#path` is wrong for that ref. Browse the repository in the Map library. |
 | `names a directory outside the repository` / `names a link to a directory outside the repository` | The `#path` contains `..`, or is a symlink leading out of the checkout. Point it at the real directory. |
 | `map directory cannot be read` | The `#path` names a directory the process cannot look at under the map root: a path component longer than the file system allows, a permission it lacks, or an I/O error. The editor shows the map as not downloaded. |
