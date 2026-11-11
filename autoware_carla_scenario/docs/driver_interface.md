@@ -8,8 +8,8 @@ The wire contract is alpasim's `egodriver.EgodriverService`. Its policy side is
 [**`carla-driver-interface`**](https://github.com/hakuturu583/carla_driver_interface)
 (2.x), a light package (grpcio, protobuf, numpy, Pillow; Python 3.10+) a policy
 depends on without pulling in the scenario framework. It is versioned on its own: the
-framework accepts any `carla-driver-interface>=2.1,<3`, so a policy and a scenario
-package can share an environment whenever their majors agree.
+framework requires `carla-driver-interface>=2.4.2,<3`, so a policy and a scenario
+package can share an environment when the policy accepts 2.4.2 or a later 2.x.
 
 A policy run as a separate process may be on another major. Each side declares the
 **contract revision** it speaks (carla-driver-interface's major) in gRPC metadata, and
@@ -123,10 +123,8 @@ copied through the loopback twice per step). The one difference is a deadline
 (`driver.timeout_s`): the policy runs on the run's own thread, so an overrun is
 reported when its call returns rather than cut short.
 
-`unix` with `driver.policy` and `direct` need carla-driver-interface 2.2 or later;
-with an older one the run stops as it sets up, naming the installed version, and
-`tcp` keeps working. Under the SLURM launcher every task serves its own policy, so
-neither uses a port of its slot ([slurm.md](slurm.md)).
+Under the SLURM launcher every task serves its own policy, so neither `unix` nor
+`direct` uses a port of its slot ([slurm.md](slurm.md)).
 
 `ScenarioRunner` logs `Autopilot skipped for ego (id=…) — external control expected`
 when the policy has taken over. Pass and fail conditions, recording, the trajectory log,
@@ -622,6 +620,15 @@ The map's `local_x` / `local_y` must be the `local` frame (CARLA's world with y
 mirrored, as carla-ue5-maps' are). Nothing checks that the file and the world's
 OpenDRIVE describe the same roads in the same frame.
 
+roadgen validates the OpenDRIVE before it writes any format and has no option to skip
+that: a map it refuses (`ValueError: the map failed validation (N issues): ...`) ends
+the run at scenario start, before the driver session opens. The nishishinjuku fixture
+map (`data/nishishinjuku_carla.xodr`) is one (#2065, [metrics.md](metrics.md)). On such
+a map, hand the policy its Lanelet2 map with `driver.lanelet2_path`: with the default
+`driver.map_formats: [lanelet2]` nothing is left for roadgen to convert, so it is not
+run at all (the set's IR and read trace are left empty). Any other format in
+`driver.map_formats` still goes through roadgen, and fails the same way.
+
 ### Diagnostics coming back
 
 `DriveResponse.debug_info.unstructured_debug_info` is decoded as
@@ -800,28 +807,16 @@ server.
 
 ## Protobuf definitions
 
-The protobuf definitions are **vendored**, not installed, in `carla_driver_interface`.
-alpasim's published `alpasim-grpc` requires Python ≥ 3.11, while this workspace supports
-3.10 onwards -- Autoware's own environment is 3.10 -- so depending on it would drop 3.10
-support. Instead the `.proto` files are copied verbatim from two upstreams (both
-Apache-2.0) and compiled locally:
+The alpasim `egodriver` contract and its CARLA extension payloads (`carla_driver.v0`)
+are not compiled here: carla-driver-interface vendors their `.proto` files, generates
+the Python modules and checks them, and the framework imports them from
+`carla_driver_interface.protocol`. Its own documentation gives their provenance.
 
-| Proto | Source | Carries |
-| --- | --- | --- |
-| `alpasim_grpc/v0/*` | `NVlabs/alpasim@6870924` | The `egodriver` service and its messages |
-| `carla_driver/v0/*` | `hakuturu583/carla_driver_interface@af1dcd3` | The CARLA extension payloads |
-
-Field numbers, package names, and import paths are preserved exactly, which is what
-keeps the messages wire compatible.
-
-Regenerate the committed modules after updating the vendored protos:
-
-```bash
-uv run python autoware_carla_scenario/scripts/compile_protos.py
-```
-
-`test_proto_generated.py` fails if the committed output drifts from the `.proto` files.
-See `carla_driver_interface/proto/README.md` for the full provenance.
+`autoware_carla_scenario/scripts/compile_protos.py` compiles only the contracts this
+repository owns or vendors itself -- `AutowareBridge`, tier4/e2e-devkit's T4Scene and
+`PedestrianMotion` -- and `test_proto_generated.py` fails if their committed modules
+drift from the `.proto` files (`compile_protos.py --check` runs the same check). See
+`autoware_carla_scenario/proto/README.md`.
 
 ## Limitations
 

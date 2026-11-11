@@ -16,7 +16,6 @@ from __future__ import annotations
 
 import atexit
 import functools
-import importlib
 import logging
 import os
 import shutil
@@ -34,8 +33,6 @@ from carla_driver_interface.contract import (
     contract_metadata,
     negotiate,
 )
-import carla_driver_interface
-from carla_driver_interface import server as _cdi_server
 from carla_driver_interface.driver import BaseDriver
 from carla_driver_interface.geometry import body_to_optical
 from carla_driver_interface.policies import load_policy
@@ -86,10 +83,6 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         channel: Pre-built channel to use instead of dialling
             :attr:`DriverClientConfig.address`.  Intended for tests, which run the
             policy in-process.
-
-    Raises:
-        RuntimeError: ``config.transport`` serves ``config.policy`` in a way the
-            installed carla-driver-interface cannot (``unix``, ``direct``: 2.2+).
     """
 
     def __init__(
@@ -98,9 +91,6 @@ class EgoDriverGrpcClient(BaseEgoDriverClient):
         channel: Optional[grpc.Channel] = None,
     ) -> None:
         super().__init__(config)
-        if channel is None and config.policy is not None and config.transport != "tcp":
-            # Now, while the run sets up, rather than at its first scenario.
-            _require_in_process_support(config.transport)
         self._owns_channel = channel is None
         self._channel: Optional[grpc.Channel] = channel
         self._stub: Optional[egodriver_pb2_grpc.EgodriverServiceStub] = None
@@ -474,16 +464,8 @@ def _vec3(values: NDArray[np.float64]) -> common_pb2.Vec3:
     return common_pb2.Vec3(x=array[0], y=array[1], z=array[2])
 
 
-#: The carla-driver-interface release the in-process transports first ship in.
-_IN_PROCESS_RELEASE = "2.2"
-
-
 def _open_channel(config: DriverClientConfig) -> tuple[grpc.Channel, str]:
-    """A channel to the configured policy over ``config.transport``, and where it is.
-
-    Raises:
-        RuntimeError: The transport needs a newer carla-driver-interface.
-    """
+    """A channel to the configured policy over ``config.transport``, and where it is."""
     if config.policy is None:
         # A policy in a process of its own, at a TCP or a unix: address.
         return (
@@ -497,24 +479,6 @@ def _open_channel(config: DriverClientConfig) -> tuple[grpc.Channel, str]:
     else:
         target = f"localhost:{_serve_in_process(config.policy)}"
     return grpc.insecure_channel(target, options=channel_options()), target
-
-
-def _require_in_process_support(transport: str) -> None:
-    """Refuse *transport* on a carla-driver-interface that cannot serve it, saying why."""
-    try:
-        importlib.import_module("carla_driver_interface.inprocess")
-    except ImportError:
-        supported = False
-    else:
-        supported = hasattr(_cdi_server, "bind_address")
-    if not supported:
-        raise RuntimeError(
-            f"driver.transport={transport} with driver.policy needs "
-            f"carla-driver-interface>={_IN_PROCESS_RELEASE}, which serves a policy "
-            "on a Unix socket and in-process; this environment has "
-            f"{carla_driver_interface.__version__}. Upgrade it, or use "
-            "driver.transport=tcp."
-        )
 
 
 @functools.lru_cache(maxsize=None)
@@ -548,7 +512,6 @@ def _serve_on_unix_socket(spec: str) -> str:
     In a directory of its own (``0700``, under ``$TMPDIR``), so runs sharing a node
     -- SLURM tasks, say -- never share a socket, and nothing else can dial it.
     """
-    _require_in_process_support("unix")
     # Loaded before the directory exists: a policy that fails to load leaves none.
     policy = _policy(spec)
     directory = tempfile.mkdtemp(prefix="acs-policy-")
@@ -573,7 +536,6 @@ def _serve_on_unix_socket(spec: str) -> str:
 @functools.lru_cache(maxsize=None)
 def _in_process_servicer(spec: str) -> EgodriverServicer:
     """The servicer a server for *spec* would run, for the direct transport. Once per run."""
-    _require_in_process_support("direct")
     logger.info("Serving policy %r in this process, called directly", spec)
     return EgodriverServicer(_policy(spec))
 
