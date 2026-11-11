@@ -1002,7 +1002,11 @@ register_action_spec(
                 unit="%",
                 minimum=0.0,
                 maximum=100.0,
-                help="Rain intensity.",
+                help=(
+                    "Rain intensity.  Rain wets the road: with Wetness and "
+                    "Standing water empty, they follow the rain by the "
+                    "weather rules, and the vehicles' grip with them."
+                ),
             ),
             FieldSpec(
                 name="precipitation_deposits",
@@ -1055,6 +1059,7 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="m",
+                minimum=0.0,
                 help="How far away the fog starts.",
             ),
             FieldSpec(
@@ -1064,6 +1069,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="deg",
+                minimum=-90.0,
+                maximum=90.0,
                 help="Degrees above the horizon; negative is night.",
             ),
             FieldSpec(
@@ -1073,6 +1080,8 @@ register_action_spec(
                 default=None,
                 required=False,
                 unit="deg",
+                minimum=0.0,
+                maximum=360.0,
                 help="Compass direction of the sun.",
             ),
         ),

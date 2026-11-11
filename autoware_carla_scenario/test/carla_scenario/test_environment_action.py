@@ -23,6 +23,7 @@ from autoware_carla_scenario.actions.environment import (
     forget_weather_conditions,
     tire_friction,
     tire_friction_range,
+    world_tire_friction,
 )
 
 
@@ -210,15 +211,43 @@ class TestRefusedValues:
         assert EnvironmentAction(**_given(name, 0.0)).settings[name] == 0.0
         assert EnvironmentAction(**_given(name, 100.0)).settings[name] == 100.0
 
-    def test_unbounded_fields_take_any_finite_value(self) -> None:
+    def test_the_fog_distance_and_the_sun_take_carlas_ranges(self) -> None:
         settings = EnvironmentAction(
-            fog_distance=-5.0, sun_altitude_angle=-90.0, sun_azimuth_angle=720.0
+            fog_distance=0.0, sun_altitude_angle=-90.0, sun_azimuth_angle=360.0
         ).settings
         assert settings == {
-            "fog_distance": -5.0,
+            "fog_distance": 0.0,
             "sun_altitude_angle": -90.0,
-            "sun_azimuth_angle": 720.0,
+            "sun_azimuth_angle": 360.0,
         }
+        assert EnvironmentAction(fog_distance=1e6).settings["fog_distance"] == 1e6
+        assert EnvironmentAction(sun_altitude_angle=90.0).settings == {
+            "sun_altitude_angle": 90.0
+        }
+        assert EnvironmentAction(sun_azimuth_angle=0.0).settings == {
+            "sun_azimuth_angle": 0.0
+        }
+
+    @pytest.mark.parametrize("value", [-0.001, -100.0])
+    def test_a_negative_fog_distance_is_refused(self, value: float) -> None:
+        """#2063: passed to CARLA unchanged."""
+        with pytest.raises(ValueError, match="fog_distance must not be negative"):
+            EnvironmentAction(fog_distance=value)
+
+    @pytest.mark.parametrize("value", [-90.001, 90.001, 500.0, -500.0])
+    def test_a_sun_altitude_outside_90_is_refused(self, value: float) -> None:
+        with pytest.raises(
+            ValueError, match=r"sun_altitude_angle must be within \[-90, 90\]"
+        ):
+            EnvironmentAction(sun_altitude_angle=value)
+
+    @pytest.mark.parametrize("value", [-0.001, 360.001, 720.0, -720.0])
+    def test_a_sun_azimuth_outside_0_360_is_refused(self, value: float) -> None:
+        """Refused, not wrapped (#2063)."""
+        with pytest.raises(
+            ValueError, match=r"sun_azimuth_angle must be within \[0, 360\]"
+        ):
+            EnvironmentAction(sun_azimuth_angle=value)
 
     def test_a_negative_rainfall_rate_or_no_fog_visibility_is_refused(self) -> None:
         with pytest.raises(ValueError, match="rainfall_rate_mm_h must not be negative"):
@@ -263,6 +292,21 @@ class TestTheEnvironmentConfig:
             ValueError, match=r"^environment\.fog_density must be finite, got -?1000+$"
         ):
             self._add({"fog_density": value})
+
+    @pytest.mark.parametrize(
+        "key, value, message",
+        [
+            ("fog_distance", -100, "must not be negative"),
+            ("sun_altitude_angle", 500, r"must be within \[-90, 90\]"),
+            ("sun_azimuth_angle", -720, r"must be within \[0, 360\]"),
+        ],
+    )
+    def test_fog_and_sun_out_of_range_name_the_key(
+        self, key: str, value: float, message: str
+    ) -> None:
+        """#2063: passed to CARLA unchanged."""
+        with pytest.raises(ValueError, match=rf"^environment\.{key} {message}"):
+            self._add({key: value})
 
     def test_a_share_out_of_range_names_the_key(self) -> None:
         with pytest.raises(
@@ -400,6 +444,72 @@ class TestTireFriction:
     def test_a_dry_road_at_its_middle_leaves_the_vehicles_alone(self) -> None:
         world = _world_with(_Vehicle(1))
         EnvironmentAction(wetness=0.0, precipitation_deposits=0.0).execute(world)
+        assert world.fleet[0].applied == 0
+
+    def test_rain_alone_wets_the_road_and_sets_the_grip(self) -> None:
+        """#2063: the rules' water for the rain, as the config's gets."""
+        action = EnvironmentAction(precipitation=100.0)
+        assert action.sets_tire_friction
+        world = _world_with(_Vehicle(1))
+        action.execute(world)
+        weather = _applied(world)
+        assert weather.precipitation == pytest.approx(100.0)
+        assert weather.wetness == pytest.approx(97.5)
+        assert weather.precipitation_deposits == pytest.approx(90.0)
+        assert world.fleet[0].frictions == pytest.approx([3.5 * 0.56] * 4)
+        assert world_tire_friction(world.id) == pytest.approx(0.56)
+        # What the action was given is unchanged.
+        assert action.settings == {"precipitation": 100.0}
+
+    def test_stopping_the_rain_dries_the_road_at_once(self) -> None:
+        """#2063: as a config's ``precipitation: 0`` does (docs/odd.md)."""
+        world = _world_with(_Vehicle(1))
+        EnvironmentAction(precipitation=100.0).execute(world)
+        assert world.fleet[0].frictions == pytest.approx([3.5 * 0.56] * 4)
+        EnvironmentAction(precipitation=0.0).execute(world)
+        weather = world.set_weather.call_args[0][0]
+        assert (weather.wetness, weather.precipitation_deposits) == (0.0, 0.0)
+        assert world.fleet[0].frictions == pytest.approx([3.5] * 4)
+
+    def test_rain_gives_the_grip_the_config_gives(self) -> None:
+        """The same rain, set by the config or by an action, the same grip."""
+        from omegaconf import OmegaConf
+
+        from autoware_carla_scenario.examples.run import add_environment
+
+        registered: list = []
+        scenario = SimpleNamespace(register_init=registered.append)
+        add_environment(
+            OmegaConf.create({"environment": {"precipitation": 100}}),
+            scenario,  # type: ignore[arg-type]
+        )
+        (configured,) = registered
+        by_config = _world_with(_Vehicle(1))
+        configured.execute(by_config)
+        by_action = _world_with(_Vehicle(1))
+        EnvironmentAction(precipitation=100.0).execute(by_action)
+        for field in ("precipitation", "wetness", "precipitation_deposits"):
+            assert getattr(_applied(by_action), field) == pytest.approx(
+                getattr(_applied(by_config), field)
+            )
+        assert by_action.fleet[0].frictions == pytest.approx(
+            by_config.fleet[0].frictions
+        )
+
+    def test_water_given_wins_over_the_rains(self) -> None:
+        world = _world_with(_Vehicle(1))
+        EnvironmentAction(precipitation=100.0, wetness=10.0).execute(world)
+        weather = _applied(world)
+        assert weather.wetness == pytest.approx(10.0)
+        # The one not given still follows the rain.
+        assert weather.precipitation_deposits == pytest.approx(90.0)
+
+        world = _world_with(_Vehicle(1))
+        EnvironmentAction(
+            precipitation=100.0, wetness=0.0, precipitation_deposits=0.0
+        ).execute(world)
+        weather = _applied(world)
+        assert (weather.wetness, weather.precipitation_deposits) == (0.0, 0.0)
         assert world.fleet[0].applied == 0
 
     def test_puddles_alone_set_the_grip(self) -> None:

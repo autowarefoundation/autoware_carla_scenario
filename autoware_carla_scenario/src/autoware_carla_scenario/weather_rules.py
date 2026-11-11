@@ -82,6 +82,7 @@ __all__ = [
     "custom_rules_in_use",
     "default_rules",
     "resolve_environment",
+    "road_water",
     "rule_values",
     "use_weather_rules",
     "vehicle_at",
@@ -329,19 +330,42 @@ def resolve_environment(
         RulesError: When the rules cannot give a quantity at the values given
             (a cause they do not know, a label they are not written at).
     """
-    rules = _backend().active_rules
+    if _backend().active_rules is None:
+        return dict(settings)
+    out, causes = _work_out(settings, quantiles)
+    if (
+        not causes
+        and any(settings.get(f) is not None for f in CARLA_QUANTITIES)
+        and settings.get("visibility_m") is None
+    ):
+        logger.warning(
+            "environment sets CARLA's weather but names no condition (%s): how "
+            "far drivers see does not follow it, and the ODD's weather is not "
+            "measured",
+            ", ".join(CAUSE_SETTINGS),
+        )
+    return out
+
+
+def _work_out(
+    settings: Mapping[str, Any],
+    quantiles: Optional[Mapping[str, float]] = None,
+) -> tuple[dict[str, Any], set[str]]:
+    """*settings* with what the weather rules give worked out, as
+    :func:`resolve_environment` documents, and the causes it names."""
     out: dict[str, Any] = dict(settings)
-    if rules is None:
-        return out
-    wanted = dict(quantiles or {})
-    if "visibility" not in wanted and settings.get("visibility_quantile") is not None:
-        wanted["visibility"] = float(settings["visibility_quantile"])
-    # What is known: the causes named, and the CARLA fields set.
     known: dict[str, Any] = {}
     for key, cause in CAUSE_SETTINGS.items():
         if settings.get(key) is not None:
             known[cause] = settings[key]
     causes = set(known)
+    rules = _backend().active_rules
+    if rules is None:
+        return out, causes
+    wanted = dict(quantiles or {})
+    if "visibility" not in wanted and settings.get("visibility_quantile") is not None:
+        wanted["visibility"] = float(settings["visibility_quantile"])
+    # What is known: the causes named, and the CARLA fields set.
     for field, quantity in CARLA_QUANTITIES.items():
         if settings.get(field) is not None:
             known[quantity] = float(settings[field])
@@ -363,15 +387,48 @@ def resolve_environment(
             out["visibility_m"] = value
         else:
             out[_FIELD_OF[quantity]] = value
-    if (
-        not causes
-        and any(settings.get(f) is not None for f in CARLA_QUANTITIES)
-        and settings.get("visibility_m") is None
-    ):
-        logger.warning(
-            "environment sets CARLA's weather but names no condition (%s): how "
-            "far drivers see does not follow it, and the ODD's weather is not "
-            "measured",
-            ", ".join(CAUSE_SETTINGS),
-        )
-    return out
+    return out, causes
+
+
+#: CARLA's fields for the road's water, which the grip reads:
+#: :func:`road_water` works them out.
+_ROAD_WATER_FIELDS: tuple[str, ...] = ("wetness", "precipitation_deposits")
+
+
+def road_water(
+    fields: Mapping[str, float],
+    conditions: Optional[Mapping[str, float]] = None,
+    labels: Optional[Mapping[str, str]] = None,
+) -> dict[str, float]:
+    """The road's water -- CARLA's ``wetness`` and standing water
+    (``precipitation_deposits``) -- the weather rules give the CARLA weather
+    fields *fields* sets (by default, its ``precipitation``), each at its
+    median: the ones *fields* does not set itself and the rules lead to, by
+    field name.
+
+    *conditions* and *labels* are the conditions the run is set to, by their
+    ``environment`` key (:data:`CAUSE_SETTINGS`): the numbers
+    (``rainfall_rate_mm_h``, ...) and the labels (``cloud_cover``,
+    ``time_of_day``).  A rule file whose water reads one reads the run's, as
+    it does before the run; one not given reads the rules' default.
+
+    What :func:`resolve_environment` gives a config's ``environment`` for the
+    same fields and conditions, and so what an
+    :class:`~autoware_carla_scenario.EnvironmentAction` that sets the rain
+    and not the water applies (#2063): the same rain leaves the same grip
+    however it is set.  A field *fields* sets itself wins.
+    """
+    known: dict[str, Any] = {
+        f: float(v) for f, v in fields.items() if f in CARLA_QUANTITIES
+    }
+    for given in (conditions, labels):
+        if given is not None:
+            for key, value in given.items():
+                if key in CAUSE_SETTINGS:
+                    known[key] = value
+    worked_out, _ = _work_out(known)
+    return {
+        field: float(worked_out[field])
+        for field in _ROAD_WATER_FIELDS
+        if field not in fields and field in worked_out
+    }
