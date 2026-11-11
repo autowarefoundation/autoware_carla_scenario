@@ -15,12 +15,14 @@ what lets a test say when Autoware accepted or rejected a request.
 from __future__ import annotations
 
 import importlib
+import logging
 import sys
 import time
 import types
 from types import SimpleNamespace
 from typing import Any, Callable, Iterator
 
+import grpc
 import pytest
 
 from autoware_carla_scenario.autoware_bridge import (
@@ -758,13 +760,17 @@ def test_initializing_localization_does_not_wait_for_a_route_state(
 
     node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
     node._tick()  # noqa: SLF001
-    assert bridge.client_connected
+    # It has the mission, but has not reported in: it cannot be routed yet.
+    assert bridge.seconds_since_mission_poll() is not None
+    assert not bridge.client_connected
     assert len(initialize) == 1
     assert _route_calls(node) == []  # the planner is still UNKNOWN
 
     initialize[-1][1].answer(True)
     node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
     assert _route_calls(node) == []
+    node._tick()  # noqa: SLF001 - reports in
+    assert bridge.client_connected and not bridge.is_ready()
     node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
     assert len(_route_calls(node)) == 1
 
@@ -789,3 +795,305 @@ def test_the_node_polls_on_the_steady_clock(
 
     assert len(node.timers) == 2  # the startup tick, then the route watch
     assert all(timer.clock.clock_type == "steady" for timer in node.timers)
+
+
+# ---------------------------------------------------------------------------
+# #2051: the stack has booted once it can be routed, not once it asked for
+# the mission
+# ---------------------------------------------------------------------------
+
+
+class _RpcError(grpc.RpcError):
+    def code(self) -> str:
+        return "UNAVAILABLE"
+
+
+def _readiness_reports(node: Any, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
+    """Record each ReportReadiness the node sends (it still reaches the bridge)."""
+    reports: list[bool] = []
+    send = node._client.report_readiness  # noqa: SLF001
+
+    def _report(ready: bool, timeout: Any = None) -> None:
+        reports.append(ready)
+        send(ready, timeout=timeout)
+
+    monkeypatch.setattr(node._client, "report_readiness", _report)  # noqa: SLF001
+    return reports
+
+
+def test_the_node_reports_in_once_localization_is_initialized(
+    node_module: types.ModuleType,
+    bridge: GrpcAutowareBridgeServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The pose initializer is up, NDT is not: each initialize is rejected and
+    retried, and the node, which has the mission, does not report in."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(
+        node_module,
+        bridge,
+        initialize_localization=True,
+        require_localization_initialized=True,
+    )
+    reports = _readiness_reports(node, monkeypatch)
+    initialize = node.clients["/api/localization/initialize"].calls
+    node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
+
+    for _ in range(5):
+        node._tick()  # noqa: SLF001
+        initialize[-1][1].answer(False, "ndt_align not ready")
+    assert len(initialize) == 5
+    assert bridge.seconds_since_mission_poll() is not None
+    assert reports == []
+    assert not bridge.client_connected
+
+    node._tick()  # noqa: SLF001
+    initialize[-1][1].answer(True)
+    node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+    assert reports == [False]
+    assert bridge.client_connected and not bridge.is_ready()
+
+    # Once only.
+    node._tick()  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+    assert reports == [False]
+
+
+def test_a_gnss_initialized_stack_reports_in_without_an_initialize(
+    node_module: types.ModuleType,
+    bridge: GrpcAutowareBridgeServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """automatic_pose_initializer localizes from GNSS before the node asks."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(
+        node_module,
+        bridge,
+        initialize_localization=True,
+        require_localization_initialized=True,
+    )
+    reports = _readiness_reports(node, monkeypatch)
+    node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
+
+    node._tick()  # noqa: SLF001
+
+    assert node.clients["/api/localization/initialize"].calls == []
+    assert reports == [False]
+    assert bridge.client_connected
+
+
+def test_a_gnss_initialization_while_the_nodes_is_pending_reports_in(
+    node_module: types.ModuleType,
+    bridge: GrpcAutowareBridgeServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """GNSS gets there first, while the node's own initialize is unanswered."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(
+        node_module,
+        bridge,
+        initialize_localization=True,
+        require_localization_initialized=True,
+    )
+    reports = _readiness_reports(node, monkeypatch)
+    node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+    assert len(node.clients["/api/localization/initialize"].calls) == 1
+    assert reports == []
+
+    node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+
+    assert reports == [False]
+
+
+@pytest.mark.parametrize("auto_engage", [True, False])
+def test_a_node_that_does_not_initialize_localization_reports_in_with_the_mission(
+    node_module: types.ModuleType,
+    bridge: GrpcAutowareBridgeServer,
+    monkeypatch: pytest.MonkeyPatch,
+    auto_engage: bool,
+) -> None:
+    """Its gate already waited for the mission planner: it can be routed."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, bridge, auto_engage=auto_engage)
+    reports = _readiness_reports(node, monkeypatch)
+    node._on_route_state(_route_state(ROUTE_STATE_UNKNOWN))  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+    assert reports == [] and bridge.seconds_since_mission_poll() is None
+
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+
+    assert reports == [False]
+    assert bridge.client_connected and not bridge.is_ready()
+    assert len(_route_calls(node)) == 1
+
+
+@pytest.mark.parametrize("auto_engage", [True, False])
+def test_a_node_without_auto_engage_reports_in_once_localized(
+    node_module: types.ModuleType,
+    bridge: GrpcAutowareBridgeServer,
+    monkeypatch: pytest.MonkeyPatch,
+    auto_engage: bool,
+) -> None:
+    """Engaging is after the boot: it plays no part in reporting in."""
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(
+        node_module,
+        bridge,
+        initialize_localization=True,
+        require_localization_initialized=True,
+        auto_engage=auto_engage,
+    )
+    reports = _readiness_reports(node, monkeypatch)
+    node.clients["/api/operation_mode/change_to_autonomous"].ready = auto_engage
+    node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+    node.clients["/api/localization/initialize"].calls[-1][1].answer(True)
+    node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
+
+    node._tick()  # noqa: SLF001
+
+    assert reports == [False]
+
+
+def test_a_failed_report_in_is_retried(
+    node_module: types.ModuleType,
+    bridge: GrpcAutowareBridgeServer,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    bridge.configure(_INITIAL, _GOAL)
+    node = _node(node_module, bridge)
+    send = node._client.report_readiness  # noqa: SLF001
+    attempts: list[bool] = []
+
+    def _report(ready: bool, timeout: Any = None) -> None:
+        attempts.append(ready)
+        if len(attempts) == 1:
+            raise _RpcError()
+        send(ready, timeout=timeout)
+
+    monkeypatch.setattr(node._client, "report_readiness", _report)  # noqa: SLF001
+    node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+    node._tick()  # noqa: SLF001
+    assert not bridge.client_connected
+    assert [m for level, m in node.logger.records if level == "warning"]
+
+    node._tick()  # noqa: SLF001
+
+    assert attempts == [False, False]
+    assert bridge.client_connected
+
+
+def test_the_framework_knows_the_nodes_poll_defaults(
+    node_module: types.ModuleType, bridge: GrpcAutowareBridgeServer
+) -> None:
+    """The liveness check compares with these when bridge_parameters omit them."""
+    from autoware_carla_scenario.autoware_stack.bridge_node import (
+        MISSION_POLL_TIMEOUT_S,
+        ROUTE_WATCH_PERIOD_S,
+    )
+
+    node = _node(node_module, bridge)
+    assert node._route_watch_period_s == ROUTE_WATCH_PERIOD_S  # noqa: SLF001
+    assert node._mission_poll_timeout_s == MISSION_POLL_TIMEOUT_S  # noqa: SLF001
+
+
+@pytest.mark.parametrize("initialize_localization", [True, False])
+def test_ticks_stay_paced_until_the_stack_can_be_routed(
+    node_module: types.ModuleType,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    initialize_localization: bool,
+) -> None:
+    """The issue's case, end to end over the real server: the pose
+    initializer is up but NDT is not, so the node has the mission and keeps
+    retrying the initialize. The scenario keeps pacing the world under
+    boot_timeout_s, and counts ready_timeout_ticks only once localization is
+    INITIALIZED."""
+    from .test_autoware_ego_entity import (
+        _FakeActor,
+        _FakeLauncher,
+        _FakeWorld,
+        _launched_entity,
+        _place,
+    )
+
+    monkeypatch.setattr(
+        "autoware_carla_scenario.entity.bridged_ego.to_map_frame",
+        lambda _pose: _INITIAL,
+    )
+    bridge = GrpcAutowareBridgeServer(
+        AutowareBridgeConfig(address="localhost:0"), autostart=False
+    )
+    entity = _launched_entity(
+        bridge,
+        _FakeLauncher(),
+        ready_timeout_ticks=5,
+        boot_timeout_s=60.0,
+        boot_tick_period_s=0.05,
+    )
+    world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+    _place(entity, world)
+    caplog.set_level(logging.INFO, logger="autoware_carla_scenario.entity.bridged_ego")
+    node = None
+    try:
+        entity.on_scenario_start(world)
+        node = _node(
+            node_module,
+            bridge,
+            initialize_localization=initialize_localization,
+            require_localization_initialized=initialize_localization,
+        )
+        initialize = node.clients["/api/localization/initialize"].calls
+        if initialize_localization:
+            # The pose initializer is up; the mission planner waits for it.
+            node._on_localization_state(  # noqa: SLF001
+                SimpleNamespace(state=_UNINITIALIZED)
+            )
+        node._on_route_state(_route_state(ROUTE_STATE_UNKNOWN))  # noqa: SLF001
+
+        started = time.monotonic()
+        for _ in range(20):
+            node._tick()  # noqa: SLF001
+            if initialize and not initialize[-1][1].done():
+                initialize[-1][1].answer(False, "ndt_align not ready")
+            entity.on_tick(world, 0.0)
+        paced_s = time.monotonic() - started
+
+        assert not entity.termination_requested, entity.termination_reason
+        assert not bridge.client_connected
+        assert paced_s >= 20 * 0.05
+        took = [r for r in caplog.records if "took the mission" in r.getMessage()]
+        if initialize_localization:
+            # It has the mission, and the scenario says so, once.
+            assert bridge.seconds_since_mission_poll() is not None
+            assert len(initialize) == 20
+            assert len(took) == 1
+        else:
+            assert bridge.seconds_since_mission_poll() is None
+            assert took == []
+
+        # The map has loaded: NDT aligns, or the mission planner is up.
+        if initialize_localization:
+            node._tick()  # noqa: SLF001
+            initialize[-1][1].answer(True)
+            node._on_localization_state(  # noqa: SLF001
+                SimpleNamespace(state=_INITIALIZED)
+            )
+        else:
+            node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
+        node._tick()  # noqa: SLF001
+        assert bridge.client_connected
+
+        started = time.monotonic()
+        for _ in range(5):
+            entity.on_tick(world, 0.0)
+        assert time.monotonic() - started < 5 * 0.05
+        assert entity.termination_reason == "The Autoware stack not ready after 5 ticks"
+    finally:
+        if node is not None:
+            node.destroy_node()
+        entity.on_scenario_end(world)

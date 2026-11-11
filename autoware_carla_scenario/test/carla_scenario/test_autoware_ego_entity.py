@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import math
 import time
+from pathlib import Path
 from typing import List
 from unittest import mock
 
@@ -677,6 +678,28 @@ class TestLaunchedStack:
         assert entity.termination_reason is not None
         assert "did not reach the bridge" in entity.termination_reason
 
+    def test_a_stack_that_took_the_mission_but_never_localized_says_so(
+        self,
+    ) -> None:
+        """#2051: past the AD API, short of localizing -- an NDT map that never
+        loads, say -- is told apart from a stack that never got anywhere."""
+        bridge = FakeAutowareBridge(connected=False, mission_poll_age_s=0.5)
+        entity = _launched_entity(bridge, _FakeLauncher(), boot_timeout_s=60.0)
+        world = _FakeWorld([_FakeActor(42, str(EGO_ROLE_NAME))])
+        _place(entity, world)
+        entity.on_scenario_start(world)
+        for _ in range(10):
+            entity.on_tick(world, 0.0)
+        assert not entity.termination_requested
+        assert "is_ready" not in bridge.calls
+
+        with mock.patch("time.monotonic", return_value=time.monotonic() + 3600.0):
+            entity.on_tick(world, 0.0)
+
+        reason = entity.termination_reason
+        assert reason is not None
+        assert "took the mission but did not report in" in reason
+
     def test_a_stack_that_exits_mid_run_ends_it(self) -> None:
         launcher = _FakeLauncher()
         entity = _launched_entity(FakeAutowareBridge(), launcher)
@@ -724,6 +747,110 @@ class TestLaunchedStack:
         # Without a launcher there is no boot phase to wait out.
         assert entity.is_initialized
         assert entity.launcher is None
+
+
+# ---------------------------------------------------------------------------
+# #2051: a liveness timeout the node's polls would trip is refused
+# ---------------------------------------------------------------------------
+
+
+class TestLivenessAgainstTheNodesParameters:
+    @staticmethod
+    def _command_launcher(**bridge_parameters):
+        from autoware_carla_scenario.autoware_stack import CommandAutowareLauncher
+
+        return CommandAutowareLauncher(
+            ["true"], bridge_parameters={"use_sim_time": True, **bridge_parameters}
+        )
+
+    def test_a_route_watch_slower_than_the_timeout_is_refused(self) -> None:
+        launcher = self._command_launcher(route_watch_period_s=60)
+        with pytest.raises(ValueError) as raised:
+            _launched_entity(FakeAutowareBridge(), launcher)
+        message = str(raised.value)
+        assert message.startswith("liveness_timeout_s (30 s) would end a healthy run")
+        assert "route_watch_period_s (60 s)" in message
+        assert "mission_poll_timeout_s (1 s)" in message  # the node's default
+        assert "at least twice their sum, 122 s" in message
+
+    def test_the_margin_takes_one_lost_poll(self) -> None:
+        # 2 * (14 + 1) = 30: just enough.
+        _launched_entity(
+            FakeAutowareBridge(), self._command_launcher(route_watch_period_s=14)
+        )
+        # 2 * (14 + 2) = 32: a poll that times out and one lost would trip it.
+        with pytest.raises(ValueError, match="mission_poll_timeout_s .2 s."):
+            _launched_entity(
+                FakeAutowareBridge(),
+                self._command_launcher(
+                    route_watch_period_s=14, mission_poll_timeout_s=2.0
+                ),
+            )
+
+    def test_the_defaults_are_consistent(self) -> None:
+        from autoware_carla_scenario.autoware_stack import (
+            CommandAutowareLauncher,
+            DockerAutowareConfig,
+            DockerAutowareLauncher,
+        )
+
+        _launched_entity(FakeAutowareBridge(), CommandAutowareLauncher(["true"]))
+        _launched_entity(
+            FakeAutowareBridge(),
+            DockerAutowareLauncher(
+                DockerAutowareConfig(workspace=Path("/nonexistent"), launch=["x"])
+            ),
+        )
+
+    def test_the_docker_launchers_parameters_are_checked(self) -> None:
+        from autoware_carla_scenario.autoware_stack import (
+            DockerAutowareConfig,
+            DockerAutowareLauncher,
+        )
+
+        launcher = DockerAutowareLauncher(
+            DockerAutowareConfig(
+                workspace=Path("/nonexistent"),
+                launch=["x"],
+                bridge_parameters={"route_watch_period_s": "20.0"},
+            )
+        )
+        with pytest.raises(ValueError, match="route_watch_period_s .20 s."):
+            _launched_entity(FakeAutowareBridge(), launcher)
+        # A larger timeout takes it.
+        _launched_entity(FakeAutowareBridge(), launcher, liveness_timeout_s=42.0)
+
+    @pytest.mark.parametrize(
+        ("liveness_timeout_s", "bridge_parameters"),
+        [
+            (0.0, {"route_watch_period_s": 60}),  # the check is off
+            (30.0, {"route_watch_period_s": 0}),  # the node stops polling
+            (30.0, {"route_watch_period_s": -1.0}),
+        ],
+    )
+    def test_what_is_not_watched_is_not_checked(
+        self, liveness_timeout_s: float, bridge_parameters: dict
+    ) -> None:
+        _launched_entity(
+            FakeAutowareBridge(),
+            self._command_launcher(**bridge_parameters),
+            liveness_timeout_s=liveness_timeout_s,
+        )
+
+    def test_a_launcher_without_parameters_is_not_checked(self) -> None:
+        """Its node is started elsewhere, out of the framework's sight."""
+        _launched_entity(FakeAutowareBridge(), _FakeLauncher(), liveness_timeout_s=1.0)
+
+    def test_the_handshake_itself_checks(self) -> None:
+        from autoware_carla_scenario.entity.bridged_ego import BridgeHandshake
+
+        with pytest.raises(ValueError, match="liveness_timeout_s"):
+            BridgeHandshake(
+                AutowareBridgeConfig(liveness_timeout_s=3.0),
+                FakeAutowareBridge(),
+                "bridged",
+                launcher=self._command_launcher(),
+            )
 
 
 # ---------------------------------------------------------------------------

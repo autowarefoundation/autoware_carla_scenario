@@ -58,17 +58,24 @@ class AutowareBridgeConfig:
         ready_timeout_ticks: Maximum world ticks to wait for Autoware to become
             ready before the scenario fails.  At 20 Hz, ``1200`` is ~60 s.  When
             the framework launches Autoware itself, they are counted from when
-            the stack reaches the bridge, not from when it was started.
+            the stack reaches the bridge, not from when it was started: what
+            they cover is routing and engaging.
         boot_timeout_s: When the framework launches Autoware itself, the
             wall-clock seconds the stack has to reach the bridge before the
             scenario ends.  Launching Autoware takes as long as it takes,
             whatever the world does meanwhile, so it is not measured in ticks.
-            The stack reaches the bridge when its interface node first asks for
-            the mission, which the ``scenario_bridge`` node does only once
-            Autoware's AD API is up (the services it calls, and a localization
-            initialization state -- or, when it does not initialize
-            localization, a route state from the mission planner) -- not as
-            soon as the node itself has started.
+            The stack reaches the bridge when its interface node first reports
+            its readiness, ready or not
+            (:attr:`AutowareBridge.client_connected`), which the
+            ``scenario_bridge`` node does once Autoware can be routed: its
+            localization is INITIALIZED -- the pointcloud map loaded and NDT
+            aligned at the mission's initial pose, or a GNSS fix taken -- or,
+            when it does not initialize localization, the mission planner has
+            left UNKNOWN.  Not when the node has started, nor when it first
+            asks for the mission, which it does as soon as Autoware's AD API is
+            up, to have the initial pose to localize at.  A node that never
+            reports until it is ready (one older than this, or a client of
+            your own) keeps the whole startup under this timeout.
         boot_tick_period_s: How long each tick waits while the stack is still
             starting, so the world advances at about real time rather than
             hundreds of simulated seconds before Autoware is there to see them.
@@ -90,6 +97,15 @@ class AutowareBridgeConfig:
             was given.  Watched only once the stack has asked after it became
             ready, so a node that stops asking then (``route_watch_period_s``
             of 0 or less) is not mistaken for a dead one.  ``0`` turns it off.
+            It must be comfortably above the longest wall-clock gap between
+            two polls of a healthy node: one period plus one poll's timeout
+            (``route_watch_period_s + mission_poll_timeout_s``, 1 s + 1 s by
+            default), and twice that so a single lost poll is not a dead
+            stack.  A launcher the framework ships refuses a smaller one when
+            its ``bridge_parameters`` set those
+            (:func:`~autoware_carla_scenario.autoware_stack.bridge_node.liveness_timeout_problem`);
+            a node started elsewhere is not seen, so keep to it there by
+            hand.
 
     Raises:
         ValueError: Naming the field, when ``ready_timeout_ticks`` is not a
@@ -133,8 +149,7 @@ class AutowareBridgeConfig:
             )
         if not math.isfinite(self.boot_timeout_s) or self.boot_timeout_s <= 0.0:
             raise ValueError(
-                "boot_timeout_s must be positive and finite, "
-                f"got {self.boot_timeout_s}"
+                f"boot_timeout_s must be positive and finite, got {self.boot_timeout_s}"
             )
         if not math.isfinite(self.boot_tick_period_s) or self.boot_tick_period_s < 0.0:
             raise ValueError(
@@ -373,13 +388,16 @@ class AutowareBridge(ABC):
     def client_connected(self) -> bool:
         """Whether the stack has reached this bridge yet.
 
-        Tells a stack that is still starting from one that is localizing: the
-        first takes as long as Autoware takes to launch, in wall-clock time,
-        and only the second is measured in ticks.  A stack reaches the bridge
-        when its interface node first asks for the mission (or reports its
-        readiness), which a client does once its stack is up -- the
-        ``scenario_bridge`` node once the AD API is.  A bridge that cannot
-        tell says ``True``.
+        Tells a stack that is still starting from one that is routing and
+        engaging: the first takes as long as Autoware takes to launch, load
+        its maps and localize, in wall-clock time, and only the second is
+        measured in ticks.  A stack reaches the bridge when its interface node
+        first reports its readiness, ready or not, which a client does once
+        its stack can be routed -- the ``scenario_bridge`` node once
+        localization is INITIALIZED (or, when it does not initialize
+        localization, once the mission planner is up).  Asking for the
+        mission does not count: the node needs the mission's initial pose to
+        localize.  A bridge that cannot tell says ``True``.
         """
         return True
 

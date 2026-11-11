@@ -1248,6 +1248,30 @@ class TestBuildAutowareLauncher:
         assert entity is not None
         assert entity.launcher is launcher  # type: ignore[attr-defined]
 
+    def test_a_liveness_timeout_the_node_would_trip_is_refused(self) -> None:
+        """#2051: route_watch_period_s 60 with the default liveness_timeout_s
+        of 30 would end every healthy run 30 s after Autoware turned ready."""
+        from autoware_carla_scenario.examples.run import (
+            _check_batch_queue_settings,
+            build_ego_entity,
+        )
+
+        cfg = self._cfg(
+            type="command",
+            command=["true"],
+            bridge_parameters={"use_sim_time": True, "route_watch_period_s": 60},
+        )
+        for check in (build_ego_entity, _check_batch_queue_settings):
+            with pytest.raises(ValueError) as raised:
+                check(cfg)
+            assert str(raised.value).startswith(
+                "autoware.liveness_timeout_s (30 s) would end a healthy run"
+            ), check
+
+        cfg.autoware.liveness_timeout_s = 130.0
+        _check_batch_queue_settings(cfg)
+        assert build_ego_entity(cfg) is not None
+
     @pytest.mark.parametrize(
         ("value", "rosdep"),
         [

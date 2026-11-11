@@ -212,21 +212,43 @@ def test_implements_autoware_bridge_contract(
 # ---------------------------------------------------------------------------
 
 
-def test_client_connected_once_the_client_calls(
+def test_asking_for_the_mission_is_not_reaching_the_bridge(
     bridge: GrpcAutowareBridgeServer,
 ) -> None:
-    assert not bridge.client_connected
+    """The node asks as soon as the AD API is up, long before an NDT stack
+    can localize (#2051): the scenario must keep the boot phase."""
+    bridge.configure(_INITIAL, _GOAL)
     with _client(bridge) as stub:
         stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+    assert not bridge.client_connected
+    assert bridge.seconds_since_mission_poll() is not None
+
+
+def test_a_not_ready_report_reaches_the_bridge(
+    bridge: GrpcAutowareBridgeServer, caplog: pytest.LogCaptureFixture
+) -> None:
+    caplog.set_level(
+        "INFO", logger="autoware_carla_scenario.autoware_bridge.grpc_server"
+    )
+    assert not bridge.client_connected
+    with _client(bridge) as stub:
+        for _ in range(2):
+            stub.ReportReadiness(
+                pb2.ReportReadinessRequest(ready=False), timeout=_RPC_TIMEOUT_S
+            )
     assert bridge.client_connected
+    assert not bridge.is_ready()
+    reported = [r for r in caplog.records if "reported in" in r.getMessage()]
+    assert len(reported) == 1
 
 
-def test_readiness_is_contact_too(bridge: GrpcAutowareBridgeServer) -> None:
+def test_a_ready_report_reaches_the_bridge(bridge: GrpcAutowareBridgeServer) -> None:
+    """A client that reports only once ready (an older node) still gets there."""
     with _client(bridge) as stub:
         stub.ReportReadiness(
-            pb2.ReportReadinessRequest(ready=False), timeout=_RPC_TIMEOUT_S
+            pb2.ReportReadinessRequest(ready=True), timeout=_RPC_TIMEOUT_S
         )
-    assert bridge.client_connected
+    assert bridge.client_connected and bridge.is_ready()
 
 
 def test_the_time_since_the_last_mission_poll_is_kept(
