@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import math
 import sys
+import threading
 from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
@@ -863,6 +864,106 @@ class TestPluginCollisions:
         ]
         self._load(monkeypatch, entry_points)
         assert calls == ["a1", "a2", "b", "c"]
+
+
+class TestConcurrentPluginLoading:
+    """Callers that make the first call at the same time (#2037)."""
+
+    @pytest.fixture(autouse=True)
+    def _isolated(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        import autoware_carla_scenario.examples.run  # noqa: F401, PLC0415
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        for table in ("_SCENARIO_REGISTRY", "_SCENARIO_CLASSES", "_SCENARIO_DOCUMENTS"):
+            monkeypatch.setattr(registry, table, dict(getattr(registry, table)))
+        monkeypatch.setattr(registry, "_PLUGIN_SCENARIOS", {})
+        _isolate_conf_dirs(monkeypatch)
+        monkeypatch.setattr(registry, "_plugins_loaded", False)
+
+    @staticmethod
+    def _serve(monkeypatch: pytest.MonkeyPatch, entry_points: list[Any]) -> None:
+        monkeypatch.setattr(
+            "importlib.metadata.entry_points", lambda *, group: list(entry_points)
+        )
+
+    def test_every_first_caller_returns_with_the_plugins_loaded(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The second caller waits for the walk the first one is in."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        started = threading.Event()
+        release = threading.Event()
+
+        def register() -> None:
+            started.set()
+            assert release.wait(10)
+            registry.register_scenario("slow_plugin", _DummyScenario, _DummyConfig)
+
+        entry_point = _entry_point("slow", register)
+        self._serve(monkeypatch, [entry_point])
+        seen: dict[str, bool] = {}
+
+        def call(caller: str) -> None:
+            registry.load_scenario_plugins()
+            seen[caller] = "slow_plugin" in registry.get_scenario_registry()
+
+        first = threading.Thread(target=call, args=("first",))
+        second = threading.Thread(target=call, args=("second",))
+        first.start()
+        assert started.wait(10)
+        second.start()
+        second.join(0.2)
+        # Before #2037 the second caller saw the latch set and returned here,
+        # before the plugin had registered anything.
+        assert second.is_alive()
+        release.set()
+        first.join(10)
+        second.join(10)
+        assert not first.is_alive() and not second.is_alive()
+        assert seen == {"first": True, "second": True}
+        entry_point.load.assert_called_once()
+
+    def test_a_plugin_that_loads_the_plugins_again_does_not_deadlock(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        def register() -> None:
+            registry.load_scenario_plugins()
+            registry.register_scenario("reentrant", _DummyScenario, _DummyConfig)
+
+        entry_point = _entry_point("reentrant", register)
+        self._serve(monkeypatch, [entry_point])
+        loader = threading.Thread(target=registry.load_scenario_plugins, daemon=True)
+        loader.start()
+        loader.join(10)
+        assert not loader.is_alive()
+        assert "reentrant" in registry.get_scenario_registry()
+        entry_point.load.assert_called_once()
+        assert registry._plugins_loaded and not registry._plugins_loading
+
+    def test_a_walk_that_fails_is_not_retried(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The latch is set even so, and the lock is let go of."""
+        from autoware_carla_scenario import registry  # noqa: PLC0415
+
+        calls: list[str] = []
+
+        def entry_points(*, group: str) -> list[Any]:
+            calls.append(group)
+            raise RuntimeError("broken metadata")
+
+        monkeypatch.setattr("importlib.metadata.entry_points", entry_points)
+        with pytest.raises(RuntimeError, match="broken metadata"):
+            registry.load_scenario_plugins()
+        assert registry._plugins_loaded and not registry._plugins_loading
+        registry.load_scenario_plugins()
+        assert len(calls) == 1
+        # Another thread can take the lock: it was released.
+        assert registry._PLUGIN_LOAD_LOCK.acquire(timeout=1)
+        registry._PLUGIN_LOAD_LOCK.release()
 
 
 class TestConfDirCollisions:

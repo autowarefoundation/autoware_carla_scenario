@@ -45,8 +45,13 @@ TrafficBackendFactory = Callable[[Mapping[str, Any]], TrafficBackend]
 
 _BACKENDS: dict[str, TrafficBackendFactory] = {}
 
-#: Whether the entry-point walk has already run in this process.
+#: Whether the entry-point walk has already run in this process.  Set only
+#: once the walk is over (#2037).
 _plugins_loaded = False
+
+#: Whether the walk is running right now, on the thread holding the plugin
+#: lock (a plugin's import calling load_traffic_backend_plugins again).
+_plugins_loading = False
 
 
 def register_backend(name: str, factory: TrafficBackendFactory) -> None:
@@ -147,12 +152,32 @@ def load_traffic_backend_plugins() -> None:
     which matters because a Hydra ``--multirun`` sweep builds a backend once per
     job in one process, and re-running a third-party package's registration code
     once per job is unbounded work this package does not control.
+
+    Loading is thread-safe (#2037), as
+    :func:`~autoware_carla_scenario.registry.load_scenario_plugins` is, and
+    under the same lock: concurrent first callers wait for the one that walks,
+    a call a plugin makes while it is being loaded returns at once, and a walk
+    that fails outright is not retried.
     """
-    global _plugins_loaded
+    global _plugins_loaded, _plugins_loading
     if _plugins_loaded:
         return
-    _plugins_loaded = True
 
+    from ..registry import _PLUGIN_LOAD_LOCK  # noqa: PLC0415
+
+    with _PLUGIN_LOAD_LOCK:
+        if _plugins_loaded or _plugins_loading:
+            return
+        _plugins_loading = True
+        try:
+            _walk_traffic_backend_plugins()
+        finally:
+            _plugins_loaded = True
+            _plugins_loading = False
+
+
+def _walk_traffic_backend_plugins() -> None:
+    """Load every traffic backend plugin (under the plugin lock)."""
     from ..registry import load_entry_point_plugins  # noqa: PLC0415
 
     # A plugin that overrides a built-in backend means to (register_backend),
