@@ -16,6 +16,7 @@ from __future__ import annotations
 import hashlib
 import math
 import os
+import random
 import shlex
 from pathlib import Path
 from typing import Any, Mapping, Optional
@@ -90,6 +91,11 @@ def host_python_root(cache_dir: Path | None = None) -> Path:
     installed package, and nothing else, so another Python -- the ROS 2
     distribution's -- imports only that.  Kept under the user cache, one per
     installed location.
+
+    Safe for processes that make it at once (runs started together from one
+    install, #2079): the link is made under a name of this process's own and
+    renamed onto ``autoware_bridge``, which replaces whatever is there in one
+    step, so no process sees it missing or finds it already made.
     """
     package = bridge_package_dir()
     if cache_dir is not None:
@@ -103,9 +109,18 @@ def host_python_root(cache_dir: Path | None = None) -> Path:
     link = root / "autoware_carla_scenario" / "autoware_bridge"
     if not link.is_symlink() or link.resolve() != package:
         link.parent.mkdir(parents=True, exist_ok=True)
-        if link.is_symlink() or link.exists():
-            link.unlink()
-        link.symlink_to(package, target_is_directory=True)
+        # Unique to this process: the pid, and random bits for a pid reused
+        # on another host sharing the cache (an NFS home).  A Random of its
+        # own, seeded afresh: the module's would advance a stream a scenario
+        # may have seeded, and repeat the same bits wherever it was seeded alike.
+        unique = f"{os.getpid()}.{random.Random().getrandbits(32)}"
+        tmp = link.with_name(f".{link.name}.{unique}.tmp")
+        tmp.symlink_to(package, target_is_directory=True)
+        try:
+            os.replace(tmp, link)
+        except OSError:
+            tmp.unlink(missing_ok=True)
+            raise
     return root
 
 

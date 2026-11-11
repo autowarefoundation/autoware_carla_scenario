@@ -339,7 +339,9 @@ class ProcessGroup:
                 self._process = _start_session(argv, env, self._log)
             else:
                 self._process = _start_session(argv, env, subprocess.DEVNULL)
-        except OSError as exc:
+        except (OSError, ValueError) as exc:
+            # ValueError: an environment variable Popen cannot pass (a name
+            # with `=`, a NUL anywhere; #2079).
             self._close_log()
             raise AutowareStackError(f"Could not run {argv[0]!r}: {exc}") from exc
         # start_new_session makes the child its group's leader.

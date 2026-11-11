@@ -742,7 +742,10 @@ def _launcher_str_mapping(name: str, value: object) -> dict[str, str]:
     """``autoware.launcher.<name>`` (``env``, ``mounts``), checked: a mapping
     whose values are strings or numbers, each made a ``str``; null or absent is
     empty.  A value that is null, a boolean, a list or a mapping is refused, as
-    :func:`_launcher_str_list` refuses such an argument.
+    :func:`_launcher_str_list` refuses such an argument.  So is a key or a
+    value holding a NUL, and, in ``env``, an empty variable name or one holding
+    ``=``: no process can be handed those, and ``Popen`` would refuse them only
+    once the stack starts (#2079).
 
     Raises:
         ValueError: naming the key.
@@ -760,7 +763,19 @@ def _launcher_str_mapping(name: str, value: object) -> dict[str, str]:
                 f"autoware.launcher.{name}.{key} must be a string or a number, "
                 f"not {type(item).__name__} {item!r}"
             )
-    return {str(key): str(item) for key, item in value.items()}
+    mapping = {str(key): str(item) for key, item in value.items()}
+    for key, item in mapping.items():
+        if "\0" in key or "\0" in item:
+            raise ValueError(
+                f"autoware.launcher.{name}: {key!r}: {item!r} holds a NUL "
+                "character, which no process can be handed"
+            )
+        if name == "env" and (not key or "=" in key):
+            raise ValueError(
+                f"autoware.launcher.env: {key!r} is not an environment variable "
+                "name: it must be non-empty and hold no '='"
+            )
+    return mapping
 
 
 def _launcher_bridge_parameters(settings: dict[str, Any]) -> dict[str, Any]:
