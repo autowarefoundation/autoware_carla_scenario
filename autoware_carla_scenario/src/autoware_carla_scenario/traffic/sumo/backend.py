@@ -599,6 +599,12 @@ class SumoTrafficBackend(TrafficBackend):
         #: background_vehicles gives it while it waits, so that a source's
         #: ``max_vehicles`` and ``min_gap_m`` count it (#2082).
         self._background_requested: dict[str, tuple[float, float, Optional[float]]] = {}
+        #: SUMO ids of the background vehicles added since SUMO last stepped:
+        #: SUMO lists one as pending only once a step has tried to insert it,
+        #: so until then it is neither on the road nor pending, and must not be
+        #: taken for one that left (a second source, or a sink, asking in the
+        #: same tick).
+        self._background_unstepped: set[str] = set()
         #: Lane id -> the vehicle classes it disallowed before its first
         #: close_lane() (its permissions, kept as what it disallows: see
         #: close_lane()), and how many close_lane() calls are not yet matched
@@ -940,6 +946,7 @@ class SumoTrafficBackend(TrafficBackend):
         that departed in it their parameters and their sight."""
         for _ in range(self._substeps):
             self._traci.simulationStep()
+            self._background_unstepped = set()
             self._departed = None
             self._forget_arrived()
             self._apply_parameters()
@@ -1560,6 +1567,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._walking = {}
         self._background = set()
         self._background_requested = {}
+        self._background_unstepped = set()
         self._background_count = 0
         self._closed_lanes = {}
         self._blueprints = {}
@@ -2864,6 +2872,7 @@ class SumoTrafficBackend(TrafficBackend):
         # Pending until SUMO inserts it, which it does only once its spot is
         # clear: given at the spot asked for meanwhile (background_vehicles).
         self._background_requested[sumo_id] = (location.x, location.y, location.z)
+        self._background_unstepped.add(sumo_id)
         if blueprint:
             self._blueprints[sumo_id] = blueprint
         return sumo_id
@@ -2959,9 +2968,11 @@ class SumoTrafficBackend(TrafficBackend):
             return {}
         vehicle = self._traci.vehicle
         present = set(vehicle.getIDList())
-        # A vehicle added this step is pending until SUMO inserts it; one that
-        # is neither has reached the end of its route and left.
+        # A vehicle added this step is pending until SUMO inserts it (listed
+        # as such only once SUMO has stepped since it was added); one that is
+        # neither has reached the end of its route and left.
         pending = set(self._traci.simulation.getPendingVehicles())
+        pending |= self._background_unstepped
         meso = self._meso if self._meso is not None else ()
         self._background &= (
             present | pending | {i for i in self._background if i in meso}
@@ -3016,6 +3027,7 @@ class SumoTrafficBackend(TrafficBackend):
             return
         self._background.discard(handle)
         self._background_requested.pop(handle, None)
+        self._background_unstepped.discard(handle)
         if self._meso is not None and self._meso.remove(handle) is not None:
             self._blueprints.pop(handle, None)
             self._meso_widths.pop(handle, None)

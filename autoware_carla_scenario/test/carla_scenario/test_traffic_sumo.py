@@ -2006,6 +2006,38 @@ def test_background_vehicles_waiting_to_enter_are_where_they_were_asked_for(
         backend.close()
 
 
+@needs_sumo
+def test_background_vehicles_added_this_tick_are_not_taken_for_gone(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """SUMO lists a vehicle as pending only once it has stepped since it was
+    added: one added in this tick, before SUMO steps, is neither on the road
+    nor pending.  A second source (or a sink) asking in the same tick still
+    sees it at the spot asked for, and can remove it (#2082)."""
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path, max_vehicles=0)
+    tc = backend._traci
+    try:
+        first = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=20.0
+        )
+        assert first is not None
+        assert first not in tc.simulation.getPendingVehicles()
+        vehicles = backend.background_vehicles(world)
+        assert vehicles[first] == pytest.approx((-60.0, 5.25, 0.0))
+        second = backend.spawn_background(
+            world, _carla_transform(-80.0, 5.25, 0.0), speed_kmh=20.0
+        )
+        assert second is not None
+        assert set(backend.background_vehicles(world)) == {first, second}
+        backend.remove_background(world, second)
+        backend.tick(world, 0.05)
+        assert set(backend.background_vehicles(world)) == {first}
+        assert second not in tc.vehicle.getIDList()
+        assert second not in tc.simulation.getPendingVehicles()
+    finally:
+        backend.close()
+
+
 def _a_source_on_one_spot(monkeypatch: pytest.MonkeyPatch, x: float, y: float) -> None:
     """Every place a source draws is CARLA ``(x, y, 0)``."""
     import typesafe_carla.carla as carla
