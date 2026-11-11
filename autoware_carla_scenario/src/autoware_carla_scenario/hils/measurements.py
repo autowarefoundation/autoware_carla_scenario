@@ -26,6 +26,8 @@ __all__ = [
     "camera_frame",
     "lidar_points",
     "lidar_scan_fields",
+    "ray_times",
+    "spin_lidar_points",
 ]
 
 FloatPoints = np.ndarray[tuple[int, int], np.dtype[np.float32]]
@@ -42,6 +44,50 @@ CAMERA_ENCODINGS: Tuple[str, ...] = ("bgra", "bgr", "rgb", "jpeg", "png")
 def lidar_points(raw: bytes | memoryview | np.ndarray) -> FloatPoints:
     """A ray-cast LiDAR buffer as an ``[N, 4]`` float32 array (sensor frame)."""
     return np.frombuffer(raw, dtype=np.float32).reshape(-1, 4)
+
+
+def ray_times(points: np.ndarray, period: float) -> np.ndarray:
+    """Seconds after a revolution's start a turning sensor fires each point's ray.
+
+    hilspy dates the ray of azimuth ``atan2(y, x)`` (CARLA's sensor frame,
+    clockwise from forward) ``azimuth / 360`` of *period* after the scan's
+    timestamp, as the sensor fires it.
+    """
+    y, x = points[:, 1].astype(np.float64), points[:, 0].astype(np.float64)
+    return np.mod(np.arctan2(y, x), 2.0 * np.pi) * (period / (2.0 * np.pi))
+
+
+def spin_lidar_points(
+    points: np.ndarray,
+    measured: np.ndarray,
+    motion: np.ndarray,
+    timestamp: float,
+    rays: np.ndarray,
+) -> np.ndarray:
+    """Re-observe a revolution's points as a spinning sensor would have seen them.
+
+    CARLA casts each tick's arc at once, from where the sensor was then
+    (*measured*, per point); a turning sensor fires each ray at
+    ``timestamp + rays`` (:func:`ray_times`).  Each point moves, with the
+    sensor's *motion* then held constant (per point ``vx, vy, vz`` in m/s and
+    ``wx, wy, wz`` in rad/s, CARLA's sensor frame, whose angular velocity
+    follows the left-hand rule: ``wz`` turns x toward y), to where the sensor
+    would have seen it at its ray's time -- small angles, first order -- so a
+    driver correcting the motion over each point's time gets back a cloud of
+    one instant.  *points* is CARLA's ``[N, 4]``; so is the result.
+    """
+    # Differences first: epoch seconds do not fit a float32 (CARLA's points are).
+    dt = (timestamp - np.asarray(measured, np.float64)) + np.asarray(rays, np.float64)
+    vx, vy, vz, wx, wy, wz = (motion[:, k] * dt for k in range(6))
+    a = points[:, 0] - vx
+    b = points[:, 1] - vy
+    c = points[:, 2] - vz
+    out = np.empty((len(points), 4), np.float32)
+    out[:, 0] = a - wy * c + wz * b
+    out[:, 1] = b - wz * a + wx * c
+    out[:, 2] = c - wx * b + wy * a
+    out[:, 3] = points[:, 3]
+    return out
 
 
 def lidar_scan_fields(

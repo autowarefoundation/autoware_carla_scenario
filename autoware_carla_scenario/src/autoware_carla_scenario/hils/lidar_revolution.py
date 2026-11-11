@@ -175,6 +175,11 @@ class LidarRevolution:
         self._anchored = False
         self._parts = []
 
+    @property
+    def period(self) -> float:
+        """Seconds a revolution takes."""
+        return self._fov / self._per_second
+
     def add(
         self, time: float, points: np.ndarray[tuple[int, int], np.dtype[np.float32]]
     ) -> Optional[np.ndarray[tuple[int, int], np.dtype[np.float32]]]:

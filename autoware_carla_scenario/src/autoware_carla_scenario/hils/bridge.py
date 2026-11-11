@@ -76,6 +76,8 @@ from .measurements import (
     camera_frame,
     lidar_points,
     lidar_scan_fields,
+    ray_times,
+    spin_lidar_points,
 )
 from .signals import EgoState, ego_signals
 
@@ -335,6 +337,12 @@ class _SensorDevice:
         self.channel = channel
         self._hilspy = hilspy
         self._actor: Optional["carla.Actor"] = None
+        #: The ego the sensor rides (for its motion while a LiDAR turns).
+        self._ego: Optional["carla.Actor"] = None
+        #: With the wall clock, a LiDAR's arcs not yet sent whole: id -> (when it
+        #: arrived, the sensor's motion then); its points carry the id (column 4).
+        self._arcs: Dict[int, Tuple[float, Tuple[float, ...]]] = {}
+        self._next_arc = 0
         #: Gathers a LiDAR's arcs into revolutions (under :attr:`_convert_lock`).
         self._revolution: Optional[LidarRevolution] = None
         #: The attach generation (:meth:`attach`, :meth:`detach`); written by
@@ -347,7 +355,9 @@ class _SensorDevice:
         #: Held while a measurement is converted into a message.
         self._convert_lock = threading.Lock()
         #: What the callback copied, tagged with its generation.
-        self._received: "queue.Queue[Tuple[int, float, Any, int, int]]" = queue.Queue()
+        self._received: "queue.Queue[Tuple[int, float, Any, Any, int, int]]" = (
+            queue.Queue()
+        )
         self._failures = _Failures(spec.name)
         #: With the wall clock, the messages for the device's thread, tagged
         #: with their generation (``None`` stops the thread).
@@ -380,6 +390,7 @@ class _SensorDevice:
             carla_module.Rotation(roll=roll, pitch=pitch, yaw=yaw),
         )
         actor = world.spawn_actor(blueprint, transform, attach_to=ego)
+        self._ego = ego
         # Until it is the device's, a failure must not leave the sensor on the
         # ego, measuring for nobody: the caller only logs it (#1478).
         try:
@@ -457,20 +468,82 @@ class _SensorDevice:
             raw = np.frombuffer(data.raw_data, dtype=np.uint8).copy()
             width = int(getattr(data, "width", 0))
             height = int(getattr(data, "height", 0))
-            self._received.put((generation, float(data.timestamp), raw, width, height))
+            arc = None
+            if self._outbox is not None and self._revolution is not None:
+                # The wall clock's moment of the measurement (give or take the
+                # callback's delay) and how the sensor moved then.
+                arc = (time.time(), self._sensor_motion(data))
+            self._received.put(
+                (generation, float(data.timestamp), arc, raw, width, height)
+            )
         except Exception:  # noqa: BLE001 - a sensor thread must not die
             logger.exception("%s: failed to receive a measurement", self.spec.name)
 
-    def _message(self, measured: Tuple[float, Any, int, int]) -> Optional[Any]:
-        timestamp, raw, width, height = measured
+    def _sensor_motion(self, data: Any) -> Tuple[float, ...]:
+        """The sensor's velocity and angular velocity (its frame; m/s, rad/s) as *data*
+        was measured.
+
+        The ego's motion from the client's last snapshot (no call to the
+        server), turned into the sensor's frame by the measurement's transform;
+        still when it cannot be read.
+        """
+        ego = self._ego
+        if ego is None:
+            return (0.0,) * 6
+        try:
+            v = ego.get_velocity()
+            w = ego.get_angular_velocity()
+            inverse = np.asarray(data.transform.get_inverse_matrix(), dtype=np.float64)[
+                :3, :3
+            ]
+        except Exception:  # noqa: BLE001 - the ego may be gone; send the points as measured
+            return (0.0,) * 6
+        vs = inverse @ np.array([v.x, v.y, v.z], dtype=np.float64)
+        # A rotation turns the angular velocity (deg/s, world axes) as it does a vector.
+        ws = inverse @ np.radians(np.array([w.x, w.y, w.z], dtype=np.float64))
+        return (*(float(c) for c in vs), *(float(c) for c in ws))
+
+    def _message(self, measured: Tuple[float, Any, Any, int, int]) -> Optional[Any]:
+        timestamp, arc, raw, width, height = measured
         spec = self.sensor_spec
         if self._revolution is not None:
-            revolution = self._revolution.add(timestamp, lidar_points(raw))
+            points = lidar_points(raw)
+            if arc is not None:
+                points = np.column_stack(
+                    [points, np.full(len(points), self._next_arc, np.float32)]
+                )
+                self._arcs[self._next_arc] = arc
+                self._next_arc += 1
+            revolution = self._revolution.add(timestamp, points)
             if revolution is None:
                 return None
-            return ("scan", lidar_scan_fields(revolution, spec.intensity_scale))
+            if arc is None:
+                return ("scan", lidar_scan_fields(revolution, spec.intensity_scale))
+            # Date the revolution by when CARLA measured it, not by its send, and
+            # re-observe it as a turning sensor would (see spin_lidar_points).
+            spun, start = self._spin(revolution)
+            fields: Dict[str, Any] = dict(lidar_scan_fields(spun, spec.intensity_scale))
+            fields["timestamp"] = start
+            return ("scan", fields)
         frame = camera_frame(raw, width, height, spec.encoding)
         return self._hilspy.Message(data=frame)
+
+    def _spin(self, revolution: np.ndarray) -> Tuple[np.ndarray, float]:
+        """*revolution*'s points (tagged with their arc) as a spinning sensor's,
+        and the time its first ray fires."""
+        ids = revolution[:, 4].astype(np.int64)
+        known = np.array(sorted(self._arcs), np.int64)
+        index = np.searchsorted(known, ids)
+        arcs = [self._arcs[int(k)] for k in known]
+        measured = np.array([a[0] for a in arcs])[index]
+        motion = np.array([a[1] for a in arcs])[index]
+        rays = ray_times(revolution, self._revolution.period)  # type: ignore[union-attr]
+        # The start that centres the rays' times on the measuring times.
+        start = float(np.mean(measured - rays))
+        # Arcs before the last one in this revolution are sent whole.
+        for k in [k for k in self._arcs if k < int(ids.max())]:
+            del self._arcs[k]
+        return spin_lidar_points(revolution, measured, motion, start, rays), start
 
     def _send(self, message: Any) -> None:
         try:
@@ -486,14 +559,16 @@ class _SensorDevice:
         a sensor detached since measured is dropped."""
         while True:
             try:
-                generation, timestamp, raw, width, height = self._received.get_nowait()
+                generation, timestamp, arrived, raw, width, height = (
+                    self._received.get_nowait()
+                )
             except queue.Empty:
                 return
             with self._convert_lock:
                 if not self._current(generation):
                     continue
                 try:
-                    message = self._message((timestamp, raw, width, height))
+                    message = self._message((timestamp, arrived, raw, width, height))
                 except Exception as exc:  # noqa: BLE001
                     self._failures.report("conversion", exc)
                     continue
