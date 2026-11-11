@@ -912,6 +912,54 @@ def test_lidar_revolutions_go_out_as_the_sensors_packets(world: _World) -> None:
         receiver.close()
 
 
+def test_wall_clock_lidar_revolutions_are_dated_by_their_measurement(world: _World) -> None:
+    # Sent once the arc completing them arrived, over a revolution, they would
+    # be dated by their send; hilspy dates the packets from the timestamp the
+    # bridge gives instead: the arcs' arrival, centred on the revolution.
+    url = _mem()
+    receiver = hilspy.open(url, "lidar:vlp16", frame="packet")
+    bridge = _bridge(
+        {
+            "clock": "wall",
+            "devices": {
+                "lidar": {
+                    "url": url,
+                    "codec": "lidar:vlp16",
+                    "sensor": {
+                        "blueprint": "sensor.lidar.ray_cast",
+                        "transform": {"z": 2.0},
+                        "attributes": {"rotation_frequency": 10, "channels": 16},
+                    },
+                }
+            },
+        },
+        world,
+    )
+    try:
+        world.tick()
+        bridge.step()
+        [sensor] = world.sensors
+        first = time.time()
+        sensor.callback(_lidar_measurement(0.05, 500, 0))
+        world.tick()
+        bridge.step()
+        time.sleep(0.05)
+        second = time.time()
+        sensor.callback(_lidar_measurement(0.10, 500, 1))
+        world.tick()
+        bridge.step()
+        packets: List[Any] = []
+        deadline = time.time() + 2.0
+        while sum(len(p["x"]) for p in packets) < 1000 and time.time() < deadline:
+            packets.extend(_drain(receiver))
+        assert sum(len(p["x"]) for p in packets) == 1000
+        dated = min(float(p["timestamp"]) for p in packets)
+        assert dated == pytest.approx(0.5 * (first + second) - 0.05, abs=0.01)
+    finally:
+        bridge.close()
+        receiver.close()
+
+
 class _BrokenListen(Exception):
     pass
 

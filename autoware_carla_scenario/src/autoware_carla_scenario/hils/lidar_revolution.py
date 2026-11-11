@@ -149,6 +149,11 @@ class LidarRevolution:
     #: last started over.
     _anchored: bool
     _parts: List[np.ndarray[tuple[int, int], np.dtype[np.float32]]]
+    #: The stamp :meth:`add` was given with each part in :attr:`_parts`.
+    _part_stamps: List[Optional[float]]
+    #: The point-weighted mean stamp of the revolution :meth:`add` returned
+    #: last, ``None`` when it was given no stamps.
+    revolution_stamp: Optional[float]
 
     def __init__(
         self, rotation_frequency: float, first_dt: float, horizontal_fov: float = 360.0
@@ -174,11 +179,38 @@ class LidarRevolution:
         self._start = 0.0
         self._anchored = False
         self._parts = []
+        self._part_stamps = []
+        self.revolution_stamp = None
+
+    @property
+    def period(self) -> float:
+        """Seconds a revolution takes."""
+        return self._fov / self._per_second
+
+    def _stamped(
+        self, parts: List[np.ndarray[tuple[int, int], np.dtype[np.float32]]], stamps: List[Optional[float]]
+    ) -> None:
+        """Set :attr:`revolution_stamp` for the revolution made of *parts*."""
+        weights = [len(p) for p, t in zip(parts, stamps) if t is not None]
+        if not weights or sum(weights) == 0 or len(weights) != len(parts):
+            self.revolution_stamp = None
+            return
+        self.revolution_stamp = float(
+            sum(len(p) * t for p, t in zip(parts, stamps)) / sum(weights)  # type: ignore[operator]
+        )
 
     def add(
-        self, time: float, points: np.ndarray[tuple[int, int], np.dtype[np.float32]]
+        self,
+        time: float,
+        points: np.ndarray[tuple[int, int], np.dtype[np.float32]],
+        stamp: Optional[float] = None,
     ) -> Optional[np.ndarray[tuple[int, int], np.dtype[np.float32]]]:
-        """Add the measurement taken at *time*; a whole revolution, or ``None``."""
+        """Add the measurement taken at *time*; a whole revolution, or ``None``.
+
+        *stamp* is the measurement's time on another clock (the wall clock's,
+        say); a returned revolution's :attr:`revolution_stamp` is its points'
+        mean stamp.
+        """
         previous = self._time
         if previous is None:
             dt = self._first_dt
@@ -186,6 +218,7 @@ class LidarRevolution:
             dt = time - previous
         if dt <= 0.0:  # a new episode, its clock restarted: start over
             self._parts.clear()
+            self._part_stamps.clear()
             self._swept = 0.0
             self._start = 0.0
             self._anchored = False
@@ -203,17 +236,20 @@ class LidarRevolution:
                 self._anchored = True
         if swept + _REVOLUTION_TOLERANCE_DEG < fov:
             self._parts.append(points)
+            self._part_stamps.append(stamp)
             self._swept = swept
             return None
         if arc + _REVOLUTION_TOLERANCE_DEG >= fov:
             # The arc alone covers every azimuth: it is the revolution, and
             # the next one starts where it ended.
             self._parts = []
+            self._part_stamps = []
             self._swept = 0.0
             self._start = (self._start + swept) % fov
             # Not every renderer sweeps the whole arc (carla_canvas sweeps
             # one revolution at most): the next arc's points tell.
             self._anchored = False
+            self._stamped([points], [stamp])
             return points
         leftover = swept - fov
         if leftover < _REVOLUTION_TOLERANCE_DEG:
@@ -221,13 +257,16 @@ class LidarRevolution:
             # The next one starts where it did end, a hair either side of it
             # (float sums of tick lengths), so that hairs do not add up.
             self._parts.append(points)
+            self._part_stamps.append(stamp)
             self._swept = 0.0
             self._start = (self._start + leftover) % fov
             if len(self._parts) == 1:
                 revolution = self._parts[0]
             else:
                 revolution = np.concatenate(self._parts)
+            self._stamped(self._parts, self._part_stamps)
             self._parts = []
+            self._part_stamps = []
             return revolution
         # The arc runs past the revolution's end: split it by each point's
         # azimuth, not by its place in the buffer.  CARLA lays the points out
@@ -241,7 +280,10 @@ class LidarRevolution:
         ) % fov - _START_TOLERANCE_DEG
         ends = relative >= 0.5 * (leftover + before)
         self._parts.append(points[ends])
+        self._part_stamps.append(stamp)
         self._swept = leftover
         revolution = np.concatenate(self._parts)
+        self._stamped(self._parts, self._part_stamps)
         self._parts = [points[~ends]]
+        self._part_stamps = [stamp]
         return revolution

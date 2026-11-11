@@ -347,7 +347,7 @@ class _SensorDevice:
         #: Held while a measurement is converted into a message.
         self._convert_lock = threading.Lock()
         #: What the callback copied, tagged with its generation.
-        self._received: "queue.Queue[Tuple[int, float, Any, int, int]]" = queue.Queue()
+        self._received: "queue.Queue[Tuple[int, float, float, Any, int, int]]" = queue.Queue()
         self._failures = _Failures(spec.name)
         #: With the wall clock, the messages for the device's thread, tagged
         #: with their generation (``None`` stops the thread).
@@ -457,18 +457,30 @@ class _SensorDevice:
             raw = np.frombuffer(data.raw_data, dtype=np.uint8).copy()
             width = int(getattr(data, "width", 0))
             height = int(getattr(data, "height", 0))
-            self._received.put((generation, float(data.timestamp), raw, width, height))
+            arrived = time.time()  # the wall clock's moment of the measurement, give or take the callback's delay
+            self._received.put((generation, float(data.timestamp), arrived, raw, width, height))
         except Exception:  # noqa: BLE001 - a sensor thread must not die
             logger.exception("%s: failed to receive a measurement", self.spec.name)
 
-    def _message(self, measured: Tuple[float, Any, int, int]) -> Optional[Any]:
-        timestamp, raw, width, height = measured
+    def _message(self, measured: Tuple[float, float, Any, int, int]) -> Optional[Any]:
+        timestamp, arrived, raw, width, height = measured
         spec = self.sensor_spec
         if self._revolution is not None:
-            revolution = self._revolution.add(timestamp, lidar_points(raw))
+            revolution = self._revolution.add(timestamp, lidar_points(raw), stamp=arrived)
             if revolution is None:
                 return None
-            return ("scan", lidar_scan_fields(revolution, spec.intensity_scale))
+            fields = lidar_scan_fields(revolution, spec.intensity_scale)
+            if self._outbox is not None:
+                # With the wall clock, date the revolution by when CARLA measured it, not by
+                # when it is sent: the send starts once the arc completing it arrived and takes
+                # a revolution, so packets dated by their send would be ~75 ms late on average
+                # plus the conversion.  hilspy spreads the packets over the revolution from
+                # ``timestamp``; centring that span on the points' measuring times leaves each
+                # point within half a world tick of its time (CARLA casts an arc at once).
+                captured = self._revolution.revolution_stamp
+                if captured is not None:
+                    fields["timestamp"] = captured - 0.5 * self._revolution.period
+            return ("scan", fields)
         frame = camera_frame(raw, width, height, spec.encoding)
         return self._hilspy.Message(data=frame)
 
@@ -486,14 +498,14 @@ class _SensorDevice:
         a sensor detached since measured is dropped."""
         while True:
             try:
-                generation, timestamp, raw, width, height = self._received.get_nowait()
+                generation, timestamp, arrived, raw, width, height = self._received.get_nowait()
             except queue.Empty:
                 return
             with self._convert_lock:
                 if not self._current(generation):
                     continue
                 try:
-                    message = self._message((timestamp, raw, width, height))
+                    message = self._message((timestamp, arrived, raw, width, height))
                 except Exception as exc:  # noqa: BLE001
                     self._failures.report("conversion", exc)
                     continue

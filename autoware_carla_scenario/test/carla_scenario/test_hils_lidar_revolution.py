@@ -774,3 +774,39 @@ def test_revolutions_start_where_the_sweep_did_whatever_was_lost(
         angles = whole[:, 3].astype(np.float64) * sensor.step
         index = np.floor((angles - start + 1e-6) / horizontal_fov)
         assert np.all(index == index[0])  # one sweep of the sensor's
+
+
+def test_a_revolution_is_stamped_with_its_points_mean_stamp() -> None:
+    # 10 Hz at 20 Hz ticks: two arcs a revolution; stamps on another clock.
+    lidar = _CarlaLidar(10.0, 1, 1.0)
+    revolution = LidarRevolution(10.0, 0.05)
+    assert revolution.period == pytest.approx(0.1)
+    assert revolution.add(0.05, lidar.arc(0.05), stamp=1000.05) is None
+    whole = revolution.add(0.10, lidar.arc(0.05), stamp=1000.10)
+    assert whole is not None
+    assert revolution.revolution_stamp == pytest.approx(1000.075)
+
+
+def test_a_split_arc_stamps_both_revolutions() -> None:
+    # 15 Hz at 20 Hz ticks: 270 degrees an arc, so arcs straddle revolutions;
+    # each revolution's stamp is the point-weighted mean of the stamps of
+    # the parts it holds, within the two arcs it spans.
+    lidar = _CarlaLidar(15.0, 1, 1.0)
+    revolution = LidarRevolution(15.0, 0.05)
+    stamps = []
+    for tick in range(1, 9):
+        whole = revolution.add(0.05 * tick, lidar.arc(0.05), stamp=100.0 + 0.05 * tick)
+        if whole is not None:
+            stamps.append(revolution.revolution_stamp)
+    assert len(stamps) == 6
+    assert all(b > a for a, b in zip(stamps, stamps[1:]))
+    tick_stamps = [100.0 + 0.05 * tick for tick in range(1, 9)]
+    assert all(min(tick_stamps) <= s <= max(tick_stamps) for s in stamps)
+
+
+def test_unstamped_measurements_leave_no_stamp() -> None:
+    lidar = _CarlaLidar(10.0, 1, 1.0)
+    revolution = LidarRevolution(10.0, 0.05)
+    revolution.add(0.05, lidar.arc(0.05), stamp=5.0)
+    assert revolution.add(0.10, lidar.arc(0.05)) is not None
+    assert revolution.revolution_stamp is None
