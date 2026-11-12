@@ -17,16 +17,17 @@ what the launcher itself needs in ``slurm/`` beside them::
 Plain JSON, written atomically (a reader never sees half a file), and free of
 heavy imports: the ``scenario-slurm`` commands only read these.
 
-The records are written as ``dict[str, Any]`` and the manifest is read as
-one, which every reader of the batch takes (:mod:`.submit`, :mod:`.worker`,
-:mod:`.collect`, the viewer); a submission's record, a case's outcome and a
-task's status are read into a :class:`SubmissionRecord`, a
-:class:`CaseOutcome` and a :class:`TaskStatus`: their members as their JSON
-text (:class:`.records.JsonMembers`), each read when it is asked for.  The
-library check (docs/typecheck.md) compiles this module, and Codon cannot hold
-a JSON document's values of mixed types beyond the function that parses it:
-the version a manifest names is checked as the JSON text of its value, and
-what creates a submission record exclusively is given the record's JSON text.
+The records are written as ``dict[str, Any]``, and read into a
+:class:`Manifest` (its cases each a :class:`ManifestCase`), a
+:class:`SubmissionRecord`, a :class:`CaseOutcome` and a :class:`TaskStatus`:
+their members as their JSON text (:class:`.records.JsonMembers`), each read
+when it is asked for.  The library check (docs/typecheck.md) compiles this
+module, and Codon cannot hold a JSON document's values of mixed types beyond
+the function that parses it: the version a manifest names is checked as the
+JSON text of its value, and what creates a submission record exclusively is
+given the record's JSON text.  The readers the check leaves out
+(:mod:`.submit`, :mod:`.worker`, the gate, the viewer) read the manifest as
+they read the ``dict`` it was (:meth:`Manifest.get`, ``manifest[key]``).
 """
 
 from __future__ import annotations
@@ -55,11 +56,14 @@ __all__ = [
     "SBATCH_IN_FLIGHT_SECONDS",
     "BatchLayout",
     "CaseOutcome",
+    "Manifest",
+    "ManifestCase",
     "SubmissionRecord",
     "TaskStatus",
     "config_files",
     "config_key",
     "file_sha256",
+    "manifest_of_text",
     "resubmit_target",
     "read_json",
     "read_submission_record",
@@ -72,6 +76,7 @@ __all__ = [
     "submission_record_of",
     "verdict_of_document",
     "write_json",
+    "write_json_text",
 ]
 
 logger = logging.getLogger(__name__)
@@ -132,12 +137,12 @@ def config_files(
     return found
 
 
-def resubmit_target(layout: "BatchLayout", manifest: dict[str, Any]) -> str:
+def resubmit_target(layout: "BatchLayout", manifest: "Manifest") -> str:
     """The batch's directory as ``scenario-slurm`` on the submit host takes
     it: a ``remote_cwd`` batch collected on a node names the submit host's
     path (the manifest's ``batch_dir``), not the node's."""
-    if manifest.get("batch_dir_relative") and manifest.get("batch_dir"):
-        return str(manifest["batch_dir"])
+    if manifest.is_true("batch_dir_relative") and manifest.is_true("batch_dir"):
+        return manifest.text("batch_dir")
     return str(layout.batch_dir)
 
 
@@ -153,6 +158,21 @@ def write_json(path: Path, data: Any) -> None:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             json.dump(data, stream, indent=2, ensure_ascii=False)
             stream.write("\n")
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
+def write_json_text(path: Path, text: str) -> None:
+    """Write *text*, a JSON document's text as :func:`write_json` writes it
+    (:meth:`.records.JsonMembers.object_text`), to *path* as
+    :func:`write_json` writes it: atomically, the user's alone."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(text)
         os.replace(tmp, path)
     except BaseException:
         Path(tmp).unlink(missing_ok=True)
@@ -453,6 +473,242 @@ class SubmissionRecord:
         return None
 
 
+def manifest_of_text(text: str) -> Manifest | None:
+    """The manifest of the JSON text *text*, as ``json.loads()`` reads it
+    (a key named twice keeps its first place and its last value), or
+    ``None`` when *text* is JSON that is not an object.
+
+    Raises what ``json.loads()`` raises for text that is not JSON (a
+    :class:`ValueError`, a :class:`RecursionError` for text nested too deep
+    for it), and nothing else.  Each value is written back here with the C
+    encoder, as :class:`.records.JsonMembers` holds a value, so that nothing
+    of the manifest is read again deeper in the stack than ``json.loads()``
+    read it (Python 3.10 counts the calls on the stack with the levels of
+    nesting it reads).
+    """
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        return None
+    members = JsonMembers()
+    cases: list[ManifestCase] = []
+    # The shape of ``cases`` when it is a value Python cannot iterate.
+    cases_shape = ""
+    for key, value in data.items():
+        members.put(str(key), json.dumps(value, ensure_ascii=False))
+        if str(key) != "cases":
+            continue
+        cases = []
+        cases_shape = ""
+        if isinstance(value, list) or isinstance(value, dict) or isinstance(value, str):
+            # A case of each item ``for case in manifest["cases"]`` gave:
+            # a list's items, an object's keys, a string's characters.
+            for item in value:
+                case = JsonMembers()
+                shape = ""
+                if isinstance(item, dict):
+                    for name, field in item.items():
+                        case.put(str(name), json.dumps(field, ensure_ascii=False))
+                elif isinstance(item, list):
+                    shape = "[]"
+                elif isinstance(item, str):
+                    shape = '""'
+                elif isinstance(item, bool):
+                    shape = "false"
+                elif isinstance(item, int):
+                    shape = "0"
+                elif isinstance(item, float):
+                    shape = "0.0"
+                else:
+                    shape = "null"
+                cases.append(ManifestCase(case, shape))
+        elif isinstance(value, bool):
+            cases_shape = "false"
+        elif isinstance(value, int):
+            cases_shape = "0"
+        elif isinstance(value, float):
+            cases_shape = "0.0"
+        else:
+            cases_shape = "null"
+    manifest = Manifest(members, cases, cases_shape)
+    if not TYPE_CHECKING:
+        # The manifest as json.loads() read it, for the readers the check
+        # leaves out (Manifest.get(), manifest[key]).
+        manifest._document = data
+    return manifest
+
+
+class ManifestCase:
+    """A case of a batch's manifest (:meth:`Manifest.cases`): its members,
+    each read when it is asked for, as the case read as a ``dict`` gave it.
+
+    The case is what its submitter wrote (``slurm/submit.py``): its
+    ``index``, ``label``, ``scenario``, ``overrides`` and
+    ``case_overrides``, ``scenario_class``, its file ``stem`` (missing from
+    a manifest older than #1957), its resolved ``config`` and the ``files``
+    it names -- or anything a hand or another version left there.  A case
+    that is not an object (a hand's, another version's) is held as a value
+    of its type (*shape*: ``[]``, ``""``, ``0``, ``0.0``, ``false`` or
+    ``null``, empty for an object), so that reading a member of it raises
+    what CPython raises for its type (``'int' object is not subscriptable``;
+    a list, a string or a number in its place raises alike whatever it
+    holds).
+    """
+
+    members: JsonMembers
+    _shape: str
+
+    def __init__(self, members: JsonMembers, shape: str = "") -> None:
+        self.members = members
+        self._shape = shape
+
+    def __getitem__(self, key: str) -> Any:
+        """The value of the member *key*: the case's ``case[key]``, a
+        :class:`KeyError` when there is none (a :class:`TypeError` for a
+        case that is not an object)."""
+        if self._shape != "":
+            return json.loads(self._shape)[key]
+        return self.members.value(key)
+
+    def get(self, key: str) -> Any:
+        """The value of the member *key*, ``None`` when there is none: the
+        case's ``case.get(key)`` (an :class:`AttributeError` for a case
+        that is not an object)."""
+        if self._shape != "":
+            return json.loads(self._shape).get(key)
+        return json.loads(_value_json(self.members, key))
+
+    def index(self) -> int:
+        """The case's ``index`` as ``int(case["index"])`` reads it: a
+        :class:`KeyError` when it has none, a :class:`TypeError` or a
+        :class:`ValueError` (an :class:`OverflowError` for an infinity) for
+        a value ``int()`` cannot read."""
+        return int(self["index"])
+
+    def index_value(self) -> int:
+        """The case's ``index`` as the manifest holds it: ``case["index"]``,
+        an int in a manifest its submitter wrote (and any value a hand left,
+        which Python alone hands on)."""
+        value = self["index"]
+        if TYPE_CHECKING:
+            return int(value)
+        else:
+            return value
+
+    def label(self) -> str:
+        """The case's ``label`` as text: ``str(case["label"])``."""
+        return str(self["label"])
+
+    def stem(self) -> str:
+        """The case's file stem as text, empty when it has none (a manifest
+        older than #1957): ``str(case.get("stem") or "")``."""
+        stem = self.get("stem")
+        if bool(stem):
+            return str(stem)
+        return ""
+
+    def case_overrides(self) -> list[str]:
+        """The overrides that make the case, as ``list(case["case_overrides"])``
+        reads them: a list's items (the strings its submitter wrote, and
+        any value a hand left, which Python alone hands on), an object's
+        keys, a string's characters; a :class:`TypeError` for a number or
+        ``null``."""
+        value = self["case_overrides"]
+        if TYPE_CHECKING:
+            return [str(item) for item in value]
+        else:
+            return list(value)
+
+
+class Manifest:
+    """A batch's manifest (``slurm/manifest.json``,
+    :meth:`BatchLayout.read_manifest`): its members, each read when it is
+    asked for, and its cases (:class:`ManifestCase`).
+
+    The manifest is what its submitter wrote (``slurm/submit.py``): its
+    ``version``, when it was ``created``, its ``batch_dir`` (and, with
+    ``launcher.remote_cwd``, its ``batch_dir_relative``), the ``cwd``,
+    ``python`` and ``argv`` that submitted it, its ``scenario_names``,
+    ``overrides`` and whether it expands them (``expand``), its
+    ``build_scenario_fn``, whether it was ``typechecked``, its ``launcher``
+    settings, the ``env`` its jobs set again, which cases decide its
+    ``batch_settings`` (missing from a manifest older than #1225), and its
+    ``cases`` -- or anything a hand or another version left there.
+
+    :meth:`get`, ``manifest[key]`` and ``key in manifest`` read it as the
+    ``dict`` it was read as before, for the readers the library check leaves
+    out (:mod:`.submit`, :mod:`.worker`, :mod:`.cli`, the gate, the viewer):
+    the very values ``json.loads()`` read.  The typed accessors read what the
+    checked readers (:mod:`.collect`, :func:`resubmit_target`) ask of it.
+
+    Made by :func:`manifest_of_text`, which reads its cases when the
+    manifest is read, as deep in the stack as ``json.loads()`` read it.
+    """
+
+    members: JsonMembers
+    _cases: list[ManifestCase]
+    #: ``cases`` as a value of its type when Python cannot iterate it
+    #: (``0``, ``0.0``, ``false``, ``null``); empty when it can.
+    _cases_shape: str
+    #: The manifest as ``json.loads()`` read it, for :meth:`get` and
+    #: ``manifest[key]``: Python alone holds it (manifest_of_text()).
+    _document: dict[str, Any]
+
+    def __init__(
+        self, members: JsonMembers, cases: list[ManifestCase], cases_shape: str = ""
+    ) -> None:
+        self.members = members
+        self._cases = cases
+        self._cases_shape = cases_shape
+        self._document = {}
+
+    def has(self, key: str) -> bool:
+        """Whether the manifest has the member *key*."""
+        return self.members.has(key)
+
+    def __contains__(self, key: str) -> bool:
+        """``key in manifest``: whether it has the member *key*."""
+        return self.members.has(key)
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """The value of the member *key*, *default* when there is none: the
+        manifest's ``dict.get(key, default)``, the value ``json.loads()``
+        read."""
+        return self._document.get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        """The value of the member *key*: the manifest's ``dict[key]``, the
+        value ``json.loads()`` read; a :class:`KeyError` when there is
+        none."""
+        return self._document[key]
+
+    def version_text(self) -> str:
+        """The JSON text of the manifest's ``version``, ``null`` when it has
+        none (:meth:`BatchLayout._check_version`)."""
+        return _value_json(self.members, "version")
+
+    def is_true(self, key: str) -> bool:
+        """Whether the member *key* is true, as ``bool()`` reads its value
+        (false when there is none): ``bool(manifest.get(key))``."""
+        return bool(json.loads(_value_json(self.members, key)))
+
+    def text(self, key: str) -> str:
+        """The member *key* as text: ``str(manifest[key])``, a
+        :class:`KeyError` when there is none."""
+        return str(self.members.value(key))
+
+    def cases(self) -> list[ManifestCase]:
+        """The manifest's cases, as ``for case in manifest["cases"]`` gave
+        them: a :class:`KeyError` when it has none, the
+        :class:`TypeError` CPython raises for ``cases`` it cannot iterate
+        (a number, ``true`` or ``null``)."""
+        if not self.members.has("cases"):
+            raise KeyError("cases")
+        if self._cases_shape != "":
+            for _ in json.loads(self._cases_shape):
+                pass
+        return self._cases
+
+
 class CaseOutcome:
     """A case's outcome as its task recorded it (``results/<i>.json``,
     :meth:`BatchLayout.read_result`): the record's members, each read when
@@ -744,8 +1000,8 @@ class BatchLayout(BatchPaths):
                 return index
             index = max(index + 1, self.next_submission())
 
-    def read_manifest(self) -> dict[str, Any]:
-        """The batch's manifest.
+    def read_manifest(self) -> Manifest:
+        """The batch's manifest (:class:`Manifest`).
 
         Raises:
             FileNotFoundError: *batch_dir* holds no SLURM batch.
@@ -757,15 +1013,18 @@ class BatchLayout(BatchPaths):
             raise FileNotFoundError(
                 f"{self.batch_dir} holds no SLURM batch (no {self.manifest})"
             )
-        manifest = read_json(self.manifest)
-        if not isinstance(manifest, dict):
+        # Parsed in a helper, as read_json() parsed it: Python 3.10 counts
+        # the calls on the stack with the levels of nesting json.loads()
+        # reads.
+        manifest = manifest_of_text(self.manifest.read_text(encoding="utf-8"))
+        if manifest is None:
             raise ValueError(
                 f"{self.manifest} is not a SLURM batch manifest "
                 "(it holds JSON that is not an object)"
             )
         # The version as JSON text, which json.loads() reads back as the
         # value the manifest holds.
-        self._check_version(json.dumps(manifest.get("version")))
+        self._check_version(manifest.version_text())
         return manifest
 
     def _check_version(self, text: str) -> None:

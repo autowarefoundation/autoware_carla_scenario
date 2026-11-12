@@ -30,6 +30,7 @@ from autoware_carla_scenario.slurm.manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
     SubmissionRecord,
+    manifest_of_text,
     submission_record_of,
     no_job_note,
     read_json,
@@ -643,8 +644,9 @@ def test_a_manifest_of_a_version_read_reads_as_json_holds_it(
         '"cases": [{"index": 1}], "big": 123456789012345678901234567890}',
     )
     data = layout.read_manifest()
-    assert list(data) == ["cases", "version", "batch_dir", "extra", "big"]
+    assert data.members.keys() == ["cases", "version", "batch_dir", "extra", "big"]
     assert data["cases"] == [{"index": 1}]
+    assert [case.index() for case in data.cases()] == [1]
     assert data["version"] == json.loads(version)
     assert type(data["version"]) is type(json.loads(version))
     assert data["batch_dir"] == "/x/é"
@@ -652,12 +654,15 @@ def test_a_manifest_of_a_version_read_reads_as_json_holds_it(
     assert data["big"] == 123456789012345678901234567890
 
 
-def test_read_manifest_gives_a_new_dict_each_time(tmp_path: Path) -> None:
+def test_read_manifest_gives_a_new_manifest_each_time(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     _write_manifest(layout, '{"version": 1, "cases": []}')
     first = layout.read_manifest()
     first["cases"].append("changed")
-    assert layout.read_manifest() == {"version": 1, "cases": []}
+    again = layout.read_manifest()
+    assert again["cases"] == []
+    assert again.members.keys() == ["version", "cases"]
+    assert again.cases() == []
 
 
 # ---------------------------------------------------------------------------
@@ -1079,7 +1084,9 @@ def test_recorded_verdict(record: Any, verdict: bool | None) -> None:
 def test_resubmit_target(tmp_path: Path, record: dict[str, Any], target: str) -> None:
     layout = _layout(tmp_path)
     expected = str(layout.batch_dir) if target == "LAYOUT" else target
-    assert resubmit_target(layout, record) == expected
+    manifest = manifest_of_text(json.dumps(record))
+    assert manifest is not None
+    assert resubmit_target(layout, manifest) == expected
 
 
 def test_config_files_names_the_files_of_a_config(tmp_path: Path) -> None:

@@ -132,6 +132,16 @@ class JsonMembers:
         if key in self._layouts:
             del self._layouts[key]
 
+    def put(self, key: str, value_json: str) -> None:
+        """Set the member *key* to the value *value_json*, the text
+        ``json.dumps(value, ensure_ascii=False)`` wrote for it, which is held
+        as it is: not read again, so the caller writes it as deep in the
+        stack as it read the value (:func:`.manifest.manifest_of_text`).  In
+        its place when the object has the member, else after the others."""
+        self._values[key] = value_json
+        if key in self._layouts:
+            del self._layouts[key]
+
     def object_text(self) -> str:
         """The object's text, as :func:`.manifest.write_json` writes it:
         ``json.dumps(obj, indent=2, ensure_ascii=False)`` and a newline (see

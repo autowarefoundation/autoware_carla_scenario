@@ -1015,7 +1015,7 @@ def test_the_worker_refuses_a_timeout_that_is_not_positive_and_finite(
     from autoware_carla_scenario.slurm.manifest import write_json
 
     layout = _batch_on_disk(tmp_path, cases=1)
-    manifest = layout.read_manifest()
+    manifest = read_json(layout.manifest)
     manifest["cases"][0].update(
         scenario=_CONCRETE,
         overrides=["scenario.timeout_seconds=nan"],
@@ -1083,7 +1083,7 @@ def test_the_worker_refuses_a_case_off_its_documents_map(
     monkeypatch.setitem(registry._SCENARIO_DOCUMENTS, name, lambda: document)
 
     layout = _batch_on_disk(tmp_path, cases=1)
-    manifest = layout.read_manifest()
+    manifest = read_json(layout.manifest)
     manifest["cases"][0].update(
         scenario=_CONCRETE, overrides=[], stem="S", scenario_class="X"
     )
@@ -3835,7 +3835,7 @@ def test_the_worker_takes_its_slot_in_launcher_port_lock_dir(
     from autoware_carla_scenario.slurm.manifest import write_json
 
     layout = _batch_on_disk(tmp_path, cases=1)
-    manifest = layout.read_manifest()
+    manifest = read_json(layout.manifest)
     manifest["launcher"] = {"port_lock_dir": str(tmp_path / "locks")}
     manifest["cases"][0].update(scenario="x", overrides=[], stem="S")
     write_json(layout.manifest, manifest)
@@ -3874,7 +3874,7 @@ def test_a_failing_task_port_propagates_and_releases_the_slot(
     from autoware_carla_scenario.slurm.manifest import write_json
 
     layout = _batch_on_disk(tmp_path, cases=1)
-    manifest = layout.read_manifest()
+    manifest = read_json(layout.manifest)
     manifest["cases"][0].update(scenario="x", overrides=[], stem="S")
     write_json(layout.manifest, manifest)
     released: list[bool] = []

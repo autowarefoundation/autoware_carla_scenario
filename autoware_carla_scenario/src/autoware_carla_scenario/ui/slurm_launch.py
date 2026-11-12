@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..slurm.manifest import (
     BatchLayout,
+    Manifest,
     SubmissionRecord,
     TaskStatus,
     no_job_note,
@@ -376,7 +377,7 @@ _ACTIVE_STATES: tuple[str, ...] = tuple(sorted(ACTIVE_STATES))
 
 def _case_states(
     layout: BatchLayout,
-    manifest: dict[str, Any],
+    manifest: Manifest,
     squeue: dict[int, dict[int, str] | None],
 ) -> list[dict[str, Any]]:
     """Each case: its record's outcome, or where its task is."""

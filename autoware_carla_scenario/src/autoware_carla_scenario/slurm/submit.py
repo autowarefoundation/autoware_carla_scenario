@@ -28,6 +28,7 @@ from .manifest import (
     MANIFEST_VERSION,
     SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
+    Manifest,
     config_files,
     recorded_verdict,
     sbatch_in_flight,
@@ -267,7 +268,7 @@ def after_submit(layout: BatchLayout, index: int, settings: SlurmSettings) -> in
 
 
 def _script_inputs(
-    manifest: dict[str, Any], *, python: bool, cwd: bool, env: Any
+    manifest: dict[str, Any] | Manifest, *, python: bool, cwd: bool, env: Any
 ) -> ScriptInputs:
     """What the scripts read of *manifest*, as they read it before #732.
 
@@ -286,7 +287,7 @@ def _script_inputs(
 
 def job_script(
     layout: BatchLayout,
-    manifest: dict[str, Any],
+    manifest: dict[str, Any] | Manifest,
     settings: SlurmSettings,
     submission: int,
 ) -> str:
@@ -302,7 +303,7 @@ def job_script(
 
 
 def collect_script(
-    manifest: dict[str, Any],
+    manifest: dict[str, Any] | Manifest,
     settings: SlurmSettings,
     layout: BatchLayout | None = None,
 ) -> str:
@@ -320,7 +321,7 @@ def collect_script(
 
 def _collect_command(
     layout: BatchLayout,
-    manifest: dict[str, Any],
+    manifest: dict[str, Any] | Manifest,
     settings: SlurmSettings,
     job: str,
     script: Path | None = None,
@@ -345,7 +346,7 @@ def _write_script(path: Path, text: str) -> None:
 
 def submit_cases(
     layout: BatchLayout,
-    manifest: dict[str, Any],
+    manifest: dict[str, Any] | Manifest,
     settings: SlurmSettings,
     case_indices: list[int],
     before_sbatch: Callable[[int], None] | None = None,

@@ -46,6 +46,7 @@ from autoware_carla_scenario.batch_report import print_summary
 from autoware_carla_scenario.slurm import cli, collect as collect_mod, submit, worker
 from autoware_carla_scenario.slurm.manifest import (
     BatchLayout,
+    manifest_of_text,
     recorded_verdict,
     write_json,
 )
@@ -328,7 +329,7 @@ def _old_read_manifest(self: BatchLayout) -> dict[str, Any]:
     return manifest
 
 
-def _old_resubmit_target(layout: BatchLayout, manifest: dict[str, Any]) -> str:
+def _old_resubmit_target(layout: BatchLayout, manifest: Any) -> str:
     if manifest.get("batch_dir_relative") and manifest.get("batch_dir"):
         return str(manifest["batch_dir"])
     return str(layout.batch_dir)
@@ -534,6 +535,10 @@ def _text(value: Any) -> str:
         return json.dumps(value, indent=1, ensure_ascii=False)
     except (TypeError, ValueError, RecursionError):
         return repr(value)
+
+
+def _same(actual: Any, expected: Any) -> None:
+    assert _text(actual) == _text(expected)
 
 
 def _logs(caplog: pytest.LogCaptureFixture) -> list[tuple[str, int, str]]:
@@ -838,6 +843,180 @@ def test_the_gate_names_a_case_without_an_index_as_python_shows_it(
 
     pristine = _batch(tmp_path, _manifest(_V1, cases=cases).encode())
     assert _slurm_unrecorded(pristine.batch_dir) == f"{pristine.manifest}: {message}"
+
+
+# -- The typed accessors --------------------------------------------------------------
+
+
+@pytest.mark.parametrize(("name", "content"), _CONTENTS, ids=_IDS)
+def test_the_typed_accessors_of_each_manifest(
+    tmp_path: Path, name: str, content: bytes
+) -> None:
+    """What the checked readers ask of a manifest, as they asked it of the
+    manifest read as a dict."""
+    layout = BatchLayout(tmp_path / "batch")
+    layout.manifest.parent.mkdir(parents=True)
+    layout.manifest.write_bytes(content)
+    old = _outcome(lambda: _old_read_manifest(layout))
+    new = _outcome(layout.read_manifest)
+    if old[0] == "raises":
+        assert new == old
+        return
+    document, manifest = old[1], new[1]
+    assert manifest.members.keys() == list(document)
+    for key in document:
+        assert manifest.members.value_text(key) == json.dumps(
+            document[key], ensure_ascii=False
+        )
+        assert key in manifest and manifest.has(key)
+        _same(manifest[key], document[key])
+        assert type(manifest[key]) is type(document[key])
+    assert "no such key" not in manifest
+    assert manifest.version_text() == json.dumps(
+        document.get("version"), ensure_ascii=False
+    )
+    for key in ("batch_dir", "batch_dir_relative", "expand", "no such key"):
+        assert manifest.is_true(key) is bool(document.get(key))
+        _same(
+            _outcome(partial(manifest.text, key)),
+            _outcome(partial(lambda key: str(document[key]), key)),
+        )
+    _same(
+        _outcome(lambda: [type(c).__name__ for c in manifest.cases()]),
+        _outcome(lambda: ["ManifestCase" for _ in document["cases"]]),
+    )
+    if not isinstance(document.get("cases"), (list, dict, str)):
+        return
+    for case, raw in zip(manifest.cases(), document["cases"]):
+        pairs: list[tuple[Callable[[], Any], Callable[[], Any]]] = [
+            (case.index, partial(lambda raw: int(raw["index"]), raw)),
+            (case.index_value, partial(lambda raw: raw["index"], raw)),
+            (case.label, partial(lambda raw: str(raw["label"]), raw)),
+            (case.stem, partial(lambda raw: str(raw.get("stem") or ""), raw)),
+            (
+                case.case_overrides,
+                partial(lambda raw: list(raw["case_overrides"]), raw),
+            ),
+        ]
+        for key in (*_CASE_KEYS, "z"):
+            pairs.append(
+                (
+                    partial(operator.getitem, case, key),
+                    partial(lambda raw, key: raw[key], raw, key),
+                )
+            )
+            pairs.append(
+                (
+                    partial(case.get, key),
+                    partial(lambda raw, key: raw.get(key), raw, key),
+                )
+            )
+        for typed, read in pairs:
+            _same(_outcome(typed), _outcome(read))
+
+
+@pytest.mark.parametrize(
+    ("text", "shape"),
+    [
+        ("1", "0"),
+        ("-1.5", "0.0"),
+        ("true", "false"),
+        ("null", "null"),
+        ('"x"', '""'),
+        ("[1, [2]]", "[]"),
+    ],
+)
+def test_a_case_that_is_no_object_raises_as_its_type_does(
+    text: str, shape: str
+) -> None:
+    manifest = manifest_of_text(f'{{"version": 1, "cases": [{text}]}}')
+    assert manifest is not None
+    (case,) = manifest.cases()
+    raw = json.loads(text)
+    for typed, read in [
+        (case.index, lambda: int(raw["index"])),
+        (case.label, lambda: str(raw["label"])),
+        (case.stem, lambda: str(raw.get("stem") or "")),
+        (case.case_overrides, lambda: list(raw["case_overrides"])),
+    ]:
+        with pytest.raises(Exception) as typed_error:
+            typed()
+        with pytest.raises(Exception) as read_error:
+            read()
+        assert type(typed_error.value) is type(read_error.value)
+        assert str(typed_error.value) == str(read_error.value)
+    assert case.members.keys() == []
+
+
+@pytest.mark.parametrize(
+    ("cases", "error", "message"),
+    [
+        (None, KeyError, "'cases'"),
+        ("1", TypeError, "'int' object is not iterable"),
+        ("1.5", TypeError, "'float' object is not iterable"),
+        ("true", TypeError, "'bool' object is not iterable"),
+        ("null", TypeError, "'NoneType' object is not iterable"),
+    ],
+)
+def test_cases_python_cannot_iterate_raise_as_they_did(
+    cases: str | None, error: type[Exception], message: str
+) -> None:
+    text = '{"version": 1}' if cases is None else f'{{"version": 1, "cases": {cases}}}'
+    manifest = manifest_of_text(text)
+    assert manifest is not None
+    with pytest.raises(error) as info:
+        manifest.cases()
+    assert type(info.value) is error
+    assert str(info.value) == message
+
+
+@pytest.mark.parametrize(
+    ("cases", "count"), [('"abc"', 3), ('""', 0), ('{"a": 1, "b": 2}', 2), ("[]", 0)]
+)
+def test_cases_of_a_string_or_an_object_are_its_characters_or_keys(
+    cases: str, count: int
+) -> None:
+    manifest = manifest_of_text(f'{{"version": 1, "cases": {cases}}}')
+    assert manifest is not None
+    assert len(manifest.cases()) == count
+    for case in manifest.cases():
+        with pytest.raises(TypeError, match="string indices must be integers"):
+            case.index()
+
+
+@pytest.mark.parametrize("text", ["[]", '"x"', "1", "null", "true"])
+def test_manifest_of_text_is_none_for_json_that_is_no_object(text: str) -> None:
+    assert manifest_of_text(text) is None
+
+
+def test_collected_json_is_written_as_write_json_writes_it(tmp_path: Path) -> None:
+    labels = ["s#1", "\u00fc \u2603", 'q"uote', "back\\slash"]
+    cases = ", ".join(
+        f'{{"index": {i}, "label": {json.dumps(label)}, "stem": "s{i}"}}'
+        for i, label in enumerate(labels)
+    )
+    layout = BatchLayout(tmp_path / "batch")
+    layout.manifest.parent.mkdir(parents=True)
+    layout.manifest.write_text(
+        f'{{"version": 1, "cases": [{cases}], "launcher": {{}}}}', encoding="utf-8"
+    )
+    layout.result(0).parent.mkdir(parents=True)
+    layout.result(0).write_text(_passing_record(0), encoding="utf-8")
+    layout.result(2).write_text(_failing_record(2), encoding="utf-8")
+    assert collect_mod.collect(layout, quiet_hint=True) == 1
+    expected = tmp_path / "expected.json"
+    write_json(
+        expected,
+        {
+            "cases": 4,
+            "passed": 1,
+            "errored": [labels[2]],
+            "missing": [labels[1], labels[3]],
+        },
+    )
+    written = layout.root / "collected.json"
+    assert written.read_bytes() == expected.read_bytes()
+    assert oct(written.stat().st_mode & 0o777) == oct(expected.stat().st_mode & 0o777)
 
 
 # -- A manifest nested deep ---------------------------------------------------------
