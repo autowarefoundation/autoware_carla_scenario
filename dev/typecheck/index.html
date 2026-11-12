@@ -4880,8 +4880,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-316 of the package's 432
-modules (73%; about 99,600 of
+317 of the package's 432
+modules (73%; about 100,000 of
 168,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4958,7 +4958,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 316 CHECKED modules</summary>
+<summary>The 317 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5952,6 +5952,10 @@ with the first paragraph of its docstring:</p>
 <td>Running a batch's cases as SLURM array jobs: <code>launcher=slurm</code> (docs/slurm.md).</td>
 </tr>
 <tr>
+<td><code>slurm.collect</code></td>
+<td>Collecting a SLURM batch: its summary and <code>batch_results.json</code>.</td>
+</tr>
+<tr>
 <td><code>slurm.manifest</code></td>
 <td>What a SLURM batch leaves in its output directory, and reads back.</td>
 </tr>
@@ -6234,8 +6238,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>194 functions and methods of those modules are <code>UNCALLED</code>
-(58 of them protected helpers, see <em>What is
+<p>208 functions and methods of those modules are <code>UNCALLED</code>
+(61 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6247,7 +6251,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 194 UNCALLED functions and methods, and why</summary>
+<summary>The 208 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6364,6 +6368,20 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>signals.controller._group_members</code>: reads the authoring package's pydantic signal groups (<code>list[Any]</code>, so the runtime does not import authoring); only build_controllers, itself uncalled, calls it</li>
 <li><code>signals.controller._phase_states</code>: reads one of the authoring package's pydantic phases (<code>Any</code>, so the runtime does not import authoring); only build_controllers, itself uncalled, calls it</li>
 <li><code>signals.controller.build_controllers</code>: reads the authoring package's pydantic specs (MapRef.traffic_signal_controllers and signal_groups), typed <code>list[Any]</code> so the runtime does not import authoring, with getattr defaults for fields older documents lack</li>
+<li><code>slurm.collect.RecordedResult.__init__</code>: the generated constructor of a dataclass whose one field is a case's outcome as a task recorded it, a <code>dict[str, Any]</code> of mixed value types (see <code>_BATCH_RECORD</code>), which Codon cannot express</li>
+<li><code>slurm.collect.RecordedResult.condition_statuses</code>: reads the recorded outcome (<code>self.data</code>, a <code>dict[str, Any]</code> of mixed value types (see <code>_BATCH_RECORD</code>)), which Codon cannot express</li>
+<li><code>slurm.collect.RecordedResult.elapsed_seconds</code>: reads the recorded outcome (<code>self.data</code>, a <code>dict[str, Any]</code> of mixed value types (see <code>_BATCH_RECORD</code>)), which Codon cannot express</li>
+<li><code>slurm.collect.RecordedResult.failure</code>: reads the recorded outcome (<code>self.data</code>, a <code>dict[str, Any]</code> of mixed value types (see <code>_BATCH_RECORD</code>)) back with the uncalled Failure.from_dict(), which Codon cannot express</li>
+<li><code>slurm.collect.RecordedResult.message</code>: reads the recorded outcome (<code>self.data</code>, a <code>dict[str, Any]</code> of mixed value types (see <code>_BATCH_RECORD</code>)), which Codon cannot express</li>
+<li><code>slurm.collect.RecordedResult.passed</code>: reads the recorded outcome (<code>self.data</code>, a <code>dict[str, Any]</code> of mixed value types (see <code>_BATCH_RECORD</code>)), which Codon cannot express</li>
+<li><code>slurm.collect.RecordedResult.rerun_recording</code>: reads the recorded outcome (<code>self.data</code>, a <code>dict[str, Any]</code> of mixed value types (see <code>_BATCH_RECORD</code>)), which Codon cannot express</li>
+<li><code>slurm.collect.RecordedResult.to_dict</code>: returns the recorded outcome, a <code>dict[str, Any]</code> of mixed value types (see <code>_BATCH_RECORD</code>), which Codon cannot express</li>
+<li><code>slurm.collect._error_result</code>: builds a RecordedResult, whose outcome is a <code>dict[str, Any]</code> of mixed value types (see <code>_BATCH_RECORD</code>), with the uncalled Failure.to_dict(), which Codon cannot express</li>
+<li><code>slurm.collect._last_submission_of</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest, a submission, a task's status or a case's outcome), which Codon cannot express</li>
+<li><code>slurm.collect._missing_message</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest, a submission, a task's status or a case's outcome), which Codon cannot express; it reads a missing case's records, and which advice they give and its message are the checked _advice()'s</li>
+<li><code>slurm.collect.collect</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest, a submission, a task's status or a case's outcome), which Codon cannot express; the advice on a case with no outcome is the checked _advice()'s, and the hint on them the checked _missing_hint()'s</li>
+<li><code>slurm.collect.missing_cases</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest, a submission, a task's status or a case's outcome), which Codon cannot express</li>
+<li><code>slurm.collect.unfinished_cases</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest, a submission, a task's status or a case's outcome), which Codon cannot express</li>
 <li><code>slurm.manifest.BatchLayout.read_manifest</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest, a submission, a task's status or a case's outcome), which Codon cannot express; whether it reads the manifest's version is the checked _check_version()'s</li>
 <li><code>slurm.manifest.BatchLayout.read_result</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest, a submission, a task's status or a case's outcome), which Codon cannot express</li>
 <li><code>slurm.manifest.BatchLayout.read_submission</code>: returns the JSON document it reads, of any type (<code>Any</code>), which Codon cannot express</li>
@@ -6445,7 +6463,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 116 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 115 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6474,7 +6492,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 116 EXCLUDED modules, and why</summary>
+<summary>The 115 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped</li>
@@ -6561,9 +6579,8 @@ the first:</p>
 <li><code>ros2.messages</code>: imports cyclonedds (the IdlStruct base of every message, and the IDL field types <code>array[float64, 36]</code> and <code>sequence[TrajectoryPoint]</code>, which Codon cannot express)</li>
 <li><code>scaffold.generator</code>: imports argparse, ast, errno, functools, importlib.metadata, templating (jinja2) and, inside functions, packaging, typecheck.transform and authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked; its naming rules, and the framework-name rule it shares with authoring.package_names, are the checked scaffold.names'; scaffold/generator.codon declares what the checked scaffold package re-exports of it</li>
 <li><code>serve_cli</code>: imports argparse and ipaddress</li>
-<li><code>slurm.cli</code>: imports argparse, and slurm.collect and slurm.submit, which are not checked</li>
-<li><code>slurm.collect</code>: reads the outcomes recorded as JSON into dataclass fields typed <code>dict[str, Any]</code>, which Codon cannot express, through what the checked slurm.manifest reads them with (<code>dict[str, Any]</code>, uncalled)</li>
-<li><code>slurm.submit</code>: imports omegaconf (inside functions) and, inside a function, slurm.collect, which are not checked, and more of os than its shim declares (<code>os.O_TRUNC</code>); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts, and run, as squeue, scancel and scontrol are, by the checked slurm.queue</li>
+<li><code>slurm.cli</code>: imports argparse, and slurm.submit, which are not checked, and calls the checked slurm.collect's uncalled collect() and unfinished_cases() (<code>dict[str, Any]</code> records)</li>
+<li><code>slurm.submit</code>: imports omegaconf (inside functions), which is not checked, and more of os than its shim declares (<code>os.O_TRUNC</code>), and, inside a function, calls the checked slurm.collect's uncalled collect() (<code>dict[str, Any]</code> records); takes the manifest as <code>dict[str, Any]</code> and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts, and run, as squeue, scancel and scontrol are, by the checked slurm.queue</li>
 <li><code>slurm.worker</code>: imports traceback, uuid, <code>contextlib.contextmanager</code>, more of errno, os, threading and importlib than their shims declare (<code>errno.ENOSYS</code>, <code>errno.ENOLCK</code>, <code>errno.EINVAL</code>, <code>os.fstat()</code>, <code>os.write()</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled, and, inside run_task(), typecheck.mode (the checker, outside the library check); imports <code>RerunConverter</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>report()</code> from rerun, which is not checked, and the rerun model declares neither <code>report()</code> nor <code>RerunConverter.close()</code>, and its <code>RerunConverter.wait()</code> returns None, not the RerunConversion records the worker passes to <code>rerun_errors()</code>; compares config values of any type (<code>Any</code>); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's, and whether a differing config string names the same file the checked slurm.same_files' (#1720)</li>
 <li><code>sweeper</code>: re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)</li>
 <li><code>sweeper.expand</code>: imports omegaconf, and openodd inside a function; imports <code>OddDraws</code> (under <code>TYPE_CHECKING</code>) and <code>ODD_CASE_KEY</code>, <code>QUANTILE_DRAWS</code>, <code>case_settings()</code>, <code>check_sample_settings()</code>, <code>controls_from_mapping()</code>, <code>encode_case()</code>, <code>sample_draws()</code>, <code>scenario_backend()</code>, <code>search_from_config()</code>, <code>seed_setting()</code> and <code>whole_number_setting()</code> from odd.sampler (inside _with_odd_samples(), _refuse_overridden(), _config_seed(), _case_index() and expand_config()), <code>lanelet_readings()</code> from odd.route (inside _case_readings()) and <code>ControlsError</code> and <code>validate_controls()</code> from odd.controls (inside scenario_controls()), which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as <code>Any</code> and <code>Mapping[..., Any]</code>, which Codon cannot express; the lanelet a base case is on, whether a drawn case fits a base case and which base case each drawn case is put on are the checked sweeper.case_choice's, and the lanelet key a walk-back moves (<code>_walk_back_lanelet_key()</code>) is the checked sweeper.bindings's (#1697), which it re-exports</li>
