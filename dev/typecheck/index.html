@@ -3049,7 +3049,8 @@ value, so the result is not checked:</p>
   <code>autoware_stack/launcher</code>, <code>autoware_stack/devcontainer</code> (and its values),
   <code>driver/egodriver_client</code>, <code>_map_source</code>, <code>maps/cache</code>,
   <code>maps/z_offset_cache</code>, <code>maps/road_network_cache</code>, <code>pedestrian/soma</code>,
-  <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code>, <code>scaffold/generator</code> and <code>utils/traffic_light</code>, each declaring exactly the names compared;
+  <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code>, <code>scaffold/generator</code>,
+  <code>commonroad/session</code>, <code>commonroad/worker</code> and <code>utils/traffic_light</code>, each declaring exactly the names compared;
   <code>ros2/cyclone</code> where cyclonedds is installed.</li>
 <li><strong>Every public name of a modelled module</strong>: each name a module the model
   has exports in Python (its <code>__all__</code>, or the public names it defines when
@@ -4878,7 +4879,7 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-310 of the package's 432
+311 of the package's 432
 modules (72%; about 97,700 of
 168,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
@@ -4895,8 +4896,9 @@ the signal table read off roadgen's traces or the crossings read with
 <code>xml.etree.ElementTree</code>, which the check leaves uncalled), the signal
 controllers, the adversity math, the measures, the metrics (and which of the
 CommonRoad metrics are heavy, the environment that turns them off and the
-checks of their periods: <code>heavy_metrics</code>, #1689; not <code>commonroad.session</code>,
-which runs the workers and re-exports it) and the ODD's
+checks of their periods: <code>heavy_metrics</code>, #1689, and the <code>commonroad</code>
+package's <code>__init__</code>, which re-exports them; not <code>commonroad.session</code>,
+which runs the workers and re-exports it too) and the ODD's
 probes (and the names, knob keys, limits and ranges of the traffic
 parameters' probes: <code>odd.traffic_ranges</code>, #1680; not the probes themselves,
 <code>odd.traffic_probes</code>, which builds openodd's knobs), the gate package's
@@ -4954,7 +4956,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 310 CHECKED modules</summary>
+<summary>The 311 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5214,6 +5216,10 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>carla_install_paths</code></td>
 <td>Where <code>scenario-setup</code> installs CARLA, and the paths it swaps an install by.</td>
+</tr>
+<tr>
+<td><code>commonroad</code></td>
+<td>The CommonRoad metrics: CriMe's criticality measures and CommonRoad-Reach's drivable area (<code>autoware_carla_scenario.metrics.COMMONROAD_METRICS</code>), computed once a run is over.</td>
 </tr>
 <tr>
 <td><code>commonroad.frame</code></td>
@@ -6393,7 +6399,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 122 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 121 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6422,7 +6428,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 122 EXCLUDED modules, and why</summary>
+<summary>The 121 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped</li>
@@ -6448,9 +6454,8 @@ the first:</p>
 <li><code>autoware_stack.devcontainer</code>: imports yaml; reads a JSONC and a Compose document of values of any type (<code>Any</code>), which Codon cannot express. The checked autoware_stack.docker and the package take what they use of it (<code>DevContainer</code>, <code>DevContainerError</code>, <code>read_devcontainer()</code>, <code>DEFAULT_WORKSPACE_MOUNT</code>) from its model (autoware_stack/devcontainer.codon); its JSONC, <code>${VAR}</code> interpolation and workspaceMount text parsers are the checked autoware_stack.devcontainer_text's</li>
 <li><code>batch_resume</code>: reads a batch's summary (batch_results.json) as JSON entries of mixed value types (<code>dict[str, Any]</code>), and reads a kept entry back as a result whose condition statuses and recording are values of any type, which Codon cannot express; the summary it rewrites is written by the checked batch_report</li>
 <li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, platform, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>), and reads the install's stamp from JSON of any value types; its paths, lock file, needed room, swap, and the decision whether an install is current and the conditional request that asks so, are the checked carla_install_paths's, which it re-exports</li>
-<li><code>commonroad</code>: re-exports commonroad.session and commonroad.worker, which are not checked</li>
-<li><code>commonroad.session</code>: imports concurrent.futures, and commonroad.worker and, inside a function, metric_batch, which are not checked; holds the workers' settings as values of any type (<code>dict[str, Any]</code>); which metrics are heavy, the environment that turns them off and the period checks are the checked heavy_metrics' (#1689), which it re-exports</li>
-<li><code>commonroad.worker</code>: imports select (<code>select.poll()</code>, <code>select.POLLIN</code>), which Codon has nothing for, and more of shlex and os than their shims declare (<code>shlex.split()</code>, <code>os.read()</code>, <code>os.set_blocking()</code>), and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express</li>
+<li><code>commonroad.session</code>: imports concurrent.futures, and commonroad.worker and, inside a function, metric_batch, which are not checked; holds the workers' settings as values of any type (<code>dict[str, Any]</code>); which metrics are heavy, the environment that turns them off and the period checks are the checked heavy_metrics' (#1689), which it re-exports; commonroad/session.codon declares what the checked commonroad package re-exports of it</li>
+<li><code>commonroad.worker</code>: imports select (<code>select.poll()</code>, <code>select.POLLIN</code>), which Codon has nothing for, and more of shlex and os than their shims declare (<code>shlex.split()</code>, <code>os.read()</code>, <code>os.set_blocking()</code>), and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express; commonroad/worker.codon declares what the checked commonroad package re-exports of it</li>
 <li><code>coverage.cod</code>: re-exports openodd's COD export (a Rust extension)</li>
 <li><code>coverage.collector</code>: derives openodd's collector (a Rust extension); imports <code>types.SimpleNamespace</code>, which Codon has nothing for; the names a versioned measure's cover items are written under are the checked coverage.item_names's</li>
 <li><code>coverage.items</code>: re-exports openodd's cover items (a Rust extension)</li>
@@ -6864,7 +6869,8 @@ stands in for it in the check's workspace:</p>
   <code>autoware_bridge/grpc_server.codon</code>, <code>driver/egodriver_client.codon</code>,
   <code>maps/cache.codon</code>, <code>autoware_stack/devcontainer.codon</code>,
   <code>ros2/cyclone.codon</code>, <code>pedestrian/soma.codon</code>,
-  <code>scaffold/generator.codon</code>), or, for a module of
+  <code>scaffold/generator.codon</code>, <code>commonroad/session.codon</code>,
+  <code>commonroad/worker.codon</code>), or, for a module of
   the top-level package, a model of that module (<code>trajectory_recorder.codon</code>,
   for <code>scenario_runner</code>, the <code>TrajectoryRecorder</code> it starts, records and
   closes, whose JSON lines hold values of mixed types; <code>environment.codon</code>,
@@ -8237,7 +8243,18 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   (<code>scaffold/generator.codon</code>, argparse and jinja2), which the checked
   <code>scaffold</code> package re-exports with <code>create_scenario_package()</code>,
   <code>resolve_names()</code> and <code>main()</code>, <code>compile_error</code>s as well: they write a new
-  scenario package (<code>scenario-new</code>), not a scenario. Each constructor takes
+  scenario package (<code>scenario-new</code>), not a scenario, and
+  <code>CommonRoadSettings</code> (<code>commonroad/session.codon</code>) and <code>CommonRoadWorker</code>
+  and <code>CommonRoadWorkerError</code> (<code>commonroad/worker.codon</code>, worker processes
+  spoken to in JSON), which the checked <code>commonroad</code> package re-exports with
+  <code>configure_commonroad_metrics()</code>, <code>commonroad_settings()</code>,
+  <code>evaluate_commonroad()</code>, <code>close_commonroad_workers()</code>, <code>worker_command()</code>
+  and the <code>WORKER_ENV</code> string, <code>compile_error</code>s too: the runner evaluates
+  the CommonRoad metrics after a run, not a scenario
+  (<code>CommonRoadSettings</code> leaves out <code>workers</code> and <code>heavy_metrics</code>, whose
+  defaults the machine and the environment decide: <code>_OMITTED_PARAMETERS</code>;
+  <code>CommonRoadWorkerError</code>, a <code>RuntimeError</code> with no constructor of its own,
+  takes <code>*args</code>, as Python's does). Each constructor takes
   Python's parameters and is a <code>compile_error</code>: its config
   (<code>AutowareBridgeConfig</code>, <code>DriverClientConfig</code>) is a checked class the model
   does not have, the class is only ever built by openodd's merge, its
@@ -8465,7 +8482,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 12, 2026 05:46:51 UTC"><span class="timeago" datetime="2026-11-12T05:46:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 12, 2026 05:46:51 UTC">2026-11-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 12, 2026 06:27:13 UTC"><span class="timeago" datetime="2026-11-12T06:27:13+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 12, 2026 06:27:13 UTC">2026-11-12</span>
   </span>
 
     
