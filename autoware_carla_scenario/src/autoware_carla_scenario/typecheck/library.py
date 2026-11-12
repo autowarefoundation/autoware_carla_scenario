@@ -21,7 +21,7 @@ two (``test_typecheck_library.py``), so a new module needs an entry here.
 :data:`UNCALLED` names the few functions and methods of a checked module the
 check leaves out, each with its reason: one whose job Codon cannot express (a
 dict of mixed value types, a parameter of ``Any``, a standard module Codon has
-nothing for, such as ``platform``), in a module that otherwise compiles.
+nothing for, such as ``ctypes``), in a module that otherwise compiles.
 
 To move a module into :data:`CHECKED`, delete its :data:`EXCLUDED` entry, add
 it to :data:`CHECKED`, run ``uv run scenario-check --library`` and fix what
@@ -205,6 +205,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.entity.ros2_entity",
     "autoware_carla_scenario.entity.vehicle_entity",
     "autoware_carla_scenario.entity_role",
+    "autoware_carla_scenario.environment",
     "autoware_carla_scenario.environment_pin",
     "autoware_carla_scenario.examples.adversity",
     "autoware_carla_scenario.examples.argv",
@@ -463,11 +464,18 @@ _BACKEND_VALUE = (
     "(`Any`: a Hydra node's), which Codon cannot express"
 )
 
+_PACKAGE_RECORDS = (
+    "the installed distributions as RunEnvironment holds and the environment "
+    "file writes them, `dict[str, Any]` records of mixed value types (a name, "
+    "a version or None, and a source whose values direct_url.json gives of "
+    "any JSON type), which Codon cannot express"
+)
+
 #: Functions and methods of checked modules the check does not call,
 #: by dotted name (``module.Class.method``), with the reason.  Codon compiles
 #: a function only when something calls it, so the body of one listed here is
 #: not checked; nor are the imports made inside it, which is where a module
-#: imports what Codon has nothing for (``platform``, ``argparse``) and only that
+#: imports what Codon has nothing for (``ctypes``, ``argparse``) and only that
 #: function uses.
 #: Everything else in the module still is.
 UNCALLED: dict[str, str] = {
@@ -492,6 +500,20 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.conditions.base.BaseCondition.to_summary_dict": _DETAILS,
     "autoware_carla_scenario.conditions.base.ConditionStatus.to_dict": _DETAILS,
     "autoware_carla_scenario.conditions.base.ScenarioResult.to_dict": _DETAILS,
+    "autoware_carla_scenario.environment._source": "builds a PinSource of the values a direct_url.json gives, as it gives them (of any JSON type: `vcs`, `commit`, `requested` and `subdirectory` are no str in a malformed one), which PinSource's typed fields cannot hold in Codon; reading the file is the checked _direct_url()'s and _source_members()'s, which holds each value as its JSON text",
+    "autoware_carla_scenario.environment._record": "reads a source's members (_source_members()) back into the record the environment file writes, a `dict[str, Any]` of values of any JSON type, which Codon cannot express",
+    "autoware_carla_scenario.environment._source_record": "builds the record the environment file writes of a PinSource, a `dict[str, Any]` of mixed value types (str, bool, a dict of hashes), which Codon cannot express; capture() writes the checked _source_members()'s",
+    "autoware_carla_scenario.environment._pin_source": "reads a source as the environment file records it (`dict[str, Any]`, of any JSON type), which Codon cannot express; the requirement it pins to is the checked environment_pin.pin()'s",
+    "autoware_carla_scenario.environment._package_pin": "reads a distribution as RunEnvironment holds it (`dict[str, Any]`), which Codon cannot express; the requirement it pins to is the checked environment_pin.pin()'s",
+    "autoware_carla_scenario.environment.RunEnvironment.__init__": f"takes {_PACKAGE_RECORDS}; what Python and the platform are is the checked _interpreter()'s",
+    "autoware_carla_scenario.environment.RunEnvironment.pins": f"reads {_PACKAGE_RECORDS} with _package_pin()",
+    "autoware_carla_scenario.environment.RunEnvironment.id": f"reads {_PACKAGE_RECORDS} through pins; the hash is the checked _environment_id()'s; the checked scenario_runner reads it through environment.codon (MODELLED_IMPORTS)",
+    "autoware_carla_scenario.environment.RunEnvironment.scenario_package": f"takes a scenario of any class (`Any`: its class's module names the package) and returns one of {_PACKAGE_RECORDS}; which distributions provide the package is the checked _distribution_names()'s",
+    "autoware_carla_scenario.environment.RunEnvironment.summary": f"takes a scenario of any class (`Any`) and builds the summary, a `dict[str, Any]` of mixed value types, from {_PACKAGE_RECORDS}",
+    "autoware_carla_scenario.environment.RunEnvironment.to_dict": f"takes a scenario of any class (`Any`) and builds the environment file's document, a `dict[str, Any]` of mixed value types, from {_PACKAGE_RECORDS}",
+    "autoware_carla_scenario.environment.RunEnvironment.lock": f"takes a scenario of any class (`Any`) and reads {_PACKAGE_RECORDS} with _package_pin(); the lock's text is the checked _lock_text()'s",
+    "autoware_carla_scenario.environment.capture": f"builds the RunEnvironment of {_PACKAGE_RECORDS} (with _record()); reading the distributions is the checked _installed()'s; the checked scenario_runner reads it through environment.codon (MODELLED_IMPORTS)",
+    "autoware_carla_scenario.environment.write": f"takes a scenario of any class (`Any`) and writes the environment file's document, a `dict[str, Any]` of mixed value types, and the lock, both of {_PACKAGE_RECORDS}",
     "autoware_carla_scenario.failure.Failure.to_dict": _DETAILS,
     "autoware_carla_scenario.failure.Failure.from_dict": "reads the dict to_dict() wrote, a `Mapping[str, Any]` of mixed value types (see `_DETAILS`), which Codon cannot express",
     "autoware_carla_scenario.gate.criteria.CaseChange.to_dict": _DETAILS,
@@ -594,7 +616,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.scenario_runner._record_metrics": "writes the metric series evaluate_metrics returns into the trajectory log, both held as `Any`, in rows of mixed float and bool values (`dict[str, Optional[Union[float, bool]]]`); only _judge_metrics, itself uncalled, calls it",
     "autoware_carla_scenario.scenario_runner._traffic_record": "reads the traffic backend's describe() and fidelity_census(), dicts of mixed value types, which Codon cannot express; _run_scenario calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.scenario_runner._write_gate_record": "calls a scenario's gate_record() found with getattr(), a method of no declared type (`make(result, file_stem)` returns `Any`), and writes its GateRecord with gate.record's write_gate_record(), itself uncalled (a `dict[str, Any]` of mixed value types); _run_scenario calls it in the `else` branch of `if TYPE_CHECKING:`",
-    "autoware_carla_scenario.scenario_runner._write_result": "merges the traffic record (`Any`) and environment.write()'s record (environment is EXCLUDED: platform, importlib.metadata) into the result document, which Codon cannot express; _run_scenario calls it in the `else` branch of `if TYPE_CHECKING:`",
+    "autoware_carla_scenario.scenario_runner._write_result": "merges the traffic record (`Any`) and environment.write()'s record (a `dict[str, Any]` of mixed value types, of the uncalled write()) into the result document, which Codon cannot express; _run_scenario calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.signals.controller.build_controllers": "reads the authoring package's pydantic specs (MapRef.traffic_signal_controllers and signal_groups), typed `list[Any]` so the runtime does not import authoring, with getattr defaults for fields older documents lack",
     "autoware_carla_scenario.sweeper.bindings.parse_binding": _YAML,
     "autoware_carla_scenario.sweeper.bindings._check_offset": "checks a stop-line offset as a YAML document or the editor wrote it (`value: Any`: an int, a float or numpy's numbers), which Codon cannot express; StopLineOffsetBinding's and StopLineApproachBinding's __post_init__ call it with their own field, so its body is compiled through them",
@@ -701,7 +723,6 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.editor.service": "imports yaml, zipfile, stat, uuid and weakref (`WeakValueDictionary`), which Codon has nothing for, and `contextlib.contextmanager`; imports serve_cli (argparse, ipaddress), which is not checked; reaches pydantic models through authoring.models; takes form fields as `Mapping[str, Any]`, which Codon cannot express; the gate fields the inspector edits and how they are shown are the checked editor.gate_fields's, and the name a new row gets the checked editor.naming's",
     "autoware_carla_scenario.entity.carla_driver_entity": "imports carla_driver_interface.driver (`TurnIndicator`) and carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, driver.renderer (the protocol's messages) and rerun_lidar (`active_recorder()`; the Rerun SDK; `CameraMount` is the checked rerun_sensor_mount's, #1688), and, inside functions, driver.hdmap_export (itself excluded) and t4_scene.live (t4_scene.convert; also under `TYPE_CHECKING`), which are neither checked nor modelled, and `active_recording()`, `offer_driver_sensors()` and `withdraw_driver_sensors()` from t4, which the t4 model does not declare; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)",
     "autoware_carla_scenario.entity.hils_entity": "imports hils.protocol (socket), which is neither checked nor modelled, for its `LineReader`, whose `read()` returns `List[Dict[str, Any]]`; uses more of socket than its shim declares (`settimeout()`, `sendall()`); takes and sends messages of any shape (`Any`, `Mapping[str, Any]`), and builds its config from a mapping through `cls.__dataclass_fields__` and `cls(**values)`, which Codon cannot express",
-    "autoware_carla_scenario.environment": "records packages as `dict[str, Any]`, and reads the values a direct_url.json gives, of any JSON type, into a PinSource, which Codon cannot express; the source record and the requirement a distribution is pinned to are the checked environment_pin's, and the suffixes of a run's environment and lock (`ENVIRONMENT_SUFFIX`, `LOCK_SUFFIX`) the checked run_outputs's (#1713), which it re-exports; a typed package record would change the public RunEnvironment.packages and the `distributions` it writes, and with the records UNCALLED only _git would compile",
     "autoware_carla_scenario.examples": "re-exports examples.run (omegaconf, hydra) and the registry (omegaconf, importlib)",
     "autoware_carla_scenario.examples.compose_errors": "imports difflib, and, inside functions, hydra and omegaconf (their errors), the registry (omegaconf, importlib) and examples.run (hydra, omegaconf), which are neither checked nor modelled; reads a composed config of any shape (`Any`), which Codon cannot express",
     "autoware_carla_scenario.examples.expand": "imports the registry (omegaconf, importlib) and sweeper.expand (omegaconf), and, inside main(), authoring.hydra_config (pydantic, through authoring.models), odd.controls (omegaconf, difflib) and examples.compose_errors (difflib, and hydra, omegaconf and examples.run inside its functions), which are not checked, and `OddDraws` from odd.sampler, which the odd model does not declare; holds the composed config as `Any`, which Codon cannot express",
@@ -833,6 +854,10 @@ MODELLED_IMPORTS: dict[str, tuple[str, ...]] = {
     "autoware_carla_scenario.odd.route_plan": (
         "autoware_carla_scenario.scenario_base",
     ),
+    # _record_run() calls capture() and reads its id, both UNCALLED (the
+    # distributions as `dict[str, Any]` records): through environment.codon,
+    # which declares them, the calls do not compile their bodies.
+    "autoware_carla_scenario.scenario_runner": ("autoware_carla_scenario.environment",),
     # PlayMotionAction.__init__() calls load_soma_motion(), which is UNCALLED
     # (numpy.load of an .npz): through pedestrian/soma.codon, which declares
     # it, the call does not compile its body.
