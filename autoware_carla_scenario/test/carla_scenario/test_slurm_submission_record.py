@@ -37,6 +37,7 @@ import pytest
 
 import autoware_carla_scenario.slurm.manifest as manifest_mod
 from autoware_carla_scenario.slurm import cli, collect as collect_mod, submit
+from autoware_carla_scenario.slurm import status as slurm_status
 from autoware_carla_scenario.slurm.collect import (
     _UNFINISHED_TASK_STATES,
     _advice,
@@ -52,6 +53,9 @@ from autoware_carla_scenario.slurm.manifest import (
     write_json,
 )
 from autoware_carla_scenario.slurm.settings import SlurmSettings
+
+from . import test_slurm_batch_readers
+from .test_slurm_batch_readers import old_reading
 
 _LOGGER = "autoware_carla_scenario.slurm.manifest"
 
@@ -440,7 +444,14 @@ def _old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
             lambda self, index: _old_read(self.submission(index)),
         )
         patch.setattr(BatchLayout, "read_submission", _old_read_submission)
-        for module in (manifest_mod, cli, collect_mod, submit, slurm_launch):
+        for module in (
+            manifest_mod,
+            cli,
+            collect_mod,
+            submit,
+            slurm_launch,
+            test_slurm_batch_readers,
+        ):
             for name, old in (
                 ("sbatch_in_flight", _old_in_flight),
                 ("sbatch_timed_out", _old_timed_out),
@@ -450,7 +461,10 @@ def _old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
                     patch.setattr(module, name, old)
         patch.setattr(collect_mod, "_last_submission_of", _old_last_submission_of)
         patch.setattr(collect_mod, "_missing_message", _old_missing_message)
-        yield
+        # status, cancel, the busy check and the viewer's case states, as
+        # they read the records then.
+        with old_reading(patch):
+            yield
 
 
 # -- The batch ------------------------------------------------------------------
@@ -540,7 +554,7 @@ def clock(monkeypatch: pytest.MonkeyPatch) -> _Clock:
     """The readers' clock, which reads _NOW and counts its reads."""
     fake = _Clock()
     monkeypatch.setattr(manifest_mod, "time", SimpleNamespace(time=fake.time))
-    monkeypatch.setattr(cli, "time", SimpleNamespace(time=fake.time))
+    monkeypatch.setattr(slurm_status, "time", SimpleNamespace(time=fake.time))
     return fake
 
 
@@ -836,7 +850,7 @@ def quiet_slurm(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     asked to cancel)."""
     from autoware_carla_scenario.ui import slurm_launch
 
-    for module in (cli, submit, slurm_launch):
+    for module in (slurm_status, submit, slurm_launch):
         monkeypatch.setattr(module, "squeue_states", lambda job: {})
     cancelled: list[list[str]] = []
 
@@ -844,7 +858,7 @@ def quiet_slurm(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
         cancelled.append(list(jobs))
         return True
 
-    monkeypatch.setattr(cli, "cancel_jobs", cancel)
+    monkeypatch.setattr(slurm_status, "cancel_jobs", cancel)
     return cancelled
 
 

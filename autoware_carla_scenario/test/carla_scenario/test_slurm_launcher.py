@@ -28,6 +28,7 @@ from typing import Any
 
 import pytest
 
+from autoware_carla_scenario.slurm import status as slurm_status
 from autoware_carla_scenario.slurm.collect import missing_cases, unfinished_cases
 from autoware_carla_scenario.slurm.manifest import (
     BatchLayout,
@@ -2520,16 +2521,16 @@ def test_resubmit_refuses_when_squeue_cannot_tell_unless_forced(
     from autoware_carla_scenario.slurm import cli
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: None)
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: None)
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
     err = capsys.readouterr().err
     assert "squeue could not tell" in err and "77" in err and "--force" in err
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run", "--force"]) == 0
     assert "Resubmitting 3 case(s)" in capsys.readouterr().out
     # A job squeue lists as running is refused as before; one gone is not.
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {0: "RUNNING"})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {0: "RUNNING"})
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 0
 
 
@@ -2541,7 +2542,7 @@ def test_resubmit_runs_a_case_named_twice_once(
     from autoware_carla_scenario.slurm import cli
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     submitted: list[list[int]] = []
 
     def submit_cases(
@@ -2573,7 +2574,7 @@ def test_resubmit_refuses_a_non_ascii_digit_case(
     from autoware_carla_scenario.slurm import cli
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     argv = ["resubmit", str(layout.batch_dir), "--cases", item, "--dry-run"]
     assert cli.main(argv) == 1
     assert f"Error: no case {item!r} in the batch" in capsys.readouterr().err
@@ -2729,7 +2730,7 @@ def test_a_timed_out_sbatch_keeps_the_reservation_in_flight(
     typed = layout.submission_record(1)
     assert typed is not None
     assert sbatch_in_flight(typed) and sbatch_timed_out(typed)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     capsys.readouterr()
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
     err = capsys.readouterr().err
@@ -2753,7 +2754,7 @@ def test_resubmit_refuses_while_a_submission_is_in_flight(
     )
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     pending: dict[str, Any] = {
         "index": 1,
         "job_id": None,
@@ -2791,7 +2792,7 @@ def test_an_unreadable_submission_record_refuses_only_while_young(
     from autoware_carla_scenario.slurm.manifest import SBATCH_IN_FLIGHT_SECONDS
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     path = layout.submission(1)
     path.write_text(content)
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
@@ -2845,7 +2846,7 @@ def test_status_lists_an_unreadable_submission_record(
     from autoware_carla_scenario.slurm import cli
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     path = layout.submission(1)
     path.write_text(content)
     assert cli.main(["status", str(layout.batch_dir)]) == 0
@@ -2870,7 +2871,7 @@ def test_cancel_skips_an_unreadable_submission_record(
         cancelled.append(jobs)
         return True
 
-    monkeypatch.setattr(cli, "cancel_jobs", cancel_jobs)
+    monkeypatch.setattr(slurm_status, "cancel_jobs", cancel_jobs)
     path = layout.submission(1)
     path.write_text(content)
     assert cli.main(["cancel", str(layout.batch_dir)]) == 0
@@ -3587,7 +3588,7 @@ def test_status_names_no_job_for_a_submission_with_no_job_id(
         asked.append(job)
         return {}
 
-    monkeypatch.setattr(cli, "squeue_states", squeue_states)
+    monkeypatch.setattr(slurm_status, "squeue_states", squeue_states)
     record: dict[str, Any] = {
         "index": 1,
         "job_id": None,
@@ -3706,7 +3707,7 @@ def test_of_two_resubmits_at_once_the_later_index_refuses(
     from autoware_carla_scenario.slurm.manifest import write_json
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     monkeypatch.setattr(cli, "after_submit", lambda *_: 0)
     monkeypatch.setattr(submit, "job_script", lambda *_a, **_k: "#!/bin/sh\n")
     monkeypatch.setattr(submit, "max_array_size", lambda: 1001)
@@ -3796,7 +3797,7 @@ def test_a_new_batch_is_refused_a_directory_that_holds_a_batch(
     assert sbatch == []
     assert layout.submissions() == [0]
     # A resubmit adds a submission to that same manifest, as before.
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 0
     assert "Resubmitting 3 case(s)" in capsys.readouterr().out
 

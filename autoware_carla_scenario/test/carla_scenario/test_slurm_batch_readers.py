@@ -24,7 +24,8 @@ import random
 import stat
 import sys
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Iterator
+from contextlib import contextmanager
 from functools import partial
 from pathlib import Path
 from typing import Any
@@ -57,12 +58,42 @@ _old_logger = logging.getLogger("autoware_carla_scenario.slurm.cli")
 
 
 def _squeue_states(job: str) -> dict[int, str] | None:
-    """The readers' squeue, looked up when it is asked (the fake on PATH)."""
-    return queue_mod.squeue_states(job)
+    """The oracles' squeue, looked up when it is asked (the fake on PATH, or
+    what old_reading() hands them)."""
+    return _slurm.squeue_states(job)
 
 
 def _cancel_jobs(jobs: list[str]) -> bool:
-    return queue_mod.cancel_jobs(jobs)
+    return _slurm.cancel_jobs(jobs)
+
+
+#: Where the oracles find squeue, scancel and the clock: slurm.queue's and
+#: the time module, unless old_reading() hands them a test's fakes.
+_slurm: Any = queue_mod
+_clock: Any = time
+
+
+@contextmanager
+def old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
+    """scenario-slurm's status, cancel and busy check, and the viewer's case
+    states, read as they were (the oracles), with the fakes a test has set
+    on slurm.status for squeue, scancel and the clock: for the tests that
+    hand the readers a batch's records as dicts."""
+    from autoware_carla_scenario.slurm import status as slurm_status
+
+    with monkeypatch.context() as patch:
+        patch.setattr(sys.modules[__name__], "_slurm", slurm_status)
+        patch.setattr(sys.modules[__name__], "_clock", slurm_status.time)
+        patch.setattr(cli, "_active_jobs", _old_active_jobs)
+        patch.setattr(cli, "_busy", _old_busy)
+        patch.setattr(cli, "_status", _old_status)
+        patch.setattr(
+            cli,
+            "_cancel",
+            lambda args: _old_cancel(BatchLayout(Path(args.batch_dir).resolve())),
+        )
+        patch.setattr(slurm_launch, "_case_states", _old_case_states)
+        yield
 
 
 # -- The oracles: the readers as they were ------------------------------------------
@@ -88,7 +119,7 @@ def _old_active_jobs(
             submission = None
         if submission is None:
             try:
-                age = time.time() - path.stat().st_mtime
+                age = _clock.time() - path.stat().st_mtime
             except FileNotFoundError:
                 continue
             if age < SBATCH_IN_FLIGHT_SECONDS:

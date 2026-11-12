@@ -406,6 +406,41 @@ class SubmissionRecord:
         (``"None"`` when it has none)."""
         return str(json.loads(_value_json(self.members, "job_id")))
 
+    def is_true(self, key: str) -> bool:
+        """Whether the member *key* is true, as ``bool()`` reads its value
+        (false when there is none): ``bool(record.get(key))``."""
+        return bool(json.loads(_value_json(self.members, key)))
+
+    def text(self, key: str) -> str:
+        """The member *key* as text: ``str(record[key])``, a
+        :class:`KeyError` when there is none."""
+        return str(self.members.value(key))
+
+    def size_of(self, key: str) -> int:
+        """``len(record.get(key) or [])``: 0 when the record has no true
+        *key*, the :class:`TypeError` CPython raises for a true value with
+        no length (a number, ``true``)."""
+        value = json.loads(_value_json(self.members, key))
+        if not bool(value):
+            return 0
+        return len(value)
+
+    def chunk_list(self) -> list[list[int]]:
+        """The record's ``chunks``, as ``enumerate(record.get("chunks") or
+        [])`` gave them: none when they are false, the :class:`TypeError`
+        CPython raises for chunks that cannot be iterated (a number,
+        ``true``).  Each chunk is the value the record holds (a list of the
+        cases its task runs in a record its submitter wrote; an object's key
+        or a string's character in place of one), which Python alone hands
+        on: its length and its cases are read as they were."""
+        chunks = json.loads(_value_json(self.members, "chunks"))
+        if not bool(chunks):
+            return []
+        if TYPE_CHECKING:
+            return [[int(case) for case in chunk] for chunk in chunks]
+        else:
+            return list(chunks)
+
     def started_is_number(self) -> bool:
         """Whether the record's ``submitted_at`` is a number: an int (a
         boolean among them) or a float, as ``isinstance(value, (int,
@@ -548,14 +583,10 @@ def manifest_of_text(text: str) -> Manifest | None:
                 else:
                     shape = "null"
                 cases.append(ManifestCase(case, shape))
-        elif isinstance(value, bool):
-            cases_shape = "false"
-        elif isinstance(value, int):
-            cases_shape = "0"
-        elif isinstance(value, float):
-            cases_shape = "0.0"
         else:
-            cases_shape = "null"
+            # A number, a boolean or null: the value itself, whose truth
+            # ``manifest.get("cases") or []`` reads.
+            cases_shape = json.dumps(value, ensure_ascii=False)
     manifest = Manifest(members, keys, cases, cases_shape)
     if not TYPE_CHECKING:
         # The manifest as json.loads() read it, for the readers the check
@@ -617,6 +648,16 @@ class ManifestCase:
         if self._shape != "":
             return json.loads(self._shape).get(key)
         return json.loads(_value_json(self.members, key))
+
+    def value_json(self, key: str) -> str:
+        """The JSON text of the member *key*, one of ``_CASE_MEMBERS``,
+        ``null`` when there is none: the case's ``case.get(key)`` (an
+        :class:`AttributeError` for a case that is not an object)."""
+        if key not in _CASE_MEMBERS:
+            raise _not_held("case", key)
+        if self._shape != "":
+            json.loads(self._shape).get(key)
+        return _value_json(self.members, key)
 
     def index(self) -> int:
         """The case's ``index`` as ``int(case["index"])`` reads it: a
@@ -691,8 +732,8 @@ class Manifest:
     #: The members of ``_MANIFEST_MEMBERS`` it has.
     members: JsonMembers
     _cases: list[ManifestCase]
-    #: ``cases`` as a value of its type when Python cannot iterate it
-    #: (``0``, ``0.0``, ``false``, ``null``); empty when it can.
+    #: ``cases`` as its JSON text when Python cannot iterate it (a number,
+    #: a boolean or ``null``); empty when it can.
     _cases_shape: str
     #: The name of each of its members, in its place.
     _keys: list[str]
@@ -763,6 +804,21 @@ class Manifest:
         if key not in _MANIFEST_MEMBERS and self.has(key):
             raise _not_held("manifest", key)
         return str(self.members.value(key))
+
+    def listed_cases(self) -> list[ManifestCase]:
+        """The manifest's cases, as ``for case in manifest.get("cases") or
+        []`` gave them: none when it has none or false ones, the
+        :class:`TypeError` CPython raises for true ``cases`` it cannot
+        iterate (a number, ``true``)."""
+        if not self.has("cases"):
+            return []
+        if self._cases_shape != "":
+            cases = json.loads(self._cases_shape)
+            if not bool(cases):
+                return []
+            for _ in cases:
+                pass
+        return self._cases
 
     def cases(self) -> list[ManifestCase]:
         """The manifest's cases, as ``for case in manifest["cases"]`` gave
@@ -869,6 +925,48 @@ class TaskStatus:
         if not self.members.has("state"):
             return default
         return str(json.loads(self.members.value_text("state")))
+
+    def joined(self, prefix: str, key: str) -> str:
+        """*prefix* and the member *key* when it is true, else empty:
+        ``prefix + status.get(key) if status.get(key) else ""``, the
+        :class:`TypeError` CPython raises for a true value that is not a
+        string."""
+        value = json.loads(_value_json(self.members, key))
+        if not bool(value):
+            return ""
+        if TYPE_CHECKING:
+            return prefix + str(value)
+        else:
+            return prefix + value
+
+    def port_text(self) -> str:
+        """The task's RPC port as ``status`` shows it: ``" port " +
+        str(ports["rpc"])`` when ``ports = status.get("ports") or {}`` has a
+        true ``rpc``, else empty; the :class:`AttributeError` CPython raises
+        for true ``ports`` that are not an object."""
+        ports = json.loads(_value_json(self.members, "ports"))
+        if not bool(ports):
+            return ""
+        if not bool(ports.get("rpc")):
+            return ""
+        return " port " + str(ports["rpc"])
+
+    def size_of(self, key: str) -> int:
+        """``len(status.get(key) or [])``: 0 when the record has no true
+        *key*, the :class:`TypeError` CPython raises for a true value with
+        no length (a number, ``true``)."""
+        value = json.loads(_value_json(self.members, key))
+        if not bool(value):
+            return 0
+        return len(value)
+
+    def true_text(self, key: str) -> str | None:
+        """The member *key* as text when it is true (``f"{value}"``), else
+        ``None``."""
+        value = json.loads(_value_json(self.members, key))
+        if bool(value):
+            return str(value)
+        return None
 
     @property
     def error(self) -> str | None:

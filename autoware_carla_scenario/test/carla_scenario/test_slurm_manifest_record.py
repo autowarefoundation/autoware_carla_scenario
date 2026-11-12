@@ -44,6 +44,7 @@ import pytest
 import autoware_carla_scenario.slurm.manifest as manifest_mod
 from autoware_carla_scenario.batch_report import print_summary
 from autoware_carla_scenario.slurm import cli, collect as collect_mod, submit, worker
+from autoware_carla_scenario.slurm import status as slurm_status
 from autoware_carla_scenario.slurm.manifest import (
     BatchLayout,
     manifest_of_text,
@@ -51,6 +52,8 @@ from autoware_carla_scenario.slurm.manifest import (
     write_json,
 )
 from autoware_carla_scenario.slurm.settings import SlurmSettings
+
+from .test_slurm_batch_readers import old_reading
 
 # -- The corpus -------------------------------------------------------------------
 
@@ -458,7 +461,10 @@ def _old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         patch.setattr(collect_mod, "collect", _old_collect)
         patch.setattr(cli, "unfinished_cases", _old_unfinished_cases)
         patch.setattr(cli, "collect", _old_collect)
-        yield
+        # status, cancel, the busy check and the viewer's case states, as
+        # they read the records then.
+        with old_reading(patch):
+            yield
 
 
 # -- The batch ------------------------------------------------------------------
@@ -714,9 +720,9 @@ def quiet_slurm(monkeypatch: pytest.MonkeyPatch) -> None:
     scenarios or signal handlers, and stops before it builds its cases."""
     from autoware_carla_scenario.ui import slurm_launch
 
-    for module in (cli, submit, slurm_launch):
+    for module in (slurm_status, submit, slurm_launch):
         monkeypatch.setattr(module, "squeue_states", lambda job: {})
-    monkeypatch.setattr(cli, "cancel_jobs", lambda jobs: True)
+    monkeypatch.setattr(slurm_status, "cancel_jobs", lambda jobs: True)
     package = types.ModuleType("autoware_carla_scenario.examples")
     package.__path__ = []  # type: ignore[attr-defined]
     run = _fake_run()
