@@ -4317,10 +4317,15 @@ What Codon 0.19 needs that Python does not, beyond
   checked module builds or uses, and `CoverageReport` (`coverage.codon`,
   openodd's), which the checked `coverage` package re-exports with
   `merge_coverage(documents)`, the `COVERAGE_SCHEMA` string and the
-  `CoverGroup` enum (`ODD`, `SITUATION`, `SCENARIO`). Each constructor takes
+  `CoverGroup` enum (`ODD`, `SITUATION`, `SCENARIO`), and `T4SceneExport`
+  (`t4_scene.codon`, Protobuf messages), which the checked `t4_scene` package
+  re-exports with the suffix strings and `map_resource()` and
+  `trajectory_log_to_t4_scene()`, functions whose bodies are a
+  `compile_error` too. Each constructor takes
   Python's parameters and is a `compile_error`: its config
   (`AutowareBridgeConfig`, `DriverClientConfig`) is a checked class the model
-  does not have, or the class is only ever built by openodd's merge, so a
+  does not have, the class is only ever built by openodd's merge, or its
+  fields are messages the model has no type for, so a
   scenario that builds one fails its check rather than passing it with
   arguments the run would refuse. Such a class derives from nothing in the
   model: a subclass of the model's `EgoVehicle` that nothing builds breaks

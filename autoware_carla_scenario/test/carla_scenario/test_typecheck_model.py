@@ -945,9 +945,11 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     ),
     # What the checked scenario_runner and scenario_queue hold of it.
     "t4": (t4_module, ("T4Recorder", "T4Recording")),
-    # What the checked scenario_runner and scenario_queue hold of it, and what
-    # the checked t4_scene.exporter writes each log with.
-    "t4_scene": (t4_scene_module, ("T4SceneExporter", "write_t4_scene")),
+    # What the checked scenario_runner and scenario_queue hold of it, what
+    # the checked t4_scene.exporter writes each log with, and the rest of
+    # what the checked package re-exports (T4SceneExport, map_resource() and
+    # trajectory_log_to_t4_scene() are compile errors).
+    "t4_scene": (t4_scene_module, tuple(t4_scene_module.__all__)),
     # What the checked visibility and actions.environment read the weather
     # rules through.
     "weather_rules": (
@@ -1052,6 +1054,9 @@ _UNBUILDABLE: dict[str, str] = {
     # a scenario has no ROS 2 transport to build.
     "Ros2EgoConfig": "_ros2",
     "Ros2EgoTransport": "_ros2",
+    # What the checked t4_scene package re-exports of t4_scene.convert: a
+    # converted log, which holds Protobuf messages.
+    "T4SceneExport": "t4_scene",
 }
 
 
