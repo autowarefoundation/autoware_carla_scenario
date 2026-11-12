@@ -28,8 +28,16 @@ from typing import Any
 
 import pytest
 
+from autoware_carla_scenario.slurm import status as slurm_status
 from autoware_carla_scenario.slurm.collect import missing_cases, unfinished_cases
-from autoware_carla_scenario.slurm.manifest import BatchLayout, sequential_stems
+from autoware_carla_scenario.slurm.manifest import (
+    BatchLayout,
+    SubmissionRecord,
+    submission_record_of,
+    read_json,
+    sequential_stems,
+)
+from autoware_carla_scenario.slurm.records import JsonMembers
 from autoware_carla_scenario.slurm.ports import (
     PORT_SLOT_WIDTH,
     acquire_slot,
@@ -45,6 +53,17 @@ from autoware_carla_scenario.slurm.settings import (
 )
 
 from ._slurm_ports import RANGE_SLOTS, fake_carlas, port_range
+
+
+def _record_json(layout: BatchLayout, index: int) -> Any:
+    """Submission *index*'s record as JSON reads it."""
+    return read_json(layout.submission(index))
+
+
+def _typed(record: dict[str, Any]) -> SubmissionRecord:
+    """The submission record of the members of *record*."""
+    return submission_record_of(JsonMembers.from_value(record))
+
 
 _DATA = Path(__file__).parent / "data" / "fake_slurm"
 #: A scenario without a sweep of its own: drawing from the ODD needs no map.
@@ -271,7 +290,7 @@ def test_a_slurm_batch_reports_what_the_same_local_batch_does(
 
     # Two tasks of three cases, at most two at once, each on ports of its own.
     layout = BatchLayout(batch)
-    submission = layout.read_submission(0)
+    submission = _record_json(layout, 0)
     assert submission["chunks"] == [[0, 1, 2], [3, 4, 5]]
     sbatch = [json.loads(line) for line in (fake_slurm.state / "sbatch.log").open()]
     assert any(arg == "--array=0-1%2" for arg in sbatch[0]["argv"])
@@ -295,7 +314,7 @@ def test_a_slurm_batch_reports_what_the_same_local_batch_does(
     # Every task finished, and stopped its CARLA.
     for task in range(2):
         status = layout.read_task(0, task)
-        assert status is not None and status["state"] == "done"
+        assert status is not None and status.get("state") == "done"
         assert not layout.task_port(0, task).exists()
     for port in ports:
         assert fake_carlas(fake_slurm.record, port) == []
@@ -407,7 +426,7 @@ def test_a_batch_s_settings_do_not_depend_on_how_its_cases_are_split_into_tasks(
             [*_slurm(fake_slurm)[len(_SWEEP) :], f"launcher.cases_per_task={per_task}"],
         )
         out = capsys.readouterr().out
-        assert BatchLayout(batch).read_submission(0)["chunks"] == (
+        assert _record_json(BatchLayout(batch), 0)["chunks"] == (
             [[0], [1]] if per_task == 1 else [[0, 1]]
         )
         assert _queues(fake_slurm) == [decided] * tasks, name
@@ -544,7 +563,7 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     # The job script stopped the CARLA the dead worker left running.
     task0 = layout.read_task(0, 0)
     assert task0 is not None
-    port = task0["ports"]["rpc"]
+    port = task0.get("ports")["rpc"]
     _wait_for(
         lambda: fake_carlas(fake_slurm.record, port) == [], 20, "the orphaned CARLA"
     )
@@ -555,7 +574,7 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     errored = [
         i
         for i in range(6)
-        if (record := layout.read_result(i)) is not None and record["errored"]
+        if (record := layout.read_result(i)) is not None and record.errored
     ]
     assert missing_cases(layout) == [1, 2]
     code = cli.main(["resubmit", str(batch), "--dry-run"])
@@ -563,14 +582,14 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     assert f"Resubmitting {2 + len(errored)} case(s)" in capsys.readouterr().out
     code = cli.main(["resubmit", str(batch), "--wait"])
     assert code == local_status
-    assert layout.read_submission(1)["cases"] == sorted([1, 2, *errored])
+    assert _record_json(layout, 1)["cases"] == sorted([1, 2, *errored])
     assert _outputs(batch) == _outputs(local)
     assert (batch / "batch_results.json").read_bytes() == (
         local / "batch_results.json"
     ).read_bytes()
     # Only the cases that error whenever they run are left.
     assert missing_cases(layout) == []
-    errored_now = [i for i in range(6) if layout.read_result(i)["errored"]]  # type: ignore[index]
+    errored_now = [i for i in range(6) if layout.read_result(i).errored]  # type: ignore[union-attr]
     assert unfinished_cases(layout) == errored_now
 
 
@@ -589,7 +608,7 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
     assert status == 0
     assert "not waiting" in out and "scenario-slurm collect" in out
     layout = BatchLayout(batch)
-    submission = layout.read_submission(0)
+    submission = _record_json(layout, 0)
     assert submission["collect_job_id"]
 
     _wait_for(
@@ -613,7 +632,7 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
         _wait_for(lambda p=port: fake_carlas(fake_slurm.record, p) == [], 20, "CARLA")
     for task in range(2):
         task_status = layout.read_task(0, task)
-        assert task_status is not None and task_status["state"] == "cancelled"
+        assert task_status is not None and task_status.get("state") == "cancelled"
         # Removed after CARLA is gone, by the worker or (when it was killed)
         # its watchdog, so it can lag the CARLA check above (#525).
         _wait_for(
@@ -642,7 +661,7 @@ def test_cancel_cancels_every_job_of_the_batch(
     fake_slurm.monkeypatch.setenv("FAKE_CASE_SECONDS", "60")
     status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm), wait=False)
     assert status == 0
-    submission = BatchLayout(batch).read_submission(0)
+    submission = _record_json(BatchLayout(batch), 0)
     assert cli.main(["cancel", str(batch)]) == 0
     assert (
         f"Cancelling job(s) {submission['job_id']}, {submission['collect_job_id']}"
@@ -694,7 +713,7 @@ def test_no_wait_submits_and_the_collect_job_writes_the_results(
     )
     assert status == 0
     layout = BatchLayout(batch)
-    submission = layout.read_submission(0)
+    submission = _record_json(layout, 0)
     assert len(submission["chunks"]) == 6
     # The collect job runs a script beside the tasks' (#1159).
     collect_script = layout.root / "jobs" / "0-collect.sh"
@@ -997,7 +1016,7 @@ def test_the_worker_refuses_a_timeout_that_is_not_positive_and_finite(
     from autoware_carla_scenario.slurm.manifest import write_json
 
     layout = _batch_on_disk(tmp_path, cases=1)
-    manifest = layout.read_manifest()
+    manifest = read_json(layout.manifest)
     manifest["cases"][0].update(
         scenario=_CONCRETE,
         overrides=["scenario.timeout_seconds=nan"],
@@ -1037,9 +1056,9 @@ def test_the_worker_refuses_a_timeout_that_is_not_positive_and_finite(
         for sig, handler in handlers.items():
             signal.signal(sig, handler)
     status = layout.read_task(0, 0)
-    assert status is not None and status["state"] == "failed"
-    assert "ValueError: scenario.timeout_seconds" in status["error"]
-    assert "nan" in status["error"]
+    assert status is not None and status.get("state") == "failed"
+    assert "ValueError: scenario.timeout_seconds" in status.get("error")
+    assert "nan" in status.get("error")
     assert released == [False]
 
 
@@ -1065,7 +1084,7 @@ def test_the_worker_refuses_a_case_off_its_documents_map(
     monkeypatch.setitem(registry._SCENARIO_DOCUMENTS, name, lambda: document)
 
     layout = _batch_on_disk(tmp_path, cases=1)
-    manifest = layout.read_manifest()
+    manifest = read_json(layout.manifest)
     manifest["cases"][0].update(
         scenario=_CONCRETE, overrides=[], stem="S", scenario_class="X"
     )
@@ -1102,9 +1121,9 @@ def test_the_worker_refuses_a_case_off_its_documents_map(
         for sig, handler in handlers.items():
             signal.signal(sig, handler)
     status = layout.read_task(0, 0)
-    assert status is not None and status["state"] == "failed"
-    assert "RunConfigError: s#1: " in status["error"]
-    assert "map=my_cut_in_map" in status["error"]
+    assert status is not None and status.get("state") == "failed"
+    assert "RunConfigError: s#1: " in status.get("error")
+    assert "map=my_cut_in_map" in status.get("error")
     assert released == [False]
 
 
@@ -2422,7 +2441,7 @@ def test_submit_spreads_a_large_batch_within_max_array_size(
         SlurmSettings(wait=False, collect_job=False),
         limit,
     )
-    submission = layout.read_submission(1)
+    submission = _record_json(layout, 1)
     chunks = submission["chunks"]
     assert len(chunks) == tasks <= (limit or 1001)
     assert [case for chunk in chunks for case in chunk] == list(range(cases))
@@ -2502,16 +2521,16 @@ def test_resubmit_refuses_when_squeue_cannot_tell_unless_forced(
     from autoware_carla_scenario.slurm import cli
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: None)
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: None)
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
     err = capsys.readouterr().err
     assert "squeue could not tell" in err and "77" in err and "--force" in err
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run", "--force"]) == 0
     assert "Resubmitting 3 case(s)" in capsys.readouterr().out
     # A job squeue lists as running is refused as before; one gone is not.
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {0: "RUNNING"})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {0: "RUNNING"})
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 0
 
 
@@ -2523,7 +2542,7 @@ def test_resubmit_runs_a_case_named_twice_once(
     from autoware_carla_scenario.slurm import cli
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     submitted: list[list[int]] = []
 
     def submit_cases(
@@ -2555,7 +2574,7 @@ def test_resubmit_refuses_a_non_ascii_digit_case(
     from autoware_carla_scenario.slurm import cli
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     argv = ["resubmit", str(layout.batch_dir), "--cases", item, "--dry-run"]
     assert cli.main(argv) == 1
     assert f"Error: no case {item!r} in the batch" in capsys.readouterr().err
@@ -2615,7 +2634,7 @@ def test_concurrent_submissions_get_indices_of_their_own(
     assert errors == []
     assert sorted(indices) == [1, 2]
     assert layout.submissions() == [0, 1, 2]
-    records = [layout.read_submission(i) for i in (1, 2)]
+    records = [_record_json(layout, i) for i in (1, 2)]
     assert [r["index"] for r in records] == [1, 2]
     assert sorted(r["job_id"] for r in records) == ["1000", "1001"]
     # No temporary file of the reservation is left.
@@ -2641,8 +2660,8 @@ def test_reserve_submission_passes_over_a_taken_index(
     )
     record: dict[str, Any] = {"index": None, "job_id": None}
     assert layout.reserve_submission(record) == 2
-    assert layout.read_submission(1) == taken
-    assert layout.read_submission(2) == {"index": 2, "job_id": None}
+    assert _record_json(layout, 1) == taken
+    assert _record_json(layout, 2) == {"index": 2, "job_id": None}
 
 
 def test_a_failed_sbatch_removes_the_reservation(
@@ -2656,7 +2675,7 @@ def test_a_failed_sbatch_removes_the_reservation(
 
     def run_sbatch(_command: list[str]) -> str:
         # The reservation holds a whole record while sbatch runs.
-        seen.append(layout.read_submission(1))
+        seen.append(_record_json(layout, 1))
         raise RuntimeError("sbatch failed (1): down")
 
     monkeypatch.setattr(submit, "_run_sbatch", run_sbatch)
@@ -2704,12 +2723,14 @@ def test_a_timed_out_sbatch_keeps_the_reservation_in_flight(
         submit.submit_cases(layout, layout.read_manifest(), SlurmSettings(), [0, 2])
     assert time.monotonic() - started < 10.0
     assert layout.submissions() == [0, 1]
-    record = layout.read_submission(1)
+    record = _record_json(layout, 1)
     assert record["job_id"] is None and record["chunks"] == [[0], [2]]
     assert record["sbatch_timed_out"] is True
     assert isinstance(record["sbatch_timed_out_at"], str)
-    assert sbatch_in_flight(record) and sbatch_timed_out(record)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    typed = layout.submission_record(1)
+    assert typed is not None
+    assert sbatch_in_flight(typed) and sbatch_timed_out(typed)
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     capsys.readouterr()
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
     err = capsys.readouterr().err
@@ -2733,7 +2754,7 @@ def test_resubmit_refuses_while_a_submission_is_in_flight(
     )
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     pending: dict[str, Any] = {
         "index": 1,
         "job_id": None,
@@ -2771,7 +2792,7 @@ def test_an_unreadable_submission_record_refuses_only_while_young(
     from autoware_carla_scenario.slurm.manifest import SBATCH_IN_FLIGHT_SECONDS
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     path = layout.submission(1)
     path.write_text(content)
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
@@ -2810,7 +2831,9 @@ def test_read_submission_record_is_none_for_an_unreadable_record(
     with caplog.at_level("WARNING", logger=manifest.__name__):
         assert layout.submission_record(2) is None
     assert not caplog.records
-    assert layout.submission_record(0) == layout.read_submission(0)
+    record = layout.submission_record(0)
+    assert record is not None
+    assert {k: record.get(k) for k in record.members.keys()} == _record_json(layout, 0)
 
 
 @_UNREADABLE
@@ -2823,7 +2846,7 @@ def test_status_lists_an_unreadable_submission_record(
     from autoware_carla_scenario.slurm import cli
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     path = layout.submission(1)
     path.write_text(content)
     assert cli.main(["status", str(layout.batch_dir)]) == 0
@@ -2848,7 +2871,7 @@ def test_cancel_skips_an_unreadable_submission_record(
         cancelled.append(jobs)
         return True
 
-    monkeypatch.setattr(cli, "cancel_jobs", cancel_jobs)
+    monkeypatch.setattr(slurm_status, "cancel_jobs", cancel_jobs)
     path = layout.submission(1)
     path.write_text(content)
     assert cli.main(["cancel", str(layout.batch_dir)]) == 0
@@ -3034,14 +3057,16 @@ def _with_case_1(tmp_path: Path, record: dict[str, Any]) -> BatchLayout:
 def test_recorded_verdict_is_a_boolean_passed_or_none() -> None:
     """#1718: the one reader of a recorded verdict."""
     from autoware_carla_scenario.slurm.collect import recorded_verdict
+    from autoware_carla_scenario.slurm.manifest import verdict_of_document
 
-    assert recorded_verdict(_recorded(True)) is True
-    assert recorded_verdict(_recorded(False)) is False
+    assert verdict_of_document(_recorded(True)) is True
+    assert verdict_of_document(_recorded(False)) is False
     assert recorded_verdict(None) is None
+    assert verdict_of_document(None) is None
     for value in ("false", "true", 1, 0, None, 1.0):
-        assert recorded_verdict(_recorded(value)) is None
-    assert recorded_verdict({"result": "x"}) is None
-    assert recorded_verdict({}) is None
+        assert verdict_of_document(_recorded(value)) is None
+    assert verdict_of_document({"result": "x"}) is None
+    assert verdict_of_document({}) is None
 
 
 def test_what_the_worker_records_is_readable() -> None:
@@ -3053,8 +3078,11 @@ def test_what_the_worker_records_is_readable() -> None:
         ScenarioResult,
     )
     from autoware_carla_scenario.failure import Failure, FailureCategory
-    from autoware_carla_scenario.slurm.collect import recorded_verdict
-    from autoware_carla_scenario.slurm.manifest import readable_result
+    from autoware_carla_scenario.slurm.manifest import (
+        readable_result,
+        verdict_of_document,
+    )
+    from autoware_carla_scenario.slurm.records import JsonMembers
 
     status = ConditionStatus("pass[0](t)", True, "ok", "TimeoutCondition", "pass")
     failure = Failure("fail[0](c)", FailureCategory.OTHER, 3.0, "collided")
@@ -3064,14 +3092,14 @@ def test_what_the_worker_records_is_readable() -> None:
         ScenarioResult(False, "collided", 3.0, [status], failure=failure),
     ):
         data = json.loads(json.dumps(result.to_dict()))
-        assert readable_result(data)
+        assert readable_result(JsonMembers.from_value(data))
         record = {"submission": 0, "errored": False, "result": data}
-        assert recorded_verdict(record) is result.passed
-    assert recorded_verdict(_recorded(True, elapsed_seconds=4)) is True
-    assert recorded_verdict(_recorded(True, condition_statuses=None)) is True
+        assert verdict_of_document(record) is result.passed
+    assert verdict_of_document(_recorded(True, elapsed_seconds=4)) is True
+    assert verdict_of_document(_recorded(True, condition_statuses=None)) is True
     without = _recorded(False)
     del without["result"]["condition_statuses"]
-    assert recorded_verdict(without) is False
+    assert verdict_of_document(without) is False
 
 
 _UNWRITABLE = pytest.mark.parametrize(
@@ -3119,7 +3147,7 @@ def test_collect_into_an_unwritable_batch_reports_one_error_line(
     if output == "batch_results.json":
         monkeypatch.setattr(batch_report, "write_text_atomically", refuse)
     else:
-        monkeypatch.setattr(collect_module, "write_json", refuse)
+        monkeypatch.setattr(collect_module, "write_json_text", refuse)
         target = layout.root / output
     assert cli.main(["collect", str(layout.batch_dir)]) == 1
     captured = capsys.readouterr()
@@ -3144,10 +3172,10 @@ def test_collect_still_prints_its_hints_before_collected_json(
 
     layout = _batch_on_disk(tmp_path)
 
-    def refuse(path: Path, data: Any) -> None:
+    def refuse(path: Path, text: str) -> None:
         raise PermissionError(errno.EACCES, "Permission denied", str(path))
 
-    monkeypatch.setattr(collect_module, "write_json", refuse)
+    monkeypatch.setattr(collect_module, "write_json_text", refuse)
     assert cli.main(["collect", str(layout.batch_dir)]) == 1
     captured = capsys.readouterr()
     assert _one_error_line(captured.err).startswith("Error: [Errno 13]")
@@ -3311,17 +3339,16 @@ def test_an_unreadable_manifest_is_one_error_line(
     """#1740: a manifest that cannot be read is one ``Error:`` line, and a
     batch directory with none keeps its message."""
     from autoware_carla_scenario.slurm import cli
-    from autoware_carla_scenario.slurm import manifest as manifest_module
 
     layout = _batch_on_disk(tmp_path)
-    read_json = manifest_module.read_json
+    read_text = Path.read_text
 
-    def unreadable(path: Path) -> Any:
-        if Path(path) == layout.manifest:
+    def unreadable(path: Path, *args: Any, **kwargs: Any) -> str:
+        if path == layout.manifest:
             raise PermissionError(errno.EACCES, "Permission denied", str(path))
-        return read_json(path)
+        return read_text(path, *args, **kwargs)
 
-    monkeypatch.setattr(manifest_module, "read_json", unreadable)
+    monkeypatch.setattr(Path, "read_text", unreadable)
     assert cli.main([command, str(layout.batch_dir)]) == 1
     line = _one_error_line(capsys.readouterr().err)
     assert line == f"Error: [Errno 13] Permission denied: '{layout.manifest}'"
@@ -3561,7 +3588,7 @@ def test_status_names_no_job_for_a_submission_with_no_job_id(
         asked.append(job)
         return {}
 
-    monkeypatch.setattr(cli, "squeue_states", squeue_states)
+    monkeypatch.setattr(slurm_status, "squeue_states", squeue_states)
     record: dict[str, Any] = {
         "index": 1,
         "job_id": None,
@@ -3623,7 +3650,7 @@ def test_collect_names_no_job_for_a_submission_with_no_job_id(
         message = entry["message"]
         assert "job None" not in message
         assert "task 0 of submission 1 never started; no job id" in message
-        assert no_job_note(record) in message
+        assert no_job_note(_typed(record)) in message
         if kind == "in-flight":
             assert "sbatch in flight" in message
         elif kind == "timed-out":
@@ -3655,7 +3682,7 @@ def test_follow_says_resubmit_is_refused_only_while_a_timed_out_record_is_young(
         "sbatch_timed_out_at": "2026-11-06T12:00:00+09:00",
     }
     write_json(layout.submission(1), record)
-    assert sbatch_in_flight(record) is not old
+    assert sbatch_in_flight(_typed(record)) is not old
     assert submit.follow(layout, 1, SlurmSettings()) == 1
     err = capsys.readouterr().err
     assert "its sbatch timed out at 2026-11-06T12:00:00+09:00" in err
@@ -3680,7 +3707,7 @@ def test_of_two_resubmits_at_once_the_later_index_refuses(
     from autoware_carla_scenario.slurm.manifest import write_json
 
     layout = _batch_on_disk(tmp_path)
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     monkeypatch.setattr(cli, "after_submit", lambda *_: 0)
     monkeypatch.setattr(submit, "job_script", lambda *_a, **_k: "#!/bin/sh\n")
     monkeypatch.setattr(submit, "max_array_size", lambda: 1001)
@@ -3708,7 +3735,7 @@ def test_of_two_resubmits_at_once_the_later_index_refuses(
     )
     assert sbatch == []
     assert layout.submissions() == [0, 1]
-    assert layout.read_submission(1)["job_id"] is None
+    assert _record_json(layout, 1)["job_id"] is None
 
 
 def test_batches_started_in_the_same_second_get_directories_of_their_own(
@@ -3770,7 +3797,7 @@ def test_a_new_batch_is_refused_a_directory_that_holds_a_batch(
     assert sbatch == []
     assert layout.submissions() == [0]
     # A resubmit adds a submission to that same manifest, as before.
-    monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda _job: {})
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 0
     assert "Resubmitting 3 case(s)" in capsys.readouterr().out
 
@@ -3808,7 +3835,7 @@ def test_the_worker_takes_its_slot_in_launcher_port_lock_dir(
     from autoware_carla_scenario.slurm.manifest import write_json
 
     layout = _batch_on_disk(tmp_path, cases=1)
-    manifest = layout.read_manifest()
+    manifest = read_json(layout.manifest)
     manifest["launcher"] = {"port_lock_dir": str(tmp_path / "locks")}
     manifest["cases"][0].update(scenario="x", overrides=[], stem="S")
     write_json(layout.manifest, manifest)
@@ -3836,7 +3863,7 @@ def test_the_worker_takes_its_slot_in_launcher_port_lock_dir(
             signal.signal(sig, handler)
     assert seen["lock_dir"] == tmp_path / "locks"
     status = layout.read_task(0, 0)
-    assert status is not None and "stop here" in status["error"]
+    assert status is not None and "stop here" in status.get("error")
 
 
 def test_a_failing_task_port_propagates_and_releases_the_slot(
@@ -3847,7 +3874,7 @@ def test_a_failing_task_port_propagates_and_releases_the_slot(
     from autoware_carla_scenario.slurm.manifest import write_json
 
     layout = _batch_on_disk(tmp_path, cases=1)
-    manifest = layout.read_manifest()
+    manifest = read_json(layout.manifest)
     manifest["cases"][0].update(scenario="x", overrides=[], stem="S")
     write_json(layout.manifest, manifest)
     released: list[bool] = []
@@ -3874,9 +3901,9 @@ def test_a_failing_task_port_propagates_and_releases_the_slot(
     # The original error is recorded, not an UnboundLocalError from the cleanup.
     status = layout.read_task(0, 0)
     assert status is not None
-    assert status["state"] == "failed"
-    assert "OSError: no port file" in status["error"]
-    assert "UnboundLocalError" not in status["traceback"]
+    assert status.get("state") == "failed"
+    assert "OSError: no port file" in status.get("error")
+    assert "UnboundLocalError" not in status.get("traceback")
     assert released == [False]
 
 
@@ -4311,7 +4338,7 @@ def test_a_failing_collect_job_is_reported_not_raised(
     status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm), wait=False)
     captured = capsys.readouterr()
     assert status == 1
-    submission = BatchLayout(batch).read_submission(0)
+    submission = _record_json(BatchLayout(batch), 0)
     assert submission["job_id"] and submission["collect_job_id"] is None
     assert "QOSMaxSubmitJobPerUserLimit" in submission["collect_error"]
     assert f"SLURM job {submission['job_id']}" in captured.err
@@ -4339,7 +4366,7 @@ def test_an_unwritable_collect_script_is_reported_not_raised(
     status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm), wait=False)
     captured = capsys.readouterr()
     assert status == 1
-    submission = BatchLayout(batch).read_submission(0)
+    submission = _record_json(BatchLayout(batch), 0)
     assert submission["job_id"] and submission["collect_job_id"] is None
     assert "No space left on device" in submission["collect_error"]
     assert "scenario-slurm collect" in captured.err
@@ -4820,7 +4847,7 @@ def test_a_batch_submitted_from_a_mount_runs_at_the_node_s_paths(
     assert 'cd "$HOME"/workspace/OnePlanner || ' in again
     assert str(submit_side) not in again
     record = layout.read_result(0)
-    assert record is not None and record["submission"] == 1
+    assert record is not None and record.get("submission") == 1
 
 
 def _case_with_file(path: Path, **config: Any) -> dict[str, Any]:

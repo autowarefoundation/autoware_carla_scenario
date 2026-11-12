@@ -246,7 +246,7 @@ def _slurm_unrecorded(directory: Path) -> tuple[list[str], int] | str:
         if (
             record is not None
             and recorded_verdict(record) is not None
-            and not record.get("errored")
+            and not record.errored
         ):
             continue
         stem = case.get("stem")
