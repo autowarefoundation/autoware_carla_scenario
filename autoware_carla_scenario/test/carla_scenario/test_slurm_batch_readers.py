@@ -33,7 +33,7 @@ import pytest
 
 from autoware_carla_scenario.slurm import cli
 from autoware_carla_scenario.slurm import queue as queue_mod
-from autoware_carla_scenario.slurm.collect import collect, unfinished_cases
+from autoware_carla_scenario.slurm.collect import unfinished_cases
 from autoware_carla_scenario.slurm.manifest import (
     MANIFEST_VERSION,
     SBATCH_IN_FLIGHT_SECONDS,
@@ -118,9 +118,7 @@ def _old_active_jobs(
 
 
 def _old_busy(layout: BatchLayout, below: int | None = None) -> str | None:
-    active, unknown, in_flight, unreadable, timed_out = _old_active_jobs(
-        layout, below
-    )
+    active, unknown, in_flight, unreadable, timed_out = _old_active_jobs(layout, below)
     if active:
         return (
             f"job(s) {', '.join(active)} of this batch are still queued or "
@@ -594,7 +592,9 @@ def write_batch(batch_dir: Path, rng: random.Random, now: float = _NOW) -> dict:
         cases.append(_object(_maybe(rng, members, 0.95)))
     cases_text = "[" + ", ".join(cases) + "]"
     if rng.random() < 0.04:
-        cases_text = rng.choice(["null", "0", "5", "true", '"ab"', "{}", '{"a": 1}', "[]"])
+        cases_text = rng.choice(
+            ["null", "0", "5", "true", '"ab"', "{}", '{"a": 1}', "[]"]
+        )
     manifest = [
         ("version", str(MANIFEST_VERSION) if rng.random() < 0.98 else "9"),
         ("created", _value(rng, '"2026-11-12T00:00:00"')),
@@ -629,12 +629,25 @@ def write_batch(batch_dir: Path, rng: random.Random, now: float = _NOW) -> dict:
         while pool:
             size = rng.randint(1, 3)
             chunk, pool = pool[:size], pool[size:]
-            items = [str(c) if rng.random() < 0.95 else rng.choice(['"1"', "1.0", "true"]) for c in chunk]
+            items = [
+                str(c) if rng.random() < 0.95 else rng.choice(['"1"', "1.0", "true"])
+                for c in chunk
+            ]
             chunks.append("[" + ", ".join(items) + "]")
         chunks_text = "[" + ", ".join(chunks) + "]"
         if rng.random() < 0.06:
             chunks_text = rng.choice(
-                ["null", "0", "7", "true", '"ab"', '{"a": [0]}', "[3]", '[[0], "x"]', "[[0], null]"]
+                [
+                    "null",
+                    "0",
+                    "7",
+                    "true",
+                    '"ab"',
+                    '{"a": [0]}',
+                    "[3]",
+                    '[[0], "x"]',
+                    "[[0], null]",
+                ]
             )
         job = _value(rng, '"1000"', "1001", '"1002"', "null")
         kind = rng.random()
@@ -730,7 +743,11 @@ def write_batch(batch_dir: Path, rng: random.Random, now: float = _NOW) -> dict:
 
 def _squeue_answer(rng: random.Random, job: str, tasks: int) -> str:
     states = [*sorted(ACTIVE_STATES), "COMPLETED", "FAILED", "TIMEOUT", "running"]
-    lines = [f"{job}_{task} {rng.choice(states)}" for task in range(tasks) if rng.random() < 0.6]
+    lines = [
+        f"{job}_{task} {rng.choice(states)}"
+        for task in range(tasks)
+        if rng.random() < 0.6
+    ]
     if tasks > 1 and rng.random() < 0.1:
         lines.append(f"{job}_[0-{tasks - 1}] PENDING")
     return "".join(f"{line}\n" for line in lines)
@@ -772,7 +789,10 @@ class _Seen:
 
     def files(self) -> list[tuple[str, bytes | None]]:
         return sorted(
-            (str(p.relative_to(self.batch_dir)), p.read_bytes() if p.is_file() else None)
+            (
+                str(p.relative_to(self.batch_dir)),
+                p.read_bytes() if p.is_file() else None,
+            )
             for p in self.batch_dir.rglob("*")
         )
 
@@ -816,13 +836,17 @@ def _readers(batch_dir: Path) -> dict[str, tuple[Callable[[], Any], Callable[[],
         "resubmit-dry-run": (
             lambda: cli.main(["resubmit", batch, "--dry-run"]),
             lambda: _old_main(
-                lambda: _old_resubmit_dry_run(BatchLayout(batch_dir.resolve()), False, False)
+                lambda: _old_resubmit_dry_run(
+                    BatchLayout(batch_dir.resolve()), False, False
+                )
             ),
         ),
         "resubmit-failed-forced-dry-run": (
             lambda: cli.main(["resubmit", batch, "--dry-run", "--failed", "--force"]),
             lambda: _old_main(
-                lambda: _old_resubmit_dry_run(BatchLayout(batch_dir.resolve()), True, True)
+                lambda: _old_resubmit_dry_run(
+                    BatchLayout(batch_dir.resolve()), True, True
+                )
             ),
         ),
         "active-jobs": (
@@ -894,7 +918,11 @@ def test_the_corpus_covers_what_the_readers_tell_apart(
                 outcome, out, err, logs, cancelled, _ = seen(oracle)
                 outcomes.add(f"{name}:{outcome[0]}:{outcome[1]}")
                 texts.append(
-                    str(outcome[1]) + out + err + "".join(m for _, _, m in logs) + cancelled
+                    str(outcome[1])
+                    + out
+                    + err
+                    + "".join(m for _, _, m in logs)
+                    + cancelled
                 )
     joined = "\n".join(texts)
     for phrase in (
@@ -978,7 +1006,9 @@ def test_a_batch_nested_deep(
         + "}}",
     )
     squeue["1000"] = "1000_0 RUNNING\n"
-    Path(fake_slurm["FAKE_SLURM_SQUEUE"]).write_text(json.dumps(squeue), encoding="utf-8")
+    Path(fake_slurm["FAKE_SLURM_SQUEUE"]).write_text(
+        json.dumps(squeue), encoding="utf-8"
+    )
     _compare(batch_dir, _Seen(capsys, caplog, fake_slurm, batch_dir))
 
 
@@ -998,7 +1028,9 @@ def test_status_of_a_batch_as_it_reads(
     _write(root / "manifest.json", json.dumps(manifest))
     _write(
         root / "submissions" / "0.json",
-        json.dumps({"job_id": "1000", "chunks": [[0, 1], [2, 3]], "cases": [0, 1, 2, 3]}),
+        json.dumps(
+            {"job_id": "1000", "chunks": [[0, 1], [2, 3]], "cases": [0, 1, 2, 3]}
+        ),
     )
     _write(
         root / "submissions" / "1.json",
@@ -1018,7 +1050,9 @@ def test_status_of_a_batch_as_it_reads(
             }
         ),
     )
-    _write(root / "tasks" / "0-1.json", json.dumps({"state": "failed", "error": "boom"}))
+    _write(
+        root / "tasks" / "0-1.json", json.dumps({"state": "failed", "error": "boom"})
+    )
     _write(
         root / "results" / "0.json",
         json.dumps(
@@ -1064,7 +1098,10 @@ def test_status_of_a_batch_as_it_reads(
         ("passed", "ok"),
         ("running", "task 0 of job 1000: running"),
         ("missing", "no result: task 1 of job 1000 failed: boom"),
-        ("pending", "no job id yet: submission 1 is being submitted (sbatch in flight)"),
+        (
+            "pending",
+            "no job id yet: submission 1 is being submitted (sbatch in flight)",
+        ),
     ]
     assert list(batch["cases"][0]) == [
         "index",
