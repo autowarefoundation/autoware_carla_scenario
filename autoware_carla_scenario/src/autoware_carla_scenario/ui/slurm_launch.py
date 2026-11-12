@@ -31,12 +31,14 @@ from typing import TYPE_CHECKING, Any
 
 from ..slurm.manifest import (
     BatchLayout,
+    TaskStatus,
     no_job_note,
     recorded_verdict,
     sbatch_in_flight,
     sbatch_timed_out,
 )
 from ..slurm.queue import ACTIVE_STATES, squeue_states
+from ..slurm.records import JsonMembers
 from .case_paths import session_order
 from .slurm_case_state import case_state, no_job_case_state
 
@@ -424,16 +426,15 @@ def _case_states(
             states = squeue.get(sub_index)
             squeue_known = states is not None
             queued = None if states is None else states.get(task)
-            status = layout.read_task(sub_index, task) or {}
+            status = layout.read_task(sub_index, task) or TaskStatus(JsonMembers())
             job_id = f"{sub.get('job_id')}"
             # Only what case_state's branch reads of the status; a task file
             # that holds no JSON object reads as no status at all (#1630).
             if queued in ACTIVE_STATES:
-                at_case = queued == "RUNNING" and bool(status.get("current") == index)
+                at_case = queued == "RUNNING" and status.is_at(index)
             elif squeue_known:
-                task_state = f"{status.get('state', 'never started')}"
-                if status.get("error"):
-                    task_error = f"{status['error']}"
+                task_state = status.state_text("never started")
+                task_error = status.error
         state, message = no_job or case_state(
             record is not None,
             errored,
@@ -507,13 +508,15 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
         in_flight = not job and not timed_out and sbatch_in_flight(sub)
         tasks = []
         for task, chunk in enumerate(sub.get("chunks") or []):
-            status = layout.read_task(index, task) or {}
+            status = layout.read_task(index, task) or TaskStatus(JsonMembers())
             tasks.append(
                 {
                     "task": task,
                     "cases": chunk,
                     "squeue": None if states is None else states.get(task),
-                    "state": status.get("state", "not started"),
+                    "state": status.get("state")
+                    if status.has("state")
+                    else "not started",
                     "host": status.get("host"),
                     "done": len(status.get("done") or []),
                     "current": status.get("current"),

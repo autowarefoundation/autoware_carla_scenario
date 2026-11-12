@@ -21,6 +21,7 @@ import pytest
 from autoware_carla_scenario.slurm.manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
     CaseOutcome,
+    TaskStatus,
     readable_result,
 )
 from autoware_carla_scenario.slurm.records import JsonMembers
@@ -79,7 +80,7 @@ def _original_case_states(
             sub_index, task, sub = given[index]
             states = squeue.get(sub_index)
             queued = None if states is None else states.get(task)
-            status = layout.read_task(sub_index, task) or {}
+            status = layout.task_dict(sub_index, task) or {}
             if queued in ACTIVE_STATES:
                 running = queued == "RUNNING" and status.get("current") == index
                 entry.update(
@@ -107,7 +108,7 @@ class _Layout:
         self,
         submissions: dict[int, dict[str, Any]],
         results: dict[int, dict[str, Any]],
-        tasks: dict[tuple[int, int], dict[str, Any]],
+        tasks: dict[tuple[int, int], Any],
     ) -> None:
         self._submissions = submissions
         self._results = results
@@ -127,8 +128,16 @@ class _Layout:
         record = self._results.get(index)
         return None if record is None else CaseOutcome(JsonMembers.from_value(record))
 
-    def read_task(self, submission: int, task: int) -> dict[str, Any] | None:
-        return self._tasks.get((submission, task))
+    def task_dict(self, submission: int, task: int) -> dict[str, Any] | None:
+        """The task's status as it was read, a dict, for the original: None
+        for one that is no object, as BatchLayout reads it since #1630."""
+        status = self._tasks.get((submission, task))
+        return status if isinstance(status, dict) else None
+
+    def read_task(self, submission: int, task: int) -> TaskStatus | None:
+        # As BatchLayout reads the status the dict would be written as.
+        status = self.task_dict(submission, task)
+        return None if status is None else TaskStatus(JsonMembers.from_value(status))
 
 
 _SQUEUE_STATES = [*sorted(ACTIVE_STATES), "COMPLETED", "FAILED", "TIMEOUT", "running"]
@@ -253,21 +262,19 @@ def test_case_states_match_the_original(seed: int) -> None:
 @pytest.mark.parametrize("status", [[1], "x", 5])
 @pytest.mark.parametrize("queued", [None, "PENDING", "RUNNING", "COMPLETED"])
 @pytest.mark.parametrize("asked", [True, False])
-def test_a_task_file_holding_no_object_fails_where_it_did(
+def test_a_task_file_holding_no_object_reads_as_no_status(
     status: Any, queued: str | None, asked: bool
 ) -> None:
+    """BatchLayout.read_task reads a task file that holds JSON that is no
+    object as no status (#1630): the case is where a task with no status
+    is."""
     states = ({} if queued is None else {0: queued}) if asked else None
     layout = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {}, {(0, 0): status})
+    none = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {}, {})
     manifest = {"cases": [{"index": 0}]}
-    try:
-        want: Any = _original_case_states(layout, manifest, {0: states})
-    except Exception as error:  # noqa: BLE001
-        want = type(error)
-    try:
-        got: Any = slurm_launch._case_states(layout, manifest, {0: states})  # type: ignore[arg-type]
-    except Exception as error:  # noqa: BLE001
-        got = type(error)
-    assert got == want
+    got = slurm_launch._case_states(layout, manifest, {0: states})  # type: ignore[arg-type]
+    assert got == _original_case_states(layout, manifest, {0: states})
+    assert got == slurm_launch._case_states(none, manifest, {0: states})  # type: ignore[arg-type]
 
 
 @pytest.mark.parametrize(

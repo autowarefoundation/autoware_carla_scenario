@@ -323,8 +323,13 @@ def test_read_result_and_read_task_read_the_object_as_json_holds_it(
     assert outcome is not None
     task = layout.read_task(0, 0)
     assert task is not None
-    assert outcome.members.keys() == list(task) == ["z", "result", "big", "extra"]
-    for record in (task, {key: outcome.get(key) for key in outcome.members.keys()}):
+    assert (
+        outcome.members.keys() == task.members.keys() == ["z", "result", "big", "extra"]
+    )
+    for record in (
+        {key: task.get(key) for key in task.members.keys()},
+        {key: outcome.get(key) for key in outcome.members.keys()},
+    ):
         assert record["z"][:2] == [1, 2.0]
         assert isinstance(record["z"][1], float)
         assert math.copysign(1.0, record["z"][2]) == -1.0

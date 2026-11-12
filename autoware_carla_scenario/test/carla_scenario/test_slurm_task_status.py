@@ -378,15 +378,19 @@ def _same(actual: Any, expected: Any) -> None:
     assert text(actual) == text(expected)
 
 
-_NONE = object()
-
-
 def _keys(status: Any) -> list[str]:
     """The keys of the status read_task read, in their order (a dict, as it
     was read before, or a typed record of its members)."""
     if isinstance(status, dict):
         return list(status)
     return list(status.members.keys())
+
+
+def _has(status: Any, key: str) -> bool:
+    """Whether the status read_task read has the member *key*."""
+    if isinstance(status, dict):
+        return key in status
+    return bool(status.has(key))
 
 
 # -- What read_task reads -----------------------------------------------------------
@@ -409,10 +413,27 @@ def test_read_task_reads_each_status(tmp_path: Path, name: str, content: bytes) 
     assert _keys(status) == list(old)
     for key in (*_KEYS, "z", "a", "rpc"):
         _same(status.get(key), old.get(key))
-        if key not in old:
-            assert status.get(key, _NONE) is _NONE
+        assert _has(status, key) is (key in old)
     for key in old:
-        _same(status.get(key, _NONE), old[key])
+        _same(status.get(key), old[key])
+
+
+@pytest.mark.parametrize(("name", "content"), _CONTENTS, ids=_IDS)
+def test_the_typed_accessors_of_each_status(
+    tmp_path: Path, name: str, content: bytes
+) -> None:
+    """TaskStatus's state_text(), error and is_at() read what its readers
+    read of the status as a dict."""
+    layout = _batch(tmp_path, content)
+    old = _old_status(content)
+    status = layout.read_task(0, 0)
+    if status is None or old is None:
+        return
+    for default in ("not started", "never started", "?"):
+        assert status.state_text(default) == f"{old.get('state', default)}"
+    assert status.error == (f"{old['error']}" if old.get("error") else None)
+    for case in (0, 1, 2, -1, 2**53 + 1, 10**30, 10**400):
+        assert status.is_at(case) is bool(old.get("current") == case)
 
 
 def test_read_task_is_none_for_a_missing_status_or_a_directory(
