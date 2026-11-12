@@ -44,10 +44,13 @@ A scenario's life, with `ego.entity=hils`:
 2. The bridge starts the devices' periodic messages, runs the
    `scenario_start` steps (wake the ECUs, wait until they say they are ready)
    and then attaches its sensors to the ego, so the ECUs get no sensor data
-   measured before the scenario is live. The runner ticks the world
-   meanwhile, holding every vehicle still, until the bridge answers `ready`
-   -- or fails the run when a step fails or nothing comes within
-   `hils.ready_timeout_s`.
+   measured before the scenario is live. Then it runs the `warmup` steps
+   with the sensors streaming (wait until the ECUs are ready to drive: an
+   automated driving stack localized, routed and engaged). The runner ticks
+   the world meanwhile, holding every vehicle still, until the bridge answers
+   `ready` -- or fails the run when a step fails or nothing comes within
+   `hils.ready_timeout_s`. The scenario's clock starts then: this wait is the
+   run's warm-up, as for an ego whose stack comes up over ROS 2.
 3. Every tick the ego's state goes to the ECUs; whenever an ECU sends a
    command message (`inputs`), the bridge forwards the command and the runner
    applies it to the ego.
@@ -103,7 +106,7 @@ uv run scenario ego.entity=hils hils.host=hils-pc
 | --- | --- | --- |
 | `host`, `port` | `localhost`, `7700` | the bridge's `runner.listen`; an IPv6 host without brackets (`hils.host=::1`); with brackets, quote it (`'hils.host="[::1]"'`), or Hydra reads `[::1]` as a list; the port is a whole number from 1 to 65535 |
 | `connect_timeout_s` | `10.0` | reaching the bridge |
-| `ready_timeout_s` | `60.0` | its `scenario_start` steps (wall clock) |
+| `ready_timeout_s` | `60.0` | its `scenario_start` and `warmup` steps (wall clock) |
 | `end_timeout_s` | `30.0` | its `scenario_end` steps (wall clock) |
 | `stale_s` | `0.5` | a command older than this (wall clock) is stale |
 | `on_stale` | `brake` | `brake`, or `hold` the last command, once stale; before any command the ego brakes |
@@ -441,12 +444,13 @@ The run applies the newest command every tick. One older than `hils.stale_s`
 
 ### Lifecycle
 
-`lifecycle` lists steps for four moments:
+`lifecycle` lists steps for five moments:
 
 | Phase | When | If a step fails |
 | --- | --- | --- |
 | `startup` | once, when the bridge starts (devices just opened, before CARLA is reached) | the bridge stops (status 1) |
 | `scenario_start` | a scenario starts (the run's `start`, or the ego appearing); the periodic messages are already running, and the run waits for the steps; the sensors are attached after them (even when one fails), so no sensor data measured during the steps is sent | the run fails, with the step's error |
+| `warmup` | right after `scenario_start`, with the sensors attached and the world followed (the ego's state and the sensor data reach the ECUs as in the scenario; their commands are not applied yet, and the run holds every vehicle still); the run waits for these steps too, and its clock starts after them | the run fails, with the step's error |
 | `scenario_end` | the scenario ends (the run's `end`, the run going away, or the ego disappearing); the sensors go before the steps (nothing they measure meanwhile is queued or sent), and the periodic messages stop after them | logged; the other steps still run |
 | `shutdown` | once, when the bridge stops (Ctrl-C, SIGTERM) | logged; the other steps still run |
 
@@ -464,6 +468,11 @@ lifecycle:
       name: EcuStatus
       fields: {Ready: 1}
       timeout: 10.0
+  warmup:                                  # the sensors stream meanwhile
+    - wait: vehicle_can
+      name: EcuStatus
+      fields: {Engaged: 1}
+      timeout: 60.0
   scenario_end:
     - send: diag_can                       # a raw frame: id and hex bytes
       id: 0x7DF

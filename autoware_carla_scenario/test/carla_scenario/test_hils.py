@@ -1567,6 +1567,9 @@ BO_ 512 ControlCmd: 3 ECU
 
 BO_ 768 EcuStatus: 1 ECU
  SG_ Ready : 0|1@1+ (1,0) [0|1] "" SIM
+
+BO_ 769 EcuDrive: 1 ECU
+ SG_ Engaged : 0|1@1+ (1,0) [0|1] "" SIM
 """
 
 
@@ -2014,10 +2017,13 @@ def _sensor_bridge(
     clock: str,
     ready_timeout: float = 5.0,
     end_wait: bool = False,
+    warmup_timeout: Optional[float] = None,
 ) -> tuple[Any, Any, Any]:
     """A bridge with the CAN device's lifecycle and a camera, its ECU's end of
     the bus, and the camera's receiver.  With *end_wait*, the scenario_end
-    steps wait for the ECU's EcuStatus(Ready=0) after putting it to sleep."""
+    steps wait for the ECU's EcuStatus(Ready=0) after putting it to sleep;
+    with *warmup_timeout*, the warmup steps wait that long for its
+    EcuDrive(Engaged=1)."""
     from autoware_carla_scenario.hils.bridge import HilsBridge
 
     can, camera = _mem(), _mem()
@@ -2027,6 +2033,15 @@ def _sensor_bridge(
         document["lifecycle"]["scenario_end"].append(
             {"wait": "can", "name": "EcuStatus", "fields": {"Ready": 0}, "timeout": 5}
         )
+    if warmup_timeout is not None:
+        document["lifecycle"]["warmup"] = [
+            {
+                "wait": "can",
+                "name": "EcuDrive",
+                "fields": {"Engaged": 1},
+                "timeout": warmup_timeout,
+            }
+        ]
     document["devices"]["camera"] = {
         "url": camera,
         "sensor": {"blueprint": "sensor.camera.rgb"},
@@ -2167,6 +2182,73 @@ def test_the_scenario_end_steps_waiting_queue_no_measurement(
         world.tick()
         bridge.step()
         assert _drain(receiver) == []
+    finally:
+        bridge.close()
+        ecu.close()
+        receiver.close()
+
+
+def test_the_warmup_steps_wait_with_the_sensors_streaming(
+    world: _World, dbc: Path
+) -> None:
+    """The ECU gets ready to drive on what the sensors measure: the warmup
+    steps run with them attached and the world followed, and _begin returns
+    (the run's ``ready``) only once the ECU says so."""
+    bridge, ecu, receiver = _sensor_bridge(world, dbc, "simulation", warmup_timeout=5.0)
+    seen: List[Any] = []
+    failed: List[BaseException] = []
+
+    def ecu_side() -> None:
+        try:
+            deadline = time.monotonic() + 5.0
+            while not any(
+                m is not None and m.name == "Wake" and m["On"] == 1
+                for m in [ecu.recv(0.05)]
+            ):
+                assert time.monotonic() < deadline, "the bridge sent no Wake(On=1)"
+            ecu.send("EcuStatus", {"Ready": 1})
+            while not (world.sensors and world.sensors[0].callback is not None):
+                assert time.monotonic() < deadline, "no sensor attached"
+                time.sleep(0.01)
+            # A frame measured during the warm-up reaches the ECU ...
+            world.sensors[0].callback(_frame(b"WARMUP-FRAME-001"))
+            while not seen:
+                assert time.monotonic() < deadline, "no frame during the warm-up"
+                world.tick()
+                frame = receiver.recv(0.05)
+                if frame is not None:
+                    seen.append(frame.data)
+            # ... and only then does the ECU say it is ready to drive.
+            ecu.send("EcuDrive", {"Engaged": 1})
+        except BaseException as exc:  # noqa: BLE001 - reported by the test
+            failed.append(exc)
+
+    try:
+        thread = _start(ecu_side)
+        bridge._begin(world.actors[0], "")
+        thread.join(5.0)
+        assert not thread.is_alive() and failed == []
+        assert seen == [b"WARMUP-FRAME-001"]
+        assert bridge.active
+    finally:
+        bridge.close()
+        ecu.close()
+        receiver.close()
+
+
+def test_a_warmup_step_that_times_out_fails_the_start(
+    world: _World, dbc: Path
+) -> None:
+    from autoware_carla_scenario.hils.bridge import HilsStepError
+
+    bridge, ecu, receiver = _sensor_bridge(world, dbc, "simulation", warmup_timeout=0.3)
+    try:
+        ecu_side, _, failed = _fire_while_the_ecu_wakes(world, ecu, bridge._sensors[0], 0)
+        with pytest.raises(HilsStepError, match="warmup: can sent no EcuDrive"):
+            bridge._begin(world.actors[0], "")
+        ecu_side.join(5.0)
+        assert failed == []
+        assert bridge._sensors[0].attached
     finally:
         bridge.close()
         ecu.close()

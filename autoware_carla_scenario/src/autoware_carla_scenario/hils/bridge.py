@@ -17,6 +17,11 @@ for an ECU's message, sleep) run at four points:
   are attached after the steps, so that nothing they measured while the
   steps waited (nothing is sent meanwhile) reaches the ECUs late, or piles
   up in memory;
+* ``warmup`` -- right after, with the sensors attached and the world followed
+  (the run ticks it, its vehicles held on their brakes): the ECUs getting
+  ready to drive on what they measure.  The run waits for these steps too
+  before its clock starts -- its warm-up, as for an ego whose stack has to
+  localize, route and engage;
 * ``scenario_end`` -- when it ends: the run's ``end``, the run going away, or
   the ego disappearing; then the periodic messages stop and the sensors go;
 * ``shutdown`` -- when the bridge stops (Ctrl-C, SIGTERM).
@@ -805,9 +810,10 @@ class HilsBridge:
 
     # -- lifecycle steps -----------------------------------------------------
 
-    def _run_steps(self, phase: str, strict: bool) -> None:
+    def _run_steps(self, phase: str, strict: bool, live: bool = False) -> None:
         """Run *phase*'s steps; the first failure raises when *strict*, else
-        each is logged and the rest still run."""
+        each is logged and the rest still run.  *live* follows the world while
+        they wait (:meth:`_pump`)."""
         steps = self.config.steps(phase)
         if not steps:
             return
@@ -816,27 +822,28 @@ class HilsBridge:
         try:
             for step in steps:
                 try:
-                    self._run_step(step, since)
+                    self._run_step(step, since, live)
                 except HilsStepError as exc:
                     if strict:
                         raise HilsStepError(f"{phase}: {exc}") from exc
                     logger.warning("%s: %s", phase, exc)
         finally:
-            # The clock followed the wall clock meanwhile: the next tick must
-            # not add the world time that passed as well.
-            self._last_time = None
+            if not live:
+                # The clock followed the wall clock meanwhile: the next tick
+                # must not add the world time that passed as well.
+                self._last_time = None
 
-    def _run_step(self, step: StepSpec, since: float) -> None:
+    def _run_step(self, step: StepSpec, since: float, live: bool = False) -> None:
         logger.info("  %s", step.describe())
         if step.kind == "sleep":
-            self._pump(lambda: False, step.seconds)
+            self._pump(lambda: False, step.seconds, live)
             return
         if step.kind == "wait":
             receiver = self._receivers[step.device]
             assert step.name is not None
             name: str = step.name
             if not self._pump(
-                lambda: receiver.seen(name, step.match, since), step.seconds
+                lambda: receiver.seen(name, step.match, since), step.seconds, live
             ):
                 expected = f" with {dict(step.match)}" if step.match else ""
                 raise HilsStepError(
@@ -853,9 +860,10 @@ class HilsBridge:
         except Exception as exc:  # noqa: BLE001 - hilspy.Error, or a missing signal
             raise HilsStepError(f"{step.describe()} failed: {exc}") from exc
 
-    def _pump(self, done: Callable[[], bool], seconds: float) -> bool:
+    def _pump(self, done: Callable[[], bool], seconds: float, live: bool = False) -> bool:
         """Wait up to *seconds* for *done*; the simulated clock follows the wall
-        clock meanwhile.  Whether *done* came true."""
+        clock meanwhile, or, *live*, the world's ticks are served
+        (:meth:`step`).  Whether *done* came true."""
         start = last = time.monotonic()
         while True:
             if done():
@@ -863,6 +871,9 @@ class HilsBridge:
             now = time.monotonic()
             if now - start >= seconds:
                 return False
+            if live:
+                self.step(min(_TICK_POLL_S, seconds - (now - start)))
+                continue
             time.sleep(min(_STEP_POLL_S, seconds - (now - start)))
             now = time.monotonic()
             if self.clock is not None:
@@ -883,7 +894,7 @@ class HilsBridge:
 
     def _begin(self, ego: "carla.Actor", scenario: str) -> None:
         """Start a scenario for *ego*: periodic messages, the
-        ``scenario_start`` steps, then the sensors.
+        ``scenario_start`` steps, the sensors, then the ``warmup`` steps.
 
         The sensors are attached once the steps are over, failed or not:
         nothing a sensor measures is sent until the scenario is live (the
@@ -892,9 +903,12 @@ class HilsBridge:
         -- unbounded -- for the first flush to send stale.  Nothing in a step
         needs a sensor.
 
+        The ``warmup`` steps wait on what the ECUs make of the sensors, so
+        they run with the world followed (:meth:`step`), as a scenario runs.
+
         Raises:
-            HilsStepError: A scenario_start step failed (the scenario is still
-                running, and ends as any other).
+            HilsStepError: A scenario_start or warmup step failed (the scenario
+                is still running, and ends as any other).
         """
         assert self._world is not None
         self._ego = ego
@@ -930,6 +944,7 @@ class HilsBridge:
                     logger.exception(
                         "%s: failed to attach the sensor", sensor_device.spec.name
                     )
+        self._run_steps("warmup", strict=True, live=True)
 
     def _finish(self) -> None:
         """End the scenario: remove the sensors, carry what its cuts stopped
