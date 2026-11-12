@@ -8,12 +8,17 @@ run's recorded frames are shared out among them (:mod:`.session`).
 ``docs/metrics.md`` ("CommonRoad metrics") says how to set them up.
 """
 
-from .map import commonroad_map
-from .session import (
+# The heavy metrics' settings are the checked heavy_metrics' (#1689), which
+# commonroad.session re-exports too: the same objects, imported from where they
+# are defined.
+from ..heavy_metrics import (
     DEFAULT_METRIC_PERIODS_S,
     HEAVY_METRICS,
     HEAVY_METRICS_DECIDED_ENV,
     HEAVY_METRICS_ENV,
+)
+from .map import commonroad_map
+from .session import (
     CommonRoadSettings,
     close_commonroad_workers,
     commonroad_settings,

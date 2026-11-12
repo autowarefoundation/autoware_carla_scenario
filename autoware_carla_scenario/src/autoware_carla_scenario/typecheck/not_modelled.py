@@ -585,6 +585,24 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         _BY_NAME,
     ),
     "ConditionStatus": {"details": _CONDITION_DETAILS, "to_dict": _AS_DICT},
+    "CommonRoadSettings": _members(
+        "cache_dir command dt evaluates heavy_metrics horizon_s "
+        "metric_periods_s period_for period_s radius_m reach_settings "
+        "request_timeout_s start_timeout_s worker_settings workers",
+        "how the runner evaluates the CommonRoad metrics after a run (the "
+        "metrics config); the model declares the class by name only, so the "
+        "checked commonroad package's re-export resolves, and a scenario "
+        "cannot build one (its constructor is a compile error)",
+    ),
+    "CommonRoadWorker": _members(
+        "close command evaluate measures request running",
+        "a CommonRoad worker process, spoken to in JSON objects of mixed "
+        "value types (`dict[str, Any]`), which Codon cannot express; the "
+        "model declares the class by name only, so the checked commonroad "
+        "package's re-export resolves, and a scenario cannot build one (its "
+        "constructor is a compile error): commonroad.session starts the "
+        "workers after a run, not a scenario",
+    ),
     "CoverageCollector": {"to_dict": _AS_DICT},
     "CoverageReport": {
         **_members(
