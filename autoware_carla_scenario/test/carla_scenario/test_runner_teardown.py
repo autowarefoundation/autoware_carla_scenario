@@ -218,6 +218,82 @@ def test_the_log_goes_to_rerun_when_the_result_cannot_be_written(
     rerun.submit.assert_called_once_with(trajectory.path, ANY)
 
 
+def _failing_trajectory(tmp_path: Path) -> MagicMock:
+    """A trajectory recorder that opens its log on start() and gives up on
+    it mid-run, as a failed write does (_fail() closes it): the partial log
+    stays on disk and the recorder is no longer active."""
+    trajectory = MagicMock()
+    trajectory.active = False
+    trajectory.path = tmp_path / "S.trajectory.jsonl"
+
+    def start(world: Any) -> None:
+        trajectory.path.write_text('{"type":"world"}\n')
+        trajectory.active = True
+
+    def fail(*_: Any) -> None:
+        trajectory.active = False
+
+    trajectory.start.side_effect = start
+    trajectory.record_markers.side_effect = fail
+    return trajectory
+
+
+def test_a_log_the_recorder_gave_up_on_goes_to_rerun_after_the_result(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    # The partial log is converted as every other log is, once the result
+    # JSON it is read with is written (#2085).
+    order: list[str] = []
+    written: list[Any] = []
+
+    def write_result(json_path: Path, *_: Any) -> None:
+        order.append("result")
+        written.append(_[3])
+
+    trajectory = _failing_trajectory(tmp_path)
+    rerun = MagicMock()
+    rerun.submit.side_effect = lambda path, label: order.append("rerun")
+    with caplog.at_level("WARNING"):
+        _run(tmp_path, trajectory, write_result=write_result, rerun=rerun)
+    assert order == ["result", "rerun"]
+    rerun.submit.assert_called_once_with(trajectory.path, ANY)
+    assert written[0].rerun_recording == str(tmp_path / "S.rrd")
+    # The recorder is closed already: nothing more is written to it.
+    trajectory.record_result.assert_not_called()
+    trajectory.close.assert_not_called()
+    assert "partial log" in caplog.text
+
+
+def test_a_log_the_recorder_gave_up_on_goes_to_rerun_when_the_run_raises(
+    tmp_path: Path,
+) -> None:
+    trajectory = _failing_trajectory(tmp_path)
+    rerun = MagicMock()
+    write_result = MagicMock()
+    with pytest.raises(ValueError, match="coverage broke"):
+        _run(
+            tmp_path,
+            trajectory,
+            write_result=write_result,
+            rerun=rerun,
+            coverage_end_error=ValueError("coverage broke"),
+        )
+    rerun.submit.assert_called_once_with(trajectory.path, ANY)
+    write_result.assert_not_called()
+
+
+def test_a_log_that_never_started_is_not_converted(tmp_path: Path) -> None:
+    # start() failed: whatever file is at the path (an earlier run's) is not
+    # this run's log.
+    trajectory = MagicMock()
+    trajectory.active = False
+    trajectory.path = tmp_path / "S.trajectory.jsonl"
+    trajectory.path.write_text('{"type":"world"}\n')
+    rerun = MagicMock()
+    _run(tmp_path, trajectory, rerun=rerun)
+    rerun.submit.assert_not_called()
+
+
 @pytest.mark.parametrize(
     "error", [RuntimeError("CommonRoad worker died"), KeyboardInterrupt()]
 )

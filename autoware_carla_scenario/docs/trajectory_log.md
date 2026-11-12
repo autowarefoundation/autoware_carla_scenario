@@ -48,8 +48,10 @@ then one `traffic_light` line per light and one `warmup` line. After that come t
 (an ego's followed by a `rear_axle` line) and
 an `actor_gone` line for every one that has gone since the last, and followed
 by a `turn_indicators` line when a vehicle's turn indicators changed on it, a `markers` line when the ego's plan changed on it (and a `plan` line after
-it, the plan timed), a `condition` line for
-each condition that changed and an `action` line for each action that moved on. A run judged on a `MetricCondition` then has, after its last tick, a `metric` line for each frame its metrics were computed for and `condition` lines for each metric condition, whether its metric was NG, all in frame order ([Metrics](metrics.md#how-metrics-are-computed)). A run that reached a verdict ends with `result`: its final one, the one `_result.json` holds, after the `MetricCondition`s are judged. A run that raises before that -- in its tick loop, or after it (a CommonRoad worker that died while the metrics were computed, a Ctrl-C) -- writes no `_result.json` and ends without a `result` line (#2067).
+it, the plan timed), then an `action` line for each action that moved on (each
+followed by the `adversity`, `waypoint_arrival`, `spawn` and `despawn` lines its
+tick brought), the `collision`, `walker_fallen` and fallen walkers' `despawn`
+lines, and last a `condition` line for each condition that changed. A run judged on a `MetricCondition` then has, after its last tick, a `metric` line for each frame its metrics were computed for, in frame order, and then, for each metric condition in turn, its `condition` lines, whether its metric was NG, from its first frame again: after the ticks, `frame` goes back each time a new block starts, so a reader wanting one timeline sorts these lines by `frame` ([Metrics](metrics.md#how-metrics-are-computed)). A run that reached a verdict ends with `result`: its final one, the one `_result.json` holds, after the `MetricCondition`s are judged. A run that raises before that -- in its tick loop, or after it (a CommonRoad worker that died while the metrics were computed, a Ctrl-C) -- writes no `_result.json` and ends without a `result` line (#2067).
 
 ```json
 {"type":"world","schema_version":2,"map":"Carla/Maps/Town10HD_Opt","episode":7}
@@ -60,8 +62,8 @@ each condition that changed and an `action` line for each action that moved on. 
 {"type":"tick","frame":100,"t":0.0,"actors":[[1,0.0,1.0,0.0,0.0,0.0,90.0,0.0,0.0,0.0]],"control":{"1":[0.5,0.0,0.0,1]},"lights":{"9":"Red"}}
 {"type":"markers","frame":100,"t":0.0,"actor":1,"polylines":[{"points":[[0.0,1.0,0.3],[5.0,1.0,0.3]],"color":[0,255,0],"thickness":0.1,"point_size":0.1}]}
 {"type":"plan","frame":100,"t":0.0,"actor":1,"step":1,"planned_at_us":3050000,"policy":"resworld","inference_seconds":0.031,"turn_indicator":1,"debug_scalars":{},"points":[[0.1,0.0,1.0,0.0,90.0],[0.2,5.0,1.0,0.0,90.0]]}
-{"type":"condition","frame":101,"t":0.05,"role":"pass","index":0,"label":"arrived","satisfied":false}
 {"type":"action","frame":101,"t":0.05,"phase":"post_tick","index":0,"label":"cut_in","action_type":"LaneChangeAction","state":"startTransition"}
+{"type":"condition","frame":101,"t":0.05,"role":"pass","index":0,"label":"arrived","satisfied":false}
 {"type":"actor_gone","id":3,"frame":180,"t":4.0}
 {"type":"result","passed":true,"message":"Ego reached the goal","elapsed_seconds":12.3,"conditions":[{"label":"pass[0](arrived)","role":"pass","condition_type":"ReachPositionCondition","satisfied":true,"message":"..."}]}
 ```
@@ -72,7 +74,7 @@ each condition that changed and an `action` line for each action that moved on. 
 | `traffic_light` | once per light, when recording starts | `id`, `opendrive_id`, `location` `[x,y,z]`, `boxes` `[[x,y,z,ex,ey,ez,yaw]]` (one per light head), `stops` `[[x,y,z,yaw]]` (stop-line waypoints) |
 | `actor` | before the first tick a vehicle/walker appears in | `id`, `type_id` (blueprint), `role` (`role_name`), `extent` (bounding box half size), `center` (box centre offset from the actor origin, actor frame) |
 | `tick` | after each `world.tick()` | `frame` (CARLA frame), `t` (scenario seconds), `actors` `[[id,x,y,z,roll,pitch,yaw,vx,vy,vz]]`, `control` `{id: [throttle,steer,brake,gear]}` (egos only), `angular_velocity` `{id: [wx,wy,wz]}` (egos only, deg/s in CARLA's world axes; (2), absent before it was recorded), `lights` `{id: state}` (changes only) |
-| `map` (2) | once, after `world` | `name` (short map name), `source` (`map.source`, else `map.directory`, else null), `lanelet2` / `opendrive` (`{path, sha256, bytes}` of the file read, or null), `projector_info` (`map_projector_info.yaml` as read, or null), `projector_type` (the config's override, or null), `mgrs_offset` `[ox,oy]` and `z_offset` (the loaded Lanelet2 map's, or null) |
+| `map` (2) | once, after `world` | `name` (short map name), `source` (`map.directory`, else `map.source`, else null: the one the map was read from, as `map.directory` wins), `lanelet2` / `opendrive` (`{path, sha256, bytes}` of the file read, or null), `projector_info` (`map_projector_info.yaml` as read, or null), `projector_type` (the config's override, or null), `mgrs_offset` `[ox,oy]` and `z_offset` (the loaded Lanelet2 map's, or null) |
 | `warmup` (2) | once, before the first tick | `ticks` (frames of the CARLA recording before the scenario clock started: the warm-up), `start_frame` (the frame the recorder started at, null without a recording), `end_frame` (the frame of the first tick, t = 0) |
 | `rear_axle` (2) | right after an ego's `actor` line | `id`, `offset` (where its rear axle -- Autoware's `base_link`, the driver policy's rig origin -- is from the actor origin along its x axis, metres, negative behind: where the ego put its `base_link` for the run -- a driver policy's entity's rig origin (`driver.rear_axle_offset_m`), a ROS 2 ego's odometry (`rear_axle_offset_m`), an Autoware ego's `base_link` (`AutowareBridgeConfig.base_link_offset_m`) -- else from its wheels, else half its box's half-length behind (`-0.5 * extent.x`, a quarter of its length)) |
 | `actor_gone` (2) | before the first tick a vehicle/walker is missing from | `id`, and the `frame` and `t` of that tick |
@@ -99,7 +101,9 @@ generated types keep them as tuples where the target language has them.
   y south, z up; see [Coordinate frames](driver_interface.md#coordinate-frames)). Positions are in metres, angles in degrees, and velocities
   are world-frame m/s (an angular velocity, world-frame deg/s, a pseudovector:
 into a right-handed frame its `x` and `z` flip, not its `y`). Every float is
-rounded to 3 decimals.
+rounded to 3 decimals, but for the values of a `metric` record, written as
+they were computed (an importance-sampling weight is far smaller than a
+thousandth); its `t` is rounded as every other.
 - A walker's velocity is measured from where it stood the tick before: one
   walking on CARLA's walker controller reports 0. Every other actor's is the
   one CARLA reports.

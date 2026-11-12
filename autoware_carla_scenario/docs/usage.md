@@ -952,6 +952,9 @@ With `rerun.enabled=true`:
 - Each log is converted on a background thread as soon as its run ends, while
   the next case runs (the converter releases the GIL; a log takes milliseconds).
   A run that raised is converted too: its log is what shows what happened.
+  So is a log whose recording stopped early (a write that failed, a full
+  disk: logged as `Trajectory recording stopped`): the records written up to
+  then, without a `result` record, and a warning naming the file.
 - At the end the run waits for the last conversions and prints how they went:
   `Rerun recordings: N/M written`, and a line per failure naming its case. A
   retried case counts once, by the conversion of its last attempt. A
@@ -1010,18 +1013,25 @@ refused for a bad one in any of its cases before the first case runs.
 ### Metrics in the recording
 
 A run judged on a `MetricCondition` writes the metrics it computed once it was
-over into its trajectory log ([Metrics](metrics.md#how-metrics-are-computed)),
-and its recording carries them:
+over into its trajectory log, as `metric` records
+([Metrics](metrics.md#how-metrics-are-computed),
+[Trajectory Log](trajectory_log.md)), and the converter
+(`autoware-carla-scenario-rerun` 0.3, which the `rerun` extra pins) draws
+them itself when it converts the log, on the recording's `frame` and
+`sim_time` timelines:
 
-- each metric as a scalar, `metrics/<key>` (`metrics/crime_ttc_s`), on the
-  recording's `frame` and `sim_time` timelines -- add a time series view of
-  `/metrics` in the viewer to plot them (the converter's layout has none yet);
+- each numeric metric as a scalar, `/metrics/<key>` (`/metrics/crime_ttc_s`),
+  plotted in the **Metrics** time series view;
+- each yes/no metric as a state, `/metric_states/<key>`, plotted in the
+  **Metric states** view;
 - each metric condition in the **Conditions** view, satisfied over the frames
   its metric was NG.
 
-The values are written with the Rerun SDK and merged into the recording once
-the log is converted, as the sensors are (`rerun rrd merge`); the `rerun`
-extra installs the SDK. Converting a log again puts them in again.
+Nothing is merged into the recording afterwards: the metrics are in the log,
+so converting it again draws them again. (A converter that did not know
+`metric` records had them written with the Rerun SDK and merged in, into
+`metrics/<key>`; the pinned one draws them, and the framework then writes
+nothing -- `rerun_metrics.merge_metrics`.)
 
 ### Sensors in the recording
 
