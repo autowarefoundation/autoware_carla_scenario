@@ -106,7 +106,7 @@ uv run scenario ego.entity=hils hils.host=hils-pc
 | --- | --- | --- |
 | `host`, `port` | `localhost`, `7700` | the bridge's `runner.listen`; an IPv6 host without brackets (`hils.host=::1`); with brackets, quote it (`'hils.host="[::1]"'`), or Hydra reads `[::1]` as a list; the port is a whole number from 1 to 65535 |
 | `connect_timeout_s` | `10.0` | reaching the bridge |
-| `ready_timeout_s` | `60.0` | its `scenario_start` and `warmup` steps (wall clock) |
+| `ready_timeout_s` | `60.0` | its `scenario_start` and `warmup` steps together (wall clock): raise it to cover the steps' timeouts when they add up to more |
 | `end_timeout_s` | `30.0` | its `scenario_end` steps (wall clock) |
 | `stale_s` | `0.5` | a command older than this (wall clock) is stale |
 | `on_stale` | `brake` | `brake`, or `hold` the last command, once stale; before any command the ego brakes |

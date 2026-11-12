@@ -2194,40 +2194,38 @@ def test_the_warmup_steps_wait_with_the_sensors_streaming(
     """The ECU gets ready to drive on what the sensors measure: the warmup
     steps run with them attached and the world followed, and _begin returns
     (the run's ``ready``) only once the ECU says so."""
-    bridge, ecu, receiver = _sensor_bridge(world, dbc, "simulation", warmup_timeout=5.0)
+    bridge, ecu, receiver = _sensor_bridge(
+        world, dbc, "simulation", warmup_timeout=5.0
+    )
+    [device] = bridge._sensors
     seen: List[Any] = []
     failed: List[BaseException] = []
 
-    def ecu_side() -> None:
+    def drive() -> None:
         try:
-            deadline = time.monotonic() + 5.0
-            while not any(
-                m is not None and m.name == "Wake" and m["On"] == 1
-                for m in [ecu.recv(0.05)]
-            ):
-                assert time.monotonic() < deadline, "the bridge sent no Wake(On=1)"
-            ecu.send("EcuStatus", {"Ready": 1})
-            while not (world.sensors and world.sensors[0].callback is not None):
-                assert time.monotonic() < deadline, "no sensor attached"
-                time.sleep(0.01)
+            assert _until(
+                lambda: bool(world.sensors) and world.sensors[0].callback is not None
+            )
             # A frame measured during the warm-up reaches the ECU ...
             world.sensors[0].callback(_frame(b"WARMUP-FRAME-001"))
-            while not seen:
-                assert time.monotonic() < deadline, "no frame during the warm-up"
+            frame = None
+            while frame is None:
                 world.tick()
                 frame = receiver.recv(0.05)
-                if frame is not None:
-                    seen.append(frame.data)
+            seen.append(frame.data)
             # ... and only then does the ECU say it is ready to drive.
             ecu.send("EcuDrive", {"Engaged": 1})
         except BaseException as exc:  # noqa: BLE001 - reported by the test
             failed.append(exc)
 
     try:
-        thread = _start(ecu_side)
+        wake, _, wake_failed = _fire_while_the_ecu_wakes(world, ecu, device, 0)
+        driver = _start(drive)
         bridge._begin(world.actors[0], "")
-        thread.join(5.0)
-        assert not thread.is_alive() and failed == []
+        for thread in (wake, driver):
+            thread.join(5.0)
+            assert not thread.is_alive()
+        assert wake_failed == [] and failed == []
         assert seen == [b"WARMUP-FRAME-001"]
         assert bridge.active
     finally:
@@ -2239,7 +2237,9 @@ def test_the_warmup_steps_wait_with_the_sensors_streaming(
 def test_a_warmup_step_that_times_out_fails_the_start(world: _World, dbc: Path) -> None:
     from autoware_carla_scenario.hils.bridge import HilsStepError
 
-    bridge, ecu, receiver = _sensor_bridge(world, dbc, "simulation", warmup_timeout=0.3)
+    bridge, ecu, receiver = _sensor_bridge(
+        world, dbc, "simulation", warmup_timeout=0.1
+    )
     try:
         ecu_side, _, failed = _fire_while_the_ecu_wakes(
             world, ecu, bridge._sensors[0], 0
@@ -2249,6 +2249,40 @@ def test_a_warmup_step_that_times_out_fails_the_start(world: _World, dbc: Path) 
         ecu_side.join(5.0)
         assert failed == []
         assert bridge._sensors[0].attached
+    finally:
+        bridge.close()
+        ecu.close()
+        receiver.close()
+
+
+def test_a_scenario_that_ends_during_the_warmup_stops_waiting(
+    world: _World, dbc: Path
+) -> None:
+    """The ego going away while the warmup steps wait ends the scenario, and
+    the wait with it, rather than the bridge waiting out the step."""
+    from autoware_carla_scenario.hils.bridge import HilsStepError
+
+    bridge, ecu, receiver = _sensor_bridge(
+        world, dbc, "simulation", warmup_timeout=30.0
+    )
+    [device] = bridge._sensors
+
+    def ego_goes() -> None:
+        assert _until(lambda: device.attached)
+        world.actors[0].is_alive = False
+        world.tick()
+
+    try:
+        wake, _, failed = _fire_while_the_ecu_wakes(world, ecu, device, 0)
+        gone = _start(ego_goes)
+        started = time.monotonic()
+        with pytest.raises(HilsStepError, match="warmup: the scenario ended"):
+            bridge._begin(world.actors[0], "")
+        assert time.monotonic() - started < 5.0
+        wake.join(5.0)
+        gone.join(5.0)
+        assert failed == []
+        assert not bridge.active
     finally:
         bridge.close()
         ecu.close()

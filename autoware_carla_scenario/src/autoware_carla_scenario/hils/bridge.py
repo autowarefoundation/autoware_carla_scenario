@@ -810,10 +810,11 @@ class HilsBridge:
 
     # -- lifecycle steps -----------------------------------------------------
 
-    def _run_steps(self, phase: str, strict: bool, live: bool = False) -> None:
+    def _run_steps(self, phase: str, strict: bool) -> None:
         """Run *phase*'s steps; the first failure raises when *strict*, else
-        each is logged and the rest still run.  *live* follows the world while
-        they wait (:meth:`_pump`)."""
+        each is logged and the rest still run.  The ``warmup`` steps follow
+        the world while they wait (:meth:`_pump`)."""
+        live = phase == "warmup"
         steps = self.config.steps(phase)
         if not steps:
             return
@@ -865,7 +866,12 @@ class HilsBridge:
     ) -> bool:
         """Wait up to *seconds* for *done*; the simulated clock follows the wall
         clock meanwhile, or, *live*, the world's ticks are served
-        (:meth:`step`).  Whether *done* came true."""
+        (:meth:`step`).  Whether *done* came true.
+
+        Raises:
+            HilsStepError: *live*, and the scenario ended meanwhile (its ego
+                went away).
+        """
         start = last = time.monotonic()
         while True:
             if done():
@@ -875,6 +881,8 @@ class HilsBridge:
                 return False
             if live:
                 self.step(min(_TICK_POLL_S, seconds - (now - start)))
+                if not self._active:
+                    raise HilsStepError("the scenario ended")
                 continue
             time.sleep(min(_STEP_POLL_S, seconds - (now - start)))
             now = time.monotonic()
@@ -946,7 +954,7 @@ class HilsBridge:
                     logger.exception(
                         "%s: failed to attach the sensor", sensor_device.spec.name
                     )
-        self._run_steps("warmup", strict=True, live=True)
+        self._run_steps("warmup", strict=True)
 
     def _finish(self) -> None:
         """End the scenario: remove the sensors, carry what its cuts stopped
