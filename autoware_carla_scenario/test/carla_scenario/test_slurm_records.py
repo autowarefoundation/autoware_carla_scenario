@@ -419,10 +419,14 @@ def test_from_value_raises_what_write_json_raises(
 def test_from_value_refuses_a_circular_object(tmp_path: Path) -> None:
     looped: dict[str, Any] = {}
     looped["self"] = looped
-    with pytest.raises(ValueError, match="^Circular reference detected$"):
+    # str(), not match=: from 3.14.10 json adds a note ("when serializing
+    # dict item 'self'"), which match= reads as part of the message.
+    with pytest.raises(ValueError) as written:
         write_json(tmp_path / "doc.json", looped)
-    with pytest.raises(ValueError, match="^Circular reference detected$"):
+    assert str(written.value) == "Circular reference detected"
+    with pytest.raises(ValueError) as read:
         JsonMembers.from_value(looped)
+    assert str(read.value) == "Circular reference detected"
 
 
 @pytest.mark.skipif(
