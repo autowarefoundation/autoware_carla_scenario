@@ -3166,7 +3166,7 @@ _URLLIB = """
 from __future__ import annotations
 
 from typing import Optional
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlparse, urlsplit, urlunsplit
 
 
 def repository(url: str) -> str:
@@ -3185,6 +3185,15 @@ def host(url: str) -> Optional[str]:
     if parts.port is None and parts[0] == scheme:
         return parts.hostname
     return urlunsplit(parts) + parts.geturl()
+
+
+def local(url: str) -> Optional[str]:
+    # Python's ParseResult: a 6-tuple of str, the path's ;params apart.
+    parsed = urlparse(url, scheme="file", allow_fragments=False)
+    scheme, netloc, path, params, query, fragment = parsed
+    if parsed.params or parsed[3] != params or len(parsed) != 6:
+        return parsed.hostname
+    return unquote(urlparse(url).path) + netloc + path + query + fragment
 """
 
 
@@ -3196,10 +3205,16 @@ def test_the_urllib_parse_shim_splits_and_joins_urls(
     assert (model_dir() / "urllib" / "parse.codon").is_file()
     result = _check_case(_URLLIB, tmp_path, monkeypatch)
     assert result.ok, result.format()
-    # SplitResult's parts are typed: a part Python's lacks is refused.
-    wrong = _URLLIB.replace("parts.netloc:", "parts.host:")
-    assert wrong != _URLLIB
-    assert not _check_case(wrong, tmp_path, monkeypatch).ok
+    # SplitResult's and ParseResult's parts are typed: a part Python's lacks
+    # is refused, and so is an argument urlparse() does not take.
+    for right, wrong in (
+        ("parts.netloc:", "parts.host:"),
+        ("if parsed.params", "if parsed.param"),
+        ("urlparse(url).path", "urlparse(url, fragments=False).path"),
+    ):
+        source = _URLLIB.replace(right, wrong)
+        assert source != _URLLIB
+        assert not _check_case(source, tmp_path, monkeypatch).ok, wrong
 
 
 # ---------------------------------------------------------------------------
@@ -3759,7 +3774,7 @@ def test_the_file_helpers_are_declared_with_the_parameters_cpython_3_10_has() ->
 
 # ---------------------------------------------------------------------------
 # The subprocess and importlib.metadata shims, str.removesuffix(), a typed
-# *args and except (A, B) (#118)
+# *args and except (A, B) (#118); the installed distributions
 # ---------------------------------------------------------------------------
 
 
@@ -3821,6 +3836,30 @@ def checked() -> subprocess.CompletedProcess[str]:
     except subprocess.CalledProcessError as exc:
         raise subprocess.TimeoutExpired(exc.cmd, 1, output=exc.stdout)
     return done
+
+
+def provided(top: str) -> list[str]:
+    names = metadata.packages_distributions().get(top)
+    if names is None:
+        return []
+    return names
+
+
+def described(dist: metadata.Distribution) -> Optional[str]:
+    text = dist.read_text("direct_url.json")
+    name = dist.metadata.get("Name")
+    if text is None or name is None:
+        return dist.metadata.get("Summary", "")
+    return name + dist.version + text
+
+
+def installed_names() -> list[str]:
+    found: list[str] = []
+    for dist in metadata.distributions():
+        text = described(dist)
+        if text is not None:
+            found.append(text)
+    return found + provided("numpy")
 """
 
 
@@ -3862,6 +3901,10 @@ def test_the_subprocess_and_metadata_shims_take_what_cpython_takes(
         ("str(Path.cwd())", "str(Path.cwd(repo))"),
         ("process.wait(timeout=5.0)", "process.wait(5.0, 1)"),
         ("subprocess.TimeoutExpired(exc.cmd, 1,", "subprocess.TimeoutExpired(exc.cmd,"),
+        ("metadata.packages_distributions()", 'metadata.packages_distributions("x")'),
+        ('dist.read_text("direct_url.json")', "dist.read_text()"),
+        ('dist.metadata.get("Name")', "dist.metadata.get()"),
+        ("name + dist.version", "name + dist.versions"),
     ],
     ids=[
         "version-keyword",
@@ -3877,6 +3920,10 @@ def test_the_subprocess_and_metadata_shims_take_what_cpython_takes(
         "cwd-arguments",
         "wait-arguments",
         "timeout-expired-arguments",
+        "packages-distributions-arguments",
+        "read-text-arguments",
+        "metadata-get-arguments",
+        "distribution-unknown-attribute",
     ],
 )
 def test_the_subprocess_and_metadata_shims_refuse_what_cpython_refuses(
@@ -4089,7 +4136,8 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_refuse_what_cpython_r
 
 # ---------------------------------------------------------------------------
 # The shlex and sys shims, signal.Signals, a file object (Path.open(), a
-# Popen stream) and the symlink queries (#127); shlex.split()
+# Popen stream) and the symlink queries (#127); shlex.split(); the platform
+# shim
 # ---------------------------------------------------------------------------
 
 
@@ -4097,12 +4145,18 @@ _STACK = """
 from __future__ import annotations
 
 import os
+import platform
 import shlex
 import signal
 import subprocess
 import sys
 from pathlib import Path
 from typing import IO, Optional
+
+
+def host() -> str:
+    version = platform.python_version() + platform.python_implementation()
+    return version + platform.platform(aliased=True, terse=1) + platform.machine()
 
 
 def command(root: str, args: list[str]) -> str:
@@ -4214,7 +4268,13 @@ def test_the_sys_shim_keeps_all_of_codons_sys() -> None:
 def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for shim in ("shlex.codon", "sys.codon", "signal.codon", "typing.codon"):
+    for shim in (
+        "shlex.codon",
+        "sys.codon",
+        "signal.codon",
+        "typing.codon",
+        "platform.codon",
+    ):
         assert (model_dir() / shim).is_file(), shim
     result = _check_case(_STACK, tmp_path, monkeypatch)
     assert result.ok, result.format()
@@ -4231,6 +4291,8 @@ def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
         # reports a bad argument of a call written over several lines at the
         # call's first line (`at`).
         ("shlex.quote(root)", "shlex.quote(len(root))", None),
+        ("platform.machine()", "platform.machine(1)", None),
+        ("terse=1", "terse=1, alias=True", None),
         ("shlex.join(argv)", "shlex.join([len(root)])", None),
         ("shlex.split(line)", "shlex.split(len(line))", None),
         ("posix=False", "posx=False", None),
@@ -4247,6 +4309,8 @@ def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
     ],
     ids=[
         "quote-str",
+        "machine-arguments",
+        "platform-keyword",
         "join-str",
         "split-str",
         "split-keyword",

@@ -1,9 +1,11 @@
 # The part of Python's importlib.metadata the checked framework names, for
-# the checker (docs/typecheck.md): version() and PackageNotFoundError, with
+# the checker (docs/typecheck.md): version() and PackageNotFoundError, the
+# installed distributions (distributions(), the Distribution each is, with its
+# metadata's fields, version and files) and packages_distributions(), with
 # CPython 3.10's signatures, the oldest Python the package supports. Nothing
-# here runs: no distribution is looked up, and every version is empty.
-# metadata(), entry_points(), distribution() and the rest are not declared,
-# so the check refuses them.
+# here runs: no distribution is looked up, none is installed, and every
+# version is empty. metadata(), entry_points(), distribution(), requires()
+# and the rest are not declared, so the check refuses them.
 
 from autoware_carla_scenario._exceptions import ModuleNotFoundError
 
@@ -22,3 +24,49 @@ class PackageNotFoundError(Static[ModuleNotFoundError]):
 # version(distribution_name): the version of an installed distribution.
 def version(distribution_name: str) -> str:
     return ""
+
+
+# The metadata of a distribution (CPython's PackageMetadata, an
+# email.message.Message): its fields by name. get() gives None, or the
+# default it is given, for a field the metadata lacks; only a str default is
+# declared.
+class PackageMetadata:
+    def __init__(self):
+        pass
+
+    def get(self, name: str, failobj: Optional[str] = None) -> Optional[str]:
+        return failobj
+
+
+# An installed distribution. Its version is its metadata's `Version` (CPython
+# gives None for metadata without one, which the check does not see), and
+# read_text(filename) the text of one of its files, None for a file it does
+# not have.
+class Distribution:
+    def __init__(self):
+        pass
+
+    @property
+    def metadata(self) -> PackageMetadata:
+        return PackageMetadata()
+
+    @property
+    def version(self) -> str:
+        return ""
+
+    def read_text(self, filename: str) -> Optional[str]:
+        return Optional[str]()
+
+
+# distributions(): every installed distribution, in the order sys.path finds
+# them. CPython's keyword filters (`name=`, `path=`, `context=`) are not
+# declared.
+def distributions() -> Generator[Distribution]:
+    if False:
+        yield Distribution()
+
+
+# packages_distributions(): each top-level importable package, with the
+# distributions that provide it.
+def packages_distributions() -> Dict[str, List[str]]:
+    return Dict[str, List[str]]()
