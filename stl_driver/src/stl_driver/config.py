@@ -37,13 +37,29 @@ class Horizon:
         return self.n_steps * self.step_s
 
     def index_at(self, seconds: float) -> int:
-        """Timestep index for a time in seconds, clamped into the horizon.
+        """The signal row sampled at ``seconds`` from now, clamped into the horizon.
+
+        Row ``k`` of a plan's signal is the state at ``(k + 1) * step_s``: the
+        rollout and the forecast both sample at ``step_s, 2 * step_s, ...,
+        n_steps * step_s``, and "now" is not a row. So the row for a time is
+        one less than the number of steps to it -- reading ``round(seconds /
+        step_s)`` instead started every window one step late.
 
         STL intervals are indices, not seconds.  Every rule that wants a
         wall-clock window goes through here rather than hardcoding a number,
-        so that changing ``step_s`` cannot silently reinterpret a rule.
+        so that changing ``step_s`` cannot silently reinterpret a rule.  For
+        the number of rows covering the first ``seconds``, use
+        :meth:`rows_within`.
         """
-        return max(0, min(self.n_steps - 1, int(round(seconds / self.step_s))))
+        return max(0, min(self.n_steps - 1, int(round(seconds / self.step_s)) - 1))
+
+    def rows_within(self, seconds: float) -> int:
+        """How many signal rows fall within the first ``seconds``, clamped to the horizon.
+
+        A count, not an index: ``signal[: rows_within(s)]`` is the plan up to
+        and including the row at ``s``.
+        """
+        return max(0, min(self.n_steps, int(round(seconds / self.step_s))))
 
 
 @dataclass(frozen=True)
@@ -469,8 +485,9 @@ class OptimizerConfig:
     #: already slowing for it and the next replan -- a tenth of a second
     #: later, with a fresh forecast -- gets another say.
     fallback_window_s: float = 1.2
-    #: How much better a different plan must be, in robustness, before it is
-    #: preferred over continuing last step's.
+    #: How much better a different plan must be, in merit (the exact
+    #: weighted objective `solve` selects on, not the robustness), before it
+    #: is preferred over continuing last step's.
     #:
     #: Nothing in the specification distinguishes two plans that satisfy it
     #: equally well, so with no tie-breaker the search picks a different one

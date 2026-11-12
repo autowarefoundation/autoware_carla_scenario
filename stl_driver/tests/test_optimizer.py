@@ -486,6 +486,26 @@ def test_the_candidate_batch_is_the_same_width_with_or_without_a_warm_start(opti
     assert torch.allclose(cold[-1], warm[-1])
 
 
+@pytest.mark.parametrize("warm", [False, True])
+def test_the_fixed_rows_join_a_warm_start_on_the_search_device(optimizer, monkeypatch, warm):
+    """The hold and brake rows are built on the CPU; the warm start is not.
+
+    The warm start is last step's solution, which lives on the search's
+    device. Stacking it with the CPU-built fixed rows before moving them raised
+    a device mismatch on a CUDA session's second step. No GPU is needed to see
+    it: ``meta`` is a device other than the CPU that every torch build has, so
+    it stands in for CUDA here.
+    """
+    monkeypatch.setattr(optimizer, "device", "meta")
+    monkeypatch.setattr(optimizer, "_seeds", optimizer._seeds.to("meta"))
+    warm_start = torch.zeros(N_PARAMS, device="meta") if warm else None
+
+    candidates = optimizer._candidates(warm_start, 0.0)
+
+    assert candidates.device.type == "meta"
+    assert candidates.shape == (CONFIG.optimizer.n_samples + 3, N_PARAMS)
+
+
 def test_alternatives_are_reported_for_inspection(optimizer):
     inputs = make_inputs(CONFIG, speed0_mps=6.0)
     solution = optimizer.solve(inputs)
