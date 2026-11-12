@@ -319,6 +319,14 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "RerunConverter the checked runner hands each log to and "
         "recording_path, which names the recording it makes",
     ),
+    f"{_PACKAGE}.scaffold.generator": {
+        "TEMPLATES_DIR": (
+            "the directory of the templates beside the Python module, which "
+            "scenario-new renders a new scenario package from, not a "
+            "scenario; the model declares only what the checked scaffold "
+            "package re-exports"
+        ),
+    },
     f"{_PACKAGE}.t4": _each(
         "DATASET_SUFFIX INSTALL_HINT LIDAR_CHANNEL T4Settings T4UnavailableError "
         "active_recording camera_channel category_of dataset_path opencv_of_ftheta "
@@ -709,6 +717,23 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "ui/models.codon models the fields"
         )
     },
+    "PackageExistsError": {
+        "root": (
+            "the package directory that already exists; the model declares "
+            "the class by name only, so the checked scaffold package's "
+            "re-export resolves, and a scenario cannot build one (its "
+            "constructor is a compile error): create_scenario_package() raises "
+            "it, which scenario-new calls from the shell, not a scenario"
+        ),
+    },
+    "ScaffoldResult": _members(
+        "names root",
+        "the new scenario package's root and template variables; the model "
+        "declares the class by name only, so the checked scaffold package's "
+        "re-export resolves, and a scenario cannot build one (its constructor "
+        "is a compile error): create_scenario_package() returns it, which "
+        "scenario-new calls from the shell, not a scenario",
+    ),
     "ScalarComparisonRule": {"to_dict": _AS_DICT},
     "ScenarioResult": {"to_dict": _AS_DICT},
     "Failure": {
