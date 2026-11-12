@@ -18,6 +18,7 @@ says why, and the viewer offers the local launcher only.
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import shlex
@@ -31,12 +32,16 @@ from typing import TYPE_CHECKING, Any
 
 from ..slurm.manifest import (
     BatchLayout,
+    Manifest,
+    SubmissionRecord,
+    TaskStatus,
     no_job_note,
     recorded_verdict,
     sbatch_in_flight,
     sbatch_timed_out,
 )
 from ..slurm.queue import ACTIVE_STATES, squeue_states
+from ..slurm.records import JsonMembers
 from .case_paths import session_order
 from .slurm_case_state import case_state, no_job_case_state
 
@@ -371,94 +376,161 @@ def start_submit(command: list[str], base: Path) -> Submission:
 _ACTIVE_STATES: tuple[str, ...] = tuple(sorted(ACTIVE_STATES))
 
 
+def _member_json(members: JsonMembers, key: str, default: str = "null") -> str:
+    """The JSON text of the member *key* of *members*, *default* when there
+    is none: what ``dict.get(key, default)`` gave of the object."""
+    return members.value_text(key) if members.has(key) else default
+
+
+@dataclass
+class CaseState:
+    """A case of a batch as the viewer shows it (:func:`_case_states`): its
+    ``index``; its ``label``, ``stem`` and ``case_overrides`` as the manifest
+    holds them (``[]`` for false overrides), each as its JSON text; its
+    ``state`` (ui.slurm_case_state's); and the ``message`` that says why,
+    as its JSON text.  A case whose outcome is recorded also shows its
+    result's ``elapsed_seconds`` and the ``host`` and ``job_id`` that ran
+    it, as the record holds them, and its result's ``message`` (``""``
+    when it has none).
+
+    The values are held as JSON text, written with the C encoder as
+    :class:`~autoware_carla_scenario.slurm.records.JsonMembers` holds a
+    value, so that :func:`batch_status` gives the viewer's API the very
+    values ``json.loads()`` read of the batch's files, of whatever type they
+    are.
+    """
+
+    index: int
+    label_json: str
+    stem_json: str
+    overrides_json: str
+    state: str
+    message_json: str
+    recorded: bool = False
+    elapsed_seconds_json: str = "null"
+    host_json: str = "null"
+    job_id_json: str = "null"
+
+
 def _case_states(
     layout: BatchLayout,
-    manifest: dict[str, Any],
+    manifest: Manifest,
     squeue: dict[int, dict[int, str] | None],
-) -> list[dict[str, Any]]:
+) -> list[CaseState]:
     """Each case: its record's outcome, or where its task is."""
     # The last submission (and task) each case was given to.
-    given: dict[int, tuple[int, int, dict[str, Any]]] = {}
+    given: dict[int, tuple[int, int, SubmissionRecord]] = {}
     for index in layout.submissions():
-        sub = layout.submission_record(index)
-        if sub is None:
+        read = layout.submission_record(index)
+        if read is None:
             continue  # batch_status notes it; it gave no case (#1356)
-        for task, chunk in enumerate(sub.get("chunks") or []):
-            for case in chunk:
-                given[int(case)] = (index, task, sub)
-    out = []
-    for case in manifest.get("cases") or []:
-        index = int(case["index"])
+        # Typed through a local: Codon 0.19 keeps the Optional of the read
+        # record in the tuple.
+        submitted: SubmissionRecord = read
+        for task, chunk in enumerate(submitted.chunk_list()):
+            for item in chunk:
+                given[int(item)] = (index, task, submitted)
+    out: list[CaseState] = []
+    for case in manifest.listed_cases():
+        index = case.index()
         record = layout.read_result(index)
-        entry: dict[str, Any] = {
-            "index": index,
-            "label": case.get("label"),
-            "stem": case.get("stem"),
-            "overrides": case.get("case_overrides") or [],
-        }
-        result: dict[str, Any] = {}
+        label_json = case.value_json("label")
+        stem_json = case.value_json("stem")
+        overrides_json = case.value_json("case_overrides")
+        if not bool(json.loads(overrides_json)):
+            overrides_json = "[]"
+        # A result that is no object reads as an empty one, and only a
+        # boolean ``passed`` as a verdict (#1718).
+        result = JsonMembers()
         errored = passed = False
         if record is not None:
-            # A result that is no object reads as an empty one, and only a
-            # boolean ``passed`` as a verdict (#1718).
-            recorded = record.get("result")
-            result = recorded if isinstance(recorded, dict) else {}
-            errored = bool(record.get("errored"))
-            passed = not errored and recorded_verdict(record) is True
+            # Annotated: Codon 0.19 refuses the call's value for the local
+            # without.
+            recorded: JsonMembers | None = record.result()
+            if recorded is not None:
+                result = recorded
+            errored = record.errored
+            if not errored:
+                verdict = recorded_verdict(record)
+                passed = verdict is not None and verdict
         queued: str | None = None
         squeue_known = at_case = False
-        task, job_id, task_state, task_error = 0, "", "", None
+        task, job_id, task_state = 0, "", ""
+        task_error: str | None = None
         no_job: tuple[str, str] | None = None
-        if record is None and index in given and not given[index][2].get("job_id"):
+        if record is None and index in given and not given[index][2].has_job:
             # No job to ask squeue about, nor to name: never "job None" and
             # never missing while its sbatch is in flight or timed out (#1791).
             sub_index, _task, sub = given[index]
+            at = sub.timed_out_at_text()
             no_job = no_job_case_state(
                 sub_index,
                 sbatch_timed_out(sub),
                 sbatch_in_flight(sub),
-                f"{sub.get('sbatch_timed_out_at') or ''}",
+                "" if at is None else at,
             )
         elif record is None and index in given:
             sub_index, task, sub = given[index]
-            states = squeue.get(sub_index)
+            # squeue.get(sub_index), spelled out: Codon's get() of a dict of
+            # Optional values gives an Optional of an Optional.
+            states: dict[int, str] | None = None
+            if sub_index in squeue:
+                states = squeue[sub_index]
             squeue_known = states is not None
             queued = None if states is None else states.get(task)
-            status = layout.read_task(sub_index, task) or {}
-            job_id = f"{sub.get('job_id')}"
+            task_read = layout.read_task(sub_index, task)
+            status = TaskStatus(JsonMembers()) if task_read is None else task_read
+            job_id = sub.job_text()
             # Only what case_state's branch reads of the status; a task file
             # that holds no JSON object reads as no status at all (#1630).
-            if queued in ACTIVE_STATES:
-                at_case = queued == "RUNNING" and bool(status.get("current") == index)
+            if queued is not None and queued in ACTIVE_STATES:
+                at_case = queued == "RUNNING" and status.is_at(index)
             elif squeue_known:
-                task_state = f"{status.get('state', 'never started')}"
-                if status.get("error"):
-                    task_error = f"{status['error']}"
-        state, message = no_job or case_state(
-            record is not None,
-            errored,
-            passed,
-            index in given,
-            queued,
-            squeue_known,
-            at_case,
-            task,
-            job_id,
-            task_state,
-            task_error,
-            _ACTIVE_STATES,
-        )
+                task_state = status.state_text("never started")
+                task_error = status.error
+        if no_job is not None:
+            state, message = no_job
+        else:
+            state, message = case_state(
+                record is not None,
+                errored,
+                passed,
+                index in given,
+                queued,
+                squeue_known,
+                at_case,
+                task,
+                job_id,
+                task_state,
+                task_error,
+                _ACTIVE_STATES,
+            )
         if record is not None:
-            entry.update(
-                state=state,
-                message=result.get("message", ""),
-                elapsed_seconds=result.get("elapsed_seconds"),
-                host=record.get("host"),
-                job_id=record.get("job_id"),
+            out.append(
+                CaseState(
+                    index,
+                    label_json,
+                    stem_json,
+                    overrides_json,
+                    state,
+                    _member_json(result, "message", '""'),
+                    True,
+                    _member_json(result, "elapsed_seconds"),
+                    _member_json(record.members, "host"),
+                    _member_json(record.members, "job_id"),
+                )
             )
         else:
-            entry.update(state=state, message=message)
-        out.append(entry)
+            out.append(
+                CaseState(
+                    index,
+                    label_json,
+                    stem_json,
+                    overrides_json,
+                    state,
+                    json.dumps(message, ensure_ascii=False),
+                )
+            )
     return out
 
 
@@ -507,13 +579,15 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
         in_flight = not job and not timed_out and sbatch_in_flight(sub)
         tasks = []
         for task, chunk in enumerate(sub.get("chunks") or []):
-            status = layout.read_task(index, task) or {}
+            status = layout.read_task(index, task) or TaskStatus(JsonMembers())
             tasks.append(
                 {
                     "task": task,
                     "cases": chunk,
                     "squeue": None if states is None else states.get(task),
-                    "state": status.get("state", "not started"),
+                    "state": status.get("state")
+                    if status.has("state")
+                    else "not started",
                     "host": status.get("host"),
                     "done": len(status.get("done") or []),
                     "current": status.get("current"),
@@ -543,10 +617,28 @@ def batch_status(batch_dir: Path) -> dict[str, Any] | None:
                 "in_flight": bool(in_flight),
             }
         )
-    cases = _case_states(layout, manifest, squeue)
+
+    def case_entry(case: CaseState) -> dict[str, Any]:
+        """The case as the viewer's API sends it, its keys in their order."""
+        entry: dict[str, Any] = {
+            "index": case.index,
+            "label": json.loads(case.label_json),
+            "stem": json.loads(case.stem_json),
+            "overrides": json.loads(case.overrides_json),
+            "state": case.state,
+            "message": json.loads(case.message_json),
+        }
+        if case.recorded:
+            entry["elapsed_seconds"] = json.loads(case.elapsed_seconds_json)
+            entry["host"] = json.loads(case.host_json)
+            entry["job_id"] = json.loads(case.job_id_json)
+        return entry
+
+    case_states = _case_states(layout, manifest, squeue)
     counts: dict[str, int] = {}
-    for case in cases:
-        counts[case["state"]] = counts.get(case["state"], 0) + 1
+    for entry in case_states:
+        counts[entry.state] = counts.get(entry.state, 0) + 1
+    cases = [case_entry(entry) for entry in case_states]
     collected = layout.root / "collected.json"
     return {
         "batch_dir": str(batch_dir),
