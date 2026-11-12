@@ -4089,7 +4089,7 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_refuse_what_cpython_r
 
 # ---------------------------------------------------------------------------
 # The shlex and sys shims, signal.Signals, a file object (Path.open(), a
-# Popen stream) and the symlink queries (#127)
+# Popen stream) and the symlink queries (#127); shlex.split()
 # ---------------------------------------------------------------------------
 
 
@@ -4108,6 +4108,13 @@ from typing import IO, Optional
 def command(root: str, args: list[str]) -> str:
     argv = ["python3", "-m", "x y", *args]
     return shlex.quote(root) + " " + shlex.join(argv)
+
+
+def words(line: str) -> list[str]:
+    split: list[str] = shlex.split(line)
+    return split + shlex.split(line, True) + shlex.split(
+        line, comments=True, posix=False
+    )
 
 
 def interpreter() -> list[str]:
@@ -4226,6 +4233,8 @@ def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
         # call's first line (`at`).
         ("shlex.quote(root)", "shlex.quote(len(root))", None),
         ("shlex.join(argv)", "shlex.join([len(root)])", None),
+        ("shlex.split(line)", "shlex.split(len(line))", None),
+        ("posix=False", "posx=False", None),
         ('sys.platform != "linux"', 'sys.platfrom != "linux"', None),
         ("signals[0].name", "signals[0].label", None),
         ("os.killpg(pid, sig)", "os.killpg(pid, sig.name)", None),
@@ -4240,6 +4249,8 @@ def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
     ids=[
         "quote-str",
         "join-str",
+        "split-str",
+        "split-keyword",
         "sys-unknown-name",
         "signal-unknown-attribute",
         "killpg-signal-number",
