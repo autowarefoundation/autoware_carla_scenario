@@ -19,9 +19,13 @@ from hypothesis import strategies as st
 from autoware_carla_scenario.slurm.manifest import write_json
 from autoware_carla_scenario.slurm.records import JsonMembers, parse_object
 
+#: Bounded and derandomized, as test_odd_properties.py's: the same examples,
+#: and so the same verdict, on every run, in a few seconds.
 _SETTINGS = settings(
-    max_examples=600,
+    max_examples=300,
     deadline=None,
+    derandomize=True,
+    database=None,
     suppress_health_check=[HealthCheck.too_slow, HealthCheck.data_too_large],
 )
 
