@@ -793,6 +793,33 @@ def test_reserve_submission_without_hard_links_passes_over_a_taken_index(
     assert _names(layout.submission(0).parent) == ["0.json", "1.json"]
 
 
+def test_reserve_submission_without_hard_links_raises_any_other_open_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Only EEXIST passes over an index: any other error of the O_EXCL open
+    # is raised, and the temporary file is removed.
+    layout = _layout(tmp_path)
+    error = PermissionError(errno.EACCES, "Permission denied")
+    real_open = os.open
+
+    def link(src: Any, dst: Any) -> None:
+        raise OSError(errno.EPERM, "Operation not permitted")
+
+    def open_(path: Any, flags: int, *args: Any, **kwargs: Any) -> int:
+        if Path(path).name == "0.json":
+            raise error
+        return real_open(path, flags, *args, **kwargs)
+
+    monkeypatch.setattr(os, "link", link)
+    monkeypatch.setattr(os, "open", open_)
+    record: dict[str, Any] = {}
+    with pytest.raises(PermissionError) as info:
+        layout.reserve_submission(record)
+    assert info.value is error
+    assert record == {"index": 0}
+    assert _names(layout.submission(0).parent) == []
+
+
 @pytest.mark.parametrize("code", [errno.EACCES, errno.EXDEV, errno.ENOSPC, None])
 def test_reserve_submission_raises_any_other_link_error(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, code: int | None
