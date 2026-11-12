@@ -4112,9 +4112,8 @@ def command(root: str, args: list[str]) -> str:
 
 def words(line: str) -> list[str]:
     split: list[str] = shlex.split(line)
-    return split + shlex.split(line, True) + shlex.split(
-        line, comments=True, posix=False
-    )
+    raw = shlex.split(line, comments=True, posix=False)
+    return split + shlex.split(line, True) + raw
 
 
 def interpreter() -> list[str]:
