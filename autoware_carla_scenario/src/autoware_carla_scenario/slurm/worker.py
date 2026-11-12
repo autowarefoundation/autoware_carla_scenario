@@ -46,6 +46,7 @@ from ..run_timeout import run_timeout_seconds
 from ..seed import check_whole_number
 from .manifest import (
     BatchLayout,
+    Manifest,
     config_key,
     write_json,
 )
@@ -803,7 +804,7 @@ def _apply_metrics(run: Any, configs: list[Any], heavy: Any = None) -> bool:
 
 def _batch_configs(
     run: Any,
-    manifest: dict[str, Any],
+    manifest: Manifest,
     record: dict[str, Any],
     chunk: list[int],
     configs: list[Any],
