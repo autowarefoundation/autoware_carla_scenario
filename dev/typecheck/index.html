@@ -4881,8 +4881,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 318 of the package's 433
-modules (73%; about 100,500 of
-169,100 lines) are <code>CHECKED</code>: the kinematics, the
+modules (73%; about 100,600 of
+169,300 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6242,8 +6242,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>194 functions and methods of those modules are <code>UNCALLED</code>
-(57 of them protected helpers, see <em>What is
+<p>186 functions and methods of those modules are <code>UNCALLED</code>
+(55 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6255,7 +6255,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 194 UNCALLED functions and methods, and why</summary>
+<summary>The 186 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6372,23 +6372,15 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>signals.controller._group_members</code>: reads the authoring package's pydantic signal groups (<code>list[Any]</code>, so the runtime does not import authoring); only build_controllers, itself uncalled, calls it</li>
 <li><code>signals.controller._phase_states</code>: reads one of the authoring package's pydantic phases (<code>Any</code>, so the runtime does not import authoring); only build_controllers, itself uncalled, calls it</li>
 <li><code>signals.controller.build_controllers</code>: reads the authoring package's pydantic specs (MapRef.traffic_signal_controllers and signal_groups), typed <code>list[Any]</code> so the runtime does not import authoring, with getattr defaults for fields older documents lack</li>
-<li><code>slurm.collect._last_submission_of</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express</li>
-<li><code>slurm.collect._missing_message</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express; it reads the submission that last gave a missing case (the uncalled _last_submission_of()'s), while its task's status is the checked TaskStatus's, and which advice they give and its message are the checked _advice()'s</li>
-<li><code>slurm.collect.collect</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express; the advice on a case with no outcome is the checked _advice()'s, and the hint on them the checked _missing_hint()'s</li>
-<li><code>slurm.collect.missing_cases</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express</li>
-<li><code>slurm.collect.unfinished_cases</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express</li>
-<li><code>slurm.manifest.BatchLayout.read_manifest</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express; whether it reads the manifest's version is the checked _check_version()'s</li>
-<li><code>slurm.manifest.BatchLayout.read_submission</code>: returns the JSON document it reads, of any type (<code>Any</code>), which Codon cannot express</li>
-<li><code>slurm.manifest.BatchLayout.reserve_submission</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express; creating the record exclusively is the checked _link_exclusive()'s</li>
-<li><code>slurm.manifest.BatchLayout.submission_record</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express</li>
+<li><code>slurm.collect.collect</code>: takes or returns a SLURM batch's manifest as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express; the message of a case with no outcome is the checked _missing_message()'s, its advice the checked _advice()'s, and the hint on them the checked _missing_hint()'s</li>
+<li><code>slurm.collect.missing_cases</code>: takes or returns a SLURM batch's manifest as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express</li>
+<li><code>slurm.collect.unfinished_cases</code>: takes or returns a SLURM batch's manifest as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express</li>
+<li><code>slurm.manifest.BatchLayout.read_manifest</code>: takes or returns a SLURM batch's manifest as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express; whether it reads the manifest's version is the checked _check_version()'s</li>
+<li><code>slurm.manifest.BatchLayout.reserve_submission</code>: takes the submission record its submitter builds and fills in after sbatch (slurm.submit's submit_cases), a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express, and sets its <code>index</code> in place; creating the record exclusively is the checked _link_exclusive()'s, and reading it the checked SubmissionRecord's</li>
 <li><code>slurm.manifest._create_exclusive</code>: writes a submission record of any value types (<code>data: Any</code>) as JSON, which Codon cannot express; creating the file exclusively from that text is the checked _link_exclusive()'s</li>
 <li><code>slurm.manifest.config_files</code>: walks a resolved config of any shape (<code>config: Any</code>: the dicts and lists of an OmegaConf container), which Codon cannot express</li>
-<li><code>slurm.manifest.no_job_note</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express</li>
 <li><code>slurm.manifest.read_json</code>: returns the JSON document it reads, of any type (<code>Any</code>), which Codon cannot express</li>
-<li><code>slurm.manifest.read_submission_record</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express</li>
-<li><code>slurm.manifest.resubmit_target</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express</li>
-<li><code>slurm.manifest.sbatch_in_flight</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express</li>
-<li><code>slurm.manifest.sbatch_timed_out</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express</li>
+<li><code>slurm.manifest.resubmit_target</code>: takes or returns a SLURM batch's manifest as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express</li>
 <li><code>slurm.manifest.verdict_of_document</code>: takes a case's outcome as <code>json.loads()</code> reads it, a document of any type (<code>Any</code>: an object of mixed value types when it is one), which Codon cannot express; it writes its result back as JSON text for a JsonMembers, and the verdict is the checked recorded_verdict()'s</li>
 <li><code>slurm.manifest.write_json</code>: writes a JSON document of any value types (<code>data: Any</code>: a manifest, a submission, a task's status), which Codon cannot express</li>
 <li><code>slurm.records.JsonMembers.from_value</code>: takes the object as Python holds it, a <code>dict</code> of keys and values of any types (<code>value: Any</code>), which Codon cannot express; reading the members from an object's text is the checked parse_object()'s</li>
@@ -6447,8 +6439,8 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>trajectory.model._whole</code>: checks that a value of any type (<code>value: Any</code>: whatever a YAML document or a caller wrote for a lane or junction index) is a whole number, which Codon cannot express; the route poses' __post_init__ call it with their own fields, so its body is compiled through them</li>
 <li><code>ui.slurm_launch.SlurmOptions.from_request</code>: reads the run panel's fields (<code>dict[str, Any] | None</code>: the JSON body of a request, of values of any type), which Codon cannot express, through a helper that returns a number of either type it is given (<code>number(key, kind: type) -&gt; Any</code>, an int or a float); the checks of each field are the checked ui.slurm_options'</li>
 <li><code>ui.slurm_launch.Submission.to_dict</code>: returns the submission as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types (text, an optional directory and an optional exit status), which Codon cannot express</li>
-<li><code>ui.slurm_launch._case_states</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express; only the uncalled batch_status() calls it, and the state of each case and its message are the checked ui.slurm_case_state's</li>
-<li><code>ui.slurm_launch.batch_status</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest or a submission), which Codon cannot express, and returns the batch's progress as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types</li>
+<li><code>ui.slurm_launch._case_states</code>: takes or returns a SLURM batch's manifest as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express; only the uncalled batch_status() calls it, and the state of each case and its message are the checked ui.slurm_case_state's</li>
+<li><code>ui.slurm_launch.batch_status</code>: takes or returns a SLURM batch's manifest as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types, which Codon cannot express, and returns the batch's progress as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types</li>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
