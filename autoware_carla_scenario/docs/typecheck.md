@@ -844,7 +844,7 @@ What `test_typecheck_model.py` compares, model by model:
   `autoware_stack/launcher`, `autoware_stack/devcontainer` (and its values),
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
   `maps/z_offset_cache`, `maps/road_network_cache`, `pedestrian/soma`,
-  `ui/models`, `_ros2`, `metrics`, `measures` and `utils/traffic_light`, each declaring exactly the names compared;
+  `ui/models`, `_ros2`, `metrics`, `measures`, `scaffold/generator` and `utils/traffic_light`, each declaring exactly the names compared;
   `ros2/cyclone` where cyclonedds is installed.
 - **Every public name of a modelled module**: each name a module the model
   has exports in Python (its `__all__`, or the public names it defines when
@@ -2935,7 +2935,8 @@ stands in for it in the check's workspace:
   a model of that module alone (`utils/traffic_light.codon`,
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
   `maps/cache.codon`, `autoware_stack/devcontainer.codon`,
-  `ros2/cyclone.codon`, `pedestrian/soma.codon`), or, for a module of
+  `ros2/cyclone.codon`, `pedestrian/soma.codon`,
+  `scaffold/generator.codon`), or, for a module of
   the top-level package, a model of that module (`trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
   closes, whose JSON lines hold values of mixed types; `environment.codon`,
@@ -4321,11 +4322,16 @@ What Codon 0.19 needs that Python does not, beyond
   (`t4_scene.codon`, Protobuf messages), which the checked `t4_scene` package
   re-exports with the suffix strings and `map_resource()` and
   `trajectory_log_to_t4_scene()`, functions whose bodies are a
-  `compile_error` too. Each constructor takes
+  `compile_error` too, and `PackageExistsError` and `ScaffoldResult`
+  (`scaffold/generator.codon`, argparse and jinja2), which the checked
+  `scaffold` package re-exports with `create_scenario_package()`,
+  `resolve_names()` and `main()`, `compile_error`s as well: they write a new
+  scenario package (`scenario-new`), not a scenario. Each constructor takes
   Python's parameters and is a `compile_error`: its config
   (`AutowareBridgeConfig`, `DriverClientConfig`) is a checked class the model
-  does not have, the class is only ever built by openodd's merge, or its
-  fields are messages the model has no type for, so a
+  does not have, the class is only ever built by openodd's merge, its
+  fields are messages the model has no type for, or only the scaffolder
+  builds it, so a
   scenario that builds one fails its check rather than passing it with
   arguments the run would refuse. Such a class derives from nothing in the
   model: a subclass of the model's `EgoVehicle` that nothing builds breaks

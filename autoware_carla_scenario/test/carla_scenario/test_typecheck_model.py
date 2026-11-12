@@ -55,6 +55,7 @@ from autoware_carla_scenario import (
     weather_rules,
 )
 from autoware_carla_scenario import rerun as rerun_module
+from autoware_carla_scenario import scaffold as scaffold_module
 from autoware_carla_scenario import t4 as t4_module
 from autoware_carla_scenario import t4_scene as t4_scene_module
 from autoware_carla_scenario import waypoint_arrival
@@ -83,6 +84,7 @@ from autoware_carla_scenario.pedestrian import soma as pedestrian_soma
 from autoware_carla_scenario.route import active as route_active
 from autoware_carla_scenario.route import frame as route_frame
 from autoware_carla_scenario.route import model as route_model
+from autoware_carla_scenario.scaffold import generator as scaffold_generator
 from autoware_carla_scenario.traffic import base as traffic_base
 from autoware_carla_scenario.traffic import context as traffic_context
 from autoware_carla_scenario.traffic import registry as traffic_registry
@@ -1029,6 +1031,9 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What the checked actions.play_motion reads of the unchecked
     # pedestrian.soma (numpy.load, numpy.typing).
     "pedestrian/soma": (pedestrian_soma, ("SomaMotion", "load_soma_motion")),
+    # What the checked scaffold package re-exports of scaffold.generator
+    # (argparse, jinja2): the classes by name, the functions compile errors.
+    "scaffold/generator": (scaffold_generator, tuple(scaffold_module.__all__)),
     # The model of one module of the checked utils package, which the scenario
     # check resolves (typecheck/check.py).
     "utils/traffic_light": (
@@ -1057,6 +1062,10 @@ _UNBUILDABLE: dict[str, str] = {
     # What the checked t4_scene package re-exports of t4_scene.convert: a
     # converted log, which holds Protobuf messages.
     "T4SceneExport": "t4_scene",
+    # What the checked scaffold package re-exports of scaffold.generator: the
+    # error and the result of writing a new scenario package (scenario-new).
+    "PackageExistsError": "scaffold/generator",
+    "ScaffoldResult": "scaffold/generator",
 }
 
 
@@ -2503,6 +2512,7 @@ _UNCOMPARED_MODEL_FILES: dict[str, str] = {
             "maps",
             "pedestrian",
             "ros2",
+            "scaffold",
             "ui",
             "utils",
         )
