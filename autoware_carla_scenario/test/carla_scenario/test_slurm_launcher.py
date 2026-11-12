@@ -32,6 +32,7 @@ from autoware_carla_scenario.slurm.collect import missing_cases, unfinished_case
 from autoware_carla_scenario.slurm.manifest import (
     BatchLayout,
     SubmissionRecord,
+    submission_record_of,
     read_json,
     sequential_stems,
 )
@@ -60,7 +61,7 @@ def _record_json(layout: BatchLayout, index: int) -> Any:
 
 def _typed(record: dict[str, Any]) -> SubmissionRecord:
     """The submission record of the members of *record*."""
-    return SubmissionRecord(JsonMembers.from_value(record))
+    return submission_record_of(JsonMembers.from_value(record))
 
 
 _DATA = Path(__file__).parent / "data" / "fake_slurm"

@@ -69,6 +69,7 @@ __all__ = [
     "sbatch_in_flight",
     "sbatch_timed_out",
     "sequential_stems",
+    "submission_record_of",
     "verdict_of_document",
     "write_json",
 ]
@@ -163,18 +164,6 @@ def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _parse_submission(path: Path) -> SubmissionRecord | None:
-    """The submission record *path*, or ``None`` when it holds JSON that is
-    not an object; raises what reading it as JSON raises (:func:`read_json`:
-    :class:`FileNotFoundError` when it is missing, another
-    :class:`OSError`, a :class:`ValueError` for what is not JSON -- not
-    UTF-8 among it)."""
-    members = parse_object(path.read_text(encoding="utf-8"))
-    if members is None:
-        return None
-    return SubmissionRecord(members)
-
-
 def read_submission_record(path: Path) -> SubmissionRecord | None:
     """The submission record *path*, or ``None`` when there is none to read.
 
@@ -184,8 +173,11 @@ def read_submission_record(path: Path) -> SubmissionRecord | None:
     warning naming the file (#1356).  A missing one (removed since it was
     listed: its sbatch failed) is ``None`` without one.
     """
+    # Parsed here, not in a helper: Python 3.10 counts the calls on the stack
+    # with the levels of nesting json.loads() reads, and read_json() read
+    # the record as deep as this reads it.
     try:
-        record = _parse_submission(path)
+        members = parse_object(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:
@@ -193,14 +185,14 @@ def read_submission_record(path: Path) -> SubmissionRecord | None:
             "Ignoring %s: it cannot be read as a submission record (%s)", path, exc
         )
         return None
-    if record is None:
+    if members is None:
         logger.warning(
             "Ignoring %s: it cannot be read as a submission record "
             "(it holds JSON that is not an object)",
             path,
         )
         return None
-    return record
+    return submission_record_of(members)
 
 
 #: How long a submission record whose ``job_id`` is still ``None`` counts as
@@ -309,6 +301,17 @@ def _value_json(members: JsonMembers, key: str) -> str:
     return members.value_text(key) if members.has(key) else "null"
 
 
+def submission_record_of(members: JsonMembers) -> SubmissionRecord:
+    """The submission record of *members*, the members of a submission's
+    JSON object (:class:`SubmissionRecord`)."""
+    has_job = bool(json.loads(_value_json(members, "job_id")))
+    started = json.loads(_value_json(members, "submitted_at"))
+    started_is_number = isinstance(started, int) or isinstance(started, float)
+    timed_out = json.loads(_value_json(members, "sbatch_timed_out"))
+    says_timed_out = isinstance(timed_out, bool) and bool(timed_out)
+    return SubmissionRecord(members, has_job, started_is_number, says_timed_out)
+
+
 class SubmissionRecord:
     """A submission's record (``submissions/<k>.json``,
     :meth:`BatchLayout.submission_record`): the record's members, each read
@@ -327,12 +330,33 @@ class SubmissionRecord:
     :meth:`get` and ``record[key]`` read a member as ``dict.get(key)`` and
     ``dict[key]`` did, for the readers that pass its value on; the typed
     accessors read what the checked readers ask of it.
+
+    Made by :func:`submission_record_of`, which reads whether it has a job
+    id, a number as ``submitted_at`` and says its sbatch timed out when the
+    record is read, as deep in the stack as the record was read as a whole:
+    asking them, as ``sbatch_in_flight()`` and ``no_job_note()`` do, reads
+    nothing more, as the dict's ``get()`` did not, wherever they are asked
+    (Python 3.10 counts the calls on the stack with the levels of nesting
+    ``json.loads()`` reads, and 3.12 counts a constructor's, called from C,
+    against the C stack ``json.loads()`` reads on).
     """
 
     members: JsonMembers
+    _has_job: bool
+    _started_is_number: bool
+    _says_timed_out: bool
 
-    def __init__(self, members: JsonMembers) -> None:
+    def __init__(
+        self,
+        members: JsonMembers,
+        has_job: bool,
+        started_is_number: bool,
+        says_timed_out: bool,
+    ) -> None:
         self.members = members
+        self._has_job = has_job
+        self._started_is_number = started_is_number
+        self._says_timed_out = says_timed_out
 
     def has(self, key: str) -> bool:
         """Whether the record has the member *key*."""
@@ -352,7 +376,7 @@ class SubmissionRecord:
     def has_job(self) -> bool:
         """Whether the record has a job id: a true ``job_id`` (of any type,
         as ``bool()`` reads it)."""
-        return bool(json.loads(_value_json(self.members, "job_id")))
+        return self._has_job
 
     def job_text(self) -> str:
         """The record's ``job_id`` as text: ``f"{record.get('job_id')}"``
@@ -363,8 +387,7 @@ class SubmissionRecord:
         """Whether the record's ``submitted_at`` is a number: an int (a
         boolean among them) or a float, as ``isinstance(value, (int,
         float))`` read it."""
-        started = json.loads(_value_json(self.members, "submitted_at"))
-        return isinstance(started, int) or isinstance(started, float)
+        return self._started_is_number
 
     def started_seconds(self) -> float:
         """The record's ``submitted_at`` as ``float()`` reads it (an
@@ -376,8 +399,7 @@ class SubmissionRecord:
     def says_timed_out(self) -> bool:
         """Whether the record says its sbatch timed out: its
         ``sbatch_timed_out`` is ``true`` (``is True``: no other true value)."""
-        timed_out = json.loads(_value_json(self.members, "sbatch_timed_out"))
-        return isinstance(timed_out, bool) and bool(timed_out)
+        return self._says_timed_out
 
     def timed_out_at_text(self) -> str | None:
         """When the record says its sbatch timed out, as text: a true
@@ -776,8 +798,13 @@ class BatchLayout(BatchPaths):
         """Submission *index*'s record, or ``None`` when it holds JSON that
         is not an object; raises what reading it as JSON raises
         (:class:`FileNotFoundError` when it is missing, another
-        :class:`OSError`, a :class:`ValueError` for what is not JSON)."""
-        return _parse_submission(self.submission(index))
+        :class:`OSError`, a :class:`ValueError` for what is not JSON).
+
+        Parsed here, as :func:`read_submission_record` parses it."""
+        members = parse_object(self.submission(index).read_text(encoding="utf-8"))
+        if members is None:
+            return None
+        return submission_record_of(members)
 
     def submission_record(self, index: int) -> SubmissionRecord | None:
         """Submission *index*'s record, or ``None`` when it is missing or

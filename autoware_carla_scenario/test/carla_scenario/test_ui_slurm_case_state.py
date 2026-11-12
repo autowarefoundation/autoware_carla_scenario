@@ -22,6 +22,7 @@ from autoware_carla_scenario.slurm.manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
     CaseOutcome,
     SubmissionRecord,
+    submission_record_of,
     TaskStatus,
     readable_result,
 )
@@ -123,7 +124,7 @@ class _Layout:
 
     def submission_record(self, index: int) -> SubmissionRecord | None:
         # As BatchLayout reads the record the dict would be written as.
-        return SubmissionRecord(JsonMembers.from_value(self._submissions[index]))
+        return submission_record_of(JsonMembers.from_value(self._submissions[index]))
 
     def read_result(self, index: int) -> CaseOutcome | None:
         # As BatchLayout reads the record the dict would be written as.

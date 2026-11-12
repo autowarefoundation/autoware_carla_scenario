@@ -30,6 +30,7 @@ from autoware_carla_scenario.slurm.manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
     SubmissionRecord,
+    submission_record_of,
     no_job_note,
     read_json,
     read_submission_record,
@@ -47,7 +48,7 @@ _LOGGER = "autoware_carla_scenario.slurm.manifest"
 
 def _submission(record: dict[str, Any]) -> SubmissionRecord:
     """The submission record of the members of *record*."""
-    return SubmissionRecord(JsonMembers.from_value(record))
+    return submission_record_of(JsonMembers.from_value(record))
 
 
 #: A document with a value of each kind JSON writes, and the keys json turns
