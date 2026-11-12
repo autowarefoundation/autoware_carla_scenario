@@ -1944,6 +1944,326 @@ def test_background_vehicles_are_sumo_traffic_mirrored_into_carla(
         backend.close()
 
 
+def _block_the_spot(backend: Any, world: _FakeWorld, x: float, y: float) -> str:
+    """A SUMO car of its own standing where a background vehicle asked for at
+    CARLA ``(x, y)`` would enter: SUMO keeps that one pending."""
+    tc = backend._traci
+    edge, pos, lane = tc.simulation.convertRoad(x + 2.3, -y, False, "passenger")
+    tc.route.add("route:standing", [edge])
+    tc.vehicle.add(
+        "standing",
+        "route:standing",
+        departLane=str(lane),
+        departPos=f"{pos:.2f}",
+        departSpeed="0",
+    )
+    tc.vehicle.setSpeed("standing", 0.0)
+    for i in range(3):
+        backend.tick(world, i * 0.05)
+    assert "standing" in tc.vehicle.getIDList()
+    return "standing"
+
+
+@needs_sumo
+def test_background_vehicles_waiting_to_enter_are_where_they_were_asked_for(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """SUMO keeps a background vehicle pending while its spot is taken -- here
+    by a car CARLA does not mirror (``max_vehicles=0``): it is given at the
+    spot asked for meanwhile, so a source counts it (#2082)."""
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path, max_vehicles=0)
+    tc = backend._traci
+    try:
+        _block_the_spot(backend, world, -60.0, 5.25)
+        handles = []
+        for i in range(5):
+            handle = backend.spawn_background(
+                world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=20.0
+            )
+            assert handle is not None
+            handles.append(handle)
+            backend.tick(world, (3 + i) * 0.05)
+        assert set(tc.simulation.getPendingVehicles()) >= set(handles)
+        vehicles = backend.background_vehicles(world)
+        assert set(vehicles) == set(handles)
+        for x, y, z in vehicles.values():
+            assert (x, y, z) == pytest.approx((-60.0, 5.25, 0.0))
+        # Removed while it waits, it never enters.
+        backend.remove_background(world, handles[0])
+        tc.vehicle.remove("standing")
+        entered: set[str] = set()
+        tick = 8
+        while entered != set(handles[1:]) and tick < 400:
+            backend.tick(world, tick * 0.05)
+            tick += 1
+            entered |= set(tc.vehicle.getIDList()) & set(handles)
+        assert handles[0] not in backend.background_vehicles(world)
+        # The others entered, one after the other, once the spot cleared.
+        assert entered == set(handles[1:])
+        for i in range(20):
+            backend.tick(world, (tick + i) * 0.05)
+        # On their way: given where SUMO has them, past the spot.
+        vehicles = backend.background_vehicles(world)
+        assert set(vehicles) == set(handles[1:])
+        for handle in handles[1:]:
+            x, _y, _z = vehicles[handle]
+            assert x > -60.0
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_background_vehicles_added_this_tick_are_not_taken_for_gone(
+    crossroads: Path, tmp_path: Path
+) -> None:
+    """SUMO lists a vehicle as pending only once it has stepped since it was
+    added: one added in this tick, before SUMO steps, is neither on the road
+    nor pending.  A second source (or a sink) asking in the same tick still
+    sees it at the spot asked for, and can remove it (#2082)."""
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path, max_vehicles=0)
+    tc = backend._traci
+    try:
+        first = backend.spawn_background(
+            world, _carla_transform(-60.0, 5.25, 0.0), speed_kmh=20.0
+        )
+        assert first is not None
+        assert first not in tc.simulation.getPendingVehicles()
+        vehicles = backend.background_vehicles(world)
+        assert vehicles[first] == pytest.approx((-60.0, 5.25, 0.0))
+        second = backend.spawn_background(
+            world, _carla_transform(-80.0, 5.25, 0.0), speed_kmh=20.0
+        )
+        assert second is not None
+        assert set(backend.background_vehicles(world)) == {first, second}
+        backend.remove_background(world, second)
+        backend.tick(world, 0.05)
+        assert set(backend.background_vehicles(world)) == {first}
+        assert second not in tc.vehicle.getIDList()
+        assert second not in tc.simulation.getPendingVehicles()
+    finally:
+        backend.close()
+
+
+def _a_source_on_one_spot(monkeypatch: pytest.MonkeyPatch, x: float, y: float) -> None:
+    """Every place a source draws is CARLA ``(x, y, 0)``."""
+    import typesafe_carla.carla as carla
+
+    import autoware_carla_scenario.coordinate as coordinate
+    from autoware_carla_scenario.actions import background_traffic
+
+    monkeypatch.setattr(
+        background_traffic.LaneletRegion, "lanelet_ids", property(lambda self: [1])
+    )
+    monkeypatch.setattr(coordinate, "lanelet_length", lambda lanelet_id: 100.0)
+    monkeypatch.setattr(
+        coordinate,
+        "to_carla_world",
+        lambda pose: SimpleNamespace(
+            x=x,
+            y=y,
+            z=0.0,
+            to_carla_transform=lambda: carla.Transform(carla.Location(x, y, 0.0)),
+        ),
+    )
+
+
+@needs_sumo
+@pytest.mark.parametrize(
+    ("max_vehicles", "min_gap_m", "expected"), [(3, 0.0, 3), (None, 10.0, 1)]
+)
+def test_a_source_counts_the_vehicles_waiting_to_enter(
+    crossroads: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    max_vehicles: Any,
+    min_gap_m: float,
+    expected: int,
+) -> None:
+    """A source spawning onto a spot an unmirrored SUMO car stands on adds no
+    more than ``max_vehicles``, nor one within ``min_gap_m`` of another,
+    though all of them wait to enter; when the spot clears, no more than
+    those enter (#2082)."""
+    from autoware_carla_scenario import TrafficSourceAction
+
+    _a_source_on_one_spot(monkeypatch, -60.0, 5.25)
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path, max_vehicles=0)
+    tc = backend._traci
+    source = TrafficSourceAction(
+        [{"type": "not", "constraint": {"type": "is_junction"}}],
+        initial_vehicles=5,
+        vehicles_per_minute=600.0,
+        max_vehicles=max_vehicles,
+        min_gap_m=min_gap_m,
+    )
+    source.set_traffic_backend(backend)
+    try:
+        _block_the_spot(backend, world, -60.0, 5.25)
+        for i in range(40):
+            source.tick(world, i * 0.05)
+            backend.tick(world, (3 + i) * 0.05)
+            assert len(backend.background_vehicles(world)) <= expected
+        assert source.spawned == expected
+        tc.vehicle.remove("standing")
+        for i in range(100):
+            backend.tick(world, (43 + i) * 0.05)
+            assert len(backend.background_vehicles(world)) <= expected
+        # Every one of them entered, one after the other, and no more.
+        entered = set(tc.vehicle.getIDList()) & backend._background
+        assert len(entered) == expected
+    finally:
+        backend.close()
+
+
+@needs_sumo
+@pytest.mark.parametrize("vehicle_control", ["teleport", "physics"])
+def test_a_backend_that_gives_up_leaves_no_actor_driving_on(
+    crossroads: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    vehicle_control: str,
+) -> None:
+    """After 20 failed steps in a row SUMO drives nothing more: the mirrors of
+    its own traffic are destroyed and the NPC it drove brakes to a stop,
+    rather than driving on at its last velocity or control (#2082)."""
+    backend, world, npc, _ego = _prepared(
+        crossroads,
+        tmp_path,
+        period_s=0.5,
+        warmup_s=20.0,
+        vehicle_control=vehicle_control,
+    )
+    tc = backend._traci
+    try:
+        for i in range(40):
+            backend.tick(world, i * 0.05)
+        mirrors = list(backend._ambient.values())
+        assert mirrors
+        assert backend.describe()["gave_up_at_s"] is None
+
+        def broken() -> None:
+            raise RuntimeError("SUMO is gone")
+
+        monkeypatch.setattr(tc, "simulationStep", broken)
+        with caplog.at_level(logging.ERROR):
+            for i in range(20):
+                backend.tick(world, (40 + i) * 0.05)
+        assert not backend._running
+        assert "traffic stops for this run" in caplog.text
+        assert all(mirror.destroyed for mirror in mirrors)
+        assert backend._ambient == {}
+        assert npc.constant_velocity is None
+        assert npc.control.brake == 1.0 and npc.control.throttle == 0.0
+        assert backend.describe()["gave_up_at_s"] == pytest.approx(59 * 0.05)
+        assert backend.background_vehicles(world) == {}
+    finally:
+        backend.close()
+    # close() after it is safe, and forgets it.
+    assert backend.describe()["gave_up_at_s"] is None
+
+
+@needs_sumo
+def test_a_vehicle_that_came_up_while_sumo_failed_stops_when_it_gives_up(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A parked NPC a spawn brings up while SUMO's steps fail is added but
+    never put on SUMO's road: when the backend gives up, it brakes to a stop
+    like the vehicles SUMO drove, rather than running on uncontrolled
+    (#2082)."""
+    import typesafe_carla.carla as carla
+
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    hidden = _FakeActor(_carla_transform(-60.0, 5.25, 0.0), "late")
+    hidden.transform.location.z = -500.0
+    entity = _Entity(hidden, "late")
+    tc = backend._traci
+    try:
+        backend.adopt(entity)
+        backend._parked[hidden.id] = (hidden, entity)
+        backend.tick(world, 0.0)
+
+        def broken() -> None:
+            raise RuntimeError("SUMO is gone")
+
+        monkeypatch.setattr(tc, "simulationStep", broken)
+        backend.tick(world, 0.05)
+        hidden.transform = _carla_transform(-60.0, 5.25, 0.0)
+        hidden.apply_control(carla.VehicleControl(throttle=0.6))
+        for i in range(19):
+            backend.tick(world, (2 + i) * 0.05)
+        assert not backend._running
+        assert any(arriving is entity for _a, arriving in backend._arriving.values())
+        assert hidden.control.brake == 1.0 and hidden.control.throttle == 0.0
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_backend_that_gives_up_halts_the_pedestrians_it_walked(
+    crossroads_with_sidewalks: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scenario pedestrian SUMO walks across the road stands still when
+    the backend gives up, rather than walking on at its last command
+    (#2082)."""
+    from autoware_carla_scenario.entity.pedestrian_entity import walker_speed_command
+
+    backend, world, entity = _scenario_pedestrian(
+        crossroads_with_sidewalks, tmp_path, scenario_pedestrians="sumo"
+    )
+    walker = entity.actor
+    try:
+        entity.walk_straight(1.5)
+        for i in range(10):
+            backend.tick(world, 1.0 + i * 0.05)
+        assert walker.control.speed == pytest.approx(walker_speed_command(1.5))
+
+        def broken() -> None:
+            raise RuntimeError("SUMO is gone")
+
+        monkeypatch.setattr(backend._traci, "simulationStep", broken)
+        for i in range(20):
+            backend.tick(world, 2.0 + i * 0.05)
+        assert not backend._running
+        assert walker.control.speed == 0.0
+        assert backend._walking == {}
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_vehicle_handed_back_after_the_backend_gave_up_stops(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An NPC an action drove while SUMO gave up is handed back to nothing:
+    it brakes to a stop rather than keeping what the action last gave it
+    (#2082)."""
+    import typesafe_carla.carla as carla
+
+    backend, world, npc, _ego = _prepared(crossroads, tmp_path)
+    _sumo_id, entity = next(iter(backend._driven.items()))
+    tc = backend._traci
+    try:
+        backend.tick(world, 0.0)
+        backend.release(entity, world)
+        # The action drives it on.
+        npc.apply_control(carla.VehicleControl(throttle=0.6))
+
+        def broken() -> None:
+            raise RuntimeError("SUMO is gone")
+
+        monkeypatch.setattr(tc, "simulationStep", broken)
+        for i in range(20):
+            backend.tick(world, (1 + i) * 0.05)
+        assert not backend._running
+        # Not SUMO's when it gave up: left to the action.
+        assert npc.control.throttle == pytest.approx(0.6)
+        backend.resume(entity, world)
+        assert npc.constant_velocity is None
+        assert npc.control.brake == 1.0 and npc.control.throttle == 0.0
+    finally:
+        backend.close()
+
+
 @needs_sumo
 def test_sumo_traffic_drives_no_faster_than_its_drivers_see(
     crossroads: Path, tmp_path: Path

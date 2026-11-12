@@ -594,6 +594,17 @@ class SumoTrafficBackend(TrafficBackend):
         self._walking: dict[str, tuple[float, float, float, float]] = {}
         #: SUMO ids of the background vehicles spawn_background added.
         self._background: set[str] = set()
+        #: SUMO id -> the CARLA ``(x, y, z)`` spawn_background asked for a
+        #: background vehicle SUMO has not inserted yet: where
+        #: background_vehicles gives it while it waits, so that a source's
+        #: ``max_vehicles`` and ``min_gap_m`` count it (#2082).
+        self._background_requested: dict[str, tuple[float, float, Optional[float]]] = {}
+        #: SUMO ids of the background vehicles added since SUMO last stepped:
+        #: SUMO lists one as pending only once a step has tried to insert it,
+        #: so until then it is neither on the road nor pending, and must not be
+        #: taken for one that left (a second source, or a sink, asking in the
+        #: same tick).
+        self._background_unstepped: set[str] = set()
         #: Lane id -> the vehicle classes it disallowed before its first
         #: close_lane() (its permissions, kept as what it disallows: see
         #: close_lane()), and how many close_lane() calls are not yet matched
@@ -639,6 +650,9 @@ class SumoTrafficBackend(TrafficBackend):
         #: which says start() has put the run's vehicles into SUMO.
         self._connected = False
         self._failures = 0
+        #: Simulated seconds at which tick gave up stepping SUMO, ``None``
+        #: while it has not: the result records it (describe(), #2082).
+        self._gave_up_at: Optional[float] = None
         #: With fcd_output: SUMO time, CARLA simulation time and frame per tick.
         self._clock_log: Any = None
         #: Actor id -> what the physics follower keeps between ticks.
@@ -932,6 +946,7 @@ class SumoTrafficBackend(TrafficBackend):
         that departed in it their parameters and their sight."""
         for _ in range(self._substeps):
             self._traci.simulationStep()
+            self._background_unstepped = set()
             self._departed = None
             self._forget_arrived()
             self._apply_parameters()
@@ -1286,6 +1301,16 @@ class SumoTrafficBackend(TrafficBackend):
                     published=int(actor.id) in self._published_ids,
                 )
 
+    def _drives_on_arrival(self, actor: Any, entity: Any) -> bool:
+        """Whether :meth:`_arrive` would have SUMO drive *actor*, which came
+        up for *entity* (:meth:`_bring_in`) -- now, or on resume() if it is
+        released: :meth:`_join` publishes it otherwise."""
+        return (
+            entity is not None
+            and not self._tm_drives_scenario
+            and int(actor.id) not in self._published_ids
+        )
+
     def _drive_approaches(self, elapsed: float) -> None:
         """One tick of each vehicle driven to its goal in CARLA (finish_at)."""
         if not self._approaches:
@@ -1395,8 +1420,85 @@ class SumoTrafficBackend(TrafficBackend):
             self._failures += 1
             logger.warning("SUMO step failed (%d in a row): %s", self._failures, exc)
             if self._failures >= 20:
-                logger.error("SUMO keeps failing; traffic stops for this run")
-                self._running = False
+                self._give_up(elapsed)
+
+    def _give_up(self, elapsed: float) -> None:
+        """Stop stepping SUMO for the rest of the run, leaving no CARLA actor
+        driving on without it (#2082): the mirrors of SUMO's own vehicles and
+        pedestrians are destroyed, as :meth:`close` destroys them, and every
+        vehicle SUMO drove (or drove the last of its way to its goal in
+        CARLA, or was to drive once a step put it on its road) loses its
+        constant velocity and brakes to a stop, every pedestrian it walked
+        stands still.  The connection stays open
+        for :meth:`close`; the run goes on, and its result records when this
+        happened (``gave_up_at_s`` in :meth:`describe`)."""
+        self._running = False
+        self._gave_up_at = elapsed
+        # The vehicles SUMO drove, those it drove the last of their way to
+        # their goal in CARLA (finish_at), which no tick steps any more, and
+        # those that came up (_bring_in) for SUMO to drive, which no step put
+        # on its road (_arrive): a spawn in a failing tick leaves them so.
+        actors = [getattr(entity, "actor", None) for entity in self._driven.values()]
+        actors += [self._external.get(sumo_id) for sumo_id in self._approaches]
+        actors += [
+            actor
+            for actor, entity in self._arriving.values()
+            if id(entity) not in self._released
+            and self._drives_on_arrival(actor, entity)
+        ]
+        logger.error(
+            "SUMO failed %d steps in a row at %.2f s; traffic stops for this run: "
+            "%d mirror(s) of SUMO's traffic destroyed, %d vehicle(s) SUMO drove "
+            "brought to a stop, %d pedestrian(s) it walked halted",
+            self._failures,
+            elapsed,
+            len(self._ambient) + len(self._persons),
+            sum(actor is not None for actor in actors),
+            len(self._walked),
+        )
+        self._destroy_mirrors()
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        self._approaches = {}
+        for actor in actors:
+            if actor is not None:
+                self._stop_vehicle(actor)
+        for entity in self._walked.values():
+            actor = getattr(entity, "actor", None)
+            if actor is None:
+                continue
+            try:
+                actor.apply_control(carla.WalkerControl())  # speed 0
+            except RuntimeError as exc:
+                logger.debug("SUMO: halting %s: %s", actor.id, exc)
+        self._walking = {}
+
+    def _stop_vehicle(self, actor: Any) -> None:
+        """Brake *actor*, which SUMO no longer drives, to a stop: off its
+        constant velocity (``teleport``) and its last control (``physics``)."""
+        import typesafe_carla.carla as carla  # noqa: PLC0415
+
+        self._constant_speed.pop(actor.id, None)
+        self._physics.pop(actor.id, None)
+        try:
+            actor.disable_constant_velocity()
+            actor.apply_control(
+                carla.VehicleControl(throttle=0.0, steer=0.0, brake=1.0)
+            )
+        except RuntimeError as exc:  # destroyed meanwhile
+            logger.debug("SUMO: stopping %s: %s", actor.id, exc)
+
+    def _destroy_mirrors(self) -> None:
+        """Destroy the CARLA mirrors of SUMO's own vehicles and pedestrians."""
+        for actor in [*self._ambient.values(), *self._persons.values()]:
+            self._constant_speed.pop(actor.id, None)
+            self._physics.pop(actor.id, None)
+            try:
+                actor.destroy()
+            except RuntimeError:
+                pass
+        self._ambient = {}
+        self._persons = {}
 
     def close(self) -> None:
         """Stop SUMO, destroy the ambient actors and forget the run."""
@@ -1446,16 +1548,12 @@ class SumoTrafficBackend(TrafficBackend):
             for sumo_id in self._handed_ambient
             if sumo_id in self._external
         ]
-        for actor in [
-            *self._ambient.values(),
-            *self._persons.values(),
-            *handed_ambient,
-        ]:
+        self._destroy_mirrors()
+        for actor in handed_ambient:
             try:
                 actor.destroy()
             except RuntimeError:
                 pass
-        self._persons = {}
         self._handed_ambient = {}
         self._released_overrides = {}
         for entity in self._driven.values():
@@ -1493,6 +1591,8 @@ class SumoTrafficBackend(TrafficBackend):
         self._walked = {}
         self._walking = {}
         self._background = set()
+        self._background_requested = {}
+        self._background_unstepped = set()
         self._background_count = 0
         self._closed_lanes = {}
         self._blueprints = {}
@@ -1508,6 +1608,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._bicycle_rides = {}
         self._ego_actor = None
         self._failures = 0
+        self._gave_up_at = None
         if self._feedback_count:
             logger.info(
                 "SUMO: moved SUMO vehicles to where CARLA had them %d time(s) this run",
@@ -1558,6 +1659,8 @@ class SumoTrafficBackend(TrafficBackend):
             }
         out["follow_visibility"] = self._follows_visibility
         out["visibility_m"] = self._visibility
+        # When SUMO failed for good and traffic stopped (tick), else None.
+        out["gave_up_at_s"] = self._gave_up_at
         return out
 
     def fidelity_census(self) -> dict[str, int]:
@@ -2277,6 +2380,26 @@ class SumoTrafficBackend(TrafficBackend):
             return
         self._released.discard(id(entity))
         handed = self._handed.pop(id(entity), None)
+        actor = getattr(entity, "actor", None)
+        if (
+            self._gave_up_at is not None
+            and actor is not None
+            and (
+                handed is not None
+                or self._id_of(entity) is not None
+                # Released as it came up, before a step put it on SUMO's road.
+                or any(
+                    arriving is entity
+                    and self._drives_on_arrival(arriving_actor, entity)
+                    for arriving_actor, arriving in self._arriving.values()
+                )
+            )
+        ):
+            # Handed back after SUMO failed for good (_give_up): nothing
+            # drives it on, so it stops rather than keeping what the action
+            # last gave it (#2082).
+            self._stop_vehicle(actor)
+            return
         if handed is None or not self._running:
             # Never released while SUMO drove it: start() drives it, or it
             # was never SUMO's to drive.
@@ -2487,9 +2610,10 @@ class SumoTrafficBackend(TrafficBackend):
             return
         modes = self._handed_ambient.pop(sumo_id)
         overrides = self._released_overrides.pop(sumo_id, None)
-        if not self._take_back(sumo_id, modes, -1.0):
-            # Gone from SUMO while CARLA drove it (its route ended): the
-            # mirror has nothing left to follow.
+        if self._gave_up_at is not None or not self._take_back(sumo_id, modes, -1.0):
+            # Gone from SUMO while CARLA drove it (its route ended), or SUMO
+            # failed for good meanwhile (_give_up destroyed the other
+            # mirrors): the mirror has nothing left to follow.
             try:
                 actor.destroy()
             except RuntimeError:
@@ -2791,6 +2915,10 @@ class SumoTrafficBackend(TrafficBackend):
             )
             return None
         self._background.add(sumo_id)
+        # Pending until SUMO inserts it, which it does only once its spot is
+        # clear: given at the spot asked for meanwhile (background_vehicles).
+        self._background_requested[sumo_id] = (location.x, location.y, location.z)
+        self._background_unstepped.add(sumo_id)
         if blueprint:
             self._blueprints[sumo_id] = blueprint
         return sumo_id
@@ -2876,15 +3004,21 @@ class SumoTrafficBackend(TrafficBackend):
         """Every background vehicle SUMO still has, at its CARLA ``(x, y, z)``.
 
         One the queue model holds has no height (``None``): the model places
-        it on a lane's 2D shape."""
+        it on a lane's 2D shape.  One SUMO has not inserted yet -- it waits
+        while its spot is taken, by a vehicle CARLA may not even mirror -- is
+        at the spot spawn_background asked for: it is on the road as soon as
+        the spot clears, so a source's ``max_vehicles`` and ``min_gap_m``
+        count it (#2082)."""
         del world
         if not self._running:
             return {}
         vehicle = self._traci.vehicle
         present = set(vehicle.getIDList())
-        # A vehicle added this step is pending until SUMO inserts it; one that
-        # is neither has reached the end of its route and left.
+        # A vehicle added this step is pending until SUMO inserts it (listed
+        # as such only once SUMO has stepped since it was added); one that is
+        # neither has reached the end of its route and left.
         pending = set(self._traci.simulation.getPendingVehicles())
+        pending |= self._background_unstepped
         meso = self._meso if self._meso is not None else ()
         self._background &= (
             present | pending | {i for i in self._background if i in meso}
@@ -2909,6 +3043,14 @@ class SumoTrafficBackend(TrafficBackend):
                 ),
             )
             out[sumo_id] = (pose.x, pose.y, pose.z)
+        self._background_requested = {
+            sumo_id: requested
+            for sumo_id, requested in self._background_requested.items()
+            if sumo_id in pending and sumo_id in self._background
+        }
+        for sumo_id, requested in self._background_requested.items():
+            if sumo_id not in out:
+                out[sumo_id] = requested
         return out
 
     def _background_origin(self, sumo_id: str, centre: Pose2D) -> Pose2D:
@@ -2930,6 +3072,8 @@ class SumoTrafficBackend(TrafficBackend):
         if handle not in self._background or not self._running:
             return
         self._background.discard(handle)
+        self._background_requested.pop(handle, None)
+        self._background_unstepped.discard(handle)
         if self._meso is not None and self._meso.remove(handle) is not None:
             self._blueprints.pop(handle, None)
             self._meso_widths.pop(handle, None)
