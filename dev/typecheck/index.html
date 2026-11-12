@@ -2287,7 +2287,12 @@ Codon compiler, no config matches <code>scenario=</code> (the message lists the
 configs), or an override names a key the config does not have
 (<code>scenario.timout_seconds=3</code> is reported with the closest key,
 <code>scenario.timeout_seconds</code>; <code>+key=value</code> adds a new one; <code>HYDRA_FULL_ERROR=1</code>
-shows the traceback). A scenario package
+shows the traceback). A check that raises (an error of the checker itself,
+not a verdict on the scenario) fails that config only: it is reported as
+<code>[FAILED] &lt;config&gt;: checker error: &lt;exception&gt;</code>, its traceback goes to
+stderr, the other configs are still checked and reported, and the exit
+status is 1, as for any failed config (<code>--library</code> likewise reports
+<code>[FAILED] library check: checker error: ...</code> and exits with 1). A scenario package
 can make the same check in its own tests, with no simulator (the template and
 <code>scenario-new</code> packages have one in <code>tests/test_typecheck.py</code>):</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.typecheck</span><span class="w"> </span><span class="kn">import</span> <span class="n">typecheck_scenario</span>
@@ -2387,7 +2392,7 @@ packages have. What the key still leaves out: a distribution
 installed in development mode without PEP 610's <code>direct_url.json</code> (an old
 <code>setup.py develop</code>, a <code>.pth</code> file written by hand); clear the directory after
 editing one.
-A crash is never kept, and an entry
+A crash is never kept on disk (only for its process, as above), and an entry
 that cannot be read counts as a miss. A verdict read from the directory has
 its file's times touched, so the directory can be pruned by access time.</p>
 <p>The test suite shares such a directory between its xdist workers. CI keeps
@@ -8443,7 +8448,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 8, 2026 18:50:56 UTC"><span class="timeago" datetime="2026-11-08T18:50:56+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 8, 2026 18:50:56 UTC">2026-11-08</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 12, 2026 04:48:14 UTC"><span class="timeago" datetime="2026-11-12T04:48:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 12, 2026 04:48:14 UTC">2026-11-12</span>
   </span>
 
     
