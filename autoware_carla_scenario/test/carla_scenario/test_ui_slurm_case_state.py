@@ -20,6 +20,7 @@ import pytest
 
 from autoware_carla_scenario.slurm.manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
+    CaseOutcome,
     readable_result,
 )
 from autoware_carla_scenario.slurm.records import JsonMembers
@@ -121,8 +122,10 @@ class _Layout:
     def submission_record(self, index: int) -> dict[str, Any] | None:
         return self._submissions[index]
 
-    def read_result(self, index: int) -> dict[str, Any] | None:
-        return self._results.get(index)
+    def read_result(self, index: int) -> CaseOutcome | None:
+        # As BatchLayout reads the record the dict would be written as.
+        record = self._results.get(index)
+        return None if record is None else CaseOutcome(JsonMembers.from_value(record))
 
     def read_task(self, submission: int, task: int) -> dict[str, Any] | None:
         return self._tasks.get((submission, task))
