@@ -2567,7 +2567,7 @@ the first:
   pickle, grpc, protobuf, omegaconf and hydra, yaml, jinja2, fastapi, cv2,
   cyclonedds, or openodd and hilspy, Rust extensions) or a standard module
   Codon lacks (`inspect`, `concurrent.futures`, `importlib` beyond
-  `importlib.metadata`, or more of `os`, `pathlib`, `shlex`, `shutil`,
+  `importlib.metadata`, or more of `os`, `pathlib`, `shutil`,
   `signal`, `socket`, `subprocess`, `tempfile`, `threading`, `dataclasses`,
   `importlib.metadata` or `urllib.parse` than their shims declare), at module
   level or inside a function the check calls. This is most of the tooling
@@ -3399,7 +3399,10 @@ What Codon 0.19 needs that Python does not, beyond
   `ValueError` with `msg`, `doc` and `pos`. `shlex` declares
   `quote(s)` and `join(split_command)`, CPython 3.10's on Codon's `re`; a
   `quote()` of a false value that is no `str` (`None`, which CPython quotes
-  as `''`) is refused. `fnmatch` declares `fnmatch(name, pat)` and
+  as `''`) is refused. It declares `split(s, comments=False, posix=True)`
+  too, which takes a `str` (CPython 3.10 reads standard input for `None`, and
+  3.12 refuses it) and gives a `list[str]`; the check only compiles it, so
+  its body splits nothing. `fnmatch` declares `fnmatch(name, pat)` and
   `fnmatchcase(name, pat)`, CPython 3.10's shell-pattern match written
   without a regular expression (CPython's translation uses a lookahead,
   which Codon's `re` has no syntax for); `fnmatch()` takes a `str` or an
