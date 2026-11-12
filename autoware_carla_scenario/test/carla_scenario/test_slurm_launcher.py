@@ -555,7 +555,7 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     errored = [
         i
         for i in range(6)
-        if (record := layout.read_result(i)) is not None and record["errored"]
+        if (record := layout.read_result(i)) is not None and record.errored
     ]
     assert missing_cases(layout) == [1, 2]
     code = cli.main(["resubmit", str(batch), "--dry-run"])
@@ -570,7 +570,7 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     ).read_bytes()
     # Only the cases that error whenever they run are left.
     assert missing_cases(layout) == []
-    errored_now = [i for i in range(6) if layout.read_result(i)["errored"]]  # type: ignore[index]
+    errored_now = [i for i in range(6) if layout.read_result(i).errored]  # type: ignore[union-attr]
     assert unfinished_cases(layout) == errored_now
 
 
@@ -3034,14 +3034,16 @@ def _with_case_1(tmp_path: Path, record: dict[str, Any]) -> BatchLayout:
 def test_recorded_verdict_is_a_boolean_passed_or_none() -> None:
     """#1718: the one reader of a recorded verdict."""
     from autoware_carla_scenario.slurm.collect import recorded_verdict
+    from autoware_carla_scenario.slurm.manifest import verdict_of_document
 
-    assert recorded_verdict(_recorded(True)) is True
-    assert recorded_verdict(_recorded(False)) is False
+    assert verdict_of_document(_recorded(True)) is True
+    assert verdict_of_document(_recorded(False)) is False
     assert recorded_verdict(None) is None
+    assert verdict_of_document(None) is None
     for value in ("false", "true", 1, 0, None, 1.0):
-        assert recorded_verdict(_recorded(value)) is None
-    assert recorded_verdict({"result": "x"}) is None
-    assert recorded_verdict({}) is None
+        assert verdict_of_document(_recorded(value)) is None
+    assert verdict_of_document({"result": "x"}) is None
+    assert verdict_of_document({}) is None
 
 
 def test_what_the_worker_records_is_readable() -> None:
@@ -3053,8 +3055,11 @@ def test_what_the_worker_records_is_readable() -> None:
         ScenarioResult,
     )
     from autoware_carla_scenario.failure import Failure, FailureCategory
-    from autoware_carla_scenario.slurm.collect import recorded_verdict
-    from autoware_carla_scenario.slurm.manifest import readable_result
+    from autoware_carla_scenario.slurm.manifest import (
+        readable_result,
+        verdict_of_document,
+    )
+    from autoware_carla_scenario.slurm.records import JsonMembers
 
     status = ConditionStatus("pass[0](t)", True, "ok", "TimeoutCondition", "pass")
     failure = Failure("fail[0](c)", FailureCategory.OTHER, 3.0, "collided")
@@ -3064,14 +3069,14 @@ def test_what_the_worker_records_is_readable() -> None:
         ScenarioResult(False, "collided", 3.0, [status], failure=failure),
     ):
         data = json.loads(json.dumps(result.to_dict()))
-        assert readable_result(data)
+        assert readable_result(JsonMembers.from_value(data))
         record = {"submission": 0, "errored": False, "result": data}
-        assert recorded_verdict(record) is result.passed
-    assert recorded_verdict(_recorded(True, elapsed_seconds=4)) is True
-    assert recorded_verdict(_recorded(True, condition_statuses=None)) is True
+        assert verdict_of_document(record) is result.passed
+    assert verdict_of_document(_recorded(True, elapsed_seconds=4)) is True
+    assert verdict_of_document(_recorded(True, condition_statuses=None)) is True
     without = _recorded(False)
     del without["result"]["condition_statuses"]
-    assert recorded_verdict(without) is False
+    assert verdict_of_document(without) is False
 
 
 _UNWRITABLE = pytest.mark.parametrize(
@@ -4820,7 +4825,7 @@ def test_a_batch_submitted_from_a_mount_runs_at_the_node_s_paths(
     assert 'cd "$HOME"/workspace/OnePlanner || ' in again
     assert str(submit_side) not in again
     record = layout.read_result(0)
-    assert record is not None and record["submission"] == 1
+    assert record is not None and record.get("submission") == 1
 
 
 def _case_with_file(path: Path, **config: Any) -> dict[str, Any]:

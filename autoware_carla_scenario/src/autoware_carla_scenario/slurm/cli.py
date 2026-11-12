@@ -182,7 +182,7 @@ def _status(layout: BatchLayout) -> int:
             continue
         done += 1
         passed += recorded_verdict(record) is True
-        errored += bool(record.get("errored"))
+        errored += record.errored
     print(f"Batch {layout.batch_dir}: {len(cases)} case(s)")  # noqa: T201
     print(  # noqa: T201
         f"  {done} with a result ({passed} passed, {errored} errored), "

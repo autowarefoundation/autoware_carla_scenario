@@ -1081,24 +1081,29 @@ def test_a_slurm_batch_reports_the_recordings_its_tasks_made(
     from the record its task wrote, and reports them as a local batch does."""
     from autoware_carla_scenario.batch_report import print_summary
     from autoware_carla_scenario.slurm.collect import RecordedResult
+    from autoware_carla_scenario.slurm.records import JsonMembers
 
     results = [
         RecordedResult(
-            {
-                "passed": True,
-                "message": "ok",
-                "elapsed_seconds": 1.0,
-                "condition_statuses": [],
-                "rerun_recording": str(tmp_path / "A.rrd"),
-            }
+            JsonMembers.from_value(
+                {
+                    "passed": True,
+                    "message": "ok",
+                    "elapsed_seconds": 1.0,
+                    "condition_statuses": [],
+                    "rerun_recording": str(tmp_path / "A.rrd"),
+                }
+            )
         ),
         RecordedResult(
-            {
-                "passed": True,
-                "message": "ok",
-                "elapsed_seconds": 1.0,
-                "condition_statuses": [],
-            }
+            JsonMembers.from_value(
+                {
+                    "passed": True,
+                    "message": "ok",
+                    "elapsed_seconds": 1.0,
+                    "condition_statuses": [],
+                }
+            )
         ),
     ]
     assert results[0].rerun_recording == str(tmp_path / "A.rrd")

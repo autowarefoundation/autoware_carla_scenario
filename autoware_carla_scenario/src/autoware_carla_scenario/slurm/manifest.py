@@ -18,12 +18,14 @@ Plain JSON, written atomically (a reader never sees half a file), and free of
 heavy imports: the ``scenario-slurm`` commands only read these.
 
 The records are read and written as ``dict[str, Any]``, which every reader of
-the batch takes (:mod:`.submit`, :mod:`.worker`, :mod:`.collect`, the viewer).
-The library check (docs/typecheck.md) compiles this module, and Codon cannot
-hold a JSON document's values of mixed types beyond the function that parses
-it: the version a manifest names is checked as the JSON text of its value,
-and what creates a submission record exclusively is given the record's JSON
-text.
+the batch takes (:mod:`.submit`, :mod:`.worker`, :mod:`.collect`, the viewer),
+but for a case's outcome, which is read into a :class:`CaseOutcome`: its
+members as their JSON text (:class:`.records.JsonMembers`), each read when it
+is asked for.  The library check (docs/typecheck.md) compiles this module, and
+Codon cannot hold a JSON document's values of mixed types beyond the function
+that parses it: the version a manifest names is checked as the JSON text of
+its value, and what creates a submission record exclusively is given the
+record's JSON text.
 """
 
 from __future__ import annotations
@@ -40,6 +42,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..failure import Failure
 from ..run_outputs import RUN_FILE_SUFFIXES
+from .records import JsonMembers, parse_object
 from .scripts import BatchPaths, file_sha256
 from .stems import config_key, sequential_stems
 
@@ -49,6 +52,7 @@ __all__ = [
     "RUN_FILE_SUFFIXES",
     "SBATCH_IN_FLIGHT_SECONDS",
     "BatchLayout",
+    "CaseOutcome",
     "config_files",
     "config_key",
     "file_sha256",
@@ -61,6 +65,7 @@ __all__ = [
     "sbatch_in_flight",
     "sbatch_timed_out",
     "sequential_stems",
+    "verdict_of_document",
     "write_json",
 ]
 
@@ -291,10 +296,75 @@ def _link_exclusive(path: Path, fd: int, tmp: str, text: str) -> bool:
         Path(tmp).unlink(missing_ok=True)
 
 
-def _real_number(value: Any) -> bool:
+def _value_json(members: JsonMembers, key: str) -> str:
+    """The JSON text of the value of the member *key* of *members*, ``null``
+    when there is none: what ``dict.get(key)`` gave of the object."""
+    return members.value_text(key) if members.has(key) else "null"
+
+
+class CaseOutcome:
+    """A case's outcome as its task recorded it (``results/<i>.json``,
+    :meth:`BatchLayout.read_result`): the record's members, each read when
+    it is asked for, as the record read as a ``dict`` gave it.
+
+    The record is what the task wrote (``slurm/worker.py``): the case's
+    ``index``, ``label`` and ``stem``, its ``result``
+    (``ScenarioResult.to_dict()``), whether it ``errored``, the
+    ``submission``, ``task``, ``job_id`` and ``host`` that ran it, its
+    ``wall_seconds`` and when it ``finished``, and why its Rerun recording
+    failed (``rerun_error``), if it did -- or anything a hand or another
+    version left there.
+    """
+
+    members: JsonMembers
+
+    def __init__(self, members: JsonMembers) -> None:
+        self.members = members
+
+    def has(self, key: str) -> bool:
+        """Whether the record has the member *key*."""
+        return self.members.has(key)
+
+    def get(self, key: str) -> Any:
+        """The value of the member *key*, ``None`` when there is none: the
+        record's ``dict.get(key)``."""
+        return json.loads(_value_json(self.members, key))
+
+    @property
+    def errored(self) -> bool:
+        """Whether the record says the case raised rather than ran: a true
+        ``errored`` (of any type, as ``bool()`` reads it)."""
+        return bool(json.loads(_value_json(self.members, "errored")))
+
+    @property
+    def rerun_error(self) -> str | None:
+        """Why the case's Rerun recording failed, if the record says: a true
+        ``rerun_error`` (of any type, as ``bool()`` reads it), as ``str()``
+        gives it."""
+        why = json.loads(_value_json(self.members, "rerun_error"))
+        if bool(why):
+            return str(why)
+        return None
+
+    def result(self) -> JsonMembers | None:
+        """The members of the record's ``result``, or ``None`` when it has
+        none or one that is not an object."""
+        if not self.members.has("result"):
+            return None
+        result = parse_object(self.members.value_text("result"))
+        if result is None:
+            return None
+        return result
+
+
+def _real_number(value_json: str) -> bool:
+    """Whether the JSON text *value_json* is a number of seconds."""
+    value = json.loads(value_json)
     # ``True`` is an int, but no number of seconds; nor is an integer
     # literal too long for a float (``float()`` overflows on it).
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool):
+        return False
+    if not (isinstance(value, int) or isinstance(value, float)):
         return False
     try:
         float(value)
@@ -303,48 +373,64 @@ def _real_number(value: Any) -> bool:
     return True
 
 
-def _readable_status(status: Any) -> bool:
+def _readable_status(status_json: str) -> bool:
+    """Whether the JSON text *status_json* is a condition's status that can
+    be reported: an object with a string ``label`` and ``message`` and a
+    boolean ``satisfied``."""
+    status = json.loads(status_json)
+    if not isinstance(status, dict):
+        return False
+    label = status.get("label")
+    satisfied = status.get("satisfied")
+    message = status.get("message")
     return (
-        isinstance(status, dict)
-        and isinstance(status.get("label"), str)
-        and isinstance(status.get("satisfied"), bool)
-        and isinstance(status.get("message"), str)
+        isinstance(label, str)
+        and isinstance(satisfied, bool)
+        and isinstance(message, str)
     )
 
 
-def readable_result(result: Any) -> bool:
-    """Whether *result*, a recorded ``result`` (``ScenarioResult.to_dict()``),
-    can be reported (#1726): an object whose ``message`` is a string, whose
-    ``elapsed_seconds`` is a number (not a boolean), whose
-    ``condition_statuses``, if any, is a list of objects each with a string
-    ``label`` and ``message`` and a boolean ``satisfied``, and whose
-    ``failure``, if any, is an object.  What ``to_dict()`` leaves out
+def readable_result(result: JsonMembers) -> bool:
+    """Whether *result*, the members of a recorded ``result``
+    (``ScenarioResult.to_dict()``), can be reported (#1726): its ``message``
+    is a string, its ``elapsed_seconds`` a number (not a boolean), its
+    ``condition_statuses``, if any, a list of objects each with a string
+    ``label`` and ``message`` and a boolean ``satisfied``, and its
+    ``failure``, if any, an object.  What ``to_dict()`` leaves out
     (``rerun_recording``, ``failure``) may be missing; ``passed`` is
     :func:`recorded_verdict`'s to check."""
-    if not isinstance(result, dict):
+    message = json.loads(_value_json(result, "message"))
+    if not isinstance(message, str):
         return False
-    if not isinstance(result.get("message"), str):
+    if not _real_number(_value_json(result, "elapsed_seconds")):
         return False
-    if not _real_number(result.get("elapsed_seconds")):
-        return False
-    statuses = result.get("condition_statuses")
-    if statuses is not None and not (
-        isinstance(statuses, list) and all(_readable_status(s) for s in statuses)
-    ):
-        return False
-    failure = result.get("failure")
-    if failure is None:
+    statuses_json = _value_json(result, "condition_statuses")
+    if statuses_json != "null":
+        statuses = json.loads(statuses_json)
+        if not isinstance(statuses, list):
+            return False
+        for status in statuses:
+            if not _readable_status(json.dumps(status)):
+                return False
+    failure_json = _value_json(result, "failure")
+    if failure_json == "null":
         return True
+    failure = json.loads(failure_json)
     if not isinstance(failure, dict):
         return False
-    try:
-        Failure.from_dict(failure)
-    except (TypeError, ValueError, AttributeError, OverflowError):
-        return False
+    if TYPE_CHECKING:
+        # Failure.from_dict() reads a mapping of any values, which Codon
+        # cannot express (typecheck/library.py's UNCALLED).
+        pass
+    else:
+        try:
+            Failure.from_dict(failure)
+        except (TypeError, ValueError, AttributeError, OverflowError):
+            return False
     return True
 
 
-def recorded_verdict(record: dict[str, Any] | None) -> bool | None:
+def recorded_verdict(record: CaseOutcome | None) -> bool | None:
     """Whether the outcome a task recorded for a case (``results/<i>.json``,
     read by :meth:`BatchLayout.read_result`) passed: its ``result``'s
     ``passed`` when ``result`` is an object and ``passed`` a boolean, else
@@ -356,15 +442,45 @@ def recorded_verdict(record: dict[str, Any] | None) -> bool | None:
     missing or of the wrong type) holds no verdict either (#1726), so that the counts of
     ``scenario-slurm status`` and ``wait``, the viewer, ``collect`` and
     ``resubmit`` all agree that it did not pass."""
-    if not isinstance(record, dict):
+    if record is None:
         return None
-    result = record.get("result")
-    if not isinstance(result, dict):
+    # Annotated: Codon 0.19 refuses the call's value for the local without.
+    members: JsonMembers | None = record.result()
+    if members is None:
         return None
-    passed = result.get("passed")
+    return _verdict_of_result(members)
+
+
+def _verdict_of_result(result: JsonMembers) -> bool | None:
+    """:func:`recorded_verdict` of the members of a recorded ``result``."""
+    passed = json.loads(_value_json(result, "passed"))
     if not isinstance(passed, bool):
         return None
-    return passed if readable_result(result) else None
+    verdict = bool(passed)
+    if readable_result(result):
+        return verdict
+    return None
+
+
+def verdict_of_document(document: Any) -> bool | None:
+    """:func:`recorded_verdict` of a case's outcome as ``json.loads()``
+    reads it (``ui.cases`` reads the file itself): ``None`` for a document
+    that is not an object, or whose ``result`` is not one.
+
+    Each member of the ``result`` is written back as
+    :class:`.records.JsonMembers` holds a value, with the C encoder, and is
+    not read again as part of the whole: what ``json.loads()`` read, nested
+    however deep, is read here too, on Python 3.10 (which counts the calls
+    on the stack with the levels of nesting) as on 3.12."""
+    if not isinstance(document, dict):
+        return None
+    result = document.get("result")
+    if not isinstance(result, dict):
+        return None
+    members = JsonMembers()
+    for key, value in result.items():
+        members.set_text(key, json.dumps(value, ensure_ascii=False))
+    return _verdict_of_result(members)
 
 
 @dataclass(frozen=True)
@@ -452,10 +568,20 @@ class BatchLayout(BatchPaths):
         cannot be read as one (:func:`read_submission_record`)."""
         return read_submission_record(self.submission(index))
 
-    def read_result(self, case: int) -> dict[str, Any] | None:
+    def read_result(self, case: int) -> CaseOutcome | None:
         """Case *case*'s outcome, or ``None`` when there is none to read:
-        missing, not JSON, or JSON that is not an object (#1630)."""
-        return _read_object(self.result(case))
+        missing, cannot be read, not JSON (not UTF-8 among them), or JSON
+        that is not an object (#1630)."""
+        path = self.result(case)
+        if not path.is_file():
+            return None
+        try:
+            members = parse_object(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if members is None:
+            return None
+        return CaseOutcome(members)
 
     def read_task(self, submission: int, task: int) -> dict[str, Any] | None:
         """Task *task* of submission *submission*'s status, or ``None`` when

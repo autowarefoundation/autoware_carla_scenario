@@ -33,12 +33,13 @@ from autoware_carla_scenario.slurm.manifest import (
     read_json,
     read_submission_record,
     readable_result,
-    recorded_verdict,
     resubmit_target,
     sbatch_in_flight,
     sbatch_timed_out,
+    verdict_of_document,
     write_json,
 )
+from autoware_carla_scenario.slurm.records import JsonMembers
 
 _LOGGER = "autoware_carla_scenario.slurm.manifest"
 
@@ -318,9 +319,12 @@ def test_read_result_and_read_task_read_the_object_as_json_holds_it(
     for path in (layout.result(0), layout.task(0, 0)):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
-    for record in (layout.read_result(0), layout.read_task(0, 0)):
-        assert record is not None
-        assert list(record) == ["z", "result", "big", "extra"]
+    outcome = layout.read_result(0)
+    assert outcome is not None
+    task = layout.read_task(0, 0)
+    assert task is not None
+    assert outcome.members.keys() == list(task) == ["z", "result", "big", "extra"]
+    for record in (task, {key: outcome.get(key) for key in outcome.members.keys()}):
         assert record["z"][:2] == [1, 2.0]
         assert isinstance(record["z"][1], float)
         assert math.copysign(1.0, record["z"][2]) == -1.0
@@ -350,7 +354,7 @@ def test_read_result_of_an_integer_too_long_to_read(tmp_path: Path) -> None:
     else:  # pragma: no cover - a Python without the limit
         record = layout.read_result(0)
         assert record is not None
-        assert record["a"] == int("1" * 5000)
+        assert record.get("a") == int("1" * 5000)
 
 
 # ---------------------------------------------------------------------------
@@ -965,10 +969,7 @@ _STATUS = {"label": "l", "satisfied": True, "message": "m"}
         ({"message": "", "elapsed_seconds": 1, "condition_statuses": None}, True),
         ({"message": "", "elapsed_seconds": 1, "condition_statuses": []}, True),
         ({"message": "", "elapsed_seconds": 1, "condition_statuses": [_STATUS]}, True),
-        (
-            {"message": "", "elapsed_seconds": 1, "condition_statuses": (_STATUS,)},
-            False,
-        ),
+        ({"message": "", "elapsed_seconds": 1, "condition_statuses": "s"}, False),
         ({"message": "", "elapsed_seconds": 1, "condition_statuses": {}}, False),
         (
             {
@@ -1013,7 +1014,13 @@ _STATUS = {"label": "l", "satisfied": True, "message": "m"}
     ],
 )
 def test_readable_result(result: Any, readable: bool) -> None:
-    assert readable_result(result) is readable
+    if isinstance(result, dict):
+        assert readable_result(JsonMembers.from_value(result)) is readable
+    # A result that is no object holds no verdict.
+    record = {
+        "result": {"passed": True, **result} if isinstance(result, dict) else result
+    }
+    assert verdict_of_document(record) is (True if readable else None)
 
 
 @pytest.mark.parametrize(
@@ -1033,7 +1040,7 @@ def test_readable_result(result: Any, readable: bool) -> None:
     ],
 )
 def test_recorded_verdict(record: Any, verdict: bool | None) -> None:
-    assert recorded_verdict(record) is verdict
+    assert verdict_of_document(record) is verdict
 
 
 @pytest.mark.parametrize(

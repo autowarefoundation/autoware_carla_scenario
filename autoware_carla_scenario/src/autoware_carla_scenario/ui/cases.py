@@ -32,7 +32,7 @@ import json
 from pathlib import Path
 from typing import Any
 
-from ..slurm.manifest import recorded_verdict
+from ..slurm.manifest import verdict_of_document
 
 # The path guard, the case stems and a batch's stamp, compiled by the library check; every
 # name stays importable from here.
@@ -192,7 +192,7 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
     the outcomes its tasks recorded (``slurm/results/<case>.json``), while it
     has no ``batch_results.json`` yet. A case without an outcome yet has
     ``passed`` ``None`` and ``pending`` true; one whose outcome holds no
-    verdict, or a result that cannot be reported (``recorded_verdict``,
+    verdict, or a result that cannot be reported (``verdict_of_document``,
     #1718, #1726), did not pass: ``error`` true, as ``collect`` reports it."""
     cases = _manifest_cases(directory)
     if cases is None:
@@ -211,7 +211,7 @@ def _slurm_entries(directory: Path) -> list[dict[str, Any]] | None:
             entry.update(record["result"])
             if record.get("errored"):
                 entry["error"] = True
-            if recorded_verdict(record) is None:
+            if verdict_of_document(record) is None:
                 path = directory / "slurm" / "results" / f"{int(case['index'])}.json"
                 entry.update(
                     passed=False,
