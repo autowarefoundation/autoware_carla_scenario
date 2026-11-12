@@ -153,3 +153,55 @@ def test_a_weak_resemblance_is_not_suggested() -> None:
     assert "did you mean" not in far[0].message
     near = validate_controls({"vehicle_ahead_gap_m": "scenario.npc_gap"}, cfg)
     assert "did you mean 'scenario.npc_gap_m'?" in near[0].message
+
+
+# A check that raises (#2091) fails its config only: the others are still
+# checked and reported, and the exit status is that of a failed check.
+def _fake_toolchain() -> object:
+    from pathlib import Path  # noqa: PLC0415
+
+    from autoware_carla_scenario.typecheck.toolchain import Toolchain  # noqa: PLC0415
+
+    return Toolchain(Path("/nonexistent/codon"), Path("/nonexistent"), "test")
+
+
+def test_a_checker_error_fails_its_config_only(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.typecheck import cli  # noqa: PLC0415
+    from autoware_carla_scenario.typecheck.check import (  # noqa: PLC0415
+        TypeCheckResult,
+    )
+
+    def check(name: str, scenario: object, *, toolchain: object) -> TypeCheckResult:
+        if dict(scenario)["side"] == "left":  # type: ignore[call-overload]
+            raise RuntimeError("boom")
+        return TypeCheckResult(name, ok=True)
+
+    monkeypatch.setattr(cli, "find_supported_codon", _fake_toolchain)
+    monkeypatch.setattr(cli, "typecheck_registered", check)
+    code = main(["scenario=cut_in/*"])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "[FAILED] cut_in/left: checker error: RuntimeError: boom" in captured.out
+    assert "[ok] cut_in/right" in captured.out
+    assert "1 of 2 scenario config(s) failed the static check" in captured.out
+    assert "Traceback" not in captured.out
+    assert "Traceback" in captured.err
+
+
+def test_a_library_checker_error_is_a_failed_check(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    from autoware_carla_scenario.typecheck import cli  # noqa: PLC0415
+
+    def library(modules: object, *, toolchain: object) -> object:
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(cli, "find_supported_codon", _fake_toolchain)
+    monkeypatch.setattr(cli, "typecheck_library", library)
+    code = main(["--library"])
+    captured = capsys.readouterr()
+    assert code == 1
+    assert "[FAILED] library check: checker error: RuntimeError: boom" in captured.out
+    assert "Traceback" in captured.err
