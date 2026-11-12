@@ -6,15 +6,20 @@
 #   a float or None. source_address and all_errors are not declared.
 # - socket(family, type, proto), with the AF_INET, AF_INET6 and SOCK_STREAM
 #   constants (ints here; CPython's are IntEnum members of the same values).
-#   fileno is not declared.
+#   fileno is not declared. The options setsockopt() sets: SOL_SOCKET with
+#   SO_REUSEADDR, and IPPROTO_IPV6 with IPV6_V6ONLY (ints, Linux's values,
+#   the only system the package runs on, the same on x86_64 and aarch64).
 # - On a socket: bind(address, /) and getsockname() of an AF_INET socket, whose
 #   address is a (host, port) pair, and bind() of an AF_INET6 one given the
 #   same pair (CPython fills in flowinfo and scope_id), close(), and `with`
-#   (__enter__ returns the socket, __exit__ closes it).
+#   (__enter__ returns the socket, __exit__ closes it), and
+#   setsockopt(level, optname, value, /) of an int level and option and an
+#   int or bytes value (CPython's setsockopt(level, optname, None, optlen)
+#   form is not declared).
 # - gethostname().
 #
-# The rest of the module is not declared. Nothing here connects, binds or
-# asks the system: the check sees a socket bound to port 0 of an empty host,
+# The rest of the module is not declared. Nothing here connects, binds, sets
+# an option or asks the system: the check sees a socket bound to port 0 of an empty host,
 # on a host whose name is empty.
 
 import internal.static as static
@@ -22,6 +27,10 @@ import internal.static as static
 AF_INET = 2
 AF_INET6 = 10
 SOCK_STREAM = 1
+SOL_SOCKET = 1
+SO_REUSEADDR = 2
+IPPROTO_IPV6 = 41
+IPV6_V6ONLY = 26
 
 
 def _positional_only(args, where: Literal[str]):
@@ -45,6 +54,18 @@ class socket:
     def bind(self, *address) -> None:
         _positional_only(address, "bind()")
         value: tuple[str, int] = address[0]
+
+    # setsockopt(level, optname, value, /): positional only in CPython; the
+    # value is an int or bytes (a str here, as the check reads bytes).
+    def setsockopt(self, *args) -> None:
+        if static.len(args) != 3:
+            compile_error("setsockopt() takes a level, an option and a value, by position")
+        level: int = args[0]
+        optname: int = args[1]
+        if isinstance(args[2], int) or isinstance(args[2], str):
+            pass
+        else:
+            compile_error("setsockopt(): the value is an int or bytes")
 
     def getsockname(self) -> tuple[str, int]:
         return ("", 0)

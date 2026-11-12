@@ -59,6 +59,11 @@ X_OK = 1
 W_OK = 2
 R_OK = 4
 
+# The flags of os.open() the framework passes (Linux's values, the only
+# system the package runs on; the same on x86_64 and aarch64).
+O_RDONLY = 0
+O_CREAT = 64
+
 
 class _Environ:
     """What os.environ is: a MutableMapping of str to str (os._Environ)."""
@@ -275,6 +280,52 @@ def readlink(path, *_kw, dir_fd: Optional[int] = None) -> str:
 # close(fd): a descriptor tempfile.mkstemp() returned.
 def close(fd: int) -> None:
     pass
+
+
+# open(path, flags, mode=0o777, *, dir_fd=None): a new file descriptor, an
+# int (0 here, and nothing is opened). The flags and the mode are ints.
+def open(path, flags: int, mode: int = 511, *_kw, dir_fd: Optional[int] = None) -> int:
+    _keyword_only(_kw, "open(): dir_fd")
+    fspath(path)
+    return 0
+
+
+# fdopen(fd, mode="r", buffering=-1, encoding=None, *args, **kwargs): a file
+# object on the descriptor, as open() builds it, which takes what follows
+# (errors, newline, closefd) by position or keyword; an IO[bytes] for a
+# binary mode, an IO[str] otherwise (one type here, as the pathlib shim's
+# Path.open() gives). The opener open() also takes is not declared.
+def fdopen(
+    fd: int,
+    mode: str = "r",
+    buffering: int = -1,
+    encoding: Optional[str] = None,
+    errors: Optional[str] = None,
+    newline: Optional[str] = None,
+    closefd: bool = True,
+):
+    # Imported here: Codon's runtime imports os before what typing's shim
+    # imports is defined.
+    from typing import IO
+
+    return IO[str]("", mode)
+
+
+# access(path, mode, *, dir_fd=None, effective_ids=False,
+# follow_symlinks=True): whether this process may use *path* as the mode
+# (F_OK, or R_OK, W_OK and X_OK or-ed) asks; False here, as a query of the
+# pathlib shim is, since nothing is asked of the system.
+def access(
+    path,
+    mode: int,
+    *_kw,
+    dir_fd: Optional[int] = None,
+    effective_ids: bool = False,
+    follow_symlinks: bool = True,
+) -> bool:
+    _keyword_only(_kw, "access(): dir_fd, effective_ids, follow_symlinks")
+    fspath(path)
+    return False
 
 
 # chmod(path, mode, *, dir_fd=None, follow_symlinks=True).
