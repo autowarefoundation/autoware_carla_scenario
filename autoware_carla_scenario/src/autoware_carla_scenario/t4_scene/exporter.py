@@ -40,6 +40,9 @@ class T4SceneExporter:
             ``t4scene`` key, rather than failing each run's export.
     """
 
+    step_s: float
+    max_distance_m: Optional[float]
+
     def __init__(
         self, *, step_s: float = 0.1, max_distance_m: Optional[float] = 100.0
     ) -> None:

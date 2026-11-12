@@ -328,15 +328,6 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "model declares only the T4Recorder and T4Recording the checked "
         "runner drives",
     ),
-    f"{_PACKAGE}.t4_scene": _each(
-        "LOG_SUFFIX MAP_SUFFIX SCENE_SUFFIX T4SceneExport map_resource "
-        "trajectory_log_to_t4_scene",
-        "writes a run's trajectory log as a T4Scene, which the runner does "
-        "after a run (t4scene.enabled) and scenario-t4scene does from the "
-        "shell, not a scenario; the model declares only the T4SceneExporter "
-        "the checked runner hands each log to and the write_t4_scene() the "
-        "checked t4_scene.exporter writes it with",
-    ),
     f"{_PACKAGE}.trajectory_recorder": {
         "SCHEMA_PATH": (
             "the path of the JSON Schema beside the Python module "
@@ -732,6 +723,15 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "builds the bridge from it (examples/run.py), not a scenario"
         )
     },
+    "T4SceneExport": _members(
+        "map_resource scene",
+        "the converted log's Protobuf messages (t4_scene.proto's T4Scene and "
+        "MapResource), which the model has no type for; the model declares "
+        "the class by name only, so the checked t4_scene package's re-export "
+        "resolves, and a scenario cannot build one (its constructor is a "
+        "compile error): the runner converts a run's log after the run "
+        "(t4scene.enabled)",
+    ),
     "TrajectoryRecorder": {
         "record_metric": (
             "writes the metrics computed once the run is over; only "
