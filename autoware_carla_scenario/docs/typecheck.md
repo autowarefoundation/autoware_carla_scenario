@@ -845,7 +845,8 @@ What `test_typecheck_model.py` compares, model by model:
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
   `maps/z_offset_cache`, `maps/road_network_cache`, `pedestrian/soma`,
   `ui/models`, `_ros2`, `metrics`, `measures`, `scaffold/generator`,
-  `commonroad/session`, `commonroad/worker` and `utils/traffic_light`, each declaring exactly the names compared;
+  `commonroad/session`, `commonroad/worker`, `hils/config` and
+  `utils/traffic_light`, each declaring exactly the names compared;
   `ros2/cyclone` where cyclonedds is installed.
 - **Every public name of a modelled module**: each name a module the model
   has exports in Python (its `__all__`, or the public names it defines when
@@ -2497,7 +2498,8 @@ the criteria and the cases compared from a baseline's runs to a candidate's,
 and the records grouped by scenario; not the evaluator itself, which reads the
 gate's pydantic model and openodd's merged coverage), the HILS bridge's wire format (a command's values included)
 and its configuration's sensor spec and the check of a field's signal name
-(not the YAML reading around it), how an error shows an integer too long for
+(not the YAML reading around it, `hils.config`; the `hils` package's
+`__init__`, which re-exports them, is checked), how an error shows an integer too long for
 `repr()` (`value_text.huge_integer()`, which `hils.config` re-exports, #1704), the
 example scenarios and their configs, the SLURM launcher's job scripts, where
 a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
@@ -2939,7 +2941,7 @@ stands in for it in the check's workspace:
   `maps/cache.codon`, `autoware_stack/devcontainer.codon`,
   `ros2/cyclone.codon`, `pedestrian/soma.codon`,
   `scaffold/generator.codon`, `commonroad/session.codon`,
-  `commonroad/worker.codon`), or, for a module of
+  `commonroad/worker.codon`, `hils/config.codon`), or, for a module of
   the top-level package, a model of that module (`trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
   closes, whose JSON lines hold values of mixed types; `environment.codon`,
@@ -4340,7 +4342,13 @@ What Codon 0.19 needs that Python does not, beyond
   (`CommonRoadSettings` leaves out `workers` and `heavy_metrics`, whose
   defaults the machine and the environment decide: `_OMITTED_PARAMETERS`;
   `CommonRoadWorkerError`, a `RuntimeError` with no constructor of its own,
-  takes `*args`, as Python's does). Each constructor takes
+  takes `*args`, as Python's does), and `DeviceSpec`, `FieldSource`,
+  `HilsConfig` and `MessageSpec` (`hils/config.codon`, yaml and a document
+  of any shape), which the checked `hils` package re-exports with
+  `load_config()` and `parse_config()`, `compile_error`s too: scenario-hils
+  reads the HILS bridge's configuration on the HILS PC, not a scenario (the
+  package imports `SensorSpec` and `HilsConfigError` from the checked
+  `hils.sensor_spec`, which defines them). Each constructor takes
   Python's parameters and is a `compile_error`: its config
   (`AutowareBridgeConfig`, `DriverClientConfig`) is a checked class the model
   does not have, the class is only ever built by openodd's merge, its
