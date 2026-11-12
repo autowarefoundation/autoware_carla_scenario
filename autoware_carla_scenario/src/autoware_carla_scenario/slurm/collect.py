@@ -143,33 +143,111 @@ def _missing_message(
 ) -> tuple[str, str, int | None]:
     """The message of *case*, which has no outcome, which advice it gives
     (``_RUNNING``, ``_IN_FLIGHT``, ``_TIMED_OUT`` or ``_RESUBMIT``), and the
-    submission that advice is about (None for ``_RESUBMIT``).
+    submission that advice is about (None for ``_RESUBMIT``): what
+    :func:`_advice` says of what the batch's records say of it.
+
+    The records are read here, in the order and only as far as before the
+    advice was split from them: the clock is read as often, and a state no
+    set holds or a ``submitted_at`` no float holds raises in the same cases
+    (each condition below short-circuits as the advice's did)."""
+    where = _last_submission_of(layout, case)
+    if where is None:
+        return _advice(
+            layout,
+            target,
+            submitted=False,
+            index=0,
+            task=0,
+            job="",
+            has_job=False,
+            state="",
+            has_status=False,
+            unfinished=False,
+            error=None,
+            note="",
+            timed_out=False,
+            in_flight=False,
+        )
+    index, task, submission = where
+    status = layout.read_task(index, task)
+    state = "never started" if status is None else status.get("state", "?")
+    job = submission.get("job_id")
+    # Never "job None" (#1796): why the submission has no job id.
+    note = "" if job else no_job_note(submission)
+    error = f"{status['error']}" if status is not None and status.get("error") else None
+    # Queued (no status yet) or running -- or killed before its status said
+    # so; a state no set holds raises, where a job's task has a status.
+    unfinished = bool(job) and status is not None and state in _UNFINISHED_TASK_STATES
+    timed_out = (
+        not job and sbatch_timed_out(submission) and sbatch_in_flight(submission)
+    )
+    in_flight = not job and not timed_out and sbatch_in_flight(submission)
+    return _advice(
+        layout,
+        target,
+        submitted=True,
+        index=index,
+        task=task,
+        job=f"{job}",
+        has_job=bool(job),
+        state=f"{state}",
+        has_status=status is not None,
+        unfinished=unfinished,
+        error=error,
+        note=note,
+        timed_out=timed_out,
+        in_flight=in_flight,
+    )
+
+
+def _advice(
+    layout: BatchLayout,
+    target: str,
+    *,
+    submitted: bool,
+    index: int,
+    task: int,
+    job: str,
+    has_job: bool,
+    state: str,
+    has_status: bool,
+    unfinished: bool,
+    error: str | None,
+    note: str,
+    timed_out: bool,
+    in_flight: bool,
+) -> tuple[str, str, int | None]:
+    """The message of a case with no outcome, which advice it gives
+    (``_RUNNING``, ``_IN_FLIGHT``, ``_TIMED_OUT`` or ``_RESUBMIT``), and the
+    submission that advice is about (None for ``_RESUBMIT``), from what the
+    batch's records say of it (:func:`_missing_message` reads them): whether
+    any submission gave it (*submitted*), and if so the last one (*index*), its
+    *task*, the submission's *job* id as text and whether it has one
+    (*has_job*), the task's *state* as text and whether it has a status
+    (*has_status*), whether that state is one of an unfinished task
+    (*unfinished*), its *error* (None when it has none), why the submission
+    has no job id (*note*), whether its sbatch timed out less than
+    SBATCH_IN_FLIGHT_SECONDS ago (*timed_out*), and, if not, whether it is
+    in flight (*in_flight*).
 
     The advice is chosen from what the batch's records say, asking SLURM
     nothing, as ``wait`` words it (#1801): a resubmit is advised only where
     ``resubmit`` takes it, or with the reason it is refused for now."""
-    where = _last_submission_of(layout, case)
     resubmit = f"Run it again with: scenario-slurm resubmit {target}"
     advice = _RESUBMIT
     about: int | None = None
-    if where is None:
+    if not submitted:
         detail = "it was never submitted"
         then = resubmit
     else:
-        index, task, submission = where
-        status = layout.read_task(index, task)
-        state = "never started" if status is None else status.get("state", "?")
-        job = submission.get("job_id")
-        if job:
+        if has_job:
             detail = f"task {task} of job {job} {state}"
         else:
             # Never "job None" (#1796): say why the submission has no job id.
-            detail = (
-                f"task {task} of submission {index} {state}; {no_job_note(submission)}"
-            )
-        if status is not None and status.get("error"):
-            detail += f": {status['error']}"
-        if job and (status is None or state in _UNFINISHED_TASK_STATES):
+            detail = f"task {task} of submission {index} {state}; {note}"
+        if error is not None:
+            detail += f": {error}"
+        if has_job and (not has_status or unfinished):
             # Queued (no status yet) or running -- or killed before its status
             # said so: only squeue can tell, and resubmit refuses while it is.
             advice, about = _RUNNING, index
@@ -179,14 +257,14 @@ def _missing_message(
                 "once it has ended, run the case again with: "
                 f"scenario-slurm resubmit {target}"
             )
-        elif not job and sbatch_timed_out(submission) and sbatch_in_flight(submission):
+        elif not has_job and timed_out:
             advice, about = _TIMED_OUT, index
             then = (
                 "If `squeue --me` lists the job, collect the batch once it "
                 f"ends: scenario-slurm collect {target}; if not, run the case "
                 f"again with: scenario-slurm resubmit {target} ({_REFUSED_UNTIL})"
             )
-        elif not job and sbatch_in_flight(submission):
+        elif not has_job and in_flight:
             advice, about = _IN_FLIGHT, index
             then = (
                 "Its submission is being submitted; try again once sbatch "
