@@ -3585,7 +3585,10 @@ same action means "every lane outside a junction" on any map:</p>
   one's CARLA <code>(x, y, z)</code>, so a sink or a construction zone tells a road from
   the overpass above it (<code>on_lanelet</code> reads the height); <code>z</code> is <code>None</code> for a
   vehicle SUMO's queue model holds (on a lane's 2D shape), which is then
-  placed in plan view alone. Under <code>traffic=sumo</code> they are
+  placed in plan view alone. A vehicle SUMO has not inserted yet -- it waits
+  while its spot is taken, often by a SUMO vehicle CARLA does not mirror -- is
+  given at the spot <code>spawn_background</code> was asked for, as it will be on the road
+  once the spot clears. Under <code>traffic=sumo</code> they are
   SUMO vehicles that wander the network (a random way out at each junction) and
   are mirrored into CARLA like the rest of SUMO's traffic; ones placed during
   initialization have SUMO's warm-up to spread out. Under
@@ -3605,9 +3608,12 @@ same action means "every lane outside a junction" on any map:</p>
   <code>TrafficSourceAction</code>, by <code>background_traffic.source.speed_kmh</code> and by the
   editor's validator, because a vehicle that never moves is no traffic (a parked
   car is an entity). <strong><code>max_vehicles</code></strong> counts every background vehicle on the
-  road, whichever source made it.</li>
+  road, whichever source made it, and every one still waiting to enter it
+  (under <code>sumo</code>, those SUMO has not inserted yet), so a source that keeps
+  asking for a taken spot does not let more than <code>max_vehicles</code> in at once
+  when it clears.</li>
 <li><strong><code>vehicles_per_minute</code></strong> and <strong><code>min_gap_m</code></strong> (the least distance from a new
-  vehicle to any other) must be finite and not negative; NaN or infinity is
+  vehicle to any other, a waiting one included) must be finite and not negative; NaN or infinity is
   refused by <code>TrafficSourceAction</code> and by <code>background_traffic.source.*</code>, naming
   the key, rather than crashing the run or being dropped without a word.</li>
 <li><strong><code>initial_vehicles</code></strong>, <strong><code>max_vehicles</code></strong> and <code>background_traffic.seed</code> are
@@ -3753,6 +3759,20 @@ stem like its <code>_result.json</code> (<code>CutInScenario.sumo/</code>, then
 keeps its own; the directory counts as one of the run's outputs, so a later
 run never takes its stem and a retried run clears it first
 (<code>run_outputs.RUN_DIR_SUFFIXES</code>).</p>
+<p><strong>When SUMO keeps failing</strong> -- 20 steps in a row raise -- the backend stops
+stepping it for the rest of the run, and leaves nothing it drove moving on
+its own: the mirrors of SUMO's vehicles, bicycles and pedestrians are
+destroyed, every scenario vehicle SUMO drove (<code>scenario_vehicles=sumo</code>), or
+had yet to put on its road after a spawn brought it up, loses
+its constant velocity (<code>vehicle_control=teleport</code>) or its last control
+(<code>physics</code>) and brakes to a stop, and every scenario pedestrian it walked
+stands still. Vehicles it does not drive (the ego, the TrafficManager's, those
+an action took over) are left alone; one an action hands back afterwards
+brakes to a stop too, and a SUMO vehicle's mirror an action hands back is
+destroyed. It logs an error, and the run goes on
+without traffic rather than failing: the result records when it gave up
+(<code>traffic.gave_up_at_s</code>, simulated seconds; <code>null</code> in a run where it did not),
+so a batch can tell such runs apart.</p>
 <p><strong>The network</strong> is the world's own road network. The backend takes the
 OpenDRIVE the world runs (the file the run installed, or
 <code>world.get_map().to_opendrive()</code>), converts it with
@@ -4328,7 +4348,7 @@ CARLA co-simulation; its adversarial behaviour generation is left to scenarios.<
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 16:17:46 UTC"><span class="timeago" datetime="2026-11-11T16:17:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 16:17:46 UTC">2026-11-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 12, 2026 02:09:21 UTC"><span class="timeago" datetime="2026-11-12T02:09:21+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 12, 2026 02:09:21 UTC">2026-11-12</span>
   </span>
 
     
