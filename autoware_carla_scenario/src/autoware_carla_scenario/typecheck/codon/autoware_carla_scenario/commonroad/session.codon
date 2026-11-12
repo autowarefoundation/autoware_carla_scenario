@@ -1,0 +1,57 @@
+# Model of autoware_carla_scenario.commonroad.session (docs/typecheck.md),
+# which imports concurrent.futures, starts the CommonRoad workers
+# (commonroad.worker, processes spoken to in JSON) and holds their settings as
+# values of any type. The checked commonroad package re-exports
+# CommonRoadSettings, close_commonroad_workers(), commonroad_settings(),
+# configure_commonroad_metrics() and evaluate_commonroad(), and only the names
+# are needed: no checked module builds, reads or calls them. They configure
+# and run the evaluation of the CommonRoad metrics, which the runner does
+# after a run (the `metrics` config), not a scenario: the class is declared by
+# name and constructor, each function with Python's signature, and every
+# constructor and function body is a compile error, so a scenario that
+# evaluates the CommonRoad metrics fails its check.
+
+
+# How the CommonRoad metrics are evaluated: Python's is a frozen dataclass.
+# Its workers and heavy_metrics fields default to what the machine and the
+# environment say (the CPU count, $AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS),
+# which no literal holds, so the constructor leaves them out
+# (test_typecheck_model.py, _OMITTED_PARAMETERS); it is a compile error all
+# the same.
+class CommonRoadSettings:
+    def __init__(self, period_s = 0.1, metric_periods_s = {"crime_ttr_s": 0.5},
+                 dt = 0.1, horizon_s = 3.0, radius_m = 100.0,
+                 reach_settings = None, cache_dir = None, command = None,
+                 request_timeout_s = 120.0, start_timeout_s = 1800.0):
+        compile_error("CommonRoadSettings is not modelled: the static check "
+                      "cannot build one (typecheck/codon/autoware_carla_scenario/"
+                      "commonroad/session.codon)")
+
+
+# configure_commonroad_metrics(**changes): the settings, changed.
+def configure_commonroad_metrics(**changes):
+    compile_error("configure_commonroad_metrics() is not modelled: it changes "
+                  "how the runner evaluates the CommonRoad metrics after a run "
+                  "(the metrics config), not a scenario")
+
+
+# commonroad_settings(): the settings the CommonRoad metrics are evaluated with.
+def commonroad_settings():
+    compile_error("commonroad_settings() is not modelled: it reads how the "
+                  "runner evaluates the CommonRoad metrics after a run (the "
+                  "metrics config), not a scenario")
+
+
+# evaluate_commonroad(frames, carla_map, keys): the metrics on a run's
+# recorded frames, by the workers.
+def evaluate_commonroad(frames, carla_map, keys):
+    compile_error("evaluate_commonroad() is not modelled: it evaluates the "
+                  "CommonRoad metrics on a run's recorded frames, in worker "
+                  "processes, which the runner does after a run, not a scenario")
+
+
+# close_commonroad_workers(): stops the workers, if any run.
+def close_commonroad_workers():
+    compile_error("close_commonroad_workers() is not modelled: it stops the "
+                  "CommonRoad workers, which the runner starts and stops, not "
+                  "a scenario")

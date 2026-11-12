@@ -1099,7 +1099,14 @@ def test_resume_from_is_this_main_calls_alone(
         lambda: seen.append(os.environ.get("SWEEP_RESUME_FROM")),
     )
     monkeypatch.delenv("SWEEP_RESUME_FROM", raising=False)
-    argv = ["scenario", "--multirun", "scenario=a/b"]
+    # The lanelet sweeper: the one Hydra sweeper that reads --resume-from,
+    # which a single run or the basic sweeper refuses (#2089).
+    argv = [
+        "scenario",
+        "--multirun",
+        "scenario=a/b",
+        "hydra/sweeper=lanelet_constraint",
+    ]
     monkeypatch.setattr(sys, "argv", [*argv, "--resume-from", "3"])
     run.main()
     monkeypatch.setattr(sys, "argv", list(argv))
@@ -1121,7 +1128,14 @@ def test_resume_from_puts_back_the_value_it_replaced(
     seen: list[str | None] = []
     run = _stub_main(monkeypatch, tmp_path, hydra_main)
     monkeypatch.setenv("SWEEP_RESUME_FROM", "5")
-    argv = ["scenario", "--multirun", "scenario=a/b"]
+    # The lanelet sweeper: the one Hydra sweeper that reads --resume-from,
+    # which a single run or the basic sweeper refuses (#2089).
+    argv = [
+        "scenario",
+        "--multirun",
+        "scenario=a/b",
+        "hydra/sweeper=lanelet_constraint",
+    ]
     monkeypatch.setattr(sys, "argv", [*argv, "--resume-from", "3"])
     with pytest.raises(SystemExit):
         run.main()

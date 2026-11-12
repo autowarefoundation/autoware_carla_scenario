@@ -17,6 +17,7 @@ import sys
 import textwrap
 import time
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -354,6 +355,28 @@ def test_process_group_logs_output(tmp_path: Path) -> None:
     group.stop()
 
     assert log.read_text().strip() == "hello"
+
+
+@pytest.mark.parametrize(
+    "env", [{"A=B": "1"}, {"A": "x\0y"}, {"A\0": "1"}], ids=["equals", "nul", "nul-key"]
+)
+def test_process_group_reports_an_environment_it_cannot_pass(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, env: dict[str, str]
+) -> None:
+    """#2079: Popen's ValueError is an AutowareStackError, and the log is closed."""
+    opened = []
+    path_open = Path.open
+
+    def recording_open(self: Path, *args: Any, **kwargs: Any) -> Any:
+        handle = path_open(self, *args, **kwargs)
+        opened.append(handle)
+        return handle
+
+    monkeypatch.setattr(Path, "open", recording_open)
+    with pytest.raises(AutowareStackError, match="Could not run 'true'"):
+        ProcessGroup(["true"], env={**os.environ, **env}, log_path=tmp_path / "out.log")
+    assert len(opened) == 1
+    assert opened[0].closed
 
 
 def test_process_group_reports_a_missing_command() -> None:
@@ -1495,6 +1518,67 @@ def test_command_launcher_fills_in_the_scenario_bridge(
     assert "python3 -m autoware_carla_scenario.autoware_bridge.ros_bridge" in written
     assert "-p bridge_address:=localhost:7" in written
     assert "-p use_sim_time:=true -p auto_engage:=false" in written
+
+
+def test_the_host_python_root_replaces_a_stale_link(tmp_path: Path) -> None:
+    """A link to another install is replaced, and no temporary link is left."""
+    root = host_python_root(tmp_path)
+    link = root / "autoware_carla_scenario" / "autoware_bridge"
+    link.unlink()
+    link.symlink_to(tmp_path, target_is_directory=True)
+
+    import random
+
+    state = random.getstate()
+    assert host_python_root(tmp_path) == root
+    # The temporary name's bits leave the module's (seedable) stream alone.
+    assert random.getstate() == state
+    assert link.resolve() == bridge_package_dir()
+    assert sorted(p.name for p in link.parent.iterdir()) == ["autoware_bridge"]
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork()")
+def test_the_host_python_root_is_made_by_processes_at_once(tmp_path: Path) -> None:
+    """#2079: runs started together all get the link, none an error."""
+    import traceback
+    import warnings
+
+    processes = 12
+    for trial in range(6):
+        cache = tmp_path / f"trial{trial}"
+        errors = tmp_path / f"errors{trial}"
+        errors.mkdir()
+        gate, release = os.pipe()
+        children = []
+        for index in range(processes):
+            with warnings.catch_warnings():
+                # Python 3.12+ warns about forking a process with threads.
+                warnings.simplefilter("ignore", DeprecationWarning)
+                child = os.fork()
+            if child == 0:  # pragma: no cover -- the child
+                status = 1
+                try:
+                    os.close(release)
+                    os.read(gate, 1)  # every child waits for the same moment
+                    host_python_root(cache)
+                    status = 0
+                except BaseException:
+                    (errors / str(index)).write_text(traceback.format_exc())
+                finally:
+                    os._exit(status)
+            children.append(child)
+        os.close(gate)
+        os.close(release)  # EOF: releases every child at once
+        statuses = [os.waitpid(child, 0)[1] for child in children]
+        failures = [p.read_text() for p in sorted(errors.iterdir())]
+        assert failures == []
+        assert statuses == [0] * processes
+
+        root = host_python_root(cache)
+        link = root / "autoware_carla_scenario" / "autoware_bridge"
+        assert link.is_symlink()
+        assert link.resolve() == bridge_package_dir()
+        assert sorted(p.name for p in link.parent.iterdir()) == ["autoware_bridge"]
 
 
 def test_the_host_python_root_holds_the_bridge_package_alone(tmp_path: Path) -> None:

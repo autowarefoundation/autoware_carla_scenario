@@ -4852,7 +4852,7 @@ def test_an_optional_of_every_model_class_with_subclasses_compiles(
     for i in range(len(classes)):
         program += [f"_x{i}: Optional[_C{i}] = None", f"print(_x{i} is None)"]
     toolchain = find_supported_codon()
-    _base_workspace(tmp_path, None, codon_path_dir())
+    _base_workspace(tmp_path, None, codon_path_dir(), toolchain)
     (tmp_path / "acs_optionals.py").write_text("\n".join(program) + "\n")
     proc = subprocess.run(  # noqa: S603 - a fixed compiler invocation
         [

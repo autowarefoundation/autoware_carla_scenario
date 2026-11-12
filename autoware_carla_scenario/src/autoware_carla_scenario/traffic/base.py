@@ -1113,7 +1113,11 @@ class TrafficBackend:
         the one over it (:func:`~autoware_carla_scenario.coordinate.on_lanelet`).
         ``z`` is ``None`` where the backend does not know it -- a vehicle the
         SUMO backend's queue model holds, on a lane's 2D shape -- and the
-        vehicle is then placed in plan view alone."""
+        vehicle is then placed in plan view alone.  A vehicle
+        :meth:`spawn_background` added that waits to enter the road (the SUMO
+        backend's, while its spot is taken) is one too, at the place it was
+        asked for: a source's ``max_vehicles`` and ``min_gap_m`` count it
+        (#2082)."""
         return {}
 
     def remove_background(self, world: "carla.World", handle: str) -> None:

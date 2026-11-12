@@ -54,7 +54,7 @@ from hydra import compose, initialize_config_dir
 from hydra.core.global_hydra import GlobalHydra
 from hydra.core.hydra_config import HydraConfig
 from hydra.types import RunMode
-from omegaconf import DictConfig, OmegaConf
+from omegaconf import DictConfig, ListConfig, OmegaConf
 
 from autoware_carla_scenario import (
     BaseScenario,
@@ -454,6 +454,65 @@ def build_ground_projection(cfg: DictConfig) -> GroundProjectionConfig:
     return GroundProjectionConfig(ray_distance_upper=upper, ray_distance_lower=lower)
 
 
+def _lanelet_id(key: str, value: Any) -> int:
+    """The lanelet id *value* of *key* names, checked as every whole-number
+    setting is (:func:`~autoware_carla_scenario.odd.sampler.whole_number_setting`):
+    ``242``, ``242.0`` or ``"242"`` -- not ``242.7``, which ``int()`` alone
+    truncated to 242 and so spawned the ego on another lanelet, ``abc``, a
+    boolean or null (#2089).
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    lanelet_id = whole_number_setting(key, value)
+    if lanelet_id is None:
+        raise ValueError(f"{key} must be a lanelet id (a whole number), got None")
+    return lanelet_id
+
+
+def _waypoint_lanelet_ids(ego_cfg: Any) -> list[int]:
+    """``ego.waypoint_lanelet_ids`` of the ``ego`` group *ego_cfg*, each
+    checked (:func:`_lanelet_id`); empty when absent, null or empty.
+
+    Raises:
+        ValueError: naming the key (and the item), when it is not a list or
+            an item is not a lanelet id.
+    """
+    value = ego_cfg.get("waypoint_lanelet_ids")
+    if value is None:
+        return []
+    if not isinstance(value, (ListConfig, list, tuple)):
+        raise ValueError(
+            f"ego.waypoint_lanelet_ids must be a list of lanelet ids, got {value!r}"
+        )
+    return [
+        _lanelet_id(f"ego.waypoint_lanelet_ids[{i}]", item)
+        for i, item in enumerate(value)
+    ]
+
+
+def _check_ego_lanelet_ids(cfg: DictConfig) -> None:
+    """Refuse the ego's lanelet ids -- ``ego.spawn_lanelet_id``,
+    ``ego.goal_lanelet_id`` and ``ego.waypoint_lanelet_ids`` -- unless each
+    is a whole number (:func:`_lanelet_id`), as building the ego would
+    (:func:`build_spawn_pose`, :func:`build_goal_pose`,
+    :func:`build_waypoint_poses`), so a batch or a sweep refuses them before
+    CARLA starts (#2089).  A spawn or goal that is absent or null is left to
+    the build, which reads it as none or refuses it.
+
+    Raises:
+        ValueError: naming the key of the value refused.
+    """
+    ego_cfg = cfg.get("ego")
+    if not isinstance(ego_cfg, (DictConfig, Mapping)):
+        return
+    for key in ("spawn_lanelet_id", "goal_lanelet_id"):
+        value = ego_cfg.get(key)
+        if value is not None:
+            _lanelet_id(f"ego.{key}", value)
+    _waypoint_lanelet_ids(ego_cfg)
+
+
 def build_spawn_pose(cfg: DictConfig) -> Lanelet2Pose:
     """Extract the ego's spawn pose from the ``ego.spawn_*`` keys.
 
@@ -465,7 +524,7 @@ def build_spawn_pose(cfg: DictConfig) -> Lanelet2Pose:
     """
     ego_cfg = cfg.ego
     return Lanelet2Pose(
-        lanelet_id=int(ego_cfg.spawn_lanelet_id),
+        lanelet_id=_lanelet_id("ego.spawn_lanelet_id", ego_cfg.spawn_lanelet_id),
         s=_ego_number("ego.spawn_s", ego_cfg.spawn_s),
         t=_ego_number("ego.spawn_t", ego_cfg.get("spawn_t", 0.0) or 0.0),
         heading=_ego_number(
@@ -485,7 +544,7 @@ def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
     if goal_lanelet_id is None:
         return None
     return Lanelet2Pose(
-        lanelet_id=int(goal_lanelet_id),
+        lanelet_id=_lanelet_id("ego.goal_lanelet_id", goal_lanelet_id),
         s=_ego_number("ego.goal_s", ego_cfg.get("goal_s", 0.0)),
     )
 
@@ -500,8 +559,10 @@ def build_waypoint_poses(cfg: DictConfig) -> list[Lanelet2Pose]:
     ``setup()``, e.g. from the route it already asserts.
     """
     ego_cfg = cfg.get("ego") or {}
-    lanelet_ids = ego_cfg.get("waypoint_lanelet_ids") or []
-    return [Lanelet2Pose(lanelet_id=int(x), s=0.0) for x in lanelet_ids]
+    return [
+        Lanelet2Pose(lanelet_id=lanelet_id, s=0.0)
+        for lanelet_id in _waypoint_lanelet_ids(ego_cfg)
+    ]
 
 
 def build_planned_route(cfg: DictConfig, name: str = "") -> PlannedRoute:
@@ -526,7 +587,7 @@ def build_planned_route(cfg: DictConfig, name: str = "") -> PlannedRoute:
     if spawn_lanelet_id is None:
         raise RouteError("no ego.spawn_lanelet_id: the route has no start")
     start = Lanelet2Pose(
-        lanelet_id=int(spawn_lanelet_id),
+        lanelet_id=_lanelet_id("ego.spawn_lanelet_id", spawn_lanelet_id),
         s=_ego_number("ego.spawn_s", ego_cfg.get("spawn_s", 0.0)),
         t=_ego_number("ego.spawn_t", ego_cfg.get("spawn_t", 0.0) or 0.0),
         heading=_ego_number(
@@ -742,7 +803,10 @@ def _launcher_str_mapping(name: str, value: object) -> dict[str, str]:
     """``autoware.launcher.<name>`` (``env``, ``mounts``), checked: a mapping
     whose values are strings or numbers, each made a ``str``; null or absent is
     empty.  A value that is null, a boolean, a list or a mapping is refused, as
-    :func:`_launcher_str_list` refuses such an argument.
+    :func:`_launcher_str_list` refuses such an argument.  So is a key or a
+    value holding a NUL, and, in ``env``, an empty variable name or one holding
+    ``=``: no process can be handed those, and ``Popen`` would refuse them only
+    once the stack starts (#2079).
 
     Raises:
         ValueError: naming the key.
@@ -760,7 +824,19 @@ def _launcher_str_mapping(name: str, value: object) -> dict[str, str]:
                 f"autoware.launcher.{name}.{key} must be a string or a number, "
                 f"not {type(item).__name__} {item!r}"
             )
-    return {str(key): str(item) for key, item in value.items()}
+    mapping = {str(key): str(item) for key, item in value.items()}
+    for key, item in mapping.items():
+        if "\0" in key or "\0" in item:
+            raise ValueError(
+                f"autoware.launcher.{name}: {key!r}: {item!r} holds a NUL "
+                "character, which no process can be handed"
+            )
+        if name == "env" and (not key or "=" in key):
+            raise ValueError(
+                f"autoware.launcher.env: {key!r} is not an environment variable "
+                "name: it must be non-empty and hold no '='"
+            )
+    return mapping
 
 
 def _launcher_bridge_parameters(settings: dict[str, Any]) -> dict[str, Any]:
@@ -891,6 +967,37 @@ def _check_autoware_liveness(
         raise ValueError(f"autoware.{problem}")
 
 
+#: The ego entities ``ego.entity`` may name (:func:`build_ego_entity`).
+EGO_ENTITIES: tuple[str, ...] = (
+    "autopilot",
+    "autoware",
+    "carla_driver",
+    "ros2",
+    "hils",
+)
+
+
+def ego_entity_name(cfg: DictConfig) -> str:
+    """``ego.entity`` of *cfg*, checked: one of :data:`EGO_ENTITIES`;
+    ``autopilot`` when the config has no ``ego`` group or does not set it.
+
+    :func:`check_batch_configs` calls this, so a run, a batch or a lanelet
+    sweep naming an unknown entity is refused before anything starts rather
+    than once its scenario is built (#2089).
+
+    Raises:
+        ValueError: naming the key, when it names no entity.
+    """
+    ego_cfg = cfg.get("ego") or {}
+    entity = str(ego_cfg.get("entity", "autopilot"))
+    if entity not in EGO_ENTITIES:
+        expected = ", ".join(repr(name) for name in EGO_ENTITIES)
+        raise ValueError(
+            f"Unknown ego.entity: {entity!r}. Expected one of: {expected}."
+        )
+    return entity
+
+
 def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
     """Build the ego entity selected by ``cfg.ego.entity``.
 
@@ -906,8 +1013,7 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
             ``ego.native_autoware_interface`` is refused
             (:func:`_native_autoware_interface`).
     """
-    ego_cfg = cfg.get("ego") or {}
-    entity = str(ego_cfg.get("entity", "autopilot"))
+    entity = ego_entity_name(cfg)
     native = _native_autoware_interface(cfg)
 
     if entity == "autopilot":
@@ -1044,11 +1150,8 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
             episode_name=str(scenario_cfg.get("name", "")),
         )
 
-    msg = (
-        f"Unknown ego.entity: {entity!r}. "
-        "Expected one of: 'autopilot', 'autoware', 'carla_driver', 'ros2', 'hils'."
-    )
-    raise ValueError(msg)
+    # Unreachable: ego_entity_name() refused any other name.
+    raise ValueError(f"Unknown ego.entity: {entity!r}")
 
 
 def _legacy_traffic_manager_options(cfg: DictConfig) -> dict[str, Any]:
@@ -1373,9 +1476,13 @@ def _with_fog_density_scale(driver: dict[str, Any], cfg: DictConfig) -> dict[str
 
 
 def _map_source(cfg: DictConfig) -> str | None:
-    """Where the map came from: ``map.source``, else ``map.directory``."""
+    """Where the map came from: ``map.directory``, else ``map.source``.
+
+    The same order :func:`resolve_map_paths` resolves them in: a directory on
+    this machine wins over a source, so the map the run read is the one named.
+    """
     map_cfg = cfg.get("map") or {}
-    for key in ("source", "directory"):
+    for key in ("directory", "source"):
         value = map_cfg.get(key)
         if value:
             return str(value)
@@ -2104,7 +2211,7 @@ def _batch_queue(
     return ScenarioQueue(
         host=first_cfg.server.host,
         port=first_cfg.server.port,
-        tm_port=first_cfg.traffic_manager.port,
+        tm_port=_traffic_manager_port(first_cfg),
         xodr_path=map_paths.install_xodr,
         overwrite_xodr=map_paths.overwrite_xodr,
         opendrive_path=map_paths.opendrive_path,
@@ -2147,23 +2254,42 @@ def cooldown_max_retries(cfg: DictConfig) -> int:
     return retries
 
 
-def _check_port_setting(cfg: DictConfig, section: str) -> None:
+def _check_port_setting(
+    cfg: DictConfig, section: str, *, null_is_default: bool = True
+) -> None:
     """Refuse ``{section}.port`` of *cfg* unless it is a TCP port: an integer
-    (not a bool) within 1-65535.  Unset or null is left to the reader, as it
-    was.  Without this a port of 0, 70000 or ``true`` reaches the CARLA client
-    and is refused only once a server is up.
+    (not a bool) within 1-65535.  Unset is left to the reader, as it was, and
+    so is null when *null_is_default*: ``traffic_manager.port: null`` is the
+    TrafficManager's default port (:data:`DEFAULT_TM_PORT`,
+    :func:`_traffic_manager_port`).  ``server.port`` has no default to fall
+    back on, so null is refused there (``null_is_default=False``, #2089).
+    Without this a port of 0, 70000, ``true`` or null reaches the CARLA
+    client and is refused only once a server is up.
 
     Raises:
         ValueError: naming the key.
     """
     node = cfg.get(section)
-    port = None if node is None else node.get("port")
-    if port is None:
+    if not isinstance(node, (DictConfig, Mapping)) or "port" not in node:
         return
+    port = node.get("port")
+    if port is None:
+        if null_is_default:
+            return
+        raise ValueError(f"{section}.port must be an integer within 1-65535 (got None)")
     if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
         raise ValueError(
             f"{section}.port must be an integer within 1-65535 (got {port!r})"
         )
+
+
+def _traffic_manager_port(cfg: DictConfig) -> int:
+    """``traffic_manager.port`` of *cfg*, the port the runner's TrafficManager
+    and the scenario's entities are given: :data:`DEFAULT_TM_PORT` when it is
+    null, as the traffic backend reads it (:func:`build_traffic_backend`,
+    ``traffic.options.port``).  Checked by :func:`_check_port_setting`."""
+    port = cfg.traffic_manager.port
+    return DEFAULT_TM_PORT if port is None else int(port)
 
 
 def _check_host_setting(cfg: DictConfig) -> None:
@@ -2196,7 +2322,7 @@ def _check_batch_queue_settings(cfg: DictConfig) -> None:
             setting the queue would refuse.
     """
     _check_host_setting(cfg)
-    _check_port_setting(cfg, "server")
+    _check_port_setting(cfg, "server", null_is_default=False)
     _check_port_setting(cfg, "traffic_manager")
     _cooldown_seconds(cfg)
     cooldown_max_retries(cfg)
@@ -2380,7 +2506,8 @@ def check_batch_configs(
 
     The ``rerun``, ``t4``, ``driver`` and ``t4scene`` settings, as the batch
     reads them (:func:`_check_batch_writer_settings`); each case's timeout,
-    seeds (``seed``, ``sweep.odd_sample.seed`` and ``.count``),
+    ``typecheck`` mode (:func:`~autoware_carla_scenario.typecheck.mode.typecheck_mode`),
+    ``ego.entity`` (:func:`ego_entity_name`), seeds (``seed``, ``sweep.odd_sample.seed`` and ``.count``),
     ``background_traffic`` (:func:`background_traffic_settings`),
     ``environment`` (:func:`environment_settings`) and the form of its
     ``rules`` (:func:`_check_weather_rules`), ``driver`` settings of an
@@ -2391,7 +2518,9 @@ def check_batch_configs(
     class refuses (:func:`_check_scenario_config`), the ego's and entities'
     numbers (``ego.initial_speed_kmh``, the spawn and goal poses,
     ``entity.spawn_retry_*_step`` and ``entity.spawn_retry_max_count``:
-    :func:`_check_ego_numbers`), ``ego.native_autoware_interface``
+    :func:`_check_ego_numbers`), lanelet ids (``ego.spawn_lanelet_id``,
+    ``ego.goal_lanelet_id``, ``ego.waypoint_lanelet_ids``:
+    :func:`_check_ego_lanelet_ids`), ``ego.native_autoware_interface``
     (:func:`_native_autoware_interface`), ``odd_case``
     and ``metrics.heavy`` (:func:`metrics_heavy`); and the server, traffic and Autoware launcher settings its
     queue is built from (:func:`_batch_queue`, :func:`run_scenario`), once for
@@ -2426,6 +2555,10 @@ def check_batch_configs(
     for i, cfg in enumerate(configs):
         try:
             run_timeout_seconds(cfg)
+            # When the scenario is statically checked, and which ego drives
+            # it: each refused only once the scenario was built (#2089).
+            typecheck_mode(cfg)
+            ego_entity_name(cfg)
             _check_seeds(cfg)
             background_traffic_settings(cfg)
             environment_settings(cfg)
@@ -2437,6 +2570,7 @@ def check_batch_configs(
             _odd_case(cfg)
             build_ground_projection(cfg)
             _check_ego_numbers(cfg)
+            _check_ego_lanelet_ids(cfg)
             _native_autoware_interface(cfg)
             # Every case's, though apply_metrics reads only the first set.
             metrics_heavy(cfg)
@@ -3654,7 +3788,7 @@ def _run_scenario(
         scenario,
         host=cfg.server.host,
         port=cfg.server.port,
-        tm_port=cfg.traffic_manager.port,
+        tm_port=_traffic_manager_port(cfg),
         xodr_path=map_paths.install_xodr,
         overwrite_xodr=map_paths.overwrite_xodr,
         opendrive_path=map_paths.opendrive_path,
@@ -3970,11 +4104,28 @@ def _main() -> None:
         _dispatch(resume_from, resume_into)
 
 
+def _lanelet_sweeper_requested_in_argv(argv: list[str]) -> bool:
+    """Whether *argv* selects the lanelet sweeper
+    (``hydra/sweeper=lanelet_constraint``, with or without ``+``).  Read
+    before Hydra composes, so a sweeper a config file selects is not seen."""
+    for arg in argv:
+        name, sep, value = arg.lstrip("+").partition("=")
+        if sep and name == "hydra/sweeper":
+            if value.strip().strip("'\"") == "lanelet_constraint":
+                return True
+    return False
+
+
 def _dispatch(resume_from: int, resume_into: str | None = None) -> None:
     """Run what ``sys.argv`` (``--resume-from`` and ``--resume-into`` taken
     off) selects: a batch of the scenarios a glob or a SLURM launcher names,
     or one through Hydra.  ``--resume-into`` is a local batch's alone: a run
-    through Hydra refuses it (exit 2)."""
+    through Hydra refuses it (exit 2).  ``--resume-from`` is a batch's (a
+    glob, or ``launcher=slurm``) or the lanelet sweeper's (``--multirun
+    hydra/sweeper=lanelet_constraint``): a single run or Hydra's basic
+    sweeper would ignore it, and refuses it (exit 2).  ``launcher=slurm``
+    runs a batch, so it needs ``scenario=``: without one it is refused
+    (exit 2) rather than running the default scenario here (#2089)."""
     # --no-wait: a launcher=slurm batch is submitted, and this exits.
     no_wait = "--no-wait" in sys.argv
     if no_wait:
@@ -3986,6 +4137,15 @@ def _dispatch(resume_from: int, resume_into: str | None = None) -> None:
     # A SLURM launcher runs a batch, so a single scenario selected with it runs
     # as one too: --multirun's cases, or the scenario once, as SLURM tasks.
     slurm = launcher_requested_in_argv(remaining) == "slurm"
+    if slurm and scenario_value is None and not asks_for_no_job(sys.argv):
+        # @hydra.main would compose the default scenario and run it here,
+        # ignoring the launcher (#2089).
+        print(  # noqa: T201
+            "Error: launcher=slurm runs a batch: name its scenarios with "
+            "scenario=<name or glob>",
+            file=sys.stderr,
+        )
+        sys.exit(2)
     if scenario_value is not None and (_is_glob_pattern(scenario_value) or slurm):
         # --multirun runs every case of each scenario's sweep in the batch's
         # one queue; the sweeper it would pick is the batch itself.  Read off
@@ -4045,6 +4205,20 @@ def _dispatch(resume_from: int, resume_into: str | None = None) -> None:
             print(  # noqa: T201
                 "Error: --resume-into resumes a local batch (a scenario glob); "
                 "a sweep resumes into its own directory with hydra.sweep.dir=",
+                file=sys.stderr,
+            )
+            sys.exit(2)
+        if resume_from > 0 and not (
+            _multirun_requested_in_argv(sys.argv)
+            and _lanelet_sweeper_requested_in_argv(sys.argv)
+        ):
+            # Only the lanelet sweeper reads SWEEP_RESUME_FROM: a single run
+            # or Hydra's basic sweeper would run every case (#2089).
+            print(  # noqa: T201
+                "Error: --resume-from resumes a batch (a scenario glob, or "
+                "launcher=slurm) or a lanelet sweep (--multirun "
+                "hydra/sweeper=lanelet_constraint); a single run or Hydra's "
+                "basic sweeper would ignore it",
                 file=sys.stderr,
             )
             sys.exit(2)

@@ -131,7 +131,8 @@ class RolloutInputs:
     stop_station_m: torch.Tensor
     #: ``+gate`` when a red or amber light applies, ``-gate`` otherwise.
     light_gate: torch.Tensor
-    #: The posted limit to hold ourselves to.
+    #: The speed to hold ourselves to: the lower of the cruise speed and the
+    #: posted limit (`STLDriverConfig.target_speed_mps`).
     speed_limit_mps: torch.Tensor
     #: Distance `makes_progress` asks the plan to cover.
     progress_target_m: torch.Tensor

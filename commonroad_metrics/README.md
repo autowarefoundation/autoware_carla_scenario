@@ -169,7 +169,8 @@ worker exits at its end, so a worker must not ignore the end of its input.
 A road user is `id` (positive), `kind` (`car`, `truck`, `bus`, `motorcycle`,
 `bicycle`, `pedestrian`), `x`, `y`, `yaw`, `vx`, `vy`, `ax`, `ay`, `yaw_rate`,
 `length` and `width`. A value is a number, `Infinity` (no conflict: TTC never
-comes) or `null` (nothing to measure from); a measure that failed is `null`
+comes), `-Infinity` (ALongReq when no braking avoids a contact within the
+horizon; BTN is `Infinity` then) or `null` (nothing to measure from); a measure that failed is `null`
 with its error. While the ego is on no lanelet every measure is `null`.
 `settings` takes `reach_settings` too: overrides of CommonRoad-Reach's
 configuration by section and key (`{"planning": {"size_grid": 0.3}}`).

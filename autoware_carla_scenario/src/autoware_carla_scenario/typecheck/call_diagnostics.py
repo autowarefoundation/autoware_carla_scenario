@@ -153,7 +153,7 @@ class _Files:
             return None
         if path not in self._trees:
             try:
-                text = Path(path).read_text()
+                text = Path(path).read_text(encoding="utf-8")
                 self._trees[path] = (ast.parse(text), text.splitlines())
             except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
                 self._trees[path] = None

@@ -18,12 +18,15 @@ from .config import (
     DeviceSpec,
     FieldSource,
     HilsConfig,
-    HilsConfigError,
     MessageSpec,
-    SensorSpec,
     load_config,
     parse_config,
 )
+
+# SensorSpec and HilsConfigError are the checked hils.sensor_spec's, which
+# hils.config re-exports: the same objects, imported from where they are
+# defined.
+from .sensor_spec import HilsConfigError, SensorSpec
 from .signals import SIGNALS, EgoState, ego_signals
 
 __all__ = [

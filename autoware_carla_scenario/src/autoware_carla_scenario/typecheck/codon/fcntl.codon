@@ -1,0 +1,37 @@
+# The part of Python's fcntl the checked framework names, for the checker
+# (docs/typecheck.md): flock(fd, operation, /), with CPython 3.10's
+# signature, and the LOCK_SH, LOCK_EX, LOCK_NB and LOCK_UN constants (ints,
+# as in CPython; the values are Linux's, the only system the package runs
+# on). The descriptor is an int or an object with a fileno() method (a file
+# object, typing.IO here), as CPython takes; the operation is an int. The
+# other functions and constants are not declared.
+# Nothing here runs: nothing is locked or unlocked.
+
+import internal.static as static
+
+LOCK_SH = 1
+LOCK_EX = 2
+LOCK_NB = 4
+LOCK_UN = 8
+
+
+def _descriptor(fd) -> None:
+    # An int, or what has a fileno() that gives one (an Optional of either
+    # unwrapped, as Codon passes one to a parameter of its type).
+    if isinstance(fd, int):
+        pass
+    elif isinstance(fd, Optional):
+        _descriptor(fd.__val__())
+    elif hasattr(fd, "fileno"):
+        number: int = fd.fileno()
+    else:
+        compile_error("flock(): the descriptor is an int or has a fileno() method")
+
+
+# flock(fd, operation, /): positional only in CPython; a `*args` of two here,
+# as Codon 0.19 has no `/`.
+def flock(*args) -> None:
+    if static.len(args) != 2:
+        compile_error("flock() takes exactly two arguments, by position")
+    _descriptor(args[0])
+    operation: int = args[1]

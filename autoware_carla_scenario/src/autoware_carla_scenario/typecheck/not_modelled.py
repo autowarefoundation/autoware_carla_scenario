@@ -319,6 +319,22 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "RerunConverter the checked runner hands each log to and "
         "recording_path, which names the recording it makes",
     ),
+    f"{_PACKAGE}.hils.config": _each(
+        "CLOCKS PHASES HilsConfigError InputSource InputSpec SensorSpec StepSpec",
+        "the HILS bridge's configuration, which scenario-hils reads on the "
+        "HILS PC, not a scenario; the model declares only what the checked "
+        "hils package re-exports of hils.config (CLOCKS, PHASES, "
+        "HilsConfigError and SensorSpec are the checked hils.sensor_spec's; "
+        "the package imports HilsConfigError and SensorSpec from there)",
+    ),
+    f"{_PACKAGE}.scaffold.generator": {
+        "TEMPLATES_DIR": (
+            "the directory of the templates beside the Python module, which "
+            "scenario-new renders a new scenario package from, not a "
+            "scenario; the model declares only what the checked scaffold "
+            "package re-exports"
+        ),
+    },
     f"{_PACKAGE}.t4": _each(
         "DATASET_SUFFIX INSTALL_HINT LIDAR_CHANNEL T4Settings T4UnavailableError "
         "active_recording camera_channel category_of dataset_path opencv_of_ftheta "
@@ -327,15 +343,6 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "package, which the runner does (t4.enabled), not a scenario; the "
         "model declares only the T4Recorder and T4Recording the checked "
         "runner drives",
-    ),
-    f"{_PACKAGE}.t4_scene": _each(
-        "LOG_SUFFIX MAP_SUFFIX SCENE_SUFFIX T4SceneExport map_resource "
-        "trajectory_log_to_t4_scene",
-        "writes a run's trajectory log as a T4Scene, which the runner does "
-        "after a run (t4scene.enabled) and scenario-t4scene does from the "
-        "shell, not a scenario; the model declares only the T4SceneExporter "
-        "the checked runner hands each log to and the write_t4_scene() the "
-        "checked t4_scene.exporter writes it with",
     ),
     f"{_PACKAGE}.trajectory_recorder": {
         "SCHEMA_PATH": (
@@ -475,6 +482,14 @@ _RUN_CLEANUP = (
     "(#371); a scenario never calls it, and a condition that overrides it "
     "needs no declaration in the model to do so"
 )
+_HILS_CONFIG = (
+    "a part of the HILS bridge's configuration, which scenario-hils reads "
+    "from YAML on the HILS PC (hils.config: a document of any shape, "
+    "constants of a Union Codon cannot express), not a scenario; the model "
+    "declares the class by name only, so the checked hils package's "
+    "re-export resolves, and a scenario cannot build one (its constructor "
+    "is a compile error)"
+)
 
 
 def _members(names: str, reason: str) -> dict[str, str]:
@@ -586,7 +601,29 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         _BY_NAME,
     ),
     "ConditionStatus": {"details": _CONDITION_DETAILS, "to_dict": _AS_DICT},
+    "CommonRoadSettings": _members(
+        "cache_dir command dt evaluates heavy_metrics horizon_s "
+        "metric_periods_s period_for period_s radius_m reach_settings "
+        "request_timeout_s start_timeout_s worker_settings workers",
+        "how the runner evaluates the CommonRoad metrics after a run (the "
+        "metrics config); the model declares the class by name only, so the "
+        "checked commonroad package's re-export resolves, and a scenario "
+        "cannot build one (its constructor is a compile error)",
+    ),
+    "CommonRoadWorker": _members(
+        "close command evaluate measures request running",
+        "a CommonRoad worker process, spoken to in JSON objects of mixed "
+        "value types (`dict[str, Any]`), which Codon cannot express; the "
+        "model declares the class by name only, so the checked commonroad "
+        "package's re-export resolves, and a scenario cannot build one (its "
+        "constructor is a compile error): commonroad.session starts the "
+        "workers after a run, not a scenario",
+    ),
     "CoverageCollector": {"to_dict": _AS_DICT},
+    "DeviceSpec": _members(
+        "codec inputs messages name options sensor url", _HILS_CONFIG
+    ),
+    "FieldSource": _members("constant offset resolve scale signal", _HILS_CONFIG),
     "CoverageReport": {
         **_members(
             "assumptions cases cell_flakiness entries entry flaky_cells odds weighted_outcomes",
@@ -615,6 +652,11 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "client_address client_connected close config configure is_ready port "
         "reroute seconds_since_mission_poll start take_turn_indicators",
         _BY_NAME,
+    ),
+    "HilsConfig": _members(
+        "canvas clock command_mode devices ego_wait host lifecycle port "
+        "role_name runner_listen steps timeout",
+        _HILS_CONFIG,
     ),
     "HilsEgoEntity": _members(
         "actor attaches_to_existing_actor carried_actor_ids change_lane command "
@@ -718,6 +760,24 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "ui/models.codon models the fields"
         )
     },
+    "PackageExistsError": {
+        "root": (
+            "the package directory that already exists; the model declares "
+            "the class by name only, so the checked scaffold package's "
+            "re-export resolves, and a scenario cannot build one (its "
+            "constructor is a compile error): create_scenario_package() raises "
+            "it, which scenario-new calls from the shell, not a scenario"
+        ),
+    },
+    "ScaffoldResult": _members(
+        "names root",
+        "the new scenario package's root and template variables; the model "
+        "declares the class by name only, so the checked scaffold package's "
+        "re-export resolves, and a scenario cannot build one (its constructor "
+        "is a compile error): create_scenario_package() returns it, which "
+        "scenario-new calls from the shell, not a scenario",
+    ),
+    "MessageSpec": _members("fields name period values", _HILS_CONFIG),
     "ScalarComparisonRule": {"to_dict": _AS_DICT},
     "ScenarioResult": {"to_dict": _AS_DICT},
     "Failure": {
@@ -732,6 +792,15 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
             "builds the bridge from it (examples/run.py), not a scenario"
         )
     },
+    "T4SceneExport": _members(
+        "map_resource scene",
+        "the converted log's Protobuf messages (t4_scene.proto's T4Scene and "
+        "MapResource), which the model has no type for; the model declares "
+        "the class by name only, so the checked t4_scene package's re-export "
+        "resolves, and a scenario cannot build one (its constructor is a "
+        "compile error): the runner converts a run's log after the run "
+        "(t4scene.enabled)",
+    ),
     "TrajectoryRecorder": {
         "record_metric": (
             "writes the metrics computed once the run is over; only "

@@ -88,7 +88,8 @@ def default_lock_dir(shm: Path = Path("/dev/shm")) -> Path:
     """
     path = shm / f"acs-slurm-ports-{os.getuid()}"
     try:
-        path.mkdir(mode=0o700, exist_ok=True)
+        # 0o700: Codon has no octal literal.
+        path.mkdir(mode=448, exist_ok=True)
     except OSError:
         return LOCK_DIR
     return path if os.access(path, os.W_OK | os.X_OK) else LOCK_DIR
@@ -166,7 +167,8 @@ def _try_lock(path: Path) -> IO[bytes] | None:
     """*path* opened and locked (exclusive, not waiting); None when another
     process holds it or it cannot be opened (another user's lock file)."""
     try:
-        fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
+        # 0o644: Codon has no octal literal.
+        fd = os.open(path, os.O_RDONLY | os.O_CREAT, 420)
     except OSError:
         return None
     stream = os.fdopen(fd, "rb")
@@ -190,13 +192,18 @@ class RosDomains:
     The locks go when :meth:`release` is called or the process ends.
     """
 
+    _lock_dir: Path | None
+    _highest: int
+    _mapped: dict[int, int]
+    _held: dict[int, IO[bytes]]
+
     def __init__(
         self, lock_dir: Path | None = None, *, highest: int = MAX_ROS_DOMAIN_ID
     ) -> None:
         self._lock_dir = lock_dir
         self._highest = highest
-        self._mapped: dict[int, int] = {}
-        self._held: dict[int, IO[bytes]] = {}
+        self._mapped = {}
+        self._held = {}
 
     @property
     def mapping(self) -> dict[int, int]:
@@ -338,9 +345,13 @@ class CarlaWatchdog:
     killed midway must not have dropped it.  A CARLA that survives keeps it.
     """
 
+    _process: subprocess.Popen[bytes] | None
+
     def __init__(self, slot: PortSlot, port_file: Path | None = None) -> None:
         pass_fds = [] if slot._lock is None else [slot._lock.fileno()]
-        self._process: subprocess.Popen[bytes] | None = subprocess.Popen(
+        # Typed through a local: Codon 0.19 infers Popen's type parameter
+        # from a Popen target, not from an Optional one.
+        process: subprocess.Popen[bytes] = subprocess.Popen(
             watchdog_argv(
                 sys.executable,
                 __name__,
@@ -353,6 +364,7 @@ class CarlaWatchdog:
             start_new_session=True,
             pass_fds=pass_fds,
         )
+        self._process = process
 
     def finish(self) -> None:
         """The worker cleaned up itself: the watchdog has nothing to do."""

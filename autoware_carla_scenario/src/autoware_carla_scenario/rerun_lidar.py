@@ -40,6 +40,7 @@ from typing import Any, Optional
 import numpy as np
 
 from .constants import FIXED_DELTA_SECONDS
+from .rerun import RerunUnavailableError
 
 # What a run's sensor recording is named, ``{stem}.sensors.rrd``, and where it
 # is: the path rule is the checked run_outputs's (#1678); the names they had
@@ -95,8 +96,13 @@ _lock = threading.Lock()
 _active: Optional["SensorRecorder"] = None
 
 
-class LidarRerunUnavailableError(RuntimeError):
-    """``rerun.lidar`` or ``rerun.cameras`` is set, but the Rerun SDK is not installed."""
+class LidarRerunUnavailableError(RerunUnavailableError):
+    """``rerun.lidar`` or ``rerun.cameras`` is set, but the Rerun SDK is not installed.
+
+    A :class:`~autoware_carla_scenario.rerun.RerunUnavailableError` (and so a
+    ``RuntimeError``): an extra the run asks for is missing, which the
+    ``scenario`` CLI and the lanelet sweeper refuse with exit 2 (#2089).
+    """
 
 
 def require_sdk() -> Any:

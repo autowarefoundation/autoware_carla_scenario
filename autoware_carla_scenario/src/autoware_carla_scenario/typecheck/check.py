@@ -332,7 +332,7 @@ def _model_file(module: str) -> Path:
 def _model_names(module: str) -> frozenset[str]:
     """The names model module *module* declares: what it defines or imports."""
     names: set[str] = set()
-    for node in ast.parse(_model_file(module).read_text()).body:
+    for node in ast.parse(_model_file(module).read_text(encoding="utf-8")).body:
         if isinstance(node, (ast.ClassDef, ast.FunctionDef)):
             names.add(node.name)
         elif isinstance(node, (ast.Assign, ast.AnnAssign)):
@@ -431,7 +431,7 @@ def _model_declarations() -> dict[str, set[str]]:
     classes: dict[str, tuple[list[str], set[str]]] = {}
     for path in sorted(model_dir().rglob("*.codon")):
         try:
-            tree = ast.parse(path.read_text())
+            tree = ast.parse(path.read_text(encoding="utf-8"))
         except SyntaxError:
             continue
         classes.update(class_declarations(tree))
@@ -781,14 +781,24 @@ class _Workspace:
     driver_label: str = _DRIVER_LABEL
 
 
-def _base_workspace(root: Path, driver: Any, codon_path: Path) -> _Workspace:
-    """The model, the shims and the CARLA API, in *root*."""
+def _base_workspace(
+    root: Path, driver: Any, codon_path: Path, toolchain: Toolchain
+) -> _Workspace:
+    """The model, the shims and the CARLA API, in *root*.
+
+    The standard library modules the model extends are *toolchain*'s, the
+    Codon that compiles the workspace and whose digest keys its verdict
+    (:func:`_toolchain_digest`), not whichever Codon a lookup finds (#2091).
+    """
     shutil.copytree(model_dir(), root, dirs_exist_ok=True)
     extensions = root / _STDLIB_EXTENSIONS
-    stdlib = find_codon().codon_dir / "lib" / "codon" / "stdlib"
+    stdlib = toolchain.codon_dir / "lib" / "codon" / "stdlib"
     for extension in sorted(extensions.glob("*.codon")):
         (root / extension.name).write_text(
-            (stdlib / extension.name).read_text() + "\n\n" + extension.read_text(),
+            (stdlib / extension.name).read_text(encoding="utf-8")
+            + "\n\n"
+            + extension.read_text(encoding="utf-8"),
+            encoding="utf-8",
         )
     shutil.rmtree(extensions)
     # The CARLA API: typesafe_carla's CODON_PATH directory (the library and
@@ -823,7 +833,11 @@ def _unchecked_warning(message: str, path: Path, line: int, reach: str) -> Diagn
 
 
 def _build_workspace(
-    root: Path, sources: _Sources, driver: Any, codon_path: Path
+    root: Path,
+    sources: _Sources,
+    driver: Any,
+    codon_path: Path,
+    toolchain: Toolchain,
 ) -> tuple[_Workspace, list[Diagnostic]]:
     """The scenario's (or the ODD's) modules, rewritten, beside the model.
 
@@ -838,7 +852,7 @@ def _build_workspace(
     A function with a ``**kwargs`` or ``*args`` the modules call is compiled
     through those calls only (:func:`.library_driver.call_sites`, #266).
     """
-    ws = _base_workspace(root, driver, codon_path)
+    ws = _base_workspace(root, driver, codon_path, toolchain)
     ws.appended_label = _SCENARIO_CHECK_LABEL
     problems: list[Diagnostic] = []
     declared = _declarations(sources)
@@ -912,7 +926,7 @@ def _build_workspace(
             )
             for d in dead_isinstances(module.tree)
         ]
-        dest.write_text(text + checks.source)
+        dest.write_text(text + checks.source, encoding="utf-8")
         key = rel.as_posix()
         ws.files[key] = str(module.path)
         ws.origins[key] = origin
@@ -927,10 +941,11 @@ def _build_workspace(
                 root / parent / "__init__.codon",
             )
             if not init_py.exists() and not init_codon.exists():
-                init_codon.write_text("")
+                init_codon.write_text("", encoding="utf-8")
             parent = parent.parent
     (root / DRIVER_MODULE).write_text(
-        driver.source + render_module_checks(sorted(sources.modules)) + driver.trailer
+        driver.source + render_module_checks(sorted(sources.modules)) + driver.trailer,
+        encoding="utf-8",
     )
     return ws, problems
 
@@ -1235,7 +1250,7 @@ def _conditional_expression_at(diagnostic: Diagnostic) -> bool:
     if diagnostic.path is None or diagnostic.line is None or not diagnostic.column:
         return False
     try:
-        tree = ast.parse(Path(diagnostic.path).read_text())
+        tree = ast.parse(Path(diagnostic.path).read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError):
         return False
     return any(
@@ -1251,7 +1266,7 @@ def _source_line(diagnostic: Diagnostic) -> str:
     if diagnostic.path is None or diagnostic.line is None:
         return ""
     try:
-        lines = Path(diagnostic.path).read_text().splitlines()
+        lines = Path(diagnostic.path).read_text(encoding="utf-8").splitlines()
         return lines[diagnostic.line - 1]
     except (OSError, UnicodeDecodeError, IndexError):
         return ""
@@ -1263,7 +1278,7 @@ def _in_dict_display(diagnostic: Diagnostic) -> bool:
     if diagnostic.path is None or diagnostic.line is None:
         return False
     try:
-        tree = ast.parse(Path(diagnostic.path).read_text())
+        tree = ast.parse(Path(diagnostic.path).read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError):
         return False
     return any(
@@ -1279,7 +1294,7 @@ def _classes_below(diagnostic: Diagnostic) -> tuple[set[str], bool]:
     if diagnostic.path is None or diagnostic.line is None:
         return set(), False
     try:
-        tree = ast.parse(Path(diagnostic.path).read_text())
+        tree = ast.parse(Path(diagnostic.path).read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError):
         return set(), False
     line = diagnostic.line
@@ -2256,8 +2271,10 @@ def _rewritten_lines(
     compiled and line *original_line* of the author's *original*, when they
     differ."""
     try:
-        compiled = checked.read_text().splitlines()[line - 1]
-        written = Path(original).read_text().splitlines()[original_line - 1]
+        compiled = checked.read_text(encoding="utf-8").splitlines()[line - 1]
+        written = (
+            Path(original).read_text(encoding="utf-8").splitlines()[original_line - 1]
+        )
     except (OSError, IndexError, ValueError):
         return None
     return None if compiled == written else (compiled, written)
@@ -2345,7 +2362,7 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         """The checked copy *rel*, parsed, and its lines."""
         if rel not in trees:
             try:
-                text = (ws.root / rel).read_text()
+                text = (ws.root / rel).read_text(encoding="utf-8")
                 # Split at "\n" only, as Python numbers the lines: splitlines()
                 # also splits at a form feed or U+2028, which do not end one.
                 trees[rel] = (ast.parse(text), text.split("\n"))
@@ -2397,7 +2414,10 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         ):
             # Codon's position inside an f-string field: not a line of the file.
             found = _fstring_line(
-                (ws.root / rel).read_text(), ws.origins.get(rel), column, message
+                (ws.root / rel).read_text(encoding="utf-8"),
+                ws.origins.get(rel),
+                column,
+                message,
             )
             if found is not None:
                 original = found
@@ -3382,7 +3402,9 @@ def _compile(
     started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="acs-typecheck-") as tmp:
         if build is None:
-            ws, problems = _build_workspace(Path(tmp), sources, driver, codon_path)
+            ws, problems = _build_workspace(
+                Path(tmp), sources, driver, codon_path, toolchain
+            )
         else:
             ws, problems = build(Path(tmp))
         if problems:
@@ -4084,6 +4106,7 @@ def _build_library_workspace(
     files: list[_LibraryFile],
     driver: Any,
     codon_path: Path,
+    toolchain: Toolchain,
 ) -> tuple[_Workspace, list[Diagnostic]]:
     """The model as the scenario check has it, and the checked modules beside it.
 
@@ -4092,7 +4115,7 @@ def _build_library_workspace(
     every import of the framework in it names either another checked module
     there or the model (:func:`.transform.redirect_imports`).
     """
-    ws = _base_workspace(root, driver, codon_path)
+    ws = _base_workspace(root, driver, codon_path, toolchain)
     ws.driver_label = _LIBRARY_DRIVER_LABEL
     problems: list[Diagnostic] = []
     declared = _declarations(sources)
@@ -4106,14 +4129,16 @@ def _build_library_workspace(
             problems.append(Diagnostic(attr.message(), str(module.path), attr.lineno))
         dest = root / file.rel
         dest.parent.mkdir(parents=True, exist_ok=True)
-        dest.write_text(file.text)
+        dest.write_text(file.text, encoding="utf-8")
         ws.files[file.rel] = str(module.path)
         ws.appended[file.rel] = (file.offset, file.labels)
         ws.origins[file.rel] = file.origin
-    (root / Path(files[0].rel).parent / "__init__.codon").write_text("")
+    (root / Path(files[0].rel).parent / "__init__.codon").write_text(
+        "", encoding="utf-8"
+    )
     for stem, text in replaced_models(sources.modules, problems).items():
-        (root / _PACKAGE / f"{stem}.codon").write_text(text)
-    (root / DRIVER_MODULE).write_text(driver.source)
+        (root / _PACKAGE / f"{stem}.codon").write_text(text, encoding="utf-8")
+    (root / DRIVER_MODULE).write_text(driver.source, encoding="utf-8")
     return ws, problems
 
 
@@ -4147,7 +4172,9 @@ def replaced_models(
         model = model_dir() / _PACKAGE / f"{stem}.codon"
         imports: dict[str, list[str]] = {m: [] for m in modules}
         defined = {m: _top_level_names(checked[m].tree) for m in modules}
-        for name in sorted(_top_level_names(ast.parse(model.read_text()))):
+        for name in sorted(
+            _top_level_names(ast.parse(model.read_text(encoding="utf-8")))
+        ):
             owner = next((m for m in modules if name in defined[m]), None)
             if owner is None:
                 problems.append(
@@ -4272,7 +4299,7 @@ def typecheck_library(
         codon_path,
         timeout,
         build=lambda root: _build_library_workspace(
-            root, sources, files, driver, codon_path
+            root, sources, files, driver, codon_path, toolchain
         ),
     )
     if result is None:

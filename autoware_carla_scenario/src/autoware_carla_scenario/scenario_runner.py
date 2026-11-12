@@ -1012,8 +1012,9 @@ class ScenarioRunner:
     #: map was not loaded by this runner yet).
     _baseline: Optional[WorldBaseline]
     #: The map the runs are on, as the trajectory log's ``map`` record names
-    #: it: where it came from (``map.source``), the Lanelet2 file read, and the
-    #: projection the config overrode its own with.  The queue sets them.
+    #: it: where it came from (``map.directory``, else ``map.source``), the
+    #: Lanelet2 file read, and the projection the config overrode its own
+    #: with.  The queue sets them.
     map_source: Optional[str]
     lanelet2_path: Optional[Path]
     projector_type: Optional[str]
@@ -1835,6 +1836,10 @@ class ScenarioRunner:
         last_frame = -1
         # The log the Rerun converter takes once the result JSON is written.
         rerun_log: Optional[Path] = None
+        # Whether this run's trajectory log was opened: one the recorder
+        # gave up on mid-run (closed already, not active) is still this run's
+        # on disk, and still converted (#2085).
+        trajectory_started = False
         # Whether the run got past the tick loop, the MetricConditions and
         # the coverage's end: only then is ``result`` the run's verdict, which
         # the trajectory log ends with and the code after the cleanup writes.
@@ -2088,6 +2093,7 @@ class ScenarioRunner:
                 # this loop steps -- in-process, so no second client has to follow
                 # the world from outside.
                 trajectory.start(world)
+                trajectory_started = trajectory.active
                 clock_start_frame = int(world.get_snapshot().frame)
                 # The file starts where the clock does; the recording, warmup_ticks
                 # frames earlier.
@@ -2485,13 +2491,28 @@ class ScenarioRunner:
             if self.rerun is not None:
                 lidar_recording: RerunConverter = self.rerun
                 lidar_recording.stop_sensors()
-            if trajectory.active:
+            # Whether this run's log is on disk for the converter: closed
+            # here, or closed already by a recorder that failed writing it
+            # (it logged why), which leaves the records up to the failure and
+            # no result record -- converted all the same, as a run that
+            # raised is (#2085).
+            log_on_disk = trajectory.active
+            if log_on_disk:
                 if result is not None and verdict_final:
                     trajectory.record_result(result)
                 trajectory.close()
                 logger.info(
                     "[%s] Trajectory written to %s", scenario_name, trajectory.path
                 )
+            elif trajectory_started and trajectory.path.exists():
+                logger.warning(
+                    "[%s] Trajectory recording stopped early; the partial log "
+                    "is kept at %s",
+                    scenario_name,
+                    trajectory.path,
+                )
+                log_on_disk = True
+            if log_on_disk:
                 if self.rerun is not None:
                     # Converted in the background while the next case runs;
                     # the run waits for it at its end (rerun.py).  A log

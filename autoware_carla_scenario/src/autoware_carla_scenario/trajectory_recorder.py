@@ -80,6 +80,12 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
 * ``{"type": "despawn", "frame", "t", "label", "entity", "id", "reason"}``
   -- a ``DespawnAction`` (``reason: "action"``), or the run for a walker
   lying fallen (``"fallen"``), took an entity out of the world.
+* ``{"type": "metric", "frame", "t", "values": {key: value}}`` -- after the
+  last tick, a run judged on a ``MetricCondition``: the metrics computed once
+  the run was over for each frame they were computed for (a number, a
+  boolean for a yes/no metric, a string for one that names its state, or
+  null), the values unrounded; then each metric condition's ``condition``
+  records, from its first frame again.
 * ``{"type": "result", "passed", "message", "elapsed_seconds",
   "conditions"}`` -- last, the verdict.
 
@@ -299,7 +305,8 @@ class TrajectoryRecorder:
 
     Args:
         path: The ``.jsonl`` file to write.
-        map_source: Where the map came from (the run's ``map.source``), for
+        map_source: Where the map came from (the run's ``map.directory``,
+            else its ``map.source``), for
             the ``map`` record, which holds it with any credentials in it
             redacted (:func:`~.maps.source.redacted_url`).
         lanelet2_path: The Lanelet2 map the run read.
