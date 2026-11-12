@@ -5081,7 +5081,7 @@ def test_the_fcntl_os_and_popen_shims_take_what_cpython_takes(
         ),
         ("fcntl.flock(fd, fcntl.LOCK_SH)", "fcntl.flock(fd)"),
         ("fcntl.flock(fd, fcntl.LOCK_SH)", "fcntl.flock(path, fcntl.LOCK_SH)"),
-        ("fcntl.flock(fd, fcntl.LOCK_SH)", "fcntl.lockf(fd, fcntl.LOCK_SH)"),
+        ("fcntl.flock(fd, fcntl.LOCK_SH)", "fcntl.lock(fd, fcntl.LOCK_SH)"),
         ("os.O_RDONLY | os.O_CREAT, 420)", 'os.O_RDONLY | os.O_CREAT, "420")'),
         ("os.O_RDONLY | os.O_CREAT, 420)", "os.O_RDONLY | os.O_CREAT, 420, None)"),
         ('os.fdopen(fd, "rb")', 'os.fdopen(fd, "rb", buffer=0)'),
