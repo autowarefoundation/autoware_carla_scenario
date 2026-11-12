@@ -1015,7 +1015,8 @@ run never takes its stem and a retried run clears it first
 **When SUMO keeps failing** -- 20 steps in a row raise -- the backend stops
 stepping it for the rest of the run, and leaves nothing it drove moving on
 its own: the mirrors of SUMO's vehicles, bicycles and pedestrians are
-destroyed, every scenario vehicle SUMO drove (`scenario_vehicles=sumo`) loses
+destroyed, every scenario vehicle SUMO drove (`scenario_vehicles=sumo`), or
+had yet to put on its road after a spawn brought it up, loses
 its constant velocity (`vehicle_control=teleport`) or its last control
 (`physics`) and brakes to a stop, and every scenario pedestrian it walked
 stands still. Vehicles it does not drive (the ego, the TrafficManager's, those

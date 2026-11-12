@@ -1991,17 +1991,23 @@ def test_background_vehicles_waiting_to_enter_are_where_they_were_asked_for(
         # Removed while it waits, it never enters.
         backend.remove_background(world, handles[0])
         tc.vehicle.remove("standing")
-        for i in range(40):
-            backend.tick(world, (8 + i) * 0.05)
-        assert handles[0] not in tc.vehicle.getIDList()
+        entered: set[str] = set()
+        tick = 8
+        while entered != set(handles[1:]) and tick < 400:
+            backend.tick(world, tick * 0.05)
+            tick += 1
+            entered |= set(tc.vehicle.getIDList()) & set(handles)
         assert handles[0] not in backend.background_vehicles(world)
-        # The others entered once the spot cleared: given where SUMO has them.
-        on_the_road = set(tc.vehicle.getIDList())
+        # The others entered, one after the other, once the spot cleared.
+        assert entered == set(handles[1:])
+        for i in range(20):
+            backend.tick(world, (tick + i) * 0.05)
+        # On their way: given where SUMO has them, past the spot.
         vehicles = backend.background_vehicles(world)
+        assert set(vehicles) == set(handles[1:])
         for handle in handles[1:]:
-            if handle in on_the_road:
-                x, y, _z = vehicles[handle]
-                assert x > -60.0
+            x, _y, _z = vehicles[handle]
+            assert x > -60.0
     finally:
         backend.close()
 
@@ -2154,6 +2160,74 @@ def test_a_backend_that_gives_up_leaves_no_actor_driving_on(
         backend.close()
     # close() after it is safe, and forgets it.
     assert backend.describe()["gave_up_at_s"] is None
+
+
+@needs_sumo
+def test_a_vehicle_that_came_up_while_sumo_failed_stops_when_it_gives_up(
+    crossroads: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A parked NPC a spawn brings up while SUMO's steps fail is added but
+    never put on SUMO's road: when the backend gives up, it brakes to a stop
+    like the vehicles SUMO drove, rather than running on uncontrolled
+    (#2082)."""
+    import typesafe_carla.carla as carla
+
+    backend, world, _npc, _ego = _prepared(crossroads, tmp_path)
+    hidden = _FakeActor(_carla_transform(-60.0, 5.25, 0.0), "late")
+    hidden.transform.location.z = -500.0
+    entity = _Entity(hidden, "late")
+    tc = backend._traci
+    try:
+        backend.adopt(entity)
+        backend._parked[hidden.id] = (hidden, entity)
+        backend.tick(world, 0.0)
+
+        def broken() -> None:
+            raise RuntimeError("SUMO is gone")
+
+        monkeypatch.setattr(tc, "simulationStep", broken)
+        backend.tick(world, 0.05)
+        hidden.transform = _carla_transform(-60.0, 5.25, 0.0)
+        hidden.apply_control(carla.VehicleControl(throttle=0.6))
+        for i in range(19):
+            backend.tick(world, (2 + i) * 0.05)
+        assert not backend._running
+        assert any(arriving is entity for _a, arriving in backend._arriving.values())
+        assert hidden.control.brake == 1.0 and hidden.control.throttle == 0.0
+    finally:
+        backend.close()
+
+
+@needs_sumo
+def test_a_backend_that_gives_up_halts_the_pedestrians_it_walked(
+    crossroads_with_sidewalks: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A scenario pedestrian SUMO walks across the road stands still when
+    the backend gives up, rather than walking on at its last command
+    (#2082)."""
+    from autoware_carla_scenario.entity.pedestrian_entity import walker_speed_command
+
+    backend, world, entity = _scenario_pedestrian(
+        crossroads_with_sidewalks, tmp_path, scenario_pedestrians="sumo"
+    )
+    walker = entity.actor
+    try:
+        entity.walk_straight(1.5)
+        for i in range(10):
+            backend.tick(world, 1.0 + i * 0.05)
+        assert walker.control.speed == pytest.approx(walker_speed_command(1.5))
+
+        def broken() -> None:
+            raise RuntimeError("SUMO is gone")
+
+        monkeypatch.setattr(backend._traci, "simulationStep", broken)
+        for i in range(20):
+            backend.tick(world, 2.0 + i * 0.05)
+        assert not backend._running
+        assert walker.control.speed == 0.0
+        assert backend._walking == {}
+    finally:
+        backend.close()
 
 
 @needs_sumo

@@ -1417,12 +1417,27 @@ class SumoTrafficBackend(TrafficBackend):
         driving on without it (#2082): the mirrors of SUMO's own vehicles and
         pedestrians are destroyed, as :meth:`close` destroys them, and every
         vehicle SUMO drove (or drove the last of its way to its goal in
-        CARLA) loses its constant velocity and brakes to a stop,
-        every pedestrian it walked stands still.  The connection stays open
+        CARLA, or was to drive once a step put it on its road) loses its
+        constant velocity and brakes to a stop, every pedestrian it walked
+        stands still.  The connection stays open
         for :meth:`close`; the run goes on, and its result records when this
         happened (``gave_up_at_s`` in :meth:`describe`)."""
         self._running = False
         self._gave_up_at = elapsed
+        # The vehicles SUMO drove, those it drove the last of their way to
+        # their goal in CARLA (finish_at), which no tick steps any more, and
+        # those that came up (_bring_in) for SUMO to drive, which no step put
+        # on its road (_arrive): a spawn in a failing tick leaves them so.
+        actors = [getattr(entity, "actor", None) for entity in self._driven.values()]
+        actors += [self._external.get(sumo_id) for sumo_id in self._approaches]
+        actors += [
+            actor
+            for actor, entity in self._arriving.values()
+            if entity is not None
+            and not self._tm_drives_scenario
+            and id(entity) not in self._released
+            and int(actor.id) not in self._published_ids
+        ]
         logger.error(
             "SUMO failed %d steps in a row at %.2f s; traffic stops for this run: "
             "%d mirror(s) of SUMO's traffic destroyed, %d vehicle(s) SUMO drove "
@@ -1430,16 +1445,12 @@ class SumoTrafficBackend(TrafficBackend):
             self._failures,
             elapsed,
             len(self._ambient) + len(self._persons),
-            len(self._driven) + len(self._approaches),
+            sum(actor is not None for actor in actors),
             len(self._walked),
         )
         self._destroy_mirrors()
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
-        # The vehicles SUMO drove, and those it drove the last of their way
-        # to their goal in CARLA (finish_at), which no tick steps any more.
-        actors = [getattr(entity, "actor", None) for entity in self._driven.values()]
-        actors += [self._external.get(sumo_id) for sumo_id in self._approaches]
         self._approaches = {}
         for actor in actors:
             if actor is not None:
@@ -2365,7 +2376,12 @@ class SumoTrafficBackend(TrafficBackend):
         if (
             self._gave_up_at is not None
             and actor is not None
-            and (handed is not None or self._id_of(entity) is not None)
+            and (
+                handed is not None
+                or self._id_of(entity) is not None
+                # Released as it came up, before a step put it on SUMO's road.
+                or any(arriving is entity for _a, arriving in self._arriving.values())
+            )
         ):
             # Handed back after SUMO failed for good (_give_up): nothing
             # drives it on, so it stops rather than keeping what the action
