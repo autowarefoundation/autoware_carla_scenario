@@ -29,18 +29,28 @@ from autoware_carla_scenario.slurm.manifest import (
     MANIFEST_VERSIONS,
     SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
+    SubmissionRecord,
+    manifest_of_text,
+    submission_record_of,
     no_job_note,
     read_json,
     read_submission_record,
     readable_result,
-    recorded_verdict,
     resubmit_target,
     sbatch_in_flight,
     sbatch_timed_out,
+    verdict_of_document,
     write_json,
 )
+from autoware_carla_scenario.slurm.records import JsonMembers
 
 _LOGGER = "autoware_carla_scenario.slurm.manifest"
+
+
+def _submission(record: dict[str, Any]) -> SubmissionRecord:
+    """The submission record of the members of *record*."""
+    return submission_record_of(JsonMembers.from_value(record))
+
 
 #: A document with a value of each kind JSON writes, and the keys json turns
 #: into strings (an int, a float, a bool, None).
@@ -321,9 +331,17 @@ def test_read_result_and_read_task_read_the_object_as_json_holds_it(
     for path in (layout.result(0), layout.task(0, 0)):
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(content)
-    for record in (layout.read_result(0), layout.read_task(0, 0)):
-        assert record is not None
-        assert list(record) == ["z", "result", "big", "extra"]
+    outcome = layout.read_result(0)
+    assert outcome is not None
+    task = layout.read_task(0, 0)
+    assert task is not None
+    assert (
+        outcome.members.keys() == task.members.keys() == ["z", "result", "big", "extra"]
+    )
+    for record in (
+        {key: task.get(key) for key in task.members.keys()},
+        {key: outcome.get(key) for key in outcome.members.keys()},
+    ):
         assert record["z"][:2] == [1, 2.0]
         assert isinstance(record["z"][1], float)
         assert math.copysign(1.0, record["z"][2]) == -1.0
@@ -353,7 +371,7 @@ def test_read_result_of_an_integer_too_long_to_read(tmp_path: Path) -> None:
     else:  # pragma: no cover - a Python without the limit
         record = layout.read_result(0)
         assert record is not None
-        assert record["a"] == int("1" * 5000)
+        assert record.get("a") == int("1" * 5000)
 
 
 # ---------------------------------------------------------------------------
@@ -457,30 +475,38 @@ def test_a_submission_record_reads_as_json_holds_it(
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
         record = layout.submission_record(2)
     assert caplog.records == []
-    assert record == {
+    assert record is not None
+    assert {key: record.get(key) for key in record.members.keys()} == {
         "index": "two",
         "job_id": None,
         "submitted_at": math.inf,
         "tasks": [[0, 1]],
         "x": {"é": -0.0},
     }
-    assert list(record) == ["index", "job_id", "submitted_at", "tasks", "x"]
+    assert record.members.keys() == ["index", "job_id", "submitted_at", "tasks", "x"]
     assert math.copysign(1.0, record["x"]["é"]) == -1.0
 
 
-def test_read_submission_reads_any_json_and_raises_as_read_json(
-    tmp_path: Path,
+def test_read_submission_is_none_for_json_no_object_and_raises_as_read_json(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     layout = _layout(tmp_path)
     with pytest.raises(FileNotFoundError):
         layout.read_submission(0)
     layout.submission(0).parent.mkdir(parents=True)
     layout.submission(0).write_text("[1, NaN]")
-    data: Any = layout.read_submission(0)
-    assert data[0] == 1 and math.isnan(data[1])
+    with caplog.at_level(logging.DEBUG, logger=_LOGGER):
+        assert layout.read_submission(0) is None
+    assert caplog.records == []
     layout.submission(1).write_text("{")
     with pytest.raises(json.JSONDecodeError):
         layout.read_submission(1)
+    layout.submission(2).write_text('{"job_id": 7, "chunks": [[NaN]]}')
+    record = layout.read_submission(2)
+    assert record is not None
+    assert record["job_id"] == 7 and math.isnan(record.get("chunks")[0][0])
+    with pytest.raises(KeyError):
+        record["cases"]
 
 
 # ---------------------------------------------------------------------------
@@ -621,8 +647,10 @@ def test_a_manifest_of_a_version_read_reads_as_json_holds_it(
         '"cases": [{"index": 1}], "big": 123456789012345678901234567890}',
     )
     data = layout.read_manifest()
-    assert list(data) == ["cases", "version", "batch_dir", "extra", "big"]
+    assert data.keys() == ["cases", "version", "batch_dir", "extra", "big"]
+    assert data.members.keys() == ["version", "batch_dir"]
     assert data["cases"] == [{"index": 1}]
+    assert [case.index() for case in data.cases()] == [1]
     assert data["version"] == json.loads(version)
     assert type(data["version"]) is type(json.loads(version))
     assert data["batch_dir"] == "/x/é"
@@ -630,12 +658,15 @@ def test_a_manifest_of_a_version_read_reads_as_json_holds_it(
     assert data["big"] == 123456789012345678901234567890
 
 
-def test_read_manifest_gives_a_new_dict_each_time(tmp_path: Path) -> None:
+def test_read_manifest_gives_a_new_manifest_each_time(tmp_path: Path) -> None:
     layout = _layout(tmp_path)
     _write_manifest(layout, '{"version": 1, "cases": []}')
     first = layout.read_manifest()
     first["cases"].append("changed")
-    assert layout.read_manifest() == {"version": 1, "cases": []}
+    again = layout.read_manifest()
+    assert again["cases"] == []
+    assert again.keys() == ["version", "cases"]
+    assert again.cases() == []
 
 
 # ---------------------------------------------------------------------------
@@ -884,22 +915,20 @@ def test_reserve_submission_of_what_json_cannot_write_raises(
 def test_sbatch_in_flight(
     submission: dict[str, Any], now: float, expected: bool
 ) -> None:
-    assert sbatch_in_flight(submission, now) is expected
+    assert sbatch_in_flight(_submission(submission), now) is expected
 
 
 def test_sbatch_in_flight_of_an_integer_no_float_holds_raises() -> None:
     with pytest.raises(OverflowError):
-        sbatch_in_flight({"submitted_at": 10**400}, 0.0)
+        sbatch_in_flight(_submission({"submitted_at": 10**400}), 0.0)
 
 
 def test_sbatch_in_flight_reads_the_clock_when_no_time_is_given() -> None:
     import time
 
-    assert sbatch_in_flight({"submitted_at": time.time()}) is True
-    assert (
-        sbatch_in_flight({"submitted_at": time.time() - SBATCH_IN_FLIGHT_SECONDS - 1})
-        is False
-    )
+    assert sbatch_in_flight(_submission({"submitted_at": time.time()})) is True
+    old = time.time() - SBATCH_IN_FLIGHT_SECONDS - 1
+    assert sbatch_in_flight(_submission({"submitted_at": old})) is False
 
 
 @pytest.mark.parametrize(
@@ -915,7 +944,7 @@ def test_sbatch_in_flight_reads_the_clock_when_no_time_is_given() -> None:
     ],
 )
 def test_sbatch_timed_out(submission: dict[str, Any], expected: bool) -> None:
-    assert sbatch_timed_out(submission) is expected
+    assert sbatch_timed_out(_submission(submission)) is expected
 
 
 @pytest.mark.parametrize(
@@ -945,7 +974,7 @@ def test_sbatch_timed_out(submission: dict[str, Any], expected: bool) -> None:
     ],
 )
 def test_no_job_note(submission: dict[str, Any], note: str) -> None:
-    assert no_job_note(submission, 100.0) == note
+    assert no_job_note(_submission(submission), 100.0) == note
 
 
 _STATUS = {"label": "l", "satisfied": True, "message": "m"}
@@ -968,10 +997,7 @@ _STATUS = {"label": "l", "satisfied": True, "message": "m"}
         ({"message": "", "elapsed_seconds": 1, "condition_statuses": None}, True),
         ({"message": "", "elapsed_seconds": 1, "condition_statuses": []}, True),
         ({"message": "", "elapsed_seconds": 1, "condition_statuses": [_STATUS]}, True),
-        (
-            {"message": "", "elapsed_seconds": 1, "condition_statuses": (_STATUS,)},
-            False,
-        ),
+        ({"message": "", "elapsed_seconds": 1, "condition_statuses": "s"}, False),
         ({"message": "", "elapsed_seconds": 1, "condition_statuses": {}}, False),
         (
             {
@@ -1016,7 +1042,13 @@ _STATUS = {"label": "l", "satisfied": True, "message": "m"}
     ],
 )
 def test_readable_result(result: Any, readable: bool) -> None:
-    assert readable_result(result) is readable
+    if isinstance(result, dict):
+        assert readable_result(JsonMembers.from_value(result)) is readable
+    # A result that is no object holds no verdict.
+    record = {
+        "result": {"passed": True, **result} if isinstance(result, dict) else result
+    }
+    assert verdict_of_document(record) is (True if readable else None)
 
 
 @pytest.mark.parametrize(
@@ -1036,7 +1068,7 @@ def test_readable_result(result: Any, readable: bool) -> None:
     ],
 )
 def test_recorded_verdict(record: Any, verdict: bool | None) -> None:
-    assert recorded_verdict(record) is verdict
+    assert verdict_of_document(record) is verdict
 
 
 @pytest.mark.parametrize(
@@ -1056,7 +1088,9 @@ def test_recorded_verdict(record: Any, verdict: bool | None) -> None:
 def test_resubmit_target(tmp_path: Path, record: dict[str, Any], target: str) -> None:
     layout = _layout(tmp_path)
     expected = str(layout.batch_dir) if target == "LAYOUT" else target
-    assert resubmit_target(layout, record) == expected
+    manifest = manifest_of_text(json.dumps(record))
+    assert manifest is not None
+    assert resubmit_target(layout, manifest) == expected
 
 
 def test_config_files_names_the_files_of_a_config(tmp_path: Path) -> None:

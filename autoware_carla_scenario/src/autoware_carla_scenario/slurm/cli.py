@@ -15,147 +15,31 @@ Light: no CARLA, no Hydra.
 from __future__ import annotations
 
 import argparse
-import logging
 import sys
-import time
 from collections.abc import Callable
 from pathlib import Path
 
 from .collect import collect, unfinished_cases
-from .manifest import (
-    SBATCH_IN_FLIGHT_SECONDS,
-    BatchLayout,
-    no_job_note,
-    recorded_verdict,
-    sbatch_in_flight,
-    sbatch_timed_out,
-)
+from .manifest import BatchLayout
 from .settings import SlurmSettings
-from .submit import (
-    ACTIVE_STATES,
-    after_submit,
-    cancel_jobs,
-    squeue_states,
-    submit_cases,
-)
+from .status import active_jobs, busy_reason, cancel_batch, print_status
+from .submit import after_submit, submit_cases
 
 __all__ = ["main"]
-
-logger = logging.getLogger(__name__)
 
 
 def _layout(path: str) -> BatchLayout:
     return BatchLayout(Path(path).expanduser().resolve())
 
 
-def _active_jobs(
-    layout: BatchLayout, below: int | None = None
-) -> tuple[list[str], list[str], list[int], list[int], list[int]]:
-    """The batch's array jobs SLURM still lists, those squeue could not be
-    asked about (which may be running too), the submissions whose sbatch has
-    not returned yet (``manifest.sbatch_in_flight``), those whose record
-    cannot be read yet is younger than ``SBATCH_IN_FLIGHT_SECONDS``, and those
-    whose sbatch timed out, younger than that too (still in flight, but
-    sbatch has returned, #1791): of every submission, or of those before
-    *below*.
-
-    A record that cannot be read (not JSON, or not a JSON object) may be one
-    another submitter is still writing; past ``SBATCH_IN_FLIGHT_SECONDS``
-    after the file was last modified, it is ignored with a warning, so that
-    a corrupt record never refuses every resubmit (the viewer cannot pass
-    ``--force``).
-    """
-    active: list[str] = []
-    unknown: list[str] = []
-    in_flight: list[int] = []
-    unreadable: list[int] = []
-    timed_out: list[int] = []
-    for index in layout.submissions():
-        if below is not None and index >= below:
-            continue
-        path = layout.submission(index)
-        try:
-            submission = layout.read_submission(index)
-        except FileNotFoundError:
-            continue  # removed since: its sbatch failed
-        except (OSError, ValueError):
-            submission = None
-        if not isinstance(submission, dict):
-            try:
-                age = time.time() - path.stat().st_mtime
-            except FileNotFoundError:
-                continue
-            if age < SBATCH_IN_FLIGHT_SECONDS:
-                unreadable.append(index)
-            else:
-                logger.warning(
-                    "Ignoring %s: it cannot be read as a submission record, "
-                    "and was last modified %.0f s ago",
-                    path,
-                    age,
-                )
-            continue
-        job = submission.get("job_id")
-        if not job:
-            if sbatch_in_flight(submission):
-                if sbatch_timed_out(submission):
-                    timed_out.append(index)
-                else:
-                    in_flight.append(index)
-            continue
-        states = squeue_states(str(job))
-        if states is None:
-            unknown.append(str(job))
-        elif any(state in ACTIVE_STATES for state in states.values()):
-            active.append(str(job))
-    return active, unknown, in_flight, unreadable, timed_out
-
-
-def _busy(layout: BatchLayout, below: int | None = None) -> str | None:
-    """Why the batch cannot be resubmitted now, if it cannot: a job of it is
-    queued or running, ``squeue`` cannot tell, another submission of it is
-    in flight (another ``resubmit``, the viewer's, #1352), or one's sbatch
-    timed out a short while ago (its job may exist, #1791)."""
-    active, unknown, in_flight, unreadable, timed_out = _active_jobs(layout, below)
-    if active:
-        return (
-            f"job(s) {', '.join(active)} of this batch are still queued or "
-            "running; wait for them (scenario-slurm wait), cancel them "
-            "(scenario-slurm cancel), or pass --force"
-        )
-    if in_flight:
-        return (
-            f"submission(s) {', '.join(str(i) for i in in_flight)} of this batch "
-            "are being submitted (sbatch has not returned yet), by another "
-            "resubmit or the viewer; try again once it has, or pass --force. "
-            "A record left by a submitter that died is ignored "
-            f"{SBATCH_IN_FLIGHT_SECONDS:.0f} s after it was made"
-        )
-    if timed_out:
-        return (
-            f"the sbatch of submission(s) {', '.join(str(i) for i in timed_out)} "
-            "of this batch timed out, and SLURM may have taken the job all the "
-            "same: check `squeue --me` (scancel the job if it is there and you "
-            "want its cases run again), then pass --force, or try again once "
-            f"the record is ignored, {SBATCH_IN_FLIGHT_SECONDS:.0f} s after it "
-            "was made"
-        )
-    if unreadable:
-        files = ", ".join(str(layout.submission(i)) for i in unreadable)
-        return (
-            f"the submission record(s) {files} of this batch are unreadable "
-            "(another submitter may still be writing them); try again shortly, "
-            "or pass --force. An unreadable record is ignored "
-            f"{SBATCH_IN_FLIGHT_SECONDS:.0f} s after it was last modified"
-        )
-    if unknown:
-        # A task still running would have its outputs removed under it.
-        return (
-            f"squeue could not tell whether job(s) {', '.join(unknown)} of "
-            "this batch are still queued or running; check with squeue, or pass "
-            "--force if they are not"
-        )
-    return None
+# What status prints, whether the batch is busy, and what cancel cancels are
+# the checked slurm.status's.  Bound here, not called through a function of
+# this module, so that a batch's records are read as deep in the stack as
+# they were read here (Python 3.10 counts the calls on the stack with the
+# levels of nesting json.loads() reads).
+_active_jobs = active_jobs
+_busy = busy_reason
+_status = print_status
 
 
 def _refuse_if_busy(layout: BatchLayout) -> Callable[[int], None]:
@@ -170,61 +54,6 @@ def _refuse_if_busy(layout: BatchLayout) -> Callable[[int], None]:
             raise RuntimeError(reason)
 
     return check
-
-
-def _status(layout: BatchLayout) -> int:
-    manifest = layout.read_manifest()
-    cases = manifest["cases"]
-    done = passed = errored = 0
-    for case in cases:
-        record = layout.read_result(int(case["index"]))
-        if record is None:
-            continue
-        done += 1
-        passed += recorded_verdict(record) is True
-        errored += bool(record.get("errored"))
-    print(f"Batch {layout.batch_dir}: {len(cases)} case(s)")  # noqa: T201
-    print(  # noqa: T201
-        f"  {done} with a result ({passed} passed, {errored} errored), "
-        f"{len(cases) - done} without"
-    )
-    for index in layout.submissions():
-        submission = layout.submission_record(index)
-        if submission is None:
-            path = layout.submission(index)
-            if path.exists():  # else removed since: its sbatch failed
-                print(  # noqa: T201
-                    f"  submission {index}: unreadable record {path} "
-                    "(empty, not JSON, or not a JSON object)"
-                )
-            continue
-        job = submission.get("job_id")
-        chunks = submission.get("chunks") or []
-        size = f"{len(chunks)} task(s), {len(submission.get('cases') or [])} case(s)"
-        if job:
-            states = squeue_states(str(job))
-            queued = (
-                "squeue unavailable"
-                if states is None
-                else ", ".join(f"{t}:{s}" for t, s in sorted(states.items())) or "ended"
-            )
-            print(f"  submission {index}: job {job}, {size}; in the queue: {queued}")  # noqa: T201
-        else:
-            # No job id to ask squeue about: never "job None ... ended" (#1791).
-            print(f"  submission {index}: {size}; {no_job_note(submission)}")  # noqa: T201
-        for task, chunk in enumerate(chunks):
-            status = layout.read_task(index, task) or {}
-            ports = status.get("ports") or {}
-            rss = status.get("peak_rss_mb")
-            print(  # noqa: T201
-                f"    task {task}: {status.get('state', 'not started')}"
-                f"{' on ' + status['host'] if status.get('host') else ''}"
-                f"{' port ' + str(ports['rpc']) if ports.get('rpc') else ''}"
-                f", {len(status.get('done') or [])}/{len(chunk)} case(s)"
-                f"{f', peak RSS {rss} MB' if rss else ''}"
-                f"{' -- ' + status['error'] if status.get('error') else ''}"
-            )
-    return 0
 
 
 def _resubmit(args: argparse.Namespace) -> int:
@@ -294,27 +123,8 @@ def _wait(args: argparse.Namespace) -> int:
 
 
 def _cancel(args: argparse.Namespace) -> int:
-    layout = _layout(args.batch_dir)
-    jobs: list[str] = []
-    for index in layout.submissions():
-        submission = layout.submission_record(index)
-        if submission is None:
-            path = layout.submission(index)
-            if path.exists():  # else removed since: its sbatch failed
-                print(  # noqa: T201
-                    f"Skipping {path}: it cannot be read as a submission record; "
-                    "if it named a job, cancel that with scancel",
-                    file=sys.stderr,
-                )
-            continue
-        for key in ("job_id", "collect_job_id"):
-            if submission.get(key):
-                jobs.append(str(submission[key]))
-    if not jobs:
-        print("The batch has no job to cancel.")  # noqa: T201
-        return 0
-    print(f"Cancelling job(s) {', '.join(jobs)}")  # noqa: T201
-    return 0 if cancel_jobs(jobs) else 1
+    """``scenario-slurm cancel`` (slurm.status's cancel_batch)."""
+    return cancel_batch(_layout(args.batch_dir))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -434,7 +244,8 @@ def main(argv: list[str] | None = None) -> int:
             return collect(_layout(args.batch_dir))
         if args.command == "resubmit":
             return _resubmit(args)
-        return _cancel(args)
+        # Not through _cancel(): the records are read as deep as before.
+        return cancel_batch(_layout(args.batch_dir))
     # OSError covers FileNotFoundError, and an unreadable manifest or an
     # unwritable batch directory (shared storage, a read-only mount): one
     # line, not a traceback (#1740).

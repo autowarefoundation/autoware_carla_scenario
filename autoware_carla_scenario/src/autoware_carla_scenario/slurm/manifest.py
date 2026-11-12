@@ -17,13 +17,20 @@ what the launcher itself needs in ``slurm/`` beside them::
 Plain JSON, written atomically (a reader never sees half a file), and free of
 heavy imports: the ``scenario-slurm`` commands only read these.
 
-The records are read and written as ``dict[str, Any]``, which every reader of
-the batch takes (:mod:`.submit`, :mod:`.worker`, :mod:`.collect`, the viewer).
-The library check (docs/typecheck.md) compiles this module, and Codon cannot
-hold a JSON document's values of mixed types beyond the function that parses
-it: the version a manifest names is checked as the JSON text of its value,
-and what creates a submission record exclusively is given the record's JSON
-text.
+The records are written as ``dict[str, Any]``, and read into a
+:class:`Manifest` (its cases each a :class:`ManifestCase`), a
+:class:`SubmissionRecord`, a :class:`CaseOutcome` and a :class:`TaskStatus`:
+their members as their JSON text (:class:`.records.JsonMembers`), each read
+when it is asked for.  The library check (docs/typecheck.md) compiles this
+module, and Codon cannot hold a JSON document's values of mixed types beyond
+the function that parses it: the version a manifest names is checked as the
+JSON text of its value, and what creates a submission record exclusively is
+given the record's JSON text.  The readers the check leaves out
+(:mod:`.submit`, :mod:`.worker`, the gate, the viewer) read the manifest as
+they read the ``dict`` it was (:meth:`Manifest.get`, ``manifest[key]``);
+a :class:`Manifest` holds as JSON text only the members the checked readers
+read of it, so that a manifest of many cases costs little more than that
+``dict``.
 """
 
 from __future__ import annotations
@@ -31,6 +38,7 @@ from __future__ import annotations
 import errno
 import json
 import logging
+import math
 import os
 import tempfile
 import time
@@ -40,6 +48,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..failure import Failure
 from ..run_outputs import RUN_FILE_SUFFIXES
+from .records import JsonMembers, parse_object
 from .scripts import BatchPaths, file_sha256
 from .stems import config_key, sequential_stems
 
@@ -49,9 +58,15 @@ __all__ = [
     "RUN_FILE_SUFFIXES",
     "SBATCH_IN_FLIGHT_SECONDS",
     "BatchLayout",
+    "CaseOutcome",
+    "Manifest",
+    "ManifestCase",
+    "SubmissionRecord",
+    "TaskStatus",
     "config_files",
     "config_key",
     "file_sha256",
+    "manifest_of_text",
     "resubmit_target",
     "read_json",
     "read_submission_record",
@@ -61,7 +76,10 @@ __all__ = [
     "sbatch_in_flight",
     "sbatch_timed_out",
     "sequential_stems",
+    "submission_record_of",
+    "verdict_of_document",
     "write_json",
+    "write_json_text",
 ]
 
 logger = logging.getLogger(__name__)
@@ -122,12 +140,12 @@ def config_files(
     return found
 
 
-def resubmit_target(layout: "BatchLayout", manifest: dict[str, Any]) -> str:
+def resubmit_target(layout: "BatchLayout", manifest: "Manifest") -> str:
     """The batch's directory as ``scenario-slurm`` on the submit host takes
     it: a ``remote_cwd`` batch collected on a node names the submit host's
     path (the manifest's ``batch_dir``), not the node's."""
-    if manifest.get("batch_dir_relative") and manifest.get("batch_dir"):
-        return str(manifest["batch_dir"])
+    if manifest.is_true("batch_dir_relative") and manifest.is_true("batch_dir"):
+        return manifest.text("batch_dir")
     return str(layout.batch_dir)
 
 
@@ -149,24 +167,27 @@ def write_json(path: Path, data: Any) -> None:
         raise
 
 
+def write_json_text(path: Path, text: str) -> None:
+    """Write *text*, a JSON document's text as :func:`write_json` writes it
+    (:meth:`.records.JsonMembers.object_text`), to *path* as
+    :func:`write_json` writes it: atomically, the user's alone."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(text)
+        os.replace(tmp, path)
+    except BaseException:
+        Path(tmp).unlink(missing_ok=True)
+        raise
+
+
 def read_json(path: Path) -> Any:
     """Read the JSON file *path*."""
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def _read_object(path: Path) -> dict[str, Any] | None:
-    """The JSON object in *path*, or ``None`` when it is missing, cannot be
-    read, is not JSON, or holds JSON that is not an object."""
-    if not path.is_file():
-        return None
-    try:
-        data = read_json(path)
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
-
-
-def read_submission_record(path: Path) -> dict[str, Any] | None:
+def read_submission_record(path: Path) -> SubmissionRecord | None:
     """The submission record *path*, or ``None`` when there is none to read.
 
     A record that cannot be read as one -- empty, not JSON, or JSON that is
@@ -175,8 +196,11 @@ def read_submission_record(path: Path) -> dict[str, Any] | None:
     warning naming the file (#1356).  A missing one (removed since it was
     listed: its sbatch failed) is ``None`` without one.
     """
+    # Parsed here, not in a helper: Python 3.10 counts the calls on the stack
+    # with the levels of nesting json.loads() reads, and read_json() read
+    # the record as deep as this reads it.
     try:
-        record = read_json(path)
+        members = parse_object(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:
@@ -184,14 +208,14 @@ def read_submission_record(path: Path) -> dict[str, Any] | None:
             "Ignoring %s: it cannot be read as a submission record (%s)", path, exc
         )
         return None
-    if not isinstance(record, dict):
+    if members is None:
         logger.warning(
             "Ignoring %s: it cannot be read as a submission record "
             "(it holds JSON that is not an object)",
             path,
         )
         return None
-    return record
+    return submission_record_of(members)
 
 
 #: How long a submission record whose ``job_id`` is still ``None`` counts as
@@ -201,39 +225,42 @@ def read_submission_record(path: Path) -> dict[str, Any] | None:
 SBATCH_IN_FLIGHT_SECONDS = 600.0
 
 
-def sbatch_in_flight(submission: dict[str, Any], now: float | None = None) -> bool:
+def sbatch_in_flight(submission: SubmissionRecord, now: float | None = None) -> bool:
     """Whether *submission* is being submitted: its index is reserved, its
     sbatch has not returned yet (no ``job_id``), and it was reserved less than
-    :data:`SBATCH_IN_FLIGHT_SECONDS` ago."""
-    if submission.get("job_id"):
+    :data:`SBATCH_IN_FLIGHT_SECONDS` ago.
+
+    The clock is read only for a record with no job id and a number as its
+    ``submitted_at``; an integer no float holds raises
+    :class:`OverflowError`, after it is read."""
+    if submission.has_job:
         return False
-    started = submission.get("submitted_at")
-    if not isinstance(started, (int, float)):
+    if not submission.started_is_number():
         return False
-    now = time.time() if now is None else now
-    return now - float(started) < SBATCH_IN_FLIGHT_SECONDS
+    clock = time.time() if now is None else now
+    return clock - submission.started_seconds() < SBATCH_IN_FLIGHT_SECONDS
 
 
-def sbatch_timed_out(submission: dict[str, Any]) -> bool:
+def sbatch_timed_out(submission: SubmissionRecord) -> bool:
     """Whether *submission* has no job id because its sbatch timed out
     (``sbatch_timed_out``, which ``submit_cases`` records, #1791): SLURM may
     have taken the job all the same, under a job id nobody was told.
 
     Such a record still counts as in flight (:func:`sbatch_in_flight`) for
     :data:`SBATCH_IN_FLIGHT_SECONDS`, as one whose sbatch has not returned."""
-    return not submission.get("job_id") and submission.get("sbatch_timed_out") is True
+    return not submission.has_job and submission.says_timed_out
 
 
-def no_job_note(submission: dict[str, Any], now: float | None = None) -> str:
+def no_job_note(submission: SubmissionRecord, now: float | None = None) -> str:
     """Why *submission*, which has no ``job_id``, has none (#1791), as
     ``status``, ``wait``, ``resubmit`` and the viewer say it: its sbatch timed
     out (the job may exist), it is still in flight, or the record is stale (its
     submitter stopped before sbatch returned)."""
     if sbatch_timed_out(submission):
-        at = submission.get("sbatch_timed_out_at")
+        at = submission.timed_out_at_text()
         return (
             "no job id: sbatch timed out"
-            + (f" at {at}" if at else "")
+            + ("" if at is None else f" at {at}")
             + "; the job may exist all the same: check `squeue --me`"
         )
     if sbatch_in_flight(submission, now):
@@ -291,10 +318,709 @@ def _link_exclusive(path: Path, fd: int, tmp: str, text: str) -> bool:
         Path(tmp).unlink(missing_ok=True)
 
 
-def _real_number(value: Any) -> bool:
+def _value_json(members: JsonMembers, key: str) -> str:
+    """The JSON text of the value of the member *key* of *members*, ``null``
+    when there is none: what ``dict.get(key)`` gave of the object."""
+    return members.value_text(key) if members.has(key) else "null"
+
+
+def submission_record_of(members: JsonMembers) -> SubmissionRecord:
+    """The submission record of *members*, the members of a submission's
+    JSON object (:class:`SubmissionRecord`)."""
+    has_job = bool(json.loads(_value_json(members, "job_id")))
+    started = json.loads(_value_json(members, "submitted_at"))
+    started_is_number = isinstance(started, int) or isinstance(started, float)
+    timed_out = json.loads(_value_json(members, "sbatch_timed_out"))
+    says_timed_out = isinstance(timed_out, bool) and bool(timed_out)
+    return SubmissionRecord(members, has_job, started_is_number, says_timed_out)
+
+
+class SubmissionRecord:
+    """A submission's record (``submissions/<k>.json``,
+    :meth:`BatchLayout.submission_record`): the record's members, each read
+    when it is asked for, as the record read as a ``dict`` gave it.
+
+    The record is what its submitter wrote (``slurm/submit.py``'s
+    ``submit_cases``): the submission's ``index``, when it was ``created``
+    and ``submitted_at`` (``time.time()``, missing from a record older than
+    #1352), its ``cases`` and the ``chunks`` its tasks run, its ``launcher``
+    settings, its ``job_id`` and ``collect_job_id`` (``null`` until sbatch
+    returns), its ``sbatch`` command line, and either that its sbatch timed
+    out (``sbatch_timed_out``, ``sbatch_timed_out_at``, #1791) or the
+    ``collect_sbatch`` of the job collecting it and why that failed
+    (``collect_error``) -- or anything a hand or another version left there.
+
+    :meth:`get` and ``record[key]`` read a member as ``dict.get(key)`` and
+    ``dict[key]`` did, for the readers that pass its value on; the typed
+    accessors read what the checked readers ask of it.
+
+    Made by :func:`submission_record_of`, which reads whether it has a job
+    id, a number as ``submitted_at`` and says its sbatch timed out when the
+    record is read, as deep in the stack as the record was read as a whole:
+    asking them, as ``sbatch_in_flight()`` and ``no_job_note()`` do, reads
+    nothing more, as the dict's ``get()`` did not, wherever they are asked
+    (Python 3.10 counts the calls on the stack with the levels of nesting
+    ``json.loads()`` reads, and 3.12 counts a constructor's, called from C,
+    against the C stack ``json.loads()`` reads on).
+    """
+
+    members: JsonMembers
+    _has_job: bool
+    _started_is_number: bool
+    _says_timed_out: bool
+
+    def __init__(
+        self,
+        members: JsonMembers,
+        has_job: bool,
+        started_is_number: bool,
+        says_timed_out: bool,
+    ) -> None:
+        self.members = members
+        self._has_job = has_job
+        self._started_is_number = started_is_number
+        self._says_timed_out = says_timed_out
+
+    def has(self, key: str) -> bool:
+        """Whether the record has the member *key*."""
+        return self.members.has(key)
+
+    def get(self, key: str) -> Any:
+        """The value of the member *key*, ``None`` when there is none: the
+        record's ``dict.get(key)``."""
+        return json.loads(_value_json(self.members, key))
+
+    def __getitem__(self, key: str) -> Any:
+        """The value of the member *key*: the record's ``dict[key]``, a
+        :class:`KeyError` when there is none."""
+        return self.members.value(key)
+
+    @property
+    def has_job(self) -> bool:
+        """Whether the record has a job id: a true ``job_id`` (of any type,
+        as ``bool()`` reads it)."""
+        return self._has_job
+
+    def job_text(self) -> str:
+        """The record's ``job_id`` as text: ``f"{record.get('job_id')}"``
+        (``"None"`` when it has none)."""
+        return str(json.loads(_value_json(self.members, "job_id")))
+
+    def is_true(self, key: str) -> bool:
+        """Whether the member *key* is true, as ``bool()`` reads its value
+        (false when there is none): ``bool(record.get(key))``."""
+        return bool(json.loads(_value_json(self.members, key)))
+
+    def text(self, key: str) -> str:
+        """The member *key* as text: ``str(record[key])``, a
+        :class:`KeyError` when there is none."""
+        return str(self.members.value(key))
+
+    def size_of(self, key: str) -> int:
+        """``len(record.get(key) or [])``: 0 when the record has no true
+        *key*, the :class:`TypeError` CPython raises for a true value with
+        no length (a number, ``true``)."""
+        value = json.loads(_value_json(self.members, key))
+        if not bool(value):
+            return 0
+        return len(value)
+
+    def chunk_list(self) -> list[list[int]]:
+        """The record's ``chunks``, as ``enumerate(record.get("chunks") or
+        [])`` gave them: none when they are false, the :class:`TypeError`
+        CPython raises for chunks that cannot be iterated (a number,
+        ``true``).  Each chunk is the value the record holds (a list of the
+        cases its task runs in a record its submitter wrote; an object's key
+        or a string's character in place of one), which Python alone hands
+        on: its length and its cases are read as they were."""
+        chunks = json.loads(_value_json(self.members, "chunks"))
+        if not bool(chunks):
+            return []
+        if TYPE_CHECKING:
+            return [[int(case) for case in chunk] for chunk in chunks]
+        else:
+            return list(chunks)
+
+    def started_is_number(self) -> bool:
+        """Whether the record's ``submitted_at`` is a number: an int (a
+        boolean among them) or a float, as ``isinstance(value, (int,
+        float))`` read it."""
+        return self._started_is_number
+
+    def started_seconds(self) -> float:
+        """The record's ``submitted_at`` as ``float()`` reads it (an
+        :class:`OverflowError` for an integer no float holds), when it is a
+        number (:meth:`started_is_number`)."""
+        return float(json.loads(_value_json(self.members, "submitted_at")))
+
+    @property
+    def says_timed_out(self) -> bool:
+        """Whether the record says its sbatch timed out: its
+        ``sbatch_timed_out`` is ``true`` (``is True``: no other true value)."""
+        return self._says_timed_out
+
+    def timed_out_at_text(self) -> str | None:
+        """When the record says its sbatch timed out, as text: a true
+        ``sbatch_timed_out_at`` (of any type, as ``bool()`` reads it), as
+        an f-string gives it."""
+        at = json.loads(_value_json(self.members, "sbatch_timed_out_at"))
+        if bool(at):
+            return str(at)
+        return None
+
+    def task_of(self, case: int) -> int | None:
+        """The first of the record's tasks that runs *case*: the index in its
+        ``chunks`` (none when they are false) of the first chunk holding it
+        (``case in chunk``), or ``None``.  Raises what that raises: a
+        :class:`TypeError` for ``chunks`` that cannot be iterated or a chunk
+        that cannot hold a number (a string, a number, ``null``)."""
+        chunks = json.loads(_value_json(self.members, "chunks"))
+        if not bool(chunks):
+            return None
+        task = 0
+        for chunk in chunks:
+            if isinstance(chunk, list):
+                # ``case in chunk``: an element equal to it, as ``==`` reads
+                # a number (``1.0``, ``true`` for 1); never another value.
+                for item in chunk:
+                    if isinstance(item, bool):
+                        if int(bool(item)) == case:
+                            return task
+                    elif isinstance(item, int):
+                        if int(item) == case:
+                            return task
+                    elif isinstance(item, float):
+                        number = float(item)
+                        if (
+                            math.isfinite(number)
+                            and number == math.floor(number)
+                            and int(number) == case
+                        ):
+                            return task
+            elif not isinstance(chunk, dict):
+                # A string, a number, true or null: the TypeError CPython
+                # raises for ``case in chunk``, whose text differs between
+                # its versions.  (An object holds no number: its keys are
+                # strings.)
+                if TYPE_CHECKING:
+                    pass
+                else:
+                    if case in chunk:
+                        return task
+            task += 1
+        return None
+
+
+#: The members of a manifest :class:`Manifest` holds as their JSON text: what
+#: the checked readers read of it (:meth:`.BatchLayout.read_manifest`'s
+#: version, :func:`resubmit_target`, :mod:`.collect`).  The others (its
+#: ``cases`` among them, read through :meth:`Manifest.cases`) are read as
+#: the readers the check leaves out read them (:meth:`Manifest.get`).
+_MANIFEST_MEMBERS: tuple[str, ...] = (
+    "version",
+    "expand",
+    "batch_dir",
+    "batch_dir_relative",
+)
+
+#: The members of a case :class:`ManifestCase` holds as their JSON text: what
+#: the checked readers read of it (:mod:`.collect`).
+_CASE_MEMBERS: tuple[str, ...] = ("index", "label", "stem", "case_overrides")
+
+
+def manifest_of_text(text: str) -> Manifest | None:
+    """The manifest of the JSON text *text*, as ``json.loads()`` reads it
+    (a key named twice keeps its first place and its last value), or
+    ``None`` when *text* is JSON that is not an object.
+
+    Raises what ``json.loads()`` raises for text that is not JSON (a
+    :class:`ValueError`, a :class:`RecursionError` for text nested too deep
+    for it), and nothing else.  The members the checked readers read
+    (``_MANIFEST_MEMBERS``, and ``_CASE_MEMBERS`` of each case) are
+    written back here with the C encoder, as :class:`.records.JsonMembers`
+    holds a value, so that nothing of the manifest is read again deeper in
+    the stack than ``json.loads()`` read it (Python 3.10 counts the calls on
+    the stack with the levels of nesting it reads); nothing else is written
+    again, so the manifest costs little more than the document
+    ``json.loads()`` read.
+    """
+    data = json.loads(text)
+    if not isinstance(data, dict):
+        return None
+    members = JsonMembers()
+    keys: list[str] = []
+    cases: list[ManifestCase] = []
+    # The shape of ``cases`` when it is a value Python cannot iterate.
+    cases_shape = ""
+    for key, value in data.items():
+        keys.append(str(key))
+        if str(key) in _MANIFEST_MEMBERS:
+            members.put(str(key), json.dumps(value, ensure_ascii=False))
+        if str(key) != "cases":
+            continue
+        cases = []
+        cases_shape = ""
+        if isinstance(value, list) or isinstance(value, dict) or isinstance(value, str):
+            # A case of each item ``for case in manifest["cases"]`` gave:
+            # a list's items, an object's keys, a string's characters.
+            for item in value:
+                case = JsonMembers()
+                shape = ""
+                if isinstance(item, dict):
+                    for name, field in item.items():
+                        if str(name) in _CASE_MEMBERS:
+                            case.put(str(name), json.dumps(field, ensure_ascii=False))
+                elif isinstance(item, list):
+                    shape = "[]"
+                elif isinstance(item, str):
+                    shape = '""'
+                elif isinstance(item, bool):
+                    shape = "false"
+                elif isinstance(item, int):
+                    shape = "0"
+                elif isinstance(item, float):
+                    shape = "0.0"
+                else:
+                    shape = "null"
+                cases.append(ManifestCase(case, shape))
+        else:
+            # A number, a boolean or null: the value itself, whose truth
+            # ``manifest.get("cases") or []`` reads.
+            cases_shape = json.dumps(value, ensure_ascii=False)
+    manifest = Manifest(members, keys, cases, cases_shape)
+    if not TYPE_CHECKING:
+        # The manifest as json.loads() read it, for the readers the check
+        # leaves out (Manifest.get(), manifest[key]).
+        manifest._document = data
+    return manifest
+
+
+def _not_held(what: str, key: str) -> ValueError:
+    """The error of asking a manifest or a case for the text of a member it
+    does not hold (``_MANIFEST_MEMBERS``, ``_CASE_MEMBERS``)."""
+    return ValueError(
+        f"a {what} read by read_manifest() holds no {key!r} as JSON text: "
+        "only what the checked readers read of it"
+    )
+
+
+class ManifestCase:
+    """A case of a batch's manifest (:meth:`Manifest.cases`): the members
+    the checked readers read of it (``_CASE_MEMBERS``: its ``index``,
+    ``label``, file ``stem`` and ``case_overrides``), each read when it is
+    asked for, as the case read as a ``dict`` gave it.  The rest of the case
+    (its resolved ``config``, the ``files`` it names, ...) is read through
+    ``manifest["cases"]`` (:meth:`Manifest.get`).
+
+    The case is what its submitter wrote (``slurm/submit.py``), or anything
+    a hand or another version left there: a ``stem`` is missing from a
+    manifest older than #1957.  A case that is not an object (a hand's,
+    another version's) is held as a value of its type (*shape*: ``[]``,
+    ``""``, ``0``, ``0.0``, ``false`` or ``null``, empty for an object), so
+    that reading a member of it raises what CPython raises for its type
+    (``'int' object is not subscriptable``; a list, a string or a number in
+    its place raises alike whatever it holds).
+    """
+
+    members: JsonMembers
+    _shape: str
+
+    def __init__(self, members: JsonMembers, shape: str = "") -> None:
+        self.members = members
+        self._shape = shape
+
+    def _value(self, key: str) -> Any:
+        """The value of the member *key*, one of ``_CASE_MEMBERS``: the
+        case's ``case[key]``, a :class:`KeyError` when there is none (a
+        :class:`TypeError` for a case that is not an object)."""
+        if key not in _CASE_MEMBERS:
+            raise _not_held("case", key)
+        if self._shape != "":
+            return json.loads(self._shape)[key]
+        return self.members.value(key)
+
+    def _get(self, key: str) -> Any:
+        """The value of the member *key*, one of ``_CASE_MEMBERS``,
+        ``None`` when there is none: the case's ``case.get(key)`` (an
+        :class:`AttributeError` for a case that is not an object)."""
+        if key not in _CASE_MEMBERS:
+            raise _not_held("case", key)
+        if self._shape != "":
+            return json.loads(self._shape).get(key)
+        return json.loads(_value_json(self.members, key))
+
+    def value_json(self, key: str) -> str:
+        """The JSON text of the member *key*, one of ``_CASE_MEMBERS``,
+        ``null`` when there is none: the case's ``case.get(key)`` (an
+        :class:`AttributeError` for a case that is not an object)."""
+        if key not in _CASE_MEMBERS:
+            raise _not_held("case", key)
+        if self._shape != "":
+            json.loads(self._shape).get(key)
+        return _value_json(self.members, key)
+
+    def index(self) -> int:
+        """The case's ``index`` as ``int(case["index"])`` reads it: a
+        :class:`KeyError` when it has none, a :class:`TypeError` or a
+        :class:`ValueError` (an :class:`OverflowError` for an infinity) for
+        a value ``int()`` cannot read."""
+        return int(self._value("index"))
+
+    def index_value(self) -> int:
+        """The case's ``index`` as the manifest holds it: ``case["index"]``,
+        an int in a manifest its submitter wrote (and any value a hand left,
+        which Python alone hands on)."""
+        value = self._value("index")
+        if TYPE_CHECKING:
+            return int(value)
+        else:
+            return value
+
+    def label(self) -> str:
+        """The case's ``label`` as text: ``str(case["label"])``."""
+        return str(self._value("label"))
+
+    def stem(self) -> str:
+        """The case's file stem as text, empty when it has none (a manifest
+        older than #1957): ``str(case.get("stem") or "")``."""
+        stem = self._get("stem")
+        if bool(stem):
+            return str(stem)
+        return ""
+
+    def case_overrides(self) -> list[str]:
+        """The overrides that make the case, as ``list(case["case_overrides"])``
+        reads them: a list's items (the strings its submitter wrote, and
+        any value a hand left, which Python alone hands on), an object's
+        keys, a string's characters; a :class:`TypeError` for a number or
+        ``null``."""
+        value = self._value("case_overrides")
+        if TYPE_CHECKING:
+            return [str(item) for item in value]
+        else:
+            return list(value)
+
+
+class Manifest:
+    """A batch's manifest (``slurm/manifest.json``,
+    :meth:`BatchLayout.read_manifest`): the members the checked readers read
+    of it, each read when it is asked for, and its cases
+    (:class:`ManifestCase`).
+
+    The manifest is what its submitter wrote (``slurm/submit.py``): its
+    ``version``, when it was ``created``, its ``batch_dir`` (and, with
+    ``launcher.remote_cwd``, its ``batch_dir_relative``), the ``cwd``,
+    ``python`` and ``argv`` that submitted it, its ``scenario_names``,
+    ``overrides`` and whether it expands them (``expand``), its
+    ``build_scenario_fn``, whether it was ``typechecked``, its ``launcher``
+    settings, the ``env`` its jobs set again, which cases decide its
+    ``batch_settings`` (missing from a manifest older than #1225), and its
+    ``cases`` -- or anything a hand or another version left there.
+
+    :meth:`get`, ``manifest[key]`` and ``key in manifest`` read it as the
+    ``dict`` it was read as before, for the readers the library check leaves
+    out (:mod:`.submit`, :mod:`.worker`, :mod:`.cli`, the gate, the viewer):
+    the very values ``json.loads()`` read.  The typed accessors read what the
+    checked readers (:mod:`.collect`, :func:`resubmit_target`) ask of it,
+    which the manifest holds as JSON text: ``_MANIFEST_MEMBERS``, and
+    ``_CASE_MEMBERS`` of each case.
+
+    Made by :func:`manifest_of_text`, which reads its cases when the
+    manifest is read, as deep in the stack as ``json.loads()`` read it.
+    """
+
+    #: The members of ``_MANIFEST_MEMBERS`` it has.
+    members: JsonMembers
+    _cases: list[ManifestCase]
+    #: ``cases`` as its JSON text when Python cannot iterate it (a number,
+    #: a boolean or ``null``); empty when it can.
+    _cases_shape: str
+    #: The name of each of its members, in its place.
+    _keys: list[str]
+    #: The manifest as ``json.loads()`` read it, for :meth:`get` and
+    #: ``manifest[key]``: Python alone holds it (manifest_of_text()).
+    _document: dict[str, Any]
+
+    def __init__(
+        self,
+        members: JsonMembers,
+        keys: list[str],
+        cases: list[ManifestCase],
+        cases_shape: str = "",
+    ) -> None:
+        self.members = members
+        self._keys = keys
+        self._cases = cases
+        self._cases_shape = cases_shape
+        self._document = {}
+
+    def keys(self) -> list[str]:
+        """The name of each of the manifest's members, in its place:
+        ``list(manifest)`` of the manifest read as a ``dict``."""
+        return list(self._keys)
+
+    def has(self, key: str) -> bool:
+        """Whether the manifest has the member *key*."""
+        return key in self._keys
+
+    def __contains__(self, key: str) -> bool:
+        """``key in manifest``: whether it has the member *key*."""
+        return key in self._keys
+
+    def get(self, key: str, default: Any = None) -> Any:
+        """The value of the member *key*, *default* when there is none: the
+        manifest's ``dict.get(key, default)``, the value ``json.loads()``
+        read."""
+        return self._document.get(key, default)
+
+    def __getitem__(self, key: str) -> Any:
+        """The value of the member *key*: the manifest's ``dict[key]``, the
+        value ``json.loads()`` read; a :class:`KeyError` when there is
+        none."""
+        return self._document[key]
+
+    def _held_text(self, key: str) -> str:
+        """The JSON text of the member *key*, ``null`` when there is none;
+        a :class:`ValueError` for a member it has that it does not hold as
+        text (one not of ``_MANIFEST_MEMBERS``)."""
+        if key not in _MANIFEST_MEMBERS and self.has(key):
+            raise _not_held("manifest", key)
+        return _value_json(self.members, key)
+
+    def version_text(self) -> str:
+        """The JSON text of the manifest's ``version``, ``null`` when it has
+        none (:meth:`BatchLayout._check_version`)."""
+        return self._held_text("version")
+
+    def is_true(self, key: str) -> bool:
+        """Whether the member *key* (one of ``_MANIFEST_MEMBERS``) is
+        true, as ``bool()`` reads its value (false when there is none):
+        ``bool(manifest.get(key))``."""
+        return bool(json.loads(self._held_text(key)))
+
+    def text(self, key: str) -> str:
+        """The member *key* (one of ``_MANIFEST_MEMBERS``) as text:
+        ``str(manifest[key])``, a :class:`KeyError` when there is none."""
+        if key not in _MANIFEST_MEMBERS and self.has(key):
+            raise _not_held("manifest", key)
+        return str(self.members.value(key))
+
+    def listed_cases(self) -> list[ManifestCase]:
+        """The manifest's cases, as ``for case in manifest.get("cases") or
+        []`` gave them: none when it has none or false ones, the
+        :class:`TypeError` CPython raises for true ``cases`` it cannot
+        iterate (a number, ``true``)."""
+        if not self.has("cases"):
+            return []
+        if self._cases_shape != "":
+            cases = json.loads(self._cases_shape)
+            if not bool(cases):
+                return []
+            for _ in cases:
+                pass
+        return self._cases
+
+    def cases(self) -> list[ManifestCase]:
+        """The manifest's cases, as ``for case in manifest["cases"]`` gave
+        them: a :class:`KeyError` when it has none, the
+        :class:`TypeError` CPython raises for ``cases`` it cannot iterate
+        (a number, ``true`` or ``null``)."""
+        if not self.has("cases"):
+            raise KeyError("cases")
+        if self._cases_shape != "":
+            for _ in json.loads(self._cases_shape):
+                pass
+        return self._cases
+
+
+class CaseOutcome:
+    """A case's outcome as its task recorded it (``results/<i>.json``,
+    :meth:`BatchLayout.read_result`): the record's members, each read when
+    it is asked for, as the record read as a ``dict`` gave it.
+
+    The record is what the task wrote (``slurm/worker.py``): the case's
+    ``index``, ``label`` and ``stem``, its ``result``
+    (``ScenarioResult.to_dict()``), whether it ``errored``, the
+    ``submission``, ``task``, ``job_id`` and ``host`` that ran it, its
+    ``wall_seconds`` and when it ``finished``, and why its Rerun recording
+    failed (``rerun_error``), if it did -- or anything a hand or another
+    version left there.
+    """
+
+    members: JsonMembers
+
+    def __init__(self, members: JsonMembers) -> None:
+        self.members = members
+
+    def has(self, key: str) -> bool:
+        """Whether the record has the member *key*."""
+        return self.members.has(key)
+
+    def get(self, key: str) -> Any:
+        """The value of the member *key*, ``None`` when there is none: the
+        record's ``dict.get(key)``."""
+        return json.loads(_value_json(self.members, key))
+
+    @property
+    def errored(self) -> bool:
+        """Whether the record says the case raised rather than ran: a true
+        ``errored`` (of any type, as ``bool()`` reads it)."""
+        return bool(json.loads(_value_json(self.members, "errored")))
+
+    @property
+    def rerun_error(self) -> str | None:
+        """Why the case's Rerun recording failed, if the record says: a true
+        ``rerun_error`` (of any type, as ``bool()`` reads it), as ``str()``
+        gives it."""
+        why = json.loads(_value_json(self.members, "rerun_error"))
+        if bool(why):
+            return str(why)
+        return None
+
+    def result(self) -> JsonMembers | None:
+        """The members of the record's ``result``, or ``None`` when it has
+        none or one that is not an object."""
+        if not self.members.has("result"):
+            return None
+        result = parse_object(self.members.value_text("result"))
+        if result is None:
+            return None
+        return result
+
+
+class TaskStatus:
+    """A task's status as it last wrote it (``tasks/<k>-<t>.json``,
+    :meth:`BatchLayout.read_task`): the record's members, each read when it
+    is asked for, as the record read as a ``dict`` gave it.
+
+    The record is what the task writes (``slurm/worker.py``'s ``_Task``):
+    its ``submission``, ``task``, ``job_id``, ``array_job_id``, ``host`` and
+    ``pid``, its ``state``, when it ``started``, its ``cases``, those
+    ``done`` and the ``current`` one, and, as its run adds them, when it was
+    ``updated``, its ``ros_domains`` and ``ports``, when it ``finished``, its
+    ``error`` and ``traceback`` and its ``peak_*_rss_mb`` -- or anything a
+    hand or another version left there.  An empty record
+    (``TaskStatus(JsonMembers())``) is what its readers take for a task that
+    has none.
+    """
+
+    members: JsonMembers
+
+    def __init__(self, members: JsonMembers) -> None:
+        self.members = members
+
+    def has(self, key: str) -> bool:
+        """Whether the record has the member *key*."""
+        return self.members.has(key)
+
+    def get(self, key: str) -> Any:
+        """The value of the member *key*, ``None`` when there is none: the
+        record's ``dict.get(key)``."""
+        return json.loads(_value_json(self.members, key))
+
+    def state_text(self, default: str) -> str:
+        """The task's ``state`` as text, *default* when the record has none:
+        ``f"{status.get('state', default)}"`` of the record read as a
+        ``dict``."""
+        if not self.members.has("state"):
+            return default
+        return str(json.loads(self.members.value_text("state")))
+
+    def joined(self, prefix: str, key: str) -> str:
+        """*prefix* and the member *key* when it is true, else empty:
+        ``prefix + status.get(key) if status.get(key) else ""``, the
+        :class:`TypeError` CPython raises for a true value that is not a
+        string."""
+        value = json.loads(_value_json(self.members, key))
+        if not bool(value):
+            return ""
+        if TYPE_CHECKING:
+            return prefix + str(value)
+        else:
+            return prefix + value
+
+    def port_text(self) -> str:
+        """The task's RPC port as ``status`` shows it: ``" port " +
+        str(ports["rpc"])`` when ``ports = status.get("ports") or {}`` has a
+        true ``rpc``, else empty; the :class:`AttributeError` CPython raises
+        for true ``ports`` that are not an object."""
+        ports = json.loads(_value_json(self.members, "ports"))
+        if not bool(ports):
+            return ""
+        if not bool(ports.get("rpc")):
+            return ""
+        return " port " + str(ports["rpc"])
+
+    def size_of(self, key: str) -> int:
+        """``len(status.get(key) or [])``: 0 when the record has no true
+        *key*, the :class:`TypeError` CPython raises for a true value with
+        no length (a number, ``true``)."""
+        value = json.loads(_value_json(self.members, key))
+        if not bool(value):
+            return 0
+        return len(value)
+
+    def true_text(self, key: str) -> str | None:
+        """The member *key* as text when it is true (``f"{value}"``), else
+        ``None``."""
+        value = json.loads(_value_json(self.members, key))
+        if bool(value):
+            return str(value)
+        return None
+
+    @property
+    def error(self) -> str | None:
+        """Why the task failed, if the record says: a true ``error`` (of any
+        type, as ``bool()`` reads it), as ``str()`` gives it."""
+        why = json.loads(_value_json(self.members, "error"))
+        if bool(why):
+            return str(why)
+        return None
+
+    def state_in(self, states: frozenset[str]) -> bool:
+        """Whether the task's ``state`` is one of *states*: the record's
+        ``get("state", "?") in states``, which raises the
+        :class:`TypeError` CPython raises for a ``state`` no set holds (a
+        list, an object)."""
+        state = json.loads(_value_json(self.members, "state"))
+        if isinstance(state, str):
+            return str(state) in states
+        if isinstance(state, list) or isinstance(state, dict):
+            if TYPE_CHECKING:
+                # The error CPython raises for a value no set holds, whose
+                # text differs between its versions.
+                return False
+            else:
+                return state in states
+        return False
+
+    def is_at(self, case: int) -> bool:
+        """Whether the task's ``current`` case is *case*: the record's
+        ``get("current") == case``, which a number equal to it (``1.0``,
+        ``true`` for 1) is too."""
+        current = json.loads(_value_json(self.members, "current"))
+        if isinstance(current, bool):
+            return int(bool(current)) == case
+        if isinstance(current, int):
+            return int(current) == case
+        if isinstance(current, float):
+            number = float(current)
+            return (
+                math.isfinite(number)
+                and number == math.floor(number)
+                and int(number) == case
+            )
+        return False
+
+
+def _real_number(value_json: str) -> bool:
+    """Whether the JSON text *value_json* is a number of seconds."""
+    value = json.loads(value_json)
     # ``True`` is an int, but no number of seconds; nor is an integer
     # literal too long for a float (``float()`` overflows on it).
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
+    if isinstance(value, bool):
+        return False
+    if not (isinstance(value, int) or isinstance(value, float)):
         return False
     try:
         float(value)
@@ -303,48 +1029,64 @@ def _real_number(value: Any) -> bool:
     return True
 
 
-def _readable_status(status: Any) -> bool:
+def _readable_status(status_json: str) -> bool:
+    """Whether the JSON text *status_json* is a condition's status that can
+    be reported: an object with a string ``label`` and ``message`` and a
+    boolean ``satisfied``."""
+    status = json.loads(status_json)
+    if not isinstance(status, dict):
+        return False
+    label = status.get("label")
+    satisfied = status.get("satisfied")
+    message = status.get("message")
     return (
-        isinstance(status, dict)
-        and isinstance(status.get("label"), str)
-        and isinstance(status.get("satisfied"), bool)
-        and isinstance(status.get("message"), str)
+        isinstance(label, str)
+        and isinstance(satisfied, bool)
+        and isinstance(message, str)
     )
 
 
-def readable_result(result: Any) -> bool:
-    """Whether *result*, a recorded ``result`` (``ScenarioResult.to_dict()``),
-    can be reported (#1726): an object whose ``message`` is a string, whose
-    ``elapsed_seconds`` is a number (not a boolean), whose
-    ``condition_statuses``, if any, is a list of objects each with a string
-    ``label`` and ``message`` and a boolean ``satisfied``, and whose
-    ``failure``, if any, is an object.  What ``to_dict()`` leaves out
+def readable_result(result: JsonMembers) -> bool:
+    """Whether *result*, the members of a recorded ``result``
+    (``ScenarioResult.to_dict()``), can be reported (#1726): its ``message``
+    is a string, its ``elapsed_seconds`` a number (not a boolean), its
+    ``condition_statuses``, if any, a list of objects each with a string
+    ``label`` and ``message`` and a boolean ``satisfied``, and its
+    ``failure``, if any, an object.  What ``to_dict()`` leaves out
     (``rerun_recording``, ``failure``) may be missing; ``passed`` is
     :func:`recorded_verdict`'s to check."""
-    if not isinstance(result, dict):
+    message = json.loads(_value_json(result, "message"))
+    if not isinstance(message, str):
         return False
-    if not isinstance(result.get("message"), str):
+    if not _real_number(_value_json(result, "elapsed_seconds")):
         return False
-    if not _real_number(result.get("elapsed_seconds")):
-        return False
-    statuses = result.get("condition_statuses")
-    if statuses is not None and not (
-        isinstance(statuses, list) and all(_readable_status(s) for s in statuses)
-    ):
-        return False
-    failure = result.get("failure")
-    if failure is None:
+    statuses_json = _value_json(result, "condition_statuses")
+    if statuses_json != "null":
+        statuses = json.loads(statuses_json)
+        if not isinstance(statuses, list):
+            return False
+        for status in statuses:
+            if not _readable_status(json.dumps(status)):
+                return False
+    failure_json = _value_json(result, "failure")
+    if failure_json == "null":
         return True
+    failure = json.loads(failure_json)
     if not isinstance(failure, dict):
         return False
-    try:
-        Failure.from_dict(failure)
-    except (TypeError, ValueError, AttributeError, OverflowError):
-        return False
+    if TYPE_CHECKING:
+        # Failure.from_dict() reads a mapping of any values, which Codon
+        # cannot express (typecheck/library.py's UNCALLED).
+        pass
+    else:
+        try:
+            Failure.from_dict(failure)
+        except (TypeError, ValueError, AttributeError, OverflowError):
+            return False
     return True
 
 
-def recorded_verdict(record: dict[str, Any] | None) -> bool | None:
+def recorded_verdict(record: CaseOutcome | None) -> bool | None:
     """Whether the outcome a task recorded for a case (``results/<i>.json``,
     read by :meth:`BatchLayout.read_result`) passed: its ``result``'s
     ``passed`` when ``result`` is an object and ``passed`` a boolean, else
@@ -356,15 +1098,45 @@ def recorded_verdict(record: dict[str, Any] | None) -> bool | None:
     missing or of the wrong type) holds no verdict either (#1726), so that the counts of
     ``scenario-slurm status`` and ``wait``, the viewer, ``collect`` and
     ``resubmit`` all agree that it did not pass."""
-    if not isinstance(record, dict):
+    if record is None:
         return None
-    result = record.get("result")
-    if not isinstance(result, dict):
+    # Annotated: Codon 0.19 refuses the call's value for the local without.
+    members: JsonMembers | None = record.result()
+    if members is None:
         return None
-    passed = result.get("passed")
+    return _verdict_of_result(members)
+
+
+def _verdict_of_result(result: JsonMembers) -> bool | None:
+    """:func:`recorded_verdict` of the members of a recorded ``result``."""
+    passed = json.loads(_value_json(result, "passed"))
     if not isinstance(passed, bool):
         return None
-    return passed if readable_result(result) else None
+    verdict = bool(passed)
+    if readable_result(result):
+        return verdict
+    return None
+
+
+def verdict_of_document(document: Any) -> bool | None:
+    """:func:`recorded_verdict` of a case's outcome as ``json.loads()``
+    reads it (``ui.cases`` reads the file itself): ``None`` for a document
+    that is not an object, or whose ``result`` is not one.
+
+    Each member of the ``result`` is written back as
+    :class:`.records.JsonMembers` holds a value, with the C encoder, and is
+    not read again as part of the whole: what ``json.loads()`` read, nested
+    however deep, is read here too, on Python 3.10 (which counts the calls
+    on the stack with the levels of nesting) as on 3.12."""
+    if not isinstance(document, dict):
+        return None
+    result = document.get("result")
+    if not isinstance(result, dict):
+        return None
+    members = JsonMembers()
+    for key, value in result.items():
+        members.set_text(key, json.dumps(value, ensure_ascii=False))
+    return _verdict_of_result(members)
 
 
 @dataclass(frozen=True)
@@ -394,8 +1166,8 @@ class BatchLayout(BatchPaths):
                 return index
             index = max(index + 1, self.next_submission())
 
-    def read_manifest(self) -> dict[str, Any]:
-        """The batch's manifest.
+    def read_manifest(self) -> Manifest:
+        """The batch's manifest (:class:`Manifest`).
 
         Raises:
             FileNotFoundError: *batch_dir* holds no SLURM batch.
@@ -407,15 +1179,18 @@ class BatchLayout(BatchPaths):
             raise FileNotFoundError(
                 f"{self.batch_dir} holds no SLURM batch (no {self.manifest})"
             )
-        manifest = read_json(self.manifest)
-        if not isinstance(manifest, dict):
+        # Parsed in a helper, as read_json() parsed it: Python 3.10 counts
+        # the calls on the stack with the levels of nesting json.loads()
+        # reads.
+        manifest = manifest_of_text(self.manifest.read_text(encoding="utf-8"))
+        if manifest is None:
             raise ValueError(
                 f"{self.manifest} is not a SLURM batch manifest "
                 "(it holds JSON that is not an object)"
             )
         # The version as JSON text, which json.loads() reads back as the
         # value the manifest holds.
-        self._check_version(json.dumps(manifest.get("version")))
+        self._check_version(manifest.version_text())
         return manifest
 
     def _check_version(self, text: str) -> None:
@@ -444,21 +1219,49 @@ class BatchLayout(BatchPaths):
                 + ", ".join(str(v) for v in MANIFEST_VERSIONS)
             )
 
-    def read_submission(self, index: int) -> dict[str, Any]:
-        return read_json(self.submission(index))
+    def read_submission(self, index: int) -> SubmissionRecord | None:
+        """Submission *index*'s record, or ``None`` when it holds JSON that
+        is not an object; raises what reading it as JSON raises
+        (:class:`FileNotFoundError` when it is missing, another
+        :class:`OSError`, a :class:`ValueError` for what is not JSON).
 
-    def submission_record(self, index: int) -> dict[str, Any] | None:
+        Parsed here, as :func:`read_submission_record` parses it."""
+        members = parse_object(self.submission(index).read_text(encoding="utf-8"))
+        if members is None:
+            return None
+        return submission_record_of(members)
+
+    def submission_record(self, index: int) -> SubmissionRecord | None:
         """Submission *index*'s record, or ``None`` when it is missing or
         cannot be read as one (:func:`read_submission_record`)."""
         return read_submission_record(self.submission(index))
 
-    def read_result(self, case: int) -> dict[str, Any] | None:
+    def read_result(self, case: int) -> CaseOutcome | None:
         """Case *case*'s outcome, or ``None`` when there is none to read:
-        missing, not JSON, or JSON that is not an object (#1630)."""
-        return _read_object(self.result(case))
+        missing, cannot be read, not JSON (not UTF-8 among them), or JSON
+        that is not an object (#1630)."""
+        path = self.result(case)
+        if not path.is_file():
+            return None
+        try:
+            members = parse_object(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if members is None:
+            return None
+        return CaseOutcome(members)
 
-    def read_task(self, submission: int, task: int) -> dict[str, Any] | None:
+    def read_task(self, submission: int, task: int) -> TaskStatus | None:
         """Task *task* of submission *submission*'s status, or ``None`` when
-        there is none to read: missing, not JSON, or JSON that is not an
-        object (#1630)."""
-        return _read_object(self.task(submission, task))
+        there is none to read: missing, cannot be read, not JSON (not UTF-8
+        among them), or JSON that is not an object (#1630)."""
+        path = self.task(submission, task)
+        if not path.is_file():
+            return None
+        try:
+            members = parse_object(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if members is None:
+            return None
+        return TaskStatus(members)
