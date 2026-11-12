@@ -1537,43 +1537,58 @@ def test_the_host_python_root_replaces_a_stale_link(tmp_path: Path) -> None:
     assert sorted(p.name for p in link.parent.iterdir()) == ["autoware_bridge"]
 
 
+# Forks processes that make the link at the same moment, in each of the
+# directories given. Run in a fresh interpreter, not in the test's own: that is
+# an xdist worker with threads (and grpc's fork handlers), and a fork of it
+# could inherit a lock one of them held and hang until the CI job timed out.
+_MAKE_AT_ONCE = """
+import os
+import sys
+import traceback
+from pathlib import Path
+
+from autoware_carla_scenario.autoware_stack.bridge_node import host_python_root
+
+processes = 12
+failed = False
+for cache in sys.argv[1:]:
+    gate, release = os.pipe()
+    children = []
+    for _ in range(processes):
+        child = os.fork()
+        if child == 0:  # every child waits for the same moment
+            status = 1
+            try:
+                os.close(release)
+                os.read(gate, 1)
+                host_python_root(Path(cache))
+                status = 0
+            except BaseException:
+                traceback.print_exc()
+            finally:
+                os._exit(status)
+        children.append(child)
+    os.close(gate)
+    os.close(release)  # EOF: releases every child at once
+    failed |= any(os.waitpid(child, 0)[1] for child in children)
+sys.exit(1 if failed else 0)
+"""
+
+
 @pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fork()")
 def test_the_host_python_root_is_made_by_processes_at_once(tmp_path: Path) -> None:
     """#2079: runs started together all get the link, none an error."""
-    import traceback
-    import warnings
+    caches = [tmp_path / f"trial{trial}" for trial in range(24)]
+    done = subprocess.run(
+        [sys.executable, "-c", _MAKE_AT_ONCE, *map(str, caches)],
+        capture_output=True,
+        text=True,
+        timeout=120,
+        check=False,
+    )
+    assert (done.returncode, done.stderr) == (0, "")
 
-    processes = 12
-    for trial in range(6):
-        cache = tmp_path / f"trial{trial}"
-        errors = tmp_path / f"errors{trial}"
-        errors.mkdir()
-        gate, release = os.pipe()
-        children = []
-        for index in range(processes):
-            with warnings.catch_warnings():
-                # Python 3.12+ warns about forking a process with threads.
-                warnings.simplefilter("ignore", DeprecationWarning)
-                child = os.fork()
-            if child == 0:  # pragma: no cover -- the child
-                status = 1
-                try:
-                    os.close(release)
-                    os.read(gate, 1)  # every child waits for the same moment
-                    host_python_root(cache)
-                    status = 0
-                except BaseException:
-                    (errors / str(index)).write_text(traceback.format_exc())
-                finally:
-                    os._exit(status)
-            children.append(child)
-        os.close(gate)
-        os.close(release)  # EOF: releases every child at once
-        statuses = [os.waitpid(child, 0)[1] for child in children]
-        failures = [p.read_text() for p in sorted(errors.iterdir())]
-        assert failures == []
-        assert statuses == [0] * processes
-
+    for cache in caches:
         root = host_python_root(cache)
         link = root / "autoware_carla_scenario" / "autoware_bridge"
         assert link.is_symlink()

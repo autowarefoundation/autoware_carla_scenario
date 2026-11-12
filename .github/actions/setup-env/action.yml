@@ -75,16 +75,22 @@ runs:
         ' uv.lock | sha256sum | cut -c1-16)
         echo "digest=${digest}" >> "${GITHUB_OUTPUT}"
 
+    # v10, not v4: v4's cache client talks to GitHub's retired cache service,
+    # which answers every restore with 400, so no job ever found its cache and
+    # each aarch64 job compiled libsass again.
     - name: Install uv
-      uses: astral-sh/setup-uv@v4
+      uses: astral-sh/setup-uv@v10
       with:
         version: "latest"
         # Only enable the uv cache when we are actually going to populate it.
         # When 'install-dev-deps' is "false" (e.g. release.yml's early
         # 'Setup base environment' step on a no-bump-label push), 'uv sync'
-        # never runs, the cache dir stays empty, and setup-uv@v4's post-step
+        # never runs, the cache dir stays empty, and setup-uv's post-step
         # save fails the job with 'Cache path ... does not exist on disk'.
         enable-cache: ${{ inputs.install-dev-deps }}
+        # v4 pruned by default, v10 does not; the cache is meant to hold only
+        # what is built from source (see the step above).
+        prune-cache: true
         # Keyed by the previous step's digest instead (cache-suffix).
         cache-dependency-glob: ""
         # setup-uv keys the cache on the lockfile hash and nothing else, so
