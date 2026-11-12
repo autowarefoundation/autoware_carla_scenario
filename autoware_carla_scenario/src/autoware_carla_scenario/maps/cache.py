@@ -526,6 +526,11 @@ class GitMapCache:
             self._git(scratch, "remote", "add", "--", "origin", source.repo_url)
             self._git(scratch, "config", "remote.origin.promisor", "true")
             self._git(scratch, "config", "remote.origin.partialclonefilter", "tree:0")
+            # No maintenance after the fetch: git >= 2.47 runs it detached,
+            # and it would write into the scratch repository while it is
+            # being removed, leaving it behind.
+            self._git(scratch, "config", "maintenance.auto", "false")
+            self._git(scratch, "config", "gc.auto", "0")
             self._git(
                 scratch,
                 "fetch",
