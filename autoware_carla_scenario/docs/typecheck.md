@@ -43,7 +43,12 @@ Codon compiler, no config matches `scenario=` (the message lists the
 configs), or an override names a key the config does not have
 (`scenario.timout_seconds=3` is reported with the closest key,
 `scenario.timeout_seconds`; `+key=value` adds a new one; `HYDRA_FULL_ERROR=1`
-shows the traceback). A scenario package
+shows the traceback). A check that raises (an error of the checker itself,
+not a verdict on the scenario) fails that config only: it is reported as
+`[FAILED] <config>: checker error: <exception>`, its traceback goes to
+stderr, the other configs are still checked and reported, and the exit
+status is 1, as for any failed config (`--library` likewise reports
+`[FAILED] library check: checker error: ...` and exits with 1). A scenario package
 can make the same check in its own tests, with no simulator (the template and
 `scenario-new` packages have one in `tests/test_typecheck.py`):
 
@@ -134,7 +139,7 @@ packages have. What the key still leaves out: a distribution
 installed in development mode without PEP 610's `direct_url.json` (an old
 `setup.py develop`, a `.pth` file written by hand); clear the directory after
 editing one.
-A crash is never kept, and an entry
+A crash is never kept on disk (only for its process, as above), and an entry
 that cannot be read counts as a miss. A verdict read from the directory has
 its file's times touched, so the directory can be pruned by access time.
 

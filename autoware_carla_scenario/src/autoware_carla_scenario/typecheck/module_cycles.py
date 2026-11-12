@@ -84,7 +84,7 @@ def cycle_hint(
     if path is None or line is None:
         return None
     try:
-        tree = ast.parse(Path(path).read_text())
+        tree = ast.parse(Path(path).read_text(encoding="utf-8"))
     except (OSError, SyntaxError, UnicodeDecodeError):
         return None
     cannot = _CANNOT_IMPORT.match(message)
