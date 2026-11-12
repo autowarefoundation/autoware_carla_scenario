@@ -58,6 +58,8 @@ from autoware_carla_scenario import rerun as rerun_module
 from autoware_carla_scenario import scaffold as scaffold_module
 from autoware_carla_scenario import t4 as t4_module
 from autoware_carla_scenario import t4_scene as t4_scene_module
+from autoware_carla_scenario.commonroad import session as commonroad_session
+from autoware_carla_scenario.commonroad import worker as commonroad_worker
 from autoware_carla_scenario import waypoint_arrival
 from autoware_carla_scenario.autoware_bridge import base as bridge_base
 from autoware_carla_scenario.autoware_bridge import grpc_server as bridge_grpc_server
@@ -117,6 +119,10 @@ _OMITTED_PARAMETERS: dict[str, set[str]] = {
     "DriverConfig": {"bridge"},
     # A condition's details (scenario_runner fills them, outside the check).
     "ConditionStatus": {"details"},
+    # Defaults the machine and the environment decide (the CPU count,
+    # $AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS), which no literal holds; the
+    # constructor is a compile error all the same (commonroad/session.codon).
+    "CommonRoadSettings": {"heavy_metrics", "workers"},
 }
 
 #: Model constants that are no literal, each compared by a test of its own.
@@ -229,8 +235,24 @@ _KINDS = {
 }
 
 
+def _signature(obj: Any) -> inspect.Signature:
+    """*obj*'s signature. An exception class that keeps the constructor of a
+    builtin exception (CommonRoadWorkerError, a RuntimeError with no
+    __init__ of its own) takes any positional arguments, as BaseException
+    does, which inspect cannot read from the builtin."""
+    if inspect.isclass(obj) and issubclass(obj, BaseException):
+        for base in obj.__mro__:
+            if base.__module__ == "builtins":
+                return inspect.Signature(
+                    [inspect.Parameter("args", inspect.Parameter.VAR_POSITIONAL)]
+                )
+            if "__init__" in vars(base) or "__new__" in vars(base):
+                break
+    return inspect.signature(obj)
+
+
 def _python_params(obj: Any, *, drop_first: bool) -> list[Param]:
-    params = list(inspect.signature(obj).parameters.values())
+    params = list(_signature(obj).parameters.values())
     if drop_first:
         params = params[1:]
     return [
@@ -637,7 +659,7 @@ def _assert_defaults_as_in_python(
     """Every default the model declares holds the value of Python's (#969):
     _model_params compares only which parameters have one."""
     try:
-        signature = inspect.signature(python)
+        signature = _signature(python)
     except (TypeError, ValueError):
         return
     # A dataclass field's default_factory: its signature shows a placeholder.
@@ -1031,6 +1053,12 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What the checked actions.play_motion reads of the unchecked
     # pedestrian.soma (numpy.load, numpy.typing).
     "pedestrian/soma": (pedestrian_soma, ("SomaMotion", "load_soma_motion")),
+    # What the checked commonroad package re-exports of commonroad.session
+    # (concurrent.futures, the workers) and commonroad.worker (select,
+    # subprocess, JSON objects of mixed value types): every name of their
+    # __all__, the classes by name, the functions compile errors.
+    "commonroad/session": (commonroad_session, tuple(commonroad_session.__all__)),
+    "commonroad/worker": (commonroad_worker, tuple(commonroad_worker.__all__)),
     # What the checked scaffold package re-exports of scaffold.generator
     # (argparse, jinja2): the classes by name, the functions compile errors.
     "scaffold/generator": (scaffold_generator, tuple(scaffold_module.__all__)),
@@ -1066,6 +1094,12 @@ _UNBUILDABLE: dict[str, str] = {
     # error and the result of writing a new scenario package (scenario-new).
     "PackageExistsError": "scaffold/generator",
     "ScaffoldResult": "scaffold/generator",
+    # What the checked commonroad package re-exports of commonroad.session
+    # and commonroad.worker: the settings of the evaluation the runner runs
+    # after a run, and the worker processes it starts.
+    "CommonRoadSettings": "commonroad/session",
+    "CommonRoadWorker": "commonroad/worker",
+    "CommonRoadWorkerError": "commonroad/worker",
 }
 
 
@@ -1543,7 +1577,7 @@ def _arities_only_codon_takes(name: str) -> list[int]:
     own = _model_signature(inits[-1])
     fallbacks = [_fields_signature(_codon_fields(node))]
     fallbacks += [_model_signature(i) for i in _inherited_inits(node)]
-    expected = inspect.signature(python)
+    expected = _signature(python)
     out: list[int] = []
     for arity in range(max(_positional_count(f) for f in fallbacks) + 1):
         if _takes(expected, arity):
@@ -1700,7 +1734,7 @@ def _shapes_only_codon_takes(name: str) -> list[_Shape]:
     own = _model_signature(inits[-1])
     fallbacks = [_fields_signature(_codon_fields(node))]
     fallbacks += [_model_signature(i) for i in _inherited_inits(node)]
-    expected = inspect.signature(python)
+    expected = _signature(python)
     out: list[_Shape] = []
     for fallback in fallbacks:
         for shape in _call_shapes(fallback):
@@ -2508,6 +2542,7 @@ _UNCOMPARED_MODEL_FILES: dict[str, str] = {
         for package in (
             "autoware_bridge",
             "autoware_stack",
+            "commonroad",
             "driver",
             "maps",
             "pedestrian",

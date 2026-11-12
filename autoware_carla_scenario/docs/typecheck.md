@@ -844,7 +844,8 @@ What `test_typecheck_model.py` compares, model by model:
   `autoware_stack/launcher`, `autoware_stack/devcontainer` (and its values),
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
   `maps/z_offset_cache`, `maps/road_network_cache`, `pedestrian/soma`,
-  `ui/models`, `_ros2`, `metrics`, `measures`, `scaffold/generator` and `utils/traffic_light`, each declaring exactly the names compared;
+  `ui/models`, `_ros2`, `metrics`, `measures`, `scaffold/generator`,
+  `commonroad/session`, `commonroad/worker` and `utils/traffic_light`, each declaring exactly the names compared;
   `ros2/cyclone` where cyclonedds is installed.
 - **Every public name of a modelled module**: each name a module the model
   has exports in Python (its `__all__`, or the public names it defines when
@@ -2479,8 +2480,9 @@ the signal table read off roadgen's traces or the crossings read with
 `xml.etree.ElementTree`, which the check leaves uncalled), the signal
 controllers, the adversity math, the measures, the metrics (and which of the
 CommonRoad metrics are heavy, the environment that turns them off and the
-checks of their periods: `heavy_metrics`, #1689; not `commonroad.session`,
-which runs the workers and re-exports it) and the ODD's
+checks of their periods: `heavy_metrics`, #1689, and the `commonroad`
+package's `__init__`, which re-exports them; not `commonroad.session`,
+which runs the workers and re-exports it too) and the ODD's
 probes (and the names, knob keys, limits and ranges of the traffic
 parameters' probes: `odd.traffic_ranges`, #1680; not the probes themselves,
 `odd.traffic_probes`, which builds openodd's knobs), the gate package's
@@ -2936,7 +2938,8 @@ stands in for it in the check's workspace:
   `autoware_bridge/grpc_server.codon`, `driver/egodriver_client.codon`,
   `maps/cache.codon`, `autoware_stack/devcontainer.codon`,
   `ros2/cyclone.codon`, `pedestrian/soma.codon`,
-  `scaffold/generator.codon`), or, for a module of
+  `scaffold/generator.codon`, `commonroad/session.codon`,
+  `commonroad/worker.codon`), or, for a module of
   the top-level package, a model of that module (`trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
   closes, whose JSON lines hold values of mixed types; `environment.codon`,
@@ -4326,7 +4329,18 @@ What Codon 0.19 needs that Python does not, beyond
   (`scaffold/generator.codon`, argparse and jinja2), which the checked
   `scaffold` package re-exports with `create_scenario_package()`,
   `resolve_names()` and `main()`, `compile_error`s as well: they write a new
-  scenario package (`scenario-new`), not a scenario. Each constructor takes
+  scenario package (`scenario-new`), not a scenario, and
+  `CommonRoadSettings` (`commonroad/session.codon`) and `CommonRoadWorker`
+  and `CommonRoadWorkerError` (`commonroad/worker.codon`, worker processes
+  spoken to in JSON), which the checked `commonroad` package re-exports with
+  `configure_commonroad_metrics()`, `commonroad_settings()`,
+  `evaluate_commonroad()`, `close_commonroad_workers()`, `worker_command()`
+  and the `WORKER_ENV` string, `compile_error`s too: the runner evaluates
+  the CommonRoad metrics after a run, not a scenario
+  (`CommonRoadSettings` leaves out `workers` and `heavy_metrics`, whose
+  defaults the machine and the environment decide: `_OMITTED_PARAMETERS`;
+  `CommonRoadWorkerError`, a `RuntimeError` with no constructor of its own,
+  takes `*args`, as Python's does). Each constructor takes
   Python's parameters and is a `compile_error`: its config
   (`AutowareBridgeConfig`, `DriverClientConfig`) is a checked class the model
   does not have, the class is only ever built by openodd's merge, its
