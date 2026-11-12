@@ -116,6 +116,17 @@ def _message(layout: BatchLayout, clock: _Clock, case: int = 0) -> tuple[Any, ..
     return (message, advice, about, clock.reads)
 
 
+def _unhashable(state: object) -> str:
+    """The message of the TypeError looking *state* up in a set raises, as
+    this Python words it ("unhashable type: 'list'" up to 3.13, "cannot use
+    'list' as a set element (unhashable type: 'list')" from 3.14)."""
+    try:
+        state in frozenset({""})  # noqa: B015
+    except TypeError as exc:
+        return str(exc)
+    raise AssertionError(f"{state!r} is hashable")
+
+
 def _no_result(detail: str, then: str) -> str:
     return f"No result: the case did not finish under SLURM ({detail}). {then}"
 
@@ -206,12 +217,12 @@ _ABSENT = object()
         (
             {"job_id": "77"},
             {"state": ["running"]},
-            ("TypeError", "unhashable type: 'list'", 0),
+            ("TypeError", _unhashable(["running"]), 0),
         ),
         (
             {"job_id": "77"},
             {"state": {"a": 1}},
-            ("TypeError", "unhashable type: 'dict'", 0),
+            ("TypeError", _unhashable({"a": 1}), 0),
         ),
         # No job, its sbatch in flight: try again once it returns.
         (
@@ -562,7 +573,7 @@ def _expected(submission: dict[str, Any], status: Any) -> tuple[Any, ...]:
         and status is not None
         and not isinstance(state, (str, int, float, type(None)))
     ):
-        return ("TypeError", f"unhashable type: '{type(state).__name__}'", 0)
+        return ("TypeError", _unhashable(state), 0)
     if job and (status is None or state in _UNFINISHED):
         return (_no_result(detail, _RUNNING), "running", 0, reads)
     if not job and timed_out and in_flight:
