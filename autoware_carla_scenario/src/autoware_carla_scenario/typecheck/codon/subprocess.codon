@@ -60,6 +60,18 @@ def _stream(stream, where: Literal[str]) -> None:
         compile_error(where + ": a stream is None, PIPE, STDOUT, DEVNULL, a file descriptor or a file object")
 
 
+def _pass_fds(pass_fds) -> None:
+    # A sequence of file descriptors (ints): a list or a tuple, () by
+    # default, as in CPython.
+    if isinstance(pass_fds, List[int]):
+        pass
+    elif isinstance(pass_fds, Tuple):
+        for fd in pass_fds:
+            number: int = fd
+    else:
+        compile_error("Popen(): pass_fds is a sequence of file descriptors (ints)")
+
+
 def _timeout(timeout, where: Literal[str]) -> None:
     if isinstance(timeout, None) or isinstance(timeout, Optional[NoneType]):
         pass
@@ -261,8 +273,8 @@ class Popen:
 
     # Popen(args, bufsize=-1, executable=None, stdin=None, stdout=None,
     # stderr=None, ..., cwd=None, env=None, ..., start_new_session=False,
-    # ..., *, ..., encoding=None, errors=None, text=None, ...): the command,
-    # and the parameters declared here by keyword.
+    # pass_fds=(), *, ..., encoding=None, errors=None, text=None, ...): the
+    # command, and the parameters declared here by keyword.
     def __init__(
         self,
         args: List[str],
@@ -273,6 +285,7 @@ class Popen:
         cwd=None,
         env: Optional[Dict[str, str]] = None,
         start_new_session: bool = False,
+        pass_fds=(),
         text: Optional[bool] = None,
         encoding: Optional[str] = None,
         errors: Optional[str] = None,
@@ -282,6 +295,7 @@ class Popen:
         _stream(stdout, "Popen()")
         _stream(stderr, "Popen()")
         _cwd(cwd)
+        _pass_fds(pass_fds)
         self.args = args
         self.pid = 0
         self.returncode = None

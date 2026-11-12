@@ -4907,6 +4907,13 @@ def dial(port: int) -> None:
     with socket.create_connection(("127.0.0.1", port), timeout=1.0):
         pass
     socket.create_connection(("127.0.0.1", port)).close()
+
+
+def bind_any(port: int) -> None:
+    with socket.socket(socket.AF_INET6, socket.SOCK_STREAM) as probe:
+        probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+        probe.setsockopt(socket.IPPROTO_IPV6, socket.IPV6_V6ONLY, b"\\x01\\x00\\x00\\x00")
+        probe.bind(("::", port))
 """
 
 
@@ -4933,6 +4940,18 @@ def test_the_socket_shim_takes_what_cpython_takes(
         ("socket.gethostname()", "socket.gethostname(pid)"),
         ("socket.gethostname()", "socket.hostname()"),
         ("proto=0", "protocol=0"),
+        (
+            "socket.SO_REUSEADDR, 1)",
+            "socket.SO_REUSEADDR, 1.5)",
+        ),
+        (
+            "socket.SO_REUSEADDR, 1)",
+            "socket.SO_REUSEADDR)",
+        ),
+        (
+            "probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)",
+            "probe.setsockopt(level=socket.SOL_SOCKET, optname=socket.SO_REUSEADDR, value=1)",
+        ),
     ],
     ids=[
         "bind-keyword",
@@ -4943,6 +4962,9 @@ def test_the_socket_shim_takes_what_cpython_takes(
         "gethostname-argument",
         "unknown-name",
         "unknown-keyword",
+        "setsockopt-value-type",
+        "setsockopt-no-value",
+        "setsockopt-keyword",
     ],
 )
 def test_the_socket_shim_refuses_what_cpython_refuses(
@@ -4967,9 +4989,156 @@ def test_the_socket_shim_constants_are_cpythons() -> None:
     import socket
 
     shim = (model_dir() / "socket.codon").read_text()
-    for name in ("AF_INET", "AF_INET6", "SOCK_STREAM"):
+    for name in (
+        "AF_INET",
+        "AF_INET6",
+        "SOCK_STREAM",
+        "SOL_SOCKET",
+        "SO_REUSEADDR",
+        "IPPROTO_IPV6",
+        "IPV6_V6ONLY",
+    ):
         value = int(getattr(socket, name))
         assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
+
+
+# ---------------------------------------------------------------------------
+# The fcntl shim, os.open(), os.fdopen() and os.access(), Popen's pass_fds and
+# a standard stream's buffer: what slurm.ports locks its slots with
+# ---------------------------------------------------------------------------
+
+
+_LOCKS = """
+from __future__ import annotations
+
+import fcntl
+import os
+import subprocess
+import sys
+from pathlib import Path
+from typing import IO
+
+
+def lock(path: Path) -> IO[bytes] | None:
+    if not os.access(path.parent, os.W_OK | os.X_OK):
+        return None
+    try:
+        fd = os.open(path, os.O_RDONLY | os.O_CREAT, 420)
+    except OSError:
+        return None
+    stream = os.fdopen(fd, "rb")
+    try:
+        fcntl.flock(stream.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except OSError:
+        stream.close()
+        return None
+    return stream
+
+
+def unlock(stream: IO[bytes]) -> None:
+    fcntl.flock(stream, fcntl.LOCK_UN)
+    stream.close()
+
+
+def share(path: str) -> int:
+    fd = os.open(path, flags=os.O_RDONLY, mode=420, dir_fd=None)
+    fcntl.flock(fd, fcntl.LOCK_SH)
+    with os.fdopen(fd, "r", encoding="utf-8") as stream:
+        return len(stream.read())
+
+
+def watch(stream: IO[bytes]) -> int:
+    process: subprocess.Popen[bytes] = subprocess.Popen(
+        ["true"], stdin=subprocess.PIPE, pass_fds=[stream.fileno()]
+    )
+    other: subprocess.Popen[bytes] = subprocess.Popen(["true"], pass_fds=(3, 4))
+    return process.wait() + other.wait()
+
+
+def done() -> bool:
+    return sys.stdin.buffer.read().startswith(b"done")
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_fcntl_os_and_popen_shims_take_what_cpython_takes(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_LOCKS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too.
+        (
+            "fcntl.flock(fd, fcntl.LOCK_SH)",
+            "fcntl.flock(fd=fd, operation=fcntl.LOCK_SH)",
+        ),
+        ("fcntl.flock(fd, fcntl.LOCK_SH)", "fcntl.flock(fd)"),
+        ("fcntl.flock(fd, fcntl.LOCK_SH)", "fcntl.flock(path, fcntl.LOCK_SH)"),
+        ("fcntl.flock(fd, fcntl.LOCK_SH)", "fcntl.lockf(fd, fcntl.LOCK_SH)"),
+        ("os.O_RDONLY | os.O_CREAT, 420)", 'os.O_RDONLY | os.O_CREAT, "420")'),
+        ("os.O_RDONLY | os.O_CREAT, 420)", "os.O_RDONLY | os.O_CREAT, 420, None)"),
+        ('os.fdopen(fd, "rb")', 'os.fdopen(fd, "rb", buffer=0)'),
+        ('os.fdopen(fd, "rb")', 'os.fdopen(str(fd), "rb")'),
+        ("os.W_OK | os.X_OK)", "os.W_OK | os.X_OK, None)"),
+        ("pass_fds=(3, 4)", "pass_fds=3"),
+        ("sys.stdin.buffer.read()", "sys.stdin.raw.read()"),
+    ],
+    ids=[
+        "flock-positional-only",
+        "flock-no-operation",
+        "flock-descriptor",
+        "fcntl-unknown-name",
+        "open-mode-int",
+        "open-dir-fd-keyword-only",
+        "fdopen-unknown-keyword",
+        "fdopen-descriptor-int",
+        "access-dir-fd-keyword-only",
+        "pass-fds-ints",
+        "stdin-unknown-attribute",
+    ],
+)
+def test_the_fcntl_os_and_popen_shims_refuse_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _LOCKS.replace(right, wrong, 1)
+    assert source != _LOCKS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+    line = next(
+        i
+        for i, text in enumerate(textwrap.dedent(source).splitlines(), 1)
+        if wrong in text
+    )
+    located = [d for d in result.diagnostics if d.path and d.path.endswith(".py")]
+    assert located, result.format()
+    assert located[0].line == line, result.format()
+
+
+@pytest.mark.codon_selftest
+def test_the_fcntl_and_os_shim_constants_are_cpythons() -> None:
+    import fcntl
+    import os
+
+    shims = [
+        (
+            model_dir() / "fcntl.codon",
+            fcntl,
+            ("LOCK_SH", "LOCK_EX", "LOCK_NB", "LOCK_UN"),
+        ),
+        (model_dir() / "os" / "__init__.codon", os, ("O_RDONLY", "O_CREAT")),
+    ]
+    for path, python, names in shims:
+        shim = path.read_text()
+        for name in names:
+            value = int(getattr(python, name))
+            assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
 
 
 # Directories of codon/ that model a third-party package, not the standard
