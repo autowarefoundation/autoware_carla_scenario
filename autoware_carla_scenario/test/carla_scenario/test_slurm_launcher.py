@@ -3146,7 +3146,7 @@ def test_collect_into_an_unwritable_batch_reports_one_error_line(
     if output == "batch_results.json":
         monkeypatch.setattr(batch_report, "write_text_atomically", refuse)
     else:
-        monkeypatch.setattr(collect_module, "write_json", refuse)
+        monkeypatch.setattr(collect_module, "write_json_text", refuse)
         target = layout.root / output
     assert cli.main(["collect", str(layout.batch_dir)]) == 1
     captured = capsys.readouterr()
@@ -3171,10 +3171,10 @@ def test_collect_still_prints_its_hints_before_collected_json(
 
     layout = _batch_on_disk(tmp_path)
 
-    def refuse(path: Path, data: Any) -> None:
+    def refuse(path: Path, text: str) -> None:
         raise PermissionError(errno.EACCES, "Permission denied", str(path))
 
-    monkeypatch.setattr(collect_module, "write_json", refuse)
+    monkeypatch.setattr(collect_module, "write_json_text", refuse)
     assert cli.main(["collect", str(layout.batch_dir)]) == 1
     captured = capsys.readouterr()
     assert _one_error_line(captured.err).startswith("Error: [Errno 13]")
@@ -3338,17 +3338,16 @@ def test_an_unreadable_manifest_is_one_error_line(
     """#1740: a manifest that cannot be read is one ``Error:`` line, and a
     batch directory with none keeps its message."""
     from autoware_carla_scenario.slurm import cli
-    from autoware_carla_scenario.slurm import manifest as manifest_module
 
     layout = _batch_on_disk(tmp_path)
-    read_json = manifest_module.read_json
+    read_text = Path.read_text
 
-    def unreadable(path: Path) -> Any:
-        if Path(path) == layout.manifest:
+    def unreadable(path: Path, *args: Any, **kwargs: Any) -> str:
+        if path == layout.manifest:
             raise PermissionError(errno.EACCES, "Permission denied", str(path))
-        return read_json(path)
+        return read_text(path, *args, **kwargs)
 
-    monkeypatch.setattr(manifest_module, "read_json", unreadable)
+    monkeypatch.setattr(Path, "read_text", unreadable)
     assert cli.main([command, str(layout.batch_dir)]) == 1
     line = _one_error_line(capsys.readouterr().err)
     assert line == f"Error: [Errno 13] Permission denied: '{layout.manifest}'"
