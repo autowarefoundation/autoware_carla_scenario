@@ -4911,7 +4911,12 @@ beside the log, and open that in the Rerun viewer. The conversion is the
   anything starts (exit code 2), saying how to install it.</li>
 <li>Each log is converted on a background thread as soon as its run ends, while
   the next case runs (the converter releases the GIL; a log takes milliseconds).
-  A run that raised is converted too: its log is what shows what happened.</li>
+  A run that raised is converted too: its log is what shows what happened.
+  So is a log whose recording stopped early (a write that failed, a full
+  disk: logged as <code>Trajectory recording stopped</code>): the records written up to
+  then, without a <code>result</code> record, and a warning naming the file. A write
+  cut off mid-line (a full disk) leaves a last line that is not JSON, which
+  the converter refuses: that conversion fails, as any other does (below).</li>
 <li>At the end the run waits for the last conversions and prints how they went:
   <code>Rerun recordings: N/M written</code>, and a line per failure naming its case. A
   retried case counts once, by the conversion of its last attempt. A
@@ -4960,18 +4965,25 @@ leaves the decision to <code>$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS</code>; a ba
 refused for a bad one in any of its cases before the first case runs.</p>
 <h3 id="metrics-in-the-recording">Metrics in the recording<a class="headerlink" href="#metrics-in-the-recording" title="Permanent link">&para;</a></h3>
 <p>A run judged on a <code>MetricCondition</code> writes the metrics it computed once it was
-over into its trajectory log (<a href="../metrics/#how-metrics-are-computed">Metrics</a>),
-and its recording carries them:</p>
+over into its trajectory log, as <code>metric</code> records
+(<a href="../metrics/#how-metrics-are-computed">Metrics</a>,
+<a href="../trajectory_log/">Trajectory Log</a>), and the converter
+(<code>autoware-carla-scenario-rerun</code> 0.3, which the <code>rerun</code> extra pins) draws
+them itself when it converts the log, on the recording's <code>frame</code> and
+<code>sim_time</code> timelines:</p>
 <ul>
-<li>each metric as a scalar, <code>metrics/&lt;key&gt;</code> (<code>metrics/crime_ttc_s</code>), on the
-  recording's <code>frame</code> and <code>sim_time</code> timelines -- add a time series view of
-  <code>/metrics</code> in the viewer to plot them (the converter's layout has none yet);</li>
+<li>each numeric metric as a scalar, <code>/metrics/&lt;key&gt;</code> (<code>/metrics/crime_ttc_s</code>),
+  plotted in the <strong>Metrics</strong> time series view;</li>
+<li>each yes/no metric as a state, <code>/metric_states/&lt;key&gt;</code>, plotted in the
+  <strong>Metric states</strong> view;</li>
 <li>each metric condition in the <strong>Conditions</strong> view, satisfied over the frames
   its metric was NG.</li>
 </ul>
-<p>The values are written with the Rerun SDK and merged into the recording once
-the log is converted, as the sensors are (<code>rerun rrd merge</code>); the <code>rerun</code>
-extra installs the SDK. Converting a log again puts them in again.</p>
+<p>Nothing is merged into the recording afterwards: the metrics are in the log,
+so converting it again draws them again. (A converter that did not know
+<code>metric</code> records had them written with the Rerun SDK and merged in, into
+<code>metrics/&lt;key&gt;</code>; the pinned one draws them, and the framework then writes
+nothing -- <code>rerun_metrics.merge_metrics</code>.)</p>
 <h3 id="sensors-in-the-recording">Sensors in the recording<a class="headerlink" href="#sensors-in-the-recording" title="Permanent link">&para;</a></h3>
 <p>The trajectory log holds no sensor data. With <code>rerun.enabled=true</code> and:</p>
 <ul>
@@ -5623,7 +5635,7 @@ started in the same second as another run or a batch gets <code>HH-MM-SS-1</code
 </tr>
 <tr>
 <td><code>{ScenarioName}.metrics.rrd</code></td>
-<td>The run's metrics as scalars, written for a converter that does not draw them and merged into <code>{ScenarioName}.rrd</code> and removed, so only left behind by a run killed during the merge (<a href="#metrics-in-the-recording">Metrics in the recording</a>)</td>
+<td>Not written with the converter the <code>rerun</code> extra pins, which draws the metrics itself. A converter that does not draw them gets the run's metrics written here as scalars, then merged into <code>{ScenarioName}.rrd</code> and removed, so the file is only left behind by a run killed during that merge (<a href="#metrics-in-the-recording">Metrics in the recording</a>)</td>
 </tr>
 <tr>
 <td><code>{ScenarioName}.t4scene.pb</code>, <code>{ScenarioName}.t4scene.map.pb</code></td>
@@ -6807,7 +6819,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 19:38:18 UTC"><span class="timeago" datetime="2026-11-11T19:38:18+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 19:38:18 UTC">2026-11-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 12, 2026 02:48:57 UTC"><span class="timeago" datetime="2026-11-12T02:48:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 12, 2026 02:48:57 UTC">2026-11-12</span>
   </span>
 
     
