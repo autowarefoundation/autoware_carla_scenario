@@ -2236,14 +2236,14 @@ def test_the_warmup_steps_wait_with_the_sensors_streaming(
         receiver.close()
 
 
-def test_a_warmup_step_that_times_out_fails_the_start(
-    world: _World, dbc: Path
-) -> None:
+def test_a_warmup_step_that_times_out_fails_the_start(world: _World, dbc: Path) -> None:
     from autoware_carla_scenario.hils.bridge import HilsStepError
 
     bridge, ecu, receiver = _sensor_bridge(world, dbc, "simulation", warmup_timeout=0.3)
     try:
-        ecu_side, _, failed = _fire_while_the_ecu_wakes(world, ecu, bridge._sensors[0], 0)
+        ecu_side, _, failed = _fire_while_the_ecu_wakes(
+            world, ecu, bridge._sensors[0], 0
+        )
         with pytest.raises(HilsStepError, match="warmup: can sent no EcuDrive"):
             bridge._begin(world.actors[0], "")
         ecu_side.join(5.0)

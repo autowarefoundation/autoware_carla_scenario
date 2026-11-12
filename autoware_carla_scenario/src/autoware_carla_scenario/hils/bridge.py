@@ -860,7 +860,9 @@ class HilsBridge:
         except Exception as exc:  # noqa: BLE001 - hilspy.Error, or a missing signal
             raise HilsStepError(f"{step.describe()} failed: {exc}") from exc
 
-    def _pump(self, done: Callable[[], bool], seconds: float, live: bool = False) -> bool:
+    def _pump(
+        self, done: Callable[[], bool], seconds: float, live: bool = False
+    ) -> bool:
         """Wait up to *seconds* for *done*; the simulated clock follows the wall
         clock meanwhile, or, *live*, the world's ticks are served
         (:meth:`step`).  Whether *done* came true."""
