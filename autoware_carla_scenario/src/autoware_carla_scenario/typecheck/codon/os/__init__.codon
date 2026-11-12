@@ -399,6 +399,56 @@ def replace(
     fspath(dst)
 
 
+# The flags of os.open() slurm.manifest creates a file exclusively with
+# (Linux's values, as O_CREAT's above).
+O_WRONLY = 1
+O_EXCL = 128
+
+
+# link(src, dst, *, src_dir_fd=None, dst_dir_fd=None, follow_symlinks=True):
+# a hard link *dst* to *src* (nothing is linked here).
+def link(
+    src,
+    dst,
+    *_kw,
+    src_dir_fd: Optional[int] = None,
+    dst_dir_fd: Optional[int] = None,
+    follow_symlinks: bool = True,
+) -> None:
+    _keyword_only(_kw, "link(): src_dir_fd, dst_dir_fd, follow_symlinks")
+    fspath(src)
+    fspath(dst)
+
+
+class stat_result:
+    """What os.stat() returns: its mode, link count, size and modification
+    time (CPython's has more, which are not declared)."""
+
+    st_mode: int
+    st_nlink: int
+    st_size: int
+    st_mtime: float
+
+    def __init__(self):
+        self.st_mode = 0
+        self.st_nlink = 0
+        self.st_size = 0
+        self.st_mtime = 0.0
+
+
+# stat(path, *, dir_fd=None, follow_symlinks=True), of a str or an
+# os.PathLike (a descriptor is not declared); all zero here.
+def stat(
+    path,
+    *_kw,
+    dir_fd: Optional[int] = None,
+    follow_symlinks: bool = True,
+) -> stat_result:
+    _keyword_only(_kw, "stat(): dir_fd, follow_symlinks")
+    fspath(path)
+    return stat_result()
+
+
 # walk(top, topdown=True, onerror=None, followlinks=False): a generator of
 # (dirpath, dirnames, filenames), which yields nothing here. The callable
 # `onerror` takes is not declared, so the check refuses it.

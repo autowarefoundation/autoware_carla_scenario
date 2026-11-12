@@ -5194,3 +5194,103 @@ def test_shim_list() -> None:
     # The standard modules the docs call missing are not shimmed.
     unavailable = {"inspect", "concurrent.futures"}
     assert not unavailable & listed
+
+
+# ---------------------------------------------------------------------------
+# os.link(), os.stat(), os.open(), os.fdopen(), the errno shim and
+# FileExistsError: what slurm.manifest creates a submission record
+# exclusively with
+# ---------------------------------------------------------------------------
+
+
+_EXCLUSIVE = """
+from __future__ import annotations
+
+import errno
+import os
+from pathlib import Path
+
+
+def create(path: Path, tmp: str, text: str) -> bool:
+    try:
+        os.link(tmp, path)
+    except FileExistsError:
+        return os.stat(tmp).st_nlink == 2
+    except OSError:
+        try:
+            fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 384)
+        except FileExistsError:
+            return False
+        with os.fdopen(fd, "w", encoding="utf-8") as stream:
+            stream.write(text)
+    return True
+
+
+def codes() -> int:
+    return errno.EPERM + errno.ENOTSUP + errno.EOPNOTSUPP
+
+
+def sizes(path: str) -> float:
+    found = os.stat(path, follow_symlinks=False)
+    os.link(path, path + ".2", follow_symlinks=True)
+    return found.st_size + found.st_mode + found.st_mtime
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_os_and_errno_shims_take_what_slurm_manifest_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_EXCLUSIVE, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too.
+        ("os.link(tmp, path)", "os.link(tmp)"),
+        ("os.link(tmp, path)", "os.link(tmp, path, None)"),
+        ("os.stat(tmp).st_nlink", "os.stat(tmp).st_links"),
+        ("os.stat(tmp).st_nlink", "os.stat(tmp, None).st_nlink"),
+        ("errno.EPERM", "errno.EPERMS"),
+        ("FileExistsError:\n        return os", "FileExistError:\n        return os"),
+    ],
+    ids=[
+        "link-no-destination",
+        "link-keyword-only",
+        "stat-unknown-attribute",
+        "stat-keyword-only",
+        "errno-unknown-name",
+        "unknown-exception",
+    ],
+)
+def test_the_os_and_errno_shims_refuse_what_cpython_refuses_of_manifest_calls(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _EXCLUSIVE.replace(right, wrong, 1)
+    assert source != _EXCLUSIVE
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_errno_and_os_shim_constants_slurm_manifest_reads_are_cpythons() -> None:
+    import errno
+    import os
+
+    for path, python, names in (
+        (model_dir() / "errno.codon", errno, ("EPERM", "ENOTSUP", "EOPNOTSUPP")),
+        (
+            model_dir() / "os" / "__init__.codon",
+            os,
+            ("O_WRONLY", "O_CREAT", "O_EXCL"),
+        ),
+    ):
+        shim = path.read_text()
+        for name in names:
+            value = int(getattr(python, name))
+            assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
