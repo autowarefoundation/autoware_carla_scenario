@@ -310,6 +310,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.slurm.same_files",
     "autoware_carla_scenario.slurm.scripts",
     "autoware_carla_scenario.slurm.settings",
+    "autoware_carla_scenario.slurm.status",
     "autoware_carla_scenario.slurm.stems",
     "autoware_carla_scenario.slurm.task_timing",
     "autoware_carla_scenario.sweeper.bindings",
@@ -440,11 +441,6 @@ _LAUNCHER_VALUE = (
     "itself uncalled, calls it (or another of its readers)"
 )
 
-#: The reason of what reads a SLURM batch's manifest as a `dict` reads it.
-_BATCH_RECORD = (
-    "reads a SLURM batch's manifest as a `dict` reads it (Manifest.get(), "
-    "`manifest[key]`: values of mixed types), which Codon cannot express"
-)
 
 #: The reason of what gives a manifest's values as a `dict` gives them.
 _MANIFEST_VALUE = (
@@ -627,8 +623,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.slurm.settings.SlurmSettings.replace": "takes `**changes: Any` and reads them, merged into to_dict()'s `dict[str, Any]`, back with from_mapping, which Codon cannot express",
     "autoware_carla_scenario.ui.slurm_launch.SlurmOptions.from_request": "reads the run panel's fields (`dict[str, Any] | None`: the JSON body of a request, of values of any type), which Codon cannot express, through a helper that returns a number of either type it is given (`number(key, kind: type) -> Any`, an int or a float); the checks of each field are the checked ui.slurm_options'",
     "autoware_carla_scenario.ui.slurm_launch.Submission.to_dict": "returns the submission as the viewer's API sends it, a `dict[str, Any]` of mixed value types (text, an optional directory and an optional exit status), which Codon cannot express",
-    "autoware_carla_scenario.ui.slurm_launch._case_states": f"{_BATCH_RECORD}; only the uncalled batch_status() calls it, and the state of each case and its message are the checked ui.slurm_case_state's",
-    "autoware_carla_scenario.ui.slurm_launch.batch_status": f"{_BATCH_RECORD}, and returns the batch's progress as the viewer's API sends it, a `dict[str, Any]` of mixed value types",
+    "autoware_carla_scenario.ui.slurm_launch.batch_status": "returns the batch's progress as the viewer's API sends it, a `dict[str, Any]` of mixed value types: the values of the batch's records as `json.loads()` read them (the manifest's through the checked slurm.manifest's uncalled Manifest.get(), the submissions' and the tasks' through get(), of any type), which Codon cannot express; each case's state, and the values it shows as their JSON text, are the checked _case_states()'s (CaseState)",
     "autoware_carla_scenario.t4_settings.T4Settings.from_driver": "takes the `t4` config section (`Mapping[str, Any]`: a Hydra node of mixed value types), which Codon cannot express, and builds the settings with `**` of a `dict[str, Any]`",
     "autoware_carla_scenario.utils.stop_line._road_marking_stop_lines": "returns a road marking's `refers` parameters as line strings, and a `refers` parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.maps.config._setting": "reads one `map` setting off a config of any shape (`map_config: Any`: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths and _flag, both themselves uncalled, call it, and what they read is resolved by the checked _resolve()",
@@ -747,7 +742,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.ros2.messages": "imports cyclonedds (the IdlStruct base of every message, and the IDL field types `array[float64, 36]` and `sequence[TrajectoryPoint]`, which Codon cannot express)",
     "autoware_carla_scenario.scaffold.generator": "imports argparse, ast, errno, functools, importlib.metadata, templating (jinja2) and, inside functions, packaging, typecheck.transform and authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked; its naming rules, and the framework-name rule it shares with authoring.package_names, are the checked scaffold.names'; scaffold/generator.codon declares what the checked scaffold package re-exports of it",
     "autoware_carla_scenario.serve_cli": "imports argparse and ipaddress",
-    "autoware_carla_scenario.slurm.cli": "imports argparse, and slurm.submit, which are not checked, and reads the manifest as a `dict` reads it (the checked slurm.manifest's uncalled Manifest.get() and `manifest[key]`, values of any type); what it collects, and which cases it resubmits, are the checked slurm.collect's",
+    "autoware_carla_scenario.slurm.cli": "imports argparse, and slurm.submit, which are not checked, and reads the manifest as a `dict` reads it (the checked slurm.manifest's uncalled Manifest.get() and `manifest[key]`, values of any type); what it collects, and which cases it resubmits, are the checked slurm.collect's, and what `status` prints, whether a batch is busy (the resubmit's check) and what `cancel` cancels the checked slurm.status'",
     "autoware_carla_scenario.slurm.submit": "imports omegaconf (inside functions), which is not checked, and more of os than its shim declares (`os.O_TRUNC`), and takes the manifest as it builds it (`dict[str, Any]`) or as it is read back (the checked slurm.manifest's Manifest, through its uncalled get() and `manifest[key]`, values of any type) and a function as `Callable[..., Any]`, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts, and run, as squeue, scancel and scontrol are, by the checked slurm.queue",
     "autoware_carla_scenario.slurm.worker": "imports traceback, uuid, `contextlib.contextmanager`, more of errno, os, threading and importlib than their shims declare (`errno.ENOSYS`, `errno.ENOLCK`, `errno.EINVAL`, `os.fstat()`, `os.write()`, `threading.Event`, `importlib.import_module()`), omegaconf (inside functions), and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled, and, inside run_task(), typecheck.mode (the checker, outside the library check); imports `RerunConverter` (under `TYPE_CHECKING`) and, inside a function, `report()` from rerun, which is not checked, and the rerun model declares neither `report()` nor `RerunConverter.close()`, and its `RerunConverter.wait()` returns None, not the RerunConversion records the worker passes to `rerun_errors()`; compares config values of any type (`Any`); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's, and whether a differing config string names the same file the checked slurm.same_files' (#1720)",
     "autoware_carla_scenario.sweeper": "re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)",

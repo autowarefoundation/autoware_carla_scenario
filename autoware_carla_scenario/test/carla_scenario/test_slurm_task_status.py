@@ -26,6 +26,7 @@ from typing import Any
 import pytest
 
 from autoware_carla_scenario.slurm import cli, collect as collect_mod
+from autoware_carla_scenario.slurm import status as slurm_status
 from autoware_carla_scenario.slurm.collect import (
     _UNFINISHED_TASK_STATES,
     _advice,
@@ -483,7 +484,7 @@ def test_status_prints_each_task_s_line(
     content: bytes,
 ) -> None:
     layout = _batch(tmp_path, content)
-    monkeypatch.setattr(cli, "squeue_states", lambda job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda job: {})
     old = _old_status(content)
     expected = _outcome(lambda: _old_task_line(old, [0, 1, 2]))
     actual = _outcome(lambda: cli._status(layout))
@@ -735,7 +736,7 @@ def test_a_status_nested_deep_is_read_as_json_loads_reads_it(
 
     content = _status(**{key: _nested(depth)}).encode()
     layout = _batch(tmp_path, content)
-    monkeypatch.setattr(cli, "squeue_states", lambda job: {})
+    monkeypatch.setattr(slurm_status, "squeue_states", lambda job: {})
     monkeypatch.setattr(slurm_launch, "squeue_states", lambda job: {})
     try:
         old = json.loads(content.decode("utf-8"))

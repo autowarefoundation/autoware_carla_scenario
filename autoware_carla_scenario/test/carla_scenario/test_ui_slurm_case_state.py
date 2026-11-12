@@ -12,6 +12,7 @@ tests at the end cover.
 from __future__ import annotations
 
 import itertools
+import json
 import random
 import time
 from typing import Any
@@ -24,6 +25,7 @@ from autoware_carla_scenario.slurm.manifest import (
     SubmissionRecord,
     submission_record_of,
     TaskStatus,
+    manifest_of_text,
     readable_result,
 )
 from autoware_carla_scenario.slurm.records import JsonMembers
@@ -101,6 +103,32 @@ def _original_case_states(
                 )
         out.append(entry)
     return out
+
+
+def _case_states(
+    layout: Any, manifest: dict[str, Any], squeue: dict[int, Any]
+) -> list[dict[str, Any]]:
+    """ui.slurm_launch._case_states of *manifest*, read as BatchLayout reads
+    the manifest the dict would be written as, each case as batch_status
+    sends it to the viewer."""
+    read = manifest_of_text(json.dumps(manifest))
+    assert read is not None
+    entries = []
+    for state in slurm_launch._case_states(layout, read, squeue):
+        entry: dict[str, Any] = {
+            "index": state.index,
+            "label": json.loads(state.label_json),
+            "stem": json.loads(state.stem_json),
+            "overrides": json.loads(state.overrides_json),
+            "state": state.state,
+            "message": json.loads(state.message_json),
+        }
+        if state.recorded:
+            entry["elapsed_seconds"] = json.loads(state.elapsed_seconds_json)
+            entry["host"] = json.loads(state.host_json)
+            entry["job_id"] = json.loads(state.job_id_json)
+        entries.append(entry)
+    return entries
 
 
 class _Layout:
@@ -256,7 +284,7 @@ def test_case_states_match_the_original(seed: int) -> None:
     for _ in range(50):
         layout, manifest, squeue = _batch(rng)
         want = _original_case_states(layout, manifest, squeue)
-        got = slurm_launch._case_states(layout, manifest, squeue)  # type: ignore[arg-type]
+        got = _case_states(layout, manifest, squeue)
         assert [list(entry.items()) for entry in got] == [
             list(entry.items()) for entry in want
         ]
@@ -275,9 +303,9 @@ def test_a_task_file_holding_no_object_reads_as_no_status(
     layout = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {}, {(0, 0): status})
     none = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {}, {})
     manifest = {"cases": [{"index": 0}]}
-    got = slurm_launch._case_states(layout, manifest, {0: states})  # type: ignore[arg-type]
+    got = _case_states(layout, manifest, {0: states})
     assert got == _original_case_states(layout, manifest, {0: states})
-    assert got == slurm_launch._case_states(none, manifest, {0: states})  # type: ignore[arg-type]
+    assert got == _case_states(none, manifest, {0: states})
 
 
 @pytest.mark.parametrize(
@@ -325,7 +353,7 @@ def test_a_result_with_no_verdict_is_failed_not_passed(result: Any) -> None:
         record["result"] = result
     layout = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {0: record}, {})
     manifest = {"cases": [{"index": 0}]}
-    (entry,) = slurm_launch._case_states(layout, manifest, {0: {}})  # type: ignore[arg-type]
+    (entry,) = _case_states(layout, manifest, {0: {}})
     assert entry["state"] == "failed"
     assert entry["host"] == "node1"
     passed = {
@@ -333,7 +361,7 @@ def test_a_result_with_no_verdict_is_failed_not_passed(result: Any) -> None:
         "result": {"passed": True, "message": "", "elapsed_seconds": 1.0},
     }
     layout = _Layout({0: {"chunks": [[0]], "job_id": "9"}}, {0: passed}, {})
-    (entry,) = slurm_launch._case_states(layout, manifest, {0: {}})  # type: ignore[arg-type]
+    (entry,) = _case_states(layout, manifest, {0: {}})
     assert entry["state"] == "passed"
 
 
@@ -469,7 +497,7 @@ def test_a_case_of_a_submission_with_no_job_id(job: Any, kind: str) -> None:
     }
     layout = _Layout({0: sub}, {1: passed}, {(0, 0): {"state": "done"}})
     manifest = {"cases": [{"index": 0}, {"index": 1}, {"index": 2}]}
-    entries = slurm_launch._case_states(layout, manifest, {0: {}})  # type: ignore[arg-type]
+    entries = _case_states(layout, manifest, {0: {}})
     states = [entry["state"] for entry in entries]
     want = {"in-flight": "pending", "timed-out": "unknown", "stale": "missing"}[kind]
     assert states == [want, "passed", "missing"]
