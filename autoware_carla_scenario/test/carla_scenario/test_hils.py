@@ -2194,9 +2194,7 @@ def test_the_warmup_steps_wait_with_the_sensors_streaming(
     """The ECU gets ready to drive on what the sensors measure: the warmup
     steps run with them attached and the world followed, and _begin returns
     (the run's ``ready``) only once the ECU says so."""
-    bridge, ecu, receiver = _sensor_bridge(
-        world, dbc, "simulation", warmup_timeout=5.0
-    )
+    bridge, ecu, receiver = _sensor_bridge(world, dbc, "simulation", warmup_timeout=5.0)
     [device] = bridge._sensors
     seen: List[Any] = []
     failed: List[BaseException] = []
@@ -2237,9 +2235,7 @@ def test_the_warmup_steps_wait_with_the_sensors_streaming(
 def test_a_warmup_step_that_times_out_fails_the_start(world: _World, dbc: Path) -> None:
     from autoware_carla_scenario.hils.bridge import HilsStepError
 
-    bridge, ecu, receiver = _sensor_bridge(
-        world, dbc, "simulation", warmup_timeout=0.1
-    )
+    bridge, ecu, receiver = _sensor_bridge(world, dbc, "simulation", warmup_timeout=0.1)
     try:
         ecu_side, _, failed = _fire_while_the_ecu_wakes(
             world, ecu, bridge._sensors[0], 0
