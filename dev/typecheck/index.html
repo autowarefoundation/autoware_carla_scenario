@@ -4880,8 +4880,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-315 of the package's 432
-modules (73%; about 99,000 of
+316 of the package's 432
+modules (73%; about 99,600 of
 168,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4958,7 +4958,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 315 CHECKED modules</summary>
+<summary>The 316 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -6164,6 +6164,10 @@ with the first paragraph of its docstring:</p>
 <td>The state of one case of a SLURM batch, and the message the viewer shows for it.</td>
 </tr>
 <tr>
+<td><code>ui.slurm_launch</code></td>
+<td>Running a batch from the viewer through SLURM (<code>launcher=slurm</code>, docs/slurm.md), and following it.</td>
+</tr>
+<tr>
 <td><code>ui.slurm_options</code></td>
 <td>The <code>launcher.*</code> keys the viewer sets on a SLURM batch (docs/slurm.md): what each may hold, the Hydra overrides they become, and the <code>scenario</code> command line that submits the batch with them.</td>
 </tr>
@@ -6230,8 +6234,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>190 functions and methods of those modules are <code>UNCALLED</code>
-(57 of them protected helpers, see <em>What is
+<p>194 functions and methods of those modules are <code>UNCALLED</code>
+(58 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6243,7 +6247,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 190 UNCALLED functions and methods, and why</summary>
+<summary>The 194 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6433,11 +6437,15 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>trajectory.model._refusing_vertex_times</code>: the run-time wrapper of TrajectoryVertex.__init__ that refuses the calls written for a vertex with a time (<code>*args: Any, **kwargs: Any</code>, functools.wraps, an inspect.Signature); the check drops the decorator and compiles __init__ as written</li>
 <li><code>trajectory.model._vertex_advance</code>: takes a TrajectoryVertex call's <code>*args</code> and <code>**kwargs</code> as written (<code>tuple[Any, ...]</code>, <code>dict[str, Any]</code>), which Codon cannot express; only _refusing_vertex_times, itself uncalled, calls it</li>
 <li><code>trajectory.model._whole</code>: checks that a value of any type (<code>value: Any</code>: whatever a YAML document or a caller wrote for a lane or junction index) is a whole number, which Codon cannot express; the route poses' __post_init__ call it with their own fields, so its body is compiled through them</li>
+<li><code>ui.slurm_launch.SlurmOptions.from_request</code>: reads the run panel's fields (<code>dict[str, Any] | None</code>: the JSON body of a request, of values of any type), which Codon cannot express, through a helper that returns a number of either type it is given (<code>number(key, kind: type) -&gt; Any</code>, an int or a float); the checks of each field are the checked ui.slurm_options'</li>
+<li><code>ui.slurm_launch.Submission.to_dict</code>: returns the submission as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types (text, an optional directory and an optional exit status), which Codon cannot express</li>
+<li><code>ui.slurm_launch._case_states</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest, a submission, a task's status or a case's outcome), which Codon cannot express; only the uncalled batch_status() calls it, and the state of each case and its message are the checked ui.slurm_case_state's</li>
+<li><code>ui.slurm_launch.batch_status</code>: takes or returns a SLURM batch's record as every reader of the batch takes it, a <code>dict[str, Any]</code> of mixed value types (a manifest, a submission, a task's status or a case's outcome), which Codon cannot express, and returns the batch's progress as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types</li>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 117 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 116 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6445,7 +6453,7 @@ the first:</p>
   pickle, grpc, protobuf, omegaconf and hydra, yaml, jinja2, fastapi, cv2,
   cyclonedds, or openodd and hilspy, Rust extensions) or a standard module
   Codon lacks (<code>inspect</code>, <code>concurrent.futures</code>, <code>importlib</code> beyond
-  <code>importlib.metadata</code>, or more of <code>os</code>, <code>pathlib</code>, <code>shlex</code>, <code>shutil</code>,
+  <code>importlib.metadata</code>, or more of <code>os</code>, <code>pathlib</code>, <code>shutil</code>,
   <code>signal</code>, <code>socket</code>, <code>subprocess</code>, <code>tempfile</code>, <code>threading</code>, <code>dataclasses</code>,
   <code>importlib.metadata</code> or <code>urllib.parse</code> than their shims declare), at module
   level or inside a function the check calls. This is most of the tooling
@@ -6466,7 +6474,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 117 EXCLUDED modules, and why</summary>
+<summary>The 116 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped</li>
@@ -6492,7 +6500,7 @@ the first:</p>
 <li><code>autoware_stack.devcontainer</code>: imports yaml; reads a JSONC and a Compose document of values of any type (<code>Any</code>), which Codon cannot express. The checked autoware_stack.docker and the package take what they use of it (<code>DevContainer</code>, <code>DevContainerError</code>, <code>read_devcontainer()</code>, <code>DEFAULT_WORKSPACE_MOUNT</code>) from its model (autoware_stack/devcontainer.codon); its JSONC, <code>${VAR}</code> interpolation and workspaceMount text parsers are the checked autoware_stack.devcontainer_text's</li>
 <li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, platform, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>), and reads the install's stamp from JSON of any value types; its paths, lock file, needed room, swap, and the decision whether an install is current and the conditional request that asks so, are the checked carla_install_paths's, which it re-exports</li>
 <li><code>commonroad.session</code>: imports concurrent.futures, and commonroad.worker and, inside a function, metric_batch, which are not checked; holds the workers' settings as values of any type (<code>dict[str, Any]</code>); which metrics are heavy, the environment that turns them off and the period checks are the checked heavy_metrics' (#1689), which it re-exports; commonroad/session.codon declares what the checked commonroad package re-exports of it</li>
-<li><code>commonroad.worker</code>: imports select (<code>select.poll()</code>, <code>select.POLLIN</code>), which Codon has nothing for, and more of shlex and os than their shims declare (<code>shlex.split()</code>, <code>os.read()</code>, <code>os.set_blocking()</code>), and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express; commonroad/worker.codon declares what the checked commonroad package re-exports of it</li>
+<li><code>commonroad.worker</code>: imports select (<code>select.poll()</code>, <code>select.POLLIN</code>), which Codon has nothing for, and more of os than its shim declares (<code>os.read()</code>, <code>os.set_blocking()</code>), and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express; commonroad/worker.codon declares what the checked commonroad package re-exports of it</li>
 <li><code>coverage.cod</code>: re-exports openodd's COD export (a Rust extension)</li>
 <li><code>coverage.collector</code>: derives openodd's collector (a Rust extension); imports <code>types.SimpleNamespace</code>, which Codon has nothing for; the names a versioned measure's cover items are written under are the checked coverage.item_names's</li>
 <li><code>coverage.items</code>: re-exports openodd's cover items (a Rust extension)</li>
@@ -6580,7 +6588,6 @@ the first:</p>
 <li><code>ui.recordings</code>: imports base64, io, tarfile, urllib.request and zlib, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (<code>Any</code>); the web viewer's selection and the path rules of the recordings and of the web viewer's copy are the checked ui.web_viewer_paths's</li>
 <li><code>ui.results</code>: imports ui.cases, which is not checked and has no model, yaml inside a function, and openodd (a Rust extension) inside CaseResult.coverage_viewable; reads JSON documents and trajectory log records of any type (<code>Any</code>); the comparison of sessions (fed the buckets and key read here), a case's outcome and scenario, and its key by overrides are the checked ui.comparison's, only the key's fallback (the JSON of the ODD values the case was drawn at) is built here, and a session's job indices and a case's <code>scenario=</code> override are the checked ui.case_paths's</li>
 <li><code>ui.scanner</code>: imports yaml, the registry (omegaconf, importlib), which is not checked, ui.models (pydantic), whose model declares none of the view models it builds, and ui.cases, which is not checked and has no model; reads JSON documents of any type (<code>Any</code>); a run's result suffix is the checked run_outputs's (<code>RESULT_SUFFIX</code>, #1704)</li>
-<li><code>ui.slurm_launch</code>: imports more of shlex than its shim declares (<code>shlex.split()</code>, for the command VIEWER_SCENARIO_COMMAND names), and datetime; reads the run panel's fields (SlurmOptions.from_request) and the batch's JSON records of any type (<code>Any</code>); the options' checks, their overrides and the command line are the checked ui.slurm_options', the state of each case and its message the checked ui.slurm_case_state's, and what it asks SLURM (squeue, sinfo, whether sbatch and squeue are on PATH) the checked slurm.queue's</li>
 <li><code>ui.sweep_resolver</code>: imports hydra and the registry (omegaconf, importlib), and, inside resolve_sweep(), authoring.hydra_config (pydantic, through authoring.models), odd.controls and sweeper.expand (omegaconf), which are not checked; imports <code>OddDraws</code> from odd.sampler (under <code>TYPE_CHECKING</code>), which the odd model does not declare</li>
 <li><code>utils.config</code>: reads the fields of a dataclass it is handed as a class (<code>type</code>, dataclasses.fields), takes the options as <code>Mapping[str, Any]</code> and, in checked_str_list(), a list setting of any type (<code>value: Any</code>), which Codon cannot express</li>
 <li><code>weather_rules</code>: imports openodd (a Rust extension), reads rule files and <code>environment.rules</code> as <code>Mapping[str, Any]</code>, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it; the quantities, the weather inputs, <code>rule_values()</code> and which <code>vehicles</code> entry a vehicle follows (<code>vehicle_entry()</code>) are the checked weather_inputs's (#1732)</li>
@@ -7350,7 +7357,10 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>ValueError</code> with <code>msg</code>, <code>doc</code> and <code>pos</code>. <code>shlex</code> declares
   <code>quote(s)</code> and <code>join(split_command)</code>, CPython 3.10's on Codon's <code>re</code>; a
   <code>quote()</code> of a false value that is no <code>str</code> (<code>None</code>, which CPython quotes
-  as <code>''</code>) is refused. <code>fnmatch</code> declares <code>fnmatch(name, pat)</code> and
+  as <code>''</code>) is refused. It declares <code>split(s, comments=False, posix=True)</code>
+  too, which takes a <code>str</code> (CPython 3.10 reads standard input for <code>None</code>, and
+  3.12 refuses it) and gives a <code>list[str]</code>; the check only compiles it, so
+  its body splits nothing. <code>fnmatch</code> declares <code>fnmatch(name, pat)</code> and
   <code>fnmatchcase(name, pat)</code>, CPython 3.10's shell-pattern match written
   without a regular expression (CPython's translation uses a lookahead,
   which Codon's <code>re</code> has no syntax for); <code>fnmatch()</code> takes a <code>str</code> or an
@@ -8540,7 +8550,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 12, 2026 10:19:12 UTC"><span class="timeago" datetime="2026-11-12T10:19:12+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 12, 2026 10:19:12 UTC">2026-11-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 12, 2026 11:09:39 UTC"><span class="timeago" datetime="2026-11-12T11:09:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 12, 2026 11:09:39 UTC">2026-11-12</span>
   </span>
 
     
