@@ -212,7 +212,10 @@ map:
 
 On a SLURM cluster, `launcher=slurm` runs a batch's cases as array jobs, several
 at once, each on a CARLA of its own, with the same outputs (off unless
-selected; see [Running a Batch on SLURM](slurm.md)):
+selected; see [Running a Batch on SLURM](slurm.md)). It runs the scenarios
+`scenario=` names (a glob, or one scenario): `launcher=slurm` without
+`scenario=` is refused, `Error: launcher=slurm runs a batch: ...` and exit 2,
+rather than running the default scenario here:
 
 ```bash
 uv run scenario --multirun 'scenario=cut_in/*' +sweep.odd_sample.count=24 \
@@ -537,7 +540,9 @@ yourself, which it reused), which no case stops.
 A sweep whose config sets a value its runs would refuse (a `t4scene.step_s`
 that is not a multiple of the tick, a negative `server.cooldown_max_retries`,
 an unknown `server.world_reset` or `traffic.backend`, a
-`scenario.timeout_seconds` that is not positive, a
+`scenario.timeout_seconds` that is not positive, an unknown `ego.entity` or
+`typecheck`, an `ego.spawn_lanelet_id`, `ego.goal_lanelet_id` or
+`ego.waypoint_lanelet_ids` item that is not a whole number, a
 `sweep.job_timeout_seconds` that is not a whole number of seconds, a
 `sweep.resume_from` that is not a whole number, ...) exits
 2 before the map is fetched or any case runs, naming the key, rather than have every case refuse
@@ -641,6 +646,15 @@ scenario:
 uv run scenario scenario='intersection_passing/*' --resume-from 3
 ```
 
+`--resume-from` is read by a batch (a scenario glob, with or without
+`--multirun`, or `launcher=slurm`) and by the lanelet sweeper (`--multirun
+hydra/sweeper=lanelet_constraint` on the command line,
+[Lanelet Constraint Sweeping](#lanelet-constraint-sweeping)). Anywhere else
+-- a single run, or Hydra's own sweeper (`--multirun` without
+`hydra/sweeper=lanelet_constraint`) -- nothing would read it, and every case
+would run; it is refused there, `Error: --resume-from resumes a batch ...`
+and exit 2, before anything runs, as `--resume-into` is on a single run.
+
 The resumed batch runs in a directory of its own, and the directory of the
 batch it resumes still lists the cases it never finished as pending, so
 [`scenario-gate`](gate.md#cases-that-raised-no-record-so-the-set-is-refused)
@@ -733,7 +747,9 @@ uv run scenario scenario=intersection_passing/straight traffic_manager.port=8200
 
 `server.port` and `traffic_manager.port` (and `traffic.options.port`) must be
 TCP ports, integers within 1-65535; any other value (`0`, `70000`, `true`)
-is refused before anything starts.
+is refused before anything starts. `server.port` has no default to fall back
+on, so `server.port=null` is refused too; `traffic_manager.port=null` (and
+`traffic.options.port=null`) is the TrafficManager's default port, `8100`.
 
 ### One Seed for the Whole Run
 
@@ -880,7 +896,7 @@ Defines the default config group composition:
 |-----------|------|---------|-------------|
 | `ego.vehicle_type` | str | `vehicle.mini.cooper` | CARLA blueprint ID for ego vehicle |
 | `ego.initial_speed_kmh` | float | `0.0` | Initial speed of ego vehicle (km/h); finite, `0` or more |
-| `ego.spawn_lanelet_id` | int | `242` | Lanelet ID for spawn position |
+| `ego.spawn_lanelet_id` | int | `242` | Lanelet ID for spawn position; a whole number (`242` or `242.0`, not `242.7`, which is refused rather than truncated) |
 | `ego.spawn_s` | float | `25.0` | Longitudinal offset along lanelet centerline (meters) |
 | `ego.spawn_t` | float | `0.0` | Lateral offset from the lanelet centerline, positive to its left (meters) |
 | `ego.spawn_heading` | float | `0.0` | Yaw relative to the lanelet's direction of travel, positive anticlockwise (radians) |
@@ -892,6 +908,13 @@ speed would leave the ego still with no error, an infinite one break its
 physics, and a NaN pose fail far from the key behind it. A run or batch
 refuses such a value before anything starts, naming the key (`Error:
 ego.initial_speed_kmh must be finite and at least 0, got -20`).
+
+The same check refuses a lanelet id that is not a whole number --
+`ego.spawn_lanelet_id`, `ego.goal_lanelet_id` or an item of
+`ego.waypoint_lanelet_ids` (a list) set to `abc`, `true` or `242.7`, which
+used to be truncated onto another lanelet -- an `ego.entity` that names no
+entity (`autopilot`, `autoware`, `carla_driver`, `ros2`, `hils`), and a
+`typecheck` that is not `auto`, `required` or `off`.
 
 #### Entity Configuration
 
@@ -1546,7 +1569,7 @@ driver ending the run is `driver`, and a case that raised on every attempt is
 |------|---------|
 | 0 | All scenarios passed |
 | 1 | One or more scenarios failed or errored, or configuration/runtime error (a batch refusing a config value a case would refuse prints `Error: <case>: <key> ...` before anything is built) |
-| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`) is not installed, a `--resume-from` that is not a whole number of at least 1, a `--resume-into` directory the batch cannot resume into, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
+| 2 | Refused before anything ran: the scenario does not type-check, an extra it asks for (`rerun`, `t4`, the Rerun SDK `rerun.lidar` and `rerun.cameras` record with) is not installed, a `--resume-from` that is not a whole number of at least 1 or that nothing would read (a single run, Hydra's own sweeper), a `--resume-into` directory the batch cannot resume into, `launcher=slurm` without `scenario=`, or (in a lanelet sweep) a config value its runs would refuse, such as a `t4scene.step_s` that is not a multiple of the tick or a `sweep.resume_from` that is not a whole number |
 | 130, 143 | Stopped by Ctrl-C (130) or `SIGTERM` (143), after the run stopped what it started (its CARLA server, its Autoware stack); a sweep first stops the case it is running |
 
 The same codes hold however the cases run: a single run, a glob batch, a

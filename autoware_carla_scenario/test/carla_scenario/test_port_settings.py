@@ -118,3 +118,32 @@ def test_a_batch_is_refused_for_a_port_before_any_case_runs() -> None:
     bad = _shipped(["server.port=70000"])
     with pytest.raises(run.RunConfigError, match="server.port"):
         run.check_batch_configs([good, bad], ["good", "bad"])
+
+
+def test_a_null_server_port_is_refused() -> None:
+    # server.port has no default: null used to pass the check and reach the
+    # CARLA client (#2089).
+    from autoware_carla_scenario.examples import run
+
+    cfg = _shipped(["server.port=null"])
+    with pytest.raises(run.RunConfigError, match=r"^server\.port must be an integer"):
+        run.check_run_config(cfg)
+
+
+@pytest.mark.parametrize("traffic", ["traffic_manager", "sumo", "none"])
+def test_a_null_traffic_manager_port_is_the_default(traffic: str) -> None:
+    # traffic_manager.port: null is the TrafficManager's default port, as the
+    # traffic backend reads it (#2089).
+    from autoware_carla_scenario.constants import DEFAULT_TM_PORT
+    from autoware_carla_scenario.examples import run
+
+    cfg = _shipped([f"traffic={traffic}", "traffic_manager.port=null"])
+    run.check_run_config(cfg)
+    assert run._traffic_manager_port(cfg) == DEFAULT_TM_PORT
+    assert run._traffic_manager_port_text(cfg) in (
+        str(DEFAULT_TM_PORT),
+        "- (traffic backend none)",
+    )
+    if traffic == "traffic_manager":
+        assert getattr(run.build_traffic_backend(cfg), "port") == DEFAULT_TM_PORT  # noqa: B009
+    assert run._traffic_manager_port(_shipped(["traffic_manager.port=8200"])) == 8200
