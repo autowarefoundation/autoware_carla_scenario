@@ -1,0 +1,84 @@
+# Model of autoware_carla_scenario.hils.config (docs/typecheck.md), which
+# imports yaml, reads a parsed YAML document of any shape and builds on
+# hils.protocol (socket) and hils.measurements (cv2). The checked hils package
+# re-exports DeviceSpec, FieldSource, HilsConfig, MessageSpec, load_config()
+# and parse_config(), and only the names are needed: no checked module builds,
+# reads or calls them. They read the HILS bridge's configuration, which
+# scenario-hils does on the HILS PC, not a scenario: each class is declared by
+# name and constructor, each function with Python's signature, and every
+# constructor and function body is a compile error, so a scenario that reads
+# a HILS configuration fails its check. SensorSpec, HilsConfigError, CLOCKS
+# and PHASES are the checked hils.sensor_spec's, which the package imports
+# from there.
+
+
+# Where one field's value comes from: a constant (a str, int, float or bool,
+# a Union Codon cannot express) or a scaled signal. Python's is a frozen
+# dataclass.
+class FieldSource:
+    def __init__(self, signal = None, constant = None, scale = 1.0,
+                 offset = 0.0):
+        compile_error("FieldSource is not modelled: the static check cannot "
+                      "build one (typecheck/codon/autoware_carla_scenario/"
+                      "hils/config.codon)")
+
+
+# A message a device sends periodically. Python's is a frozen dataclass.
+class MessageSpec:
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("MessageSpec(): no constructor takes these arguments "
+                      "(required: name, fields)")
+
+    def __init__(self, name, fields, period = None):
+        compile_error("MessageSpec is not modelled: the static check cannot "
+                      "build one (typecheck/codon/autoware_carla_scenario/"
+                      "hils/config.codon)")
+
+
+# One hilspy channel toward a device under test; its codec options are a
+# mapping of any values. Python's is a frozen dataclass.
+class DeviceSpec:
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("DeviceSpec(): no constructor takes these arguments "
+                      "(required: name, url)")
+
+    def __init__(self, name, url, codec = "raw", options = None, messages = (),
+                 sensor = None, inputs = ()):
+        compile_error("DeviceSpec is not modelled: the static check cannot "
+                      "build one (typecheck/codon/autoware_carla_scenario/"
+                      "hils/config.codon)")
+
+
+# The HILS bridge's whole configuration. Python's is a frozen dataclass.
+class HilsConfig:
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("HilsConfig(): no constructor takes these arguments "
+                      "(required: devices)")
+
+    def __init__(self, devices, host = "localhost", port = 2000, timeout = 10.0,
+                 role_name = "Ego", ego_wait = 120.0, canvas = None,
+                 clock = "simulation", runner_listen = "0.0.0.0:7700",
+                 command_mode = "control", lifecycle = None):
+        compile_error("HilsConfig is not modelled: the static check cannot "
+                      "build one (typecheck/codon/autoware_carla_scenario/"
+                      "hils/config.codon)")
+
+
+# parse_config(document, base="."): the configuration a parsed YAML document
+# (of any shape) says, its relative files relative to base (a str or a
+# pathlib.Path).
+def parse_config(document, base = "."):
+    compile_error("parse_config() is not modelled: it reads the HILS bridge's "
+                  "configuration, which scenario-hils does on the HILS PC, "
+                  "not a scenario")
+
+
+# load_config(path): the configuration in a YAML file (a str or a
+# pathlib.Path).
+def load_config(path):
+    compile_error("load_config() is not modelled: it reads the HILS bridge's "
+                  "configuration, which scenario-hils does on the HILS PC, "
+                  "not a scenario")

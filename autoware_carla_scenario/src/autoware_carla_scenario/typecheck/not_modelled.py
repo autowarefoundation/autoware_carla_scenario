@@ -319,6 +319,14 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "RerunConverter the checked runner hands each log to and "
         "recording_path, which names the recording it makes",
     ),
+    f"{_PACKAGE}.hils.config": _each(
+        "CLOCKS PHASES HilsConfigError InputSource InputSpec SensorSpec StepSpec",
+        "the HILS bridge's configuration, which scenario-hils reads on the "
+        "HILS PC, not a scenario; the model declares only what the checked "
+        "hils package re-exports of hils.config (CLOCKS, PHASES, "
+        "HilsConfigError and SensorSpec are the checked hils.sensor_spec's, "
+        "which the package imports from there)",
+    ),
     f"{_PACKAGE}.scaffold.generator": {
         "TEMPLATES_DIR": (
             "the directory of the templates beside the Python module, which "
@@ -474,6 +482,14 @@ _RUN_CLEANUP = (
     "(#371); a scenario never calls it, and a condition that overrides it "
     "needs no declaration in the model to do so"
 )
+_HILS_CONFIG = (
+    "a part of the HILS bridge's configuration, which scenario-hils reads "
+    "from YAML on the HILS PC (hils.config: a document of any shape, "
+    "constants of a Union Codon cannot express), not a scenario; the model "
+    "declares the class by name only, so the checked hils package's "
+    "re-export resolves, and a scenario cannot build one (its constructor "
+    "is a compile error)"
+)
 
 
 def _members(names: str, reason: str) -> dict[str, str]:
@@ -604,6 +620,10 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "workers after a run, not a scenario",
     ),
     "CoverageCollector": {"to_dict": _AS_DICT},
+    "DeviceSpec": _members(
+        "codec inputs messages name options sensor url", _HILS_CONFIG
+    ),
+    "FieldSource": _members("constant offset resolve scale signal", _HILS_CONFIG),
     "CoverageReport": {
         **_members(
             "assumptions cases cell_flakiness entries entry flaky_cells odds weighted_outcomes",
@@ -632,6 +652,11 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "client_address client_connected close config configure is_ready port "
         "reroute seconds_since_mission_poll start take_turn_indicators",
         _BY_NAME,
+    ),
+    "HilsConfig": _members(
+        "canvas clock command_mode devices ego_wait host lifecycle port "
+        "role_name runner_listen steps timeout",
+        _HILS_CONFIG,
     ),
     "HilsEgoEntity": _members(
         "actor attaches_to_existing_actor carried_actor_ids change_lane command "
@@ -752,6 +777,7 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "is a compile error): create_scenario_package() returns it, which "
         "scenario-new calls from the shell, not a scenario",
     ),
+    "MessageSpec": _members("fields name period values", _HILS_CONFIG),
     "ScalarComparisonRule": {"to_dict": _AS_DICT},
     "ScenarioResult": {"to_dict": _AS_DICT},
     "Failure": {
