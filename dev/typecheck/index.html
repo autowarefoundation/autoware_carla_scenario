@@ -3049,7 +3049,7 @@ value, so the result is not checked:</p>
   <code>autoware_stack/launcher</code>, <code>autoware_stack/devcontainer</code> (and its values),
   <code>driver/egodriver_client</code>, <code>_map_source</code>, <code>maps/cache</code>,
   <code>maps/z_offset_cache</code>, <code>maps/road_network_cache</code>, <code>pedestrian/soma</code>,
-  <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code> and <code>utils/traffic_light</code>, each declaring exactly the names compared;
+  <code>ui/models</code>, <code>_ros2</code>, <code>metrics</code>, <code>measures</code>, <code>scaffold/generator</code> and <code>utils/traffic_light</code>, each declaring exactly the names compared;
   <code>ros2/cyclone</code> where cyclonedds is installed.</li>
 <li><strong>Every public name of a modelled module</strong>: each name a module the model
   has exports in Python (its <code>__all__</code>, or the public names it defines when
@@ -4878,8 +4878,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-309 of the package's 432
-modules (72%; about 97,600 of
+310 of the package's 432
+modules (72%; about 97,700 of
 168,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4954,7 +4954,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 309 CHECKED modules</summary>
+<summary>The 310 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5864,6 +5864,10 @@ with the first paragraph of its docstring:</p>
 <td><code>scenario.timeout_seconds</code>, the run's own fail-safe, read and checked.</td>
 </tr>
 <tr>
+<td><code>scaffold</code></td>
+<td>Scaffolding for standalone scenario packages.</td>
+</tr>
+<tr>
 <td><code>scaffold.names</code></td>
 <td>The naming rules of <code>scenario-new</code>: package, scenario and class names.</td>
 </tr>
@@ -6389,7 +6393,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 123 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 122 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6418,7 +6422,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 123 EXCLUDED modules, and why</summary>
+<summary>The 122 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped</li>
@@ -6506,8 +6510,7 @@ the first:</p>
 <li><code>rerun_metrics</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; reads the log's metric records as JSON objects of mixed value types (<code>dict[str, Any]</code>); the name of its scratch recording (<code>METRICS_SUFFIX</code>) is the checked run_outputs's (#1748), which it re-exports</li>
 <li><code>ros2.cyclone</code>: imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds</li>
 <li><code>ros2.messages</code>: imports cyclonedds (the IdlStruct base of every message, and the IDL field types <code>array[float64, 36]</code> and <code>sequence[TrajectoryPoint]</code>, which Codon cannot express)</li>
-<li><code>scaffold</code>: re-exports scaffold.generator (argparse, jinja2)</li>
-<li><code>scaffold.generator</code>: imports argparse, ast, errno, functools, importlib.metadata, templating (jinja2) and, inside functions, packaging, typecheck.transform and authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked; its naming rules, and the framework-name rule it shares with authoring.package_names, are the checked scaffold.names'</li>
+<li><code>scaffold.generator</code>: imports argparse, ast, errno, functools, importlib.metadata, templating (jinja2) and, inside functions, packaging, typecheck.transform and authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked; its naming rules, and the framework-name rule it shares with authoring.package_names, are the checked scaffold.names'; scaffold/generator.codon declares what the checked scaffold package re-exports of it</li>
 <li><code>serve_cli</code>: imports argparse and ipaddress</li>
 <li><code>slurm.cli</code>: imports argparse, and slurm.collect, slurm.manifest and slurm.submit, which are not checked</li>
 <li><code>slurm.collect</code>: imports slurm.manifest, which is not checked; reads the outcomes recorded as JSON into dataclass fields typed <code>dict[str, Any]</code>, which Codon cannot express</li>
@@ -6860,7 +6863,8 @@ stands in for it in the check's workspace:</p>
   a model of that module alone (<code>utils/traffic_light.codon</code>,
   <code>autoware_bridge/grpc_server.codon</code>, <code>driver/egodriver_client.codon</code>,
   <code>maps/cache.codon</code>, <code>autoware_stack/devcontainer.codon</code>,
-  <code>ros2/cyclone.codon</code>, <code>pedestrian/soma.codon</code>), or, for a module of
+  <code>ros2/cyclone.codon</code>, <code>pedestrian/soma.codon</code>,
+  <code>scaffold/generator.codon</code>), or, for a module of
   the top-level package, a model of that module (<code>trajectory_recorder.codon</code>,
   for <code>scenario_runner</code>, the <code>TrajectoryRecorder</code> it starts, records and
   closes, whose JSON lines hold values of mixed types; <code>environment.codon</code>,
@@ -8229,11 +8233,16 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   (<code>t4_scene.codon</code>, Protobuf messages), which the checked <code>t4_scene</code> package
   re-exports with the suffix strings and <code>map_resource()</code> and
   <code>trajectory_log_to_t4_scene()</code>, functions whose bodies are a
-  <code>compile_error</code> too. Each constructor takes
+  <code>compile_error</code> too, and <code>PackageExistsError</code> and <code>ScaffoldResult</code>
+  (<code>scaffold/generator.codon</code>, argparse and jinja2), which the checked
+  <code>scaffold</code> package re-exports with <code>create_scenario_package()</code>,
+  <code>resolve_names()</code> and <code>main()</code>, <code>compile_error</code>s as well: they write a new
+  scenario package (<code>scenario-new</code>), not a scenario. Each constructor takes
   Python's parameters and is a <code>compile_error</code>: its config
   (<code>AutowareBridgeConfig</code>, <code>DriverClientConfig</code>) is a checked class the model
-  does not have, the class is only ever built by openodd's merge, or its
-  fields are messages the model has no type for, so a
+  does not have, the class is only ever built by openodd's merge, its
+  fields are messages the model has no type for, or only the scaffolder
+  builds it, so a
   scenario that builds one fails its check rather than passing it with
   arguments the run would refuse. Such a class derives from nothing in the
   model: a subclass of the model's <code>EgoVehicle</code> that nothing builds breaks
@@ -8456,7 +8465,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 12, 2026 05:24:53 UTC"><span class="timeago" datetime="2026-11-12T05:24:53+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 12, 2026 05:24:53 UTC">2026-11-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 12, 2026 05:46:51 UTC"><span class="timeago" datetime="2026-11-12T05:46:51+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 12, 2026 05:46:51 UTC">2026-11-12</span>
   </span>
 
     
