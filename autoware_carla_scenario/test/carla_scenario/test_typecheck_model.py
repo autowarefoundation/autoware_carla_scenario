@@ -111,8 +111,9 @@ from carla_driver_interface import geometry as cdi_geometry
 
 _MODEL = model_dir() / "autoware_carla_scenario"
 
-#: Python members the model leaves out on purpose, by class.  Each is a
-#: free-form mapping (dict[str, Any]), which has no Codon type.
+#: Python members the model leaves out on purpose, by class: a free-form
+#: mapping (dict[str, Any]), which has no Codon type, or a default no literal
+#: holds (CommonRoadSettings').
 _OMITTED_PARAMETERS: dict[str, set[str]] = {
     "SweepConfig": {"constraints", "bindings", "exclude", "odd_sample"},
     # A mapping of AutowareBridgeConfig's fields, or None (run.py builds the bridge).
