@@ -324,8 +324,8 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "the HILS bridge's configuration, which scenario-hils reads on the "
         "HILS PC, not a scenario; the model declares only what the checked "
         "hils package re-exports of hils.config (CLOCKS, PHASES, "
-        "HilsConfigError and SensorSpec are the checked hils.sensor_spec's, "
-        "which the package imports from there)",
+        "HilsConfigError and SensorSpec are the checked hils.sensor_spec's; "
+        "the package imports HilsConfigError and SensorSpec from there)",
     ),
     f"{_PACKAGE}.scaffold.generator": {
         "TEMPLATES_DIR": (

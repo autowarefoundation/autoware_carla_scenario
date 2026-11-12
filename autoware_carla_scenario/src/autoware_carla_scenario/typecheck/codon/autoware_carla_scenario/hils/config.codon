@@ -8,8 +8,8 @@
 # name and constructor, each function with Python's signature, and every
 # constructor and function body is a compile error, so a scenario that reads
 # a HILS configuration fails its check. SensorSpec, HilsConfigError, CLOCKS
-# and PHASES are the checked hils.sensor_spec's, which the package imports
-# from there.
+# and PHASES are the checked hils.sensor_spec's; the package imports
+# SensorSpec and HilsConfigError from there, and not CLOCKS or PHASES.
 
 
 # Where one field's value comes from: a constant (a str, int, float or bool,
