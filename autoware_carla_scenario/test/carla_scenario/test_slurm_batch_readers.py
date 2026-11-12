@@ -75,8 +75,8 @@ _clock: Any = time
 
 @contextmanager
 def old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
-    """scenario-slurm's status, cancel and busy check, and the viewer's case
-    states, read as they were (the oracles), with the fakes a test has set
+    """scenario-slurm's status, cancel and busy check, and the viewer's batch
+    status, read as they were (the oracles), with the fakes a test has set
     on slurm.status for squeue, scancel and the clock: for the tests that
     hand the readers a batch's records as dicts."""
     from autoware_carla_scenario.slurm import status as slurm_status
@@ -92,7 +92,7 @@ def old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
             "_cancel",
             lambda args: _old_cancel(BatchLayout(Path(args.batch_dir).resolve())),
         )
-        patch.setattr(slurm_launch, "_case_states", _old_case_states)
+        patch.setattr(slurm_launch, "batch_status", _old_batch_status)
         yield
 
 

@@ -441,11 +441,6 @@ _LAUNCHER_VALUE = (
     "itself uncalled, calls it (or another of its readers)"
 )
 
-#: The reason of what reads a SLURM batch's manifest as a `dict` reads it.
-_BATCH_RECORD = (
-    "reads a SLURM batch's manifest as a `dict` reads it (Manifest.get(), "
-    "`manifest[key]`: values of mixed types), which Codon cannot express"
-)
 
 #: The reason of what gives a manifest's values as a `dict` gives them.
 _MANIFEST_VALUE = (
@@ -628,8 +623,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.slurm.settings.SlurmSettings.replace": "takes `**changes: Any` and reads them, merged into to_dict()'s `dict[str, Any]`, back with from_mapping, which Codon cannot express",
     "autoware_carla_scenario.ui.slurm_launch.SlurmOptions.from_request": "reads the run panel's fields (`dict[str, Any] | None`: the JSON body of a request, of values of any type), which Codon cannot express, through a helper that returns a number of either type it is given (`number(key, kind: type) -> Any`, an int or a float); the checks of each field are the checked ui.slurm_options'",
     "autoware_carla_scenario.ui.slurm_launch.Submission.to_dict": "returns the submission as the viewer's API sends it, a `dict[str, Any]` of mixed value types (text, an optional directory and an optional exit status), which Codon cannot express",
-    "autoware_carla_scenario.ui.slurm_launch._case_states": f"{_BATCH_RECORD}; only the uncalled batch_status() calls it, and the state of each case and its message are the checked ui.slurm_case_state's",
-    "autoware_carla_scenario.ui.slurm_launch.batch_status": f"{_BATCH_RECORD}, and returns the batch's progress as the viewer's API sends it, a `dict[str, Any]` of mixed value types",
+    "autoware_carla_scenario.ui.slurm_launch.batch_status": "returns the batch's progress as the viewer's API sends it, a `dict[str, Any]` of mixed value types: the values of the batch's records as `json.loads()` read them (the manifest's through the checked slurm.manifest's uncalled Manifest.get(), the submissions' and the tasks' through get(), of any type), which Codon cannot express; each case's state, and the values it shows as their JSON text, are the checked _case_states()'s (CaseState)",
     "autoware_carla_scenario.t4_settings.T4Settings.from_driver": "takes the `t4` config section (`Mapping[str, Any]`: a Hydra node of mixed value types), which Codon cannot express, and builds the settings with `**` of a `dict[str, Any]`",
     "autoware_carla_scenario.utils.stop_line._road_marking_stop_lines": "returns a road marking's `refers` parameters as line strings, and a `refers` parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.maps.config._setting": "reads one `map` setting off a config of any shape (`map_config: Any`: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths and _flag, both themselves uncalled, call it, and what they read is resolved by the checked _resolve()",
