@@ -70,9 +70,7 @@ def _check_members(members: JsonMembers, expected: dict[str, Any]) -> None:
     for key, value in expected.items():
         assert members.has(key)
         assert _same(members.value(key), value), key
-        assert members.value_text(key) == json.dumps(
-            value, indent=2, ensure_ascii=False
-        )
+        assert members.value_text(key) == json.dumps(value, ensure_ascii=False)
         assert (
             members.member_text(key)
             == (json.dumps({key: value}, indent=2, ensure_ascii=False)[2:-2])
@@ -258,7 +256,7 @@ def test_from_value_writes_the_pinned_document(tmp_path: Path) -> None:
         "null",
     ]
     assert members.member_text("tuple") == '  "tuple": [\n    1,\n    "x"\n  ]'
-    assert members.value_text("tuple") == '[\n  1,\n  "x"\n]'
+    assert members.value_text("tuple") == '[1, "x"]'
     assert members.value("tuple") == [1, "x"]
     assert members.value("false") == "bool key"
     _check_members(members, json.loads(written))
@@ -307,7 +305,8 @@ def test_parse_object_keeps_a_repeated_key_first_with_its_last_value(
         ('{"a": "\\u65e5"}', "日", '"日"'),
         ('{"a": {}}', {}, "{}"),
         ('{"a": []}', [], "[]"),
-        ('{"a": [{}]}', [{}], "[\n  {}\n]"),
+        ('{"a": [{}]}', [{}], "[{}]"),
+        ('{"a": {"b": [1, {"c": 2}]}}', {"b": [1, {"c": 2}]}, '{"b": [1, {"c": 2}]}'),
     ],
 )
 def test_value_reads_as_json_loads_reads(
@@ -448,3 +447,90 @@ def test_from_value_writes_an_int_of_any_length_on_310(tmp_path: Path) -> None:
     members = JsonMembers.from_value(data)
     assert members.object_text().encode() == _written(tmp_path, data)
     assert members.value("a") == 10**5000
+
+
+# ---------------------------------------------------------------------------
+# Nesting
+# ---------------------------------------------------------------------------
+
+
+def _nested(depth: int) -> str:
+    return "[" * depth + "]" * depth
+
+
+def _loads_limit() -> int:
+    """The deepest array ``json.loads()`` reads here, called as deep in the
+    stack as this function is."""
+    low, high = 1, 50_000
+    while low < high:
+        middle = (low + high + 1) // 2
+        try:
+            json.loads(_nested(middle))
+        except RecursionError:
+            high = middle - 1
+        else:
+            low = middle
+    return low
+
+
+def test_parse_object_reads_what_json_loads_reads_nested_however_deep() -> None:
+    # A value deeper than json's encoder written in Python lays out (a
+    # thousand levels): reading holds it as the C encoder writes it.
+    limit = _loads_limit()
+    for depth in sorted({min(limit, 5000), limit}):
+        text = '{"a": 1, "deep": ' + _nested(depth - 1) + "}"
+        members = parse_object(text)
+        assert members is not None
+        assert members.keys() == ["a", "deep"]
+        assert members.value_text("deep") == _nested(depth - 1)
+        assert members.value("deep") == json.loads(text)["deep"]
+        members.set_text("a", members.value_text("deep"))
+        assert members.value("a") == members.value("deep")
+
+
+def test_parse_object_raises_what_json_loads_raises_nested_too_deep() -> None:
+    text = '{"deep": ' + _nested(2 * _loads_limit()) + "}"
+    with pytest.raises(RecursionError):
+        json.loads(text)
+    with pytest.raises(RecursionError):
+        parse_object(text)
+
+
+@pytest.mark.parametrize("depth", [500, 5000])
+def test_a_member_too_deep_to_lay_out_raises_as_write_json_does(
+    tmp_path: Path, depth: int
+) -> None:
+    # Laid out as write_json lays it out: by json's encoder written in Python
+    # up to Python 3.12, which lays out five hundred levels but not five
+    # thousand (which json.loads() reads on 3.12), and by its C encoder from
+    # 3.13 on, which lays out both.
+    text = '{"a": 1, "deep": ' + _nested(depth) + "}"
+    if depth >= _loads_limit():
+        pytest.skip("json.loads() reads no text this deep here")
+    members = parse_object(text)
+    assert members is not None
+    data = json.loads(text)
+    try:
+        written = _written(tmp_path, data)
+    except RecursionError:
+        with pytest.raises(RecursionError):
+            members.object_text()
+        with pytest.raises(RecursionError):
+            members.member_text("deep")
+        assert members.member_text("a") == '  "a": 1'
+    else:
+        assert members.object_text().encode() == written
+
+
+def test_from_value_lays_out_nested_keys_json_writes_alike(tmp_path: Path) -> None:
+    # write_json writes both keys of the nested dict; json.loads() reads the
+    # last.
+    data = {"a": {1: "int", "1": "str"}, "b": [{None: 0, "null": 1}]}
+    members = JsonMembers.from_value(data)
+    written = _written(tmp_path, data)
+    assert members.object_text().encode() == written
+    assert members.member_text("a") == '  "a": {\n    "1": "int",\n    "1": "str"\n  }'
+    assert members.value("a") == {"1": "str"}
+    assert members.value("b") == json.loads(written)["b"]
+    members.set_text("a", members.value_text("a"))
+    assert members.member_text("a") == '  "a": {\n    "1": "str"\n  }'

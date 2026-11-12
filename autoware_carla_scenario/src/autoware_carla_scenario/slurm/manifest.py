@@ -448,11 +448,16 @@ def recorded_verdict(record: CaseOutcome | None) -> bool | None:
     members: JsonMembers | None = record.result()
     if members is None:
         return None
-    passed = json.loads(_value_json(members, "passed"))
+    return _verdict_of_result(members)
+
+
+def _verdict_of_result(result: JsonMembers) -> bool | None:
+    """:func:`recorded_verdict` of the members of a recorded ``result``."""
+    passed = json.loads(_value_json(result, "passed"))
     if not isinstance(passed, bool):
         return None
     verdict = bool(passed)
-    if readable_result(members):
+    if readable_result(result):
         return verdict
     return None
 
@@ -460,14 +465,22 @@ def recorded_verdict(record: CaseOutcome | None) -> bool | None:
 def verdict_of_document(document: Any) -> bool | None:
     """:func:`recorded_verdict` of a case's outcome as ``json.loads()``
     reads it (``ui.cases`` reads the file itself): ``None`` for a document
-    that is not an object, or whose ``result`` is not one."""
+    that is not an object, or whose ``result`` is not one.
+
+    Each member of the ``result`` is written back as
+    :class:`.records.JsonMembers` holds a value, with the C encoder, and is
+    not read again as part of the whole: what ``json.loads()`` read, nested
+    however deep, is read here too, on Python 3.10 (which counts the calls
+    on the stack with the levels of nesting) as on 3.12."""
     if not isinstance(document, dict):
         return None
-    if not isinstance(document.get("result"), dict):
+    result = document.get("result")
+    if not isinstance(result, dict):
         return None
-    return recorded_verdict(
-        CaseOutcome(JsonMembers.from_value({"result": document["result"]}))
-    )
+    members = JsonMembers()
+    for key, value in result.items():
+        members.set_text(key, json.dumps(value, ensure_ascii=False))
+    return _verdict_of_result(members)
 
 
 @dataclass(frozen=True)

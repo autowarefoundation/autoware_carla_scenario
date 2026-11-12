@@ -828,3 +828,89 @@ def test_nan_and_negative_zero_are_compared_as_json_writes_them() -> None:
     _same([math.nan, -0.0], [math.nan, -0.0])
     with pytest.raises(AssertionError):
         _same([-0.0], [0.0])
+
+
+# -- An outcome nested deep -------------------------------------------------------
+
+
+def _nested(depth: int) -> str:
+    return "[" * depth + "]" * depth
+
+
+def _deep_content(where: str, depth: int) -> bytes:
+    """An outcome that passed, with a member nested *depth* deep in the
+    record (``record``), in its result (``result``) or in a condition's
+    status (``status``)."""
+    deep = _nested(depth)
+    if where == "record":
+        text = _record(x=deep)
+    elif where == "result":
+        text = _record(result=_result(True, x=deep))
+    else:
+        status = _STATUS[:-1] + ', "x": ' + deep + "}"
+        text = _record(result=_result(True, condition_statuses=f"[{status}]"))
+    return text.encode("utf-8")
+
+
+def _compact(value: Any) -> str:
+    """*value* as JSON text, written with the C encoder (``json``'s encoder
+    written in Python, which ``indent`` takes, recurses too deep)."""
+    return json.dumps(value, ensure_ascii=False)
+
+
+@pytest.mark.parametrize("where", ["record", "result", "status"])
+@pytest.mark.parametrize("depth", [990, 5000, 100_000])
+def test_an_outcome_nested_deep_is_read_as_json_loads_reads_it(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    where: str,
+    depth: int,
+) -> None:
+    """Nested deeper than ``json``'s encoder written in Python lays out (a
+    thousand levels), an outcome is read wherever ``json.loads()`` reads it
+    (some ten thousand levels on Python 3.12, a thousand on 3.10, which
+    counts the calls on the stack with them), and raises what it raises
+    where it does not: a RecursionError, which reading the outcome as a
+    ``dict`` let through too."""
+    from autoware_carla_scenario.gate.evaluate import _slurm_unrecorded
+    from autoware_carla_scenario.ui import slurm_launch
+    from autoware_carla_scenario.ui.cases import _slurm_entries
+
+    content = _deep_content(where, depth)
+    layout = _batch(tmp_path, content)
+    try:
+        old = json.loads(content.decode("utf-8"))
+    except RecursionError:
+        with pytest.raises(RecursionError):
+            layout.read_result(1)
+        for read in (
+            lambda: cli._status(layout),
+            lambda: unfinished_cases(layout),
+            lambda: _slurm_unrecorded(layout.batch_dir),
+            lambda: slurm_launch.batch_status(layout.batch_dir),
+            lambda: _slurm_entries(layout.batch_dir),
+        ):
+            with pytest.raises(RecursionError):
+                read()
+        return
+    record = layout.read_result(1)
+    assert record is not None
+    assert recorded_verdict(record) is _old_verdict(old) is True
+    assert _compact(record.get("x")) == _compact(old.get("x"))
+    assert _compact(record.get("result")) == _compact(old["result"])
+    assert cli._status(layout) == 0
+    assert capsys.readouterr().out == (
+        f"Batch {layout.batch_dir}: 3 case(s)\n"
+        "  3 with a result (3 passed, 0 errored), 0 without\n"
+    )
+    assert unfinished_cases(layout, failed=True) == []
+    assert missing_cases(layout) == []
+    assert _slurm_unrecorded(layout.batch_dir) == ([], 3)
+    status = slurm_launch.batch_status(layout.batch_dir)
+    assert status is not None
+    assert status["cases"][1]["state"] == "passed"
+    entries = _slurm_entries(layout.batch_dir)
+    assert entries is not None
+    assert _compact(entries[1]) == _compact(
+        {"scenario": "s#2", "overrides": [], **old["result"]}
+    )

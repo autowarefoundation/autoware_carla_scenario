@@ -613,7 +613,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.slurm.manifest.resubmit_target": _BATCH_RECORD,
     "autoware_carla_scenario.slurm.manifest.sbatch_in_flight": _BATCH_RECORD,
     "autoware_carla_scenario.slurm.manifest.sbatch_timed_out": _BATCH_RECORD,
-    "autoware_carla_scenario.slurm.manifest.verdict_of_document": "takes a case's outcome as `json.loads()` reads it, a document of any type (`Any`: an object of mixed value types when it is one), which Codon cannot express; it reads it with the uncalled JsonMembers.from_value(), and the verdict is the checked recorded_verdict()'s",
+    "autoware_carla_scenario.slurm.manifest.verdict_of_document": "takes a case's outcome as `json.loads()` reads it, a document of any type (`Any`: an object of mixed value types when it is one), which Codon cannot express; it writes its result back as JSON text for a JsonMembers, and the verdict is the checked recorded_verdict()'s",
     "autoware_carla_scenario.slurm.manifest.write_json": "writes a JSON document of any value types (`data: Any`: a manifest, a submission, a task's status), which Codon cannot express",
     "autoware_carla_scenario.slurm.collect._last_submission_of": _BATCH_RECORD,
     "autoware_carla_scenario.slurm.collect._missing_message": f"{_BATCH_RECORD}; it reads a missing case's records, and which advice they give and its message are the checked _advice()'s",
