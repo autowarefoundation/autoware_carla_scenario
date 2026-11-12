@@ -1,12 +1,57 @@
 # Model of autoware_carla_scenario.t4_scene (docs/typecheck.md), which reads
 # trajectory logs with orjson and writes Protobuf messages: what the checked
 # scenario_runner, scenario_queue and t4_scene.exporter use of it, with the
-# signatures of the Python class and function.
+# signatures of the Python class and function, and the rest of what the
+# checked package __init__ re-exports of the unchecked t4_scene.convert and
+# t4_scene.map_resource, which no checked module calls or builds: those are
+# compile errors, so a scenario that converts a log fails its check.
 
 from pathlib import Path
 from typing import Optional
 
 from ._tc import _keyword_only as _acs_keyword_only
+
+# The file names of a log, its T4Scene and the scene's map. Python's are the
+# checked run_outputs's (#1678, #1713); a model cannot import a checked module
+# (the scenario check compiles only the model), so they are declared here,
+# with Python's values.
+LOG_SUFFIX: str = ".trajectory.jsonl"
+SCENE_SUFFIX: str = ".t4scene.pb"
+MAP_SUFFIX: str = ".t4scene.map.pb"
+
+
+# A converted log: its scene and map resource are Protobuf messages, which
+# the model has no type for, so the class is declared by name and
+# constructor only.
+class T4SceneExport:
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("T4SceneExport(): no constructor takes these arguments "
+                      "(required: scene, map_resource)")
+
+    def __init__(self, scene, map_resource):
+        compile_error("T4SceneExport is not modelled: the static check cannot "
+                      "build one (typecheck/codon/autoware_carla_scenario/t4_scene.codon)")
+
+
+# trajectory_log_to_t4_scene(log_path, *, ...): a scenario does not convert
+# logs; the runner does after a run (t4scene.enabled).
+def trajectory_log_to_t4_scene(log_path, *_kw, step_s = 0.1, current_index = 0,
+                               max_distance_m = 100.0, rear_axle_offset_m = None,
+                               with_map = True, lanelet2_path = None,
+                               xodr_path = None, projector_type = None,
+                               with_route = True):
+    compile_error("trajectory_log_to_t4_scene() is not modelled: it writes a "
+                  "run's trajectory log as a T4Scene, which the runner does "
+                  "after a run (t4scene.enabled) and scenario-t4scene does from "
+                  "the shell, not a scenario")
+
+
+# map_resource(lanelet_map): the map's Protobuf MapResource.
+def map_resource(lanelet_map):
+    compile_error("map_resource() is not modelled: it builds the Protobuf "
+                  "MapResource of a T4Scene's map, which the runner writes "
+                  "after a run (t4scene.enabled), not a scenario")
 
 
 # write_t4_scene(log_path, output_dir=None, **options): the scene's path and

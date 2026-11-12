@@ -157,6 +157,22 @@ def test_lane_keeping_reports_the_worst_excursion(rules):
     )
 
 
+def test_lane_keeping_opens_at_half_a_second_not_one_step_later(rules):
+    """Row ``k`` is the state at ``(k + 1) * step_s``, so 0.5 s is row 4.
+
+    The window used to start at row 5 -- 0.6 s -- because `Horizon.index_at`
+    read ``round(seconds / step_s)`` as the row for a time.
+    """
+    half_second = round(0.5 / CONFIG.horizon.step_s) - 1
+    at_half_second = signal_from_columns(lateral_offset=spike(0.0, 3.0, at=half_second))
+    assert robustness(rules, "lane_keeping", at_half_second) == pytest.approx(
+        LIMITS.lane_half_width_m - 3.0
+    )
+    # The step before is the opening moment the rule deliberately ignores.
+    just_before = signal_from_columns(lateral_offset=spike(0.0, 3.0, at=half_second - 1))
+    assert robustness(rules, "lane_keeping", just_before) == pytest.approx(LIMITS.lane_half_width_m)
+
+
 # ---------------------------------------------------------------------------
 # Comfort
 # ---------------------------------------------------------------------------
@@ -346,11 +362,38 @@ def test_rule_windows_follow_the_horizon_rather_than_hardcoded_indices():
     from stl_driver.config import Horizon
 
     fine = STLDriverConfig(horizon=Horizon(n_steps=80, step_s=0.05))
-    assert fine.horizon.index_at(1.0) == 20
+    assert fine.horizon.index_at(1.0) == 19  # row k is (k + 1) * step_s
+    assert fine.horizon.rows_within(1.0) == 20
     build_rules(fine)  # must construct without tripping the interval guard
 
     tiny = STLDriverConfig(horizon=Horizon(n_steps=4, step_s=0.1))
     build_rules(tiny)  # windows clamp into the horizon rather than overflowing
+
+
+@pytest.mark.parametrize("step_s", [0.1, 0.05, 0.2])
+def test_index_at_names_the_row_sampled_at_that_time(step_s):
+    """The rollout samples row ``k`` at ``(k + 1) * step_s``; `index_at` inverts that."""
+    from stl_driver.config import Horizon
+
+    horizon = Horizon(n_steps=int(round(4.0 / step_s)), step_s=step_s)
+    times = (torch.arange(horizon.n_steps, dtype=torch.float64) + 1.0) * step_s
+    for row in range(horizon.n_steps):
+        seconds = float(times[row])
+        assert horizon.index_at(seconds) == row
+        # A count of the rows up to and including that one.
+        assert horizon.rows_within(seconds) == row + 1
+
+
+def test_index_at_and_rows_within_clamp_into_the_horizon():
+    from stl_driver.config import Horizon
+
+    horizon = Horizon(n_steps=40, step_s=0.1)
+    assert horizon.index_at(0.0) == 0  # now is not a row; the first one is
+    assert horizon.index_at(0.5) == 4
+    assert horizon.index_at(99.0) == horizon.n_steps - 1
+    assert horizon.rows_within(0.0) == 0
+    assert horizon.rows_within(1.2) == 12
+    assert horizon.rows_within(99.0) == horizon.n_steps
 
 
 def test_a_rule_whose_interval_overflows_the_horizon_is_rejected():

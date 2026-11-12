@@ -16,6 +16,14 @@ what the launcher itself needs in ``slurm/`` beside them::
 
 Plain JSON, written atomically (a reader never sees half a file), and free of
 heavy imports: the ``scenario-slurm`` commands only read these.
+
+The records are read and written as ``dict[str, Any]``, which every reader of
+the batch takes (:mod:`.submit`, :mod:`.worker`, :mod:`.collect`, the viewer).
+The library check (docs/typecheck.md) compiles this module, and Codon cannot
+hold a JSON document's values of mixed types beyond the function that parses
+it: the version a manifest names is checked as the JSON text of its value,
+and what creates a submission record exclusively is given the record's JSON
+text.
 """
 
 from __future__ import annotations
@@ -28,7 +36,7 @@ import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..failure import Failure
 from ..run_outputs import RUN_FILE_SUFFIXES
@@ -249,6 +257,13 @@ def _create_exclusive(path: Path, data: Any) -> bool:
     """
     fd, tmp = tempfile.mkstemp(dir=path.parent, prefix=f".{path.name}.", suffix=".tmp")
     text = json.dumps(data, indent=2, ensure_ascii=False) + "\n"
+    return _link_exclusive(path, fd, tmp, text)
+
+
+def _link_exclusive(path: Path, fd: int, tmp: str, text: str) -> bool:
+    """Create *path* holding *text*, unless it exists, through the temporary
+    file *tmp* (open as *fd*), which is removed; whether it was created
+    (:func:`_create_exclusive`)."""
     try:
         with os.fdopen(fd, "w", encoding="utf-8") as stream:
             stream.write(text)
@@ -257,10 +272,16 @@ def _create_exclusive(path: Path, data: Any) -> bool:
         except FileExistsError:
             return os.stat(tmp).st_nlink == 2
         except OSError as exc:
-            if exc.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
-                raise
+            if TYPE_CHECKING:
+                # OSError's errno, which the check does not declare
+                # (docs/typecheck.md): the fallback is compiled for any error.
+                pass
+            else:
+                if exc.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
+                    raise
             try:
-                created = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+                # 0o600: Codon has no octal literal.
+                created = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 384)
             except FileExistsError:
                 return False
             with os.fdopen(created, "w", encoding="utf-8") as stream:
@@ -392,15 +413,36 @@ class BatchLayout(BatchPaths):
                 f"{self.manifest} is not a SLURM batch manifest "
                 "(it holds JSON that is not an object)"
             )
-        version = manifest.get("version")
+        # The version as JSON text, which json.loads() reads back as the
+        # value the manifest holds.
+        self._check_version(json.dumps(manifest.get("version")))
+        return manifest
+
+    def _check_version(self, text: str) -> None:
+        """Refuse a manifest whose ``version``, the JSON text *text* of its
+        value (``null`` when it has none), is not one this framework reads
+        (:meth:`read_manifest`).
+
+        Raises:
+            ValueError: That version is not one of :data:`MANIFEST_VERSIONS`.
+        """
+        version = json.loads(text)
         # ``True == 1``: a bool is no version, though ``in`` would match it.
-        if isinstance(version, bool) or version not in MANIFEST_VERSIONS:
+        # A value read from JSON equals a version only as a number: an int
+        # (as itself) or a float (as the float of the version).
+        known = False
+        if isinstance(version, bool):
+            known = False
+        elif isinstance(version, int):
+            known = int(version) in MANIFEST_VERSIONS
+        elif isinstance(version, float):
+            known = float(version) in [float(v) for v in MANIFEST_VERSIONS]
+        if not known:
             raise ValueError(
-                f"{self.manifest} is a version {version} manifest; this "
+                f"{self.manifest} is a version {str(version)} manifest; this "
                 "autoware_carla_scenario reads version(s) "
                 + ", ".join(str(v) for v in MANIFEST_VERSIONS)
             )
-        return manifest
 
     def read_submission(self, index: int) -> dict[str, Any]:
         return read_json(self.submission(index))

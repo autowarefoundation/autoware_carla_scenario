@@ -11,6 +11,10 @@ uv run scenario --multirun 'scenario=cut_in/*' +sweep.odd_sample.count=24 \
   launcher=slurm launcher.array_parallelism=2 launcher.gres=shard:1 launcher.mem=12G
 ```
 
+`launcher=slurm` needs `scenario=`: without it there is no batch to submit,
+and `scenario launcher=slurm` is refused (`Error: launcher=slurm runs a
+batch: ...`, exit 2) rather than running the default scenario locally.
+
 **It is off unless a run selects it.** The `launcher` config group is not part
 of the default config: a run that does not name it composes the same config as
 before, and the batch runs here, exactly as it always has. `launcher=local`

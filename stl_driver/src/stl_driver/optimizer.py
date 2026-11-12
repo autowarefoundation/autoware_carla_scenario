@@ -240,8 +240,13 @@ class RobustnessOptimizer:
             HOLD_ROW: hold,
             BRAKE_ROW: _accel_params(-limits.max_decel_mps2 * 0.9, limits, accel0_mps2, horizon),
         }
-        fixed = [by_row[row] for row in sorted(by_row)]
-        return torch.cat([self._seeds, torch.stack(fixed).to(self.device)], dim=0)
+        # Each row onto the search's device *before* stacking. `_accel_params`
+        # builds on the CPU while the warm start is last step's solution, which
+        # already lives on `self.device`; stacking first and moving after
+        # worked only where the two are the same device, and on CUDA raised a
+        # device mismatch on a session's second step.
+        fixed = [by_row[row].to(self.device) for row in sorted(by_row)]
+        return torch.cat([self._seeds, torch.stack(fixed)], dim=0)
 
     # -- search ------------------------------------------------------------
 
@@ -332,7 +337,7 @@ class RobustnessOptimizer:
 
         # Only a violation we can no longer plan our way out of summons the
         # emergency plan; see `RuleSet.imminent_hard_violation`.
-        window = max(2, self.config.horizon.index_at(optimizer.fallback_window_s))
+        window = max(2, self.config.horizon.rows_within(optimizer.fallback_window_s))
         imminent = self.rules.imminent_hard_violation(best_signal, window)
         if imminent is not None and not self._braking_can_help(inputs):
             # Braking changes nothing, so it is not the answer.

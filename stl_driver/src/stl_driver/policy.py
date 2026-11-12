@@ -511,7 +511,11 @@ class EgoPolicy(BaseDriver):
         with torch.no_grad():
             from stl_driver.signals import Col
 
-            scalars["target_speed_mps"] = float(solution.signal[:, Col.SPEED].mean())
+            # The speed the rules aim for -- the lower of the cruise speed and
+            # the posted limit (`STLDriverConfig.target_speed_mps`) -- and,
+            # separately, what the chosen plan actually averages.
+            scalars["target_speed_mps"] = float(inputs.speed_limit_mps)
+            scalars["plan_mean_speed_mps"] = float(solution.signal[:, Col.SPEED].mean())
             scalars["min_clearance_m"] = float(solution.signal[:, Col.CLEARANCE].min())
             scalars["min_headway_slack_m"] = float(solution.signal[:, Col.HEADWAY_SLACK].min())
         return scalars

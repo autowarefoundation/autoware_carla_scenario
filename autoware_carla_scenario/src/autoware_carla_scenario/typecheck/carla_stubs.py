@@ -293,9 +293,12 @@ def _write(root: Path) -> None:
     package = root / "typesafe_carla"
     (package / "carla").mkdir(parents=True, exist_ok=True)
     (package / "__init__.pyi").write_text(
-        "from typing import Any\n\ndef __getattr__(name: str) -> Any: ...\n"
+        "from typing import Any\n\ndef __getattr__(name: str) -> Any: ...\n",
+        encoding="utf-8",
     )
-    (package / "carla" / "__init__.pyi").write_text(render_carla_stub(Inventory()))
+    (package / "carla" / "__init__.pyi").write_text(
+        render_carla_stub(Inventory()), encoding="utf-8"
+    )
 
 
 def carla_stub_root(scratch: Path | None = None) -> Path | None:

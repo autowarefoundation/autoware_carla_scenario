@@ -1433,7 +1433,7 @@ graph LR
 | **`VIEWER_BASE_PATH`** | No | Current working directory | Viewer (`ui/__init__.py`) | Base directory that the viewer scans for `outputs/` and `multirun/` result directories. `viewer --base-path` wins over it. |
 | **`VIEWER_HOST`** | No | `127.0.0.1` | Viewer (`ui/__init__.py`) | Bind address for the Uvicorn HTTP server. `viewer --host` wins over it; `0.0.0.0` serves every interface, with no authentication. |
 | **`VIEWER_PORT`** | No | `9000` | Viewer (`ui/__init__.py`) | Listen port for the Uvicorn HTTP server. `viewer --port` wins over it. |
-| **`SWEEP_RESUME_FROM`** | No | `0` | Sweeper (`lanelet_constraint_sweeper.py`) | Internal variable set by the `--resume-from N` CLI flag. Passed via environment because Hydra's CLI parser rejects unknown overrides. Tells the sweeper to start at job N (1-indexed); set (to a whole number, `0` or empty for none), it wins over `sweep.resume_from`, and any other value is refused (exit 2). A glob batch reads the flag directly instead. |
+| **`SWEEP_RESUME_FROM`** | No | `0` | Sweeper (`lanelet_constraint_sweeper.py`) | Internal variable set by the `--resume-from N` CLI flag. Passed via environment because Hydra's CLI parser rejects unknown overrides. Tells the sweeper to start at job N (1-indexed); set (to a whole number, `0` or empty for none), it wins over `sweep.resume_from`, and any other value is refused (exit 2). A batch (a glob, or `launcher=slurm`) reads the flag directly instead; a single run or Hydra's basic sweeper, which nothing would resume, refuses the flag (exit 2). |
 
 #### Dynamic Map Path Variables
 

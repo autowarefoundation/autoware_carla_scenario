@@ -125,6 +125,27 @@ def test_every_rule_is_reported_as_a_debug_scalar(policy):
     assert "stl_robustness" in result.debug_scalars
 
 
+@pytest.mark.parametrize("posted_mps", [5.0, 30.0])
+def test_the_target_speed_scalar_is_the_target_not_the_plan_s_mean(policy, posted_mps):
+    """`target_speed_mps` is what the rules aim for: min(cruise, posted limit).
+
+    It used to report the chosen plan's mean speed under that name, which from
+    6 m/s under a 5 m/s limit read as a target above the limit. The mean is
+    still reported, as `plan_mean_speed_mps`.
+    """
+    data = CarlaRendererData(
+        ego_traffic_light=TrafficLightState.TRAFFIC_LIGHT_STATE_NONE,
+        ego_traffic_light_distance_m=-1.0,
+        speed_limit_mps=posted_mps,
+    )
+    result = policy.drive(context(route=straight_route(), speed_mps=6.0, renderer_data=data))
+    scalars = result.debug_scalars
+    expected = min(policy.config.cruise_speed_mps, posted_mps)
+    assert scalars["target_speed_mps"] == pytest.approx(expected)
+    assert scalars["target_speed_mps"] == pytest.approx(policy.config.target_speed_mps(posted_mps))
+    assert np.isfinite(scalars["plan_mean_speed_mps"])
+
+
 def test_alternatives_are_reported_for_inspection(policy):
     result = policy.drive(context(route=straight_route()))
     assert len(result.sampled_trajectories_in_rig) == (

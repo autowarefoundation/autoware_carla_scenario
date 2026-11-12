@@ -1,0 +1,67 @@
+# Model of autoware_carla_scenario.scaffold.generator (docs/typecheck.md),
+# which imports argparse, ast, importlib.metadata and templating (jinja2). The
+# checked scaffold package re-exports PackageExistsError, ScaffoldResult,
+# create_scenario_package(), main() and resolve_names(), and only the names
+# are needed: no checked module builds, raises or calls them. They write a new
+# scenario package (scenario-new), not a scenario: each class is declared by
+# name and constructor, each function with Python's signature, and every
+# constructor and function body is a compile error, so a scenario that
+# scaffolds a package fails its check.
+
+from pathlib import Path
+
+
+# The package directory create_scenario_package() would replace; Python's
+# derives from FileExistsError.
+class PackageExistsError:
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("PackageExistsError(): no constructor takes these arguments "
+                      "(required: root)")
+
+    def __init__(self, root: Path):
+        compile_error("PackageExistsError is not modelled: the static check "
+                      "cannot build one (typecheck/codon/autoware_carla_scenario/"
+                      "scaffold/generator.codon)")
+
+
+# What create_scenario_package() returns: Python's is a NamedTuple of the
+# package root and its template variables.
+class ScaffoldResult:
+    # No fields: Codon would build one with no arguments too (docs/typecheck.md).
+    def __init__(self):
+        compile_error("ScaffoldResult(): no constructor takes these arguments "
+                      "(required: root, names)")
+
+    def __init__(self, root: Path, names: Dict[str, str]):
+        compile_error("ScaffoldResult is not modelled: the static check "
+                      "cannot build one (typecheck/codon/autoware_carla_scenario/"
+                      "scaffold/generator.codon)")
+
+
+# resolve_names(name, scenario_name=None, description=None): the template
+# variables of a new scenario package.
+def resolve_names(name: str, scenario_name: Optional[str] = None,
+                  description: Optional[str] = None) -> Dict[str, str]:
+    compile_error("resolve_names() is not modelled: it names a new scenario "
+                  "package, which scenario-new writes from the shell, not a "
+                  "scenario")
+    return Dict[str, str]()
+
+
+# create_scenario_package(name, *, ...): renders a new scenario package.
+def create_scenario_package(name: str, *_kw, scenario_name: Optional[str] = None,
+                            output_dir = ".", description: Optional[str] = None,
+                            force: bool = False) -> ScaffoldResult:
+    compile_error("create_scenario_package() is not modelled: it writes a new "
+                  "scenario package, which scenario-new does from the shell, "
+                  "not a scenario")
+    return ScaffoldResult()
+
+
+# main(argv=None): the scenario-new command's entry point.
+def main(argv: Optional[List[str]] = None) -> int:
+    compile_error("main() is not modelled: it is the scenario-new command, "
+                  "which writes a new scenario package from the shell, not a "
+                  "scenario")
+    return 0

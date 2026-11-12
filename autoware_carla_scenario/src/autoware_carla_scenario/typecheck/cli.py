@@ -10,7 +10,9 @@ Each ``scenario=`` config (a name or a glob, as ``scenario`` takes) is composed
 with the remaining overrides, exactly as the runner composes it, and checked
 the way the runner checks it before a run (docs/typecheck.md).  The exit
 status is 0 when every scenario passed, 1 when one failed (or its ``controls:`` are
-invalid), and 2 when there is
+invalid, or the checker itself raised on it: ``[FAILED] <config>: checker
+error: ...``, with the traceback on stderr, and the other configs are still
+checked and reported), and 2 when there is
 no Codon compiler to check with or the command line does not compose: no config
 matches ``scenario=``, or an override names a key the config does not have
 (the message suggests the closest key; ``+key=value`` adds a new one).  ``HYDRA_FULL_ERROR=1``
@@ -29,6 +31,7 @@ from __future__ import annotations
 import logging
 import os
 import sys
+import traceback
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any
 
@@ -37,6 +40,20 @@ from .mode import typecheck_registered
 from .toolchain import ToolchainError
 
 __all__ = ["main"]
+
+
+def _checker_error(what: str, exc: BaseException) -> str:
+    """The ``[FAILED]`` line of a check that raised; its traceback goes to stderr.
+
+    A checker error fails that check only, exit status 1 as for any failed
+    check (#2091): the other configs are still checked and reported.
+    """
+    print(  # noqa: T201
+        "".join(traceback.format_exception(type(exc), exc, exc.__traceback__)),
+        end="",
+        file=sys.stderr,
+    )
+    return f"[FAILED] {what}: checker error: {type(exc).__name__}: {exc}"
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -55,7 +72,11 @@ def main(argv: list[str] | None = None) -> int:
         return 2
     if "--library" in args:
         modules = [a for a in args if a != "--library"]
-        result = typecheck_library(modules or None, toolchain=toolchain)
+        try:
+            result = typecheck_library(modules or None, toolchain=toolchain)
+        except Exception as exc:  # noqa: BLE001 - reported as a failed check
+            print(_checker_error("library check", exc))  # noqa: T201
+            return 1
         print(f"[{'ok' if result.ok else 'FAILED'}] {result.format()}")  # noqa: T201
         return 0 if result.ok else 1
 
@@ -104,9 +125,15 @@ def main(argv: list[str] | None = None) -> int:
             control_errors[config_name] = errors
 
     def check(cfg: Any) -> Any:
-        return typecheck_registered(
-            str(cfg.scenario.name), run._to_dict(cfg.scenario), toolchain=toolchain
-        )
+        # An exception is this config's failure, not the command's: it is
+        # returned, so the pool does not re-raise it and drop every other
+        # config's result (#2091).
+        try:
+            return typecheck_registered(
+                str(cfg.scenario.name), run._to_dict(cfg.scenario), toolchain=toolchain
+            )
+        except Exception as exc:  # noqa: BLE001 - reported as a failed check
+            return exc
 
     # Each check is a separate `codon build`: run a few side by side (each
     # takes a CPU core and some memory of its own).
@@ -120,6 +147,10 @@ def main(argv: list[str] | None = None) -> int:
     for config_name, cfg, result in zip(names, cfgs, results):
         scenario_name = str(cfg.scenario.name)
         if config_name in control_errors:
+            continue
+        if isinstance(result, Exception):
+            print(_checker_error(config_name, result))  # noqa: T201
+            failed += 1
             continue
         if result is None and get_scenario_builder(scenario_name) is None:
             known = sorted(get_scenario_registry())

@@ -366,7 +366,11 @@ weakening what "satisfied" means.
 
 STLCG++ measures temporal intervals in timesteps, not seconds.  Every rule
 that wants a wall-clock window goes through `Horizon.index_at`, so changing
-the step size cannot silently reinterpret a rule.  A bounded interval must
+the step size cannot silently reinterpret a rule.  Row `k` of the signal is the
+state at `(k + 1) × step_s` -- now is not a row -- so `index_at(0.5)` is row 4
+at the default 0.1 s step, and `lane_keeping`'s window really does open at
+0.5 s.  A count of rows, such as the emergency plan's 1.2 s window, goes
+through `Horizon.rows_within` instead.  A bounded interval must
 also fit inside the horizon: upstream pads a robustness trace beyond its
 bounds with `-1e9`, which would read as a catastrophic violation.
 `build_rules` asserts this at construction.

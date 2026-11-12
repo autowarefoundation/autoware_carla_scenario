@@ -316,7 +316,7 @@ def _parse_framework_stores() -> frozenset[str]:
     out: set[str] = set()
     for path in _python_files(_PACKAGE):
         try:
-            tree = ast.parse(path.read_text())
+            tree = ast.parse(path.read_text(encoding="utf-8"))
         except (OSError, SyntaxError, UnicodeDecodeError, ValueError):
             continue
         out.update(

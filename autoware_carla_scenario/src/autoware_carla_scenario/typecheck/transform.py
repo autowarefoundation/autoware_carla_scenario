@@ -232,6 +232,7 @@ MISSING_BUILTIN_EXCEPTIONS = (
     "BrokenPipeError",
     "ChildProcessError",
     "ConnectionError",
+    "FileExistsError",
     "FileNotFoundError",
     "ImportError",
     "KeyboardInterrupt",

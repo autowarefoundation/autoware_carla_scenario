@@ -818,7 +818,10 @@ self.register_pre_tick(
   one's CARLA `(x, y, z)`, so a sink or a construction zone tells a road from
   the overpass above it (`on_lanelet` reads the height); `z` is `None` for a
   vehicle SUMO's queue model holds (on a lane's 2D shape), which is then
-  placed in plan view alone. Under `traffic=sumo` they are
+  placed in plan view alone. A vehicle SUMO has not inserted yet -- it waits
+  while its spot is taken, often by a SUMO vehicle CARLA does not mirror -- is
+  given at the spot `spawn_background` was asked for, as it will be on the road
+  once the spot clears. Under `traffic=sumo` they are
   SUMO vehicles that wander the network (a random way out at each junction) and
   are mirrored into CARLA like the rest of SUMO's traffic; ones placed during
   initialization have SUMO's warm-up to spread out. Under
@@ -838,9 +841,12 @@ self.register_pre_tick(
   `TrafficSourceAction`, by `background_traffic.source.speed_kmh` and by the
   editor's validator, because a vehicle that never moves is no traffic (a parked
   car is an entity). **`max_vehicles`** counts every background vehicle on the
-  road, whichever source made it.
+  road, whichever source made it, and every one still waiting to enter it
+  (under `sumo`, those SUMO has not inserted yet), so a source that keeps
+  asking for a taken spot does not let more than `max_vehicles` in at once
+  when it clears.
 - **`vehicles_per_minute`** and **`min_gap_m`** (the least distance from a new
-  vehicle to any other) must be finite and not negative; NaN or infinity is
+  vehicle to any other, a waiting one included) must be finite and not negative; NaN or infinity is
   refused by `TrafficSourceAction` and by `background_traffic.source.*`, naming
   the key, rather than crashing the run or being dropped without a word.
 - **`initial_vehicles`**, **`max_vehicles`** and `background_traffic.seed` are
@@ -1005,6 +1011,21 @@ stem like its `_result.json` (`CutInScenario.sumo/`, then
 keeps its own; the directory counts as one of the run's outputs, so a later
 run never takes its stem and a retried run clears it first
 (`run_outputs.RUN_DIR_SUFFIXES`).
+
+**When SUMO keeps failing** -- 20 steps in a row raise -- the backend stops
+stepping it for the rest of the run, and leaves nothing it drove moving on
+its own: the mirrors of SUMO's vehicles, bicycles and pedestrians are
+destroyed, every scenario vehicle SUMO drove (`scenario_vehicles=sumo`), or
+had yet to put on its road after a spawn brought it up, loses
+its constant velocity (`vehicle_control=teleport`) or its last control
+(`physics`) and brakes to a stop, and every scenario pedestrian it walked
+stands still. Vehicles it does not drive (the ego, the TrafficManager's, those
+an action took over) are left alone; one an action hands back afterwards
+brakes to a stop too, and a SUMO vehicle's mirror an action hands back is
+destroyed. It logs an error, and the run goes on
+without traffic rather than failing: the result records when it gave up
+(`traffic.gave_up_at_s`, simulated seconds; `null` in a run where it did not),
+so a batch can tell such runs apart.
 
 **The network** is the world's own road network. The backend takes the
 OpenDRIVE the world runs (the file the run installed, or

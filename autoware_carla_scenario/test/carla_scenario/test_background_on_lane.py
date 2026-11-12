@@ -262,6 +262,8 @@ def _sumo_spawn(lane_offset_m: float) -> Optional[str]:
         _traci=traci,
         _background_count=0,
         _background=set(),
+        _background_requested={},
+        _background_unstepped=set(),
         _blueprints={},
         _blueprint_offsets={},
         _offset=(0.0, 0.0),
