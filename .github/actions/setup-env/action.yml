@@ -77,9 +77,10 @@ runs:
 
     # v10, not v4: v4's cache client talks to GitHub's retired cache service,
     # which answers every restore with 400, so no job ever found its cache and
-    # each aarch64 job compiled libsass again.
+    # each aarch64 job compiled libsass again. A release, as setup-uv tags no
+    # major version after v7.
     - name: Install uv
-      uses: astral-sh/setup-uv@v10
+      uses: astral-sh/setup-uv@v10.3.3
       with:
         version: "latest"
         # Only enable the uv cache when we are actually going to populate it.
