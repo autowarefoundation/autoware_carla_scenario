@@ -29,6 +29,8 @@ from autoware_carla_scenario.slurm.manifest import (
     MANIFEST_VERSIONS,
     SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
+    SubmissionRecord,
+    submission_record_of,
     no_job_note,
     read_json,
     read_submission_record,
@@ -42,6 +44,12 @@ from autoware_carla_scenario.slurm.manifest import (
 from autoware_carla_scenario.slurm.records import JsonMembers
 
 _LOGGER = "autoware_carla_scenario.slurm.manifest"
+
+
+def _submission(record: dict[str, Any]) -> SubmissionRecord:
+    """The submission record of the members of *record*."""
+    return submission_record_of(JsonMembers.from_value(record))
+
 
 #: A document with a value of each kind JSON writes, and the keys json turns
 #: into strings (an int, a float, a bool, None).
@@ -463,30 +471,38 @@ def test_a_submission_record_reads_as_json_holds_it(
     with caplog.at_level(logging.DEBUG, logger=_LOGGER):
         record = layout.submission_record(2)
     assert caplog.records == []
-    assert record == {
+    assert record is not None
+    assert {key: record.get(key) for key in record.members.keys()} == {
         "index": "two",
         "job_id": None,
         "submitted_at": math.inf,
         "tasks": [[0, 1]],
         "x": {"é": -0.0},
     }
-    assert list(record) == ["index", "job_id", "submitted_at", "tasks", "x"]
+    assert record.members.keys() == ["index", "job_id", "submitted_at", "tasks", "x"]
     assert math.copysign(1.0, record["x"]["é"]) == -1.0
 
 
-def test_read_submission_reads_any_json_and_raises_as_read_json(
-    tmp_path: Path,
+def test_read_submission_is_none_for_json_no_object_and_raises_as_read_json(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     layout = _layout(tmp_path)
     with pytest.raises(FileNotFoundError):
         layout.read_submission(0)
     layout.submission(0).parent.mkdir(parents=True)
     layout.submission(0).write_text("[1, NaN]")
-    data: Any = layout.read_submission(0)
-    assert data[0] == 1 and math.isnan(data[1])
+    with caplog.at_level(logging.DEBUG, logger=_LOGGER):
+        assert layout.read_submission(0) is None
+    assert caplog.records == []
     layout.submission(1).write_text("{")
     with pytest.raises(json.JSONDecodeError):
         layout.read_submission(1)
+    layout.submission(2).write_text('{"job_id": 7, "chunks": [[NaN]]}')
+    record = layout.read_submission(2)
+    assert record is not None
+    assert record["job_id"] == 7 and math.isnan(record.get("chunks")[0][0])
+    with pytest.raises(KeyError):
+        record["cases"]
 
 
 # ---------------------------------------------------------------------------
@@ -890,22 +906,20 @@ def test_reserve_submission_of_what_json_cannot_write_raises(
 def test_sbatch_in_flight(
     submission: dict[str, Any], now: float, expected: bool
 ) -> None:
-    assert sbatch_in_flight(submission, now) is expected
+    assert sbatch_in_flight(_submission(submission), now) is expected
 
 
 def test_sbatch_in_flight_of_an_integer_no_float_holds_raises() -> None:
     with pytest.raises(OverflowError):
-        sbatch_in_flight({"submitted_at": 10**400}, 0.0)
+        sbatch_in_flight(_submission({"submitted_at": 10**400}), 0.0)
 
 
 def test_sbatch_in_flight_reads_the_clock_when_no_time_is_given() -> None:
     import time
 
-    assert sbatch_in_flight({"submitted_at": time.time()}) is True
-    assert (
-        sbatch_in_flight({"submitted_at": time.time() - SBATCH_IN_FLIGHT_SECONDS - 1})
-        is False
-    )
+    assert sbatch_in_flight(_submission({"submitted_at": time.time()})) is True
+    old = time.time() - SBATCH_IN_FLIGHT_SECONDS - 1
+    assert sbatch_in_flight(_submission({"submitted_at": old})) is False
 
 
 @pytest.mark.parametrize(
@@ -921,7 +935,7 @@ def test_sbatch_in_flight_reads_the_clock_when_no_time_is_given() -> None:
     ],
 )
 def test_sbatch_timed_out(submission: dict[str, Any], expected: bool) -> None:
-    assert sbatch_timed_out(submission) is expected
+    assert sbatch_timed_out(_submission(submission)) is expected
 
 
 @pytest.mark.parametrize(
@@ -951,7 +965,7 @@ def test_sbatch_timed_out(submission: dict[str, Any], expected: bool) -> None:
     ],
 )
 def test_no_job_note(submission: dict[str, Any], note: str) -> None:
-    assert no_job_note(submission, 100.0) == note
+    assert no_job_note(_submission(submission), 100.0) == note
 
 
 _STATUS = {"label": "l", "satisfied": True, "message": "m"}

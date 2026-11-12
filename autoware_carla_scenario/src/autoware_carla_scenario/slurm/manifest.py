@@ -17,9 +17,10 @@ what the launcher itself needs in ``slurm/`` beside them::
 Plain JSON, written atomically (a reader never sees half a file), and free of
 heavy imports: the ``scenario-slurm`` commands only read these.
 
-The records are read and written as ``dict[str, Any]``, which every reader of
-the batch takes (:mod:`.submit`, :mod:`.worker`, :mod:`.collect`, the viewer),
-but for a case's outcome and a task's status, which are read into a
+The records are written as ``dict[str, Any]`` and the manifest is read as
+one, which every reader of the batch takes (:mod:`.submit`, :mod:`.worker`,
+:mod:`.collect`, the viewer); a submission's record, a case's outcome and a
+task's status are read into a :class:`SubmissionRecord`, a
 :class:`CaseOutcome` and a :class:`TaskStatus`: their members as their JSON
 text (:class:`.records.JsonMembers`), each read when it is asked for.  The
 library check (docs/typecheck.md) compiles this module, and Codon cannot hold
@@ -54,6 +55,7 @@ __all__ = [
     "SBATCH_IN_FLIGHT_SECONDS",
     "BatchLayout",
     "CaseOutcome",
+    "SubmissionRecord",
     "TaskStatus",
     "config_files",
     "config_key",
@@ -67,6 +69,7 @@ __all__ = [
     "sbatch_in_flight",
     "sbatch_timed_out",
     "sequential_stems",
+    "submission_record_of",
     "verdict_of_document",
     "write_json",
 ]
@@ -161,7 +164,7 @@ def read_json(path: Path) -> Any:
     return json.loads(path.read_text(encoding="utf-8"))
 
 
-def read_submission_record(path: Path) -> dict[str, Any] | None:
+def read_submission_record(path: Path) -> SubmissionRecord | None:
     """The submission record *path*, or ``None`` when there is none to read.
 
     A record that cannot be read as one -- empty, not JSON, or JSON that is
@@ -170,8 +173,11 @@ def read_submission_record(path: Path) -> dict[str, Any] | None:
     warning naming the file (#1356).  A missing one (removed since it was
     listed: its sbatch failed) is ``None`` without one.
     """
+    # Parsed here, not in a helper: Python 3.10 counts the calls on the stack
+    # with the levels of nesting json.loads() reads, and read_json() read
+    # the record as deep as this reads it.
     try:
-        record = read_json(path)
+        members = parse_object(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
         return None
     except (OSError, ValueError) as exc:
@@ -179,14 +185,14 @@ def read_submission_record(path: Path) -> dict[str, Any] | None:
             "Ignoring %s: it cannot be read as a submission record (%s)", path, exc
         )
         return None
-    if not isinstance(record, dict):
+    if members is None:
         logger.warning(
             "Ignoring %s: it cannot be read as a submission record "
             "(it holds JSON that is not an object)",
             path,
         )
         return None
-    return record
+    return submission_record_of(members)
 
 
 #: How long a submission record whose ``job_id`` is still ``None`` counts as
@@ -196,39 +202,42 @@ def read_submission_record(path: Path) -> dict[str, Any] | None:
 SBATCH_IN_FLIGHT_SECONDS = 600.0
 
 
-def sbatch_in_flight(submission: dict[str, Any], now: float | None = None) -> bool:
+def sbatch_in_flight(submission: SubmissionRecord, now: float | None = None) -> bool:
     """Whether *submission* is being submitted: its index is reserved, its
     sbatch has not returned yet (no ``job_id``), and it was reserved less than
-    :data:`SBATCH_IN_FLIGHT_SECONDS` ago."""
-    if submission.get("job_id"):
+    :data:`SBATCH_IN_FLIGHT_SECONDS` ago.
+
+    The clock is read only for a record with no job id and a number as its
+    ``submitted_at``; an integer no float holds raises
+    :class:`OverflowError`, after it is read."""
+    if submission.has_job:
         return False
-    started = submission.get("submitted_at")
-    if not isinstance(started, (int, float)):
+    if not submission.started_is_number():
         return False
-    now = time.time() if now is None else now
-    return now - float(started) < SBATCH_IN_FLIGHT_SECONDS
+    clock = time.time() if now is None else now
+    return clock - submission.started_seconds() < SBATCH_IN_FLIGHT_SECONDS
 
 
-def sbatch_timed_out(submission: dict[str, Any]) -> bool:
+def sbatch_timed_out(submission: SubmissionRecord) -> bool:
     """Whether *submission* has no job id because its sbatch timed out
     (``sbatch_timed_out``, which ``submit_cases`` records, #1791): SLURM may
     have taken the job all the same, under a job id nobody was told.
 
     Such a record still counts as in flight (:func:`sbatch_in_flight`) for
     :data:`SBATCH_IN_FLIGHT_SECONDS`, as one whose sbatch has not returned."""
-    return not submission.get("job_id") and submission.get("sbatch_timed_out") is True
+    return not submission.has_job and submission.says_timed_out
 
 
-def no_job_note(submission: dict[str, Any], now: float | None = None) -> str:
+def no_job_note(submission: SubmissionRecord, now: float | None = None) -> str:
     """Why *submission*, which has no ``job_id``, has none (#1791), as
     ``status``, ``wait``, ``resubmit`` and the viewer say it: its sbatch timed
     out (the job may exist), it is still in flight, or the record is stale (its
     submitter stopped before sbatch returned)."""
     if sbatch_timed_out(submission):
-        at = submission.get("sbatch_timed_out_at")
+        at = submission.timed_out_at_text()
         return (
             "no job id: sbatch timed out"
-            + (f" at {at}" if at else "")
+            + ("" if at is None else f" at {at}")
             + "; the job may exist all the same: check `squeue --me`"
         )
     if sbatch_in_flight(submission, now):
@@ -290,6 +299,158 @@ def _value_json(members: JsonMembers, key: str) -> str:
     """The JSON text of the value of the member *key* of *members*, ``null``
     when there is none: what ``dict.get(key)`` gave of the object."""
     return members.value_text(key) if members.has(key) else "null"
+
+
+def submission_record_of(members: JsonMembers) -> SubmissionRecord:
+    """The submission record of *members*, the members of a submission's
+    JSON object (:class:`SubmissionRecord`)."""
+    has_job = bool(json.loads(_value_json(members, "job_id")))
+    started = json.loads(_value_json(members, "submitted_at"))
+    started_is_number = isinstance(started, int) or isinstance(started, float)
+    timed_out = json.loads(_value_json(members, "sbatch_timed_out"))
+    says_timed_out = isinstance(timed_out, bool) and bool(timed_out)
+    return SubmissionRecord(members, has_job, started_is_number, says_timed_out)
+
+
+class SubmissionRecord:
+    """A submission's record (``submissions/<k>.json``,
+    :meth:`BatchLayout.submission_record`): the record's members, each read
+    when it is asked for, as the record read as a ``dict`` gave it.
+
+    The record is what its submitter wrote (``slurm/submit.py``'s
+    ``submit_cases``): the submission's ``index``, when it was ``created``
+    and ``submitted_at`` (``time.time()``, missing from a record older than
+    #1352), its ``cases`` and the ``chunks`` its tasks run, its ``launcher``
+    settings, its ``job_id`` and ``collect_job_id`` (``null`` until sbatch
+    returns), its ``sbatch`` command line, and either that its sbatch timed
+    out (``sbatch_timed_out``, ``sbatch_timed_out_at``, #1791) or the
+    ``collect_sbatch`` of the job collecting it and why that failed
+    (``collect_error``) -- or anything a hand or another version left there.
+
+    :meth:`get` and ``record[key]`` read a member as ``dict.get(key)`` and
+    ``dict[key]`` did, for the readers that pass its value on; the typed
+    accessors read what the checked readers ask of it.
+
+    Made by :func:`submission_record_of`, which reads whether it has a job
+    id, a number as ``submitted_at`` and says its sbatch timed out when the
+    record is read, as deep in the stack as the record was read as a whole:
+    asking them, as ``sbatch_in_flight()`` and ``no_job_note()`` do, reads
+    nothing more, as the dict's ``get()`` did not, wherever they are asked
+    (Python 3.10 counts the calls on the stack with the levels of nesting
+    ``json.loads()`` reads, and 3.12 counts a constructor's, called from C,
+    against the C stack ``json.loads()`` reads on).
+    """
+
+    members: JsonMembers
+    _has_job: bool
+    _started_is_number: bool
+    _says_timed_out: bool
+
+    def __init__(
+        self,
+        members: JsonMembers,
+        has_job: bool,
+        started_is_number: bool,
+        says_timed_out: bool,
+    ) -> None:
+        self.members = members
+        self._has_job = has_job
+        self._started_is_number = started_is_number
+        self._says_timed_out = says_timed_out
+
+    def has(self, key: str) -> bool:
+        """Whether the record has the member *key*."""
+        return self.members.has(key)
+
+    def get(self, key: str) -> Any:
+        """The value of the member *key*, ``None`` when there is none: the
+        record's ``dict.get(key)``."""
+        return json.loads(_value_json(self.members, key))
+
+    def __getitem__(self, key: str) -> Any:
+        """The value of the member *key*: the record's ``dict[key]``, a
+        :class:`KeyError` when there is none."""
+        return self.members.value(key)
+
+    @property
+    def has_job(self) -> bool:
+        """Whether the record has a job id: a true ``job_id`` (of any type,
+        as ``bool()`` reads it)."""
+        return self._has_job
+
+    def job_text(self) -> str:
+        """The record's ``job_id`` as text: ``f"{record.get('job_id')}"``
+        (``"None"`` when it has none)."""
+        return str(json.loads(_value_json(self.members, "job_id")))
+
+    def started_is_number(self) -> bool:
+        """Whether the record's ``submitted_at`` is a number: an int (a
+        boolean among them) or a float, as ``isinstance(value, (int,
+        float))`` read it."""
+        return self._started_is_number
+
+    def started_seconds(self) -> float:
+        """The record's ``submitted_at`` as ``float()`` reads it (an
+        :class:`OverflowError` for an integer no float holds), when it is a
+        number (:meth:`started_is_number`)."""
+        return float(json.loads(_value_json(self.members, "submitted_at")))
+
+    @property
+    def says_timed_out(self) -> bool:
+        """Whether the record says its sbatch timed out: its
+        ``sbatch_timed_out`` is ``true`` (``is True``: no other true value)."""
+        return self._says_timed_out
+
+    def timed_out_at_text(self) -> str | None:
+        """When the record says its sbatch timed out, as text: a true
+        ``sbatch_timed_out_at`` (of any type, as ``bool()`` reads it), as
+        an f-string gives it."""
+        at = json.loads(_value_json(self.members, "sbatch_timed_out_at"))
+        if bool(at):
+            return str(at)
+        return None
+
+    def task_of(self, case: int) -> int | None:
+        """The first of the record's tasks that runs *case*: the index in its
+        ``chunks`` (none when they are false) of the first chunk holding it
+        (``case in chunk``), or ``None``.  Raises what that raises: a
+        :class:`TypeError` for ``chunks`` that cannot be iterated or a chunk
+        that cannot hold a number (a string, a number, ``null``)."""
+        chunks = json.loads(_value_json(self.members, "chunks"))
+        if not bool(chunks):
+            return None
+        task = 0
+        for chunk in chunks:
+            if isinstance(chunk, list):
+                # ``case in chunk``: an element equal to it, as ``==`` reads
+                # a number (``1.0``, ``true`` for 1); never another value.
+                for item in chunk:
+                    if isinstance(item, bool):
+                        if int(bool(item)) == case:
+                            return task
+                    elif isinstance(item, int):
+                        if int(item) == case:
+                            return task
+                    elif isinstance(item, float):
+                        number = float(item)
+                        if (
+                            math.isfinite(number)
+                            and number == math.floor(number)
+                            and int(number) == case
+                        ):
+                            return task
+            elif not isinstance(chunk, dict):
+                # A string, a number, true or null: the TypeError CPython
+                # raises for ``case in chunk``, whose text differs between
+                # its versions.  (An object holds no number: its keys are
+                # strings.)
+                if TYPE_CHECKING:
+                    pass
+                else:
+                    if case in chunk:
+                        return task
+            task += 1
+        return None
 
 
 class CaseOutcome:
@@ -393,6 +554,23 @@ class TaskStatus:
         if bool(why):
             return str(why)
         return None
+
+    def state_in(self, states: frozenset[str]) -> bool:
+        """Whether the task's ``state`` is one of *states*: the record's
+        ``get("state", "?") in states``, which raises the
+        :class:`TypeError` CPython raises for a ``state`` no set holds (a
+        list, an object)."""
+        state = json.loads(_value_json(self.members, "state"))
+        if isinstance(state, str):
+            return str(state) in states
+        if isinstance(state, list) or isinstance(state, dict):
+            if TYPE_CHECKING:
+                # The error CPython raises for a value no set holds, whose
+                # text differs between its versions.
+                return False
+            else:
+                return state in states
+        return False
 
     def is_at(self, case: int) -> bool:
         """Whether the task's ``current`` case is *case*: the record's
@@ -616,10 +794,19 @@ class BatchLayout(BatchPaths):
                 + ", ".join(str(v) for v in MANIFEST_VERSIONS)
             )
 
-    def read_submission(self, index: int) -> dict[str, Any]:
-        return read_json(self.submission(index))
+    def read_submission(self, index: int) -> SubmissionRecord | None:
+        """Submission *index*'s record, or ``None`` when it holds JSON that
+        is not an object; raises what reading it as JSON raises
+        (:class:`FileNotFoundError` when it is missing, another
+        :class:`OSError`, a :class:`ValueError` for what is not JSON).
 
-    def submission_record(self, index: int) -> dict[str, Any] | None:
+        Parsed here, as :func:`read_submission_record` parses it."""
+        members = parse_object(self.submission(index).read_text(encoding="utf-8"))
+        if members is None:
+            return None
+        return submission_record_of(members)
+
+    def submission_record(self, index: int) -> SubmissionRecord | None:
         """Submission *index*'s record, or ``None`` when it is missing or
         cannot be read as one (:func:`read_submission_record`)."""
         return read_submission_record(self.submission(index))

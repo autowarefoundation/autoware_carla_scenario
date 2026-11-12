@@ -31,6 +31,7 @@ from typing import TYPE_CHECKING, Any
 
 from ..slurm.manifest import (
     BatchLayout,
+    SubmissionRecord,
     TaskStatus,
     no_job_note,
     recorded_verdict,
@@ -380,7 +381,7 @@ def _case_states(
 ) -> list[dict[str, Any]]:
     """Each case: its record's outcome, or where its task is."""
     # The last submission (and task) each case was given to.
-    given: dict[int, tuple[int, int, dict[str, Any]]] = {}
+    given: dict[int, tuple[int, int, SubmissionRecord]] = {}
     for index in layout.submissions():
         sub = layout.submission_record(index)
         if sub is None:

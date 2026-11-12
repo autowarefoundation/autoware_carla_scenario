@@ -29,7 +29,14 @@ from typing import Any
 import pytest
 
 from autoware_carla_scenario.slurm.collect import missing_cases, unfinished_cases
-from autoware_carla_scenario.slurm.manifest import BatchLayout, sequential_stems
+from autoware_carla_scenario.slurm.manifest import (
+    BatchLayout,
+    SubmissionRecord,
+    submission_record_of,
+    read_json,
+    sequential_stems,
+)
+from autoware_carla_scenario.slurm.records import JsonMembers
 from autoware_carla_scenario.slurm.ports import (
     PORT_SLOT_WIDTH,
     acquire_slot,
@@ -45,6 +52,17 @@ from autoware_carla_scenario.slurm.settings import (
 )
 
 from ._slurm_ports import RANGE_SLOTS, fake_carlas, port_range
+
+
+def _record_json(layout: BatchLayout, index: int) -> Any:
+    """Submission *index*'s record as JSON reads it."""
+    return read_json(layout.submission(index))
+
+
+def _typed(record: dict[str, Any]) -> SubmissionRecord:
+    """The submission record of the members of *record*."""
+    return submission_record_of(JsonMembers.from_value(record))
+
 
 _DATA = Path(__file__).parent / "data" / "fake_slurm"
 #: A scenario without a sweep of its own: drawing from the ODD needs no map.
@@ -271,7 +289,7 @@ def test_a_slurm_batch_reports_what_the_same_local_batch_does(
 
     # Two tasks of three cases, at most two at once, each on ports of its own.
     layout = BatchLayout(batch)
-    submission = layout.read_submission(0)
+    submission = _record_json(layout, 0)
     assert submission["chunks"] == [[0, 1, 2], [3, 4, 5]]
     sbatch = [json.loads(line) for line in (fake_slurm.state / "sbatch.log").open()]
     assert any(arg == "--array=0-1%2" for arg in sbatch[0]["argv"])
@@ -407,7 +425,7 @@ def test_a_batch_s_settings_do_not_depend_on_how_its_cases_are_split_into_tasks(
             [*_slurm(fake_slurm)[len(_SWEEP) :], f"launcher.cases_per_task={per_task}"],
         )
         out = capsys.readouterr().out
-        assert BatchLayout(batch).read_submission(0)["chunks"] == (
+        assert _record_json(BatchLayout(batch), 0)["chunks"] == (
             [[0], [1]] if per_task == 1 else [[0, 1]]
         )
         assert _queues(fake_slurm) == [decided] * tasks, name
@@ -563,7 +581,7 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     assert f"Resubmitting {2 + len(errored)} case(s)" in capsys.readouterr().out
     code = cli.main(["resubmit", str(batch), "--wait"])
     assert code == local_status
-    assert layout.read_submission(1)["cases"] == sorted([1, 2, *errored])
+    assert _record_json(layout, 1)["cases"] == sorted([1, 2, *errored])
     assert _outputs(batch) == _outputs(local)
     assert (batch / "batch_results.json").read_bytes() == (
         local / "batch_results.json"
@@ -589,7 +607,7 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
     assert status == 0
     assert "not waiting" in out and "scenario-slurm collect" in out
     layout = BatchLayout(batch)
-    submission = layout.read_submission(0)
+    submission = _record_json(layout, 0)
     assert submission["collect_job_id"]
 
     _wait_for(
@@ -642,7 +660,7 @@ def test_cancel_cancels_every_job_of_the_batch(
     fake_slurm.monkeypatch.setenv("FAKE_CASE_SECONDS", "60")
     status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm), wait=False)
     assert status == 0
-    submission = BatchLayout(batch).read_submission(0)
+    submission = _record_json(BatchLayout(batch), 0)
     assert cli.main(["cancel", str(batch)]) == 0
     assert (
         f"Cancelling job(s) {submission['job_id']}, {submission['collect_job_id']}"
@@ -694,7 +712,7 @@ def test_no_wait_submits_and_the_collect_job_writes_the_results(
     )
     assert status == 0
     layout = BatchLayout(batch)
-    submission = layout.read_submission(0)
+    submission = _record_json(layout, 0)
     assert len(submission["chunks"]) == 6
     # The collect job runs a script beside the tasks' (#1159).
     collect_script = layout.root / "jobs" / "0-collect.sh"
@@ -2422,7 +2440,7 @@ def test_submit_spreads_a_large_batch_within_max_array_size(
         SlurmSettings(wait=False, collect_job=False),
         limit,
     )
-    submission = layout.read_submission(1)
+    submission = _record_json(layout, 1)
     chunks = submission["chunks"]
     assert len(chunks) == tasks <= (limit or 1001)
     assert [case for chunk in chunks for case in chunk] == list(range(cases))
@@ -2615,7 +2633,7 @@ def test_concurrent_submissions_get_indices_of_their_own(
     assert errors == []
     assert sorted(indices) == [1, 2]
     assert layout.submissions() == [0, 1, 2]
-    records = [layout.read_submission(i) for i in (1, 2)]
+    records = [_record_json(layout, i) for i in (1, 2)]
     assert [r["index"] for r in records] == [1, 2]
     assert sorted(r["job_id"] for r in records) == ["1000", "1001"]
     # No temporary file of the reservation is left.
@@ -2641,8 +2659,8 @@ def test_reserve_submission_passes_over_a_taken_index(
     )
     record: dict[str, Any] = {"index": None, "job_id": None}
     assert layout.reserve_submission(record) == 2
-    assert layout.read_submission(1) == taken
-    assert layout.read_submission(2) == {"index": 2, "job_id": None}
+    assert _record_json(layout, 1) == taken
+    assert _record_json(layout, 2) == {"index": 2, "job_id": None}
 
 
 def test_a_failed_sbatch_removes_the_reservation(
@@ -2656,7 +2674,7 @@ def test_a_failed_sbatch_removes_the_reservation(
 
     def run_sbatch(_command: list[str]) -> str:
         # The reservation holds a whole record while sbatch runs.
-        seen.append(layout.read_submission(1))
+        seen.append(_record_json(layout, 1))
         raise RuntimeError("sbatch failed (1): down")
 
     monkeypatch.setattr(submit, "_run_sbatch", run_sbatch)
@@ -2704,11 +2722,13 @@ def test_a_timed_out_sbatch_keeps_the_reservation_in_flight(
         submit.submit_cases(layout, layout.read_manifest(), SlurmSettings(), [0, 2])
     assert time.monotonic() - started < 10.0
     assert layout.submissions() == [0, 1]
-    record = layout.read_submission(1)
+    record = _record_json(layout, 1)
     assert record["job_id"] is None and record["chunks"] == [[0], [2]]
     assert record["sbatch_timed_out"] is True
     assert isinstance(record["sbatch_timed_out_at"], str)
-    assert sbatch_in_flight(record) and sbatch_timed_out(record)
+    typed = layout.submission_record(1)
+    assert typed is not None
+    assert sbatch_in_flight(typed) and sbatch_timed_out(typed)
     monkeypatch.setattr(cli, "squeue_states", lambda _job: {})
     capsys.readouterr()
     assert cli.main(["resubmit", str(layout.batch_dir), "--dry-run"]) == 1
@@ -2810,7 +2830,9 @@ def test_read_submission_record_is_none_for_an_unreadable_record(
     with caplog.at_level("WARNING", logger=manifest.__name__):
         assert layout.submission_record(2) is None
     assert not caplog.records
-    assert layout.submission_record(0) == layout.read_submission(0)
+    record = layout.submission_record(0)
+    assert record is not None
+    assert {k: record.get(k) for k in record.members.keys()} == _record_json(layout, 0)
 
 
 @_UNREADABLE
@@ -3628,7 +3650,7 @@ def test_collect_names_no_job_for_a_submission_with_no_job_id(
         message = entry["message"]
         assert "job None" not in message
         assert "task 0 of submission 1 never started; no job id" in message
-        assert no_job_note(record) in message
+        assert no_job_note(_typed(record)) in message
         if kind == "in-flight":
             assert "sbatch in flight" in message
         elif kind == "timed-out":
@@ -3660,7 +3682,7 @@ def test_follow_says_resubmit_is_refused_only_while_a_timed_out_record_is_young(
         "sbatch_timed_out_at": "2026-11-06T12:00:00+09:00",
     }
     write_json(layout.submission(1), record)
-    assert sbatch_in_flight(record) is not old
+    assert sbatch_in_flight(_typed(record)) is not old
     assert submit.follow(layout, 1, SlurmSettings()) == 1
     err = capsys.readouterr().err
     assert "its sbatch timed out at 2026-11-06T12:00:00+09:00" in err
@@ -3713,7 +3735,7 @@ def test_of_two_resubmits_at_once_the_later_index_refuses(
     )
     assert sbatch == []
     assert layout.submissions() == [0, 1]
-    assert layout.read_submission(1)["job_id"] is None
+    assert _record_json(layout, 1)["job_id"] is None
 
 
 def test_batches_started_in_the_same_second_get_directories_of_their_own(
@@ -4316,7 +4338,7 @@ def test_a_failing_collect_job_is_reported_not_raised(
     status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm), wait=False)
     captured = capsys.readouterr()
     assert status == 1
-    submission = BatchLayout(batch).read_submission(0)
+    submission = _record_json(BatchLayout(batch), 0)
     assert submission["job_id"] and submission["collect_job_id"] is None
     assert "QOSMaxSubmitJobPerUserLimit" in submission["collect_error"]
     assert f"SLURM job {submission['job_id']}" in captured.err
@@ -4344,7 +4366,7 @@ def test_an_unwritable_collect_script_is_reported_not_raised(
     status, batch = _run_batch(fake_slurm, "slurm", _slurm(fake_slurm), wait=False)
     captured = capsys.readouterr()
     assert status == 1
-    submission = BatchLayout(batch).read_submission(0)
+    submission = _record_json(BatchLayout(batch), 0)
     assert submission["job_id"] and submission["collect_job_id"] is None
     assert "No space left on device" in submission["collect_error"]
     assert "scenario-slurm collect" in captured.err
