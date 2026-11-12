@@ -617,6 +617,59 @@ def test_what_a_record_says_of_its_sbatch(
     assert clock.reads == before
 
 
+@pytest.mark.parametrize(("name", "content"), _CONTENTS, ids=_IDS)
+def test_the_typed_accessors_of_each_record(
+    tmp_path: Path, name: str, content: bytes
+) -> None:
+    """SubmissionRecord's accessors read what its readers read of the record
+    as a dict, and raise what they raised."""
+    layout = _batch(tmp_path, content)
+    old = _old_read(layout.submission(0))
+    record = layout.submission_record(0)
+    if record is None or old is None:
+        return
+    job = old.get("job_id")
+    assert record.has_job is bool(job)
+    assert _outcome(record.job_text) == _outcome(lambda: f"{job}")
+    started = old.get("submitted_at")
+    assert record.started_is_number() is isinstance(started, (int, float))
+    if isinstance(started, (int, float)):
+        _same(_outcome(record.started_seconds), _outcome(lambda: float(started)))
+    assert record.says_timed_out is (old.get("sbatch_timed_out") is True)
+    at = old.get("sbatch_timed_out_at")
+    assert _outcome(record.timed_out_at_text) == _outcome(
+        lambda: f"{at}" if at else None
+    )
+
+    def old_task_of(case: int) -> int | None:
+        for task, chunk in enumerate(old.get("chunks") or []):
+            if case in chunk:
+                return task
+        return None
+
+    for case in (0, 1, 2, 3, -1, 2**53 + 1, 10**400):
+        assert _outcome(lambda: record.task_of(case)) == _outcome(
+            lambda: old_task_of(case)
+        )
+
+
+@pytest.mark.parametrize(
+    "state",
+    [_ABSENT, *_VALUES[1:], '"running"', '"waiting"', '"building"', '"starting"'],
+)
+def test_whether_a_task_s_state_is_one_of_a_set(tmp_path: Path, state: str) -> None:
+    """TaskStatus.state_in() is ``get("state", "?") in states`` of the status
+    as a dict, raising what that raises."""
+    text = _object({"state": state, "host": '"h"'})
+    layout = _batch(tmp_path, None, text)
+    status = layout.read_task(0, 0)
+    assert status is not None
+    old = json.loads(text)
+    assert _outcome(lambda: status.state_in(_UNFINISHED_TASK_STATES)) == _outcome(
+        lambda: old.get("state", "?") in _UNFINISHED_TASK_STATES
+    )
+
+
 # -- Which submission last gave a case ------------------------------------------------
 
 

@@ -82,7 +82,7 @@ def _active_jobs(
             continue  # removed since: its sbatch failed
         except (OSError, ValueError):
             submission = None
-        if not isinstance(submission, dict):
+        if submission is None:
             try:
                 age = time.time() - path.stat().st_mtime
             except FileNotFoundError:

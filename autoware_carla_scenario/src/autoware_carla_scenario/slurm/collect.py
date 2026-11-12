@@ -28,6 +28,7 @@ from ..failure import Failure, FailureCategory
 from .manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
+    SubmissionRecord,
     no_job_note,
     recorded_verdict,
     resubmit_target,
@@ -125,16 +126,24 @@ class RecordedResult:
 
 def _last_submission_of(
     layout: BatchLayout, case: int
-) -> tuple[int, int, dict[str, Any]] | None:
+) -> tuple[int, int, SubmissionRecord] | None:
     """(submission, task, the submission's record) that was last given *case*,
-    if any.  A record that cannot be read gave no case (#1356)."""
+    if any.  A record that cannot be read gave no case (#1356).
+
+    The records are read from the last, until one gave the case
+    (:meth:`.manifest.SubmissionRecord.task_of`, which raises for ``chunks``
+    of the wrong type)."""
     for index in reversed(layout.submissions()):
-        submission = layout.submission_record(index)
-        if submission is None:
+        read = layout.submission_record(index)
+        if read is None:
             continue
-        for task, chunk in enumerate(submission.get("chunks") or []):
-            if case in chunk:
-                return index, task, submission
+        # Typed through a local: Codon 0.19 keeps the Optional of the read
+        # record (and of its task) in the tuple returned.
+        submission: SubmissionRecord = read
+        found = submission.task_of(case)
+        if found is not None:
+            task: int = found
+            return index, task, submission
     return None
 
 
@@ -200,33 +209,32 @@ def _missing_message(
         )
     index, task, submission = where
     status = layout.read_task(index, task)
-    state = (
-        "never started"
-        if status is None
-        else status.get("state")
-        if status.has("state")
-        else "?"
-    )
-    job = submission.get("job_id")
+    has_job = submission.has_job
     # Never "job None" (#1796): why the submission has no job id.
-    note = "" if job else no_job_note(submission)
+    note = "" if has_job else no_job_note(submission)
     error = None if status is None else status.error
     # Queued (no status yet) or running -- or killed before its status said
     # so; a state no set holds raises, where a job's task has a status.
-    unfinished = bool(job) and status is not None and state in _UNFINISHED_TASK_STATES
+    unfinished = False
+    if has_job and status is not None:
+        unfinished = status.state_in(_UNFINISHED_TASK_STATES)
     timed_out = (
-        not job and sbatch_timed_out(submission) and sbatch_in_flight(submission)
+        not has_job and sbatch_timed_out(submission) and sbatch_in_flight(submission)
     )
-    in_flight = not job and not timed_out and sbatch_in_flight(submission)
+    in_flight = not has_job and not timed_out and sbatch_in_flight(submission)
+    # As text in the order the advice's arguments were: the job id, then the
+    # state ("?" when the status has none).
+    job = submission.job_text()
+    state = "never started" if status is None else status.state_text("?")
     return _advice(
         layout,
         target,
         submitted=True,
         index=index,
         task=task,
-        job=f"{job}",
-        has_job=bool(job),
-        state=f"{state}",
+        job=job,
+        has_job=has_job,
+        state=state,
         has_status=status is not None,
         unfinished=unfinished,
         error=error,
