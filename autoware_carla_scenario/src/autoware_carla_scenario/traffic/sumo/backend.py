@@ -1301,6 +1301,16 @@ class SumoTrafficBackend(TrafficBackend):
                     published=int(actor.id) in self._published_ids,
                 )
 
+    def _drives_on_arrival(self, actor: Any, entity: Any) -> bool:
+        """Whether :meth:`_arrive` would have SUMO drive *actor*, which came
+        up for *entity* (:meth:`_bring_in`) -- now, or on resume() if it is
+        released: :meth:`_join` publishes it otherwise."""
+        return (
+            entity is not None
+            and not self._tm_drives_scenario
+            and int(actor.id) not in self._published_ids
+        )
+
     def _drive_approaches(self, elapsed: float) -> None:
         """One tick of each vehicle driven to its goal in CARLA (finish_at)."""
         if not self._approaches:
@@ -1433,10 +1443,8 @@ class SumoTrafficBackend(TrafficBackend):
         actors += [
             actor
             for actor, entity in self._arriving.values()
-            if entity is not None
-            and not self._tm_drives_scenario
-            and id(entity) not in self._released
-            and int(actor.id) not in self._published_ids
+            if id(entity) not in self._released
+            and self._drives_on_arrival(actor, entity)
         ]
         logger.error(
             "SUMO failed %d steps in a row at %.2f s; traffic stops for this run: "
@@ -2380,7 +2388,11 @@ class SumoTrafficBackend(TrafficBackend):
                 handed is not None
                 or self._id_of(entity) is not None
                 # Released as it came up, before a step put it on SUMO's road.
-                or any(arriving is entity for _a, arriving in self._arriving.values())
+                or any(
+                    arriving is entity
+                    and self._drives_on_arrival(arriving_actor, entity)
+                    for arriving_actor, arriving in self._arriving.values()
+                )
             )
         ):
             # Handed back after SUMO failed for good (_give_up): nothing
