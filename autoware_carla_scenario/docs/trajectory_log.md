@@ -51,7 +51,7 @@ by a `turn_indicators` line when a vehicle's turn indicators changed on it, a `m
 it, the plan timed), then an `action` line for each action that moved on (each
 followed by the `adversity`, `waypoint_arrival`, `spawn` and `despawn` lines its
 tick brought), the `collision`, `walker_fallen` and fallen walkers' `despawn`
-lines, and last a `condition` line for each condition that changed. A run judged on a `MetricCondition` then has, after its last tick, a `metric` line for each frame its metrics were computed for, in frame order, and then, for each metric condition in turn, its `condition` lines, whether its metric was NG, from its first frame again: after the ticks, `frame` goes back each time a new block starts, so a reader wanting one timeline sorts these lines by `frame` ([Metrics](metrics.md#how-metrics-are-computed)). A run that reached a verdict ends with `result`: its final one, the one `_result.json` holds, after the `MetricCondition`s are judged. A run that raises before that -- in its tick loop, or after it (a CommonRoad worker that died while the metrics were computed, a Ctrl-C) -- writes no `_result.json` and ends without a `result` line (#2067).
+lines, and last a `condition` line for each condition that changed. A run judged on a `MetricCondition` then has, after its last tick, a `metric` line for each frame its metrics were computed for, in frame order, and then, for each metric condition in turn, its `condition` lines, whether its metric was NG, from its first frame again: after the ticks, `frame` goes back each time a new block starts, so a reader wanting one timeline sorts these lines by `frame` ([Metrics](metrics.md#how-metrics-are-computed)). The `collision` lines ending the contacts still going when the run ended (at its last tick's `frame`) come after all of these. A run that reached a verdict ends with `result`: its final one, the one `_result.json` holds, after the `MetricCondition`s are judged. A run that raises before that -- in its tick loop, or after it (a CommonRoad worker that died while the metrics were computed, a Ctrl-C) -- writes no `_result.json` and ends without a `result` line (#2067).
 
 ```json
 {"type":"world","schema_version":2,"map":"Carla/Maps/Town10HD_Opt","episode":7}
@@ -186,8 +186,9 @@ SHA-256, so a reader can load the very map the run was on.
   `scenario-t4scene` (and the T4Scene written as each run ends) warns about a
   cut-off last line and converts the rest, and refuses a line that is not
   JSON anywhere else, or a record it cannot use anywhere, naming the file and
-  line; the results UI's metrics and the metric records merged into a Rerun
-  recording skip any line they cannot read.
+  line; the results UI's metrics skip any line they cannot read. The Rerun
+  converter (`rerun.enabled`, `python -m autoware_carla_scenario.rerun`)
+  refuses a cut-off last line: that log's conversion fails.
 - **Only egos have controls.** `control` carries actors whose `role` is
   `ego` or `hero` (any case). `steer` is normalised to [-1, 1]; it is not a
   wheel angle.
