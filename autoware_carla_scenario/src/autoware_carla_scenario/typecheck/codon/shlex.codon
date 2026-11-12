@@ -1,12 +1,15 @@
 # The part of Python's shlex the checked framework names, for the checker
 # (docs/typecheck.md): quote(s) and join(split_command), CPython 3.10's, on
-# Codon's re.
+# Codon's re, and split(s, comments=False, posix=True), declared only.
 #
 # quote() takes a str, as CPython's re.search() does once the string is not
 # empty: CPython also returns "''" for any value that is false (`quote(None)`,
 # `quote(b"")`), which the check refuses. join() takes an iterable of str
-# (`join(split_command)`), joined with spaces after quoting each. split(),
-# shlex and the rest are not declared.
+# (`join(split_command)`), joined with spaces after quoting each. split()
+# takes a str (CPython 3.10 reads standard input for `split(None)`, with a
+# DeprecationWarning, and 3.12 refuses it, so the check does too) and gives
+# a list of str; nothing here runs, so it splits nothing (an empty list).
+# The shlex class and the rest are not declared.
 
 import re
 
@@ -28,3 +31,10 @@ def quote(s: str) -> str:
 def join(split_command) -> str:
     """Return a shell-escaped string from *split_command*."""
     return " ".join(quote(arg) for arg in split_command)
+
+
+# split(s, comments=False, posix=True): the words of *s*, as a POSIX shell
+# (or, with posix=False, a compatible one) splits them. Declared only.
+def split(s: str, comments: bool = False, posix: bool = True) -> List[str]:
+    """Split the string *s* using shell-like syntax."""
+    return List[str]()

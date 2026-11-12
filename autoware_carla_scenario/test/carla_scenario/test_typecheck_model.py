@@ -74,6 +74,7 @@ from autoware_carla_scenario.coverage import items as coverage_items
 from autoware_carla_scenario.coverage import report as coverage_report
 from autoware_carla_scenario.driver import egodriver_client
 from autoware_carla_scenario.entity import carla_driver_entity, hils_entity
+from autoware_carla_scenario.hils import config as hils_config
 from autoware_carla_scenario.maps import cache as maps_cache
 from autoware_carla_scenario.maps import source as maps_source
 from autoware_carla_scenario.maps import road_network_cache as maps_road_network_cache
@@ -1060,6 +1061,21 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # __all__, the classes by name, the functions compile errors.
     "commonroad/session": (commonroad_session, tuple(commonroad_session.__all__)),
     "commonroad/worker": (commonroad_worker, tuple(commonroad_worker.__all__)),
+    # What the checked hils package re-exports of hils.config (yaml, a
+    # document of any shape): the classes by name, the functions compile
+    # errors. SensorSpec and HilsConfigError, which hils.config re-exports
+    # too, are the checked hils.sensor_spec's.
+    "hils/config": (
+        hils_config,
+        (
+            "DeviceSpec",
+            "FieldSource",
+            "HilsConfig",
+            "MessageSpec",
+            "load_config",
+            "parse_config",
+        ),
+    ),
     # What the checked scaffold package re-exports of scaffold.generator
     # (argparse, jinja2): the classes by name, the functions compile errors.
     "scaffold/generator": (scaffold_generator, tuple(scaffold_module.__all__)),
@@ -1101,6 +1117,12 @@ _UNBUILDABLE: dict[str, str] = {
     "CommonRoadSettings": "commonroad/session",
     "CommonRoadWorker": "commonroad/worker",
     "CommonRoadWorkerError": "commonroad/worker",
+    # What the checked hils package re-exports of hils.config: the HILS
+    # bridge's configuration, which scenario-hils reads on the HILS PC.
+    "DeviceSpec": "hils/config",
+    "FieldSource": "hils/config",
+    "HilsConfig": "hils/config",
+    "MessageSpec": "hils/config",
 }
 
 
@@ -2545,6 +2567,7 @@ _UNCOMPARED_MODEL_FILES: dict[str, str] = {
             "autoware_stack",
             "commonroad",
             "driver",
+            "hils",
             "maps",
             "pedestrian",
             "ros2",

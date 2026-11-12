@@ -4,7 +4,9 @@
 # read), and adds the two names the checked framework reads besides:
 # `platform`, "linux" (the only system the package runs on, as CPython's is
 # there), and `executable`, the interpreter's path, a str (CPython's may be
-# empty, never None). Nothing else of CPython's sys is declared.
+# empty, never None). A standard stream (Codon's File) also has `buffer`, the
+# binary stream under CPython's text one: the check reads bytes as str, so
+# it is the same stream. Nothing else of CPython's sys is declared.
 #
 # Everything above `platform` is Codon's stdlib/sys.codon, Copyright (C)
 # 2022-2025 Exaloop Inc., under the Apache License 2.0
@@ -23,3 +25,12 @@ maxsize = 0x7FFFFFFFFFFFFFFF
 
 platform = "linux"
 executable = "python3"
+
+
+@extend
+class File:
+    # sys.stdin.buffer (a stream's binary buffer in CPython): what it reads
+    # is bytes there, a str here, as the stream itself reads.
+    @property
+    def buffer(self) -> File:
+        return self

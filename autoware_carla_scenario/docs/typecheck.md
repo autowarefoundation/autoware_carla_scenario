@@ -845,7 +845,8 @@ What `test_typecheck_model.py` compares, model by model:
   `driver/egodriver_client`, `_map_source`, `maps/cache`,
   `maps/z_offset_cache`, `maps/road_network_cache`, `pedestrian/soma`,
   `ui/models`, `_ros2`, `metrics`, `measures`, `scaffold/generator`,
-  `commonroad/session`, `commonroad/worker` and `utils/traffic_light`, each declaring exactly the names compared;
+  `commonroad/session`, `commonroad/worker`, `hils/config` and
+  `utils/traffic_light`, each declaring exactly the names compared;
   `ros2/cyclone` where cyclonedds is installed.
 - **Every public name of a modelled module**: each name a module the model
   has exports in Python (its `__all__`, or the public names it defines when
@@ -2497,7 +2498,8 @@ the criteria and the cases compared from a baseline's runs to a candidate's,
 and the records grouped by scenario; not the evaluator itself, which reads the
 gate's pydantic model and openodd's merged coverage), the HILS bridge's wire format (a command's values included)
 and its configuration's sensor spec and the check of a field's signal name
-(not the YAML reading around it), how an error shows an integer too long for
+(not the YAML reading around it, `hils.config`; the `hils` package's
+`__init__`, which re-exports them, is checked), how an error shows an integer too long for
 `repr()` (`value_text.huge_integer()`, which `hils.config` re-exports, #1704), the
 example scenarios and their configs, the SLURM launcher's job scripts, where
 a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
@@ -2565,7 +2567,7 @@ the first:
   pickle, grpc, protobuf, omegaconf and hydra, yaml, jinja2, fastapi, cv2,
   cyclonedds, or openodd and hilspy, Rust extensions) or a standard module
   Codon lacks (`inspect`, `concurrent.futures`, `importlib` beyond
-  `importlib.metadata`, or more of `os`, `pathlib`, `shlex`, `shutil`,
+  `importlib.metadata`, or more of `os`, `pathlib`, `shutil`,
   `signal`, `socket`, `subprocess`, `tempfile`, `threading`, `dataclasses`,
   `importlib.metadata` or `urllib.parse` than their shims declare), at module
   level or inside a function the check calls. This is most of the tooling
@@ -2939,7 +2941,7 @@ stands in for it in the check's workspace:
   `maps/cache.codon`, `autoware_stack/devcontainer.codon`,
   `ros2/cyclone.codon`, `pedestrian/soma.codon`,
   `scaffold/generator.codon`, `commonroad/session.codon`,
-  `commonroad/worker.codon`), or, for a module of
+  `commonroad/worker.codon`, `hils/config.codon`), or, for a module of
   the top-level package, a model of that module (`trajectory_recorder.codon`,
   for `scenario_runner`, the `TrajectoryRecorder` it starts, records and
   closes, whose JSON lines hold values of mixed types; `environment.codon`,
@@ -3159,7 +3161,7 @@ What Codon 0.19 needs that Python does not, beyond
   and the files of `codon/` in step):
 
   <!-- shims:start -->
-  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `fnmatch`, `hashlib`,
+  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `hashlib`,
   `importlib.metadata`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions` and `urllib.parse`
@@ -3255,7 +3257,22 @@ What Codon 0.19 needs that Python does not, beyond
   `dir_fd`), `walk(top, topdown=True, onerror=None, followlinks=False)` (a
   generator that yields nothing; the callable `onerror` is not declared), the
   separators (`sep`, `pathsep`, `linesep`,
-  `devnull`, ...) and the `access()` modes. `os.path` declares `join()`,
+  `devnull`, ...), `access(path, mode, *, dir_fd=None, effective_ids=False,
+  follow_symlinks=True)` (`False`: nothing is asked) and its modes, and
+  `open(path, flags, mode=0o777, *, dir_fd=None)` (a descriptor, `0`:
+  nothing is opened) with the flags `O_RDONLY`, `O_WRONLY`, `O_CREAT` and
+  `O_EXCL` (Linux's values) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
+  errors=None, newline=None, closefd=True)`, a file object (`typing.IO`, as
+  `Path.open()` gives), and what `slurm.manifest` creates a file
+  exclusively with: `link(src, dst, *, src_dir_fd=None, dst_dir_fd=None,
+  follow_symlinks=True)` (nothing is linked) and `stat(path, *,
+  dir_fd=None, follow_symlinks=True)`, whose result has `st_mode`,
+  `st_nlink`, `st_size` and `st_mtime` (all zero) and nothing else. `errno`
+  declares `EPERM`, `ENOTSUP` and `EOPNOTSUPP` (Linux's values) and no
+  other code. `fcntl` declares `flock(fd, operation, /)`, of
+  an `int` descriptor or a file object (what has `fileno()`), and `LOCK_SH`,
+  `LOCK_EX`, `LOCK_NB` and `LOCK_UN` (Linux's values); nothing is locked.
+  `os.path` declares `join()`,
   `basename()`, `dirname()`, `splitext()`, `isabs()`, `exists()`, `isfile()`,
   `isdir()`, `expanduser()` and `abspath()`, and `getsize()`, `getmtime()`,
   `getatime()`, `getctime()`, `islink()`, `lexists()`, `realpath()`,
@@ -3274,7 +3291,7 @@ What Codon 0.19 needs that Python does not, beyond
   capture_output=False, timeout=None, check=False, ...)` and `Popen(args,
   *, ...)` with the keywords of CPython's `Popen` the framework passes
   (`stdin`, `stdout`, `stderr`, `cwd`, `env`, `text`, `encoding`, `errors`,
-  `start_new_session`), a standard stream being `None`, one of the constants,
+  `start_new_session`, and `pass_fds`, a list or tuple of descriptors), a standard stream being `None`, one of the constants,
   a file descriptor or a file object (`typing.IO`, what `Path.open()`
   returns), `CompletedProcess(args, returncode, stdout=None,
   stderr=None)` and its `check_returncode()`, `Popen`'s `poll()`, `wait()`,
@@ -3382,7 +3399,10 @@ What Codon 0.19 needs that Python does not, beyond
   `ValueError` with `msg`, `doc` and `pos`. `shlex` declares
   `quote(s)` and `join(split_command)`, CPython 3.10's on Codon's `re`; a
   `quote()` of a false value that is no `str` (`None`, which CPython quotes
-  as `''`) is refused. `fnmatch` declares `fnmatch(name, pat)` and
+  as `''`) is refused. It declares `split(s, comments=False, posix=True)`
+  too, which takes a `str` (CPython 3.10 reads standard input for `None`, and
+  3.12 refuses it) and gives a `list[str]`; the check only compiles it, so
+  its body splits nothing. `fnmatch` declares `fnmatch(name, pat)` and
   `fnmatchcase(name, pat)`, CPython 3.10's shell-pattern match written
   without a regular expression (CPython's translation uses a lookahead,
   which Codon's `re` has no syntax for); `fnmatch()` takes a `str` or an
@@ -3399,11 +3419,14 @@ What Codon 0.19 needs that Python does not, beyond
   `gethostname()`, `AF_INET`, `AF_INET6`, `SOCK_STREAM` and
   `socket(family=AF_INET, type=SOCK_STREAM, proto=0)`, whose socket has
   `bind(address, /)` and `getsockname()` of a (host, port) pair (an AF_INET6
-  socket's bind takes the same pair), `close()` and `with`;
-  nothing connects or binds, and `fileno` and the rest of the module are not
+  socket's bind takes the same pair), `setsockopt(level, optname, value, /)`
+  of an `int` or bytes value, with the options `SOL_SOCKET`, `SO_REUSEADDR`,
+  `IPPROTO_IPV6` and `IPV6_V6ONLY` (Linux's values), `close()` and `with`;
+  nothing connects, binds or sets an option, and `fileno` and the rest of the module are not
   declared (#1498). `sys` replaces Codon's, keeping all of it (`argv`,
   the standard streams, `exit()`, `maxsize`), and adds `platform`
-  (`"linux"`) and `executable` (a `str`). `atexit`
+  (`"linux"`), `executable` (a `str`) and a standard stream's `buffer`
+  (the stream itself: the check reads bytes as `str`). `atexit`
   declares `register(func, *args, **kwargs)`, which takes the function by
   position only and returns it, and which calls it with the arguments it is
   given, so a function that cannot take them is refused where CPython
@@ -3417,7 +3440,7 @@ What Codon 0.19 needs that Python does not, beyond
   or a `str` when it names a directory, so the check returns a path that
   `str()`, `os.fspath()` and `Path()` take and nothing else does. Python's
   built-in exceptions that Codon lacks (`ImportError`,
-  `ModuleNotFoundError`, `FileNotFoundError`, `PermissionError`,
+  `ModuleNotFoundError`, `FileNotFoundError`, `FileExistsError`, `PermissionError`,
   `ProcessLookupError`, `ChildProcessError`, `TimeoutError`,
   `ConnectionError`, `BrokenPipeError`, `RecursionError`, and
   `KeyboardInterrupt`, derived from
@@ -4340,7 +4363,13 @@ What Codon 0.19 needs that Python does not, beyond
   (`CommonRoadSettings` leaves out `workers` and `heavy_metrics`, whose
   defaults the machine and the environment decide: `_OMITTED_PARAMETERS`;
   `CommonRoadWorkerError`, a `RuntimeError` with no constructor of its own,
-  takes `*args`, as Python's does). Each constructor takes
+  takes `*args`, as Python's does), and `DeviceSpec`, `FieldSource`,
+  `HilsConfig` and `MessageSpec` (`hils/config.codon`, yaml and a document
+  of any shape), which the checked `hils` package re-exports with
+  `load_config()` and `parse_config()`, `compile_error`s too: scenario-hils
+  reads the HILS bridge's configuration on the HILS PC, not a scenario (the
+  package imports `SensorSpec` and `HilsConfigError` from the checked
+  `hils.sensor_spec`, which defines them). Each constructor takes
   Python's parameters and is a `compile_error`: its config
   (`AutowareBridgeConfig`, `DriverClientConfig`) is a checked class the model
   does not have, the class is only ever built by openodd's merge, its
