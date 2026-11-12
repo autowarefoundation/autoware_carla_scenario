@@ -4880,9 +4880,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-318 of the package's 433
-modules (73%; about 101,000 of
-169,700 lines) are <code>CHECKED</code>: the kinematics, the
+319 of the package's 434
+modules (74%; about 101,400 of
+169,900 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4958,7 +4958,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 318 CHECKED modules</summary>
+<summary>The 319 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5988,6 +5988,10 @@ with the first paragraph of its docstring:</p>
 <td>The <code>launcher</code> config: who runs a batch's cases (docs/slurm.md).</td>
 </tr>
 <tr>
+<td><code>slurm.status</code></td>
+<td>What <code>scenario-slurm status</code> prints of a SLURM batch, what <code>cancel</code> cancels of it, and whether it is busy, so that <code>resubmit</code> refuses it.</td>
+</tr>
+<tr>
 <td><code>slurm.stems</code></td>
 <td>The names a SLURM batch gives its cases' files and the keys of its configs.</td>
 </tr>
@@ -6242,8 +6246,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>183 functions and methods of those modules are <code>UNCALLED</code>
-(55 of them protected helpers, see <em>What is
+<p>182 functions and methods of those modules are <code>UNCALLED</code>
+(54 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6255,7 +6259,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 183 UNCALLED functions and methods, and why</summary>
+<summary>The 182 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6436,8 +6440,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>trajectory.model._whole</code>: checks that a value of any type (<code>value: Any</code>: whatever a YAML document or a caller wrote for a lane or junction index) is a whole number, which Codon cannot express; the route poses' __post_init__ call it with their own fields, so its body is compiled through them</li>
 <li><code>ui.slurm_launch.SlurmOptions.from_request</code>: reads the run panel's fields (<code>dict[str, Any] | None</code>: the JSON body of a request, of values of any type), which Codon cannot express, through a helper that returns a number of either type it is given (<code>number(key, kind: type) -&gt; Any</code>, an int or a float); the checks of each field are the checked ui.slurm_options'</li>
 <li><code>ui.slurm_launch.Submission.to_dict</code>: returns the submission as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types (text, an optional directory and an optional exit status), which Codon cannot express</li>
-<li><code>ui.slurm_launch._case_states</code>: reads a SLURM batch's manifest as a <code>dict</code> reads it (Manifest.get(), <code>manifest[key]</code>: values of mixed types), which Codon cannot express; only the uncalled batch_status() calls it, and the state of each case and its message are the checked ui.slurm_case_state's</li>
-<li><code>ui.slurm_launch.batch_status</code>: reads a SLURM batch's manifest as a <code>dict</code> reads it (Manifest.get(), <code>manifest[key]</code>: values of mixed types), which Codon cannot express, and returns the batch's progress as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types</li>
+<li><code>ui.slurm_launch.batch_status</code>: returns the batch's progress as the viewer's API sends it, a <code>dict[str, Any]</code> of mixed value types: the values of the batch's records as <code>json.loads()</code> read them (the manifest's through the checked slurm.manifest's uncalled Manifest.get(), the submissions' and the tasks' through get(), of any type), which Codon cannot express; each case's state, and the values it shows as their JSON text, are the checked _case_states()'s (CaseState)</li>
 <li><code>utils.stop_line._road_marking_stop_lines</code>: returns a road marking's <code>refers</code> parameters as line strings, and a <code>refers</code> parameter may be any of lanelet2's primitives (a polygon, a lanelet, ...), which the lanelet2 model types as what they all have (id, attributes); regulatory_element_stop_lines calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
@@ -6558,7 +6561,7 @@ the first:</p>
 <li><code>ros2.messages</code>: imports cyclonedds (the IdlStruct base of every message, and the IDL field types <code>array[float64, 36]</code> and <code>sequence[TrajectoryPoint]</code>, which Codon cannot express)</li>
 <li><code>scaffold.generator</code>: imports argparse, ast, errno, functools, importlib.metadata, templating (jinja2) and, inside functions, packaging, typecheck.transform and authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked; its naming rules, and the framework-name rule it shares with authoring.package_names, are the checked scaffold.names'; scaffold/generator.codon declares what the checked scaffold package re-exports of it</li>
 <li><code>serve_cli</code>: imports argparse and ipaddress</li>
-<li><code>slurm.cli</code>: imports argparse, and slurm.submit, which are not checked, and reads the manifest as a <code>dict</code> reads it (the checked slurm.manifest's uncalled Manifest.get() and <code>manifest[key]</code>, values of any type); what it collects, and which cases it resubmits, are the checked slurm.collect's</li>
+<li><code>slurm.cli</code>: imports argparse, and slurm.submit, which are not checked, and reads the manifest as a <code>dict</code> reads it (the checked slurm.manifest's uncalled Manifest.get() and <code>manifest[key]</code>, values of any type); what it collects, and which cases it resubmits, are the checked slurm.collect's, and what <code>status</code> prints, whether a batch is busy (the resubmit's check) and what <code>cancel</code> cancels the checked slurm.status'</li>
 <li><code>slurm.submit</code>: imports omegaconf (inside functions), which is not checked, and more of os than its shim declares (<code>os.O_TRUNC</code>), and takes the manifest as it builds it (<code>dict[str, Any]</code>) or as it is read back (the checked slurm.manifest's Manifest, through its uncalled get() and <code>manifest[key]</code>, values of any type) and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts, and run, as squeue, scancel and scontrol are, by the checked slurm.queue</li>
 <li><code>slurm.worker</code>: imports traceback, uuid, <code>contextlib.contextmanager</code>, more of errno, os, threading and importlib than their shims declare (<code>errno.ENOSYS</code>, <code>errno.ENOLCK</code>, <code>errno.EINVAL</code>, <code>os.fstat()</code>, <code>os.write()</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled, and, inside run_task(), typecheck.mode (the checker, outside the library check); imports <code>RerunConverter</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>report()</code> from rerun, which is not checked, and the rerun model declares neither <code>report()</code> nor <code>RerunConverter.close()</code>, and its <code>RerunConverter.wait()</code> returns None, not the RerunConversion records the worker passes to <code>rerun_errors()</code>; compares config values of any type (<code>Any</code>); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's, and whether a differing config string names the same file the checked slurm.same_files' (#1720)</li>
 <li><code>sweeper</code>: re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)</li>
