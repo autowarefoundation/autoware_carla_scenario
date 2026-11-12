@@ -3161,7 +3161,7 @@ What Codon 0.19 needs that Python does not, beyond
   and the files of `codon/` in step):
 
   <!-- shims:start -->
-  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `fcntl`, `fnmatch`, `hashlib`,
+  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `hashlib`,
   `importlib.metadata`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions` and `urllib.parse`
@@ -3260,10 +3260,16 @@ What Codon 0.19 needs that Python does not, beyond
   `devnull`, ...), `access(path, mode, *, dir_fd=None, effective_ids=False,
   follow_symlinks=True)` (`False`: nothing is asked) and its modes, and
   `open(path, flags, mode=0o777, *, dir_fd=None)` (a descriptor, `0`:
-  nothing is opened) with the flags `O_RDONLY` and `O_CREAT` (Linux's
-  values) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
+  nothing is opened) with the flags `O_RDONLY`, `O_WRONLY`, `O_CREAT` and
+  `O_EXCL` (Linux's values) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
   errors=None, newline=None, closefd=True)`, a file object (`typing.IO`, as
-  `Path.open()` gives). `fcntl` declares `flock(fd, operation, /)`, of
+  `Path.open()` gives), and what `slurm.manifest` creates a file
+  exclusively with: `link(src, dst, *, src_dir_fd=None, dst_dir_fd=None,
+  follow_symlinks=True)` (nothing is linked) and `stat(path, *,
+  dir_fd=None, follow_symlinks=True)`, whose result has `st_mode`,
+  `st_nlink`, `st_size` and `st_mtime` (all zero) and nothing else. `errno`
+  declares `EPERM`, `ENOTSUP` and `EOPNOTSUPP` (Linux's values) and no
+  other code. `fcntl` declares `flock(fd, operation, /)`, of
   an `int` descriptor or a file object (what has `fileno()`), and `LOCK_SH`,
   `LOCK_EX`, `LOCK_NB` and `LOCK_UN` (Linux's values); nothing is locked.
   `os.path` declares `join()`,
@@ -3431,7 +3437,7 @@ What Codon 0.19 needs that Python does not, beyond
   or a `str` when it names a directory, so the check returns a path that
   `str()`, `os.fspath()` and `Path()` take and nothing else does. Python's
   built-in exceptions that Codon lacks (`ImportError`,
-  `ModuleNotFoundError`, `FileNotFoundError`, `PermissionError`,
+  `ModuleNotFoundError`, `FileNotFoundError`, `FileExistsError`, `PermissionError`,
   `ProcessLookupError`, `ChildProcessError`, `TimeoutError`,
   `ConnectionError`, `BrokenPipeError`, `RecursionError`, and
   `KeyboardInterrupt`, derived from
