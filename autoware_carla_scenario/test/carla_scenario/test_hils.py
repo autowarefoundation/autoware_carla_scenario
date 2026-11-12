@@ -2204,8 +2204,10 @@ def test_the_warmup_steps_wait_with_the_sensors_streaming(
             assert _until(
                 lambda: bool(world.sensors) and world.sensors[0].callback is not None
             )
+            callback = world.sensors[0].callback
+            assert callback is not None
             # A frame measured during the warm-up reaches the ECU ...
-            world.sensors[0].callback(_frame(b"WARMUP-FRAME-001"))
+            callback(_frame(b"WARMUP-FRAME-001"))
             frame = None
             while frame is None:
                 world.tick()
