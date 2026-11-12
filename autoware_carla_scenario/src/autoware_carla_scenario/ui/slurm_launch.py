@@ -403,7 +403,7 @@ def _case_states(
             # boolean ``passed`` as a verdict (#1718).
             recorded = record.get("result")
             result = recorded if isinstance(recorded, dict) else {}
-            errored = bool(record.get("errored"))
+            errored = record.errored
             passed = not errored and recorded_verdict(record) is True
         queued: str | None = None
         squeue_known = at_case = False

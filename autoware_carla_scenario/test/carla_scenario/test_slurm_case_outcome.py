@@ -485,9 +485,11 @@ def _recorded_result(layout: BatchLayout, case: int) -> Any:
     """The result collect reports for *case*'s outcome, as RecordedResult
     reads the record read_result gives."""
     record: Any = layout.read_result(case)
+    # A record read as a dict, as it was before CaseOutcome.
+    recorded_result: Any = RecordedResult
     if isinstance(record, dict):
-        return RecordedResult(dict(record["result"]))
-    return RecordedResult(record.result())
+        return recorded_result(dict(record["result"]))
+    return recorded_result(record.result())
 
 
 def _properties(result: Any) -> list[Any]:

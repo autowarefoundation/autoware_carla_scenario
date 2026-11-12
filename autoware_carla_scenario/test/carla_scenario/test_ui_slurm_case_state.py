@@ -22,6 +22,7 @@ from autoware_carla_scenario.slurm.manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
     readable_result,
 )
+from autoware_carla_scenario.slurm.records import JsonMembers
 from autoware_carla_scenario.slurm.submit import ACTIVE_STATES
 from autoware_carla_scenario.ui import slurm_launch
 from autoware_carla_scenario.ui.slurm_case_state import case_state, no_job_case_state
@@ -62,7 +63,8 @@ def _original_case_states(
                 if record.get("errored")
                 else (
                     "passed"
-                    if result.get("passed") is True and readable_result(result)
+                    if result.get("passed") is True
+                    and readable_result(JsonMembers.from_value(result))
                     else "failed"
                 ),
                 message=result.get("message", ""),
