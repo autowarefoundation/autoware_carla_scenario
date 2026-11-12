@@ -25,11 +25,13 @@ from .collect import collect, unfinished_cases
 from .manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
+    TaskStatus,
     no_job_note,
     recorded_verdict,
     sbatch_in_flight,
     sbatch_timed_out,
 )
+from .records import JsonMembers
 from .settings import SlurmSettings
 from .submit import (
     ACTIVE_STATES,
@@ -213,16 +215,18 @@ def _status(layout: BatchLayout) -> int:
             # No job id to ask squeue about: never "job None ... ended" (#1791).
             print(f"  submission {index}: {size}; {no_job_note(submission)}")  # noqa: T201
         for task, chunk in enumerate(chunks):
-            status = layout.read_task(index, task) or {}
+            status = layout.read_task(index, task) or TaskStatus(JsonMembers())
             ports = status.get("ports") or {}
             rss = status.get("peak_rss_mb")
+            host = status.get("host")
+            error = status.get("error")
             print(  # noqa: T201
-                f"    task {task}: {status.get('state', 'not started')}"
-                f"{' on ' + status['host'] if status.get('host') else ''}"
+                f"    task {task}: {status.state_text('not started')}"
+                f"{' on ' + host if host else ''}"
                 f"{' port ' + str(ports['rpc']) if ports.get('rpc') else ''}"
                 f", {len(status.get('done') or [])}/{len(chunk)} case(s)"
                 f"{f', peak RSS {rss} MB' if rss else ''}"
-                f"{' -- ' + status['error'] if status.get('error') else ''}"
+                f"{' -- ' + error if error else ''}"
             )
     return 0
 

@@ -443,9 +443,8 @@ _LAUNCHER_VALUE = (
 #: The reason of what takes or returns one of a SLURM batch's records.
 _BATCH_RECORD = (
     "takes or returns a SLURM batch's record as every reader of the batch "
-    "takes it, a `dict[str, Any]` of mixed value types (a manifest, a "
-    "submission, a task's status or a case's outcome), which Codon cannot "
-    "express"
+    "takes it, a `dict[str, Any]` of mixed value types (a manifest or a "
+    "submission), which Codon cannot express"
 )
 
 #: The reason of a function that reads a YAML document's values.
@@ -601,11 +600,9 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.sweeper.constraints.parse_constraint": _YAML,
     "autoware_carla_scenario.slurm.manifest.BatchLayout.read_manifest": f"{_BATCH_RECORD}; whether it reads the manifest's version is the checked _check_version()'s",
     "autoware_carla_scenario.slurm.manifest.BatchLayout.read_submission": "returns the JSON document it reads, of any type (`Any`), which Codon cannot express",
-    "autoware_carla_scenario.slurm.manifest.BatchLayout.read_task": _BATCH_RECORD,
     "autoware_carla_scenario.slurm.manifest.BatchLayout.reserve_submission": f"{_BATCH_RECORD}; creating the record exclusively is the checked _link_exclusive()'s",
     "autoware_carla_scenario.slurm.manifest.BatchLayout.submission_record": _BATCH_RECORD,
     "autoware_carla_scenario.slurm.manifest._create_exclusive": "writes a submission record of any value types (`data: Any`) as JSON, which Codon cannot express; creating the file exclusively from that text is the checked _link_exclusive()'s",
-    "autoware_carla_scenario.slurm.manifest._read_object": _BATCH_RECORD,
     "autoware_carla_scenario.slurm.manifest.config_files": "walks a resolved config of any shape (`config: Any`: the dicts and lists of an OmegaConf container), which Codon cannot express",
     "autoware_carla_scenario.slurm.manifest.no_job_note": _BATCH_RECORD,
     "autoware_carla_scenario.slurm.manifest.read_json": "returns the JSON document it reads, of any type (`Any`), which Codon cannot express",
@@ -616,7 +613,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.slurm.manifest.verdict_of_document": "takes a case's outcome as `json.loads()` reads it, a document of any type (`Any`: an object of mixed value types when it is one), which Codon cannot express; it writes its result back as JSON text for a JsonMembers, and the verdict is the checked recorded_verdict()'s",
     "autoware_carla_scenario.slurm.manifest.write_json": "writes a JSON document of any value types (`data: Any`: a manifest, a submission, a task's status), which Codon cannot express",
     "autoware_carla_scenario.slurm.collect._last_submission_of": _BATCH_RECORD,
-    "autoware_carla_scenario.slurm.collect._missing_message": f"{_BATCH_RECORD}; it reads a missing case's records, and which advice they give and its message are the checked _advice()'s",
+    "autoware_carla_scenario.slurm.collect._missing_message": f"{_BATCH_RECORD}; it reads the submission that last gave a missing case (the uncalled _last_submission_of()'s), while its task's status is the checked TaskStatus's, and which advice they give and its message are the checked _advice()'s",
     "autoware_carla_scenario.slurm.collect.missing_cases": _BATCH_RECORD,
     "autoware_carla_scenario.slurm.collect.unfinished_cases": _BATCH_RECORD,
     "autoware_carla_scenario.slurm.collect.collect": f"{_BATCH_RECORD}; the advice on a case with no outcome is the checked _advice()'s, and the hint on them the checked _missing_hint()'s",

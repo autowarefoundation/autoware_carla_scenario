@@ -200,11 +200,17 @@ def _missing_message(
         )
     index, task, submission = where
     status = layout.read_task(index, task)
-    state = "never started" if status is None else status.get("state", "?")
+    state = (
+        "never started"
+        if status is None
+        else status.get("state")
+        if status.has("state")
+        else "?"
+    )
     job = submission.get("job_id")
     # Never "job None" (#1796): why the submission has no job id.
     note = "" if job else no_job_note(submission)
-    error = f"{status['error']}" if status is not None and status.get("error") else None
+    error = None if status is None else status.error
     # Queued (no status yet) or running -- or killed before its status said
     # so; a state no set holds raises, where a job's task has a status.
     unfinished = bool(job) and status is not None and state in _UNFINISHED_TASK_STATES

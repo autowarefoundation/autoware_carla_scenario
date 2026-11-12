@@ -19,13 +19,13 @@ heavy imports: the ``scenario-slurm`` commands only read these.
 
 The records are read and written as ``dict[str, Any]``, which every reader of
 the batch takes (:mod:`.submit`, :mod:`.worker`, :mod:`.collect`, the viewer),
-but for a case's outcome, which is read into a :class:`CaseOutcome`: its
-members as their JSON text (:class:`.records.JsonMembers`), each read when it
-is asked for.  The library check (docs/typecheck.md) compiles this module, and
-Codon cannot hold a JSON document's values of mixed types beyond the function
-that parses it: the version a manifest names is checked as the JSON text of
-its value, and what creates a submission record exclusively is given the
-record's JSON text.
+but for a case's outcome and a task's status, which are read into a
+:class:`CaseOutcome` and a :class:`TaskStatus`: their members as their JSON
+text (:class:`.records.JsonMembers`), each read when it is asked for.  The
+library check (docs/typecheck.md) compiles this module, and Codon cannot hold
+a JSON document's values of mixed types beyond the function that parses it:
+the version a manifest names is checked as the JSON text of its value, and
+what creates a submission record exclusively is given the record's JSON text.
 """
 
 from __future__ import annotations
@@ -33,6 +33,7 @@ from __future__ import annotations
 import errno
 import json
 import logging
+import math
 import os
 import tempfile
 import time
@@ -53,6 +54,7 @@ __all__ = [
     "SBATCH_IN_FLIGHT_SECONDS",
     "BatchLayout",
     "CaseOutcome",
+    "TaskStatus",
     "config_files",
     "config_key",
     "file_sha256",
@@ -157,18 +159,6 @@ def write_json(path: Path, data: Any) -> None:
 def read_json(path: Path) -> Any:
     """Read the JSON file *path*."""
     return json.loads(path.read_text(encoding="utf-8"))
-
-
-def _read_object(path: Path) -> dict[str, Any] | None:
-    """The JSON object in *path*, or ``None`` when it is missing, cannot be
-    read, is not JSON, or holds JSON that is not an object."""
-    if not path.is_file():
-        return None
-    try:
-        data = read_json(path)
-    except (OSError, ValueError):
-        return None
-    return data if isinstance(data, dict) else None
 
 
 def read_submission_record(path: Path) -> dict[str, Any] | None:
@@ -355,6 +345,72 @@ class CaseOutcome:
         if result is None:
             return None
         return result
+
+
+class TaskStatus:
+    """A task's status as it last wrote it (``tasks/<k>-<t>.json``,
+    :meth:`BatchLayout.read_task`): the record's members, each read when it
+    is asked for, as the record read as a ``dict`` gave it.
+
+    The record is what the task writes (``slurm/worker.py``'s ``_Task``):
+    its ``submission``, ``task``, ``job_id``, ``array_job_id``, ``host`` and
+    ``pid``, its ``state``, when it ``started``, its ``cases``, those
+    ``done`` and the ``current`` one, and, as its run adds them, when it was
+    ``updated``, its ``ros_domains`` and ``ports``, when it ``finished``, its
+    ``error`` and ``traceback`` and its ``peak_*_rss_mb`` -- or anything a
+    hand or another version left there.  An empty record
+    (``TaskStatus(JsonMembers())``) is what its readers take for a task that
+    has none.
+    """
+
+    members: JsonMembers
+
+    def __init__(self, members: JsonMembers) -> None:
+        self.members = members
+
+    def has(self, key: str) -> bool:
+        """Whether the record has the member *key*."""
+        return self.members.has(key)
+
+    def get(self, key: str) -> Any:
+        """The value of the member *key*, ``None`` when there is none: the
+        record's ``dict.get(key)``."""
+        return json.loads(_value_json(self.members, key))
+
+    def state_text(self, default: str) -> str:
+        """The task's ``state`` as text, *default* when the record has none:
+        ``f"{status.get('state', default)}"`` of the record read as a
+        ``dict``."""
+        if not self.members.has("state"):
+            return default
+        return str(json.loads(self.members.value_text("state")))
+
+    @property
+    def error(self) -> str | None:
+        """Why the task failed, if the record says: a true ``error`` (of any
+        type, as ``bool()`` reads it), as ``str()`` gives it."""
+        why = json.loads(_value_json(self.members, "error"))
+        if bool(why):
+            return str(why)
+        return None
+
+    def is_at(self, case: int) -> bool:
+        """Whether the task's ``current`` case is *case*: the record's
+        ``get("current") == case``, which a number equal to it (``1.0``,
+        ``true`` for 1) is too."""
+        current = json.loads(_value_json(self.members, "current"))
+        if isinstance(current, bool):
+            return int(bool(current)) == case
+        if isinstance(current, int):
+            return int(current) == case
+        if isinstance(current, float):
+            number = float(current)
+            return (
+                math.isfinite(number)
+                and number == math.floor(number)
+                and int(number) == case
+            )
+        return False
 
 
 def _real_number(value_json: str) -> bool:
@@ -583,8 +639,17 @@ class BatchLayout(BatchPaths):
             return None
         return CaseOutcome(members)
 
-    def read_task(self, submission: int, task: int) -> dict[str, Any] | None:
+    def read_task(self, submission: int, task: int) -> TaskStatus | None:
         """Task *task* of submission *submission*'s status, or ``None`` when
-        there is none to read: missing, not JSON, or JSON that is not an
-        object (#1630)."""
-        return _read_object(self.task(submission, task))
+        there is none to read: missing, cannot be read, not JSON (not UTF-8
+        among them), or JSON that is not an object (#1630)."""
+        path = self.task(submission, task)
+        if not path.is_file():
+            return None
+        try:
+            members = parse_object(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if members is None:
+            return None
+        return TaskStatus(members)

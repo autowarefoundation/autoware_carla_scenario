@@ -295,7 +295,7 @@ def test_a_slurm_batch_reports_what_the_same_local_batch_does(
     # Every task finished, and stopped its CARLA.
     for task in range(2):
         status = layout.read_task(0, task)
-        assert status is not None and status["state"] == "done"
+        assert status is not None and status.get("state") == "done"
         assert not layout.task_port(0, task).exists()
     for port in ports:
         assert fake_carlas(fake_slurm.record, port) == []
@@ -544,7 +544,7 @@ def test_a_crashed_task_leaves_its_cases_missing_and_resubmit_runs_only_them(
     # The job script stopped the CARLA the dead worker left running.
     task0 = layout.read_task(0, 0)
     assert task0 is not None
-    port = task0["ports"]["rpc"]
+    port = task0.get("ports")["rpc"]
     _wait_for(
         lambda: fake_carlas(fake_slurm.record, port) == [], 20, "the orphaned CARLA"
     )
@@ -613,7 +613,7 @@ def test_scancel_stops_the_tasks_and_their_carla_and_resubmit_finishes_the_batch
         _wait_for(lambda p=port: fake_carlas(fake_slurm.record, p) == [], 20, "CARLA")
     for task in range(2):
         task_status = layout.read_task(0, task)
-        assert task_status is not None and task_status["state"] == "cancelled"
+        assert task_status is not None and task_status.get("state") == "cancelled"
         # Removed after CARLA is gone, by the worker or (when it was killed)
         # its watchdog, so it can lag the CARLA check above (#525).
         _wait_for(
@@ -1037,9 +1037,9 @@ def test_the_worker_refuses_a_timeout_that_is_not_positive_and_finite(
         for sig, handler in handlers.items():
             signal.signal(sig, handler)
     status = layout.read_task(0, 0)
-    assert status is not None and status["state"] == "failed"
-    assert "ValueError: scenario.timeout_seconds" in status["error"]
-    assert "nan" in status["error"]
+    assert status is not None and status.get("state") == "failed"
+    assert "ValueError: scenario.timeout_seconds" in status.get("error")
+    assert "nan" in status.get("error")
     assert released == [False]
 
 
@@ -1102,9 +1102,9 @@ def test_the_worker_refuses_a_case_off_its_documents_map(
         for sig, handler in handlers.items():
             signal.signal(sig, handler)
     status = layout.read_task(0, 0)
-    assert status is not None and status["state"] == "failed"
-    assert "RunConfigError: s#1: " in status["error"]
-    assert "map=my_cut_in_map" in status["error"]
+    assert status is not None and status.get("state") == "failed"
+    assert "RunConfigError: s#1: " in status.get("error")
+    assert "map=my_cut_in_map" in status.get("error")
     assert released == [False]
 
 
@@ -3841,7 +3841,7 @@ def test_the_worker_takes_its_slot_in_launcher_port_lock_dir(
             signal.signal(sig, handler)
     assert seen["lock_dir"] == tmp_path / "locks"
     status = layout.read_task(0, 0)
-    assert status is not None and "stop here" in status["error"]
+    assert status is not None and "stop here" in status.get("error")
 
 
 def test_a_failing_task_port_propagates_and_releases_the_slot(
@@ -3879,9 +3879,9 @@ def test_a_failing_task_port_propagates_and_releases_the_slot(
     # The original error is recorded, not an UnboundLocalError from the cleanup.
     status = layout.read_task(0, 0)
     assert status is not None
-    assert status["state"] == "failed"
-    assert "OSError: no port file" in status["error"]
-    assert "UnboundLocalError" not in status["traceback"]
+    assert status.get("state") == "failed"
+    assert "OSError: no port file" in status.get("error")
+    assert "UnboundLocalError" not in status.get("traceback")
     assert released == [False]
 
 
