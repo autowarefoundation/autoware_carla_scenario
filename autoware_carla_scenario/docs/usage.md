@@ -952,6 +952,11 @@ With `rerun.enabled=true`:
 - Each log is converted on a background thread as soon as its run ends, while
   the next case runs (the converter releases the GIL; a log takes milliseconds).
   A run that raised is converted too: its log is what shows what happened.
+  So is a log whose recording stopped early (a write that failed, a full
+  disk: logged as `Trajectory recording stopped`): the records written up to
+  then, without a `result` record, and a warning naming the file. A write
+  cut off mid-line (a full disk) leaves a last line that is not JSON, which
+  the converter refuses: that conversion fails, as any other does (below).
 - At the end the run waits for the last conversions and prints how they went:
   `Rerun recordings: N/M written`, and a line per failure naming its case. A
   retried case counts once, by the conversion of its last attempt. A
@@ -1010,18 +1015,25 @@ refused for a bad one in any of its cases before the first case runs.
 ### Metrics in the recording
 
 A run judged on a `MetricCondition` writes the metrics it computed once it was
-over into its trajectory log ([Metrics](metrics.md#how-metrics-are-computed)),
-and its recording carries them:
+over into its trajectory log, as `metric` records
+([Metrics](metrics.md#how-metrics-are-computed),
+[Trajectory Log](trajectory_log.md)), and the converter
+(`autoware-carla-scenario-rerun` 0.3, which the `rerun` extra pins) draws
+them itself when it converts the log, on the recording's `frame` and
+`sim_time` timelines:
 
-- each metric as a scalar, `metrics/<key>` (`metrics/crime_ttc_s`), on the
-  recording's `frame` and `sim_time` timelines -- add a time series view of
-  `/metrics` in the viewer to plot them (the converter's layout has none yet);
+- each numeric metric as a scalar, `/metrics/<key>` (`/metrics/crime_ttc_s`),
+  plotted in the **Metrics** time series view;
+- each yes/no metric as a state, `/metric_states/<key>`, plotted in the
+  **Metric states** view;
 - each metric condition in the **Conditions** view, satisfied over the frames
   its metric was NG.
 
-The values are written with the Rerun SDK and merged into the recording once
-the log is converted, as the sensors are (`rerun rrd merge`); the `rerun`
-extra installs the SDK. Converting a log again puts them in again.
+Nothing is merged into the recording afterwards: the metrics are in the log,
+so converting it again draws them again. (A converter that did not know
+`metric` records had them written with the Rerun SDK and merged in, into
+`metrics/<key>`; the pinned one draws them, and the framework then writes
+nothing -- `rerun_metrics.merge_metrics`.)
 
 ### Sensors in the recording
 
@@ -1331,7 +1343,7 @@ started in the same second as another run or a batch gets `HH-MM-SS-1`, then
 | `{ScenarioName}.trajectory.jsonl` | The run, tick by tick, and the map, plan, conditions and verdict ([Trajectory Log](trajectory_log.md)); make it a Rerun recording to see the run ([Seeing a run](#seeing-a-run)), or a T4Scene for tier4/e2e-devkit with `scenario-t4scene` ([T4 Scene](t4_scene.md)) |
 | `{ScenarioName}.rrd` | The Rerun recording of the trajectory log, with `rerun.enabled=true` ([Seeing a run](#seeing-a-run)) |
 | `{ScenarioName}.sensors.rrd` | The driver's sensors recorded during the run (`rerun.lidar`, `rerun.cameras`); merged into `{ScenarioName}.rrd` and removed, so only left behind by a run or merge that did not finish ([Sensors in the recording](#sensors-in-the-recording)) |
-| `{ScenarioName}.metrics.rrd` | The run's metrics as scalars, written for a converter that does not draw them and merged into `{ScenarioName}.rrd` and removed, so only left behind by a run killed during the merge ([Metrics in the recording](#metrics-in-the-recording)) |
+| `{ScenarioName}.metrics.rrd` | Not written with the converter the `rerun` extra pins, which draws the metrics itself. A converter that does not draw them gets the run's metrics written here as scalars, then merged into `{ScenarioName}.rrd` and removed, so the file is only left behind by a run killed during that merge ([Metrics in the recording](#metrics-in-the-recording)) |
 | `{ScenarioName}.t4scene.pb`, `{ScenarioName}.t4scene.map.pb` | The trajectory log as a T4Scene and the map it names, with `t4scene.enabled=true` ([T4 Scene](t4_scene.md)) |
 | `{ScenarioName}.t4/` | The run as a T4 dataset (a directory, its version `0` inside), with `t4.enabled=true` ([T4 Dataset](t4_dataset.md)) |
 | `{ScenarioName}.sumo/` | The SUMO backend's log, generated demand and, with `fcd_output`, its floating car data (`fcd.xml`) and clock (`clock.csv`), with `traffic=sumo` ([Traffic Backends](traffic_backends.md)) |

@@ -1388,9 +1388,13 @@ def _with_fog_density_scale(driver: dict[str, Any], cfg: DictConfig) -> dict[str
 
 
 def _map_source(cfg: DictConfig) -> str | None:
-    """Where the map came from: ``map.source``, else ``map.directory``."""
+    """Where the map came from: ``map.directory``, else ``map.source``.
+
+    The same order :func:`resolve_map_paths` resolves them in: a directory on
+    this machine wins over a source, so the map the run read is the one named.
+    """
     map_cfg = cfg.get("map") or {}
-    for key in ("source", "directory"):
+    for key in ("directory", "source"):
         value = map_cfg.get(key)
         if value:
             return str(value)
