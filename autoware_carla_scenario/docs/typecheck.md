@@ -3161,7 +3161,7 @@ What Codon 0.19 needs that Python does not, beyond
   and the files of `codon/` in step):
 
   <!-- shims:start -->
-  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `fnmatch`, `hashlib`,
+  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `fcntl`, `fnmatch`, `hashlib`,
   `importlib.metadata`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions` and `urllib.parse`
@@ -3257,7 +3257,16 @@ What Codon 0.19 needs that Python does not, beyond
   `dir_fd`), `walk(top, topdown=True, onerror=None, followlinks=False)` (a
   generator that yields nothing; the callable `onerror` is not declared), the
   separators (`sep`, `pathsep`, `linesep`,
-  `devnull`, ...) and the `access()` modes. `os.path` declares `join()`,
+  `devnull`, ...), `access(path, mode, *, dir_fd=None, effective_ids=False,
+  follow_symlinks=True)` (`False`: nothing is asked) and its modes, and
+  `open(path, flags, mode=0o777, *, dir_fd=None)` (a descriptor, `0`:
+  nothing is opened) with the flags `O_RDONLY` and `O_CREAT` (Linux's
+  values) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
+  errors=None, newline=None, closefd=True)`, a file object (`typing.IO`, as
+  `Path.open()` gives). `fcntl` declares `flock(fd, operation, /)`, of
+  an `int` descriptor or a file object (what has `fileno()`), and `LOCK_SH`,
+  `LOCK_EX`, `LOCK_NB` and `LOCK_UN` (Linux's values); nothing is locked.
+  `os.path` declares `join()`,
   `basename()`, `dirname()`, `splitext()`, `isabs()`, `exists()`, `isfile()`,
   `isdir()`, `expanduser()` and `abspath()`, and `getsize()`, `getmtime()`,
   `getatime()`, `getctime()`, `islink()`, `lexists()`, `realpath()`,
@@ -3276,7 +3285,7 @@ What Codon 0.19 needs that Python does not, beyond
   capture_output=False, timeout=None, check=False, ...)` and `Popen(args,
   *, ...)` with the keywords of CPython's `Popen` the framework passes
   (`stdin`, `stdout`, `stderr`, `cwd`, `env`, `text`, `encoding`, `errors`,
-  `start_new_session`), a standard stream being `None`, one of the constants,
+  `start_new_session`, and `pass_fds`, a list or tuple of descriptors), a standard stream being `None`, one of the constants,
   a file descriptor or a file object (`typing.IO`, what `Path.open()`
   returns), `CompletedProcess(args, returncode, stdout=None,
   stderr=None)` and its `check_returncode()`, `Popen`'s `poll()`, `wait()`,
@@ -3401,11 +3410,14 @@ What Codon 0.19 needs that Python does not, beyond
   `gethostname()`, `AF_INET`, `AF_INET6`, `SOCK_STREAM` and
   `socket(family=AF_INET, type=SOCK_STREAM, proto=0)`, whose socket has
   `bind(address, /)` and `getsockname()` of a (host, port) pair (an AF_INET6
-  socket's bind takes the same pair), `close()` and `with`;
-  nothing connects or binds, and `fileno` and the rest of the module are not
+  socket's bind takes the same pair), `setsockopt(level, optname, value, /)`
+  of an `int` or bytes value, with the options `SOL_SOCKET`, `SO_REUSEADDR`,
+  `IPPROTO_IPV6` and `IPV6_V6ONLY` (Linux's values), `close()` and `with`;
+  nothing connects, binds or sets an option, and `fileno` and the rest of the module are not
   declared (#1498). `sys` replaces Codon's, keeping all of it (`argv`,
   the standard streams, `exit()`, `maxsize`), and adds `platform`
-  (`"linux"`) and `executable` (a `str`). `atexit`
+  (`"linux"`), `executable` (a `str`) and a standard stream's `buffer`
+  (the stream itself: the check reads bytes as `str`). `atexit`
   declares `register(func, *args, **kwargs)`, which takes the function by
   position only and returns it, and which calls it with the arguments it is
   given, so a function that cannot take them is refused where CPython
