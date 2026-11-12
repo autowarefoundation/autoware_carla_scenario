@@ -26,9 +26,8 @@ import subprocess
 import sys
 import threading
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from ..slurm.manifest import (
     BatchLayout,
@@ -38,7 +37,6 @@ from ..slurm.manifest import (
     sbatch_timed_out,
 )
 from ..slurm.queue import ACTIVE_STATES, squeue_states
-from . import slurm_options as _options
 from .case_paths import session_order
 from .slurm_case_state import case_state, no_job_case_state
 
@@ -65,6 +63,11 @@ from .slurm_options import (  # noqa: F401
     check_setup_line,
     check_time,
 )
+
+# The options and the command line, imported by name: Codon imports no module
+# as a value (docs/typecheck.md).
+from .slurm_options import SlurmOptions as _SlurmOptions
+from .slurm_options import build_command as _build_command
 
 __all__ = [
     "SlurmOptions",
@@ -102,7 +105,7 @@ def scenario_command() -> list[str]:
 _AT_END = re.compile(r"(\\+)\Z")
 
 
-class SlurmOptions(_options.SlurmOptions):
+class SlurmOptions(_SlurmOptions):
     """The ``launcher.*`` keys the viewer sets (the rest are the config's):
     ui.slurm_options' :class:`~autoware_carla_scenario.ui.slurm_options.SlurmOptions`,
     read off the run panel's fields."""
@@ -173,7 +176,7 @@ def build_command(
     scenario: str,
     extra_overrides: list[str],
     sweeper: str,
-    options: _options.SlurmOptions,
+    options: _SlurmOptions,
 ) -> list[str]:
     """The ``scenario`` command that submits the batch and exits (``--no-wait``),
     started as :func:`scenario_command` says.
@@ -182,12 +185,25 @@ def build_command(
     (``--multirun``, expanded by the batch itself); without one each scenario
     the pattern matches runs once.
     """
-    return _options.build_command(
+    return _build_command(
         scenario_command(), scenario, extra_overrides, sweeper, options
     )
 
 
 # ── The submission the viewer started ──────────────────────────────────────
+
+
+def _now_iso() -> str:
+    """Now, in UTC to the second, as ISO 8601 (``2026-01-01T00:00:00+00:00``):
+    when a :class:`Submission` started."""
+    if TYPE_CHECKING:
+        # Codon's datetime has no timezone and no isoformat(): the check
+        # compiles a str in its place (docs/typecheck.md).
+        return ""
+    else:
+        from datetime import datetime, timezone  # noqa: PLC0415
+
+        return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
 @dataclass
@@ -200,9 +216,7 @@ class Submission:
     batch_dir: str | None = None
     output: str = ""
     returncode: int | None = None
-    started: str = field(
-        default_factory=lambda: datetime.now(timezone.utc).isoformat(timespec="seconds")
-    )
+    started: str = field(default_factory=_now_iso)
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -253,6 +267,19 @@ def _kill_group(process: subprocess.Popen[str]) -> None:
         pass  # Every process of the group has ended already.
 
 
+def _joined(stdout: str | None, stderr: str | None) -> str:
+    """What a process wrote: *stdout* and *stderr*, those that are not empty,
+    one after the other on a line of its own."""
+    # A list of the two, not a generator of the Optional[str]s: Codon joins
+    # only str (docs/typecheck.md).
+    written: list[str] = []
+    if stdout:
+        written.append(stdout)
+    if stderr:
+        written.append(stderr)
+    return "\n".join(written)
+
+
 def _run_submit(command: list[str], base: Path) -> tuple[int | None, str]:
     """Run the submitting *command* in *base*, as :func:`run_cli` runs
     ``scenario-slurm``: its exit status and output; :data:`TIMED_OUT`, with
@@ -283,7 +310,7 @@ def _run_submit(command: list[str], base: Path) -> tuple[int | None, str]:
             # A process that left the group holds the pipes: reap ours.
             process.wait()
             stdout, stderr = "", ""
-        output = "\n".join(s for s in (stdout, stderr) if s)
+        output = _joined(stdout, stderr)
         reason = (
             f"{command[0]} did not end within {timeout:g} s and was stopped: "
             "the batch's checks or sbatch hung (is the SLURM controller "
@@ -294,21 +321,24 @@ def _run_submit(command: list[str], base: Path) -> tuple[int | None, str]:
             "refused until 600 s after the record was made. A new submit (a "
             "new batch) is taken now."
         )
-        return TIMED_OUT, f"{output}\n{reason}" if output else reason
+        # Typed as the function returns it: Codon's tuples do not widen.
+        timed_out: int | None = TIMED_OUT
+        return timed_out, f"{output}\n{reason}" if output else reason
     except BaseException:
         _kill_group(process)
         process.wait()
         raise
-    return process.returncode, "\n".join(s for s in (stdout, stderr) if s)
+    return process.returncode, _joined(stdout, stderr)
 
 
 def _submit(command: list[str], base: Path, record: Submission) -> None:
     before = set((base / "outputs").glob("*/*/slurm/manifest.json"))
     returncode, output = _run_submit(command, base)
-    match = None
+    # The directory the last match names, read at each match: Codon refuses
+    # an Optional variable as a loop's variable, which is a Match.
+    batch_dir: str | None = None
     for match in _OUTPUTS_IN.finditer(output):
-        pass
-    batch_dir: str | None = match["dir"] if match else None
+        batch_dir = match["dir"]
     if batch_dir is None:
         found = _new_manifests(base, before)
         batch_dir = str(found[-1].parent.parent) if found else None
@@ -559,7 +589,7 @@ def run_cli(args: list[str], timeout: float = 300.0) -> tuple[int, str]:
         return TIMED_OUT, str(exc)
     except OSError as exc:
         return NOT_STARTED, str(exc)
-    return done.returncode, "\n".join(s for s in (done.stdout, done.stderr) if s)
+    return done.returncode, _joined(done.stdout, done.stderr)
 
 
 def _stat_key(path: Path) -> tuple[int, int, int] | None:
