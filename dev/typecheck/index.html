@@ -4878,8 +4878,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-308 of the package's 432
-modules (71%; about 97,600 of
+309 of the package's 432
+modules (72%; about 97,600 of
 168,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4954,7 +4954,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 308 CHECKED modules</summary>
+<summary>The 309 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5984,6 +5984,10 @@ with the first paragraph of its docstring:</p>
 <td>Lightweight Lanelet2 map loader for pre-simulation use.</td>
 </tr>
 <tr>
+<td><code>t4_scene</code></td>
+<td>Trajectory logs as T4Scenes, the exchange format of tier4/e2e-devkit.</td>
+</tr>
+<tr>
 <td><code>t4_scene._proto</code></td>
 <td>Generated protobuf modules for the T4Scene exchange contract (tier4/e2e-devkit).</td>
 </tr>
@@ -6385,7 +6389,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 124 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 123 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6414,11 +6418,11 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 124 EXCLUDED modules, and why</summary>
+<summary>The 123 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped</li>
-<li><code>authoring</code>: re-exports authoring.models (pydantic), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (jinja2, packaging)</li>
+<li><code>authoring</code>: re-exports authoring.models (pydantic), authoring.compiler, authoring.hydra_config, authoring.starter and authoring.validator (pydantic, through authoring.models), authoring.persistence (yaml), authoring.package_export and authoring.wheelhouse (jinja2, packaging) and authoring.registry (<code>Any</code> field defaults), none of which is checked or modelled</li>
 <li><code>authoring._builders_generated</code>: its builders take authoring.compiler's CompiledCondition, CompiledAction and BuildContext, which reach pydantic models through authoring.models</li>
 <li><code>authoring.builders</code>: dispatches to builders by name through vars() and globals() as Callable[..., Any]; its parameters reach pydantic models through authoring.compiler, and it imports authoring._builders_generated and authoring.models (pydantic) inside functions, which are not checked</li>
 <li><code>authoring.codegen</code>: imports argparse, importlib, inspect, difflib, and templating (jinja2) and authoring.registry (<code>Any</code> field defaults), which are not checked</li>
@@ -6515,7 +6519,6 @@ the first:</p>
 <li><code>sweeper.expand</code>: imports omegaconf, and openodd inside a function; imports <code>OddDraws</code> (under <code>TYPE_CHECKING</code>) and <code>ODD_CASE_KEY</code>, <code>QUANTILE_DRAWS</code>, <code>case_settings()</code>, <code>check_sample_settings()</code>, <code>controls_from_mapping()</code>, <code>encode_case()</code>, <code>sample_draws()</code>, <code>scenario_backend()</code>, <code>search_from_config()</code>, <code>seed_setting()</code> and <code>whole_number_setting()</code> from odd.sampler (inside _with_odd_samples(), _refuse_overridden(), _config_seed(), _case_index() and expand_config()), <code>lanelet_readings()</code> from odd.route (inside _case_readings()) and <code>ControlsError</code> and <code>validate_controls()</code> from odd.controls (inside scenario_controls()), which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as <code>Any</code> and <code>Mapping[..., Any]</code>, which Codon cannot express; the lanelet a base case is on, whether a drawn case fits a base case and which base case each drawn case is put on are the checked sweeper.case_choice's, and the lanelet key a walk-back moves (<code>_walk_back_lanelet_key()</code>) is the checked sweeper.bindings's (#1697), which it re-exports</li>
 <li><code>sweeper.lanelet_constraint_sweeper</code>: imports omegaconf, hydra, tqdm, sweeper.expand (omegaconf) and hydra_compat (argparse, hydra), and, inside functions, examples.run (hydra, omegaconf) and odd.controls (omegaconf, difflib; <code>ControlsError</code> and <code>format_diagnostics()</code>), which are neither checked nor modelled; derives hydra's <code>Sweeper</code> and <code>CompactHydraException</code>; imports <code>RerunUnavailableError</code> from rerun, which the rerun model does not declare, and, inside a function, <code>T4UnavailableError</code> from t4, which the t4 model does not declare; its cases are forked, stopped and waited for by the checked sweeper.isolation, a case's timeout is checked as a whole number of seconds and its verdict read as an exit status by the checked sweeper.job_status (#1712), and the stems its case runs left in a directory are worked out by the checked run_outputs</li>
 <li><code>t4</code>: hands the world and the sensors to the T4 writer, a Rust extension imported at run time with importlib and held as a module (<code>Any</code>), and keeps NumPy arrays, datetime and threading.Condition waits Codon has no model of; t4.codon models what scenario_runner and scenario_queue use of it</li>
-<li><code>t4_scene</code>: re-exports t4_scene.convert and t4_scene.map_resource, which are not checked, and the checked t4_scene.exporter; t4_scene.codon models what scenario_runner, scenario_queue and t4_scene.exporter use of it</li>
 <li><code>t4_scene.__main__</code>: the scenario-t4scene command: imports argparse and t4_scene.convert, which is not checked</li>
 <li><code>t4_scene._proto.t4_scene_pb2</code>: imports google.protobuf</li>
 <li><code>t4_scene.convert</code>: reads JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) with orjson, imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); its frame math (the map frame's positions and angles, the rotations and quaternions) is the checked t4_scene.frames (#1665), and so is the check of a rear-axle offset (<code>checked_rear_axle_offset()</code>, #1697), which it re-exports for t4_scene.live and t4_scene.__main__; the suffixes of a T4Scene and its map (<code>SCENE_SUFFIX</code>, <code>MAP_SUFFIX</code>) are the checked run_outputs's (#1713); t4_scene.codon models the write_t4_scene() the checked t4_scene.exporter calls</li>
@@ -6524,7 +6527,7 @@ the first:</p>
 <li><code>t4_scene.route</code>: Codon crashes compiling RouteGraph.of(), which builds the lane graph with lanelet2's routing graph (a segmentation fault, or an assertion at translate.cpp:193); imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks; holds the lane graph as <code>Mapping[int, tuple[int, ...]]</code> attributes; and moves a map's points with <code>Lanelet.resetCache()</code> and <code>LineString3d.__setitem__()</code>, which the lanelet2 model does not declare; t4_scene.convert and t4_scene.live, which are not checked, are all that use it</li>
 <li><code>templating</code>: imports jinja2; its filters escape with the checked text_escape</li>
 <li><code>tools.detect_no_3d_model_lanelets</code>: imports omegaconf, yaml, tqdm, argparse, and serve_cli (argparse, ipaddress), which is not checked</li>
-<li><code>traffic.registry</code>: holds backend factories behind the <code>TrafficBackendFactory</code> alias, <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> ("expected type expression"), and takes their options as <code>Mapping[str, Any]</code>, which Codon cannot express; load_traffic_backend_plugins imports, inside it, autoware_carla_scenario.registry, which is neither checked nor modelled and is the first error the check reports (an UNCALLED entry for load_traffic_backend_plugins would skip that import, but not the alias); traffic.codon models it for the traffic package</li>
+<li><code>traffic.registry</code>: holds backend factories behind the <code>TrafficBackendFactory</code> alias, <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> ("expected type expression"), and takes their options as <code>Mapping[str, Any]</code>, which Codon cannot express; load_traffic_backend_plugins and the _walk_traffic_backend_plugins it calls import, inside them, autoware_carla_scenario.registry (<code>_PLUGIN_LOAD_LOCK</code>, <code>load_entry_point_plugins()</code>), which is neither checked nor modelled and is the first error the check reports (UNCALLED entries for both would skip those imports, but not the alias); traffic.codon models it for the traffic package</li>
 <li><code>traffic.sumo.backend</code>: imports traci, sumolib and libsumo inside its functions, and builds its network and reads its signals and crossings with build_network(), SignalTable and crossing_edges() of the checked traffic.sumo.network, which the check leaves uncalled for roadgen and xml.etree.ElementTree; holds SUMO's connection as <code>_traci: Any</code> (traci or libsumo, whichever _load_traci() finds) and sumolib's network as <code>_net: Any</code>, and takes CARLA's world, its actors and the scenario's entities typed <code>Any</code>, which Codon cannot express; the signal states it sets, SUMO's step per CARLA tick and the links a program lets go together are the checked traffic.sumo.signal_states', and its command-line options, mode bits, vehicle types and type files the checked traffic.sumo.options'</li>
 <li><code>trajectory.authoring</code>: parses document values of <code>Any</code> (YAML rows, editor fields) into <code>dict[str, Any]</code>, which Codon cannot express; what it does with the editor's text and with parsed rows is the checked trajectory.vertex_text's, and the typed builders it re-exports (the goal, via lanelets, timing and lanelet path) are the checked trajectory.authored's</li>
 <li><code>trajectory_recorder</code>: writes JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) serialised with orjson (module level; <code>orjson.JSONEncodeError</code>), reads the projector's settings with yaml (inside <code>_projector_info</code>), and neither has a Codon model; trajectory_recorder.codon models what scenario_runner uses of it</li>
@@ -8222,10 +8225,15 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   checked module builds or uses, and <code>CoverageReport</code> (<code>coverage.codon</code>,
   openodd's), which the checked <code>coverage</code> package re-exports with
   <code>merge_coverage(documents)</code>, the <code>COVERAGE_SCHEMA</code> string and the
-  <code>CoverGroup</code> enum (<code>ODD</code>, <code>SITUATION</code>, <code>SCENARIO</code>). Each constructor takes
+  <code>CoverGroup</code> enum (<code>ODD</code>, <code>SITUATION</code>, <code>SCENARIO</code>), and <code>T4SceneExport</code>
+  (<code>t4_scene.codon</code>, Protobuf messages), which the checked <code>t4_scene</code> package
+  re-exports with the suffix strings and <code>map_resource()</code> and
+  <code>trajectory_log_to_t4_scene()</code>, functions whose bodies are a
+  <code>compile_error</code> too. Each constructor takes
   Python's parameters and is a <code>compile_error</code>: its config
   (<code>AutowareBridgeConfig</code>, <code>DriverClientConfig</code>) is a checked class the model
-  does not have, or the class is only ever built by openodd's merge, so a
+  does not have, the class is only ever built by openodd's merge, or its
+  fields are messages the model has no type for, so a
   scenario that builds one fails its check rather than passing it with
   arguments the run would refuse. Such a class derives from nothing in the
   model: a subclass of the model's <code>EgoVehicle</code> that nothing builds breaks
@@ -8448,7 +8456,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 12, 2026 04:48:14 UTC"><span class="timeago" datetime="2026-11-12T04:48:14+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 12, 2026 04:48:14 UTC">2026-11-12</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 12, 2026 05:24:53 UTC"><span class="timeago" datetime="2026-11-12T05:24:53+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 12, 2026 05:24:53 UTC">2026-11-12</span>
   </span>
 
     
