@@ -504,10 +504,11 @@ def test_parse_object_raises_what_json_loads_raises_nested_too_deep() -> None:
 def test_a_member_too_deep_to_lay_out_raises_as_write_json_does(
     tmp_path: Path, depth: int
 ) -> None:
-    # Laid out as write_json lays it out: by json's encoder written in Python
-    # up to Python 3.12, which lays out five hundred levels but not five
-    # thousand (which json.loads() reads on 3.12), and by its C encoder from
-    # 3.13 on, which lays out both.
+    # Laid out as write_json lays it out: json.dump() takes json's encoder
+    # written in Python on every version, which lays out five hundred levels
+    # but not five thousand (which json.loads() reads on 3.12). json.dumps()
+    # takes the C encoder from 3.13 on, which on 3.14 lays out both, so the
+    # members must not lay out with it.
     text = '{"a": 1, "deep": ' + _nested(depth) + "}"
     if depth >= _loads_limit():
         pytest.skip("json.loads() reads no text this deep here")

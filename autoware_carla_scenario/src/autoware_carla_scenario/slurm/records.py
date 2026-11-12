@@ -11,13 +11,17 @@ byte, the text :func:`.manifest.write_json` writes for the object
 
 A value is held as the text the C encoder writes, not as it is laid out
 inside the object, because reading must not fail where ``json.loads()`` reads
-the object: ``json`` lays out ``indent=2`` with its encoder written in Python,
-which recurses a Python call per level of nesting and so fails on a value
-nested a thousand deep, while ``json.loads()`` reads ten times that on
-Python 3.12 (Python 3.10 counts both against the same limit; the C encoder
-then has a level to spare, as a member is a level shallower than its object).
-Only the text written for the object (:meth:`JsonMembers.object_text`,
-:meth:`JsonMembers.member_text`) is laid out, as ``write_json`` would.
+the object: ``write_json`` lays out ``indent=2`` with ``json.dump()``, which
+always takes ``json``'s encoder written in Python, which recurses a Python
+call per level of nesting and so fails on a value nested a thousand deep,
+while ``json.loads()`` reads ten times that on Python 3.12 (Python 3.10
+counts both against the same limit; the C encoder then has a level to spare,
+as a member is a level shallower than its object).  Only the text written for
+the object (:meth:`JsonMembers.object_text`, :meth:`JsonMembers.member_text`)
+is laid out, with ``json.dump()`` as ``write_json`` lays it out, so it fails
+where ``write_json`` fails: ``json.dumps()`` takes the C encoder for
+``indent=2`` too from Python 3.13 on, which on 3.14 goes as deep as the stack
+allows.
 
 :func:`parse_object` reads an object's text into its members as
 ``json.loads()`` reads it: a key named twice keeps its first place and its last
@@ -30,6 +34,23 @@ import json
 from typing import Any
 
 __all__ = ["JsonMembers", "parse_object"]
+
+
+class _Chunks:
+    """What ``json.dump()`` writes to: the chunks it writes, joined by
+    :meth:`text`."""
+
+    _parts: list[str]
+
+    def __init__(self) -> None:
+        self._parts = list[str]()
+
+    def write(self, chunk: str) -> int:
+        self._parts.append(chunk)
+        return len(chunk)
+
+    def text(self) -> str:
+        return "".join(self._parts)
 
 
 def _member_text(single: str) -> str:
@@ -81,7 +102,9 @@ class JsonMembers:
             )
         members = cls()
         for key, item in value.items():
-            single = json.dumps({key: item}, indent=2, ensure_ascii=False)
+            chunks = _Chunks()
+            json.dump({key: item}, chunks, indent=2, ensure_ascii=False)
+            single = chunks.text()
             name = next(iter(json.loads(json.dumps({key: None}))))
             if name in members._values:
                 raise ValueError(f"the object names the member {name!r} twice")
@@ -111,7 +134,9 @@ class JsonMembers:
         if key in self._layouts:
             return self._layouts[key]
         value = json.loads(self._values[key])
-        return _member_text(json.dumps({key: value}, indent=2, ensure_ascii=False))
+        chunks = _Chunks()
+        json.dump({key: value}, chunks, indent=2, ensure_ascii=False)
+        return _member_text(chunks.text())
 
     def value_text(self, key: str) -> str:
         """The JSON text of the value of the member *key*, on one line:
