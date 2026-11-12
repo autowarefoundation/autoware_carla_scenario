@@ -644,7 +644,8 @@ def test_a_manifest_of_a_version_read_reads_as_json_holds_it(
         '"cases": [{"index": 1}], "big": 123456789012345678901234567890}',
     )
     data = layout.read_manifest()
-    assert data.members.keys() == ["cases", "version", "batch_dir", "extra", "big"]
+    assert data.keys() == ["cases", "version", "batch_dir", "extra", "big"]
+    assert data.members.keys() == ["version", "batch_dir"]
     assert data["cases"] == [{"index": 1}]
     assert [case.index() for case in data.cases()] == [1]
     assert data["version"] == json.loads(version)
@@ -661,7 +662,7 @@ def test_read_manifest_gives_a_new_manifest_each_time(tmp_path: Path) -> None:
     first["cases"].append("changed")
     again = layout.read_manifest()
     assert again["cases"] == []
-    assert again.members.keys() == ["version", "cases"]
+    assert again.keys() == ["version", "cases"]
     assert again.cases() == []
 
 

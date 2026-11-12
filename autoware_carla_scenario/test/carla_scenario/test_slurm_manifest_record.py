@@ -112,6 +112,12 @@ def _case(index: int) -> dict[str, str]:
 #: The keys of a case, in the order the submitter writes them.
 _CASE_KEYS = tuple(_case(0))
 
+#: What read_manifest holds as JSON text of a manifest and of each case: what
+#: the checked readers read (the rest is read from the document json.loads()
+#: read, through Manifest.get() and manifest[key]).
+_HELD = ("version", "expand", "batch_dir", "batch_dir_relative")
+_CASE_HELD = ("index", "label", "stem", "case_overrides")
+
 
 def _object(members: dict[str, str]) -> str:
     """The text of the object of *members* (each a value's JSON text)."""
@@ -863,11 +869,14 @@ def test_the_typed_accessors_of_each_manifest(
         assert new == old
         return
     document, manifest = old[1], new[1]
-    assert manifest.members.keys() == list(document)
-    for key in document:
+    # The members the checked readers read, and only those, held as text.
+    assert manifest.keys() == list(document)
+    assert manifest.members.keys() == [k for k in document if k in _HELD]
+    for key in manifest.members.keys():
         assert manifest.members.value_text(key) == json.dumps(
             document[key], ensure_ascii=False
         )
+    for key in document:
         assert key in manifest and manifest.has(key)
         _same(manifest[key], document[key])
         assert type(manifest[key]) is type(document[key])
@@ -898,21 +907,42 @@ def test_the_typed_accessors_of_each_manifest(
                 partial(lambda raw: list(raw["case_overrides"]), raw),
             ),
         ]
-        for key in (*_CASE_KEYS, "z"):
-            pairs.append(
-                (
-                    partial(operator.getitem, case, key),
-                    partial(lambda raw, key: raw[key], raw, key),
+        if isinstance(raw, dict):
+            assert case.members.keys() == [k for k in raw if k in _CASE_HELD]
+            for key in case.members.keys():
+                assert case.members.value_text(key) == json.dumps(
+                    raw[key], ensure_ascii=False
                 )
-            )
-            pairs.append(
-                (
-                    partial(case.get, key),
-                    partial(lambda raw, key: raw.get(key), raw, key),
-                )
-            )
         for typed, read in pairs:
             _same(_outcome(typed), _outcome(read))
+
+
+def test_a_member_not_held_as_text_is_refused_not_misread() -> None:
+    """What the manifest holds as text is what the checked readers read; a
+    typed accessor asked for another member it has refuses, rather than
+    read it as missing."""
+    manifest = manifest_of_text(
+        '{"version": 1, "cwd": "/x", "typechecked": true, "batch_dir": "/b", '
+        '"cases": [{"index": 0, "label": "a", "config": {"k": 1}}]}'
+    )
+    assert manifest is not None
+    assert manifest.members.keys() == ["version", "batch_dir"]
+    assert manifest.keys() == ["version", "cwd", "typechecked", "batch_dir", "cases"]
+    for key in ("cwd", "typechecked", "cases"):
+        with pytest.raises(ValueError, match=f"holds no '{key}' as JSON text"):
+            manifest.is_true(key)
+        with pytest.raises(ValueError, match=f"holds no '{key}' as JSON text"):
+            manifest.text(key)
+    assert manifest.is_true("expand") is False
+    assert manifest.text("batch_dir") == "/b"
+    assert manifest["cwd"] == "/x" and manifest.get("typechecked") is True
+    (case,) = manifest.cases()
+    assert case.members.keys() == ["index", "label"]
+    with pytest.raises(ValueError, match="holds no 'config' as JSON text"):
+        case._value("config")
+    with pytest.raises(ValueError, match="holds no 'config' as JSON text"):
+        case._get("config")
+    assert manifest["cases"][0]["config"] == {"k": 1}
 
 
 @pytest.mark.parametrize(
