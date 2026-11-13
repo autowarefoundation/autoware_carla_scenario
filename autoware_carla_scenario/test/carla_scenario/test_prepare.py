@@ -640,6 +640,64 @@ class TestDockerSettingsAreChecked:
         )
         assert settings.pull == "always" and settings.image == "img:1"
 
+    @pytest.mark.parametrize(
+        ("key", "value", "message"),
+        [
+            # Each handed to docker as its str() before #2143.
+            ("image", False, "must be an image name, got False"),
+            ("image", 12, "must be an image name, got 12"),
+            ("image", "", "must be an image name, got ''"),
+            ("image", " ", "must be an image name, got ' '"),
+            ("image", ["img:1"], "must be an image name, got \\['img:1'\\]"),
+            ("gpus", False, "must be auto, all, none or what docker run --gpus"),
+            ("gpus", True, "must be auto, all, none or what docker run --gpus"),
+            ("gpus", 1.5, "must be auto, all, none or what docker run --gpus"),
+            ("gpus", "", "must be auto, all, none or what docker run --gpus"),
+            ("gpus", ["all"], "must be auto, all, none or what docker run --gpus"),
+        ],
+    )
+    def test_an_image_or_gpus_of_the_wrong_kind_is_refused(
+        self, key: str, value: object, message: str
+    ) -> None:
+        with pytest.raises(ValueError, match=rf"^backends\.soma\.{key} {message}"):
+            docker_module.read_docker_settings(
+                "soma", {key: value}, image="img:1", container_port=1
+            )
+
+    def test_an_absent_or_null_image_or_gpus_is_the_default(self) -> None:
+        for settings in ({}, {"image": None, "gpus": None}):
+            read = docker_module.read_docker_settings(
+                "soma", settings, image="img:1", container_port=1
+            )
+            assert (read.image, read.gpus) == ("img:1", "auto")
+        read = docker_module.read_docker_settings(
+            "soma",
+            {"image": "other:2", "gpus": "device=1"},
+            image="img:1",
+            container_port=1,
+        )
+        assert (read.image, read.gpus) == ("other:2", "device=1")
+        # A count, as docker run --gpus takes one (gpus=2 on the command line).
+        read = docker_module.read_docker_settings(
+            "soma", {"gpus": 2}, image="img:1", container_port=1
+        )
+        assert read.gpus == "2"
+
+    def test_nothing_is_pulled_or_started_for_a_bad_gpus(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        recorded = _Docker(image_present=False)
+        monkeypatch.setattr(docker_module.subprocess, "run", recorded)
+
+        @need_prepare(_Answering)
+        class Scenario:
+            pass
+
+        pool = BackendPool({"ardy": {"gpus": False}}, check_resources=False)
+        with pytest.raises(ValueError, match=r"backends\.ardy\.gpus"):
+            pool.prepare_scenarios([Scenario()])
+        assert recorded.calls == []
+
     def test_nothing_is_pulled_or_started_for_a_bad_setting(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
