@@ -149,6 +149,31 @@ def _heavy_metrics_decision_cleared(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 @pytest.fixture(autouse=True)
+def _typecheck_mode_left_as_found() -> Iterator[None]:
+    """Put back the ``$AUTOWARE_CARLA_SCENARIO_TYPECHECK`` a test found.
+
+    A SLURM task whose batch was checked when it was submitted
+    (``slurm.worker.run_task``) sets it to ``off`` in ``os.environ``, for the
+    rest of its process.  A test that runs the task in its own process, as
+    several do, would otherwise switch the static check off for every later
+    test of the same xdist worker: a scenario the check refuses would then be
+    built, with no warning (``check_registered_scenario`` returns at
+    ``off``).  ``monkeypatch.delenv`` of a variable that is not set records
+    nothing to undo, so it does not guard against this.
+    """
+    import os
+
+    from autoware_carla_scenario.typecheck.mode import TYPECHECK_ENV
+
+    found = os.environ.get(TYPECHECK_ENV)
+    yield
+    if found is None:
+        os.environ.pop(TYPECHECK_ENV, None)
+    else:
+        os.environ[TYPECHECK_ENV] = found
+
+
+@pytest.fixture(autouse=True)
 def _vehicle_entity_run_state_cleared() -> Iterator[None]:
     """Forget the entry speeds, the warm-up flag and the control holds a test
     left behind.
