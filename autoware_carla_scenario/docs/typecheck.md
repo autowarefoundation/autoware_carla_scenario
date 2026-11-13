@@ -2523,7 +2523,10 @@ the package's README (`authoring.package_names`, #1695; the rule against the
 framework's own name is `scaffold.names`', which both apply), where the viewer keeps its
 recordings and its copy of Rerun's web viewer, and which web viewer it picks
 (`ui.web_viewer_paths`, #1672), and how it puts them in place on disk
-(`ui.recording_files`, #2124), what a run names its outputs, the path
+(`ui.recording_files`, #2124), what the viewer reads off a request and links
+a session with (`ui.request_values`, #2135: whether a body is sent as JSON, a
+session's reference, the ODD attribute a query names; not `ui.app`, which
+serves the requests and re-exports it), what a run names its outputs, the path
 rule of a trajectory log and its recordings among them (`run_outputs`, #1678:
 the stem a log is of, its recording and its sensor recording, which `rerun`,
 `rerun_lidar` and `ui.web_viewer_paths` all name them with; `ui.case_paths`
@@ -2553,7 +2556,9 @@ read and which `vehicles` entry of `environment.rules` a vehicle follows
 (`weather_inputs`, #1732; `weather_rules`, which reads the rules with openodd,
 re-exports it), the fields of a control and of `sweep.odd_sample` and the keys
 a sweep sets (`odd.control_fields`, #1733; `odd.controls` and `odd.sampler`
-re-export them), and the parts of the
+re-export them), what `scenario-odd route` reads off its command line and the
+metres per bucket it prints (`odd.route_text`, #2135; not `odd.cli`, which
+expands the scenario configs' globs and re-exports it), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 `__init__` re-exports what is not checked through models of it (see *A class
 a checked package only re-exports* below). Each checked module is listed here
@@ -2586,7 +2591,8 @@ the first:
   Codon lacks (`inspect`, `concurrent.futures`, `importlib` beyond
   `importlib.metadata`, or more of `os`, `pathlib`, `shutil`,
   `signal`, `socket`, `subprocess`, `tempfile`, `threading`, `dataclasses`,
-  `importlib.metadata` or `urllib.parse` than their shims declare), at module
+  `getpass`, `importlib.metadata` or `urllib.parse` than their shims
+  declare), at module
   level or inside a function the check calls. This is most of the tooling
   around a run (the editor, the UI, authoring, the sweeper's expansion and
   Hydra sweeper, the SLURM launcher's submitting side, the recordings and
@@ -3178,7 +3184,7 @@ What Codon 0.19 needs that Python does not, beyond
   and the files of `codon/` in step):
 
   <!-- shims:start -->
-  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `hashlib`,
+  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `getpass`, `hashlib`,
   `importlib.metadata`, `ipaddress`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `platform`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions`, `urllib.parse`, `uuid` and `xml.etree.ElementTree`
@@ -3329,7 +3335,11 @@ What Codon 0.19 needs that Python does not, beyond
   nil UUID's in the check, as nothing runs), and `UUID(hex)` of a `str`, the
   first of CPython's parameters; the rest of `UUID` (`int`, `bytes`,
   `version`, ...), `uuid1()`, `uuid3()`, `uuid5()` and the namespaces are
-  not declared. `fcntl` declares `flock(fd, operation, /)`, of
+  not declared. `getpass` declares `getuser()`, of no argument, as in
+  CPython 3.10, giving a `str` (empty in the check, as nothing runs), the user
+  `hils.host_devices` sets the devices up for when `SUDO_USER` is unset;
+  `getpass()`, the prompt for a password, and `GetPassWarning` are not
+  declared. `fcntl` declares `flock(fd, operation, /)`, of
   an `int` descriptor or a file object (what has `fileno()`), and `LOCK_SH`,
   `LOCK_EX`, `LOCK_NB` and `LOCK_UN` (Linux's values); nothing is locked.
   `os.path` declares `join()`,

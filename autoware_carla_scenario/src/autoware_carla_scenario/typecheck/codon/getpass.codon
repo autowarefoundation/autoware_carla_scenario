@@ -1,0 +1,13 @@
+# The part of Python's getpass the checked framework calls, for the checker
+# (docs/typecheck.md): getuser(), the name of the user, with CPython 3.10's
+# signature (no argument), the oldest Python the package supports
+# (hils.host_devices names the user hilspy's playbooks set the devices up
+# for with it). Nothing here runs: the name is empty. getpass(), the prompt
+# for a password, and GetPassWarning are not declared, so the check refuses
+# them.
+
+
+# getuser(): the login name (LOGNAME, USER, LNAME or USERNAME, else the
+# password database's).
+def getuser() -> str:
+    return ""

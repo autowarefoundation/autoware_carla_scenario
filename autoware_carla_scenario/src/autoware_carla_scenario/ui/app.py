@@ -29,6 +29,12 @@ from . import cases, recordings, results, runner, scanner, slurm_launch
 from .case_paths import INDEX_DIGITS, is_index, session_order
 from .models import RunProgress, SessionSummary
 
+# Whether a body is sent as JSON, a session's reference and the ODD attribute a
+# query names are the checked ui.request_values's (#2135), re-exported here.
+from .request_values import _attribute as _attribute
+from .request_values import _is_json_type as _is_json_type
+from .request_values import _session_ref as _session_ref
+
 logger = logging.getLogger(__name__)
 
 _UI_DIR = Path(__file__).resolve().parent
@@ -151,12 +157,6 @@ class BodyError(ValueError):
 def _is_number(value: object) -> bool:
     """An int or a float, not a bool (which JSON keeps apart)."""
     return isinstance(value, (int, float)) and not isinstance(value, bool)
-
-
-def _is_json_type(content_type: str) -> bool:
-    """Whether a ``Content-Type`` names JSON (``application/json``, with or
-    without parameters such as ``; charset=utf-8``)."""
-    return content_type.split(";", 1)[0].strip().lower() == "application/json"
 
 
 async def _json_object(request: Request) -> dict[str, Any]:
@@ -740,10 +740,6 @@ async def web_viewer_file(version: str, name: str) -> FileResponse:
 # ── ODD results and comparison ───────────────────────────────────────────
 
 
-def _session_ref(session_type: str, date: str, time: str) -> str:
-    return f"{session_type}/{date}/{time}"
-
-
 def _parse_ref(ref: str) -> tuple[str, str, str] | None:
     parts = ref.strip("/").split("/")
     if len(parts) != 3:
@@ -775,10 +771,6 @@ def _openodd() -> Any:
     import openodd  # noqa: PLC0415 -- a Rust extension, loaded on first use
 
     return openodd
-
-
-def _attribute(value: str | None, attributes: list[str]) -> str | None:
-    return value if value and value in attributes else None
 
 
 @app.get("/session/{session_type}/{date}/{time}/odd", response_class=HTMLResponse)
