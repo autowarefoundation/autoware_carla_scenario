@@ -136,3 +136,40 @@ def test_format_buckets_is_as_before() -> None:
         assert _outcome(odd_cli._format_buckets, bucket) == _outcome(
             _old_format_buckets, bucket
         ), bucket
+
+
+def _old_split(items: Sequence[str]) -> tuple[list[str], list[str]]:
+    """The split of _scenario_configs() as it was, before any glob is read."""
+    patterns: list[str] = []
+    overrides: list[str] = []
+    for item in items:
+        if item.startswith("scenario="):
+            patterns.append(item[len("scenario=") :])
+        elif "=" in item:
+            overrides.append(item)
+        else:
+            patterns.append(item)
+    return patterns, overrides
+
+
+def test_the_checked_split_is_the_loop_it_replaces() -> None:
+    from autoware_carla_scenario.odd import route_text
+
+    rng = random.Random(2135)
+    lists: List[List[Any]] = [[], [*_ITEMS, *_GLOBS], [None], ["a", 1, "b=1"]]
+    for _ in range(500):
+        lists.append([rng.choice(_ITEMS + _GLOBS) for _ in range(rng.randrange(0, 6))])
+    for items in lists:
+        assert _outcome(route_text._split_items, items) == _outcome(
+            _old_split, items
+        ), items
+
+
+def test_odd_cli_re_exports_the_checked_format_buckets() -> None:
+    # odd.cli's _format_buckets is odd.route_text's object (#2135), and
+    # _scenario_configs() splits its arguments with odd.route_text's
+    # _split_items(); no test patches either in odd.cli's namespace.
+    from autoware_carla_scenario.odd import route_text
+
+    assert odd_cli._format_buckets is route_text._format_buckets
+    assert odd_cli._split_items is route_text._split_items
