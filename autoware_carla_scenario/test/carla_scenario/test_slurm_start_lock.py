@@ -779,3 +779,272 @@ def test_the_worker_re_exports_the_start_locks_own_objects() -> None:
     for name in ("_take_over", "_exclusive_file", "_start_lock"):
         assert getattr(worker, name).__module__ == worker.__name__
     assert worker._TAKEOVER_STALE_AFTER == 10.0
+
+
+# -- _take_over (#2144) --------------------------------------------------------
+#
+# slurm/worker.py's _TAKEOVER_STALE_AFTER and _take_over() as they were before
+# they moved into slurm.start_lock (#2144), copied verbatim but for their
+# names (_old_ / _OLD_ in front, and in the calls of the oracles above).
+
+
+#: How old (by the file server's clock) the takeover mutex of a lock file is
+#: when the waiter holding it was killed: it is held for a few file
+#: operations only.
+_OLD_TAKEOVER_STALE_AFTER = 10.0
+
+
+def _old_take_over(
+    path: Path,
+    stale: _OldLockId,
+    clock: _OldServerClock,
+    stale_after: float,
+    token: str,
+) -> bool:
+    """Remove the lock at *path* judged stale as *stale*, if it still is it,
+    one waiter at a time; whether this waiter removed it (and need not wait
+    before trying the lock again).
+
+    The waiters taking over one stale lock share a mutex keyed to its
+    identity and made of generations: ``<path>.takeover.<ino>-<mtime>.<g>``,
+    created with ``O_EXCL``.  A waiter creates generation 1, or generation
+    g+1 once it has seen generation g and found it stale (its creator was
+    killed: :data:`_TAKEOVER_STALE_AFTER` seconds by the server's clock).
+    Creating never removes anything, so each generation has one winner, and
+    a waiter that finds the newest generation live leaves the takeover to
+    its creator.  The winner of generation g backs off, leaving its
+    generation in place, if generation g+1 exists; otherwise it checks
+    again that *path* is still *stale* and stale, unlinks it
+    (:func:`_remove_stale`), and removes generations 1 to g.  Except in the
+    cases below:
+
+    - Of the waiters that judged lock L1 stale together, one removes it;
+      the others find generation g live, or, once it is removed, win a
+      generation of their own, find *path* free or holding a fresh lock L2
+      (another identity), and leave it alone.  No waiter renames, puts back
+      or removes a live lock.
+    - A waiter killed while holding generation g leaves it and L1: after
+      :data:`_TAKEOVER_STALE_AFTER` seconds one waiter wins g+1 and removes
+      both; the waiters that arrive together find generation g stale at once
+      and still only one of them wins g+1.  A missing generation below a
+      dead one (its winner stalled, found itself superseded by a winner that
+      was then killed) is won again, left in place, and climbed past once
+      it is stale.  A mutex of a lock already removed only leads its winner
+      to find the lock gone.
+
+    The cases: a holder alive past its staleness.  The holder of L1 if it
+    held it past *stale_after* (which the stagger's spacing + 60 s rules out
+    but for a stalled node); or the winner of generation g if it stalled for
+    :data:`_TAKEOVER_STALE_AFTER` seconds, so that g+1 was won as well (two
+    winners of the mutex) -- right between its last check of *path* and its
+    unlink while the winner of g+1 removed L1 and a task made L2, it removes
+    L2.  Only then may two tasks hold the lock.
+    """
+    prefix = f"{path.name}.takeover.{stale[1]}-{stale[2]}."
+    generation = 1
+    while True:
+        mutex = path.with_name(f"{prefix}{generation}")
+        if _old_create_lock(mutex, token):
+            break
+        seen = _old_lock_identity(mutex)
+        if seen is None:
+            continue  # removed by a winner that found L1 gone: try it again
+        if not clock.stale(seen[1], _OLD_TAKEOVER_STALE_AFTER):
+            return False  # its winner is taking the lock over
+        generation += 1
+    if path.with_name(f"{prefix}{generation + 1}").exists():
+        # Superseded (this generation was missing, or this waiter stalled):
+        # generation g+1's winner removes 1 to g+1, or, if it was killed,
+        # this generation goes stale and the next waiter climbs past both.
+        # Removing it here would leave a gap below a dead g+1 that every
+        # waiter would fill and back off from, for ever.
+        return False
+    seen = _old_lock_identity(path)
+    removed = (
+        seen is not None
+        and seen[0] == stale
+        and clock.stale(seen[1], stale_after)
+        and _old_remove_stale(path, stale)
+    )
+    # The lock judged stale is gone: its mutex goes too.
+    for old in range(generation, 0, -1):
+        with contextlib.suppress(OSError):
+            os.unlink(path.with_name(f"{prefix}{old}"))
+    return removed
+
+
+class _FakeClock:
+    """A server clock that answers ``stale()`` from *answers* (then ``True``),
+    recording each age it is asked about and the mtime's file, by mtime."""
+
+    def __init__(self, answers: list[bool], mtimes: dict[float, str]) -> None:
+        self.answers = list(answers)
+        self.mtimes = mtimes
+        self.asked: list[tuple[str, float]] = []
+
+    def stale(self, mtime: float, after: float) -> bool:
+        self.asked.append((self.mtimes.get(mtime, "?"), after))
+        return self.answers.pop(0) if self.answers else True
+
+
+_MUTEXES: dict[str, list[tuple[int, bool]]] = {
+    # generation -> whether its mtime is an hour old
+    "none": [],
+    "gen1": [(1, False)],
+    "gen1-old": [(1, True)],
+    "gen1-gen2": [(1, True), (2, False)],
+    "gen2-only": [(2, True)],
+    "gen1-gen3": [(1, True), (3, True)],
+}
+
+
+def _takeover_setup(lock: str, mutexes: str) -> Callable[[Path], Any]:
+    def setup(root: Path) -> Any:
+        path = root / "start.lock.excl"
+        path.write_bytes(b"dead-host:1:task")
+        old = time.time() - 3600
+        os.utime(path, (old, old))
+        st = path.stat()
+        stale = (st.st_dev, st.st_ino, st.st_mtime_ns, "dead-host:1:task")
+        if lock == "missing":
+            path.unlink()
+        elif lock == "replaced":
+            path.unlink()
+            path.write_bytes(b"live-host:2:task")
+        elif lock == "rewritten":  # the same inode, a later mtime
+            path.write_bytes(b"dead-host:1:task")
+        prefix = f"{path.name}.takeover.{stale[1]}-{stale[2]}."
+        mtimes = {st.st_mtime: "lock"}
+        for generation, aged in _MUTEXES[mutexes]:
+            mutex = root / f"{prefix}{generation}"
+            mutex.write_bytes(b"waiter:%d" % generation)
+            if aged:
+                os.utime(mutex, (old - generation, old - generation))
+            mtimes[mutex.stat().st_mtime] = f"mutex{generation}"
+        if path.exists():
+            mtimes[path.stat().st_mtime] = "lock"
+        return path, stale, mtimes
+
+    return setup
+
+
+def _takeover_run(
+    take_over: Callable[..., bool], answers: list[bool]
+) -> Callable[[Path, Any], Any]:
+    def run(root: Path, arg: Any) -> Any:
+        path, stale, mtimes = arg
+        clock = _FakeClock(answers, mtimes)
+        return take_over(path, stale, clock, 60.0, "me:1:token"), clock.asked
+
+    return run
+
+
+def _compare_takeover(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    setup: Callable[[Path], Any],
+    answers: list[bool],
+    fail: dict[tuple[str, int], BaseException] | None = None,
+) -> None:
+    """:func:`_compare` for a takeover: the lock judged stale has an inode and
+    mtime of its own in each directory, which its mutexes are named after,
+    and the stream a lock's identity is read through a descriptor of its own:
+    both are written alike before the runs are compared."""
+    results = []
+    for name, fn in (("old", _old_take_over), ("new", worker._take_over)):
+        root = tmp_path / name
+        root.mkdir()
+        arg = setup(root)
+        stale = arg[1]
+        calls = _Calls(root)
+        calls.fail = dict(fail or {})
+        before = _open_fds()
+        with monkeypatch.context() as m:
+            calls.install(m)
+            outcome = _outcome(partial(_takeover_run(fn, answers), root, arg))
+        # A close made to fail leaves its descriptor open in both (the fake
+        # raises before closing): it is closed here, once its run is over.
+        opened = {number: fd for fd, number in calls.fds.items()}
+        for entry, then in zip(calls.log, calls.log[1:]):
+            if entry[0] == "close" and then[:2] == ("close", "raised"):
+                with contextlib.suppress(OSError):
+                    os.close(opened[entry[1][1]])
+        assert _open_fds() == before, f"{name} left a descriptor open"
+        text = repr((outcome, calls.log, _files(root)))
+        text = text.replace(f".{stale[1]}-{stale[2]}.", ".<id>.")
+        results.append(re.sub(r"'other\d+'", "'other'", text))
+    assert results[0] == results[1]
+
+
+_ANSWERS = [[], [False], [True, False], [False, True], [True, True, False]]
+
+
+@pytest.mark.parametrize("answers", range(len(_ANSWERS)))
+@pytest.mark.parametrize("mutexes", sorted(_MUTEXES))
+@pytest.mark.parametrize("lock", ["stale", "missing", "replaced", "rewritten"])
+def test_a_takeover_is_as_it_was(
+    lock: str,
+    mutexes: str,
+    answers: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_fd_leak: None,
+) -> None:
+    _compare_takeover(
+        tmp_path, monkeypatch, _takeover_setup(lock, mutexes), _ANSWERS[answers]
+    )
+
+
+@pytest.mark.parametrize("error", range(len(_ERRORS)))
+@pytest.mark.parametrize(
+    "call",
+    [
+        ("open", 1),
+        ("open", 2),
+        ("write", 1),
+        ("write", 2),
+        ("close", 1),
+        ("fstat", 1),
+        ("fstat", 2),
+        ("unlink", 1),
+        ("unlink", 2),
+        ("unlink", 3),
+    ],
+)
+@pytest.mark.parametrize("mutexes", ["none", "gen1-old", "gen1-gen3"])
+@pytest.mark.parametrize("lock", ["stale", "replaced"])
+def test_a_failing_takeover_is_as_it_was(
+    lock: str,
+    mutexes: str,
+    call: tuple[str, int],
+    error: int,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    no_fd_leak: None,
+) -> None:
+    _compare_takeover(
+        tmp_path,
+        monkeypatch,
+        _takeover_setup(lock, mutexes),
+        [],
+        fail={call: _ERRORS[error]},
+    )
+
+
+def test_an_existing_mutex_reported_taken_is_retried_as_it_was(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, no_fd_leak: None
+) -> None:
+    """``_create_lock`` refused by ``O_EXCL`` for a mutex that is then gone
+    (its winner removed it): the same generation is tried again."""
+    _compare_takeover(
+        tmp_path,
+        monkeypatch,
+        _takeover_setup("stale", "none"),
+        [],
+        fail={("open", 1): FileExistsError(errno.EEXIST, "File exists")},
+    )
+
+
+def test_the_takeover_staleness_is_as_it_was() -> None:
+    assert worker._TAKEOVER_STALE_AFTER == _OLD_TAKEOVER_STALE_AFTER == 10.0
+    assert type(worker._TAKEOVER_STALE_AFTER) is float
