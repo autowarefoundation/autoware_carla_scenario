@@ -4882,9 +4882,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-330 of the package's 444
+332 of the package's 446
 modules (74%; about 103,600 of
-170,900 lines) are <code>CHECKED</code>: the kinematics, the
+171,000 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4939,7 +4939,10 @@ the package's README (<code>authoring.package_names</code>, #1695; the rule agai
 framework's own name is <code>scaffold.names</code>', which both apply), where the viewer keeps its
 recordings and its copy of Rerun's web viewer, and which web viewer it picks
 (<code>ui.web_viewer_paths</code>, #1672), and how it puts them in place on disk
-(<code>ui.recording_files</code>, #2124), what a run names its outputs, the path
+(<code>ui.recording_files</code>, #2124), what the viewer reads off a request and links
+a session with (<code>ui.request_values</code>, #2135: whether a body is sent as JSON, a
+session's reference, the ODD attribute a query names; not <code>ui.app</code>, which
+serves the requests and re-exports it), what a run names its outputs, the path
 rule of a trajectory log and its recordings among them (<code>run_outputs</code>, #1678:
 the stem a log is of, its recording and its sensor recording, which <code>rerun</code>,
 <code>rerun_lidar</code> and <code>ui.web_viewer_paths</code> all name them with; <code>ui.case_paths</code>
@@ -4969,13 +4972,15 @@ read and which <code>vehicles</code> entry of <code>environment.rules</code> a v
 (<code>weather_inputs</code>, #1732; <code>weather_rules</code>, which reads the rules with openodd,
 re-exports it), the fields of a control and of <code>sweep.odd_sample</code> and the keys
 a sweep sets (<code>odd.control_fields</code>, #1733; <code>odd.controls</code> and <code>odd.sampler</code>
-re-export them), and the parts of the
+re-export them), what <code>scenario-odd route</code> reads off its command line and the
+metres per bucket it prints (<code>odd.route_text</code>, #2135; not <code>odd.cli</code>, which
+expands the scenario configs' globs and re-exports it), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 <code>__init__</code> re-exports what is not checked through models of it (see <em>A class
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 330 CHECKED modules</summary>
+<summary>The 332 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5805,6 +5810,10 @@ with the first paragraph of its docstring:</p>
 <td>Plan a scenario's route on the Lanelet2 map before it runs.</td>
 </tr>
 <tr>
+<td><code>odd.route_text</code></td>
+<td>What <code>scenario-odd route</code> reads off its command line, and the metres it prints.</td>
+</tr>
+<tr>
 <td><code>odd.scenario_measure</code></td>
 <td>Map an ODD attribute onto a scenario measure.</td>
 </tr>
@@ -6229,6 +6238,10 @@ with the first paragraph of its docstring:</p>
 <td>How the viewer keeps its recordings and its copy of Rerun's web viewer on disk.</td>
 </tr>
 <tr>
+<td><code>ui.request_values</code></td>
+<td>What the viewer reads off a request and links a session with.</td>
+</tr>
+<tr>
 <td><code>ui.runner</code></td>
 <td>Scenario execution bridge using subprocess + progress tracking.</td>
 </tr>
@@ -6307,8 +6320,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>194 functions and methods of those modules are <code>UNCALLED</code>
-(59 of them protected helpers, see <em>What is
+<p>193 functions and methods of those modules are <code>UNCALLED</code>
+(58 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6320,7 +6333,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 194 UNCALLED functions and methods, and why</summary>
+<summary>The 193 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6413,7 +6426,6 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>gate.sweep_plan.write_sweep_plan</code>: writes the plan as a JSON object of mixed value types (<code>dict[str, Any]</code>: a schema string beside a list of jobs, each a directory string beside a list of overrides), which Codon cannot express</li>
 <li><code>gate.unrecorded._recorded_at_stem</code>: takes a batch summary's entry as json.loads() reads it (<code>dict[str, Any]</code>), of mixed value types, which Codon cannot express, so the check has nothing to call it with; _summary_cases() calls it with the entry json.loads() read, so its body is compiled through it</li>
 <li><code>hils.host_devices.HostSetup.playbooks</code>: builds each playbook's variables as a <code>Dict[str, Any]</code> of mixed value types (a list of interfaces beside a user and booleans), which Codon cannot express; what it derives them from is the checked host_devices()'s</li>
-<li><code>hils.host_devices._user</code>: imports getpass inside it (<code>getpass.getuser()</code>), which Codon has nothing for; only the uncalled HostSetup.playbooks() calls it</li>
 <li><code>hils.wire.encode</code>: takes a message of any shape (<code>Mapping[str, Any]</code>: JSON values of mixed types), which Codon cannot express</li>
 <li><code>maps.config._flag</code>: reads a boolean <code>map</code> setting with _setting, off a config of any shape (<code>map_config: Any</code>), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it, and passes what it reads to the checked _resolve()</li>
 <li><code>maps.config._setting</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths and _flag, both themselves uncalled, call it, and what they read is resolved by the checked _resolve()</li>
@@ -6528,7 +6540,8 @@ the first:</p>
   Codon lacks (<code>inspect</code>, <code>concurrent.futures</code>, <code>importlib</code> beyond
   <code>importlib.metadata</code>, or more of <code>os</code>, <code>pathlib</code>, <code>shutil</code>,
   <code>signal</code>, <code>socket</code>, <code>subprocess</code>, <code>tempfile</code>, <code>threading</code>, <code>dataclasses</code>,
-  <code>importlib.metadata</code> or <code>urllib.parse</code> than their shims declare), at module
+  <code>getpass</code>, <code>importlib.metadata</code> or <code>urllib.parse</code> than their shims
+  declare), at module
   level or inside a function the check calls. This is most of the tooling
   around a run (the editor, the UI, authoring, the sweeper's expansion and
   Hydra sweeper, the SLURM launcher's submitting side, the recordings and
@@ -6599,7 +6612,7 @@ the first:</p>
 <li><code>hils.bridge</code>: imports hilspy (a Rust extension) at module level under TYPE_CHECKING, for its <code>Channel</code>, <code>Periodic</code> and <code>Clock</code> annotations, and inside _require_hilspy(), which hands the module on as a <code>types.ModuleType</code> value, and typesafe_carla's CPython package inside HilsBridge, which it holds as <code>_carla: Any</code>; uses more of threading than its shim declares (<code>Event</code>); holds hilspy's messages, CARLA's measurements and the queues that carry them typed <code>Any</code>; and builds on hils.link and hils.protocol (socket), hils.measurements (cv2) and hils.config (yaml), which are neither checked nor modelled</li>
 <li><code>hils.cli</code>: imports argparse and importlib.resources, and serve_cli (argparse) and hils.config (yaml) and, inside main(), hils.bridge (hilspy) and, inside _setup(), hils.host_setup (ansible_runner), which are neither checked nor modelled</li>
 <li><code>hils.config</code>: imports yaml inside load_config(), and reads a parsed YAML document of any shape (<code>Any</code>), holds a constant field value as <code>Constant = Union[str, int, float, bool]</code> and a device's codec options as <code>Mapping[str, Any]</code>, none of which Codon can express; imports at module level hils.protocol (socket) and hils.measurements (cv2), which are neither checked nor modelled; what YAML 1.1 makes of a plain scalar is the checked hils.yaml11's, and SensorSpec, the LiDAR attribute checks, the relative files, the check of a field's signal name (<code>checked_signal()</code>, its <code>_signal()</code>), CLOCKS, PHASES and HilsConfigError the checked hils.sensor_spec's, which it re-exports, as it does the checked value_text's <code>huge_integer()</code> (its <code>_huge()</code>, #1704); hils/config.codon declares what the checked hils package re-exports of it</li>
-<li><code>hils.host_setup</code>: imports importlib.resources and getpass, and, inside AnsibleRunner, ansible_runner, which Codon has nothing for; AnsibleRunner names its data directory <code>with tempfile.TemporaryDirectory(...) as data</code>, which Codon binds to the manager, not to the directory's name; builds on hils.config (yaml), which is neither checked nor modelled; hands the playbooks' variables to a runner as <code>Dict[str, Any]</code> of mixed value types, which Codon cannot express; the virtual devices a configuration's devices need, HostSetup and its description are the checked hils.host_devices's (#2124), which it re-exports, and host_setup() hands it each device's name and URL</li>
+<li><code>hils.host_setup</code>: imports importlib.resources, and, inside AnsibleRunner, ansible_runner, which Codon has nothing for; uses more of getpass than its shim declares (<code>getpass.getpass()</code>, the sudo password prompt); AnsibleRunner names its data directory <code>with tempfile.TemporaryDirectory(...) as data</code>, which Codon binds to the manager, not to the directory's name; builds on hils.config (yaml), which is neither checked nor modelled; hands the playbooks' variables to a runner as <code>Dict[str, Any]</code> of mixed value types, which Codon cannot express; the virtual devices a configuration's devices need, HostSetup and its description are the checked hils.host_devices's (#2124), which it re-exports, and host_setup() hands it each device's name and URL</li>
 <li><code>hils.link</code>: imports more of socket than its shim declares (<code>socket.create_server()</code>, <code>socket.has_dualstack_ipv6()</code>, <code>socket.timeout</code>, and a socket's <code>settimeout()</code>, <code>accept()</code>, <code>sendall()</code> and <code>shutdown()</code>, and <code>socket.SHUT_RDWR</code>), and builds on hils.protocol (socket), which is neither checked nor modelled</li>
 <li><code>hils.measurements</code>: imports cv2 inside camera_frame(), and takes a buffer that is bytes, a memoryview or a numpy array, which Codon cannot express, and reads it with <code>np.frombuffer()</code>, which takes only a str in Codon; declares <code>FloatPoints</code> at module level as <code>np.ndarray[tuple[int, int], np.dtype[np.float32]]</code>, which is not Codon's <code>ndarray[dtype, ndim]</code>; returns a LiDAR scan's fields as a <code>Dict[str, np.ndarray]</code> of float32 and uint8 arrays, which Codon cannot express; the gathering of a LiDAR's arcs into revolutions is the checked hils.lidar_revolution's, and the dating of a revolution's rays and its start and the re-observing of its points as a spinning sensor's (<code>ray_times()</code>, <code>steady_revolution_start()</code>, <code>spin_lidar_points()</code>) the checked hils.lidar_spin's (#2116), which it re-exports</li>
 <li><code>hils.protocol</code>: imports selectors, which Codon has nothing for, and more of socket than its shim declares (<code>socket.timeout</code>, and LineReader reads the bridge's socket with <code>recv()</code>), and reads JSON messages of any shape, which LineReader.read() returns as <code>List[Dict[str, Any]]</code> and Codon cannot express; what needs none of these, command_value() included, is hils.wire, which it re-exports</li>
@@ -6608,7 +6621,7 @@ the first:</p>
 <li><code>metric_batch</code>: replays the frames metric_frames records as a world of duck-typed actors (SimpleNamespace transforms, a list subclass for ActorList) through the checked metrics module, and evaluates the CommonRoad metrics with commonroad.session (worker processes), which is not checked</li>
 <li><code>odd</code>: <code>from . import backend, probes</code> fails first: Codon reads it as an import of <code>odd</code> from the top-level package's <code>__init__</code>, which the model does not declare ("cannot import name 'odd'"); behind that, it re-exports odd.model, odd.sampler, odd.openodd, odd.sources and odd.backend (openodd, a Rust extension), and odd.route and odd.registry, which are excluded (odd.probes is checked)</li>
 <li><code>odd.backend</code>: derives openodd's Backend (a Rust extension), a dataclass of probe callables and knobs (<code>Mapping[Any, OddKnob]</code>)</li>
-<li><code>odd.cli</code>: imports argparse, openodd (inside a function), and <code>odd_builder()</code> and <code>odd_names()</code> from odd.registry, which the odd model does not declare; inside its commands, it imports <code>combine_route_coverage()</code> from odd.route, which the odd model does not declare either (it declares only <code>plan_route_coverage()</code>), and typecheck (the checker, outside the library check), examples.run (omegaconf, hydra) and registry (omegaconf, importlib), which are neither checked nor modelled</li>
+<li><code>odd.cli</code>: imports argparse, openodd (inside a function), and <code>odd_builder()</code> and <code>odd_names()</code> from odd.registry, which the odd model does not declare; inside its commands, it imports <code>combine_route_coverage()</code> from odd.route, which the odd model does not declare either (it declares only <code>plan_route_coverage()</code>), and typecheck (the checker, outside the library check), examples.run (omegaconf, hydra) and registry (omegaconf, importlib), which are neither checked nor modelled; the split of <code>scenario-odd route</code>'s arguments into scenario configs and Hydra overrides (<code>_split_items()</code>, in _scenario_configs(), which expands the configs' globs) and the metres per bucket it prints (<code>_format_buckets()</code>, which it re-exports) are the checked odd.route_text's (#2135)</li>
 <li><code>odd.controls</code>: imports omegaconf inside <code>_key_exists()</code> and <code>validate_controls()</code> (the config it checks the keys of is a <code>DictConfig</code>), difflib (for its did-you-mean hints), and <code>controls_from_mapping()</code> from odd.sampler (openodd, a Rust extension), inside <code>validate_controls()</code>; it reads the <code>controls</code> of a config as <code>Any</code> and <code>Mapping[Any, Any]</code> (a control is a key, or a mapping of any values: <code>isinstance</code> on <code>Any</code>, <code>spec.get()</code> of mixed types), which Codon cannot express; the diagnostic it reports and its one-line text are the checked odd.control_diagnostics', and the fields and targets of a control the checked odd.control_fields' (#1733)</li>
 <li><code>odd.model</code>: re-exports openodd's model (a Rust extension)</li>
 <li><code>odd.openodd</code>: re-exports openodd's reader (a Rust extension)</li>
@@ -6653,7 +6666,7 @@ the first:</p>
 <li><code>trajectory.authoring</code>: parses document values of <code>Any</code> (YAML rows, editor fields) into <code>dict[str, Any]</code>, which Codon cannot express; what it does with the editor's text and with parsed rows is the checked trajectory.vertex_text's, and the typed builders it re-exports (the goal, via lanelets, timing and lanelet path) are the checked trajectory.authored's</li>
 <li><code>trajectory_recorder</code>: writes JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) serialised with orjson (module level; <code>orjson.JSONEncodeError</code>), reads the projector's settings with yaml (inside <code>_projector_info</code>), and neither has a Codon model; trajectory_recorder.codon models what scenario_runner uses of it</li>
 <li><code>ui</code>: imports argparse and serve_cli (argparse), which is not checked; imports uvicorn, ui.app (fastapi) and the registry (omegaconf, importlib) inside main(), and ui.recordings (tarfile) inside a function</li>
-<li><code>ui.app</code>: imports fastapi, web_guard (starlette), which is not checked, asyncio, more of contextlib than its shim declares (<code>asynccontextmanager</code>, for _lifespan()), and openodd (a Rust extension) inside _openodd()</li>
+<li><code>ui.app</code>: imports fastapi, web_guard (starlette), which is not checked, asyncio, more of contextlib than its shim declares (<code>asynccontextmanager</code>, for _lifespan()), and openodd (a Rust extension) inside _openodd(); whether a request body is sent as JSON, a session's reference and the ODD attribute a query names (<code>_is_json_type()</code>, <code>_session_ref()</code>, <code>_attribute()</code>) are the checked ui.request_values's (#2135), which it re-exports; <code>_parse_ref()</code> stays, reading the session's directory under this module's <code>_base_path()</code>, which tests patch</li>
 <li><code>ui.cases</code>: reads JSON documents of any type (<code>Any</code>); the path guard, the case stems and a batch's stamp (<code>batch_stamp</code>, <code>_summary_is_current</code>) are the checked ui.case_paths's; every function left here reads a batch's JSON documents (<code>Any</code>, <code>dict[str, Any]</code>), so checking it would leave all but case_files UNCALLED</li>
 <li><code>ui.models</code>: imports pydantic</li>
 <li><code>ui.recordings</code>: imports base64, io, tarfile, urllib.request and zlib, and, inside functions, the converter (autoware_carla_scenario_rerun, a Rust extension), which it holds as a module of any type (<code>Any</code>); the web viewer's selection and the path rules of the recordings and of the web viewer's copy are the checked ui.web_viewer_paths's, and whether a recording is fresh, putting a recording in place and swapping a copy of the web viewer into place (<code>_fresh()</code>, <code>_publish()</code>, <code>_swap_into_place()</code>) the checked ui.recording_files' (#2124), which it re-exports, as is the name of a recording kept in the cache (<code>cached_recording_name()</code>), which it imports: <code>_cached_recording()</code> stays, joining that name to this module's <code>_cache_root()</code> so that a patch of <code>recordings._cache_root</code> reaches it</li>
@@ -7191,7 +7204,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   and the files of <code>codon/</code> in step):</li>
 </ul>
 <!-- shims:start -->
-<p><code>__future__</code>, <code>abc</code>, <code>atexit</code>, <code>contextlib</code>, <code>dataclasses</code>, <code>enum</code>, <code>errno</code>, <code>fcntl</code>, <code>fnmatch</code>, <code>hashlib</code>,
+<p><code>__future__</code>, <code>abc</code>, <code>atexit</code>, <code>contextlib</code>, <code>dataclasses</code>, <code>enum</code>, <code>errno</code>, <code>fcntl</code>, <code>fnmatch</code>, <code>getpass</code>, <code>hashlib</code>,
   <code>importlib.metadata</code>, <code>ipaddress</code>, <code>json</code>, <code>keyword</code>, <code>logging</code>, <code>os</code>, <code>os.path</code>, <code>pathlib</code>, <code>platform</code>, <code>queue</code>,
   <code>shlex</code>, <code>shutil</code>, <code>signal</code>, <code>socket</code>, <code>subprocess</code>, <code>sys</code>, <code>tempfile</code>, <code>threading</code>,
   <code>typing</code>, <code>typing_extensions</code>, <code>urllib.parse</code>, <code>uuid</code> and <code>xml.etree.ElementTree</code>
@@ -7341,7 +7354,11 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   nil UUID's in the check, as nothing runs), and <code>UUID(hex)</code> of a <code>str</code>, the
   first of CPython's parameters; the rest of <code>UUID</code> (<code>int</code>, <code>bytes</code>,
   <code>version</code>, ...), <code>uuid1()</code>, <code>uuid3()</code>, <code>uuid5()</code> and the namespaces are
-  not declared. <code>fcntl</code> declares <code>flock(fd, operation, /)</code>, of
+  not declared. <code>getpass</code> declares <code>getuser()</code>, of no argument, as in
+  CPython 3.10, giving a <code>str</code> (empty in the check, as nothing runs), the user
+  <code>hils.host_devices</code> sets the devices up for when <code>SUDO_USER</code> is unset;
+  <code>getpass()</code>, the prompt for a password, and <code>GetPassWarning</code> are not
+  declared. <code>fcntl</code> declares <code>flock(fd, operation, /)</code>, of
   an <code>int</code> descriptor or a file object (what has <code>fileno()</code>), and <code>LOCK_SH</code>,
   <code>LOCK_EX</code>, <code>LOCK_NB</code> and <code>LOCK_UN</code> (Linux's values); nothing is locked.
   <code>os.path</code> declares <code>join()</code>,
@@ -8703,7 +8720,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 16:50:01 UTC"><span class="timeago" datetime="2026-11-13T16:50:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 16:50:01 UTC">2026-11-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 19:52:47 UTC"><span class="timeago" datetime="2026-11-13T19:52:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 19:52:47 UTC">2026-11-13</span>
   </span>
 
     
