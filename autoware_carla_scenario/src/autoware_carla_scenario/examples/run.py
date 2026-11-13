@@ -522,6 +522,15 @@ def _check_ego_lanelet_ids(cfg: DictConfig) -> None:
     _waypoint_lanelet_ids(ego_cfg)
 
 
+def _given(block: Any, key: str, default: Any) -> Any:
+    """*block*'s *key*, or *default* only when it is absent or null -- as
+    :func:`_check_ego_numbers` leaves to the build only an absent or null
+    key, so the two read every other value alike (``""`` refused by both,
+    ``0`` read as 0 by both; #2143)."""
+    value = block.get(key)
+    return default if value is None else value
+
+
 def build_spawn_pose(cfg: DictConfig) -> Lanelet2Pose:
     """Extract the ego's spawn pose from the ``ego.spawn_*`` keys.
 
@@ -535,10 +544,8 @@ def build_spawn_pose(cfg: DictConfig) -> Lanelet2Pose:
     return Lanelet2Pose(
         lanelet_id=_lanelet_id("ego.spawn_lanelet_id", ego_cfg.spawn_lanelet_id),
         s=_ego_number("ego.spawn_s", ego_cfg.spawn_s),
-        t=_ego_number("ego.spawn_t", ego_cfg.get("spawn_t", 0.0) or 0.0),
-        heading=_ego_number(
-            "ego.spawn_heading", ego_cfg.get("spawn_heading", 0.0) or 0.0
-        ),
+        t=_ego_number("ego.spawn_t", _given(ego_cfg, "spawn_t", 0.0)),
+        heading=_ego_number("ego.spawn_heading", _given(ego_cfg, "spawn_heading", 0.0)),
     )
 
 
@@ -598,10 +605,8 @@ def build_planned_route(cfg: DictConfig, name: str = "") -> PlannedRoute:
     start = Lanelet2Pose(
         lanelet_id=_lanelet_id("ego.spawn_lanelet_id", spawn_lanelet_id),
         s=_ego_number("ego.spawn_s", ego_cfg.get("spawn_s", 0.0)),
-        t=_ego_number("ego.spawn_t", ego_cfg.get("spawn_t", 0.0) or 0.0),
-        heading=_ego_number(
-            "ego.spawn_heading", ego_cfg.get("spawn_heading", 0.0) or 0.0
-        ),
+        t=_ego_number("ego.spawn_t", _given(ego_cfg, "spawn_t", 0.0)),
+        heading=_ego_number("ego.spawn_heading", _given(ego_cfg, "spawn_heading", 0.0)),
     )
     goal = build_goal_pose(cfg)
     scenario_cfg = cfg.get("scenario") or {}
@@ -1435,15 +1440,32 @@ def _paced(cfg: DictConfig) -> bool:
 def world_reset_settings(cfg: DictConfig) -> tuple[str, int]:
     """``server.world_reset`` and ``server.reload_every``, checked.
 
+    Only an absent or null ``world_reset`` is ``reload``: an empty one,
+    ``false`` or ``0`` is no strategy, and refused as any other (#2143).
+
     Raises:
         ValueError: naming the key, when ``world_reset`` is neither ``reload``
             nor ``soft``, or ``reload_every`` is not a whole number (``2`` or
             ``2.0``; not ``2.5`` or a boolean) or is negative.
     """
-    from ..world_reset import RESET_RELOAD, check_world_reset  # noqa: PLC0415
+    from ..world_reset import (  # noqa: PLC0415
+        RESET_RELOAD,
+        RESET_STRATEGIES,
+        check_world_reset,
+    )
 
     server = cfg.get("server") or {}
-    world_reset = str(server.get("world_reset", RESET_RELOAD) or RESET_RELOAD)
+    value = server.get("world_reset")
+    if value is None:
+        world_reset = RESET_RELOAD
+    elif isinstance(value, str):
+        world_reset = value
+    else:
+        # No strategy is spelt as anything but text (#2143).
+        raise ValueError(
+            f"server.world_reset must be one of {list(RESET_STRATEGIES)}, "
+            f"got {shown(value)}."
+        )
     # null is 0, as it always was.
     reload_every = (
         whole_number_setting("server.reload_every", server.get("reload_every", 0)) or 0
@@ -2405,13 +2427,17 @@ _BATCH_MAP_KEYS = (
 
 def _map_setting(cfg: DictConfig, key: str) -> str | bool | None:
     """``map.<key>`` of *cfg* as :func:`resolve_map_paths` reads it: a string
-    stripped, ``None`` when unset or empty; ``overwrite_xodr`` a flag."""
+    stripped, ``None`` when unset or empty; ``overwrite_xodr`` a flag, off
+    when unset and otherwise checked (``check_flag``, #2143).
+
+    Raises:
+        ValueError: naming ``map.overwrite_xodr``, when it is not a switch.
+    """
     map_cfg = cfg.get("map") or {}
     value = map_cfg.get(key)
-    text = None if value is None else str(value).strip() or None
     if key == "overwrite_xodr":
-        return text is not None and text.lower() in {"1", "true", "yes", "on"}
-    return text
+        return value is not None and check_flag(f"map.{key}", value)
+    return None if value is None else str(value).strip() or None
 
 
 def check_batch_map(configs: list[DictConfig], labels: list[str] | None = None) -> None:
