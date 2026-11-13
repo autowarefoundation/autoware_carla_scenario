@@ -72,8 +72,13 @@ class BasicPoint2d:
         self.y = y
 
 
-# A projector's result: a point in metres, built by no checked module.
+# A projector's result: a point in metres, and what MercatorProjector's
+# reverse() takes (t4_scene.osm builds one from x, y and z). Python also
+# builds one at the origin from nothing; the check takes all three.
 class BasicPoint3d:
+    def __init__(self, x: float, y: float, z: float):
+        pass
+
     @property
     def x(self) -> float:
         raise NotImplementedError()
@@ -363,6 +368,10 @@ class Area:
 
 
 class PointLayer:
+    # Raises RuntimeError for an id the map does not have.
+    def __getitem__(self, key: int) -> Point3d:
+        raise NotImplementedError()
+
     def __iter__(self) -> Generator[Point3d]:
         raise NotImplementedError()
 

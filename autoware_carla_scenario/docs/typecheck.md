@@ -2533,7 +2533,9 @@ of the T4Scene converter (CARLA's world frame to Autoware's `map` frame, and the
 and quaternions of its angles, and the check of the ego's rear-axle offset:
 `t4_scene.frames`, #1665, #1697; the converter
 itself, which reads the log's mixed-type records and builds protobuf
-messages, re-exports it), the file names of a driver policy's map set and the
+messages, re-exports it), the OSM bytes of a T4Scene's map resource and the
+digest that names them (`t4_scene.osm`, #2116; `t4_scene.map_resource`,
+which builds the protobuf `MapResource`, re-exports them), the file names of a driver policy's map set and the
 id it is written under (`driver.hdmap_files`, #1728; `driver.hdmap_export`,
 which writes the set with roadgen, re-exports them), what the weather rules
 read and which `vehicles` entry of `environment.rules` a vehicle follows
@@ -3172,11 +3174,19 @@ What Codon 0.19 needs that Python does not, beyond
   <!-- shims:end -->
 
   `tempfile` declares `mkstemp(suffix=None, prefix=None, dir=None,
-  text=False)` and `mkdtemp(suffix=None, prefix=None, dir=None)` only, with CPython 3.10's signature (a `str` or an
+  text=False)`, `mkdtemp(suffix=None, prefix=None, dir=None)` and
+  `TemporaryDirectory(suffix=None, prefix=None, dir=None,
+  ignore_cleanup_errors=False)` only, with CPython 3.10's signatures (a `str` or an
   `os.PathLike` directory; bytes affixes are not declared). The check only
   compiles it, so its body is a stub that makes no file (it is typed to give
   `(int, str)`, the descriptor and the name; `mkdtemp()` gives the `str`
-  name). `NamedTemporaryFile()`, `TemporaryDirectory()`, `gettempdir()` and the
+  name, and a `TemporaryDirectory` its `name`). Codon binds a `with`
+  statement's target to the manager itself, not to what `__enter__()`
+  returns, so `with TemporaryDirectory() as d` makes `d` the manager in the
+  check (CPython's is the name), and a use of it as a `str` or a path fails
+  the check: hold the manager and read its `name` (`scratch =
+  TemporaryDirectory(); with scratch: ... scratch.name`, as `t4_scene.osm`
+  does). `NamedTemporaryFile()`, `gettempdir()` and the
   rest are not declared and fail the check. Two more modules are not
   shims but extensions of Codon's own `collections` and `itertools`, in
   `codon/_stdlib/` (#422): they add
@@ -3186,9 +3196,18 @@ What Codon 0.19 needs that Python does not, beyond
   network's crossings with: `iterparse(source)` of a file name (no file
   object, no `events` or `parser`), which gives no element in the check, of
   `(event, element)` pairs, and an element's `tag`, `get(key, default=None)`
-  (a `str` or `None` default, an `Optional[str]`) and `clear()`.
-  `parse()`, `fromstring()`, `SubElement()`, `ParseError`, an element's
-  `attrib`, `find()`, `findall()` and the rest are not declared.
+  (a `str` or `None` default, an `Optional[str]`) and `clear()`; and what
+  `t4_scene.osm` rewrites the OSM file Lanelet2 wrote with:
+  `fromstring(text)`, an element's `attrib` (a `Dict[str, str]`),
+  `find(path)` (an `Optional[Element]`), `findall(path)` and
+  `set(key, value)` (by position only, as in CPython),
+  `SubElement(parent, tag, attrib={}, **extra)` (the three by position only,
+  as CPython's C implementation takes them; `str` attribute values) and
+  `tostring(element, encoding=None, method=None, *, xml_declaration=None)`.
+  The check reads bytes as `str`, so `fromstring()` takes and `tostring()`
+  gives a `str`; a path is any `str` (ElementPath's syntax is not checked).
+  `parse()`, `ParseError`, an element's `text`, its children and iteration,
+  and the rest are not declared.
   `ipaddress` declares what `serve_bind.is_loopback()` reads a host with:
   `ip_address(address)` of a `str` (no `int` or `bytes`), giving an
   `IPv4Address` or an `IPv6Address` as a `Union` Codon decides `isinstance`
@@ -3576,7 +3595,8 @@ What Codon 0.19 needs that Python does not, beyond
   `coordinate.projection._read_local_tags()` edits a `Local` map with (a
   `Point3d`'s `x`/`y`/`z` setters, `LaneletMap()` and an `add()` of each
   primitive),
-  `BasicPoint2d`, `BasicPoint3d`, `GPSPoint`, and the lanelets whose bound a
+  `BasicPoint2d`, `BasicPoint3d` (built from `x`, `y` and `z`), `GPSPoint`,
+  a point layer's points by id (`pointLayer[id]`), and the lanelets whose bound a
   line string is
   (`LaneletLayer.findUsages()`, of a line string only); `lanelet2.geometry`'s
   `to2D()`, `length()`, `length2d()` (of a lanelet), `toArcCoordinates()`
@@ -3589,13 +3609,16 @@ What Codon 0.19 needs that Python does not, beyond
   simple-lanelet2 hands them out: lanelet2's own binding wraps each in a
   `ConstLaneletOrArea`, which `route.geometry` still unwraps at run time);
   `lanelet2.traffic_rules.create()`
-  with its `Locations` and `Participants`; `lanelet2.io.Origin` and
-  `lanelet2.io.load(filename, projector)`; `lanelet2.projection`'s
-  `UtmProjector` and `LocalCartesianProjector` (with `forward()` of a
-  `GPSPoint`); and Autoware's `MGRSProjector`, `TransverseMercatorProjector`,
+  with its `Locations` and `Participants`; `lanelet2.io.Origin`,
+  `lanelet2.io.load(filename, projector)` and
+  `lanelet2.io.writeRobust(filename, map, projector)` (the errors, a list of
+  `str`), which `t4_scene.osm` writes a map with; `lanelet2.projection`'s
+  `UtmProjector`, `LocalCartesianProjector` and `MercatorProjector` (with
+  `forward()` of a `GPSPoint`, and `MercatorProjector`'s `reverse()` of a
+  `BasicPoint3d`); and Autoware's `MGRSProjector`, `TransverseMercatorProjector`,
   `AutowareTrafficLight` and `RoadMarking`. Each module's header says what
-  it leaves out; parts of the API the framework does not use yet (writing a
-  map, routes, matching, any other editing) are not declared, and the check refuses
+  it leaves out; parts of the API the framework does not use yet (`write()`,
+  routes, matching, any other editing) are not declared, and the check refuses
   them. `MapManager` (`coordinate.map_manager`, checked) and
   `sweeper.map_loader` load the map with them and hand it out as these
   classes, and `MapManager` its `routing_graph` too. Python's

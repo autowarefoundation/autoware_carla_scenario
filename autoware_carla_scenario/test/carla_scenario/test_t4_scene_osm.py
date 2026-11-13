@@ -344,3 +344,17 @@ def test_the_module_exports_these_names() -> None:
         "resource_digest",
     ]
     assert CENTERLINE_INVERTED_TAG == "devkit:centerline_inverted"
+
+
+def test_map_resource_re_exports_the_checked_osm_helpers() -> None:
+    # The helpers live in t4_scene.osm, which the library check compiles
+    # (#2116); t4_scene.map_resource re-exports the same objects.
+    osm = importlib.import_module("autoware_carla_scenario.t4_scene.osm")
+    module = importlib.import_module("autoware_carla_scenario.t4_scene.map_resource")
+    assert osm.__all__ == [
+        "CENTERLINE_INVERTED_TAG",
+        "local_meters_osm",
+        "resource_digest",
+    ]
+    for name in osm.__all__:
+        assert getattr(module, name) is getattr(osm, name), name

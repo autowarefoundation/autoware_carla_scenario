@@ -1,27 +1,62 @@
 # The part of Python's xml.etree.ElementTree the checked framework names, for
-# the checker (docs/typecheck.md): what traffic.sumo.network reads a SUMO
-# network's crossings with, iterparse() of a file name and the elements it
-# gives (their tag, get() of an attribute, clear()), with CPython 3.10's
-# signatures or narrower ones, the oldest Python the package supports.
-# Nothing here runs: no file is read and iterparse() gives no element.
-# parse(), fromstring(), ElementTree, SubElement, ParseError, an element's
-# attrib, text, find() and iteration, and the rest are not declared, so the
-# check refuses them.
+# the checker (docs/typecheck.md), with CPython 3.10's signatures or narrower
+# ones, the oldest Python the package supports:
+#
+# - what traffic.sumo.network reads a SUMO network's crossings with,
+#   iterparse() of a file name and the elements it gives (their tag, get() of
+#   an attribute, clear());
+# - what t4_scene.osm rewrites the OSM file Lanelet2 wrote with: fromstring()
+#   of the document, an element's attrib, find() and findall() of a path,
+#   set() of an attribute, SubElement() and tostring().
+#
+# The check reads bytes as str (Codon 0.19 has no bytes), so fromstring()
+# takes a str and tostring() returns one, whatever its encoding. A path is
+# any str: ElementPath's syntax (`tag`, `tag[@k='v']`, ...) is CPython's to
+# read, not the check's. Nothing here runs: no file or text is read, iterparse()
+# gives no element, find() finds none and findall() gives an empty list.
+# parse(), ElementTree, ParseError, an element's text, iteration and
+# children, and the rest are not declared, so the check refuses them.
+
+import internal.static as static
+
+
+def _keyword_only(extra, where: Literal[str]):
+    # Codon 0.19 has no `*,`: what follows `*_kw` is passed by keyword only.
+    if static.len(extra) > 0:
+        compile_error(where + " is keyword-only")
 
 
 # An element of a document: its tag (a str; iterparse() gives no comment or
-# processing instruction, whose tag is a function) and its attributes, read
-# by get(key, default=None), which gives the default, None unless given, for
-# an attribute the element lacks. Only a str or None default is declared.
-# clear() drops its attributes, text and children.
+# processing instruction, whose tag is a function) and its attributes, the
+# dict attrib, read by get(key, default=None), which gives the default, None
+# unless given, for an attribute the element lacks. Only a str or None
+# default is declared. set(key, value, /) sets one (a str, positional only in
+# CPython); clear() drops its attributes, text and children. find(path) is
+# the first matching subelement, or None; findall(path) all of them, in
+# document order. Their `namespaces` is not declared.
 class Element:
     tag: str
+    attrib: Dict[str, str]
 
     def __init__(self, tag: str):
         self.tag = tag
+        self.attrib = Dict[str, str]()
 
     def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
         return default
+
+    # set(key, value, /): Codon 0.19 has no `/`, so the two are a `*args`.
+    def set(self, *args) -> None:
+        if static.len(args) != 2:
+            compile_error("set() takes a key and a value, by position")
+        key: str = args[0]
+        value: str = args[1]
+
+    def find(self, path: str) -> Optional[Element]:
+        return Optional[Element]()
+
+    def findall(self, path: str) -> List[Element]:
+        return List[Element]()
 
     def clear(self) -> None:
         pass
@@ -34,3 +69,43 @@ class Element:
 def iterparse(source: str) -> Generator[Tuple[str, Element]]:
     if False:
         yield ("end", Element(""))
+
+
+# fromstring(text, parser=None) (XML()): the document's root element. CPython
+# takes bytes or a str; the parser is not declared.
+def fromstring(text: str) -> Element:
+    return Element("")
+
+
+# SubElement(parent, tag, attrib={}, /, **extra): a new element, appended to
+# the parent, whose attributes are attrib's and the keywords'. CPython's C
+# implementation takes the three by position only, and every keyword as an
+# attribute; Codon 0.19 has no `/`, so the three are a `*args`. Only str
+# attribute values are declared.
+def SubElement(*args, **extra) -> Element:
+    if static.len(args) < 2 or static.len(args) > 3:
+        compile_error("SubElement() takes a parent, a tag and the attrib dict, by position")
+    parent: Element = args[0]
+    tag: str = args[1]
+    if static.len(args) == 3:
+        attrib: Dict[str, str] = args[2]
+    # The keywords are a NamedTuple in Codon: its values are `extra.args`.
+    if static.len(extra.args) > 0:
+        for value in extra.args:
+            attribute: str = value
+    return Element(tag)
+
+
+# tostring(element, encoding=None, method=None, *, xml_declaration=None,
+# default_namespace=None, short_empty_elements=True): the element serialized,
+# bytes unless the encoding is "unicode" (a str either way here). Only
+# xml_declaration is declared of the keyword-only parameters.
+def tostring(
+    element: Element,
+    encoding: Optional[str] = None,
+    method: Optional[str] = None,
+    *_kw,
+    xml_declaration: Optional[bool] = None,
+) -> str:
+    _keyword_only(_kw, "xml_declaration")
+    return ""
