@@ -52,6 +52,10 @@ jobs:
     # between them; master catches what only those break.
     name: test (${{ matrix.python-version }}${{ matrix.shard != '1/1' && format(', codon {0}', matrix.shard) || '' }})
     runs-on: ubuntu-24.04
+    # A hung test fails the job here instead of holding the runner for
+    # GitHub's default six hours. The longest, a master run that compiles
+    # every Codon check, takes about 100 minutes.
+    timeout-minutes: 120
     strategy:
       fail-fast: false
       matrix:
@@ -172,6 +176,7 @@ jobs:
     # ceiling, this leg from the middle.
     name: slow tests (3.12)
     runs-on: ubuntu-24.04
+    timeout-minutes: 120  # See the 'test' job.
     # Repeats the pull request's verdict and seeds no cache: see the top.
     if: github.event_name == 'pull_request'
 
@@ -215,6 +220,7 @@ jobs:
     # Codon leg runs as two shards, as the 'test' job's does.
     name: test (${{ matrix.python-version }}, arm64${{ matrix.shard != '1/1' && format(', codon {0}', matrix.shard) || '' }})
     runs-on: ubuntu-24.04-arm
+    timeout-minutes: 120  # See the 'test' job.
     strategy:
       fail-fast: false
       matrix:

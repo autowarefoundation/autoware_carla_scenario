@@ -120,9 +120,15 @@ def test_a_summary_that_is_no_utf8(tmp_path: Path) -> None:
 
 
 def test_a_summary_nested_past_the_recursion_limit(tmp_path: Path) -> None:
+    """Refused either way: whether json parses it depends on the interpreter
+    (3.14 bounds the C parser by the stack left, not by the recursion
+    limit), so it is either unreadable or not an array of objects."""
     _write(tmp_path, "[" * 100_000 + "]" * 100_000)
-    assert _refusal(tmp_path, ["a"]).startswith(
-        f"{tmp_path / BATCH_RESULTS}: the batch summary cannot be read ("
+    refusal = _refusal(tmp_path, ["a"])
+    path = tmp_path / BATCH_RESULTS
+    assert (
+        refusal.startswith(f"{path}: the batch summary cannot be read (")
+        or refusal == f"{path}: not a batch summary (not a JSON array of objects)"
     )
 
 

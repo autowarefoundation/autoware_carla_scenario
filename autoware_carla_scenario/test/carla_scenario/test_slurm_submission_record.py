@@ -57,6 +57,7 @@ from autoware_carla_scenario.slurm.settings import SlurmSettings
 
 from . import test_slurm_batch_readers, test_slurm_follow
 from .test_slurm_batch_readers import old_reading
+from .test_slurm_records import _returns_or_stops, _written_back
 
 _LOGGER = "autoware_carla_scenario.slurm.manifest"
 
@@ -1104,6 +1105,16 @@ def test_a_record_nested_deep_is_read_as_json_loads_reads_it(
             layout.submission_record(0)
         with pytest.raises(RecursionError):
             collect_mod._missing_message(layout, 1, "t")
+        return
+    try:
+        _written_back(old)
+    except RecursionError:
+        # Read by json.loads(), too deep for the C encoder to write back
+        # (Python 3.14.10): the record's reader stops on that.
+        with pytest.raises(RecursionError):
+            layout.submission_record(0)
+        for read in (lambda: collect_mod._missing_message(layout, 1, "t"),):
+            _returns_or_stops(read)
         return
     record = layout.submission_record(0)
     assert record is not None
