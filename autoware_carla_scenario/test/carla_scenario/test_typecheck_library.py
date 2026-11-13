@@ -233,6 +233,29 @@ def test_an_excluded_reason_names_no_api_its_shim_declares() -> None:
     assert not wrong, "\n".join(wrong)
 
 
+def test_a_reason_says_codon_has_nothing_for_no_module_with_a_shim() -> None:
+    # A standard module with a shim is one Codon has something for: a reason
+    # names what of it the shim lacks ("more of X than its shim declares"),
+    # not X among the modules "which Codon has nothing for" -- as
+    # examples.run's did of platform once platform had a shim.
+    wrong = []
+    for table in (EXCLUDED, UNCALLED):
+        for name, reason in table.items():
+            for found in re.finditer(r"which Codon has nothing for", reason):
+                # The list the clause closes: back to the `;`, the `imports`
+                # or the `inside f(),` it starts at.
+                listed = re.split(r";|\bimports\b|\(\)[,:]? ", reason[: found.start()])[
+                    -1
+                ]
+                listed = re.sub(r"\([^()]*\)", "", listed)
+                for module in re.findall(
+                    r"(?<![\w.`])([a-z_]\w*(?:\.[a-z_]\w*)*)(?![\w`(])", listed
+                ):
+                    if _shim(module) is not None:
+                        wrong.append(f"{name}: {module} has a shim")
+    assert not wrong, "\n".join(wrong)
+
+
 _DOCS = Path(__file__).resolve().parents[2] / "docs" / "typecheck.md"
 _HOOK = Path(__file__).resolve().parents[2] / "mkdocs_hooks" / "typecheck_library.py"
 
@@ -3166,7 +3189,7 @@ _URLLIB = """
 from __future__ import annotations
 
 from typing import Optional
-from urllib.parse import unquote, urlsplit, urlunsplit
+from urllib.parse import unquote, urlparse, urlsplit, urlunsplit
 
 
 def repository(url: str) -> str:
@@ -3185,6 +3208,15 @@ def host(url: str) -> Optional[str]:
     if parts.port is None and parts[0] == scheme:
         return parts.hostname
     return urlunsplit(parts) + parts.geturl()
+
+
+def local(url: str) -> Optional[str]:
+    # Python's ParseResult: a 6-tuple of str, the path's ;params apart.
+    parsed = urlparse(url, scheme="file", allow_fragments=False)
+    scheme, netloc, path, params, query, fragment = parsed
+    if parsed.params or parsed[3] != params or len(parsed) != 6:
+        return parsed.hostname
+    return unquote(urlparse(url).path) + netloc + path + query + fragment
 """
 
 
@@ -3196,10 +3228,16 @@ def test_the_urllib_parse_shim_splits_and_joins_urls(
     assert (model_dir() / "urllib" / "parse.codon").is_file()
     result = _check_case(_URLLIB, tmp_path, monkeypatch)
     assert result.ok, result.format()
-    # SplitResult's parts are typed: a part Python's lacks is refused.
-    wrong = _URLLIB.replace("parts.netloc:", "parts.host:")
-    assert wrong != _URLLIB
-    assert not _check_case(wrong, tmp_path, monkeypatch).ok
+    # SplitResult's and ParseResult's parts are typed: a part Python's lacks
+    # is refused, and so is an argument urlparse() does not take.
+    for right, wrong in (
+        ("parts.netloc:", "parts.host:"),
+        ("if parsed.params", "if parsed.param"),
+        ("urlparse(url).path", "urlparse(url, fragments=False).path"),
+    ):
+        source = _URLLIB.replace(right, wrong)
+        assert source != _URLLIB
+        assert not _check_case(source, tmp_path, monkeypatch).ok, wrong
 
 
 # ---------------------------------------------------------------------------
@@ -3759,7 +3797,7 @@ def test_the_file_helpers_are_declared_with_the_parameters_cpython_3_10_has() ->
 
 # ---------------------------------------------------------------------------
 # The subprocess and importlib.metadata shims, str.removesuffix(), a typed
-# *args and except (A, B) (#118)
+# *args and except (A, B) (#118); the installed distributions
 # ---------------------------------------------------------------------------
 
 
@@ -3821,6 +3859,30 @@ def checked() -> subprocess.CompletedProcess[str]:
     except subprocess.CalledProcessError as exc:
         raise subprocess.TimeoutExpired(exc.cmd, 1, output=exc.stdout)
     return done
+
+
+def provided(top: str) -> list[str]:
+    names = metadata.packages_distributions().get(top)
+    if names is None:
+        return []
+    return names
+
+
+def described(dist: metadata.Distribution) -> Optional[str]:
+    text = dist.read_text("direct_url.json")
+    name = dist.metadata.get("Name")
+    if text is None or name is None:
+        return dist.metadata.get("Summary", "")
+    return name + dist.version + text
+
+
+def installed_names() -> list[str]:
+    found: list[str] = []
+    for dist in metadata.distributions():
+        text = described(dist)
+        if text is not None:
+            found.append(text)
+    return found + provided("numpy")
 """
 
 
@@ -3862,6 +3924,10 @@ def test_the_subprocess_and_metadata_shims_take_what_cpython_takes(
         ("str(Path.cwd())", "str(Path.cwd(repo))"),
         ("process.wait(timeout=5.0)", "process.wait(5.0, 1)"),
         ("subprocess.TimeoutExpired(exc.cmd, 1,", "subprocess.TimeoutExpired(exc.cmd,"),
+        ("metadata.packages_distributions()", 'metadata.packages_distributions("x")'),
+        ('dist.read_text("direct_url.json")', "dist.read_text()"),
+        ('dist.metadata.get("Name")', "dist.metadata.get()"),
+        ("name + dist.version", "name + dist.versions"),
     ],
     ids=[
         "version-keyword",
@@ -3877,6 +3943,10 @@ def test_the_subprocess_and_metadata_shims_take_what_cpython_takes(
         "cwd-arguments",
         "wait-arguments",
         "timeout-expired-arguments",
+        "packages-distributions-arguments",
+        "read-text-arguments",
+        "metadata-get-arguments",
+        "distribution-unknown-attribute",
     ],
 )
 def test_the_subprocess_and_metadata_shims_refuse_what_cpython_refuses(
@@ -4089,7 +4159,8 @@ def test_the_signal_atexit_and_pipe_shims_and_their_models_refuse_what_cpython_r
 
 # ---------------------------------------------------------------------------
 # The shlex and sys shims, signal.Signals, a file object (Path.open(), a
-# Popen stream) and the symlink queries (#127); shlex.split()
+# Popen stream) and the symlink queries (#127); shlex.split(); the platform
+# shim
 # ---------------------------------------------------------------------------
 
 
@@ -4097,12 +4168,18 @@ _STACK = """
 from __future__ import annotations
 
 import os
+import platform
 import shlex
 import signal
 import subprocess
 import sys
 from pathlib import Path
 from typing import IO, Optional
+
+
+def host() -> str:
+    version = platform.python_version() + platform.python_implementation()
+    return version + platform.platform(aliased=True, terse=1) + platform.machine()
 
 
 def command(root: str, args: list[str]) -> str:
@@ -4214,7 +4291,13 @@ def test_the_sys_shim_keeps_all_of_codons_sys() -> None:
 def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    for shim in ("shlex.codon", "sys.codon", "signal.codon", "typing.codon"):
+    for shim in (
+        "shlex.codon",
+        "sys.codon",
+        "signal.codon",
+        "typing.codon",
+        "platform.codon",
+    ):
         assert (model_dir() / shim).is_file(), shim
     result = _check_case(_STACK, tmp_path, monkeypatch)
     assert result.ok, result.format()
@@ -4231,6 +4314,8 @@ def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
         # reports a bad argument of a call written over several lines at the
         # call's first line (`at`).
         ("shlex.quote(root)", "shlex.quote(len(root))", None),
+        ("platform.machine()", "platform.machine(1)", None),
+        ("terse=1", "terse=1, alias=True", None),
         ("shlex.join(argv)", "shlex.join([len(root)])", None),
         ("shlex.split(line)", "shlex.split(len(line))", None),
         ("posix=False", "posx=False", None),
@@ -4247,6 +4332,8 @@ def test_the_shlex_sys_signal_and_file_shims_take_what_cpython_takes(
     ],
     ids=[
         "quote-str",
+        "machine-arguments",
+        "platform-keyword",
         "join-str",
         "split-str",
         "split-keyword",
@@ -5304,3 +5391,142 @@ def test_the_errno_and_os_shim_constants_slurm_manifest_reads_are_cpythons() -> 
         for name in names:
             value = int(getattr(python, name))
             assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
+
+
+# ---------------------------------------------------------------------------
+# The xml.etree.ElementTree shim: what traffic.sumo.network reads a network's
+# crossings with
+# ---------------------------------------------------------------------------
+
+
+_ELEMENT_TREE = """
+from __future__ import annotations
+
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Optional
+from xml.etree import ElementTree
+from xml.etree.ElementTree import Element, iterparse
+
+
+def crossings(net_file: Path) -> dict[str, frozenset[str]]:
+    out: dict[str, frozenset[str]] = {}
+    for _event, element in ElementTree.iterparse(str(net_file)):
+        if element.tag == "edge" and element.get("function") == "crossing":
+            out[str(element.get("id"))] = frozenset(
+                (element.get("crossingEdges") or "").split()
+            )
+        element.clear()
+    return out
+
+
+def first(path: str) -> Optional[str]:
+    for event, element in iterparse(path):
+        found: Element = element
+        return event + found.tag + ET.Element("x").tag
+    return None
+
+
+def defaulted(element: ET.Element) -> str:
+    named = element.get("name", "unnamed")
+    absent = element.get("absent", None)
+    if named is None or absent is not None:
+        return ""
+    return named
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_element_tree_shim_takes_what_traffic_sumo_network_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_ELEMENT_TREE, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError, an AttributeError or an ImportError in CPython
+        # too.
+        ("ElementTree.iterparse(str(net_file))", "ElementTree.iterparse()"),
+        ('element.get("function")', "element.get()"),
+        ('element.get("name", "unnamed")', 'element.get("name", "unnamed", 1)'),
+        ('element.get("name", "unnamed")', 'element.get("name", fallback="x")'),
+        ("element.clear()", "element.clear(1)"),
+        ("element.tag ==", "element.tags =="),
+        ("ElementTree.iterparse(", "ElementTree.iterparsed("),
+        (
+            "from xml.etree.ElementTree import Element, iterparse",
+            "from xml.etree import Element, iterparse",
+        ),
+    ],
+    ids=[
+        "iterparse-no-source",
+        "get-no-key",
+        "get-three-arguments",
+        "get-unknown-keyword",
+        "clear-arguments",
+        "unknown-attribute",
+        "unknown-function",
+        "not-in-the-package",
+    ],
+)
+def test_the_element_tree_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _ELEMENT_TREE.replace(right, wrong, 1)
+    assert source != _ELEMENT_TREE
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_element_tree_shim_declares_only_cpythons_names_and_parameters() -> None:
+    import inspect
+    import xml.etree.ElementTree as ET
+
+    shim = model_dir() / "xml" / "etree" / "ElementTree.codon"
+    tree = ast.parse(shim.read_text(encoding="utf-8"))
+    functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    assert set(functions) == {"iterparse"}
+    assert set(classes) == {"Element"}
+    methods = {
+        n.name: n for n in classes["Element"].body if isinstance(n, ast.FunctionDef)
+    }
+    assert set(methods) == {"__init__", "get", "clear"}
+    # Each declares CPython's leading parameters, by their names, and no
+    # other: narrower than CPython's, never wider.
+    for declared, python in (
+        (functions["iterparse"], ET.iterparse),
+        (methods["get"], ET.Element.get),
+        (methods["clear"], ET.Element.clear),
+    ):
+        names = [a.arg for a in declared.args.args if a.arg != "self"]
+        cpython = [p for p in inspect.signature(python).parameters if p != "self"]
+        assert names == cpython[: len(names)], declared.name
+    # The packages only import the submodule, so they name no module of
+    # their own (test_shim_list).
+    assert "xml.etree.ElementTree" in _shim_modules()
+    assert not {"xml", "xml.etree"} & _shim_modules()
+
+
+def test_map_resources_reason_names_each_element_tree_name_the_shim_lacks() -> None:
+    """t4_scene.map_resource's reason lists every name of xml.etree.ElementTree
+    it uses beyond the shim's (`ET.<name>` and an element's methods)."""
+    import importlib
+
+    # t4_scene re-exports a map_resource() function under the module's name.
+    module = importlib.import_module("autoware_carla_scenario.t4_scene.map_resource")
+    source = Path(str(module.__file__)).read_text(encoding="utf-8")
+    shim = model_dir() / "xml" / "etree" / "ElementTree.codon"
+    declared = set(re.findall(r"^(?:def|class) (\w+)", shim.read_text(), re.M))
+    used = set(re.findall(r"\bET\.(\w+)\b", source)) - declared
+    reason = EXCLUDED["autoware_carla_scenario.t4_scene.map_resource"]
+    assert used, "map_resource no longer uses ElementTree"
+    for name in sorted(used):
+        assert f"`{name}()`" in reason, name

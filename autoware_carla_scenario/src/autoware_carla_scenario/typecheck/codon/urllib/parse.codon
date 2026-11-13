@@ -1,6 +1,7 @@
 # The part of Python's urllib.parse the checked framework calls, for the
 # checker (docs/typecheck.md). Nothing here runs: urlsplit returns its five
-# parts typed as Python's SplitResult has them, without splitting anything.
+# parts typed as Python's SplitResult has them, and urlparse its six as
+# ParseResult has them, without splitting anything.
 
 
 class SplitResult:
@@ -68,3 +69,68 @@ def urlunsplit(components) -> str:
 # Python's: %XX escapes decoded, as UTF-8 by default.  Typed only.
 def unquote(string: str, encoding: str = "utf-8", errors: str = "replace") -> str:
     return string
+
+
+class ParseResult:
+    scheme: str
+    netloc: str
+    path: str
+    params: str
+    query: str
+    fragment: str
+
+    def __init__(
+        self, scheme: str, netloc: str, path: str, params: str, query: str, fragment: str
+    ):
+        self.scheme = scheme
+        self.netloc = netloc
+        self.path = path
+        self.params = params
+        self.query = query
+        self.fragment = fragment
+
+    # Python's ParseResult is a 6-tuple of str.
+    def __len__(self) -> int:
+        return 6
+
+    def __getitem__(self, index: int) -> str:
+        return (
+            self.scheme,
+            self.netloc,
+            self.path,
+            self.params,
+            self.query,
+            self.fragment,
+        )[index]
+
+    def __iter__(self):
+        yield self.scheme
+        yield self.netloc
+        yield self.path
+        yield self.params
+        yield self.query
+        yield self.fragment
+
+    @property
+    def username(self) -> Optional[str]:
+        return Optional[str]()
+
+    @property
+    def password(self) -> Optional[str]:
+        return Optional[str]()
+
+    @property
+    def hostname(self) -> Optional[str]:
+        return Optional[str]()
+
+    @property
+    def port(self) -> Optional[int]:
+        return Optional[int]()
+
+
+# urlparse(url, scheme='', allow_fragments=True): urlsplit()'s parts and the
+# path's `;params`. Python raises ValueError for a URL it cannot split (an
+# invalid IPv6 netloc), which the check cannot see. geturl() and urlunparse()
+# are not declared.
+def urlparse(url: str, scheme: str = "", allow_fragments: bool = True) -> ParseResult:
+    return ParseResult(scheme, "", url, "", "", "")

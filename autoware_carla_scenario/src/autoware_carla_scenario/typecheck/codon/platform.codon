@@ -1,0 +1,26 @@
+# The part of Python's platform the checked framework calls, for the checker
+# (docs/typecheck.md): what an interpreter and its machine are called, with
+# CPython 3.10's signatures, the oldest Python the package supports. Nothing
+# here runs: every name is empty. libc_ver(), system(), uname() and the
+# rest are not declared, so the check refuses them.
+
+
+# python_version(): "3.12.3", the interpreter's version.
+def python_version() -> str:
+    return ""
+
+
+# python_implementation(): "CPython", "PyPy", ...
+def python_implementation() -> str:
+    return ""
+
+
+# platform(aliased=0, terse=0): "Linux-6.8.0-x86_64-with-glibc2.39". Either
+# flag is read for its truth, so any value is taken, as CPython takes it.
+def platform(aliased=False, terse=False) -> str:
+    return ""
+
+
+# machine(): "x86_64", "aarch64", ...
+def machine() -> str:
+    return ""
