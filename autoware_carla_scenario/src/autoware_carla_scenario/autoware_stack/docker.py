@@ -637,60 +637,57 @@ class DockerAutowareLauncher:
             AutowareStackError: Another run held it for longer than
                 :data:`_BUILD_LOCK_TIMEOUT_S`.
         """
-        if TYPE_CHECKING:
-            # fcntl and os.open() have no model (typecheck/library.py).
-            return -1
-        else:
-            import fcntl  # noqa: PLC0415
-            import time  # noqa: PLC0415
+        import fcntl  # noqa: PLC0415
+        import time  # noqa: PLC0415
 
-            path = self._workspace / _BUILD_LOCK_NAME
+        path = self._workspace / _BUILD_LOCK_NAME
+        try:
+            # Read-only is enough for flock, and lets an existing file
+            # on a read-only mount lock too.
+            # 0o644: Codon has no octal literal.
+            fd = os.open(path, os.O_RDONLY | os.O_CREAT, 420)
+        except OSError as exc:
+            logger.warning(
+                "Building %s without a lock (%s): another run may build it "
+                "at the same time",
+                self._workspace,
+                exc,
+            )
+            return -1
+        # Read here, not as a default: a default is bound once.
+        timeout = _BUILD_LOCK_TIMEOUT_S
+        deadline = time.monotonic() + timeout
+        waiting = False
+        while True:
             try:
-                # Read-only is enough for flock, and lets an existing file
-                # on a read-only mount lock too.
-                fd = os.open(path, os.O_RDONLY | os.O_CREAT, 0o644)
+                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+                return fd
+            except BlockingIOError:
+                pass
             except OSError as exc:
+                os.close(fd)
                 logger.warning(
-                    "Building %s without a lock (%s): another run may build it "
-                    "at the same time",
+                    "Building %s without a lock (%s): another run may build "
+                    "it at the same time",
                     self._workspace,
                     exc,
                 )
                 return -1
-            # Read here, not as a default: a default is bound once.
-            timeout = _BUILD_LOCK_TIMEOUT_S
-            deadline = time.monotonic() + timeout
-            waiting = False
-            while True:
-                try:
-                    fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-                    return fd
-                except BlockingIOError:
-                    pass
-                except OSError as exc:
-                    os.close(fd)
-                    logger.warning(
-                        "Building %s without a lock (%s): another run may build "
-                        "it at the same time",
-                        self._workspace,
-                        exc,
-                    )
-                    return -1
-                if time.monotonic() >= deadline:
-                    os.close(fd)
-                    raise AutowareStackError(
-                        f"Another run has been building {self._workspace} for "
-                        f"more than {timeout:.0f} s (it holds {path}); not "
-                        "building it beside it"
-                    )
-                if not waiting:
-                    logger.info(
-                        "Waiting for another run to finish building %s (%s)",
-                        self._workspace,
-                        path,
-                    )
-                    waiting = True
-                time.sleep(_BUILD_LOCK_POLL_S)
+            if time.monotonic() >= deadline:
+                os.close(fd)
+                raise AutowareStackError(
+                    f"Another run has been building {self._workspace} for "
+                    f"more than {timeout:.0f} s (it holds {path}); not "
+                    "building it beside it"
+                )
+            if not waiting:
+                logger.info(
+                    "Waiting for another run to finish building %s (%s)",
+                    self._workspace,
+                    path,
+                )
+                waiting = True
+            time.sleep(_BUILD_LOCK_POLL_S)
 
     def _unlock_workspace(self, fd: int) -> None:
         """Let the build lock *fd* (from :meth:`_lock_workspace`) go."""

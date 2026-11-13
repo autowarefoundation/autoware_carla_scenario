@@ -3643,3 +3643,213 @@ class TestSecondReviewFollowUps:
         from autoware_carla_scenario.maps.cache import _sparse_pattern
 
         assert _sparse_pattern(path) == pattern
+
+
+@pytest.mark.skipif(not hasattr(os, "fork"), reason="needs fcntl (POSIX)")
+class TestLockFile:
+    """What ``_lock_file`` opens, and what it does when it cannot lock."""
+
+    def _flock_raising(
+        self, monkeypatch: pytest.MonkeyPatch, *errors: BaseException
+    ) -> list[int]:
+        """Make ``fcntl.flock`` raise *errors* in turn (then lock); its calls."""
+        import fcntl
+
+        operations: list[int] = []
+        pending = list(errors)
+
+        def _flock(fd: int, operation: int) -> None:
+            operations.append(operation)
+            if pending:
+                raise pending.pop(0)
+
+        monkeypatch.setattr(fcntl, "flock", _flock)
+        return operations
+
+    def test_it_opens_read_write_created_close_on_exec_mode_644(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        opened: list[tuple[Any, ...]] = []
+        real_open = os.open
+
+        def _open(path: Any, flags: int, mode: int = 0o777) -> int:
+            opened.append((path, flags, mode))
+            return real_open(path, flags, mode)
+
+        monkeypatch.setattr(cache_module.os, "open", _open)
+        old = os.umask(0)
+        try:
+            path = tmp_path / "new" / "entry.lock"
+            fd = cache_module._lock_file(path)
+        finally:
+            os.umask(old)
+        try:
+            assert fd >= 0
+            assert cache_module._HELD_LOCK_FDS[fd] == 1
+            assert opened == [(str(path), os.O_RDWR | os.O_CREAT | os.O_CLOEXEC, 0o644)]
+            assert path.stat().st_mode & 0o777 == 0o644
+        finally:
+            cache_module._HELD_LOCK_FDS.pop(fd, 0)
+            os.close(fd)
+
+    def test_it_takes_the_lock_without_waiting_when_it_is_free(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import fcntl
+
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        operations = self._flock_raising(monkeypatch)
+        caplog.set_level(logging.INFO, logger="autoware_carla_scenario")
+        fd = cache_module._lock_file(tmp_path / "entry.lock")
+        try:
+            assert operations == [fcntl.LOCK_EX | fcntl.LOCK_NB]
+            assert "Waiting" not in caplog.text
+        finally:
+            cache_module._HELD_LOCK_FDS.pop(fd, 0)
+            os.close(fd)
+
+    def test_it_waits_when_another_process_holds_it(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        import fcntl
+
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        operations = self._flock_raising(monkeypatch, BlockingIOError())
+        caplog.set_level(logging.INFO, logger="autoware_carla_scenario")
+        path = tmp_path / "entry.lock"
+        fd = cache_module._lock_file(path)
+        try:
+            assert fd >= 0
+            assert operations == [fcntl.LOCK_EX | fcntl.LOCK_NB, fcntl.LOCK_EX]
+            assert f"Waiting for another process to finish with {path}" in (caplog.text)
+            assert cache_module._HELD_LOCK_FDS[fd] == 1
+        finally:
+            cache_module._HELD_LOCK_FDS.pop(fd, 0)
+            os.close(fd)
+
+    @pytest.mark.parametrize("waiting", [False, True], ids=["at-once", "waiting"])
+    def test_a_flock_error_closes_the_file_and_goes_on_unlocked(
+        self,
+        waiting: bool,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        errors: list[BaseException] = [OSError(errno.ENOLCK, "no locks")]
+        if waiting:
+            errors.insert(0, BlockingIOError())
+        self._flock_raising(monkeypatch, *errors)
+        closed: list[int] = []
+        real_close = os.close
+
+        def _close(fd: int) -> None:
+            closed.append(fd)
+            real_close(fd)
+
+        monkeypatch.setattr(cache_module.os, "close", _close)
+        held = dict(cache_module._HELD_LOCK_FDS)
+        path = tmp_path / "entry.lock"
+        assert cache_module._lock_file(path) == -1
+        assert len(closed) == 1
+        assert cache_module._HELD_LOCK_FDS == held
+        assert f"beside {path} without its lock" in caplog.text
+        assert "no locks" in caplog.text
+
+    @pytest.mark.parametrize(
+        "error", [KeyboardInterrupt(), RuntimeError("boom")], ids=["interrupt", "bug"]
+    )
+    def test_any_other_flock_error_closes_the_file_and_is_raised(
+        self,
+        error: BaseException,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        self._flock_raising(monkeypatch, BlockingIOError(), error)
+        closed: list[int] = []
+        real_close = os.close
+
+        def _close(fd: int) -> None:
+            closed.append(fd)
+            real_close(fd)
+
+        monkeypatch.setattr(cache_module.os, "close", _close)
+        held = dict(cache_module._HELD_LOCK_FDS)
+        with pytest.raises(type(error)) as raised:
+            cache_module._lock_file(tmp_path / "entry.lock")
+        assert raised.value is error
+        assert len(closed) == 1
+        assert cache_module._HELD_LOCK_FDS == held
+        assert "without its lock" not in caplog.text
+
+    def test_a_file_it_cannot_open_goes_on_unlocked(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        def _open(*args: Any) -> int:
+            raise PermissionError(errno.EACCES, "denied")
+
+        monkeypatch.setattr(cache_module.os, "open", _open)
+        held = dict(cache_module._HELD_LOCK_FDS)
+        path = tmp_path / "entry.lock"
+        assert cache_module._lock_file(path) == -1
+        assert cache_module._HELD_LOCK_FDS == held
+        assert f"beside {path} without its lock" in caplog.text
+        assert "denied" in caplog.text
+
+    def test_a_directory_it_cannot_make_goes_on_unlocked(
+        self, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        (tmp_path / "file").write_text("")
+        path = tmp_path / "file" / "entry.lock"
+        assert cache_module._lock_file(path) == -1
+        assert f"beside {path} without its lock" in caplog.text
+
+    def test_it_warns_once_per_lock_file(
+        self,
+        tmp_path: Path,
+        monkeypatch: pytest.MonkeyPatch,
+        caplog: pytest.LogCaptureFixture,
+    ) -> None:
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        self._flock_raising(monkeypatch, OSError("a"), OSError("b"))
+        path = tmp_path / "entry.lock"
+        assert cache_module._lock_file(path) == -1
+        assert cache_module._lock_file(path) == -1
+        assert caplog.text.count("without its lock") == 1
+
+    def test_without_fcntl_nothing_is_locked(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        import sys
+
+        from autoware_carla_scenario.maps import cache as cache_module
+
+        monkeypatch.setitem(sys.modules, "fcntl", None)
+        # Where there is no fcntl (Windows), os may have no O_CLOEXEC either:
+        # it is not read before the import has succeeded.
+        monkeypatch.delattr(os, "O_CLOEXEC", raising=False)
+        path = tmp_path / "entry.lock"
+        assert cache_module._lock_file(path) == -1
+        assert not path.exists()

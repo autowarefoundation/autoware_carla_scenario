@@ -1263,39 +1263,44 @@ def _lock_file(path: Path) -> int:
     else ``exec``-s never holds it, and a plain fork closes it at once
     (:func:`_forget_locks`).
     """
-    if TYPE_CHECKING:
-        # fcntl and os.open() have no model (typecheck/library.py).
+    try:
+        import fcntl  # noqa: PLC0415 -- POSIX only; unlocked without it
+    except ImportError:
         return -1
-    else:
+    key = str(path)
+    # Past the import, this is POSIX, where os has O_CLOEXEC (and CPython
+    # opens a descriptor not inheritable anyway, PEP 446).
+    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with _FORK_GUARD:
+            # 0o644: Codon has no octal literal.
+            fd = os.open(key, flags, 420)
+            _HELD_LOCK_FDS[fd] = 1
+    except OSError as exc:
+        _warn_unlocked(key, exc)
+        return -1
+    try:
         try:
-            import fcntl  # noqa: PLC0415 -- POSIX only; unlocked without it
-        except ImportError:
-            return -1
-        key = str(path)
-        flags = os.O_RDWR | os.O_CREAT | getattr(os, "O_CLOEXEC", 0)
-        try:
-            path.parent.mkdir(parents=True, exist_ok=True)
-            with _FORK_GUARD:
-                fd = os.open(key, flags, 0o644)
-                _HELD_LOCK_FDS[fd] = 1
-        except OSError as exc:
-            _warn_unlocked(key, exc)
-            return -1
-        try:
-            try:
-                fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
-            except BlockingIOError:
-                logger.info("Waiting for another process to finish with %s", key)
-                fcntl.flock(fd, fcntl.LOCK_EX)
-        except BaseException as exc:
-            with _FORK_GUARD:
-                _HELD_LOCK_FDS.pop(fd, 0)
-                os.close(fd)
-            if not isinstance(exc, OSError):
-                raise
-            _warn_unlocked(key, exc)
-            return -1
-        return fd
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            logger.info("Waiting for another process to finish with %s", key)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+    # Two handlers, each closing the file first, where one handler tested
+    # isinstance(exc, OSError): Codon types the exception BaseException
+    # there, and would compile only the re-raise.
+    except OSError as exc:
+        with _FORK_GUARD:
+            _HELD_LOCK_FDS.pop(fd, 0)
+            os.close(fd)
+        _warn_unlocked(key, exc)
+        return -1
+    except BaseException:
+        with _FORK_GUARD:
+            _HELD_LOCK_FDS.pop(fd, 0)
+            os.close(fd)
+        raise
+    return fd
 
 
 def _hold_fork_guard() -> None:

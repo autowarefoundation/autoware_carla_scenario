@@ -33,7 +33,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ...utils.opendrive import sanitize_opendrive
 from ..base import TrafficBackendError, TrafficBackendUnavailable
@@ -118,12 +118,7 @@ class SignalTable:
 
 def _sumo_package_homes() -> list[Path]:
     """Where the ``eclipse-sumo`` package says SUMO is, and where it lies; none
-    when it is not installed.
-
-    Its own function so that the library check (docs/typecheck.md) leaves the
-    import out: :func:`sumo_home` calls it in the ``else`` branch of
-    ``if TYPE_CHECKING:``.
-    """
+    when it is not installed."""
     try:
         import sumo  # noqa: PLC0415 - the eclipse-sumo package
     except ImportError:
@@ -141,10 +136,7 @@ def sumo_home() -> Path:
     candidates: list[Path] = []
     if os.environ.get("SUMO_HOME"):
         candidates.append(Path(os.environ["SUMO_HOME"]))
-    if TYPE_CHECKING:
-        pass
-    else:
-        candidates += _sumo_package_homes()
+    candidates += _sumo_package_homes()
     for home in candidates:
         if (home / "tools" / "randomTrips.py").is_file() and (home / "bin").is_dir():
             return home

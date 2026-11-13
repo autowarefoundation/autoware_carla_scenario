@@ -1,6 +1,7 @@
 """What a run's Hydra command line asks for, and the run directory it gets.
 
 Whether an argv asks Hydra for a multirun (:func:`multirun_requested_in_argv`),
+selects the lanelet sweeper (:func:`lanelet_sweeper_requested_in_argv`), asks
 for no job at all (:func:`asks_for_no_job`) or names a directory itself
 (:func:`sets_hydra_key`), and the Hydra-style timestamped directory reserved
 for a run, a run's alone (:func:`reserve_timestamped_dir`, #1223, #1359).
@@ -22,6 +23,7 @@ __all__ = [
     "HYDRA_NO_JOB_FLAGS",
     "asks_for_no_job",
     "is_multirun_mode_override",
+    "lanelet_sweeper_requested_in_argv",
     "multirun_dir",
     "multirun_requested_in_argv",
     "reserve_timestamped_dir",
@@ -65,6 +67,18 @@ def multirun_requested_in_argv(argv: list[str]) -> bool:
     return any(
         arg in ("--multirun", "-m") or is_multirun_mode_override(arg) for arg in argv
     )
+
+
+def lanelet_sweeper_requested_in_argv(argv: list[str]) -> bool:
+    """Whether *argv* selects the lanelet sweeper
+    (``hydra/sweeper=lanelet_constraint``, with or without ``+``).  Read
+    before Hydra composes, so a sweeper a config file selects is not seen."""
+    for arg in argv:
+        name, sep, value = arg.lstrip("+").partition("=")
+        if sep and name == "hydra/sweeper":
+            if value.strip().strip("'\"") == "lanelet_constraint":
+                return True
+    return False
 
 
 def asks_for_no_job(argv: list[str]) -> bool:
