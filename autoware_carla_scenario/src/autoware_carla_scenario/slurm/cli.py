@@ -22,7 +22,13 @@ from pathlib import Path
 from .collect import collect, unfinished_cases
 from .manifest import BatchLayout
 from .settings import SlurmSettings
-from .status import active_jobs, busy_reason, cancel_batch, print_status
+from .status import (
+    active_jobs,
+    busy_reason,
+    cancel_batch,
+    named_cases,
+    print_status,
+)
 from .submit import after_submit, submit_cases
 
 __all__ = ["main"]
@@ -64,23 +70,11 @@ def _resubmit(args: argparse.Namespace) -> int:
         print(f"Error: {reason}", file=sys.stderr)  # noqa: T201
         return 1
     if args.cases:
-        labels = {str(c["label"]): int(c["index"]) for c in manifest["cases"]}
-        # A case named twice (by its label and its index, say) runs once.
-        picked: dict[int, None] = {}
-        for item in args.cases.split(","):
-            item = item.strip()
-            if item in labels:
-                picked[labels[item]] = None
-            elif (
-                item.isascii()
-                and item.isdigit()
-                and 0 <= int(item) < len(manifest["cases"])
-            ):
-                picked[int(item)] = None
-            else:
-                print(f"Error: no case {item!r} in the batch", file=sys.stderr)  # noqa: T201
-                return 1
-        chosen = sorted(picked)
+        # The checked slurm.status's: an unknown entry is said there.
+        named = named_cases(manifest, args.cases)
+        if named is None:
+            return 1
+        chosen = named
     else:
         chosen = unfinished_cases(layout, failed=args.failed)
     if not chosen:

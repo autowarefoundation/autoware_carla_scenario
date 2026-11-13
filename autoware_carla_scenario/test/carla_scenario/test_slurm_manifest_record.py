@@ -53,6 +53,7 @@ from autoware_carla_scenario.slurm.manifest import (
 )
 from autoware_carla_scenario.slurm.settings import SlurmSettings
 
+from . import test_slurm_follow
 from .test_slurm_batch_readers import old_reading
 
 # -- The corpus -------------------------------------------------------------------
@@ -461,6 +462,10 @@ def _old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
         patch.setattr(collect_mod, "collect", _old_collect)
         patch.setattr(cli, "unfinished_cases", _old_unfinished_cases)
         patch.setattr(cli, "collect", _old_collect)
+        # resubmit's --cases picking, as it read the manifest then.
+        patch.setattr(cli, "_resubmit", test_slurm_follow._old_resubmit)
+        patch.setattr(test_slurm_follow, "unfinished_cases", _old_unfinished_cases)
+        patch.setattr(test_slurm_follow, "collect", _old_collect)
         # status, cancel, the busy check and the viewer's case states, as
         # they read the records then.
         with old_reading(patch):
