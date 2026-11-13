@@ -390,3 +390,14 @@ def test_the_stream_is_the_lock_opened_for_appending(tmp_path: Path) -> None:
         assert stream.name == str(lock)
         assert stream.writable() and not stream.readable()
     assert lock.read_bytes() == b""
+
+
+def test_carla_install_re_exports_the_checked_modules_own_objects() -> None:
+    """``carla_install``'s names are ``carla_install_paths``' objects, which
+    the library check compiles (#2144); ``_locked()`` stays."""
+    from autoware_carla_scenario import carla_install_paths
+
+    for name in ("_open_lock", "_UNWRITABLE_ERRNOS"):
+        assert getattr(carla_install, name) is getattr(carla_install_paths, name)
+    assert carla_install._open_lock.__module__ == carla_install_paths.__name__
+    assert carla_install._locked.__module__ == carla_install.__name__

@@ -5546,6 +5546,73 @@ def test_the_errno_codes_and_uuid_hex_slurm_start_lock_reads_are_cpythons() -> N
 
 
 # ---------------------------------------------------------------------------
+# errno.EACCES and errno.EROFS: what carla_install_paths tells a lock file
+# that cannot be created or written by (#2144)
+# ---------------------------------------------------------------------------
+
+
+_LOCK_FILE = """
+from __future__ import annotations
+
+import errno
+import sys
+from pathlib import Path
+from typing import IO, Optional
+
+_CODES = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
+
+
+def opened(lock: Path) -> Optional[IO[str]]:
+    try:
+        return lock.open("a")
+    except OSError as exc:
+        if exc.errno not in _CODES:
+            raise
+        print(f"cannot create {lock} ({exc})", file=sys.stderr)
+    return None
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_errno_shim_takes_what_carla_install_paths_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_LOCK_FILE, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # An AttributeError in CPython too.
+        ("errno.EROFS", "errno.EROFFS"),
+        ("errno.EACCES", "errno.EACCESS"),
+    ],
+    ids=["erofs-misspelt", "eacces-misspelt"],
+)
+def test_the_errno_shim_refuses_what_cpython_refuses_of_carla_install_paths(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _LOCK_FILE.replace(right, wrong, 1)
+    assert source != _LOCK_FILE
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_errno_codes_carla_install_paths_reads_are_cpythons() -> None:
+    import errno
+
+    shim = (model_dir() / "errno.codon").read_text()
+    for name in ("EACCES", "EROFS"):
+        value = int(getattr(errno, name))
+        assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
+
+
+# ---------------------------------------------------------------------------
 # The xml.etree.ElementTree shim: what traffic.sumo.network reads a network's
 # crossings with
 # ---------------------------------------------------------------------------

@@ -2995,6 +2995,13 @@ current and the headers of the conditional request too (`_current_of()`,
 that a value of another type, in a stamp edited by hand, decides as it did. A
 constant a test replaces in the excluded module (`_UNPACKED_PER_PACKED`) is
 passed to the checked function (`_room_needed()`) rather than read there.
+The opening of the lock file is there too (`_open_lock()` and the errnos of a
+lock file that cannot be written, `_UNWRITABLE_ERRNOS`, #2144): it opens the
+file with `lock.open(mode)`, the same file object as `open(lock, mode)` in
+Python, since Codon's `open()` takes no `Path` and gives no `IO`; a test that
+makes the lock read-only patches `Path.open`, as `carla_install` no longer
+calls `open()`. Holding the lock (`_locked()`, a `contextmanager`) stays in
+`carla_install`.
 
 Each checked module gets the `__file__` Python sets on it (its source's path,
 a `str`), which Codon 0.19 does not, bound on the last line of the prelude so
@@ -3344,8 +3351,9 @@ What Codon 0.19 needs that Python does not, beyond
   item, `tobytes()`, `release()` and the rest are not declared.
   The result of `stat()` and `fstat()` has `st_dev`, `st_ino`, `st_mode`,
   `st_nlink`, `st_size`, `st_mtime` and `st_mtime_ns` (all zero) and
-  nothing else. `errno` declares `EPERM`, `EINVAL`, `ENOLCK`, `ENOSYS`,
-  `ENOTSUP` and `EOPNOTSUPP` (Linux's values) and no other code. `uuid`
+  nothing else. `errno` declares `EPERM`, `EACCES`, `EROFS`, `EINVAL`,
+  `ENOLCK`, `ENOSYS`, `ENOTSUP` and `EOPNOTSUPP` (Linux's values) and no
+  other code. `uuid`
   declares `uuid4()`, of no argument, and its `UUID`'s `hex` (a `str`; the
   nil UUID's in the check, as nothing runs), and `UUID(hex)` of a `str`, the
   first of CPython's parameters; the rest of `UUID` (`int`, `bytes`,
