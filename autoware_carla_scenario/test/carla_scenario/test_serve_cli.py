@@ -487,7 +487,7 @@ def test_is_loopback_reads_hosts_as_before(host: str, loopback: bool) -> None:
 def test_warn_if_exposed_writes_one_line_to_stderr(
     host: str, shown: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert warn_if_exposed("prog", host, 1234, "edit drafts") is None
+    warn_if_exposed("prog", host, 1234, "edit drafts")
     out, err = capsys.readouterr()
     assert out == ""
     assert err == (
@@ -503,7 +503,7 @@ def test_warn_if_exposed_writes_one_line_to_stderr(
 def test_warn_if_exposed_says_nothing_of_loopback(
     host: str, capsys: pytest.CaptureFixture[str]
 ) -> None:
-    assert warn_if_exposed("prog", host, 1234, "edit drafts") is None
+    warn_if_exposed("prog", host, 1234, "edit drafts")
     assert capsys.readouterr() == ("", "")
 
 
@@ -575,11 +575,8 @@ def _bind_parser(
     for name, value in env.items():
         monkeypatch.setenv(name, value)
     parser = argparse.ArgumentParser(prog="pin")
-    assert (
-        add_bind_arguments(
-            parser, host_env="PIN_HOST", port_env="PIN_PORT", default_port=9100
-        )
-        is None
+    add_bind_arguments(
+        parser, host_env="PIN_HOST", port_env="PIN_PORT", default_port=9100
     )
     return parser
 
