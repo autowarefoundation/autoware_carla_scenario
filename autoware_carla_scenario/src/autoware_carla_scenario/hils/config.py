@@ -780,7 +780,11 @@ def _device(name: str, value: Any, base: Path, mode: str) -> DeviceSpec:
         else v
         for k, v in _mapping(section.get("options"), f"{where}.options").items()
     }
-    messages_value = section.get("messages") or []
+    # Only a missing key or null has no messages: false, 0 or "" is not a
+    # list (#2134).
+    messages_value = section.get("messages")
+    if messages_value is None:
+        messages_value = []
     if not isinstance(messages_value, list):
         raise HilsConfigError(f"{where}.messages: expected a list")
     messages = tuple(
@@ -791,7 +795,9 @@ def _device(name: str, value: Any, base: Path, mode: str) -> DeviceSpec:
         if section.get("sensor") is not None
         else None
     )
-    inputs_value = section.get("inputs") or []
+    inputs_value = section.get("inputs")
+    if inputs_value is None:
+        inputs_value = []
     if not isinstance(inputs_value, list):
         raise HilsConfigError(f"{where}.inputs: expected a list")
     inputs = tuple(
@@ -854,8 +860,15 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
     if clock not in CLOCKS:
         raise HilsConfigError(f"clock: {clock!r} is not one of {', '.join(CLOCKS)}")
     canvas: Optional[Path] = None
-    if root.get("canvas"):
-        canvas = (base / Path(_text(root["canvas"], "canvas")).expanduser()).resolve()
+    # Only a missing key or null renders nothing: false or 0 is not text, and
+    # "" is text that names no file (it would resolve to the directory) (#2134).
+    if root.get("canvas") is not None:
+        canvas_text = _text(root["canvas"], "canvas")
+        if not canvas_text:
+            raise HilsConfigError(
+                'canvas: "" names no file; leave canvas out, or null, for none'
+            )
+        canvas = (base / Path(canvas_text).expanduser()).resolve()
     runner = _mapping(root.get("runner"), "runner")
     _only(runner, ("listen",), "runner")
     listen = runner.get("listen", f"0.0.0.0:{DEFAULT_PORT}")
