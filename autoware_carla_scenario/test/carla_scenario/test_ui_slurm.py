@@ -86,7 +86,7 @@ def test_a_submit_host_with_other_paths_sets_the_node_s() -> None:
     ("field", "value", "error"),
     [
         ("array_parallelism", "0", "at least 1"),
-        ("cases_per_task", "two", "must be a number"),
+        ("cases_per_task", "two", "must be a whole number"),
         ("time", "tomorrow", "--time"),
         ("partition", "main; rm -rf", "characters"),
         ("env", "1BAD=x", "not an environment variable name"),

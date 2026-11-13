@@ -129,13 +129,17 @@ class SlurmOptions(_SlurmOptions):
             return value or None
 
         def number(key: str, kind: type) -> Any:
-            value = text(key)
+            # Unset only when missing, null or blank: JSON's 0 is the number
+            # 0, as "0" is, not an unset field.
+            raw = data.get(key)
+            value = None if raw is None else str(raw).strip() or None
             if value is None:
                 return None
             try:
                 parsed = kind(value)
             except ValueError as exc:
-                raise ValueError(f"{key} must be a number, not {value!r}") from exc
+                what = "a whole number" if kind is int else "a number"
+                raise ValueError(f"{key} must be {what}, not {value!r}") from exc
             check_at_least(key, parsed, 0 if kind is float else 1)
             return parsed
 
