@@ -2056,6 +2056,59 @@ def test_the_dotenv_model_is_load_dotenv_as_in_the_package() -> None:
     )
 
 
+#: The model of the third-party packaging: what the checked
+#: authoring.framework_pin reads of a version, compared with the installed
+#: package.
+_PACKAGING_MODEL = model_dir() / "packaging"
+
+
+def test_the_packaging_model_is_version_and_invalid_version_as_in_the_package() -> None:
+    import packaging.version
+
+    assert _public(_definitions("version", _PACKAGING_MODEL)) == [
+        "InvalidVersion",
+        "Version",
+    ]
+    assert _public(_definitions("__init__", _PACKAGING_MODEL)) == []
+    _assert_declared_as_in_python(
+        "Version", "version", packaging.version.Version, root=_PACKAGING_MODEL
+    )
+    version = _definitions("version", _PACKAGING_MODEL)["Version"][0]
+    assert isinstance(version, ast.ClassDef)
+    assert sorted(_methods(version)) == ["__init__", "local"]
+    # A str or None in the package too.
+    local = _methods(version)["local"]
+    assert "property" in _decorators(local)
+    assert ast.unparse(local.returns) == "Optional[str]"  # type: ignore[arg-type]
+    python_local = inspect.getattr_static(packaging.version.Version, "local")
+    assert isinstance(python_local, property) and python_local.fget is not None
+    assert typing.get_type_hints(python_local.fget)["return"] == typing.Optional[str]
+    # InvalidVersion is a ValueError, built from nothing or one message.
+    invalid = _definitions("version", _PACKAGING_MODEL)["InvalidVersion"][0]
+    assert isinstance(invalid, ast.ClassDef)
+    assert [ast.unparse(b) for b in invalid.bases] == ["Static[ValueError]"]
+    assert packaging.version.InvalidVersion.__bases__ == (ValueError,)
+    assert str(packaging.version.InvalidVersion()) == ""
+    assert str(packaging.version.InvalidVersion("x")) == "x"
+
+
+#: The model of the eclipse-sumo package's `sumo` module: what the checked
+#: traffic.sumo.network reads of it.
+_SUMO_MODEL = model_dir() / "sumo"
+
+
+def test_the_sumo_model_is_the_packages_sumo_home() -> None:
+    definitions = _definitions("__init__", _SUMO_MODEL)
+    assert sorted(definitions) == ["SUMO_HOME", "__file__"]
+    for name in definitions:
+        node = definitions[name][0]
+        assert isinstance(node, ast.AnnAssign), name
+        assert ast.unparse(node.annotation) == "str", name
+    sumo = pytest.importorskip("sumo", reason="eclipse-sumo (the sumo extra)")
+    assert isinstance(sumo.SUMO_HOME, str)
+    assert isinstance(sumo.__file__, str)
+
+
 # ---------------------------------------------------------------------------
 # What Python exports, the model declares or leaves out on purpose (#237)
 # ---------------------------------------------------------------------------

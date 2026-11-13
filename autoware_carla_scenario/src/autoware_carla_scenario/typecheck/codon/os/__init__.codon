@@ -404,6 +404,11 @@ def replace(
 O_WRONLY = 1
 O_EXCL = 128
 
+# The flags maps.cache opens an entry's lock file with (Linux's values, the
+# same on x86_64 and aarch64: O_CLOEXEC is 0o2000000 on both).
+O_RDWR = 2
+O_CLOEXEC = 524288
+
 
 # link(src, dst, *, src_dir_fd=None, dst_dir_fd=None, follow_symlinks=True):
 # a hard link *dst* to *src* (nothing is linked here).

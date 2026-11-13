@@ -229,6 +229,7 @@ __all__ = [
 #: ``_exceptions.codon`` declares them, and :data:`PRELUDE` imports them into
 #: every transformed module, where Python finds them among its builtins.
 MISSING_BUILTIN_EXCEPTIONS = (
+    "BlockingIOError",
     "BrokenPipeError",
     "ChildProcessError",
     "ConnectionError",
