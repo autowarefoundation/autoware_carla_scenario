@@ -4882,8 +4882,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-332 of the package's 446
-modules (74%; about 103,600 of
+333 of the package's 447
+modules (74%; about 103,700 of
 171,000 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4926,7 +4926,11 @@ and its configuration's sensor spec and the check of a field's signal name
 <code>scenario-hils --setup</code> creates for a configuration's devices, each validated
 in turn (<code>hils.host_devices</code>, #2124; not the playbooks' variables, a dict of
 mixed value types, or running them with ansible-runner, <code>hils.host_setup</code>,
-which re-exports it), how an error shows an integer too long for
+which re-exports it), how <code>detect-no-3d-model</code> writes the map configuration
+it edits, through a temporary file or in place, and reports the error of
+either (<code>tools.file_writes</code>, #2135; not the edit of the YAML text, the CARLA
+ray casts or the command line, <code>tools.detect_no_3d_model_lanelets</code>, which
+re-exports it), how an error shows an integer too long for
 <code>repr()</code> (<code>value_text.huge_integer()</code>, which <code>hils.config</code> re-exports, #1704), the
 example scenarios and their configs, the SLURM launcher's job scripts (and
 how one is written, #2124), where
@@ -4980,7 +4984,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 332 CHECKED modules</summary>
+<summary>The 333 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -6122,6 +6126,10 @@ with the first paragraph of its docstring:</p>
 <td>-</td>
 </tr>
 <tr>
+<td><code>tools.file_writes</code></td>
+<td>How <code>detect-no-3d-model</code> writes the map configuration it edits.</td>
+</tr>
+<tr>
 <td><code>traffic</code></td>
 <td>what drives the vehicles a scenario did not author.</td>
 </tr>
@@ -6639,7 +6647,7 @@ the first:</p>
 <li><code>prepare.pool</code>: builds backends from the classes it is handed, by attribute name (<code>getattr(cls, ...)</code>), which Codon cannot</li>
 <li><code>pytest_fixtures</code>: imports pytest, and takes the scenario's class (<code>Type[BaseScenario]</code>), which Codon cannot hold as a value</li>
 <li><code>registry</code>: imports omegaconf (<code>DictConfig</code>) and authoring.models (<code>ScenarioDocument</code>; pydantic), both under <code>TYPE_CHECKING</code>, which are neither checked nor modelled, and more of importlib.metadata than its shim declares (<code>entry_points()</code>); holds scenario classes (<code>type[BaseScenario]</code>) and their config classes as values, which Codon cannot hold, and document loaders (<code>Callable[[], ScenarioDocument]</code>) that return a pydantic model as values</li>
-<li><code>rerun</code>: imports concurrent.futures and types, and, inside functions, importlib (<code>importlib.import_module()</code>, in require_converter(), which its shim does not declare) and argparse (in main()), which are neither checked nor modelled; uses more of errno and os than their shims declare (<code>errno.ENOENT</code>, <code>os.strerror()</code>), and raises <code>FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))</code> in convert_outputs(), of OSError's <code>(errno, strerror, filename)</code>, which the model's exceptions refuse; holds the converter package (imported at run time) as <code>Any</code>; the path rule of a log and its recording (<code>TRAJECTORY_SUFFIX</code>, <code>RECORDING_SUFFIX</code>, <code>_label()</code> and <code>recording_path()</code>) is the checked run_outputs's (#1678), which it re-exports; how a conversion went, which recordings' conversions count and the run's summary of them (<code>RerunConversion</code>, <code>latest()</code>, <code>report()</code>) and the converter's keyword for a draw radius (<code>_draw_radius_argument()</code>) are the checked rerun_report's (#2124), which it re-exports; rerun.codon models what scenario_runner, scenario_queue and t4_scene.grid use of it</li>
+<li><code>rerun</code>: imports concurrent.futures and types, and, inside functions, importlib (<code>importlib.import_module()</code>, in require_converter(), which its shim does not declare) and argparse (in main()), which are neither checked nor modelled; uses more of errno and os than their shims declare (<code>errno.ENOENT</code>, <code>os.strerror()</code>), and raises <code>FileNotFoundError(errno.ENOENT, os.strerror(errno.ENOENT), str(path))</code> in convert_outputs(), of OSError's <code>(errno, strerror, filename)</code>, which the model's FileNotFoundError refuses (it declares them of OSError itself and of a class a checked module derives from it); holds the converter package (imported at run time) as <code>Any</code>; the path rule of a log and its recording (<code>TRAJECTORY_SUFFIX</code>, <code>RECORDING_SUFFIX</code>, <code>_label()</code> and <code>recording_path()</code>) is the checked run_outputs's (#1678), which it re-exports; how a conversion went, which recordings' conversions count and the run's summary of them (<code>RerunConversion</code>, <code>latest()</code>, <code>report()</code>) and the converter's keyword for a draw radius (<code>_draw_radius_argument()</code>) are the checked rerun_report's (#2124), which it re-exports; rerun.codon models what scenario_runner, scenario_queue and t4_scene.grid use of it</li>
 <li><code>rerun_lidar</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; the name and place of a run's sensor recording (<code>SENSORS_SUFFIX</code> and <code>lidar_recording_path()</code>) are the checked run_outputs's (#1678), which it re-exports; so are a camera's mount, the colours of a sweep, the sensors' entities and the parse of <code>rerun rrd print</code> (<code>CameraMount</code>, <code>_height_colours()</code>, <code>SENSOR_ENTITIES</code>, <code>_is_sensor_entity()</code>, <code>_CHUNK_LINE</code> and <code>chunk_entities()</code>) the checked rerun_sensor_mount's (#1688), as is the scan of a recording's bytes for the sensors' entity paths (<code>_SCAN_BLOCK</code> and <code>carries_sensors()</code>, #1697), which it re-exports too; entity.carla_driver_entity (itself excluded), rerun and rerun_metrics (itself excluded) use it</li>
 <li><code>rerun_metrics</code>: imports the Rerun SDK (at run time), which Codon has no model of, and holds it as <code>Any</code>; reads the log's metric records as JSON objects of mixed value types (<code>dict[str, Any]</code>); the name of its scratch recording (<code>METRICS_SUFFIX</code>) is the checked run_outputs's (#1748), which it re-exports</li>
 <li><code>ros2.cyclone</code>: imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds</li>
@@ -6660,7 +6668,7 @@ the first:</p>
 <li><code>t4_scene.map_resource</code>: builds protobuf messages (t4_scene._proto); the OSM bytes it carries and their digest (<code>local_meters_osm()</code>, <code>resource_digest()</code>, <code>CENTERLINE_INVERTED_TAG</code>) are the checked t4_scene.osm's (#2116), which it re-exports</li>
 <li><code>t4_scene.route</code>: Codon crashes compiling RouteGraph.of(), which builds the lane graph with lanelet2's routing graph (a segmentation fault, or an assertion at translate.cpp:193); imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks; holds the lane graph as <code>Mapping[int, tuple[int, ...]]</code> attributes; and moves a map's points with <code>Lanelet.resetCache()</code> and <code>LineString3d.__setitem__()</code>, which the lanelet2 model does not declare; t4_scene.convert and t4_scene.live, which are not checked, are all that use it</li>
 <li><code>templating</code>: imports jinja2; its filters escape with the checked text_escape</li>
-<li><code>tools.detect_no_3d_model_lanelets</code>: imports omegaconf, yaml, tqdm, argparse, and serve_cli (argparse), which is not checked</li>
+<li><code>tools.detect_no_3d_model_lanelets</code>: imports omegaconf, yaml, tqdm, argparse, and serve_cli (argparse), which is not checked; writing the map configuration in place or through a temporary file, and describing the error of either (<code>_write_in_place()</code>, <code>_write_atomically()</code>, <code>_PartialWriteError</code>, <code>_describe_os_error()</code>), are the checked tools.file_writes' (#2135), which it re-exports</li>
 <li><code>traffic.registry</code>: holds backend factories behind the <code>TrafficBackendFactory</code> alias, <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> ("expected type expression"), and takes their options as <code>Mapping[str, Any]</code>, which Codon cannot express; load_traffic_backend_plugins and the _walk_traffic_backend_plugins it calls import, inside them, autoware_carla_scenario.registry (<code>_PLUGIN_LOAD_LOCK</code>, <code>load_entry_point_plugins()</code>), which is neither checked nor modelled and is the first error the check reports (UNCALLED entries for both would skip those imports, but not the alias); traffic.codon models it for the traffic package</li>
 <li><code>traffic.sumo.backend</code>: imports traci, sumolib and libsumo inside its functions, and builds its network and reads its signals and crossings with build_network(), SignalTable and crossing_edges() of the checked traffic.sumo.network, which the check leaves build_network() and SignalTable uncalled of, for roadgen; holds SUMO's connection as <code>_traci: Any</code> (traci or libsumo, whichever _load_traci() finds) and sumolib's network as <code>_net: Any</code>, and takes CARLA's world, its actors and the scenario's entities typed <code>Any</code>, which Codon cannot express; the signal states it sets, SUMO's step per CARLA tick and the links a program lets go together are the checked traffic.sumo.signal_states', and its command-line options, mode bits, vehicle types and type files the checked traffic.sumo.options'</li>
 <li><code>trajectory.authoring</code>: parses document values of <code>Any</code> (YAML rows, editor fields) into <code>dict[str, Any]</code>, which Codon cannot express; what it does with the editor's text and with parsed rows is the checked trajectory.vertex_text's, and the typed builders it re-exports (the goal, via lanelets, timing and lanelet path) are the checked trajectory.authored's</li>
@@ -7303,9 +7311,9 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   the tail of a job's log, #1647; it takes <code>whence</code> by keyword, as <code>typing.IO</code>
   declares it, where a CPython file object takes it by position only),
   <code>write()</code> (of a <code>str</code>, read as bytes too), iteration over the lines and
-  <code>with</code>. <code>stat()</code> (no argument) returns a result of the five fields the
-  framework reads (<code>st_dev</code>, <code>st_ino</code>, <code>st_size</code>, <code>st_mtime_ns</code>, <code>st_mtime</code>),
-  all zero (<code>lstat()</code> too), and <code>replace(target)</code> and <code>rename(target)</code> (a
+  <code>with</code>. <code>stat()</code> (no argument) returns a result of the seven fields the
+  framework reads (<code>st_dev</code>, <code>st_ino</code>, <code>st_uid</code>, <code>st_gid</code>, <code>st_size</code>,
+  <code>st_mtime_ns</code>, <code>st_mtime</code>), all zero (<code>lstat()</code> too), and <code>replace(target)</code> and <code>rename(target)</code> (a
   <code>str</code> or an <code>os.PathLike</code>) return the new <code>Path</code>; nothing is read or
   renamed. <code>touch(mode=0o666, exist_ok=True)</code>, <code>rmdir()</code>,
   <code>chmod(mode, *, follow_symlinks=True)</code>, <code>write_bytes(data)</code> (a <code>str</code> here, as
@@ -7345,7 +7353,15 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   follow_symlinks=True)</code> (nothing is linked) and <code>stat(path, *,
   dir_fd=None, follow_symlinks=True)</code>, and what <code>slurm.start_lock</code> creates
   and reads a lock file with: <code>fstat(fd)</code> and <code>write(fd, data, /)</code> (of bytes,
-  a <code>str</code> in the check, which reads bytes as str; <code>0</code>: nothing is written).
+  a <code>str</code> in the check, which reads bytes as str, or a <code>memoryview</code> of them;
+  <code>0</code>: nothing is written), and what <code>tools.file_writes</code> writes a file
+  with: <code>ftruncate(fd, length, /)</code>, <code>fsync(fd)</code> (of an <code>int</code>; the object
+  with a <code>fileno()</code> CPython also takes is not declared) and <code>chown(path,
+  uid, gid, *, dir_fd=None, follow_symlinks=True)</code>; nothing is cut, synced
+  or given away. <code>memoryview(obj)</code> of bytes is declared as far as
+  <code>tools.file_writes</code> uses it: a view is true while it is not empty and
+  sliced into another (<code>view[n:]</code>), which <code>os.write()</code> takes; indexing an
+  item, <code>tobytes()</code>, <code>release()</code> and the rest are not declared.
   The result of <code>stat()</code> and <code>fstat()</code> has <code>st_dev</code>, <code>st_ino</code>, <code>st_mode</code>,
   <code>st_nlink</code>, <code>st_size</code>, <code>st_mtime</code> and <code>st_mtime_ns</code> (all zero) and
   nothing else. <code>errno</code> declares <code>EPERM</code>, <code>EINVAL</code>, <code>ENOLCK</code>, <code>ENOSYS</code>,
@@ -7372,7 +7388,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   (likewise), <code>copytree(src, dst, symlinks=False, ignore=None,
   copy_function=None, ignore_dangling_symlinks=False, dirs_exist_ok=False)</code>,
   <code>copy2(src, dst, *,
-  follow_symlinks=True)</code>, <code>move(src, dst)</code>, <code>rmtree(path,
+  follow_symlinks=True)</code>, <code>copymode(src, dst, *, follow_symlinks=True)</code>
+  (which returns <code>None</code>), <code>move(src, dst)</code>, <code>rmtree(path,
   ignore_errors=False)</code> and <code>which(cmd, mode=1, path=None)</code> of a <code>str</code>
   command; the callables CPython also takes (<code>onerror</code>, <code>copy_function</code>)
   are not declared (nor <code>copytree()</code>'s <code>ignore</code> and <code>copy_function</code>).
@@ -7541,8 +7558,13 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   CPython's is whatever it was raised with (an <code>int</code>, a <code>str</code> or <code>None</code>), so
   test it with <code>isinstance()</code> before reading it as an <code>int</code>. Each
   takes no message or one value by position, as CPython does; a keyword
-  (<code>TimeoutError(message=...)</code>) and <code>OSError</code>'s <code>(errno, strerror)</code> and
-  the <code>filename</code> they fill are refused. <code>OSError</code>'s (and <code>IOError</code>'s, and
+  (<code>TimeoutError(message=...)</code>) and <code>OSError</code>'s <code>(errno, strerror)</code> are
+  refused. <code>OSError(errno, strerror, filename)</code> is declared of an
+  <code>Optional[int]</code>, an <code>Optional[str]</code> and a <code>str</code> (CPython takes any value
+  for each), with which <code>tools.file_writes</code> raises another's error as its
+  own, and so is it for a class a checked module derives from <code>OSError</code>;
+  the subclasses above still take one message (<code>FileNotFoundError(errno,
+  strerror, filename)</code> is refused). <code>OSError</code>'s (and <code>IOError</code>'s, and
   each subclass's) <code>errno</code> is declared, an <code>Optional[int]</code>, as CPython's is
   <code>None</code> for an <code>OSError</code> of one message and the code for one the system
   raised; CPython's is whatever the first of two to five values was
@@ -7550,7 +7572,13 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   catching another's error tests it as CPython needs
   (<code>exc.errno in (errno.EPERM, ...)</code>, which is <code>False</code> for <code>None</code> or a
   <code>str</code>) rather than doing arithmetic on it;
-  <code>slurm.manifest</code> tells a file system without hard links by it. Nothing in these
+  <code>slurm.manifest</code> tells a file system without hard links by it. Its
+  <code>strerror</code> and <code>filename</code> are declared too, each an <code>Optional[str]</code>:
+  CPython's are <code>None</code> for an <code>OSError</code> of one message, and whatever the
+  second and the third of three to five values were, and the system's
+  <code>filename</code> is the path as it was given (a <code>Path</code>, or bytes), so these are
+  narrower than CPython's; <code>tools.file_writes</code> passes the filename to
+  <code>os.fspath()</code> before comparing it with a path. Nothing in these
   shims runs: no environment is read, no file is copied, no process is
   signalled, no signal handler is installed and no exit function is
   registered. <code>hashlib</code> declares <code>sha256(string=b"", *,
@@ -7999,6 +8027,12 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   (<code>Trajectory.is_relative</code>).
 - <strong><code>callable(x)</code></strong> is checked as <code>hasattr(x, "__call__")</code>, which Codon
   decides when it compiles: Codon 0.19 has no <code>callable</code>.
+- <strong><code>memoryview(x)</code></strong>, which Codon 0.19 lacks too, is checked as a view of
+  bytes (<code>_acs_memoryview</code>): true while it is not empty, sliced into another
+  view, and taken by <code>os.write()</code>, which is what a loop writing all of a
+  buffer needs (<code>tools.file_writes</code>). A <code>memoryview</code> (or <code>callable</code>, or
+  <code>tuple</code>) the code binds itself, a parameter, an import or a function of
+  that name, is its own and is left as it is.
 - <strong>Annotate a local that starts as <code>None</code></strong> (<code>spawn_points:
   Optional[list[carla.Transform]] = None</code>): Codon types it by its first
   assignment, and on a branch it then compiles alone it can crash without a
@@ -8720,7 +8754,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 19:52:47 UTC"><span class="timeago" datetime="2026-11-13T19:52:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 19:52:47 UTC">2026-11-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 20:57:54 UTC"><span class="timeago" datetime="2026-11-13T20:57:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 20:57:54 UTC">2026-11-13</span>
   </span>
 
     
