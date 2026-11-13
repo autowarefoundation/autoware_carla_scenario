@@ -72,9 +72,12 @@ def after_submit(layout: BatchLayout, index: int, settings: SlurmSettings) -> in
 
 def _count(states: dict[int, str] | None, state: str) -> int:
     """How many of *states* (none when squeue could not tell) are *state*."""
-    if states is None:
-        return 0
-    return sum([1 for s in states.values() if s == state])
+    count = 0
+    if states is not None:
+        for listed in states.values():
+            if listed == state:
+                count += 1
+    return count
 
 
 def follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int:
