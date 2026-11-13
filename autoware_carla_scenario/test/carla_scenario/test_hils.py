@@ -1742,6 +1742,67 @@ def test_bad_inputs_and_steps_are_refused(
         parse_config({**_hils_config("mem://x", dbc), **change})
 
 
+@pytest.mark.parametrize("phase", ["startup", "scenario_start", "shutdown"])
+@pytest.mark.parametrize("value", [False, 0, 0.0, "", {}, 1, "steps"])
+def test_a_phase_that_is_not_a_list_is_refused(
+    dbc: Path, phase: str, value: Any
+) -> None:
+    """A falsy phase is not read as no steps (#2126)."""
+    document = _hils_config("mem://x", dbc)
+    document["lifecycle"] = {phase: value}
+    with pytest.raises(HilsConfigError) as error:
+        parse_config(document)
+    assert str(error.value) == f"lifecycle.{phase}: expected a list of steps"
+
+
+@pytest.mark.parametrize("lifecycle", [None, {}, {"startup": None}, {"warmup": []}])
+def test_a_missing_or_null_phase_has_no_steps(
+    dbc: Path, lifecycle: Optional[dict[str, Any]]
+) -> None:
+    config = parse_config({**_hils_config("mem://x", dbc), "lifecycle": lifecycle})
+    assert all(
+        config.steps(phase) == ()
+        for phase in ("startup", "scenario_start", "warmup", "scenario_end")
+    )
+
+
+@pytest.mark.parametrize("fields", [{"x": [1, 2]}, {"On": 1}, {}, False, 0, "x"])
+def test_raw_data_with_fields_is_refused(dbc: Path, fields: Any) -> None:
+    """Fields beside raw data are not dropped (#2126), not even empty ones:
+    only a null `fields`, like a missing one, is no fields."""
+    document = _hils_config("mem://x", dbc)
+    document["lifecycle"] = {
+        "shutdown": [{"send": "can", "data": "00", "fields": fields}]
+    }
+    with pytest.raises(HilsConfigError) as error:
+        parse_config(document)
+    assert str(error.value) == (
+        "lifecycle.shutdown[0]: a send has either a name (and fields) or raw data"
+    )
+
+
+@pytest.mark.parametrize("extra", [{}, {"fields": None}])
+def test_a_raw_send_and_a_named_send_still_parse(
+    dbc: Path, extra: dict[str, Any]
+) -> None:
+    document = _hils_config("mem://x", dbc)
+    document["lifecycle"]["shutdown"] = [
+        {"send": "can", "id": 0x7FF, "data": "DE AD", **extra},
+        {"send": "can", "name": "Wake", "fields": {"On": 0}},
+    ]
+    raw, named = parse_config(document).steps("shutdown")
+    assert (raw.kind, raw.device, raw.name, raw.fields) == ("send", "can", None, {})
+    assert (raw.data, raw.frame_id) == (b"\xde\xad", 0x7FF)
+    assert (named.kind, named.device, named.name, named.data) == (
+        "send",
+        "can",
+        "Wake",
+        None,
+    )
+    assert list(named.fields) == ["On"]
+    assert named.fields["On"].constant == 0
+
+
 def test_an_input_names_fields_of_the_command_mode(dbc: Path) -> None:
     document = _hils_config("mem://x", dbc, commands={"mode": "ackermann"})
     with pytest.raises(
