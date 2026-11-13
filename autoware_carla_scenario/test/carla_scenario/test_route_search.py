@@ -141,6 +141,21 @@ class TestParsing:
         with pytest.raises(ValueError, match=message):
             parse_route_search(search)
 
+    @pytest.mark.parametrize("value", [0, False, "", 0.0, 5, "lane", {}])
+    def test_segments_that_are_not_a_list_are_refused(self, value: Any) -> None:
+        """A falsy ``segments`` is not read as no segments (#2134)."""
+        with pytest.raises(ValueError) as error:
+            parse_route_search({"segments": value})
+        assert str(error.value) == "route segments must be a list"
+
+    @pytest.mark.parametrize("search", [{}, {"segments": None}, {"segments": []}])
+    def test_missing_null_or_empty_segments_are_none(
+        self, search: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValueError) as error:
+            parse_route_search(search)
+        assert str(error.value) == "a route search needs at least one segment"
+
     @pytest.mark.parametrize(
         ("field", "value", "message"),
         [
