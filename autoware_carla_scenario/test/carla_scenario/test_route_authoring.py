@@ -609,6 +609,62 @@ class TestTheRunPicksItsRoute:
         # The spawn and the goal came through the ego's own keys.
         assert scenario._spawn_pose == Lanelet2Pose(0, 0.0)
 
+    @pytest.mark.parametrize(
+        ("case_count", "expected"),
+        [(None, 0), (0, 0), (3, 3), (3.0, 3), ("3", 3)],
+    )
+    def test_the_case_count_an_expansion_wrote_is_read(
+        self, loaded: None, road: tuple[Any, Any], case_count: Any, expected: int
+    ) -> None:
+        document = _document()
+        assert document.route is not None
+        (match,) = find_route_matches(
+            parse_route_search(document.route.to_sweep_dict()), *road
+        )
+        scenario = _scenario(document, {**match.to_config(), "case_count": case_count})
+        scenario._prepare_route()
+        assert scenario._case_count == expected
+
+    @pytest.mark.parametrize(
+        ("case_count", "message"),
+        [
+            # int() truncated these, and read true as 1 (#2143).
+            (2.5, "2.5"),
+            (True, "True"),
+            (False, "False"),
+            ("x", "'x'"),
+            ("", "''"),
+            ([], "[]"),
+        ],
+    )
+    def test_a_case_count_that_is_no_whole_number_is_refused(
+        self, loaded: None, road: tuple[Any, Any], case_count: Any, message: str
+    ) -> None:
+        document = _document()
+        assert document.route is not None
+        (match,) = find_route_matches(
+            parse_route_search(document.route.to_sweep_dict()), *road
+        )
+        scenario = _scenario(document, {**match.to_config(), "case_count": case_count})
+        with pytest.raises(ValueError) as refused:
+            scenario._prepare_route()
+        assert str(refused.value) == (
+            f"scenario.route.case_count must be a whole number, got {message}"
+        )
+
+    def test_a_negative_case_count_is_refused(
+        self, loaded: None, road: tuple[Any, Any]
+    ) -> None:
+        document = _document()
+        assert document.route is not None
+        (match,) = find_route_matches(
+            parse_route_search(document.route.to_sweep_dict()), *road
+        )
+        scenario = _scenario(document, {**match.to_config(), "case_count": -1})
+        with pytest.raises(ValueError) as refused:
+            scenario._prepare_route()
+        assert str(refused.value) == "scenario.route.case_count must be >= 0, got -1"
+
     def test_an_autoware_ego_gets_the_route_as_waypoints(
         self, loaded: None, monkeypatch: pytest.MonkeyPatch
     ) -> None:

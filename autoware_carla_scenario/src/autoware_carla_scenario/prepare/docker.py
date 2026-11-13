@@ -187,12 +187,33 @@ def read_docker_settings(
     its defaults, and what the backend sets itself (its port, environment and
     mounts); a backend checks its own keys.  Checking reads nothing of the
     host and starts nothing, so a run can refuse a setting before any image
-    is pulled or container started.
+    is pulled or container started.  ``image`` is text, and ``gpus`` text or
+    a count (``docker run --gpus 2``), neither blank; an absent or null one
+    is its default, while ``false`` or a number of the wrong kind is refused
+    rather than handed to ``docker`` as ``"False"`` (#2143).
 
     Raises:
         ValueError: naming the key (``backends.<backend>.<key>``) of the
             first value refused.
     """
+    image_value = settings.get("image")
+    if image_value is None:
+        image_value = image
+    if not isinstance(image_value, str) or not image_value.strip():
+        raise ValueError(
+            f"{setting_key(backend, 'image')} must be an image name, "
+            f"got {image_value!r}"
+        )
+    gpus_value = settings.get("gpus")
+    if gpus_value is None:
+        gpus_value = "auto"
+    if isinstance(gpus_value, int) and not isinstance(gpus_value, bool):
+        gpus_value = str(gpus_value)  # A count, as docker run --gpus takes.
+    if not isinstance(gpus_value, str) or not gpus_value.strip():
+        raise ValueError(
+            f"{setting_key(backend, 'gpus')} must be auto, all, none or what "
+            f"docker run --gpus takes (device=N, a count), got {gpus_value!r}"
+        )
     pull = settings.get("pull", "missing")
     if not isinstance(pull, str) or pull not in PULL_POLICIES:
         raise ValueError(
@@ -200,9 +221,9 @@ def read_docker_settings(
             f"{', '.join(PULL_POLICIES)}, got {pull!r}"
         )
     return DockerSettings(
-        image=str(settings.get("image", image)),
+        image=image_value,
         container_port=container_port,
-        gpus=str(settings.get("gpus", "auto")),
+        gpus=gpus_value,
         env=dict(env or {}),
         pass_env=pass_env,
         mounts=mounts,

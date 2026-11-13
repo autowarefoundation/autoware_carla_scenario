@@ -1609,6 +1609,67 @@ class TestResolveMapPaths:
         off = resolve_map_paths({**config, "overwrite_xodr": False})
         assert off.overwrite_xodr is False
 
+    @pytest.mark.parametrize(
+        ("value", "expected"),
+        [
+            (None, False),
+            (True, True),
+            (False, False),
+            ("true", True),
+            (" Yes ", True),
+            ("on", True),
+            ("1", True),
+            ("false", False),
+            ("off", False),
+            ("0", False),
+            (1, True),
+            (0, False),
+        ],
+    )
+    def test_overwrite_xodr_reads_a_switch_as_before(
+        self, value: Any, expected: bool
+    ) -> None:
+        config = {"lanelet2_path": "a.osm", "xodr_path": "a.xodr", "name": "TownA"}
+        paths = resolve_map_paths({**config, "overwrite_xodr": value})
+        assert paths.overwrite_xodr is expected
+
+    @pytest.mark.parametrize(
+        ("value", "shown"),
+        [
+            # Each read as off before #2143.
+            ("ture", "'ture'"),
+            ("enabled", "'enabled'"),
+            ("", "''"),
+            (2, "2"),
+            (0.0, "0.0"),
+            ([], "[]"),
+        ],
+    )
+    def test_overwrite_xodr_refuses_what_is_no_switch(
+        self, value: Any, shown: str
+    ) -> None:
+        config = {"lanelet2_path": "a.osm", "xodr_path": "a.xodr", "name": "TownA"}
+        with pytest.raises(ValueError) as refused:
+            resolve_map_paths({**config, "overwrite_xodr": value})
+        assert str(refused.value) == (
+            f"map.overwrite_xodr must be true or false, got {shown}"
+        )
+
+    def test_the_batch_check_reads_overwrite_xodr_alike(self) -> None:
+        """``check_batch_map`` compares the switch as resolve_map_paths reads
+        it: ``"yes"`` and ``true`` are one setting, and a typo is refused."""
+        from omegaconf import OmegaConf
+
+        from autoware_carla_scenario.examples import run
+
+        def case(value: Any) -> Any:
+            return OmegaConf.create({"map": {"name": "A", "overwrite_xodr": value}})
+
+        run.check_batch_map([case("yes"), case(True)])
+        run.check_batch_map([case(None), case(False)])
+        with pytest.raises(ValueError, match=r"^map\.overwrite_xodr must be true or"):
+            run.check_batch_map([case("ture"), case(False)])
+
 
 def _map_repo(path: Path) -> Path:
     """A repository holding one map at ``map/``, as many single-map repos do."""

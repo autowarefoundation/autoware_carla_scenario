@@ -145,6 +145,40 @@ def test_the_traffic_config_reads_its_vehicles_and_pedestrians_nodes() -> None:
     assert empty.pedestrians == PedestrianParameters()
 
 
+@pytest.mark.parametrize("key", ["options", "vehicles", "pedestrians", "bicycles"])
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [(False, "False"), (0, "0"), ("", "''"), ([], "[]"), ("fast", "'fast'")],
+)
+def test_a_traffic_node_that_is_no_mapping_is_refused(
+    key: str, value: Any, shown: str
+) -> None:
+    """Each read as the defaults (``x or {}``) before #2143; only an absent
+    or null node is."""
+    with pytest.raises(ValueError) as refused:
+        TrafficConfig.from_mapping({key: value})
+    assert str(refused.value) == f"traffic.{key} must be a mapping, got {shown}"
+
+
+def test_a_null_traffic_node_is_the_defaults() -> None:
+    config = TrafficConfig.from_mapping(
+        {"options": None, "vehicles": None, "pedestrians": None, "bicycles": None}
+    )
+    assert config == TrafficConfig.from_mapping({})
+    assert config.options == {}
+
+
+def test_a_traffic_node_from_omegaconf_is_read_as_before() -> None:
+    from omegaconf import OmegaConf
+
+    node = OmegaConf.create(
+        {"options": {"port": 8100}, "vehicles": {"speed_factor": 0.8}}
+    )
+    config = TrafficConfig.from_mapping(node)
+    assert config.options == {"port": 8100}
+    assert config.vehicles == VehicleParameters(speed_factor=Spread(0.8))
+
+
 def test_the_old_parameters_node_points_to_the_new_ones() -> None:
     with pytest.raises(ValueError, match="traffic.vehicles.*traffic.pedestrians"):
         TrafficConfig.from_mapping({"parameters": {"speed_factor": 0.8}})
