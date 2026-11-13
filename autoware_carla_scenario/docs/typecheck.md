@@ -2529,7 +2529,9 @@ recording, which `rerun_metrics` re-exports, and of the ODD archive, which
 in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
 entities are the sensors', the parse of `rerun rrd print` and the scan of a
 recording's bytes for those entities: `rerun_sensor_mount`, #1688, #1697; not `rerun_lidar`, which holds the Rerun SDK as
-`Any` and re-exports it), the frame math
+`Any` and re-exports it), how converting a run's logs into Rerun recordings
+went and the run's summary of it (`rerun_report`, #2124; not `rerun`, which
+runs the converter on a thread pool and re-exports it), the frame math
 of the T4Scene converter (CARLA's world frame to Autoware's `map` frame, and the rotations
 and quaternions of its angles, and the check of the ego's rear-axle offset:
 `t4_scene.frames`, #1665, #1697; the converter

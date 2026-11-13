@@ -187,3 +187,10 @@ def test_rerun_keeps_its_names() -> None:
     assert {"RerunConversion", "latest", "report"} <= set(rerun.__all__)
     for name in ("RerunConversion", "latest", "report", "_draw_radius_argument"):
         assert hasattr(rerun, name), name
+
+
+def test_rerun_re_exports_the_checked_modules_objects() -> None:
+    from autoware_carla_scenario import rerun_report
+
+    for name in ("RerunConversion", "latest", "report", "_draw_radius_argument"):
+        assert getattr(rerun, name) is getattr(rerun_report, name), name
