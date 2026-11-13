@@ -3847,6 +3847,9 @@ class TestLockFile:
         from autoware_carla_scenario.maps import cache as cache_module
 
         monkeypatch.setitem(sys.modules, "fcntl", None)
+        # Where there is no fcntl (Windows), os may have no O_CLOEXEC either:
+        # it is not read before the import has succeeded.
+        monkeypatch.delattr(os, "O_CLOEXEC", raising=False)
         path = tmp_path / "entry.lock"
         assert cache_module._lock_file(path) == -1
         assert not path.exists()
