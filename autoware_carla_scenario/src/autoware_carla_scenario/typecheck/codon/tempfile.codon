@@ -1,8 +1,9 @@
 # The part of Python's tempfile the checked framework names, for the checker
-# (docs/typecheck.md): mkstemp() and mkdtemp(), with CPython 3.10's signature, the oldest
-# Python the package supports. A directory is a str or a pathlib.Path
-# (os.PathLike); bytes prefixes and suffixes are not declared. Nothing here
-# runs: no file or directory is made, the descriptor is -1 and the names are "".
+# (docs/typecheck.md): mkstemp(), mkdtemp() and TemporaryDirectory, with
+# CPython 3.10's signatures, the oldest Python the package supports. A
+# directory is a str or a pathlib.Path (os.PathLike); bytes prefixes and
+# suffixes are not declared. Nothing here runs: no file or directory is made
+# or removed, the descriptor is -1 and the names are "".
 
 from os import fspath
 
@@ -31,3 +32,33 @@ def mkdtemp(
     if dir is not None:
         fspath(dir)
     return ""
+
+
+# TemporaryDirectory(suffix=None, prefix=None, dir=None,
+# ignore_cleanup_errors=False): a directory made at once, its absolute name
+# (a str) the name attribute, and removed with what it holds on leaving the
+# `with` block. CPython's __enter__() returns the name, but Codon binds a with
+# statement's target to the manager itself, not to what __enter__() returns:
+# `with TemporaryDirectory() as d` makes `d` a TemporaryDirectory here, which
+# the check refuses where a str or a path is taken, so the checked framework
+# reads `.name` instead. CPython 3.12's keyword-only `delete` is not declared,
+# nor cleanup().
+class TemporaryDirectory:
+    name: str
+
+    def __init__(
+        self,
+        suffix: Optional[str] = None,
+        prefix: Optional[str] = None,
+        dir=None,
+        ignore_cleanup_errors: bool = False,
+    ):
+        if dir is not None:
+            fspath(dir)
+        self.name = ""
+
+    def __enter__(self) -> str:
+        return self.name
+
+    def __exit__(self, *args) -> None:
+        pass

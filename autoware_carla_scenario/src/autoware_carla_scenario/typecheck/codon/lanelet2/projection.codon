@@ -7,7 +7,8 @@
 # though load() takes any of them. The model derives each from Projector, as
 # C++ does, so a variable holding any projector (coordinate.projection's
 # resolve_projector() hands out one of four) is a Projector, and load() takes
-# it. Their origin() and reverse() are not declared.
+# it. Their origin() is not declared, nor reverse() but MercatorProjector's
+# (t4_scene.osm's auxiliary lat/lon).
 
 from lanelet2.core import BasicPoint3d, GPSPoint
 from lanelet2.io import Origin
@@ -31,4 +32,18 @@ class LocalCartesianProjector(Projector):
         pass
 
     def forward(self, point: GPSPoint) -> BasicPoint3d:
+        raise NotImplementedError()
+
+
+# A spherical Mercator projector at an origin (t4_scene.osm writes a map's
+# auxiliary lat/lon with one at (0, 0)). reverse(point) is the point's
+# GPSPoint, the inverse of forward().
+class MercatorProjector(Projector):
+    def __init__(self, origin: Origin):
+        pass
+
+    def forward(self, point: GPSPoint) -> BasicPoint3d:
+        raise NotImplementedError()
+
+    def reverse(self, point: BasicPoint3d) -> GPSPoint:
         raise NotImplementedError()
