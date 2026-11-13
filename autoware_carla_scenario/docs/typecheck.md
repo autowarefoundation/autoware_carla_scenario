@@ -2524,7 +2524,10 @@ and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
 `scenario-new` (`scaffold.names`, #1654) and those of the Scenario Editor's
 export, which ids it refuses and the framework pin's lines in
 the package's README (`authoring.package_names`, #1695; the rule against the
-framework's own name is `scaffold.names`', which both apply), where the viewer keeps its
+framework's own name is `scaffold.names`', which both apply), the whole
+numbers the Scenario Editor's forms post, a list field's ids and a record
+list's row count (`editor.form_values`, #2135; not the parsing of a form
+against a field's spec, `editor.forms`, which re-exports them), where the viewer keeps its
 recordings and its copy of Rerun's web viewer, and which web viewer it picks
 (`ui.web_viewer_paths`, #1672), and how it puts them in place on disk
 (`ui.recording_files`, #2124), what the viewer reads off a request and links
