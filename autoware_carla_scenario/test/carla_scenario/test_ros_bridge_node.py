@@ -857,21 +857,27 @@ class _RpcError(grpc.RpcError):
         return "UNAVAILABLE"
 
 
-def _readiness_reports(node: Any, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
-    """Record each ReportReadiness that reaches the bridge.
+def _readiness_reports(
+    node: Any, monkeypatch: pytest.MonkeyPatch
+) -> tuple[list[bool], list[bool]]:
+    """Record each ReportReadiness the node sends, and each that reaches the bridge.
 
-    One that fails (the node retries it on its next tick) is not recorded:
-    whether the call lands within one tick is up to the machine (#2148).
+    Whether a call lands within one tick is up to the machine (the node
+    retries one that fails on its next tick, #2148), so a test waits for it
+    to land and checks what landed -- but one that says the node does not
+    report checks what it sent, failed attempts included.
     """
-    reports: list[bool] = []
+    sent: list[bool] = []
+    landed: list[bool] = []
     send = node._client.report_readiness  # noqa: SLF001
 
     def _report(ready: bool, timeout: Any = None) -> None:
+        sent.append(ready)
         send(ready, timeout=timeout)
-        reports.append(ready)
+        landed.append(ready)
 
     monkeypatch.setattr(node._client, "report_readiness", _report)  # noqa: SLF001
-    return reports
+    return sent, landed
 
 
 def test_the_node_reports_in_once_localization_is_initialized(
@@ -888,7 +894,7 @@ def test_the_node_reports_in_once_localization_is_initialized(
         initialize_localization=True,
         require_localization_initialized=True,
     )
-    reports = _readiness_reports(node, monkeypatch)
+    sent, reports = _readiness_reports(node, monkeypatch)
     initialize = node.clients["/api/localization/initialize"].calls
     node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
 
@@ -899,7 +905,7 @@ def test_the_node_reports_in_once_localization_is_initialized(
         initialize[-1][1].answer(False, "ndt_align not ready")
     assert len(initialize) == 5
     assert bridge.seconds_since_mission_poll() is not None
-    assert reports == []
+    assert sent == []
     assert not bridge.client_connected
 
     node._tick()  # noqa: SLF001
@@ -909,10 +915,11 @@ def test_the_node_reports_in_once_localization_is_initialized(
     assert reports == [False]
     assert bridge.client_connected and not bridge.is_ready()
 
-    # Once only.
+    # Once only: not even tried again.
+    tried = len(sent)
     node._tick()  # noqa: SLF001
     node._tick()  # noqa: SLF001
-    assert reports == [False]
+    assert reports == [False] and len(sent) == tried
 
 
 def test_a_gnss_initialized_stack_reports_in_without_an_initialize(
@@ -928,7 +935,7 @@ def test_a_gnss_initialized_stack_reports_in_without_an_initialize(
         initialize_localization=True,
         require_localization_initialized=True,
     )
-    reports = _readiness_reports(node, monkeypatch)
+    sent, reports = _readiness_reports(node, monkeypatch)
     node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
 
     _tick_until(node, lambda: reports)
@@ -951,12 +958,12 @@ def test_a_gnss_initialization_while_the_nodes_is_pending_reports_in(
         initialize_localization=True,
         require_localization_initialized=True,
     )
-    reports = _readiness_reports(node, monkeypatch)
+    sent, reports = _readiness_reports(node, monkeypatch)
     initialize = node.clients["/api/localization/initialize"].calls
     node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
     _tick_until(node, lambda: initialize)
     assert len(initialize) == 1
-    assert reports == []
+    assert sent == []
 
     node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
     _tick_until(node, lambda: reports)
@@ -974,10 +981,10 @@ def test_a_node_that_does_not_initialize_localization_reports_in_with_the_missio
     """Its gate already waited for the mission planner: it can be routed."""
     bridge.configure(_INITIAL, _GOAL)
     node = _node(node_module, bridge, auto_engage=auto_engage)
-    reports = _readiness_reports(node, monkeypatch)
+    sent, reports = _readiness_reports(node, monkeypatch)
     node._on_route_state(_route_state(ROUTE_STATE_UNKNOWN))  # noqa: SLF001
     node._tick()  # noqa: SLF001
-    assert reports == [] and bridge.seconds_since_mission_poll() is None
+    assert sent == [] and bridge.seconds_since_mission_poll() is None
 
     node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
     _tick_until(node, lambda: reports)
@@ -1003,7 +1010,7 @@ def test_a_node_without_auto_engage_reports_in_once_localized(
         require_localization_initialized=True,
         auto_engage=auto_engage,
     )
-    reports = _readiness_reports(node, monkeypatch)
+    sent, reports = _readiness_reports(node, monkeypatch)
     node.clients["/api/operation_mode/change_to_autonomous"].ready = auto_engage
     initialize = node.clients["/api/localization/initialize"].calls
     node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
@@ -1039,10 +1046,12 @@ def test_a_failed_report_in_is_retried(
     assert not bridge.client_connected
     assert [m for level, m in node.logger.records if level == "warning"]
 
+    node._tick()  # noqa: SLF001
+    assert attempts == [False, False]  # retried on the next tick
     _tick_until(node, lambda: bridge.client_connected)
 
-    # Retried, on a later tick (more than once if the retry failed too).
-    assert len(attempts) >= 2 and set(attempts) == {False}
+    # More than once if the retry failed too, and only ever "booted".
+    assert set(attempts) == {False}
     assert bridge.client_connected
 
 
