@@ -516,7 +516,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.environment.capture": f"builds the RunEnvironment of {_PACKAGE_RECORDS} (with _record()); reading the distributions is the checked _installed()'s; the checked scenario_runner reads it through environment.codon (MODELLED_IMPORTS)",
     "autoware_carla_scenario.environment.write": f"takes a scenario of any class (`Any`) and writes the environment file's document, a `dict[str, Any]` of mixed value types, and the lock, both of {_PACKAGE_RECORDS}",
     "autoware_carla_scenario.failure.Failure.to_dict": _DETAILS,
-    "autoware_carla_scenario.failure.Failure.from_dict": "reads the dict to_dict() wrote, a `Mapping[str, Any]` of mixed value types (see `_DETAILS`), which Codon cannot express",
+    "autoware_carla_scenario.failure.Failure.from_dict": "takes the object to_dict() wrote as `Mapping[str, Any]`, of mixed value types (see `_DETAILS`), which Codon cannot express, so the check has nothing to call it with; batch_resume's KeptResult.failure, slurm.collect's RecordedResult.failure and slurm.manifest's readable_result call it with the object json.loads() read, so its body is compiled through them",
     "autoware_carla_scenario.gate.criteria.CaseChange.to_dict": _DETAILS,
     "autoware_carla_scenario.gate.criteria.CriterionChange.to_dict": _DETAILS,
     "autoware_carla_scenario.gate.criteria.CriterionResult.to_dict": "returns the criterion as the report stores it (`dataclasses.asdict()`), a `dict[str, Any]` of mixed value types, which Codon cannot express",

@@ -1107,15 +1107,10 @@ def readable_result(result: JsonMembers) -> bool:
     failure = json.loads(failure_json)
     if not isinstance(failure, dict):
         return False
-    if TYPE_CHECKING:
-        # Failure.from_dict() reads a mapping of any values, which Codon
-        # cannot express (typecheck/library.py's UNCALLED).
-        pass
-    else:
-        try:
-            Failure.from_dict(failure)
-        except (TypeError, ValueError, AttributeError, OverflowError):
-            return False
+    try:
+        Failure.from_dict(failure)
+    except (TypeError, ValueError, AttributeError, OverflowError):
+        return False
     return True
 
 
