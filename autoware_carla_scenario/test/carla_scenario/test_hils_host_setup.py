@@ -94,6 +94,39 @@ def test_an_interface_shared_by_devices_is_fd_if_one_of_them_is() -> None:
     assert setup.vcan == (VcanInterface("vcan0", fd=True),)
 
 
+@pytest.mark.parametrize(
+    ("first", "second"),
+    [
+        ("can://vcan0?fd=1", "can://vcan0?fd=maybe"),
+        ("can://vcan0?fd=maybe", "can://vcan0?fd=1"),
+    ],
+)
+def test_every_device_on_a_shared_interface_has_its_fd_checked(
+    first: str, second: str
+) -> None:
+    devices = {"a": first, "b": second}
+    bad = next(name for name, url in devices.items() if url.endswith("maybe"))
+    with pytest.raises(HostSetupError) as error:
+        host_setup(_config(**devices))
+    assert str(error.value) == f"devices.{bad}.url: fd='maybe' is not a boolean"
+
+
+@pytest.mark.parametrize(
+    ("first", "second", "fd"),
+    [
+        ("fd=1", "fd=0", True),
+        ("fd=0", "fd=1", True),
+        ("fd=true", "fd=off", True),
+        ("fd=no", "fd", True),
+        ("fd=0", "fd=false", False),
+        ("echo", "fd=no", False),
+    ],
+)
+def test_a_valid_pair_on_a_shared_interface(first: str, second: str, fd: bool) -> None:
+    setup = host_setup(_config(a=f"can://vcan0?{first}", b=f"can://vcan0?{second}"))
+    assert setup.vcan == (VcanInterface("vcan0", fd=fd),)
+
+
 def test_physical_and_network_devices_are_left_alone() -> None:
     setup = host_setup(
         _config(
