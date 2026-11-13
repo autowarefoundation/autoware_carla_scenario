@@ -2493,7 +2493,11 @@ parameters' probes: `odd.traffic_ranges`, #1680; not the probes themselves,
 `__init__`, its per-run record and probe, finding and writing the markers
 of the `--multirun` jobs given up, and finding the plans of the sweeps
 (`gate.errored` and `gate.sweep_plan`, #1967; not writing the plans or
-reading either, JSON objects of mixed value types),
+reading either, JSON objects of mixed value types), what a set of runs
+left unrecorded (`gate.unrecorded`, #2124: the batches under a directory, a
+local batch's summary read for its errored and pending cases, and the
+`--multirun` jobs given up or never started; not a SLURM batch's manifest,
+which `gate.evaluate` reads and re-exports them),
 and the typed criteria its evaluator judges (`gate.criteria`: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
 baseline; and `gate.report`, #1738: a verdict's and a comparison's Markdown,

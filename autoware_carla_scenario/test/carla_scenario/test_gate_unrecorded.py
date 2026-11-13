@@ -512,3 +512,24 @@ def test_a_plan_with_many_jobs_is_read_as_before(tmp_path: Path) -> None:
     _same(_old_unstarted_jobs, evaluate._unstarted_jobs, tmp_path)
     lines, unreadable = evaluate._unstarted_jobs(tmp_path)
     assert unreadable == [] and ", and 4 more" in lines[0]
+
+
+def test_evaluate_re_exports_the_checked_scans() -> None:
+    # gate.evaluate's names are gate.unrecorded's objects (#2124), and its
+    # summary reader returns what _summary_cases() read.
+    from autoware_carla_scenario.gate import unrecorded
+
+    for name in (
+        "BATCH_RESULTS",
+        "_NAMED",
+        "_RESULT_SUFFIX",
+        "_batch_dirs",
+        "_errored_jobs",
+        "_has_gate_record",
+        "_has_result",
+        "_has_result_since",
+        "_recorded_at_stem",
+        "_unstarted_jobs",
+    ):
+        assert getattr(evaluate, name) is getattr(unrecorded, name), name
+    assert evaluate._summary_cases is unrecorded._summary_cases
