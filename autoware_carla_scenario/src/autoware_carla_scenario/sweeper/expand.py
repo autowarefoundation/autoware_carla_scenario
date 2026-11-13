@@ -545,7 +545,9 @@ def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
         ValueError: If ``sweep.constraints`` has more than one key, or one of
             those sections is not shaped as above (#1951).
     """
-    constraints_cfg = sweep.get("constraints") or {}
+    # Only a missing section or null is empty: [], 0, false or "" is not a
+    # mapping (#2134).
+    constraints_cfg = _section(sweep, "constraints")
     if not isinstance(constraints_cfg, Mapping):
         raise ValueError(
             "sweep.constraints must map the one parameter it sweeps (such as "
@@ -565,7 +567,7 @@ def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
                 f"sweep.constraints.{key} must be a list of constraints "
                 f"(- type: ...), got {_shape(constraint_list)}"
             )
-    bindings_cfg = sweep.get("bindings") or {}
+    bindings_cfg = _section(sweep, "bindings")
     if not isinstance(bindings_cfg, Mapping):
         raise ValueError(
             "sweep.bindings must map each parameter it sets to a binding "
@@ -577,7 +579,7 @@ def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
                 f"sweep.bindings.{key} must be a binding ({{type: ...}}), got "
                 f"{_shape(binding_cfg)}"
             )
-    exclude_cfg = sweep.get("exclude") or {}
+    exclude_cfg = _section(sweep, "exclude")
     if not isinstance(exclude_cfg, Mapping):
         raise ValueError(
             "sweep.exclude must map each parameter to the list of values a case "
@@ -588,6 +590,14 @@ def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
             raise ValueError(
                 f"sweep.exclude.{key} must be a list of values, got {_shape(values)}"
             )
+
+
+def _section(sweep: Mapping[Any, Any], key: str) -> Any:
+    """``sweep[key]``, or ``{}`` when it is missing or null: a falsy value of
+    another type (``[]``, ``0``, ``false``, ``""``) is kept, for the caller to
+    refuse as the wrong shape."""
+    value = sweep.get(key)
+    return {} if value is None else value
 
 
 def _is_list(value: Any) -> bool:
@@ -872,12 +882,14 @@ def expand_config(
     sweep = (
         OmegaConf.to_container(sweep_cfg, resolve=True) if sweep_cfg is not None else {}
     )
-    if not isinstance(sweep, dict) or not (
-        sweep.get("constraints") or sweep.get("route") or sweep.get("odd_sample")
-    ):
+    if not isinstance(sweep, dict):
+        return [list(arguments)]  # already concrete
+    # Before the sweep is judged empty: a ``constraints: []`` is the wrong
+    # shape, not an empty sweep (#2134).
+    check_constraint_keys(sweep)
+    if not (sweep.get("constraints") or sweep.get("route") or sweep.get("odd_sample")):
         return [list(arguments)]  # already concrete
 
-    check_constraint_keys(sweep)
     odd = OmegaConf.select(cfg, "odd")
     # Before any map is read, as the constraint keys are.
     odd_sample = sweep.get("odd_sample")
