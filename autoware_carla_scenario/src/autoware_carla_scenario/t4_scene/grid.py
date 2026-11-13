@@ -23,6 +23,7 @@ from ..rerun import TRAJECTORY_SUFFIX
 __all__ = [
     "checked_max_distance",
     "checked_step",
+    "files_under",
     "indicator_at",
     "is_ego",
     "on_scene",
@@ -120,16 +121,22 @@ def scene_stem(name: str) -> str:
     return Path(name).stem
 
 
+def files_under(paths: list[Path], suffix: str) -> list[Path]:
+    """The files *paths* name: a file itself, or every ``*{suffix}`` file
+    under a directory (sorted)."""
+    found: list[Path] = []
+    for path in paths:
+        if path.is_dir():
+            found.extend(sorted(path.rglob(f"*{suffix}")))
+        else:
+            found.append(path)
+    return found
+
+
 def trajectory_logs(paths: list[Path]) -> list[Path]:
     """The trajectory logs *paths* name: a log itself, or every log under a
     directory (``*.trajectory.jsonl``, sorted)."""
-    logs: list[Path] = []
-    for path in paths:
-        if path.is_dir():
-            logs.extend(sorted(path.rglob(f"*{TRAJECTORY_SUFFIX}")))
-        else:
-            logs.append(path)
-    return logs
+    return files_under(paths, TRAJECTORY_SUFFIX)
 
 
 def stem_collision(logs: list[Path], output_dir: Path) -> Optional[str]:

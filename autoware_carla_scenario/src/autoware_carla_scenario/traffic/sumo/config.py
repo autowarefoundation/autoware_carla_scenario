@@ -13,7 +13,11 @@ from pathlib import Path
 from typing import Any, Mapping, Optional
 
 from ...config_flags import check_flag
-from ...constants import DEFAULT_TM_PORT, FIXED_DELTA_SECONDS
+from ...constants import (
+    CARLA_BICYCLE_BLUEPRINTS,
+    DEFAULT_TM_PORT,
+    FIXED_DELTA_SECONDS,
+)
 from ..fidelity import MesoscopicConfig, _number
 from ..parameters import BICYCLE_PARAMETER_BACKENDS
 from .signal_states import sumo_step
@@ -31,11 +35,7 @@ _SCENARIO_VEHICLE_DRIVERS = ("traffic_manager", "sumo")
 _SCENARIO_PEDESTRIAN_DRIVERS = ("traffic_manager", "sumo")
 _VEHICLE_CONTROLS = ("physics", "teleport")
 #: CARLA's bicycles, any of which a SUMO bicycle is mirrored as.
-DEFAULT_BICYCLE_BLUEPRINTS = (
-    "vehicle.bh.crossbike",
-    "vehicle.diamondback.century",
-    "vehicle.gazelle.omafiets",
-)
+DEFAULT_BICYCLE_BLUEPRINTS = CARLA_BICYCLE_BLUEPRINTS
 
 
 def _check_count(key: str, value: Optional[int]) -> None:

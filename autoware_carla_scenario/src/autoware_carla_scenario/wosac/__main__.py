@@ -12,6 +12,7 @@ from typing import Any, Optional
 import orjson
 import yaml
 
+from ..authoring.persistence import load_yaml
 from ..t4_scene.grid import stem_collision, trajectory_logs
 from .convert import CURRENT_INDEX, FUTURE_STEPS, write_rollout
 from .pack import (
@@ -26,7 +27,8 @@ from .pack import (
 def _mapping(path: Path, what: str) -> dict[str, Any]:
     """The mapping in the YAML or JSON file at *path*."""
     try:
-        data = yaml.safe_load(path.read_text())
+        # Only true/false are booleans: a role named `on` or `yes` stays one.
+        data = load_yaml(path.read_text())
     except (OSError, yaml.YAMLError) as error:
         raise ValueError(f"{what} {path}: {error}") from error
     if not isinstance(data, dict):
@@ -79,12 +81,13 @@ def _pack(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         metadata = (
             None if args.metadata is None else _mapping(args.metadata, "--metadata")
         )
-        scenarios = merge_rollouts(
+        merged = merge_rollouts(
             ((read_rollouts(path), str(path)) for path in files),
             num_rollouts=args.rollouts,
             common_agents=args.common_agents,
         )
-        submission = build_submission(scenarios, metadata)
+        submission = build_submission(merged, metadata)
+        del merged  # The submission holds the rollouts now.
         paths = write_submission(
             submission, args.output_dir, shards=args.shards, tar=args.tar
         )
@@ -92,7 +95,8 @@ def _pack(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         print(f"scenario-wosac pack: {error}", file=sys.stderr)  # noqa: T201
         return 1
     summary = {
-        scenario.scenario_id: len(scenario.joint_scenes) for scenario in scenarios
+        scenario.scenario_id: len(scenario.joint_scenes)
+        for scenario in submission.scenario_rollouts
     }
     print(orjson.dumps({"rollouts": summary}).decode())  # noqa: T201
     for path in paths:

@@ -35,13 +35,14 @@ from typing import Any, Optional
 import numpy as np
 import orjson
 
+from ..constants import CARLA_BICYCLE_BLUEPRINTS
 from ..entity_role import canonical_role_name
 from ..run_outputs import WOSAC_AGENTS_SUFFIX, WOSAC_SUFFIX
-from ..t4_scene.convert import _Log, _read_log
-from ..t4_scene.frames import FLIP_Y, map_angles, map_positions, rotations
+from ..seed import check_whole_number
+
+# The trajectory log's reader and its frame math are the T4Scene export's.
+from ..t4_scene.convert import _Log, _MapFrame, _read_log, box_poses
 from ..t4_scene.grid import is_ego, scene_stem, step_frames
-from ..traffic.sumo.config import DEFAULT_BICYCLE_BLUEPRINTS
-from ..utils.clearance import _HIDDEN_BELOW_M
 from ._proto import scenario_pb2, sim_agents_submission_pb2
 
 __all__ = [
@@ -50,6 +51,7 @@ __all__ = [
     "STEP_S",
     "WosacAgent",
     "WosacRollout",
+    "checked_count",
     "object_id_of",
     "object_type_of",
     "scenario_id_of",
@@ -86,12 +88,18 @@ class WosacAgent:
     actor_id: int
     #: Its blueprint.
     type_id: str
-    #: Its ``Track.ObjectType`` (:func:`object_type_of`).
-    object_type: int
-    #: Whether it is the ego.
-    ego: bool
     #: The rows of the rollout the log has it on (the others hold its pose).
     valid_steps: int
+
+    @property
+    def object_type(self) -> int:
+        """Its ``Track.ObjectType`` (:func:`object_type_of`)."""
+        return object_type_of(self.type_id)
+
+    @property
+    def ego(self) -> bool:
+        """Whether it is the ego."""
+        return is_ego(self.role)
 
 
 @dataclass(frozen=True)
@@ -103,15 +111,12 @@ class WosacRollout:
     agents: tuple[WosacAgent, ...]
     #: The log's stem.
     stem: str
-    #: The CARLA frame of the current row, and its time after the log's
-    #: first tick.
+    #: The CARLA frame of the current row.
     current_frame: int
-    current_t: float
-    #: ``map`` (Autoware's ``map`` frame) or ``local`` (that frame's axes, at
-    #: CARLA's world origin: no MGRS or elevation offset).
-    frame: str
-    #: The offset added to every position: ``frame`` ``map``'s origin is
-    #: CARLA's plus this.
+    #: Whether positions are in Autoware's ``map`` frame, offsets and all.
+    map_frame: bool
+    #: The offset added to every position: the map's MGRS and elevation
+    #: offsets with :attr:`map_frame`, else zero.
     offset: tuple[float, float, float]
     current_index: int
     steps: int
@@ -119,6 +124,17 @@ class WosacRollout:
     padded_steps: int
     #: The run's verdict, the log's ``result`` record (``None`` without one).
     result: Optional[Mapping[str, Any]]
+
+    @property
+    def current_t(self) -> float:
+        """The current row's time after the log's first tick, seconds."""
+        return round(self.current_index * STEP_S, 6)
+
+    @property
+    def frame(self) -> str:
+        """``map`` (Autoware's ``map`` frame) or ``local`` (its axes at
+        CARLA's world origin: no MGRS or elevation offset)."""
+        return "map" if self.map_frame else "local"
 
     def metadata(self) -> dict[str, Any]:
         """What ``{stem}.wosac.json`` holds: the rollout's grid, frame and
@@ -180,33 +196,36 @@ def object_type_of(type_id: str) -> int:
     vehicle (motorcycles too, as in the Waymo Open Dataset), else other."""
     if type_id.startswith("walker."):
         return _TRACK.TYPE_PEDESTRIAN
-    if type_id in DEFAULT_BICYCLE_BLUEPRINTS:
+    if type_id in CARLA_BICYCLE_BLUEPRINTS:
         return _TRACK.TYPE_CYCLIST
     if type_id.startswith("vehicle."):
         return _TRACK.TYPE_VEHICLE
     return _TRACK.TYPE_OTHER
 
 
-def _checked_count(value: int, key: str, minimum: int) -> int:
-    if isinstance(value, bool) or not isinstance(value, int) or value < minimum:
-        raise ValueError(f"{key} must be a whole number >= {minimum}, not {value!r}")
-    return value
+def checked_count(
+    value: int, key: str, minimum: int, maximum: Optional[int] = None
+) -> int:
+    """*value* as an int: a whole number (:func:`seed.check_whole_number`)
+    from *minimum* to *maximum* (no limit when ``None``).
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    number = check_whole_number(key, value)
+    if number < minimum or (maximum is not None and number > maximum):
+        bound = f">= {minimum}" if maximum is None else f"from {minimum} to {maximum}"
+        raise ValueError(f"{key} must be a whole number {bound}, not {value!r}")
+    return number
 
 
 def _checked_object_ids(object_ids: Mapping[str, int]) -> dict[str, int]:
     """*object_ids* keyed by canonical role name, every id an int32 >= 0."""
     checked: dict[str, int] = {}
     for role, object_id in object_ids.items():
-        if (
-            isinstance(object_id, bool)
-            or not isinstance(object_id, int)
-            or not 0 <= object_id <= _INT32_MAX
-        ):
-            raise ValueError(
-                f"the object id of {role!r} must be a whole number from 0 to "
-                f"{_INT32_MAX}, not {object_id!r}"
-            )
-        checked[canonical_role_name(str(role))] = object_id
+        checked[canonical_role_name(str(role))] = checked_count(
+            object_id, f"the object id of {role!r}", 0, _INT32_MAX
+        )
     return checked
 
 
@@ -222,14 +241,10 @@ def _agents_at(
     agents: list[tuple[int, str]] = []
     unnamed: list[int] = []
     roles: dict[str, int] = {}
-    for state in log.states(frame):
+    states = log.states(frame)
+    for state in states[log.present(states, frame)]:
         actor_id = int(state[0])
-        actor = log.actors.get(actor_id)
-        if actor is None or not log.on_scene(actor_id, frame):
-            continue
-        # A road user parked under the map (hidden) is out of the scene.
-        if state[3] < _HIDDEN_BELOW_M:
-            continue
+        actor = log.actors[actor_id]
         if is_ego(actor.role) and not include_ego:
             continue
         if not actor.role:
@@ -296,9 +311,9 @@ def trajectory_log_to_rollout(
             role or an object id, or an option is out of range.
     """
     path = Path(log_path)
-    _checked_count(current_index, "current_index", 0)
+    current_index = checked_count(current_index, "current_index", 0)
     if steps is not None:
-        _checked_count(steps, "steps", 1)
+        steps = checked_count(steps, "steps", 1)
     given_ids = _checked_object_ids(object_ids or {})
     stride = step_frames(STEP_S)
     log = _read_log(path, stride)
@@ -321,7 +336,7 @@ def trajectory_log_to_rollout(
             f"{path} has {available} rows after row {current_index}, not the "
             f"{steps} asked for: ask for fewer steps, or pad the rest"
         )
-    padded = max(steps - max(available, 0), 0)
+    padded = max(steps - available, 0)
 
     roles = _agents_at(log, current_frame, include_ego, path)
     if not roles:
@@ -336,17 +351,9 @@ def trajectory_log_to_rollout(
             )
         seen[object_id] = role
 
-    offset = np.zeros(3)
-    if map_frame:
-        record = log.map or {}
-        mgrs = record.get("mgrs_offset") or (0.0, 0.0)
-        offset = np.array(
-            [float(mgrs[0]), float(mgrs[1]), float(record.get("z_offset") or 0.0)]
-        )
-    actor_ids = np.array([actor_id for actor_id, _ in roles], dtype=np.int64)
-    actors = [log.actors[int(i)] for i in actor_ids]
-    # The box's centre is given in CARLA's (left-handed) actor frame.
-    centres = np.array([actor.center for actor in actors]).reshape(-1, 3) * FLIP_Y
+    frame_of = _MapFrame.of(log.map) if map_frame else _MapFrame(np.zeros(3))
+    actor_ids = [actor_id for actor_id, _ in roles]
+    actors = [log.actors[i] for i in actor_ids]
 
     # Row 0 is the current one, which every agent is on; the rest hold the
     # last pose where an agent is not.
@@ -356,33 +363,23 @@ def trajectory_log_to_rollout(
     valid = np.zeros((steps + 1, count), dtype=bool)
     for row in range(steps + 1):
         frame = current_frame + row * stride
-        states = log.states(frame)
-        index = {int(state[0]): n for n, state in enumerate(states)}
-        here = np.array(
-            [
-                int(i) in index
-                and log.on_scene(int(i), frame)
-                and states[index[int(i)], 3] >= _HIDDEN_BELOW_M
-                for i in actor_ids
-            ],
-            dtype=bool,
-        )
         if row > 0:
             positions[row] = positions[row - 1]
             headings[row] = headings[row - 1]
+        states = log.states(frame)
+        states = states[log.present(states, frame)]
+        index = {int(state[0]): n for n, state in enumerate(states)}
+        here = np.array([i in index for i in actor_ids], dtype=bool)
         if not here.any():
             continue
-        picked = states[[index[int(i)] for i in actor_ids[here]]]
-        turned = rotations(map_angles(picked[:, 4:7]))
-        positions[row, here] = map_positions(picked[:, 1:4], offset) + np.einsum(
-            "nij,nj->ni", turned, centres[here]
+        picked = states[[index[i] for i in actor_ids if i in index]]
+        positions[row, here], headings[row, here], _ = box_poses(
+            frame_of, picked, [a for a, h in zip(actors, here) if h]
         )
-        headings[row, here] = np.arctan2(turned[:, 1, 0], turned[:, 0, 0])
         valid[row, here] = True
 
     scene = sim_agents_submission_pb2.JointScene()
     agents: list[WosacAgent] = []
-    extents = np.array([actor.extent for actor in actors]).reshape(-1, 3)
     for n, actor in enumerate(actors):
         trajectory = scene.simulated_trajectories.add(object_id=ids[n])
         trajectory.center_x.extend(positions[1:, n, 0].tolist())
@@ -391,7 +388,7 @@ def trajectory_log_to_rollout(
         trajectory.heading.extend(headings[1:, n].tolist())
         object_type = object_type_of(actor.type_id)
         if with_boxes:
-            length, width, height = (2.0 * extents[n]).tolist()
+            length, width, height = (2.0 * np.asarray(actor.extent)).tolist()
             trajectory.length.extend([length] * steps)
             trajectory.width.extend([width] * steps)
             trajectory.height.extend([height] * steps)
@@ -401,10 +398,8 @@ def trajectory_log_to_rollout(
             WosacAgent(
                 object_id=ids[n],
                 role=roles[n][1],
-                actor_id=int(actor_ids[n]),
+                actor_id=actor_ids[n],
                 type_id=actor.type_id,
-                object_type=object_type,
-                ego=is_ego(actor.role),
                 valid_steps=int(valid[1:, n].sum()),
             )
         )
@@ -417,9 +412,12 @@ def trajectory_log_to_rollout(
         agents=tuple(agents),
         stem=stem,
         current_frame=current_frame,
-        current_t=round(current_index * STEP_S, 6),
-        frame="map" if map_frame else "local",
-        offset=(float(offset[0]), float(offset[1]), float(offset[2])),
+        map_frame=map_frame,
+        offset=(
+            float(frame_of.offset[0]),
+            float(frame_of.offset[1]),
+            float(frame_of.offset[2]),
+        ),
         current_index=current_index,
         steps=steps,
         padded_steps=padded,

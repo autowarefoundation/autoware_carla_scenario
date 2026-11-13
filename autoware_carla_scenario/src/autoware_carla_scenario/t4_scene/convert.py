@@ -253,6 +253,23 @@ class _Log:
         logged before the action moved it) or from its ``DespawnAction``'s."""
         return on_scene(self.spawned.get(actor_id), self.despawned.get(actor_id), frame)
 
+    def present(
+        self, states: npt.NDArray[np.float64], frame: int
+    ) -> npt.NDArray[np.bool_]:
+        """Which of the (N, 10) actor *states* of the tick on *frame* are road
+        users on the scene: recorded, not parked out of sight by a spawn or
+        despawn (:meth:`on_scene`) and not under the map -- a trajectory
+        entity's hiding records no despawn."""
+        return np.array(
+            [
+                int(state[0]) in self.actors
+                and self.on_scene(int(state[0]), frame)
+                and state[3] >= _HIDDEN_BELOW_M
+                for state in states
+            ],
+            dtype=bool,
+        ).reshape(-1)
+
 
 def _read_log(path: Path, step_frames: int) -> _Log:
     """Read the log at *path* a record at a time.
@@ -336,6 +353,23 @@ class _MapFrame:
         """(N, 3) CARLA rotations (roll, pitch, yaw; degrees) as map-frame
         Euler angles (radians) (:func:`t4_scene.frames.map_angles`)."""
         return map_angles(rpy_deg)
+
+
+def box_poses(
+    frame: _MapFrame, states: npt.NDArray[np.float64], actors: Sequence[_Actor]
+) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.float64], npt.NDArray[np.float64]]:
+    """The map-frame box centres (N, 3), headings (N,; radians, from x
+    counterclockwise) and roll/pitch/yaw angles (N, 3) of the (N, 10) actor
+    *states* of *actors*: each origin plus its box's ``center``, turned with
+    it."""
+    angles = frame.angles(states[:, 4:7])
+    turned = _rotations(angles)
+    # The box's centre is given in CARLA's (left-handed) actor frame.
+    centres = np.array([a.center for a in actors]).reshape(-1, 3) * _FLIP_Y
+    positions = frame.positions(states[:, 1:4]) + np.einsum(
+        "nij,nj->ni", turned, centres
+    )
+    return positions, np.arctan2(turned[:, 1, 0], turned[:, 0, 0]), angles
 
 
 def _array(
@@ -677,13 +711,7 @@ def _fill_annotations(
     for row, carla_frame in enumerate(frames):
         states = log.states(carla_frame) if available[row] else _NO_STATES
         ids = states[:, 0].astype(np.int64)
-        keep = np.array(
-            [int(i) in others and log.on_scene(int(i), carla_frame) for i in ids],
-            dtype=bool,
-        )
-        # A road user parked under the map (hidden; a trajectory entity's
-        # hiding records no despawn) is out of the scene.
-        keep &= states[:, 3] >= _HIDDEN_BELOW_M
+        keep = log.present(states, carla_frame) & (ids != ego_id)
         origins = frame.positions(states[:, 1:4])
         centre = ego_origins[row]
         if max_distance_m is not None and centre is not None:
@@ -696,10 +724,7 @@ def _fill_annotations(
             )
         states, ids, origins = states[keep], ids[keep], origins[keep]
         actors = [others[int(i)] for i in ids]
-        angles = _MapFrame.angles(states[:, 4:7])
-        rotations = _rotations(angles)
-        # The box's centre is given in CARLA's (left-handed) actor frame.
-        centres = np.array([a.center for a in actors]).reshape(-1, 3) * _FLIP_Y
+        centres, headings, angles = box_poses(frame, states, actors)
         extents = np.array([a.extent for a in actors]).reshape(-1, 3)
         dimensions = 2.0 * extents[:, [1, 0, 2]]  # (width, length, height)
         labels = np.array(
@@ -720,9 +745,9 @@ def _fill_annotations(
                 labels[n] = t4_label(fault.category)
         rows.append(
             (
-                origins + np.einsum("nij,nj->ni", rotations, centres),
+                centres,
                 dimensions,
-                np.arctan2(rotations[:, 1, 0], rotations[:, 0, 0]),
+                headings,
                 states[:, 7:9] * _FLIP_Y[:2],
                 labels,
                 ids,

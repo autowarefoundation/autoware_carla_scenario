@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import tarfile
+from collections import Counter
 from collections.abc import Iterable, Mapping
 from pathlib import Path
 from typing import Any, Optional
@@ -27,7 +28,9 @@ from typing import Any, Optional
 from google.protobuf import json_format
 
 from ..run_outputs import WOSAC_SUFFIX
+from ..t4_scene.grid import files_under
 from ._proto import sim_agents_submission_pb2 as pb
+from .convert import checked_count
 
 __all__ = [
     "SHARD_PREFIX",
@@ -49,29 +52,16 @@ SHARD_PREFIX = "submission.binproto"
 #: The archive of the shards the challenge's server takes.
 TARBALL_NAME = "submission.tar.gz"
 
-#: The fields of a ``SimulatedTrajectory`` that hold a value per row.
-_PER_ROW = (
-    "center_x",
-    "center_y",
-    "center_z",
-    "heading",
-    "width",
-    "length",
-    "height",
-    "valid",
-)
+#: The fields of a ``SimulatedTrajectory`` that hold a value per row: these
+#: always, and the optional ones none or as many.
+_REQUIRED = ("center_x", "center_y", "center_z", "heading")
+_OPTIONAL = ("width", "length", "height", "valid")
 
 
-def rollout_files(paths: Iterable[Path]) -> list[Path]:
+def rollout_files(paths: list[Path]) -> list[Path]:
     """The rollout files *paths* name: a file itself, or every
     ``*.wosac.pb`` under a directory (sorted)."""
-    found: list[Path] = []
-    for path in paths:
-        if path.is_dir():
-            found.extend(sorted(path.rglob(f"*{WOSAC_SUFFIX}")))
-        else:
-            found.append(path)
-    return found
+    return files_under(paths, WOSAC_SUFFIX)
 
 
 def read_rollouts(path: Path | str) -> pb.ScenarioRollouts:
@@ -88,18 +78,13 @@ def read_submission(paths: Iterable[Path | str]) -> pb.SimAgentsChallengeSubmiss
     return submission
 
 
-def _length(trajectory: pb.SimulatedTrajectory) -> int:
-    return len(trajectory.center_x)
-
-
 def _check_trajectory(trajectory: pb.SimulatedTrajectory, where: str) -> int:
     """The rows of *trajectory*, whose every per-row field holds that many
     values or none (the optional ones)."""
-    rows = _length(trajectory)
-    for name in _PER_ROW:
+    rows = len(trajectory.center_x)
+    for name in _REQUIRED + _OPTIONAL:
         values = getattr(trajectory, name)
-        required = name in ("center_x", "center_y", "center_z", "heading")
-        if (required or len(values)) and len(values) != rows:
+        if (name in _REQUIRED or len(values)) and len(values) != rows:
             raise ValueError(
                 f"{where}: object {trajectory.object_id} has {len(values)} "
                 f"{name} values and {rows} center_x values"
@@ -123,7 +108,7 @@ def _merge_one(
     id_sets: list[set[int]] = []
     for scene, source in scenes:
         ids = [trajectory.object_id for trajectory in scene.simulated_trajectories]
-        duplicated = sorted({i for i in ids if ids.count(i) > 1})
+        duplicated = sorted(i for i, n in Counter(ids).items() if n > 1)
         if duplicated:
             raise ValueError(f"{source}: object ids {duplicated} appear twice")
         id_sets.append(set(ids))
@@ -132,9 +117,7 @@ def _merge_one(
     if common != union:
         if not common_agents:
             first = id_sets[0]
-            other = next(
-                (n for n, ids in enumerate(id_sets) if ids != first), len(id_sets)
-            )
+            other = next(n for n, ids in enumerate(id_sets) if ids != first)
             raise ValueError(
                 f"scenario {scenario_id!r}: {scenes[0][1]} and {scenes[other][1]} "
                 f"do not simulate the same agents (only in the first: "
@@ -199,22 +182,17 @@ def merge_rollouts(
             (and not *common_agents*), or two of its trajectories differ in
             length.
     """
-    if num_rollouts is not None and (
-        isinstance(num_rollouts, bool)
-        or not isinstance(num_rollouts, int)
-        or num_rollouts < 1
-    ):
-        raise ValueError(
-            f"num_rollouts must be a whole number >= 1, not {num_rollouts!r}"
-        )
+    if num_rollouts is not None:
+        num_rollouts = checked_count(num_rollouts, "num_rollouts", 1)
     scenarios: dict[str, list[tuple[pb.JointScene, str]]] = {}
     for message, source in rollouts:
         if not message.scenario_id:
             raise ValueError(f"{source} has no scenario_id")
         scenes = scenarios.setdefault(message.scenario_id, [])
         scenes.extend((scene, source) for scene in message.joint_scenes)
+    # Each scenario's source messages are let go once it is merged.
     return [
-        _merge_one(scenario_id, scenarios[scenario_id], num_rollouts, common_agents)
+        _merge_one(scenario_id, scenarios.pop(scenario_id), num_rollouts, common_agents)
         for scenario_id in sorted(scenarios)
     ]
 
@@ -277,14 +255,7 @@ def write_submission(
             archive of the new ones would be mixed up with).
     """
     count = len(submission.scenario_rollouts)
-    if (
-        isinstance(shards, bool)
-        or not isinstance(shards, int)
-        or not 1 <= shards <= max(count, 1)
-    ):
-        raise ValueError(
-            f"shards must be a whole number from 1 to the {count} scenarios, not {shards!r}"
-        )
+    shards = checked_count(shards, "shards", 1, max(count, 1))
     directory = Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
     stale = sorted(directory.glob(f"{SHARD_PREFIX}-*"))
@@ -293,18 +264,28 @@ def write_submission(
             f"{directory} holds a submission already ({stale[0].name}): write "
             "into another directory"
         )
+    # Every shard is the metadata's bytes and then its scenarios', one at a
+    # time: serialised fields concatenate into one message, so the
+    # submission's rollouts are never copied whole.
     header = pb.SimAgentsChallengeSubmission()
-    header.CopyFrom(submission)
-    header.ClearField("scenario_rollouts")
+    for field, value in submission.ListFields():
+        if field.name == "scenario_rollouts":
+            continue
+        if field.label == field.LABEL_REPEATED:
+            getattr(header, field.name).extend(value)
+        else:
+            setattr(header, field.name, value)
+    head = header.SerializeToString(deterministic=True)
     paths: list[Path] = []
     for index in range(shards):
         start = index * count // shards
         stop = (index + 1) * count // shards
-        shard = pb.SimAgentsChallengeSubmission()
-        shard.CopyFrom(header)
-        shard.scenario_rollouts.extend(submission.scenario_rollouts[start:stop])
         path = directory / shard_name(index, shards)
-        path.write_bytes(shard.SerializeToString(deterministic=True))
+        with path.open("wb") as stream:
+            stream.write(head)
+            for scenario in submission.scenario_rollouts[start:stop]:
+                one = pb.SimAgentsChallengeSubmission(scenario_rollouts=[scenario])
+                stream.write(one.SerializeToString(deterministic=True))
         paths.append(path)
     if tar:
         archive = directory / TARBALL_NAME

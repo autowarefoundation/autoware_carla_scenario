@@ -339,7 +339,7 @@ def test_two_actors_of_one_role_are_refused(tmp_path: Path) -> None:
     [
         ({"current_index": -1}, "current_index must be a whole number >= 0"),
         ({"steps": 0}, "steps must be a whole number >= 1"),
-        ({"steps": True}, "steps must be a whole number >= 1"),
+        ({"steps": True}, "steps must be a whole number, got True"),
         ({"current_index": 200}, "no tick at row 200"),
     ],
 )
@@ -532,7 +532,9 @@ def test_the_submission_is_written_in_shards(tmp_path: Path) -> None:
 
     with pytest.raises(ValueError, match="holds a submission already"):
         write_submission(submission, out)
-    with pytest.raises(ValueError, match="from 1 to the 5 scenarios, not 6"):
+    with pytest.raises(
+        ValueError, match="shards must be a whole number from 1 to 5, not 6"
+    ):
         write_submission(submission, tmp_path / "other", shards=6)
 
 

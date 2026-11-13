@@ -806,7 +806,7 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.wosac._proto.scenario_pb2": "imports google.protobuf",
     "autoware_carla_scenario.wosac._proto.sim_agents_submission_pb2": "imports google.protobuf",
     "autoware_carla_scenario.wosac._proto.vector_pb2": "imports google.protobuf",
-    "autoware_carla_scenario.wosac.convert": "reads trajectory logs with t4_scene.convert, which is not checked (JSON-lines records of mixed value types, `dict[str, Any]`, which Codon cannot express), writes them with orjson and builds protobuf messages (wosac._proto); its frame math is the checked t4_scene.frames's, and the suffixes it writes are the checked run_outputs's",
+    "autoware_carla_scenario.wosac.convert": "reads trajectory logs with t4_scene.convert, which is not checked (JSON-lines records of mixed value types, `dict[str, Any]`, which Codon cannot express), with its presence check and box poses (`_Log.present()`, `box_poses()`), writes them with orjson and builds protobuf messages (wosac._proto); the suffixes it writes are the checked run_outputs's, and the blueprints of a cyclist the checked constants's (`CARLA_BICYCLE_BLUEPRINTS`)",
     "autoware_carla_scenario.wosac.pack": "imports tarfile and google.protobuf (`json_format`), and builds protobuf messages (wosac._proto); takes the submission's metadata as `Mapping[str, Any]`, which Codon cannot express",
 }
 
