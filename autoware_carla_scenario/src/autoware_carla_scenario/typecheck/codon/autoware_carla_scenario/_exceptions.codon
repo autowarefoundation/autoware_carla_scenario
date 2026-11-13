@@ -79,9 +79,12 @@ class OSError:
 
     # `e.errno`, the error's code: Optional[int], as CPython's is None for
     # an OSError raised without one (`OSError("x")`, the only form declared
-    # here). Code reading it tests it as CPython needs (`exc.errno in
-    # (errno.EPERM, ...)` is False for None). None in the check, where
-    # nothing runs; the subclasses below inherit it.
+    # here) and an int for one the system raised. CPython keeps whatever
+    # the first of two to five values was (`OSError("a", "b").errno` is
+    # "a"), a form refused here, so this is narrower than CPython's: code
+    # reading it tests it as CPython needs (`exc.errno in (errno.EPERM,
+    # ...)` is False for None or a str). None in the check, where nothing
+    # runs; the subclasses below inherit it.
     @property
     def errno(self) -> Optional[int]:
         return Optional[int]()

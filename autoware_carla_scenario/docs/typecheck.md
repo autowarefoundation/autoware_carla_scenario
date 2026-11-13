@@ -3515,8 +3515,12 @@ What Codon 0.19 needs that Python does not, beyond
   (`TimeoutError(message=...)`) and `OSError`'s `(errno, strerror)` and
   the `filename` they fill are refused. `OSError`'s (and `IOError`'s, and
   each subclass's) `errno` is declared, an `Optional[int]`, as CPython's is
-  `None` for an `OSError` of one message: test it as CPython needs
-  (`exc.errno in (errno.EPERM, ...)`, which is `False` for `None`);
+  `None` for an `OSError` of one message and the code for one the system
+  raised; CPython's is whatever the first of two to five values was
+  (`OSError("a", "b").errno` is `"a"`), a form the check refuses, so code
+  catching another's error tests it as CPython needs
+  (`exc.errno in (errno.EPERM, ...)`, which is `False` for `None` or a
+  `str`) rather than doing arithmetic on it;
   `slurm.manifest` tells a file system without hard links by it. Nothing in these
   shims runs: no environment is read, no file is copied, no process is
   signalled, no signal handler is installed and no exit function is
