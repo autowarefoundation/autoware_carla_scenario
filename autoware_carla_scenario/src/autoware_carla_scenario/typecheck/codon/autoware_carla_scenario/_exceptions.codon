@@ -11,9 +11,10 @@
 # CPython's other forms are not declared, so the check refuses them: a keyword
 # (CPython's OSError takes none, ImportError only `name` and `path`), other
 # values (`OSError(errno, strerror)`, but for two strs where a subclass is
-# derived from, below), and the attributes they fill (`filename`, `name`):
-# OSError's `errno` is declared (below), None as for an OSError of one
-# message.
+# derived from, below, and OSError's own `(errno, strerror, filename)`, at the
+# end), and the attributes they fill (ImportError's `name`): OSError's
+# `errno`, `strerror` and `filename` are declared (below), None as for an
+# OSError of one message.
 
 import internal.static as static
 
@@ -89,6 +90,23 @@ class OSError:
     def errno(self) -> Optional[int]:
         return Optional[int]()
 
+    # `e.strerror` and `e.filename`, the error's message and the file it
+    # names: Optional[str], as CPython's are None for an OSError raised
+    # without them and a str for one the system raised about a str path.
+    # CPython keeps whatever the second and the third of three to five values
+    # were, and the system's filename is the path as it was given (a
+    # pathlib.Path, or bytes), so these are narrower than CPython's: code
+    # reading the filename passes it to os.fspath() before comparing it.
+    # None in the check, where nothing runs; the subclasses below inherit
+    # them.
+    @property
+    def strerror(self) -> Optional[str]:
+        return Optional[str]()
+
+    @property
+    def filename(self) -> Optional[str]:
+        return Optional[str]()
+
 
 @extend
 class IOError:
@@ -96,10 +114,19 @@ class IOError:
     def args(self) -> Tuple[str]:
         return (self.message,)
 
-    # CPython's IOError is OSError: its `errno` too.
+    # CPython's IOError is OSError: its `errno`, `strerror` and `filename`
+    # too.
     @property
     def errno(self) -> Optional[int]:
         return Optional[int]()
+
+    @property
+    def strerror(self) -> Optional[str]:
+        return Optional[str]()
+
+    @property
+    def filename(self) -> Optional[str]:
+        return Optional[str]()
 
 
 @extend
@@ -348,3 +375,23 @@ class KeyboardInterrupt(Static[BaseException]):
     def __init__(self, *args, **kwargs):
         super().__init__("KeyboardInterrupt", _message(args, kwargs, "KeyboardInterrupt()"))
         self.python_type = self.__class__._pytype
+
+
+def _errno_message(errno: Optional[int], strerror: Optional[str], filename: str) -> str:
+    # CPython's str() of it: "[Errno 28] No space left on device: 'path'".
+    return "[Errno " + str(errno) + "] " + str(strerror) + ": " + repr(filename)
+
+
+# OSError(errno, strerror, filename): an error about a file, as the system
+# raises one, built from another's errno and strerror (each None when that
+# one had none) and the file's name, a str (CPython takes any object, which
+# is not declared). Declared after the subclasses above, which do not
+# inherit it (each takes one message, as before); a class a checked module
+# derives from OSError does (tools.file_writes' _PartialWriteError). Two
+# values stay refused, but for two strs, which a subclass passes on (above).
+@extend
+class OSError:
+    # Exception's constructor gives the instance its class's Python type,
+    # where it has one (a class derived in a checked module has none).
+    def __init__(self, errno: Optional[int], strerror: Optional[str], filename: str):
+        super().__init__("OSError", _errno_message(errno, strerror, filename))

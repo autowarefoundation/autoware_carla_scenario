@@ -101,10 +101,13 @@ class _PathParts:
 
 class _StatResult:
     """What Path.stat() returns (CPython's os.stat_result): the fields the
-    framework reads. Nothing is read from a file: all are zero."""
+    framework reads, its owner and group among them. Nothing is read from a
+    file: all are zero."""
 
     st_dev: int
     st_ino: int
+    st_uid: int
+    st_gid: int
     st_size: int
     st_mtime_ns: int
     st_mtime: float
@@ -112,6 +115,8 @@ class _StatResult:
     def __init__(self):
         self.st_dev = 0
         self.st_ino = 0
+        self.st_uid = 0
+        self.st_gid = 0
         self.st_size = 0
         self.st_mtime_ns = 0
         self.st_mtime = 0.0

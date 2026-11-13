@@ -2510,7 +2510,11 @@ and its configuration's sensor spec and the check of a field's signal name
 `scenario-hils --setup` creates for a configuration's devices, each validated
 in turn (`hils.host_devices`, #2124; not the playbooks' variables, a dict of
 mixed value types, or running them with ansible-runner, `hils.host_setup`,
-which re-exports it), how an error shows an integer too long for
+which re-exports it), how `detect-no-3d-model` writes the map configuration
+it edits, through a temporary file or in place, and reports the error of
+either (`tools.file_writes`, #2135; not the edit of the YAML text, the CARLA
+ray casts or the command line, `tools.detect_no_3d_model_lanelets`, which
+re-exports it), how an error shows an integer too long for
 `repr()` (`value_text.huge_integer()`, which `hils.config` re-exports, #1704), the
 example scenarios and their configs, the SLURM launcher's job scripts (and
 how one is written, #2124), where
@@ -3287,9 +3291,9 @@ What Codon 0.19 needs that Python does not, beyond
   the tail of a job's log, #1647; it takes `whence` by keyword, as `typing.IO`
   declares it, where a CPython file object takes it by position only),
   `write()` (of a `str`, read as bytes too), iteration over the lines and
-  `with`. `stat()` (no argument) returns a result of the five fields the
-  framework reads (`st_dev`, `st_ino`, `st_size`, `st_mtime_ns`, `st_mtime`),
-  all zero (`lstat()` too), and `replace(target)` and `rename(target)` (a
+  `with`. `stat()` (no argument) returns a result of the seven fields the
+  framework reads (`st_dev`, `st_ino`, `st_uid`, `st_gid`, `st_size`,
+  `st_mtime_ns`, `st_mtime`), all zero (`lstat()` too), and `replace(target)` and `rename(target)` (a
   `str` or an `os.PathLike`) return the new `Path`; nothing is read or
   renamed. `touch(mode=0o666, exist_ok=True)`, `rmdir()`,
   `chmod(mode, *, follow_symlinks=True)`, `write_bytes(data)` (a `str` here, as
@@ -3329,7 +3333,15 @@ What Codon 0.19 needs that Python does not, beyond
   follow_symlinks=True)` (nothing is linked) and `stat(path, *,
   dir_fd=None, follow_symlinks=True)`, and what `slurm.start_lock` creates
   and reads a lock file with: `fstat(fd)` and `write(fd, data, /)` (of bytes,
-  a `str` in the check, which reads bytes as str; `0`: nothing is written).
+  a `str` in the check, which reads bytes as str, or a `memoryview` of them;
+  `0`: nothing is written), and what `tools.file_writes` writes a file
+  with: `ftruncate(fd, length, /)`, `fsync(fd)` (of an `int`; the object
+  with a `fileno()` CPython also takes is not declared) and `chown(path,
+  uid, gid, *, dir_fd=None, follow_symlinks=True)`; nothing is cut, synced
+  or given away. `memoryview(obj)` of bytes is declared as far as
+  `tools.file_writes` uses it: a view is true while it is not empty and
+  sliced into another (`view[n:]`), which `os.write()` takes; indexing an
+  item, `tobytes()`, `release()` and the rest are not declared.
   The result of `stat()` and `fstat()` has `st_dev`, `st_ino`, `st_mode`,
   `st_nlink`, `st_size`, `st_mtime` and `st_mtime_ns` (all zero) and
   nothing else. `errno` declares `EPERM`, `EINVAL`, `ENOLCK`, `ENOSYS`,
@@ -3356,7 +3368,8 @@ What Codon 0.19 needs that Python does not, beyond
   (likewise), `copytree(src, dst, symlinks=False, ignore=None,
   copy_function=None, ignore_dangling_symlinks=False, dirs_exist_ok=False)`,
   `copy2(src, dst, *,
-  follow_symlinks=True)`, `move(src, dst)`, `rmtree(path,
+  follow_symlinks=True)`, `copymode(src, dst, *, follow_symlinks=True)`
+  (which returns `None`), `move(src, dst)`, `rmtree(path,
   ignore_errors=False)` and `which(cmd, mode=1, path=None)` of a `str`
   command; the callables CPython also takes (`onerror`, `copy_function`)
   are not declared (nor `copytree()`'s `ignore` and `copy_function`).
@@ -3525,8 +3538,13 @@ What Codon 0.19 needs that Python does not, beyond
   CPython's is whatever it was raised with (an `int`, a `str` or `None`), so
   test it with `isinstance()` before reading it as an `int`. Each
   takes no message or one value by position, as CPython does; a keyword
-  (`TimeoutError(message=...)`) and `OSError`'s `(errno, strerror)` and
-  the `filename` they fill are refused. `OSError`'s (and `IOError`'s, and
+  (`TimeoutError(message=...)`) and `OSError`'s `(errno, strerror)` are
+  refused. `OSError(errno, strerror, filename)` is declared of an
+  `Optional[int]`, an `Optional[str]` and a `str` (CPython takes any value
+  for each), with which `tools.file_writes` raises another's error as its
+  own, and so is it for a class a checked module derives from `OSError`;
+  the subclasses above still take one message (`FileNotFoundError(errno,
+  strerror, filename)` is refused). `OSError`'s (and `IOError`'s, and
   each subclass's) `errno` is declared, an `Optional[int]`, as CPython's is
   `None` for an `OSError` of one message and the code for one the system
   raised; CPython's is whatever the first of two to five values was
@@ -3534,7 +3552,13 @@ What Codon 0.19 needs that Python does not, beyond
   catching another's error tests it as CPython needs
   (`exc.errno in (errno.EPERM, ...)`, which is `False` for `None` or a
   `str`) rather than doing arithmetic on it;
-  `slurm.manifest` tells a file system without hard links by it. Nothing in these
+  `slurm.manifest` tells a file system without hard links by it. Its
+  `strerror` and `filename` are declared too, each an `Optional[str]`:
+  CPython's are `None` for an `OSError` of one message, and whatever the
+  second and the third of three to five values were, and the system's
+  `filename` is the path as it was given (a `Path`, or bytes), so these are
+  narrower than CPython's; `tools.file_writes` passes the filename to
+  `os.fspath()` before comparing it with a path. Nothing in these
   shims runs: no environment is read, no file is copied, no process is
   signalled, no signal handler is installed and no exit function is
   registered. `hashlib` declares `sha256(string=b"", *,
@@ -3985,6 +4009,12 @@ What Codon 0.19 needs that Python does not, beyond
   (`Trajectory.is_relative`).
 - **`callable(x)`** is checked as `hasattr(x, "__call__")`, which Codon
   decides when it compiles: Codon 0.19 has no `callable`.
+- **`memoryview(x)`**, which Codon 0.19 lacks too, is checked as a view of
+  bytes (`_acs_memoryview`): true while it is not empty, sliced into another
+  view, and taken by `os.write()`, which is what a loop writing all of a
+  buffer needs (`tools.file_writes`). A `memoryview` (or `callable`, or
+  `tuple`) the code binds itself, a parameter, an import or a function of
+  that name, is its own and is left as it is.
 - **Annotate a local that starts as `None`** (`spawn_points:
   Optional[list[carla.Transform]] = None`): Codon types it by its first
   assignment, and on a branch it then compiles alone it can crash without a
