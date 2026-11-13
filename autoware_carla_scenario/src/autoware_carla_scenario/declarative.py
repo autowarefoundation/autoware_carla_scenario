@@ -388,8 +388,16 @@ class DeclarativeScenario(BaseScenario):
         spec = parse_route_search(search.to_sweep_dict())
         match = RouteMatch.from_config(self._config.route or {})
         # How many cases the expansion found on this map: what a gate's case
-        # coverage is counted against (docs/gate.md).
-        self._case_count = int((self._config.route or {}).get("case_count") or 0)
+        # coverage is counted against (docs/gate.md).  A whole number, 0 or
+        # more; absent or null is 0, but 2.5, true or "x" is refused (#2143).
+        from .odd.sampler import whole_number_setting  # noqa: PLC0415
+
+        case_count = whole_number_setting(
+            "scenario.route.case_count",
+            (self._config.route or {}).get("case_count"),
+            minimum=0,
+        )
+        self._case_count = 0 if case_count is None else case_count
         if match is None:
             from .route.search import find_route_matches  # noqa: PLC0415
 

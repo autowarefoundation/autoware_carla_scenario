@@ -178,3 +178,38 @@ def test_the_sweeper_refuses_a_fractional_cooldown_max_retries(
     assert exited.value.code == 2
     assert "cooldown_max_retries must be a whole number" in capsys.readouterr().err
     load.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("override", "shown"),
+    [
+        # Read as the default reload before #2143.
+        ("server.world_reset=''", "''"),
+        ("server.world_reset=false", "False"),
+        ("server.world_reset=0", "0"),
+        ("server.world_reset=[]", "[]"),
+        ("server.world_reset=sotf", "'sotf'"),
+    ],
+)
+def test_world_reset_refuses_anything_but_a_strategy(override: str, shown: str) -> None:
+    """Only an absent or null ``server.world_reset`` is ``reload`` (#2143)."""
+    from autoware_carla_scenario.examples import run
+
+    with pytest.raises(ValueError) as refused:
+        run.world_reset_settings(_shipped([override]))
+    assert str(refused.value) == (
+        f"server.world_reset must be one of ['reload', 'soft'], got {shown}."
+    )
+
+
+def test_world_reset_reads_a_strategy_and_null_as_before() -> None:
+    from autoware_carla_scenario.examples import run
+
+    assert run.world_reset_settings(_shipped([]))[0] == "reload"
+    assert run.world_reset_settings(_shipped(["server.world_reset=null"]))[0] == (
+        "reload"
+    )
+    assert run.world_reset_settings(_shipped(["server.world_reset=soft"]))[0] == "soft"
+    assert run.world_reset_settings(_shipped(["server.world_reset='reload'"]))[0] == (
+        "reload"
+    )

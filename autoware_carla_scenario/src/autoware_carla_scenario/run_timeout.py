@@ -54,11 +54,22 @@ def run_timeout_seconds(cfg: Mapping[str, Any]) -> float:
     that registers none of its own, and a ``DeclarativeScenario`` always
     registers its document's.
 
+    The ``scenario`` group is a mapping: an absent or null one sets no
+    timeout either, but ``false``, ``0`` or a list is refused (#2143).
+
     Raises:
         ValueError: naming the key, when it is not a number (a string, a
-            bool, a list, ...), or not positive and finite.
+            bool, a list, ...), or not positive and finite, or when
+            ``scenario`` is not a mapping.
     """
-    scenario = cfg.get("scenario") or {}
+    scenario = cfg.get("scenario")
+    if scenario is None:
+        return DEFAULT_RUN_TIMEOUT_SECONDS
+    if not isinstance(scenario, Mapping):
+        raise ValueError(
+            f"scenario must be a mapping, got {shown(scenario)} "
+            f"({type(scenario).__name__})"
+        )
     value = scenario.get("timeout_seconds")
     if value is None:
         return DEFAULT_RUN_TIMEOUT_SECONDS
