@@ -266,7 +266,13 @@ as something else:
   `true` or `false`, or one of their spellings as text (`"false"`, `"no"`,
   `"off"`, `"0"`, and `"true"`, `"yes"`, `"on"`, `"1"`); `"false"` is false.
 - The text keys are text or a number, not a boolean, a list or a mapping;
-  `extra_sbatch_args` and `setup` are lists (or one string), `env` a mapping.
+  `extra_sbatch_args`, `env_passthrough` and `setup` are lists (or one
+  string) of non-blank text, without a null or blank item; `env` is a mapping
+  (or null, no variables) whose values are text or a number, not null or a
+  boolean (quote one: `FLAG: "true"`).
+- `0`, `false` or `[]` is a value, checked as any other, never read as
+  unset; `launcher.type` is `local` only when it is missing or null (`""`,
+  `false` or `0` is refused).
 
 `cases_per_task` trades a task's start -- CARLA takes about 50 s to start, and
 a driver policy about as long to load -- against how evenly the cases spread
