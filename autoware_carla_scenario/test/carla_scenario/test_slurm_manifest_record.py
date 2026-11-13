@@ -28,6 +28,7 @@ print, log, write and return.
 from __future__ import annotations
 
 import json
+import re
 import logging
 import operator
 import shutil
@@ -54,6 +55,7 @@ from autoware_carla_scenario.slurm.manifest import (
 from autoware_carla_scenario.slurm.settings import SlurmSettings
 
 from .test_slurm_batch_readers import old_reading
+from .test_slurm_records import _written_back
 
 # -- The corpus -------------------------------------------------------------------
 
@@ -1062,6 +1064,12 @@ def _nested(depth: int) -> str:
     return "[" * depth + "]" * depth
 
 
+def _digits_out(text: str) -> str:
+    """*text* with each run of digits as ``0``: the C encoder names the stack
+    it used ("used 16340 kB"), which differs from one call to the next."""
+    return re.sub(r"[0-9]+", "0", text)
+
+
 @pytest.mark.parametrize(
     "where", ["extra", "env", "case-config", "case-extra", "case-label", "cases"]
 )
@@ -1102,6 +1110,26 @@ def test_a_manifest_nested_deep_is_read_as_json_loads_reads_it(
         "resubmit-dry",
     )
     actual = _run_readers(pristine, tmp_path, capsys, caplog, names)
+    try:
+        data = json.loads(text)
+    except RecursionError:
+        data = None  # read by no reader, as a dict or by its members
+    if data is not None:
+        try:
+            _written_back(data)
+        except RecursionError as exc:
+            # Read by json.loads(), but too deep for the C encoder to write a
+            # member back (Python 3.14.10): a reader that writes it back
+            # stops on that RecursionError, which reading the manifest as a
+            # dict did not meet; one that leaves it unread reads as before.
+            message = _digits_out(str(exc))
+            with _old_reading(monkeypatch):
+                expected = _run_readers(pristine, tmp_path, capsys, caplog, names)
+            for name in names:
+                assert actual[name] == expected[name] or message in _digits_out(
+                    repr(actual[name])
+                ), name
+            return
     with _old_reading(monkeypatch):
         expected = _run_readers(pristine, tmp_path, capsys, caplog, names)
     assert actual == expected
