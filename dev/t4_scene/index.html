@@ -2418,8 +2418,10 @@ nanoseconds since the run's first tick, so two scenes' rows need not fall on
 the same times. A run younger than <code>t4_scene_history_s</code> sends the rows it has.
 On top of what the log holds, a scene carries what the policy is told and
 a log does not: the ego's velocity and acceleration as the egodriver
-observations carry them (of <code>base_link</code>, the acceleration an estimate), body
-angular velocity (on a row the policy was not told, the log's), front tyres'
+observations carry them (of <code>base_link</code>, the acceleration an estimate), the
+angular velocity (on a row the policy was not told, the log's) -- each turned
+from the rig's axes into the scene's by the row's <code>poses_3d</code> rotation, into
+<code>velocities_3d</code>, <code>accelerations_3d</code> and <code>angular_velocities_3d</code> -- front tyres'
 angle and odometry times; the first LiDAR's
 current sweep on the current row (<code>[N, 5]</code> in the rig frame, intensity on the
 0-255 scale, the fifth column zero); the route on every row -- the road ahead
@@ -2483,7 +2485,7 @@ machine any more) has no <code>map</code> and no <code>traffic_lights</code>.</p
 <tbody>
 <tr>
 <td><code>scene_metadata</code></td>
-<td><code>scene_id</code>: the log's stem; <code>recording_id</code>: the world's <code>episode</code>; <code>tags</code>: <code>autoware_carla_scenario</code>, <code>map:{name}</code>, and <code>result:passed</code> (the result's <code>passed</code> is JSON <code>true</code>) or <code>result:failed</code> (anything else) when the run reached a verdict</td>
+<td><code>scene_id</code>: the log's stem; <code>recording_id</code>: the world's <code>episode</code>; <code>tags</code> (each <code>key:value</code>, as the devkit requires): <code>source:autoware_carla_scenario</code>, <code>map:{name}</code>, and <code>result:passed</code> (the result's <code>passed</code> is JSON <code>true</code>) or <code>result:failed</code> (anything else) when the run reached a verdict</td>
 </tr>
 <tr>
 <td><code>timestamps_ns</code>, <code>frame_indices</code></td>
@@ -2495,7 +2497,7 @@ machine any more) has no <code>map</code> and no <code>traffic_lights</code>.</p
 </tr>
 <tr>
 <td><code>ego</code></td>
-<td>The actor whose role is <code>ego</code> or <code>hero</code>: <code>poses</code> and <code>poses_3d</code> at its <code>base_link</code>, <code>velocities</code> and <code>longitudinal_speeds</code> of its <code>base_link</code> (below), <code>angular_velocities</code> (body axes, rad/s, from the ticks' <code>angular_velocity</code>), <code>available</code>, <code>turn_indicators</code> (the log's <code>turn_indicators</code> records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its <code>shape</code></td>
+<td>The actor whose role is <code>ego</code> or <code>hero</code>, its motion in the contract's 3D fields, all in the scene's axes: <code>poses_3d</code> at its <code>base_link</code>, <code>velocities_3d</code> of its <code>base_link</code> (below), <code>angular_velocities_3d</code> (rad/s, from the ticks' <code>angular_velocity</code>); the devkit derives the planar pose, velocity and longitudinal speed from them, and refuses the legacy <code>poses</code>, <code>velocities</code>, <code>accelerations</code>, <code>longitudinal_speeds</code> and <code>angular_velocities</code>, which are left unset. Then <code>available</code>, <code>turn_indicators</code> (the log's <code>turn_indicators</code> records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its <code>shape</code></td>
 </tr>
 <tr>
 <td><code>annotations</code></td>
@@ -2630,7 +2632,7 @@ copy the file again and regenerate.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 08:46:03 UTC"><span class="timeago" datetime="2026-11-11T08:46:03+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 08:46:03 UTC">2026-11-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 13:40:16 UTC"><span class="timeago" datetime="2026-11-13T13:40:16+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 13:40:16 UTC">2026-11-13</span>
   </span>
 
     
