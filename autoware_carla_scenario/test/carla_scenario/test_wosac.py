@@ -177,6 +177,42 @@ def test_the_centre_is_the_boxs_in_the_maps_axes(tmp_path: Path) -> None:
     np.testing.assert_allclose(ego.center_y, -7.0 - 0.1, atol=1e-5)
 
 
+def test_the_frame_is_right_handed_as_waymos(tmp_path: Path) -> None:
+    # Waymo's frame is right-handed, heading counterclockwise from x (east)
+    # (scenario.proto, ObjectState.heading; sim_agents_submission.proto), and
+    # its metrics turn a box with the standard yaw rotation. CARLA's is
+    # left-handed: a left turn there decreases yaw. Drive one, forward along
+    # its yaw, and the rollout must move along its heading and turn
+    # counterclockwise -- a mirrored frame would flip the off-road metric.
+    poses = []
+    x, y, yaw = 0.0, 0.0, 30.0
+    for _ in range(91):
+        poses.append((x, y, yaw))
+        x += math.cos(math.radians(yaw))
+        y += math.sin(math.radians(yaw))
+        yaw -= 1.5
+
+    def state(actor: dict, row: int) -> Optional[list]:
+        px, py, pyaw = poses[row]
+        return _state(actor["id"], px, py, yaw=pyaw)
+
+    log = _write_log(tmp_path / "Turn.trajectory.jsonl", actors=(EGO,), state=state)
+    ego = _trajectories(trajectory_log_to_rollout(log).rollouts)[object_id_of("Ego")]
+    heading = np.array(ego.heading)
+    # The box centre is 0.1 ahead and 0.2 right of the origin: compare the
+    # origins' motion, which the offset (turning with the box) shifts alike.
+    steps = np.diff(np.c_[ego.center_x, ego.center_y], axis=0)
+    motion = np.arctan2(steps[:, 1], steps[:, 0])
+    np.testing.assert_allclose(
+        np.angle(np.exp(1j * (motion - heading[:-1]))), 0.0, atol=np.radians(0.5)
+    )
+    np.testing.assert_allclose(
+        np.angle(np.exp(1j * np.diff(heading))), np.radians(1.5), atol=1e-4
+    )
+    turns = steps[:-1, 0] * steps[1:, 1] - steps[:-1, 1] * steps[1:, 0]
+    assert (turns > 0).all()
+
+
 def test_the_map_frame_adds_the_maps_offsets(tmp_path: Path) -> None:
     log = _write_log(tmp_path / "Run.trajectory.jsonl")
     rollout = trajectory_log_to_rollout(log, map_frame=True)

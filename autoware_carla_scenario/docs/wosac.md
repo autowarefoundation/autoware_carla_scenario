@@ -167,9 +167,14 @@ What the log does not hold is held, never made up:
 ## Frames
 
 - The axes are Autoware's `map` frame, the Lanelet2 map's (x east, y north,
-  z up; right-handed), converted from CARLA's as the
-  [trajectory log](trajectory_log.md#frames-units-and-time) says. A heading
-  is counterclockwise from east, as WOSAC's is.
+  z up; right-handed), converted from CARLA's left-handed one as the
+  [trajectory log](trajectory_log.md#frames-units-and-time) says. That is
+  Waymo's convention: its `ObjectState.heading` is counterclockwise from the
+  x axis, "right hand system about the Z axis" (`scenario.proto`), a
+  submission's heading "counterclockwise from East"
+  (`sim_agents_submission.proto`), and its metrics turn a box by the standard
+  yaw rotation and take a road edge's counterclockwise winding as its inside.
+  A left turn in CARLA (yaw decreasing) is a heading increasing here.
 - By default the origin is CARLA's world origin -- the `map` frame without
   the map's MGRS and elevation offsets -- since the message holds single
   precision, which keeps millimetres there but not at an MGRS offset tens of
