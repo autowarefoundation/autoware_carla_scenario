@@ -61,6 +61,7 @@ _TWINS = {
 #: derived from it.
 _PROJECTORS = {
     "LocalCartesianProjector",
+    "MercatorProjector",
     "MGRSProjector",
     "TransverseMercatorProjector",
     "UtmProjector",
@@ -550,6 +551,7 @@ _PROJECTOR_CLASSES = [
     TransverseMercatorProjector,
     lanelet2.projection.UtmProjector,
     lanelet2.projection.LocalCartesianProjector,
+    lanelet2.projection.MercatorProjector,
 ]
 
 
@@ -576,6 +578,49 @@ def test_a_projector_projects_a_gps_point_and_loads_the_map(projector: Any) -> N
     ):
         assert isinstance(loaded, core.LaneletMap)
         assert len(loaded.laneletLayer) > 0
+
+
+def test_mercator_reverses_a_point_and_a_map_is_written_through_it(
+    lanelet_map: Any, tmp_path: Path
+) -> None:
+    # What t4_scene.osm does: the auxiliary lat/lon of a point, and the map
+    # written through the projector.
+    core = lanelet2.core
+    projector = lanelet2.projection.MercatorProjector(lanelet2.io.Origin(0, 0))
+    point = core.BasicPoint3d(10.0, 3.5, 1.25)
+    assert (point.x, point.y, point.z) == (10.0, 3.5, 1.25)
+    gps = projector.reverse(point)
+    assert isinstance(gps, core.GPSPoint)
+    assert all(isinstance(v, float) for v in (gps.lat, gps.lon, gps.alt))
+    back = projector.forward(gps)
+    assert (back.x, back.y) == pytest.approx((10.0, 3.5), abs=1e-6)
+    path = tmp_path / "map.osm"
+    errors = lanelet2.io.writeRobust(str(path), lanelet_map, projector)
+    assert errors == [] and path.is_file()
+    broken = core.LaneletMap()
+    lanelet = core.Lanelet(
+        core.getId(),
+        core.LineString3d(core.getId(), [core.Point3d(core.getId(), 0.0, 0.0)]),
+        core.LineString3d(core.getId(), [core.Point3d(core.getId(), 0.0, 1.0)]),
+    )
+    lanelet.centerline = core.LineString3d(
+        core.getId(), [core.Point3d(core.getId(), 0.0, 0.5)]
+    )
+    broken.add(lanelet)
+    errors = lanelet2.io.writeRobust(str(tmp_path / "broken.osm"), broken, projector)
+    assert isinstance(errors, list) and errors
+    assert all(isinstance(e, str) for e in errors)
+    with pytest.raises(RuntimeError):
+        lanelet2.io.writeRobust(str(tmp_path / "absent" / "map.osm"), broken, projector)
+
+
+def test_a_point_layer_is_indexed_by_id(lanelet_map: Any) -> None:
+    layer = lanelet_map.pointLayer
+    point = next(iter(layer))
+    assert isinstance(layer[point.id], lanelet2.core.Point3d)
+    assert layer[point.id].id == point.id
+    with pytest.raises(RuntimeError):
+        layer[-1]
 
 
 # ---------------------------------------------------------------------------

@@ -1,6 +1,7 @@
 # Model of lanelet2.io, for the checker (docs/typecheck.md): the map origin a
-# projector is built at, and loading a map through a projector. Writing a map,
-# loadRobust() and loading at an Origin (without a projector) are not declared.
+# projector is built at, loading a map through a projector, and writing one
+# through a projector with writeRobust(). write(), loadRobust(), loading at an
+# Origin (without a projector) and writing without one are not declared.
 
 from lanelet2.core import LaneletMap
 
@@ -21,4 +22,12 @@ from lanelet2.projection import Projector
 # (any of lanelet2's or Autoware's: lanelet2.projection.codon). Raises
 # RuntimeError for a file it cannot parse.
 def load(filename: str, projector: Projector) -> LaneletMap:
+    raise NotImplementedError()
+
+
+# writeRobust(filename, map, projector=None, params=None): writes the map to
+# the file through the projector and returns the errors, a list of str (empty
+# when it wrote every primitive). Raises RuntimeError for a file it cannot
+# create. The model takes a projector, and not the params.
+def writeRobust(filename: str, map: LaneletMap, projector: Projector) -> List[str]:
     raise NotImplementedError()

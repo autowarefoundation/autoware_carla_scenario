@@ -5288,11 +5288,15 @@ def test_shim_list() -> None:
     listed = set(re.findall(r"`([\w.]+)`", block))
     assert listed == _shim_modules()
     assert "tempfile" in listed
-    # The shim of tempfile declares mkstemp() and mkdtemp() and nothing else.
+    # The shim of tempfile declares mkstemp(), mkdtemp() and
+    # TemporaryDirectory and nothing else.
     tempfile = ast.parse((model_dir() / "tempfile.codon").read_text())
     assert [n.name for n in tempfile.body if isinstance(n, ast.FunctionDef)] == [
         "mkstemp",
         "mkdtemp",
+    ]
+    assert [n.name for n in tempfile.body if isinstance(n, ast.ClassDef)] == [
+        "TemporaryDirectory"
     ]
     # The standard modules the docs call missing are not shimmed.
     unavailable = {"inspect", "concurrent.futures"}
@@ -5497,45 +5501,210 @@ def test_the_element_tree_shim_declares_only_cpythons_names_and_parameters() -> 
 
     shim = model_dir() / "xml" / "etree" / "ElementTree.codon"
     tree = ast.parse(shim.read_text(encoding="utf-8"))
-    functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    functions = {
+        n.name: n
+        for n in tree.body
+        if isinstance(n, ast.FunctionDef) and not n.name.startswith("_")
+    }
     classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
-    assert set(functions) == {"iterparse"}
+    assert set(functions) == {"iterparse", "fromstring", "SubElement", "tostring"}
     assert set(classes) == {"Element"}
     methods = {
         n.name: n for n in classes["Element"].body if isinstance(n, ast.FunctionDef)
     }
-    assert set(methods) == {"__init__", "get", "clear"}
+    assert set(methods) == {"__init__", "get", "set", "find", "findall", "clear"}
+    attributes = {
+        n.target.id
+        for n in classes["Element"].body
+        if isinstance(n, ast.AnnAssign) and isinstance(n.target, ast.Name)
+    }
+    assert attributes == {"tag", "attrib"}
+    assert all(hasattr(ET.Element("x"), name) for name in attributes)
     # Each declares CPython's leading parameters, by their names, and no
     # other: narrower than CPython's, never wider.
     for declared, python in (
         (functions["iterparse"], ET.iterparse),
+        (functions["fromstring"], ET.fromstring),
+        (functions["tostring"], ET.tostring),
         (methods["get"], ET.Element.get),
+        (methods["find"], ET.Element.find),
+        (methods["findall"], ET.Element.findall),
         (methods["clear"], ET.Element.clear),
     ):
         names = [a.arg for a in declared.args.args if a.arg != "self"]
         cpython = [p for p in inspect.signature(python).parameters if p != "self"]
         assert names == cpython[: len(names)], declared.name
+    # tostring()'s xml_declaration is keyword-only, as in CPython.
+    keywords = [a.arg for a in functions["tostring"].args.kwonlyargs]
+    assert keywords == ["xml_declaration"]
+    tostring = inspect.signature(ET.tostring).parameters
+    assert tostring["xml_declaration"].kind is inspect.Parameter.KEYWORD_ONLY
+    # set(key, value, /) and SubElement(parent, tag, attrib={}, /, **extra)
+    # take those by position only in CPython: a `*args` here, which the shim
+    # counts; SubElement's keywords are attributes.
+    key = inspect.signature(ET.Element.set).parameters["key"]
+    assert key.kind is inspect.Parameter.POSITIONAL_ONLY
+    assert methods["set"].args.vararg is not None
+    assert [a.arg for a in methods["set"].args.args] == ["self"]
+    subelement = functions["SubElement"].args
+    assert subelement.vararg is not None and subelement.kwarg is not None
+    assert not subelement.args
+    with pytest.raises(TypeError):
+        ET.SubElement(parent=ET.Element("x"), tag="y")  # type: ignore[call-arg]
+    added = ET.SubElement(ET.Element("x"), "y", {"a": "1"}, k="2")
+    assert added.attrib == {"a": "1", "k": "2"}
+    # fromstring() is XML(), whose parameter is `text`.
+    assert ET.fromstring is ET.XML
     # The packages only import the submodule, so they name no module of
     # their own (test_shim_list).
     assert "xml.etree.ElementTree" in _shim_modules()
     assert not {"xml", "xml.etree"} & _shim_modules()
 
 
-def test_map_resources_reason_names_each_element_tree_name_the_shim_lacks() -> None:
-    """t4_scene.map_resource's reason lists every name of xml.etree.ElementTree
-    it uses beyond the shim's (`ET.<name>` and an element's methods)."""
-    import importlib
-
-    # t4_scene re-exports a map_resource() function under the module's name.
-    module = importlib.import_module("autoware_carla_scenario.t4_scene.map_resource")
-    source = Path(str(module.__file__)).read_text(encoding="utf-8")
+def test_t4_scene_osm_uses_only_element_tree_names_the_shim_declares() -> None:
+    """Every ``ET.<name>`` the checked t4_scene.osm uses is one the shim
+    declares, and t4_scene.map_resource, which re-exports its helpers, uses
+    none."""
     shim = model_dir() / "xml" / "etree" / "ElementTree.codon"
     declared = set(re.findall(r"^(?:def|class) (\w+)", shim.read_text(), re.M))
-    used = set(re.findall(r"\bET\.(\w+)\b", source)) - declared
-    reason = EXCLUDED["autoware_carla_scenario.t4_scene.map_resource"]
-    assert used, "map_resource no longer uses ElementTree"
-    for name in sorted(used):
-        assert f"`{name}()`" in reason, name
+    sources = {}
+    for name in ("osm", "map_resource"):
+        spec = importlib.util.find_spec(f"{_PACKAGE}.t4_scene.{name}")
+        assert spec is not None and spec.origin is not None
+        sources[name] = Path(spec.origin).read_text(encoding="utf-8")
+    used = set(re.findall(r"\bET\.(\w+)\b", sources["osm"]))
+    assert used == {"fromstring", "SubElement", "tostring"}
+    assert used <= declared
+    assert not re.findall(r"\bET\.(\w+)\b", sources["map_resource"])
+    assert f"{_PACKAGE}.t4_scene.osm" in CHECKED
+    assert f"{_PACKAGE}.t4_scene.map_resource" in EXCLUDED
+
+
+# ---------------------------------------------------------------------------
+# What t4_scene.osm writes a map's OSM file with: the rest of the
+# xml.etree.ElementTree shim, tempfile.TemporaryDirectory, and the lanelet2
+# model's writeRobust(), MercatorProjector and a point layer's indexing
+# ---------------------------------------------------------------------------
+
+
+_OSM_WRITE = """
+from __future__ import annotations
+
+import tempfile
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Optional
+
+import lanelet2
+import lanelet2.core
+import lanelet2.io
+import lanelet2.projection
+
+
+def write(lanelet_map: lanelet2.core.LaneletMap) -> bytes:
+    projector = lanelet2.projection.MercatorProjector(lanelet2.io.Origin(0, 0))
+    gps = projector.reverse(lanelet2.core.BasicPoint3d(1.0, 2.0, 3.0))
+    back = projector.forward(gps)
+    scratch = tempfile.TemporaryDirectory(prefix="osm-")
+    with scratch:
+        path = Path(scratch.name) / "map.osm"
+        errors = lanelet2.io.writeRobust(str(path), lanelet_map, projector)
+        if errors:
+            raise ValueError(f"{errors[:3]}")
+        root = ET.fromstring(path.read_bytes())
+    for node in root.findall("node"):
+        point = lanelet_map.pointLayer[int(node.attrib["id"])]
+        node.set("lat", repr(gps.lat + back.x + point.x))
+        tag: Optional[ET.Element] = node.find("tag[@k='ele']")
+        if tag is None:
+            tag = ET.SubElement(node, "tag", k="ele")
+        tag.set("v", "0.0")
+        ET.SubElement(node, "tag", {"k": "local_x"}, v="1.0")
+        ET.SubElement(node, "tag")
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+def named() -> str:
+    with tempfile.TemporaryDirectory() as unused:
+        pass
+    found = tempfile.TemporaryDirectory(
+        suffix="s", prefix="p", dir=Path("."), ignore_cleanup_errors=True
+    )
+    return found.name + tempfile.TemporaryDirectory(dir=".").name
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_shims_take_what_t4_scene_osm_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_OSM_WRITE, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too.
+        ("ET.fromstring(path.read_bytes())", "ET.fromstring()"),
+        ('node.set("lat", ', 'node.set(key="lat", value='),
+        ('tag.set("v", "0.0")', 'tag.set("v")'),
+        ("node.find(\"tag[@k='ele']\")", "node.find()"),
+        ('root.findall("node")', "root.findall()"),
+        ('ET.SubElement(node, "tag")', "ET.SubElement(node)"),
+        ('ET.SubElement(node, "tag")', 'ET.SubElement(parent=node, tag="tag")'),
+        ('encoding="utf-8", xml_declaration=True', '"utf-8", None, True'),
+        ('node.attrib["id"]', 'node.attribs["id"]'),
+        ("scratch.name", "scratch.path"),
+        ('dir=".")', 'directory=".")'),
+        ("projector.reverse(lanelet2.core.BasicPoint3d(", "projector.reverse(("),
+        ("lanelet_map.pointLayer[int(", "lanelet_map.pointLayer[str("),
+        ("lanelet2.io.writeRobust(", "lanelet2.io.writeRobustly("),
+    ],
+    ids=[
+        "fromstring-no-text",
+        "set-by-keyword",
+        "set-no-value",
+        "find-no-path",
+        "findall-no-path",
+        "subelement-no-tag",
+        "subelement-by-keyword",
+        "tostring-declaration-by-position",
+        "unknown-attribute",
+        "temporary-directory-unknown-attribute",
+        "temporary-directory-unknown-keyword",
+        "reverse-of-a-tuple",
+        "point-layer-by-str",
+        "unknown-function",
+    ],
+)
+def test_the_shims_refuse_what_cpython_refuses_of_t4_scene_osm_calls(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _OSM_WRITE.replace(right, wrong, 1)
+    assert source != _OSM_WRITE
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_a_temporary_directorys_with_target_is_the_manager_in_the_check(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # Codon binds the target to the manager, not to the name __enter__()
+    # returns, so the check refuses a use of it as the name, which CPython
+    # takes: t4_scene.osm reads `.name` instead.
+    source = _OSM_WRITE.replace(
+        "    with tempfile.TemporaryDirectory() as unused:\n        pass\n",
+        "    with tempfile.TemporaryDirectory() as unused:\n        Path(unused)\n",
+    )
+    assert source != _OSM_WRITE
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok
 
 
 # ---------------------------------------------------------------------------
