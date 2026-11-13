@@ -37,6 +37,7 @@ import pytest
 
 import autoware_carla_scenario.slurm.manifest as manifest_mod
 from autoware_carla_scenario.slurm import cli, collect as collect_mod, submit
+from autoware_carla_scenario.slurm import follow as slurm_follow
 from autoware_carla_scenario.slurm import status as slurm_status
 from autoware_carla_scenario.slurm.collect import (
     _UNFINISHED_TASK_STATES,
@@ -54,7 +55,7 @@ from autoware_carla_scenario.slurm.manifest import (
 )
 from autoware_carla_scenario.slurm.settings import SlurmSettings
 
-from . import test_slurm_batch_readers
+from . import test_slurm_batch_readers, test_slurm_follow
 from .test_slurm_batch_readers import old_reading
 
 _LOGGER = "autoware_carla_scenario.slurm.manifest"
@@ -449,8 +450,10 @@ def _old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
             cli,
             collect_mod,
             submit,
+            slurm_follow,
             slurm_launch,
             test_slurm_batch_readers,
+            test_slurm_follow,
         ):
             for name, old in (
                 ("sbatch_in_flight", _old_in_flight),
@@ -461,6 +464,9 @@ def _old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
                     patch.setattr(module, name, old)
         patch.setattr(collect_mod, "_last_submission_of", _old_last_submission_of)
         patch.setattr(collect_mod, "_missing_message", _old_missing_message)
+        # wait and after_submit, as they read the records then.
+        patch.setattr(submit, "follow", test_slurm_follow._old_follow)
+        patch.setattr(submit, "after_submit", test_slurm_follow._old_after_submit)
         # status, cancel, the busy check and the viewer's case states, as
         # they read the records then.
         with old_reading(patch):
@@ -850,7 +856,7 @@ def quiet_slurm(monkeypatch: pytest.MonkeyPatch) -> list[list[str]]:
     asked to cancel)."""
     from autoware_carla_scenario.ui import slurm_launch
 
-    for module in (slurm_status, submit, slurm_launch):
+    for module in (slurm_status, slurm_follow, test_slurm_follow, slurm_launch):
         monkeypatch.setattr(module, "squeue_states", lambda job: {})
     cancelled: list[list[str]] = []
 

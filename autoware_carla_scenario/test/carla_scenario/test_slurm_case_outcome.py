@@ -28,6 +28,7 @@ import pytest
 from autoware_carla_scenario.batch_report import print_summary
 from autoware_carla_scenario.failure import Failure, FailureCategory
 from autoware_carla_scenario.slurm import cli, submit
+from autoware_carla_scenario.slurm import follow as slurm_follow
 from autoware_carla_scenario.slurm.collect import (
     RecordedResult,
     collect,
@@ -722,7 +723,7 @@ def test_wait_counts_each_outcome(
     write_json(
         layout.submission(0), {"index": 0, "job_id": "70", "chunks": [[0, 1, 2]]}
     )
-    monkeypatch.setattr(submit, "squeue_states", lambda job: {})
+    monkeypatch.setattr(slurm_follow, "squeue_states", lambda job: {})
     old = _old_record(content)
     submit.follow(layout, 0, SlurmSettings(poll_seconds=0.1))
     first = capsys.readouterr().out.splitlines()[0]

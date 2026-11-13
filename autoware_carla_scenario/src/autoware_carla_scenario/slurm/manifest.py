@@ -441,6 +441,21 @@ class SubmissionRecord:
         else:
             return list(chunks)
 
+    def chunk_cases(self) -> list[int]:
+        """The cases of the record's ``chunks``, chunk after chunk, as
+        ``[case for chunk in record["chunks"] for case in chunk]`` gave
+        them: a :class:`KeyError` when it has none, the :class:`TypeError`
+        CPython raises for chunks, or a chunk, that cannot be iterated (a
+        number, ``true`` or ``null``).  Each case is the value the record
+        holds (an int in a record its submitter wrote; an object's key or a
+        string's character, and any value a hand left, in place of one),
+        which Python alone hands on."""
+        chunks = self.members.value("chunks")
+        if TYPE_CHECKING:
+            return [int(case) for chunk in chunks for case in chunk]
+        else:
+            return [case for chunk in chunks for case in chunk]
+
     def started_is_number(self) -> bool:
         """Whether the record's ``submitted_at`` is a number: an int (a
         boolean among them) or a float, as ``isinstance(value, (int,
@@ -866,6 +881,24 @@ class CaseOutcome:
         """Whether the record says the case raised rather than ran: a true
         ``errored`` (of any type, as ``bool()`` reads it)."""
         return bool(json.loads(_value_json(self.members, "errored")))
+
+    def names_submission(self, submission: int) -> bool:
+        """Whether the record's ``submission`` is *submission*: the
+        record's ``get("submission") == submission``, which a number equal
+        to it (``1.0``, ``true`` for 1) is too; never another value."""
+        named = json.loads(_value_json(self.members, "submission"))
+        if isinstance(named, bool):
+            return int(bool(named)) == submission
+        if isinstance(named, int):
+            return int(named) == submission
+        if isinstance(named, float):
+            number = float(named)
+            return (
+                math.isfinite(number)
+                and number == math.floor(number)
+                and int(number) == submission
+            )
+        return False
 
     @property
     def rerun_error(self) -> str | None:
