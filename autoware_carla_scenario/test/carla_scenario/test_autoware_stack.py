@@ -978,6 +978,151 @@ def test_docker_launcher_builds_serially_across_processes(
     assert [kind for kind, _ in events] == ["start", "end", "start", "end"]
 
 
+def _flock_raising(
+    monkeypatch: pytest.MonkeyPatch, *errors: BaseException
+) -> list[int]:
+    """Make ``fcntl.flock`` raise *errors* in turn (then lock); its calls."""
+    import fcntl
+
+    operations: list[int] = []
+    pending = list(errors)
+
+    def _flock(fd: int, operation: int) -> None:
+        operations.append(operation)
+        if pending:
+            raise pending.pop(0)
+
+    monkeypatch.setattr(fcntl, "flock", _flock)
+    return operations
+
+
+def test_the_build_lock_is_opened_read_only_created_mode_644(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    import fcntl
+
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    launcher = _docker_launcher(ws, docker)
+    opened: list[tuple[Any, ...]] = []
+    real_open = os.open
+
+    def _open(path: Any, flags: int, mode: int = 0o777) -> int:
+        opened.append((path, flags, mode))
+        return real_open(path, flags, mode)
+
+    monkeypatch.setattr(docker_module.os, "open", _open)
+    operations = _flock_raising(monkeypatch)
+    old = os.umask(0)
+    try:
+        fd = launcher._lock_workspace()
+    finally:
+        os.umask(old)
+    try:
+        assert fd >= 0
+        lock = ws / ".autoware_carla_scenario-build.lock"
+        assert opened == [(lock, os.O_RDONLY | os.O_CREAT, 0o644)]
+        assert lock.stat().st_mode & 0o777 == 0o644
+        assert operations == [fcntl.LOCK_EX | fcntl.LOCK_NB]
+    finally:
+        launcher._unlock_workspace(fd)
+
+
+def test_a_build_lock_that_cannot_be_opened_builds_unlocked(
+    tmp_path: Path,
+    fake_docker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    launcher = _docker_launcher(ws, docker)
+
+    def _open(*args: Any) -> int:
+        raise PermissionError(13, "denied")
+
+    monkeypatch.setattr(docker_module.os, "open", _open)
+    assert launcher._lock_workspace() == -1
+    assert f"Building {ws} without a lock" in caplog.text
+    assert "denied" in caplog.text
+
+
+@pytest.mark.parametrize("waiting", [False, True], ids=["at-once", "waiting"])
+def test_a_build_lock_flock_error_closes_the_file_and_builds_unlocked(
+    waiting: bool,
+    tmp_path: Path,
+    fake_docker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import fcntl
+
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    launcher = _docker_launcher(ws, docker)
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.01)
+    errors: list[BaseException] = [OSError(37, "no locks")]
+    if waiting:
+        errors.insert(0, BlockingIOError())
+    operations = _flock_raising(monkeypatch, *errors)
+    closed: list[int] = []
+    real_close = os.close
+
+    def _close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(docker_module.os, "close", _close)
+    caplog.set_level(logging.INFO, logger="autoware_carla_scenario")
+    assert launcher._lock_workspace() == -1
+    assert len(closed) == 1
+    assert operations == [fcntl.LOCK_EX | fcntl.LOCK_NB] * len(errors)
+    assert f"Building {ws} without a lock" in caplog.text
+    assert "no locks" in caplog.text
+    assert ("Waiting for another run to finish building" in caplog.text) is waiting
+
+
+def test_a_build_lock_interrupt_is_raised(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    launcher = _docker_launcher(ws, docker)
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.01)
+    error = KeyboardInterrupt()
+    _flock_raising(monkeypatch, BlockingIOError(), error)
+    with pytest.raises(KeyboardInterrupt) as raised:
+        launcher._lock_workspace()
+    assert raised.value is error
+
+
+def test_a_build_lock_held_too_long_closes_the_file(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    launcher = _docker_launcher(ws, docker)
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_POLL_S", 0.01)
+    monkeypatch.setattr(docker_module, "_BUILD_LOCK_TIMEOUT_S", 0.05)
+    _flock_raising(monkeypatch, *[BlockingIOError() for _ in range(1000)])
+    closed: list[int] = []
+    real_close = os.close
+
+    def _close(fd: int) -> None:
+        closed.append(fd)
+        real_close(fd)
+
+    monkeypatch.setattr(docker_module.os, "close", _close)
+    lock = ws / ".autoware_carla_scenario-build.lock"
+    with pytest.raises(AutowareStackError) as raised:
+        launcher._lock_workspace()
+    assert str(raised.value) == (
+        f"Another run has been building {ws} for more than 0 s (it holds "
+        f"{lock}); not building it beside it"
+    )
+    assert len(closed) == 1
+
+
 def test_docker_launcher_starts_and_removes_a_container_per_scenario(
     tmp_path: Path, fake_docker
 ) -> None:

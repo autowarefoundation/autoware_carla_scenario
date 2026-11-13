@@ -125,3 +125,50 @@ def test_a_result_not_written_is_said_so(tmp_path: Path) -> None:
     line = run._result_json_line(tmp_path, "X-1")
     assert line.startswith("Result JSON: not written")
     assert "X-1_result.json" in line
+
+
+def test_the_result_line_names_the_written_result_resolved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    (tmp_path / "out").mkdir()
+    (tmp_path / "out" / "X-1_result.json").write_text("{}")
+    monkeypatch.chdir(tmp_path)
+    resolved = (tmp_path / "out" / "X-1_result.json").resolve()
+    assert run._result_json_line(Path("out"), "X-1") == f"Result JSON: {resolved}"
+    assert run._result_json_line(Path("out"), "X-2") == (
+        f"Result JSON: not written ({resolved.parent / 'X-2_result.json'})"
+    )
+
+
+def test_a_directory_named_as_the_result_is_not_a_written_result(
+    tmp_path: Path,
+) -> None:
+    (tmp_path / "X_result.json").mkdir()
+    assert run._result_json_line(tmp_path, "X") == (
+        f"Result JSON: not written ({(tmp_path / 'X_result.json').resolve()})"
+    )
+
+
+@pytest.mark.parametrize(
+    ("argv", "requested"),
+    [
+        (["run.py", "-m", "hydra/sweeper=lanelet_constraint"], True),
+        (["run.py", "-m", "+hydra/sweeper=lanelet_constraint"], True),
+        (["run.py", "++hydra/sweeper=lanelet_constraint"], True),
+        (["run.py", "hydra/sweeper='lanelet_constraint'"], True),
+        (["run.py", 'hydra/sweeper="lanelet_constraint"'], True),
+        (["run.py", "hydra/sweeper= lanelet_constraint "], True),
+        (["run.py", "hydra/sweeper=basic"], False),
+        (["run.py", "hydra/sweeper"], False),
+        (["run.py", "hydra/sweeper=lanelet_constraint2"], False),
+        (["run.py", "~hydra/sweeper=lanelet_constraint"], False),
+        (["run.py", "x/hydra/sweeper=lanelet_constraint"], False),
+        (["run.py", "lanelet_constraint"], False),
+        (["hydra/sweeper=lanelet_constraint"], True),
+        ([], False),
+    ],
+)
+def test_the_lanelet_sweeper_is_seen_on_the_command_line(
+    argv: list[str], requested: bool
+) -> None:
+    assert run._lanelet_sweeper_requested_in_argv(argv) is requested

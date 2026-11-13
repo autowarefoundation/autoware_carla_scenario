@@ -484,6 +484,46 @@ class TestFrameworkVersionEnv:
         with pytest.raises(PinResolutionError, match="local version label"):
             resolve_framework_pin()
 
+    @pytest.mark.parametrize(
+        ("value", "problem"),
+        [
+            ("latest", "'latest' is not a valid version (PEP 440)"),
+            ("1..2", "'1..2' is not a valid version (PEP 440)"),
+            (
+                "1.2.3+local",
+                "'1.2.3+local' has a local version label (+local), which no "
+                "package index serves",
+            ),
+            (
+                "1.2.3+Ubuntu-1",
+                "'1.2.3+Ubuntu-1' has a local version label (+ubuntu.1), which "
+                "no package index serves",
+            ),
+        ],
+        ids=["word", "empty-part", "local", "normalized-local"],
+    )
+    def test_the_whole_refusal_names_the_problem(
+        self, monkeypatch: pytest.MonkeyPatch, value: str, problem: str
+    ) -> None:
+        monkeypatch.setenv("SCENARIO_EXPORT_FRAMEWORK_VERSION", value)
+        with pytest.raises(PinResolutionError) as raised:
+            resolve_framework_pin()
+        assert str(raised.value) == (
+            "SCENARIO_EXPORT_FRAMEWORK_VERSION must be an exact released version "
+            f"of autoware-carla-scenario (such as 1.2.3): {problem}."
+        )
+
+    @pytest.mark.parametrize(
+        "value", ["1.2.3", "v1.2", "1.2.3rc1", "1.2.post1", "1!2.0", "1.2.dev0"]
+    )
+    def test_a_released_version_is_pinned_as_written(
+        self, monkeypatch: pytest.MonkeyPatch, value: str
+    ) -> None:
+        monkeypatch.setenv("SCENARIO_EXPORT_FRAMEWORK_VERSION", value)
+        pin = resolve_framework_pin()
+        assert pin.kind == "version"
+        assert pin.version == value
+
     def test_the_error_points_wheel_installs_at_the_variable(
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
