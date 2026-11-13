@@ -43,6 +43,8 @@ from autoware_carla_scenario.slurm.manifest import (
 )
 from autoware_carla_scenario.slurm.queue import ACTIVE_STATES
 
+from .test_slurm_records import _returns_or_stops, _written_back
+
 # -- The corpus -------------------------------------------------------------------
 
 #: A member left out of its object.
@@ -749,6 +751,20 @@ def test_a_status_nested_deep_is_read_as_json_loads_reads_it(
         ):
             with pytest.raises(RecursionError):
                 read()
+        return
+    try:
+        _written_back(old)
+    except RecursionError:
+        # Read by json.loads(), too deep for the C encoder to write back
+        # (Python 3.14.10): the record's reader stops on that.
+        with pytest.raises(RecursionError):
+            layout.read_task(0, 0)
+        for read in (
+            lambda: cli._status(layout),
+            lambda: slurm_launch.batch_status(layout.batch_dir),
+            lambda: collect_mod._missing_message(layout, 1, "t"),
+        ):
+            _returns_or_stops(read)
         return
     status = layout.read_task(0, 0)
     assert status is not None
