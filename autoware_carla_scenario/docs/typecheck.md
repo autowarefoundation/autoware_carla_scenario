@@ -2488,10 +2488,10 @@ which runs the workers and re-exports it too) and the ODD's
 probes (and the names, knob keys, limits and ranges of the traffic
 parameters' probes: `odd.traffic_ranges`, #1680; not the probes themselves,
 `odd.traffic_probes`, which builds openodd's knobs), the gate package's
-`__init__`, its per-run record and probe, finding the markers of the
-`--multirun` jobs given up and the plans of the sweeps (`gate.errored` and
-`gate.sweep_plan`, #1967; not writing or reading them, JSON objects of mixed
-value types),
+`__init__`, its per-run record and probe, finding and writing the markers
+of the `--multirun` jobs given up, and finding the plans of the sweeps
+(`gate.errored` and `gate.sweep_plan`, #1967; not writing the plans or
+reading either, JSON objects of mixed value types),
 and the typed criteria its evaluator judges (`gate.criteria`: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
 baseline; and `gate.report`, #1738: a verdict's and a comparison's Markdown,

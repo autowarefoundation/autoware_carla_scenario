@@ -528,8 +528,6 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.gate.record._object": "reads an object of a parsed JSON object (`Mapping[str, Any]`) of mixed value types, which Codon cannot express; only the uncalled GateRecord.from_dict() calls it",
     "autoware_carla_scenario.gate.record.read_gate_record": "parses a JSON document (`Any`) and reads it with GateRecord.from_dict(), a `Mapping[str, Any]` of mixed value types, which Codon cannot express",
     "autoware_carla_scenario.gate.record.write_gate_record": "serialises GateRecord.to_dict(), a `dict[str, Any]` of mixed value types (see `_DETAILS`), which Codon cannot express",
-    "autoware_carla_scenario.gate.errored.write_case_errored": "writes the marker as a JSON object of mixed value types (`dict[str, Any]`: the schema, the overrides, the exit code or None, the attempts, the reason and the unfinished flag), which Codon cannot express",
-    "autoware_carla_scenario.gate.errored.write_case_unfinished": "writes the marker with write_case_errored(), itself uncalled (a `dict[str, Any]` of mixed value types)",
     "autoware_carla_scenario.gate.sweep_plan.write_sweep_plan": "writes the plan as a JSON object of mixed value types (`dict[str, Any]`: a schema string beside a list of jobs, each a directory string beside a list of overrides), which Codon cannot express",
     "autoware_carla_scenario.conditions.base.ScenarioResult.to_json": "serialises to_dict(), a `dict[str, Any]` of mixed value types (see `_DETAILS`), and forwards `**kwargs: Any`, which Codon cannot express",
     "autoware_carla_scenario.conditions.comparison.ScalarComparisonRule.to_dict": _DETAILS,
