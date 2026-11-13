@@ -61,6 +61,7 @@ from .scripts import WORKER_MODULE as WORKER_MODULE
 from .scripts import ScriptInputs
 from .scripts import _expand_ranges as _expand_ranges
 from .scripts import _shell_path as _shell_path
+from .scripts import _write_script as _write_script
 from .scripts import relative_batch_dir as relative_batch_dir
 from .scripts import sbatch_command as sbatch_command
 from .scripts import squeue_task_states as squeue_task_states
@@ -305,16 +306,6 @@ def _collect_command(
         manifest, python=False, cwd=settings.remote_cwd is None, env={}
     )
     return scripts._collect_command(layout, inputs, settings, job, script)
-
-
-def _write_script(path: Path, text: str) -> None:
-    """Write the job script *path*.  Only the user's: it exports the recorded
-    environment.  Created so, never readable by others even for a moment."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o700)
-    with os.fdopen(fd, "w", encoding="utf-8") as stream:
-        stream.write(text)
-    path.chmod(0o700)
 
 
 def submit_cases(

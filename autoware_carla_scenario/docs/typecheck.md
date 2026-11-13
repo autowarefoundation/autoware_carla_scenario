@@ -2512,7 +2512,8 @@ in turn (`hils.host_devices`, #2124; not the playbooks' variables, a dict of
 mixed value types, or running them with ansible-runner, `hils.host_setup`,
 which re-exports it), how an error shows an integer too long for
 `repr()` (`value_text.huge_integer()`, which `hils.config` re-exports, #1704), the
-example scenarios and their configs, the SLURM launcher's job scripts, where
+example scenarios and their configs, the SLURM launcher's job scripts (and
+how one is written, #2124), where
 a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
 and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
 `scontrol`, `sinfo`: `slurm.queue`, #1634), the naming rules of
@@ -2521,7 +2522,8 @@ export, which ids it refuses and the framework pin's lines in
 the package's README (`authoring.package_names`, #1695; the rule against the
 framework's own name is `scaffold.names`', which both apply), where the viewer keeps its
 recordings and its copy of Rerun's web viewer, and which web viewer it picks
-(`ui.web_viewer_paths`, #1672), what a run names its outputs, the path
+(`ui.web_viewer_paths`, #1672), and how it puts them in place on disk
+(`ui.recording_files`, #2124), what a run names its outputs, the path
 rule of a trajectory log and its recordings among them (`run_outputs`, #1678:
 the stem a log is of, its recording and its sensor recording, which `rerun`,
 `rerun_lidar` and `ui.web_viewer_paths` all name them with; `ui.case_paths`
@@ -3309,7 +3311,7 @@ What Codon 0.19 needs that Python does not, beyond
   follow_symlinks=True)` (`False`: nothing is asked) and its modes, and
   `open(path, flags, mode=0o777, *, dir_fd=None)` (a descriptor, `0`:
   nothing is opened) with the flags `O_RDONLY`, `O_WRONLY`, `O_RDWR`,
-  `O_CREAT`, `O_EXCL` and `O_CLOEXEC` (Linux's values) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
+  `O_CREAT`, `O_EXCL`, `O_TRUNC` and `O_CLOEXEC` (Linux's values) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
   errors=None, newline=None, closefd=True)`, a file object (`typing.IO`, as
   `Path.open()` gives), and what `slurm.manifest` creates a file
   exclusively with: `link(src, dst, *, src_dir_fd=None, dst_dir_fd=None,
