@@ -688,15 +688,16 @@ def _step(
     # missing or null `name` is no name, so a falsy one ("", 0) beside raw
     # data is refused too, and an `id` (raw data's) beside a name is not
     # dropped (#2128). Without data, a falsy name names no message, as for a
-    # wait or a periodic message.
-    raw = "data" in section
+    # wait or a periodic message. A null `data` is no data either, so beside
+    # a name it is a named send.
+    raw = section.get("data") is not None
     if (raw and (name is not None or section.get("fields") is not None)) or (
         not raw and (not name or section.get("id") is not None)
     ):
         raise HilsConfigError(
             f"{where}: a send has either a name (and fields) or raw data"
         )
-    if "data" in section:
+    if raw:
         data = _data(section["data"], f"{where}.data")
         frame_id = section.get("id")
         if frame_id is not None and (

@@ -1822,6 +1822,9 @@ def test_a_raw_send_and_a_named_send_still_parse(
         {"send": "can", "name": ""},
         {"send": "can", "name": 0},
         {"send": "can", "id": 5},
+        # A null data is no data: alone, or with only an id, it sends nothing.
+        {"send": "can", "data": None},
+        {"send": "can", "data": None, "id": 5},
     ],
 )
 def test_a_send_mixing_named_and_raw_keys_is_refused(
@@ -1837,17 +1840,24 @@ def test_a_send_mixing_named_and_raw_keys_is_refused(
 
 
 def test_null_name_and_id_are_absent_in_a_send(dbc: Path) -> None:
-    """A null `name` beside raw data, or a null `id` beside a name, is no key
-    at all (#2128); a whole-number name is a name."""
+    """A null `name` beside raw data, or a null `id` or `data` beside a name,
+    is no key at all (#2128); a whole-number name is a name."""
     document = _hils_config("mem://x", dbc)
     document["lifecycle"] = {
         "shutdown": [
             {"send": "can", "name": None, "data": [0x02, 0x10]},
             {"send": "can", "name": "Wake", "id": None, "fields": {"On": 0}},
             {"send": "can", "name": 1005, "fields": None},
+            {"send": "can", "name": "Wake", "data": None, "fields": {"On": 1}},
         ]
     }
-    raw, named, numbered = parse_config(document).steps("shutdown")
+    raw, named, numbered, null_data = parse_config(document).steps("shutdown")
+    assert (null_data.name, null_data.data, null_data.frame_id) == (
+        "Wake",
+        None,
+        None,
+    )
+    assert null_data.fields["On"].constant == 1
     assert (raw.name, raw.data, raw.frame_id, raw.fields) == (
         None,
         b"\x02\x10",
