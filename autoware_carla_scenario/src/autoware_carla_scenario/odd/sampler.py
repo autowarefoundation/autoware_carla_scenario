@@ -120,6 +120,7 @@ __all__ = [
     "case_settings",
     "QUANTILE_DRAWS",
     "sample_count",
+    "sample_coverage_paths",
     "sample_draws",
     "sample_seed",
     "sampler_from_config",
@@ -478,11 +479,42 @@ def sample_draws(raw: Mapping[str, Any], name: str) -> bool:
     return check_flag(f"sweep.odd_sample.{name}", value)
 
 
+def sample_coverage_paths(raw: Mapping[str, Any]) -> list[Union[str, Path]]:
+    """A ``sweep.odd_sample`` mapping's ``coverage_from``: the paths it
+    names, one path or a list of them; none when not given or null.
+
+    Raises:
+        ValueError: naming ``sweep.odd_sample.coverage_from``, when it is
+            neither a path nor a list of paths (``false``, ``5``, ``[5]``).
+    """
+    # Only a missing key or null names no coverage: false, 0 or "" is not a
+    # path (#2134).
+    value = raw.get("coverage_from")
+    if value is None:
+        return []
+    items = (
+        [value]
+        if isinstance(value, (str, Path))
+        else list(value)
+        if isinstance(value, Sequence)
+        else None
+    )
+    if items is None or not all(
+        isinstance(item, (str, Path)) and str(item) for item in items
+    ):
+        raise ValueError(
+            "sweep.odd_sample.coverage_from: expected a path or a list of "
+            f"paths, got {value!r}"
+        )
+    return items
+
+
 def check_sample_settings(raw: Mapping[str, Any]) -> None:
     """Refuse a ``sweep.odd_sample`` mapping's ``seed``, ``count``,
-    ``tire_friction`` and ``visibility`` when drawing from it would
-    (:func:`sample_seed`, :func:`sample_count`, :func:`sample_draws`): read
-    before anything is drawn, built or resolved.
+    ``tire_friction``, ``visibility`` and ``coverage_from`` when drawing from
+    it would (:func:`sample_seed`, :func:`sample_count`, :func:`sample_draws`,
+    :func:`sample_coverage_paths`): read before anything is drawn, built or
+    resolved.
 
     Raises:
         ValueError: naming the key of the value refused.
@@ -491,6 +523,7 @@ def check_sample_settings(raw: Mapping[str, Any]) -> None:
     sample_count(raw)
     for name in SAMPLE_DRAWS:
         sample_draws(raw, name)
+    sample_coverage_paths(raw)
 
 
 def search_from_config(
@@ -527,8 +560,9 @@ def search_from_config(
 
     Raises:
         ValueError: On an unknown field, a ``seed`` or ``count`` that is
-            not a whole number, or a ``tire_friction`` or ``visibility`` that
-            is not true or false (:func:`check_sample_settings`).
+            not a whole number, a ``tire_friction`` or ``visibility`` that
+            is not true or false, or a ``coverage_from`` that is not a path
+            or a list of paths (:func:`check_sample_settings`).
     """
     from ..coverage.report import load_and_merge  # noqa: PLC0415
     from .registry import resolve_odd  # noqa: PLC0415
@@ -550,9 +584,7 @@ def search_from_config(
         raise ValueError(f"sweep.odd_sample.flaky: unknown fields {sorted(unknown)}")
     definition = resolve_odd(raw.get("odd") or odd)
     coverage = None
-    paths: Iterable[Any] = raw.get("coverage_from") or ()
-    if isinstance(paths, (str, Path)):
-        paths = [paths]
+    paths = sample_coverage_paths(raw)
     resolved = [
         Path(p) if Path(p).is_absolute() or base_dir is None else base_dir / Path(p)
         for p in paths

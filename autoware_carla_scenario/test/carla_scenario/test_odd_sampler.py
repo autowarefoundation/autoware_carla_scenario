@@ -41,6 +41,7 @@ from autoware_carla_scenario.odd.sampler import (
     check_sample_settings,
     decode_case,
     sample_count,
+    sample_coverage_paths,
     sample_draws,
     sample_seed,
     sampler_from_config,
@@ -424,6 +425,35 @@ def test_coverage_is_read_from_earlier_runs_coverage_files(tmp_path: Path) -> No
     assert count == 1
     assert load_and_merge([tmp_path]).runs == 1
     assert sampler.sample(1)[0].buckets["environment.rain"] == "heavy"
+
+
+@pytest.mark.parametrize("value", [False, 0, "", 5, 1.5, [5], ["x", None], [""]])
+def test_a_coverage_from_that_is_not_paths_is_refused(value: Any) -> None:
+    """Only a missing or null ``coverage_from`` reads no coverage: ``false``
+    is not read as none, nor ``5`` refused with a bare TypeError (#2134)."""
+    expected = (
+        "sweep.odd_sample.coverage_from: expected a path or a list of paths, "
+        f"got {value!r}"
+    )
+    raw = {"count": 1, "coverage_from": value}
+    for read in (check_sample_settings, sample_coverage_paths):
+        with pytest.raises(ValueError) as error:
+            read(raw)
+        assert str(error.value) == expected
+    with pytest.raises(ValueError) as error:
+        sampler_from_config(raw, odd=_weather_odd())
+    assert str(error.value) == expected
+
+
+def test_coverage_from_reads_a_path_or_a_list_of_paths(tmp_path: Path) -> None:
+    assert sample_coverage_paths({}) == []
+    assert sample_coverage_paths({"coverage_from": None}) == []
+    assert sample_coverage_paths({"coverage_from": []}) == []
+    assert sample_coverage_paths({"coverage_from": "runs"}) == ["runs"]
+    assert sample_coverage_paths({"coverage_from": tmp_path}) == [tmp_path]
+    assert sample_coverage_paths({"coverage_from": ("a", tmp_path)}) == ["a", tmp_path]
+    listed = OmegaConf.create({"coverage_from": ["a", "b"]})
+    assert sample_coverage_paths(listed) == ["a", "b"]
 
 
 def _regions_odd() -> OddDefinition:
