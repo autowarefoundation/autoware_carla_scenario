@@ -78,6 +78,7 @@ from .measurements import (
     lidar_scan_fields,
     ray_times,
     spin_lidar_points,
+    steady_revolution_start,
 )
 from .signals import EgoState, ego_signals
 
@@ -343,6 +344,8 @@ class _SensorDevice:
         #: arrived, the sensor's motion then); its points carry the id (column 4).
         self._arcs: Dict[int, Tuple[float, Tuple[float, ...]]] = {}
         self._next_arc = 0
+        #: When the last revolution sent started (wall clock), for the next.
+        self._last_start: Optional[float] = None
         #: Gathers a LiDAR's arcs into revolutions (under :attr:`_convert_lock`).
         self._revolution: Optional[LidarRevolution] = None
         #: The attach generation (:meth:`attach`, :meth:`detach`); written by
@@ -413,6 +416,7 @@ class _SensorDevice:
                 revolution = LidarRevolution(frequency, dt, fov)
             with self._convert_lock:
                 self._revolution = revolution
+                self._last_start = None
             actor.listen(functools.partial(self._on_data, generation))
         except BaseException:
             _discard(actor, self.spec.name)
@@ -537,9 +541,14 @@ class _SensorDevice:
         arcs = [self._arcs[int(k)] for k in known]
         measured = np.array([a[0] for a in arcs])[index]
         motion = np.array([a[1] for a in arcs])[index]
-        rays = ray_times(revolution, self._revolution.period)  # type: ignore[union-attr]
-        # The start that centres the rays' times on the measuring times.
-        start = float(np.mean(measured - rays))
+        period = self._revolution.period  # type: ignore[union-attr]
+        rays = ray_times(revolution, period)
+        # The start that centres the rays' times on the measuring times, kept
+        # on the sensor's period.
+        start = steady_revolution_start(
+            float(np.mean(measured - rays)), self._last_start, period
+        )
+        self._last_start = start
         # Arcs before the last one in this revolution are sent whole.
         for k in [k for k in self._arcs if k < int(ids.max())]:
             del self._arcs[k]
