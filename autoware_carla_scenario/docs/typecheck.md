@@ -2506,7 +2506,11 @@ and the records grouped by scenario; not the evaluator itself, which reads the
 gate's pydantic model and openodd's merged coverage), the HILS bridge's wire format (a command's values included)
 and its configuration's sensor spec and the check of a field's signal name
 (not the YAML reading around it, `hils.config`; the `hils` package's
-`__init__`, which re-exports them, is checked), how an error shows an integer too long for
+`__init__`, which re-exports them, is checked), the virtual devices
+`scenario-hils --setup` creates for a configuration's devices, each validated
+in turn (`hils.host_devices`, #2124; not the playbooks' variables, a dict of
+mixed value types, or running them with ansible-runner, `hils.host_setup`,
+which re-exports it), how an error shows an integer too long for
 `repr()` (`value_text.huge_integer()`, which `hils.config` re-exports, #1704), the
 example scenarios and their configs, the SLURM launcher's job scripts, where
 a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
@@ -3529,7 +3533,13 @@ What Codon 0.19 needs that Python does not, beyond
   be valid on every supported Python anyway. `urllib.parse`
   declares `urlsplit()`, `urlunsplit()`, `unquote()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
-  and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
+  and `geturl()`), `urlparse()` and `ParseResult` (its six parts, likewise;
+  not `geturl()`), and `parse_qsl(qs, keep_blank_values=False)`, the first
+  two of CPython 3.10's parameters, of a `str` query, giving a
+  `list[tuple[str, str]]` of its pairs (none in the check: nothing is
+  parsed), with which `hils.host_devices` reads a device's `fd` option;
+  `strict_parsing`, `encoding`, `errors`, `max_num_fields` and `separator`,
+  a bytes query and `parse_qs()` are not declared. A scenario sees the same shims: it may import `pathlib`,
   `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata`,
   `urllib.parse`, `signal`, `atexit`, `shlex`, `fnmatch`, `keyword` and `sys` and call what they
   declare,

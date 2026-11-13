@@ -6051,3 +6051,106 @@ def test_the_os_shim_and_blocking_io_error_refuse_what_cpython_refuses(
     assert source != _WAITING_LOCK
     result = _check_case(source, tmp_path, monkeypatch)
     assert not result.ok, wrong
+
+
+# ---------------------------------------------------------------------------
+# urllib.parse.parse_qsl(): what hils.host_devices reads a device's boolean
+# option with
+# ---------------------------------------------------------------------------
+
+
+_PARSE_QSL = """
+from __future__ import annotations
+
+import urllib.parse
+from urllib.parse import parse_qsl, urlsplit
+
+
+def flag(url: str, key: str) -> bool:
+    values = [
+        v for k, v in parse_qsl(urlsplit(url).query, keep_blank_values=True) if k == key
+    ]
+    return bool(values) and values[-1].lower() in ("", "1", "true")
+
+
+def pairs(query: str) -> int:
+    found = urllib.parse.parse_qsl(query) + parse_qsl(qs=query)
+    first: tuple[str, str] = found[0]
+    return len(found) + len(first[0] + first[1]) + len(parse_qsl(query, False))
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_urllib_parse_shim_takes_what_hils_host_devices_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_PARSE_QSL, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too, or a
+        # parameter CPython has that the shim does not declare.
+        ("parse_qsl(qs=query)", "parse_qsl()"),
+        ("parse_qsl(qs=query)", "parse_qsl(query=query)"),
+        ("parse_qsl(qs=query)", "parse_qsl(query, keep_blank=True)"),
+        ("parse_qsl(qs=query)", "parse_qsl(query, strict_parsing=True)"),
+        ("parse_qsl(qs=query)", "parse_qsl(query, separator=';')"),
+        ("parse_qsl(qs=query)", "parse_qsl(query, False, False)"),
+        ("parse_qsl(qs=query)", "parse_qsl(5)"),
+        ("first[0] + first[1]", "first[0] + first[2]"),
+        ("urllib.parse.parse_qsl(query)", "urllib.parse.parse_qs(query)"),
+    ],
+    ids=[
+        "no-query",
+        "query-keyword",
+        "unknown-keyword",
+        "strict-parsing-undeclared",
+        "separator-undeclared",
+        "third-positional-undeclared",
+        "query-int",
+        "pair-of-two",
+        "parse-qs-undeclared",
+    ],
+)
+def test_the_urllib_parse_shim_refuses_what_it_does_not_declare_of_parse_qsl(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _PARSE_QSL.replace(right, wrong, 1)
+    assert source != _PARSE_QSL
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_parse_qsl_shim_declares_cpythons_leading_parameters() -> None:
+    import inspect
+    from urllib.parse import parse_qsl
+
+    shim = {
+        node.name: node.args
+        for node in ast.parse((model_dir() / "urllib" / "parse.codon").read_text()).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    declared = shim["parse_qsl"]
+    python = list(inspect.signature(parse_qsl).parameters.values())
+    names = [a.arg for a in declared.args]
+    assert (
+        names == [p.name for p in python[: len(names)]] == ["qs", "keep_blank_values"]
+    )
+    assert python[1].default is False
+    assert ast.literal_eval(declared.defaults[-1]) is False
+    assert declared.vararg is None and declared.kwarg is None
+    assert not declared.kwonlyargs
+    # What CPython makes of what the check takes.
+    assert parse_qsl("fd&x=1&fd=", keep_blank_values=True) == [
+        ("fd", ""),
+        ("x", "1"),
+        ("fd", ""),
+    ]
+    assert parse_qsl(qs="fd&x=1") == [("x", "1")]

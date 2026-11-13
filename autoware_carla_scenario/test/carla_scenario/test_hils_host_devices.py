@@ -425,3 +425,31 @@ def test_the_error_is_built_as_before(
         )
 
     assert build(HostSetupError) == build(_OldHostSetupError)
+
+
+def test_host_setup_re_exports_the_checked_devices() -> None:
+    # hils.host_setup's names are hils.host_devices's objects (#2124), and
+    # host_setup() is host_devices() of each device's name and URL.
+    from autoware_carla_scenario.hils import host_devices
+
+    for name in (
+        "VCAN_PREFIX",
+        "_LABEL_BYTES",
+        "_INTERFACE",
+        "_VIDEO_DEVICE",
+        "_TRUE",
+        "_FALSE",
+        "HostSetup",
+        "HostSetupError",
+        "LoopbackCamera",
+        "VcanInterface",
+        "_flag",
+        "_label",
+        "_user",
+    ):
+        assert getattr(host_setup_module, name) is getattr(host_devices, name), name
+    devices = [("bus", "can://vcan0?fd"), ("cam", "v4l2:///dev/video3")]
+    assert host_devices.host_devices(devices) == host_setup_module.host_setup(
+        _config(devices)
+    )
+    assert host_devices.host_devices(iter([])) == HostSetup()
