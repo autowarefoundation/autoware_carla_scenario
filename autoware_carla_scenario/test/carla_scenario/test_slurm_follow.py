@@ -41,7 +41,6 @@ import pytest
 
 from autoware_carla_scenario.slurm import cli, submit
 from autoware_carla_scenario.slurm import queue as queue_mod
-from autoware_carla_scenario.slurm.collect import collect, unfinished_cases
 from autoware_carla_scenario.slurm.manifest import (
     MANIFEST_VERSION,
     SBATCH_IN_FLIGHT_SECONDS,
@@ -59,7 +58,6 @@ from autoware_carla_scenario.slurm.queue import (
 )
 from autoware_carla_scenario.slurm.scripts import CLI_MODULE
 from autoware_carla_scenario.slurm.settings import SlurmSettings
-from autoware_carla_scenario.slurm.status import busy_reason
 
 from .test_slurm_batch_readers import _write, nested, write_batch
 
@@ -67,10 +65,6 @@ from .test_slurm_batch_readers import _write, nested, write_batch
 _NOW = 1_800_000_000.25
 
 # -- The oracles: the code as it was ------------------------------------------------
-
-_busy = busy_reason
-_refuse_if_busy = cli._refuse_if_busy
-submit_cases = submit.submit_cases
 
 
 def _layout(path: str) -> BatchLayout:
@@ -222,10 +216,13 @@ def _old_follow(layout: BatchLayout, index: int, settings: SlurmSettings) -> int
 
 
 def _old_resubmit(args: Any) -> int:
-    """``scenario-slurm resubmit`` as it was."""
+    """``scenario-slurm resubmit`` as it was.  What it called of
+    scenario-slurm's (the busy check, ``unfinished_cases``, ``collect``,
+    ``submit_cases``) is looked up on :mod:`.cli` when called, as the code
+    looked up its globals: a test that sets one there sets the oracle's."""
     layout = _layout(args.batch_dir)
     manifest = layout.read_manifest()
-    reason = None if args.force else _busy(layout)
+    reason = None if args.force else cli._busy(layout)
     if reason is not None:
         print(f"Error: {reason}", file=sys.stderr)  # noqa: T201
         return 1
@@ -248,11 +245,11 @@ def _old_resubmit(args: Any) -> int:
                 return 1
         chosen = sorted(picked)
     else:
-        chosen = unfinished_cases(layout, failed=args.failed)
+        chosen = cli.unfinished_cases(layout, failed=args.failed)
     if not chosen:
         print("Nothing to resubmit: every case has a verdict.")  # noqa: T201
         # A dry run never collects: it writes nothing (#1768).
-        return collect(layout) if args.wait and not args.dry_run else 0
+        return cli.collect(layout) if args.wait and not args.dry_run else 0
     settings = SlurmSettings.from_mapping(manifest["launcher"]).replace(
         array_parallelism=args.array_parallelism,
         cases_per_task=args.cases_per_task,
@@ -262,12 +259,12 @@ def _old_resubmit(args: Any) -> int:
     print(f"Resubmitting {len(chosen)} case(s): {', '.join(labels_of)}")  # noqa: T201
     if args.dry_run:
         return 0
-    index = submit_cases(
+    index = cli.submit_cases(
         layout,
         manifest,
         settings,
         sorted(chosen),
-        before_sbatch=None if args.force else _refuse_if_busy(layout),
+        before_sbatch=None if args.force else cli._refuse_if_busy(layout),
     )
     return _old_after_submit(layout, index, settings)
 
