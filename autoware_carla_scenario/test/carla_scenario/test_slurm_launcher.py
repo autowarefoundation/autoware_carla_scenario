@@ -28,6 +28,7 @@ from typing import Any
 
 import pytest
 
+from autoware_carla_scenario.slurm import follow as slurm_follow
 from autoware_carla_scenario.slurm import status as slurm_status
 from autoware_carla_scenario.slurm.collect import missing_cases, unfinished_cases
 from autoware_carla_scenario.slurm.manifest import (
@@ -3435,7 +3436,7 @@ def test_follow_counts_a_result_with_no_verdict_as_no_pass(
     from autoware_carla_scenario.slurm import submit
 
     layout = _with_case_1(tmp_path, record)
-    monkeypatch.setattr(submit, "squeue_states", lambda _job: {})
+    monkeypatch.setattr(slurm_follow, "squeue_states", lambda _job: {})
     assert submit.follow(layout, 0, SlurmSettings(poll_seconds=0.1)) == 1
     assert "3/3 case(s) done (2 passed)" in capsys.readouterr().out
 
@@ -3517,7 +3518,7 @@ def test_wait_neither_follows_nor_collects_a_submission_with_no_job(
     whether to retry (in flight) or that the record is stale.  #1791: one
     whose sbatch timed out says so, in the window or past it, and where to
     look for the job, never to wait for sbatch to return."""
-    from autoware_carla_scenario.slurm import cli, collect, submit
+    from autoware_carla_scenario.slurm import cli, collect
     from autoware_carla_scenario.slurm.manifest import (
         SBATCH_IN_FLIGHT_SECONDS,
         write_json,
@@ -3533,7 +3534,7 @@ def test_wait_neither_follows_nor_collects_a_submission_with_no_job(
     def no_collect(*_a: Any, **_k: Any) -> int:
         raise AssertionError("collect must not run")
 
-    monkeypatch.setattr(submit, "squeue_states", squeue_states)
+    monkeypatch.setattr(slurm_follow, "squeue_states", squeue_states)
     monkeypatch.setattr(collect, "collect", no_collect)
     submitted_at = time.time() - (SBATCH_IN_FLIGHT_SECONDS + 1 if stale else 0)
     record: dict[str, Any] = {
@@ -4403,11 +4404,13 @@ def test_interrupt_waits_for_the_cancelled_tasks_before_collecting(
         if interrupt is not None:
             raise interrupt
 
-    monkeypatch.setattr(submit, "squeue_states", squeue)
+    monkeypatch.setattr(slurm_follow, "squeue_states", squeue)
     # The wait after scancel polls through slurm.queue's own (#1634).
     monkeypatch.setattr(queue, "squeue_states", squeue)
-    monkeypatch.setattr(submit.time, "sleep", sleep)
-    monkeypatch.setattr(submit, "cancel_jobs", lambda jobs: events.append("scancel"))
+    monkeypatch.setattr(slurm_follow.time, "sleep", sleep)
+    monkeypatch.setattr(
+        slurm_follow, "cancel_jobs", lambda jobs: events.append("scancel")
+    )
 
     def collected(_layout: object) -> int:
         events.append("collect")

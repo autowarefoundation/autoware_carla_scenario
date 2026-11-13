@@ -1,5 +1,6 @@
 """What ``scenario-slurm status`` prints of a SLURM batch, what ``cancel``
-cancels of it, and whether it is busy, so that ``resubmit`` refuses it.
+cancels of it, whether it is busy, so that ``resubmit`` refuses it, and
+which of its cases ``resubmit --cases`` names.
 
 Read from the batch's files (its manifest, submission records, task statuses
 and case outcomes, :mod:`.manifest`'s typed records) and from ``squeue``
@@ -17,6 +18,7 @@ import time
 from .manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
+    Manifest,
     SubmissionRecord,
     TaskStatus,
     no_job_note,
@@ -27,7 +29,13 @@ from .manifest import (
 from .queue import ACTIVE_STATES, cancel_jobs, squeue_states
 from .records import JsonMembers
 
-__all__ = ["active_jobs", "busy_reason", "cancel_batch", "print_status"]
+__all__ = [
+    "active_jobs",
+    "busy_reason",
+    "cancel_batch",
+    "named_cases",
+    "print_status",
+]
 
 # Logged under scenario-slurm's name, as it was before this was split out of it.
 logger = logging.getLogger("autoware_carla_scenario.slurm.cli")
@@ -248,3 +256,33 @@ def cancel_batch(layout: BatchLayout) -> int:
         return 0
     print(f"Cancelling job(s) {', '.join(jobs)}")  # noqa: T201
     return 0 if cancel_jobs(jobs) else 1
+
+
+def named_cases(manifest: Manifest, names: str) -> list[int] | None:
+    """The cases of the batch *names* names (``resubmit --cases``: labels or
+    indices, comma-separated), sorted, each once (a case named twice, by its
+    label and its index say, runs once); ``None``, once it has said which,
+    when an entry names no case of the batch.
+
+    An entry is a case's label (``str(case["label"])``, the last of two
+    cases labelled alike giving its index) or else its index, ASCII digits
+    below the number of cases.  Raises what reading the manifest's cases
+    raises (:meth:`.manifest.Manifest.cases`, ``int(case["index"])``)."""
+    labels: dict[str, int] = {}
+    for case in manifest.cases():
+        # The label before the index, as a dict display reads them.
+        label = case.label()
+        labels[label] = case.index()
+    picked: set[int] = set()
+    for entry in names.split(","):
+        item = entry.strip()
+        if item in labels:
+            picked.add(labels[item])
+        elif (
+            item.isascii() and item.isdigit() and 0 <= int(item) < len(manifest.cases())
+        ):
+            picked.add(int(item))
+        else:
+            print(f"Error: no case {item!r} in the batch", file=sys.stderr)  # noqa: T201
+            return None
+    return sorted(picked)
