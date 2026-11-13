@@ -488,6 +488,8 @@ A raw frame's `data` is a quoted string of hex bytes, with or without spaces
 (`data: [0x01, 0x02]`). Unquoted, YAML reads a hex string as a number (`0102`
 is octal 66, `0x10` is 16), so the bridge refuses it rather than send other
 bytes.
+A `send` has either a `name` (and `fields`) or raw `data` (and `id`), never
+keys of both: only a missing or null key counts as absent.
 
 A `wait` is satisfied by a matching message received since its phase began, so
 an ECU that answers a `send` at once is not missed. While steps run the bridge

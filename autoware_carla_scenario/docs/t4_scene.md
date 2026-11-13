@@ -64,8 +64,10 @@ nanoseconds since the run's first tick, so two scenes' rows need not fall on
 the same times. A run younger than `t4_scene_history_s` sends the rows it has.
 On top of what the log holds, a scene carries what the policy is told and
 a log does not: the ego's velocity and acceleration as the egodriver
-observations carry them (of `base_link`, the acceleration an estimate), body
-angular velocity (on a row the policy was not told, the log's), front tyres'
+observations carry them (of `base_link`, the acceleration an estimate), the
+angular velocity (on a row the policy was not told, the log's) -- each turned
+from the rig's axes into the scene's by the row's `poses_3d` rotation, into
+`velocities_3d`, `accelerations_3d` and `angular_velocities_3d` -- front tyres'
 angle and odometry times; the first LiDAR's
 current sweep on the current row (`[N, 5]` in the rig frame, intensity on the
 0-255 scale, the fifth column zero); the route on every row -- the road ahead
@@ -118,10 +120,10 @@ machine any more) has no `map` and no `traffic_lights`.
 
 | T4Scene | From the log |
 |---|---|
-| `scene_metadata` | `scene_id`: the log's stem; `recording_id`: the world's `episode`; `tags`: `autoware_carla_scenario`, `map:{name}`, and `result:passed` (the result's `passed` is JSON `true`) or `result:failed` (anything else) when the run reached a verdict |
+| `scene_metadata` | `scene_id`: the log's stem; `recording_id`: the world's `episode`; `tags` (each `key:value`, as the devkit requires): `source:autoware_carla_scenario`, `map:{name}`, and `result:passed` (the result's `passed` is JSON `true`) or `result:failed` (anything else) when the run reached a verdict |
 | `timestamps_ns`, `frame_indices` | One row every `--step` seconds (default 0.1 s, a multiple of the 0.05 s tick) from the first tick to the last: nanoseconds since the first tick, and the CARLA frame of each row |
 | `current_index` | `--current-index` (default 0: the whole run is the recorded future) |
-| `ego` | The actor whose role is `ego` or `hero`: `poses` and `poses_3d` at its `base_link`, `velocities` and `longitudinal_speeds` of its `base_link` (below), `angular_velocities` (body axes, rad/s, from the ticks' `angular_velocity`), `available`, `turn_indicators` (the log's `turn_indicators` records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its `shape` |
+| `ego` | The actor whose role is `ego` or `hero`, its motion in the contract's 3D fields, all in the scene's axes: `poses_3d` at its `base_link`, `velocities_3d` of its `base_link` (below), `angular_velocities_3d` (rad/s, from the ticks' `angular_velocity`); the devkit derives the planar pose, velocity and longitudinal speed from them, and refuses the legacy `poses`, `velocities`, `accelerations`, `longitudinal_speeds` and `angular_velocities`, which are left unset. Then `available`, `turn_indicators` (the log's `turn_indicators` records: disabled 1, left 2, right 3, hazard 4; unknown before the first), and its `shape` |
 | `annotations` | Every other vehicle and walker within `--max-distance` (default 100 m) of the ego, as a box (the `boxes` group): its box's centre, size `(width, length, height)`, heading and quaternion, velocity, `labels` (`vehicle` 1, `pedestrian` 7) and `track_ids` (the CARLA actor id) |
 | `traffic_lights` | One group per traffic light regulatory element of the map, its one element the round lamp of the CARLA light it shows: colour (red 1, yellow 2, green 3, else unknown 0), shape circle, status on (off for CARLA's `Off`, else unknown), confidence 1. A consumer derives each lanelet's state from the map, as for any source |
 | `map` | The `MapResource`'s SHA-256, `scope` full, with elevation, `map_id` `lanelet2-sha256:{the .osm file's SHA-256}` |

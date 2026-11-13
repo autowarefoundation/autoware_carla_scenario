@@ -56,6 +56,7 @@ from .convert import (
     _MapFrame,
     _read_map,
     checked_rear_axle_offset,
+    ego_poses,
     log_to_scene,
     map_of,
 )
@@ -313,9 +314,7 @@ class LiveT4Scene:
         if road_ahead is not None and route_lanelet_ids is None:
             loaded = self._loaded_map()
             if loaded is not None and loaded.route is not None:
-                poses = np.frombuffer(scene.ego.poses.data, dtype="<f8").reshape(
-                    rows, 3
-                )
+                poses = ego_poses(scene.ego)
                 route_lanelet_ids = self._route_along(
                     loaded.route,
                     np.asarray(road_ahead, dtype=np.float64),
@@ -363,31 +362,36 @@ class LiveT4Scene:
     def _fill_ego_extras(self, scene: pb.T4Scene, frames: Sequence[int]) -> None:
         """The ego's acceleration, angular velocity, tyre angle and odometry
         times, on the rows they were told; masked on the others, but for the
-        angular velocity the log has (the converter's)."""
+        angular velocity the log has (the converter's).  The rig's vectors
+        turn into the scene's axes by the row's ``poses_3d`` rotation."""
         ego = scene.ego
         rows = len(frames)
-        poses = np.frombuffer(ego.poses.data, dtype="<f8").reshape(rows, 3)
+        rotations = (
+            np.frombuffer(ego.poses_3d.data, dtype="<f8")
+            .reshape(rows, 4, 4)[:, :3, :3]
+            .copy()
+        )
         velocities = (
-            np.frombuffer(ego.velocities.data, dtype="<f8").reshape(rows, 2).copy()
+            np.frombuffer(ego.velocities_3d.data, dtype="<f8").reshape(rows, 3).copy()
         )
         velocity_mask = (
-            np.frombuffer(ego.velocities.mask, dtype=bool).reshape(rows, 2).copy()
-            if ego.velocities.HasField("mask")
-            else np.zeros((rows, 2), dtype=bool)
+            np.frombuffer(ego.velocities_3d.mask, dtype=bool).reshape(rows, 3).copy()
+            if ego.velocities_3d.HasField("mask")
+            else np.zeros((rows, 3), dtype=bool)
         )
-        accelerations = np.zeros((rows, 2))
+        accelerations = np.zeros((rows, 3))
         # The log's angular velocity where it has one; the policy's over it.
-        if ego.HasField("angular_velocities"):
+        if ego.HasField("angular_velocities_3d"):
             angular = (
-                np.frombuffer(ego.angular_velocities.data, dtype="<f8")
+                np.frombuffer(ego.angular_velocities_3d.data, dtype="<f8")
                 .reshape(rows, 3)
                 .copy()
             )
             angular_mask = (
-                np.frombuffer(ego.angular_velocities.mask, dtype=bool)
+                np.frombuffer(ego.angular_velocities_3d.mask, dtype=bool)
                 .reshape(rows, 3)
                 .copy()
-                if ego.angular_velocities.HasField("mask")
+                if ego.angular_velocities_3d.HasField("mask")
                 else np.zeros((rows, 3), dtype=bool)
             )
         else:
@@ -401,22 +405,22 @@ class LiveT4Scene:
             if extras is None:
                 continue
             told[row] = True
-            c, s = math.cos(poses[row, 2]), math.sin(poses[row, 2])
+            rotation = rotations[row]
             ax, ay = (float(v) for v in extras.acceleration_rig[:2])
-            # Rig axes into the scene's: the row's heading.
-            accelerations[row] = (c * ax - s * ay, s * ax + c * ay)
+            accelerations[row] = rotation @ (ax, ay, 0.0)
             if extras.velocity_rig is not None:
                 vx, vy = (float(v) for v in extras.velocity_rig[:2])
-                velocities[row] = (c * vx - s * vy, s * vx + c * vy)
+                # The rig's planar velocity; the log's vertical one stays.
+                velocities[row, :2] = (rotation @ (vx, vy, 0.0))[:2]
                 velocity_mask[row] = False
-            angular[row] = extras.angular_velocity[:3]
+            angular[row] = rotation @ np.asarray(extras.angular_velocity[:3])
             angular_mask[row] = False
             if extras.tire_steering_angle is not None:
                 steering[row] = extras.tire_steering_angle
                 steered[row] = True
-        ego.velocities.CopyFrom(_array(velocities, "f8", velocity_mask))
-        ego.accelerations.CopyFrom(_array(accelerations, "f8", ~told[:, None]))
-        ego.angular_velocities.CopyFrom(_array(angular, "f8", angular_mask))
+        ego.velocities_3d.CopyFrom(_array(velocities, "f8", velocity_mask))
+        ego.accelerations_3d.CopyFrom(_array(accelerations, "f8", ~told[:, None]))
+        ego.angular_velocities_3d.CopyFrom(_array(angular, "f8", angular_mask))
         ego.tire_steering_angles.CopyFrom(_array(steering, "f8", ~steered))
         ego.odometry_timestamps_ns.CopyFrom(
             _array([(f - self._log.first_frame) * _TICK_NS for f in frames], "i8")

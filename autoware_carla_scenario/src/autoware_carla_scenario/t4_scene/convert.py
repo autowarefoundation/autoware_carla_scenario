@@ -564,7 +564,8 @@ def _fill_metadata(scene: pb.T4Scene, log: _Log, stem: str) -> None:
     metadata.scene_id = stem
     if log.world.get("episode") is not None:
         metadata.recording_id = str(log.world["episode"])
-    metadata.tags.append("autoware_carla_scenario")
+    # Every tag is key:value: the devkit refuses a bare one (common/tags.py).
+    metadata.tags.append("source:autoware_carla_scenario")
     if log.map is not None and log.map.get("name"):
         metadata.tags.append(f"map:{log.map['name']}")
     if log.result is not None:
@@ -593,12 +594,15 @@ def _fill_ego(
     ``(rear_axle, 0, 0)``, all in the map frame (``driver.observation``'s
     ``ego_observation`` does the same in the rig frame).  Without it a turning
     ego's ``base_link`` would slide sideways at ``yaw_rate * rear_axle``.
+
+    The motion goes in the contract's 3D fields, all in the scene's axes:
+    ``poses_3d``, ``velocities_3d`` and ``angular_velocities_3d``.  The devkit
+    derives the planar pose, velocity and longitudinal speed from them, and
+    refuses a scene that also carries the legacy planar fields.
     """
     count = len(frames)
-    poses = np.zeros((count, 3))
     poses_3d = np.tile(np.eye(4), (count, 1, 1))
-    velocities = np.zeros((count, 2))
-    speeds = np.zeros(count)
+    velocities = np.zeros((count, 3))
     angular = np.zeros((count, 3))
     spun = np.zeros(count, dtype=bool)
     origins: list[Optional[npt.NDArray[np.float64]]] = [None] * count
@@ -616,27 +620,19 @@ def _fill_ego(
         if carla_angular is not None:
             omega = np.radians(np.array(carla_angular) * _FLIP_AXIAL)
             velocity = velocity + np.cross(omega, rotation[:, 0] * rear_axle)
-            angular[row] = rotation.T @ omega
+            angular[row] = omega
             spun[row] = True
-        poses[row] = (
-            base_link[0],
-            base_link[1],
-            math.atan2(rotation[1, 0], rotation[0, 0]),
-        )
         poses_3d[row, :3, :3] = rotation
         poses_3d[row, :3, 3] = base_link
-        velocities[row] = velocity[:2]
-        speeds[row] = float(velocity @ rotation[:, 0])
+        velocities[row] = velocity
         origins[row] = origin[:2]
     available = np.array([origin is not None for origin in origins])
     missing = ~available
     message = scene.ego
-    message.poses.CopyFrom(_array(poses, "f8", missing[:, None]))
     message.poses_3d.CopyFrom(_array(poses_3d, "f8", missing[:, None, None]))
-    message.velocities.CopyFrom(_array(velocities, "f8", missing[:, None]))
-    message.longitudinal_speeds.CopyFrom(_array(speeds, "f8", missing))
+    message.velocities_3d.CopyFrom(_array(velocities, "f8", missing[:, None]))
     if spun.any():
-        message.angular_velocities.CopyFrom(_array(angular, "f8", ~spun[:, None]))
+        message.angular_velocities_3d.CopyFrom(_array(angular, "f8", ~spun[:, None]))
     message.available.CopyFrom(_array(available, "?"))
     changes = log.turn_indicators.get(ego_id)
     if changes is not None:
@@ -874,6 +870,16 @@ def trajectory_log_to_t4_scene(
     )
 
 
+def ego_poses(ego: pb.EgoSequence) -> npt.NDArray[np.float64]:
+    """The ego's planar ``base_link`` poses, ``[T, 3]`` x/y/yaw, from its
+    ``poses_3d``: the translation's x and y and the rotation's heading, as the
+    devkit derives them."""
+    rows = int(ego.poses_3d.shape[0])
+    transforms = np.frombuffer(ego.poses_3d.data, dtype="<f8").reshape(rows, 4, 4)
+    yaw = np.arctan2(transforms[:, 1, 0], transforms[:, 0, 0])
+    return np.column_stack([transforms[:, 0, 3], transforms[:, 1, 3], yaw])
+
+
 def driven_route(scene: pb.T4Scene, graph: RouteGraph) -> list[int]:
     """The lanelets the ego of *scene* drove along, in order: its ``base_link``
     on the rows it is on, a point every :data:`_ROUTE_SPACING_M` metres, walked
@@ -887,8 +893,7 @@ def driven_route(scene: pb.T4Scene, graph: RouteGraph) -> list[int]:
     have changed to.
     """
     ego = scene.ego
-    rows = int(scene.timestamps_ns.shape[0])
-    poses = np.frombuffer(ego.poses.data, dtype="<f8").reshape(rows, 3)
+    poses = ego_poses(ego)
     available = np.frombuffer(ego.available.data, dtype=np.bool_)
     kept: list[npt.NDArray[np.float64]] = []
     for xy in poses[available, :2]:

@@ -683,11 +683,21 @@ def _step(
             seconds=timeout,
         )
     _only(section, ("send", "name", "fields", "data", "id"), where)
-    if bool(name) == ("data" in section):
+    # Raw data has no fields: any `fields` but null alongside it (even an
+    # empty mapping) contradicts it rather than being dropped (#2126). Only a
+    # missing or null `name` is no name, so a falsy one ("", 0) beside raw
+    # data is refused too, and an `id` (raw data's) beside a name is not
+    # dropped (#2128). Without data, a falsy name names no message, as for a
+    # wait or a periodic message. A null `data` is no data either, so beside
+    # a name it is a named send.
+    raw = section.get("data") is not None
+    if (raw and (name is not None or section.get("fields") is not None)) or (
+        not raw and (not name or section.get("id") is not None)
+    ):
         raise HilsConfigError(
             f"{where}: a send has either a name (and fields) or raw data"
         )
-    if "data" in section:
+    if raw:
         data = _data(section["data"], f"{where}.data")
         frame_id = section.get("id")
         if frame_id is not None and (
@@ -743,7 +753,11 @@ def _lifecycle(
     _only(section, PHASES, "lifecycle")
     phases: Dict[str, Tuple[StepSpec, ...]] = {}
     for phase in PHASES:
-        steps = section.get(phase) or []
+        # Only a missing phase or null has no steps: false, 0 or "" is not a
+        # list (#2126).
+        steps = section.get(phase)
+        if steps is None:
+            steps = []
         if not isinstance(steps, list):
             raise HilsConfigError(f"lifecycle.{phase}: expected a list of steps")
         phases[phase] = tuple(
