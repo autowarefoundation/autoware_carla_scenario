@@ -2523,7 +2523,10 @@ the package's README (`authoring.package_names`, #1695; the rule against the
 framework's own name is `scaffold.names`', which both apply), where the viewer keeps its
 recordings and its copy of Rerun's web viewer, and which web viewer it picks
 (`ui.web_viewer_paths`, #1672), and how it puts them in place on disk
-(`ui.recording_files`, #2124), what a run names its outputs, the path
+(`ui.recording_files`, #2124), what the viewer reads off a request and links
+a session with (`ui.request_values`, #2135: whether a body is sent as JSON, a
+session's reference, the ODD attribute a query names; not `ui.app`, which
+serves the requests and re-exports it), what a run names its outputs, the path
 rule of a trajectory log and its recordings among them (`run_outputs`, #1678:
 the stem a log is of, its recording and its sensor recording, which `rerun`,
 `rerun_lidar` and `ui.web_viewer_paths` all name them with; `ui.case_paths`

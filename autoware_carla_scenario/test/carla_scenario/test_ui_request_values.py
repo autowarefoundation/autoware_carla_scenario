@@ -133,3 +133,15 @@ def test_attribute_is_as_before() -> None:
         assert _outcome(app._attribute, value, attributes) == _outcome(
             _old_attribute, value, attributes
         ), (value, attributes)
+
+
+def test_ui_app_re_exports_the_checked_request_values() -> None:
+    # ui.app's names are ui.request_values's objects (#2135); no test patches
+    # them in ui.app's namespace, and none of them reads one that is patched
+    # there (_parse_ref(), which reads ui.app._base_path(), stays).
+    from autoware_carla_scenario.ui import request_values
+
+    for name in ("_is_json_type", "_session_ref", "_attribute"):
+        assert getattr(app, name) is getattr(request_values, name), name
+        assert getattr(app, name).__module__ == request_values.__name__
+    assert app._parse_ref.__module__ == app.__name__
