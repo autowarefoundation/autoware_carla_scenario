@@ -4883,8 +4883,8 @@ lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 334 of the package's 448
-modules (75%; about 103,800 of
-171,100 lines) are <code>CHECKED</code>: the kinematics, the
+modules (75%; about 103,900 of
+171,200 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6335,8 +6335,8 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>193 functions and methods of those modules are <code>UNCALLED</code>
-(58 of them protected helpers, see <em>What is
+<p>194 functions and methods of those modules are <code>UNCALLED</code>
+(59 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6348,7 +6348,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 193 UNCALLED functions and methods, and why</summary>
+<summary>The 194 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6442,8 +6442,9 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>gate.unrecorded._recorded_at_stem</code>: takes a batch summary's entry as json.loads() reads it (<code>dict[str, Any]</code>), of mixed value types, which Codon cannot express, so the check has nothing to call it with; _summary_cases() calls it with the entry json.loads() read, so its body is compiled through it</li>
 <li><code>hils.host_devices.HostSetup.playbooks</code>: builds each playbook's variables as a <code>Dict[str, Any]</code> of mixed value types (a list of interfaces beside a user and booleans), which Codon cannot express; what it derives them from is the checked host_devices()'s</li>
 <li><code>hils.wire.encode</code>: takes a message of any shape (<code>Mapping[str, Any]</code>: JSON values of mixed types), which Codon cannot express</li>
-<li><code>maps.config._flag</code>: reads a boolean <code>map</code> setting with _setting, off a config of any shape (<code>map_config: Any</code>), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it, and passes what it reads to the checked _resolve()</li>
-<li><code>maps.config._setting</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only resolve_map_paths and _flag, both themselves uncalled, call it, and what they read is resolved by the checked _resolve()</li>
+<li><code>maps.config._flag</code>: reads a boolean <code>map</code> setting with _value, off a config of any shape (<code>map_config: Any</code>), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it, and passes what it reads to the checked _resolve()</li>
+<li><code>maps.config._setting</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>) with _value, which Codon cannot express; only resolve_map_paths, itself uncalled, calls it, and what it reads is resolved by the checked _resolve()</li>
+<li><code>maps.config._value</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only _setting and _flag, both themselves uncalled, call it, and what they read is resolved by the checked _resolve()</li>
 <li><code>maps.config.resolve_map_paths</code>: takes the <code>map</code> config node as <code>Any</code> (a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; it only reads the settings, and the checked _resolve() resolves them</li>
 <li><code>pedestrian.soma._as_matrices</code>: returns a motion's poses as they come when they are <code>(N, J, 3, 3)</code> matrices, or converts <code>(N, J, 3)</code> axis-angle ones with _rotvec_to_matrix: an array of 3 or 4 dimensions (<code>np.ndarray[Any, ...]</code>), which Codon, typing an array by its number of dimensions, cannot express; only load_soma_motion, itself uncalled, calls it</li>
 <li><code>pedestrian.soma.load_soma_motion</code>: reads a SOMA motion's .npz with <code>numpy.load(..., allow_pickle=False)</code>: Codon's numpy cannot read an .npz, and its load() has no <code>allow_pickle</code>; the checked actions.play_motion, which calls it, imports pedestrian.soma through its model (MODELLED_IMPORTS), so it is not compiled through that call either</li>
