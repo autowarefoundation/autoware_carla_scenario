@@ -5582,7 +5582,10 @@ def test_the_ipaddress_shim_takes_what_serve_bind_calls(
     ("right", "wrong"),
     [
         # Each is a TypeError, an AttributeError or an ImportError in CPython
-        # too (the unnarrowed read, of an IPv4Address).
+        # too (ipv4-mapped-of-ipv4 reads it off an IPv4Address), but
+        # ipv4-mapped-unnarrowed: CPython takes `address.ipv4_mapped` inside
+        # the isinstance() branch, where Codon reads no attribute of one
+        # member off the union (the shim's header, docs/typecheck.md).
         ('ipaddress.ip_address(host.strip("[]"))', "ipaddress.ip_address()"),
         ('ipaddress.ip_address(host.strip("[]"))', "ipaddress.ip_address(host, 4)"),
         ("ip_address(address=text)", "ip_address(addr=text)"),
