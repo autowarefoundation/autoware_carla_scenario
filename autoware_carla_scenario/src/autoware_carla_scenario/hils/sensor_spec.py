@@ -46,10 +46,21 @@ CAMERA_PREFIX = "sensor.camera."
 #: * ``"startup"`` -- once, when the bridge starts (its devices just opened).
 #: * ``"scenario_start"`` -- when a scenario starts: a run's ``start``, or the
 #:   ego appearing.  The run waits for them (the ECUs being initialized).
+#: * ``"warmup"`` -- right after, with the sensors attached and the world
+#:   followed: the ECUs getting ready to drive on what they measure (an
+#:   automated driving stack localizing, routing and engaging).  The run
+#:   waits for them too: its warm-up, as an ego's stack's
+#:   (:attr:`~autoware_carla_scenario.entity.EgoVehicle.is_initialized`).
 #: * ``"scenario_end"`` -- when the scenario ends: a run's ``end``, the run
 #:   going away, or the ego disappearing.
 #: * ``"shutdown"`` -- once, when the bridge stops (Ctrl-C, SIGTERM).
-PHASES: Tuple[str, ...] = ("startup", "scenario_start", "scenario_end", "shutdown")
+PHASES: Tuple[str, ...] = (
+    "startup",
+    "scenario_start",
+    "warmup",
+    "scenario_end",
+    "shutdown",
+)
 
 
 class HilsConfigError(ValueError):

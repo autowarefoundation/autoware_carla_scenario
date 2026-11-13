@@ -31,7 +31,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from .failure import Failure
 
@@ -265,12 +265,7 @@ class KeptResult:
         failure = json.loads(self._members.get("failure", "null"))
         if not isinstance(failure, dict):
             return None
-        if TYPE_CHECKING:
-            # Failure.from_dict() reads a mapping of any values, which Codon
-            # cannot express (typecheck/library.py's UNCALLED).
-            return None
-        else:
-            return Failure.from_dict(failure)
+        return Failure.from_dict(failure)
 
     @property
     def passed(self) -> bool:

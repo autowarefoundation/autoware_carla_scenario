@@ -151,11 +151,24 @@ class Failure:
             category = FailureCategory[str(data.get("category", "")).upper()]
         except KeyError:
             category = FailureCategory.OTHER
+        # Each member is read, and converted, in the order the constructor's
+        # arguments were.  A false ``at`` (missing, null, 0, "") is 0.0 and a
+        # false ``also_triggered`` no labels, as ``value or default`` read
+        # them, tested apart: the checked readers call this with the object
+        # json.loads() read, which Codon holds as one JSON value
+        # (``JSONValue``), and an ``or`` of it with a float or a list is
+        # neither to Codon (it refuses to iterate the list's).
+        condition = str(data.get("condition", ""))
+        at = data.get("at")
+        seconds = float(at) if at else 0.0
+        message = str(data.get("message", ""))
+        detail_text = None if detail is None else str(detail)
+        labels = data.get("also_triggered")
         return Failure(
-            condition=str(data.get("condition", "")),
+            condition=condition,
             category=category,
-            at=float(data.get("at") or 0.0),
-            message=str(data.get("message", "")),
-            detail=None if detail is None else str(detail),
-            also_triggered=[str(label) for label in data.get("also_triggered") or []],
+            at=seconds,
+            message=message,
+            detail=detail_text,
+            also_triggered=[str(label) for label in labels] if labels else [],
         )

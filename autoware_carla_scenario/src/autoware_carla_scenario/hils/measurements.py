@@ -57,6 +57,33 @@ def ray_times(points: np.ndarray, period: float) -> np.ndarray:
     return np.mod(np.arctan2(y, x), 2.0 * np.pi) * (period / (2.0 * np.pi))
 
 
+def steady_revolution_start(
+    measured: float, previous: float | None, period: float, gain: float = 0.2
+) -> float:
+    """When a revolution measured to start at *measured* is dated, *previous*
+    being the last one's start.
+
+    A turning sensor starts each revolution one *period* after the last, and
+    its packets' times never step back.  CARLA's ticks come a few ms early or
+    late on the wall clock, so the measured starts jitter; dated as they are,
+    a revolution can start before the last one's packets end, which a viewer
+    such as PandarView shows as a missing wedge.  The start therefore follows
+    the period and only drifts later toward the measured one (*gain* of the
+    difference): CARLA ticks no faster than the wall clock, so the measured
+    starts do not run ahead for long.  Where one is a whole period off (a
+    revolution missed, a stall) the stream restarts on it.  The points are
+    re-observed for the start chosen (:func:`spin_lidar_points`), so the
+    cloud stays right.
+    """
+    if previous is None:
+        return measured
+    expected = previous + period
+    error = measured - expected
+    if abs(error) >= period:
+        return measured
+    return expected + max(0.0, gain * error)
+
+
 def spin_lidar_points(
     points: np.ndarray,
     measured: np.ndarray,

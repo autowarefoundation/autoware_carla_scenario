@@ -202,8 +202,11 @@ def test_write_json_refuses_a_circular_document(tmp_path: Path) -> None:
     looped: list[Any] = []
     looped.append(looped)
     path = tmp_path / "doc.json"
-    with pytest.raises(ValueError, match="^Circular reference detected$"):
+    # str(), not match=: from 3.14.10 json adds a note ("when serializing
+    # list item 0"), which match= reads as part of the message.
+    with pytest.raises(ValueError) as info:
         write_json(path, looped)
+    assert str(info.value) == "Circular reference detected"
     assert _names(tmp_path) == []
 
 

@@ -886,3 +886,39 @@ def test_float32_points_on_epoch_times_keep_their_time() -> None:
         measurements.ray_times(points, 0.1),
     )
     assert out[0, 0] == pytest.approx(20.5)
+
+
+def test_steady_starts_never_step_back_on_jittering_ticks() -> None:
+    # CARLA's ticks on the wall clock, as measured on a HILS run: a revolution
+    # every 100.35 ms on average, jittering by 3 ms.  Dated as measured, 4 in
+    # 10 revolutions started before the last one's packets ended.
+    period = 0.1
+    rng = np.random.default_rng(7)
+    now = 1794402883.08
+    measured = now + np.arange(2000) * 0.10035 + rng.normal(0.0, 0.003, 2000)
+    starts: List[float] = []
+    for m in measured:
+        starts.append(
+            measurements.steady_revolution_start(
+                float(m), starts[-1] if starts else None, period
+            )
+        )
+    steps = np.diff(starts)
+    assert starts[0] == measured[0]
+    assert steps.min() >= period - 1e-6  # epoch seconds round at ~0.2 us
+    # Close to the measurement still (the points are re-observed for the rest).
+    assert np.abs(np.array(starts) - measured).max() < 0.02
+    assert abs(np.mean(np.array(starts) - measured)) < 0.005
+
+
+def test_a_steady_start_restarts_on_a_measurement_a_period_off() -> None:
+    start = measurements.steady_revolution_start
+    assert start(10.0, None, 0.1) == 10.0
+    assert start(10.1, 10.0, 0.1) == pytest.approx(10.1)
+    # Late by 10 ms: a fifth of it.
+    assert start(10.11, 10.0, 0.1) == pytest.approx(10.102)
+    # Early: kept on the period.
+    assert start(10.09, 10.0, 0.1) == pytest.approx(10.1)
+    # A revolution missed, or a stall: on the measurement again.
+    assert start(10.25, 10.0, 0.1) == 10.25
+    assert start(9.95, 10.0, 0.1) == 9.95

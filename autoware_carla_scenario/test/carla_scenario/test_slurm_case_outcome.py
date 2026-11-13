@@ -43,6 +43,8 @@ from autoware_carla_scenario.slurm.manifest import (
 )
 from autoware_carla_scenario.slurm.settings import SlurmSettings
 
+from .test_slurm_records import _returns_or_stops, _written_back
+
 # -- The oracles: how the outcome was read as a dict -----------------------------
 
 
@@ -893,6 +895,22 @@ def test_an_outcome_nested_deep_is_read_as_json_loads_reads_it(
         ):
             with pytest.raises(RecursionError):
                 read()
+        return
+    try:
+        _written_back(old)
+    except RecursionError:
+        # Read by json.loads(), too deep for the C encoder to write back
+        # (Python 3.14.10): the record's reader stops on that.
+        with pytest.raises(RecursionError):
+            layout.read_result(1)
+        for read in (
+            lambda: cli._status(layout),
+            lambda: unfinished_cases(layout),
+            lambda: _slurm_unrecorded(layout.batch_dir),
+            lambda: slurm_launch.batch_status(layout.batch_dir),
+            lambda: _slurm_entries(layout.batch_dir),
+        ):
+            _returns_or_stops(read)
         return
     record = layout.read_result(1)
     assert record is not None
