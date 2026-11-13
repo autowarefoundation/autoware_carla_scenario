@@ -182,8 +182,11 @@ def parse_object(text: str) -> JsonMembers | None:
 
     Raises what ``json.loads()`` raises for text that is not JSON (a
     :class:`ValueError`, a :class:`RecursionError` for text nested too deep
-    for it), and nothing else: each value is written back with the C
-    encoder, which goes at least as deep as ``json.loads()`` reads.
+    for it), and otherwise only the :class:`RecursionError` of the C encoder
+    each value is written back with, where it cannot go as deep as
+    ``json.loads()`` read: up to Python 3.14.6 it goes at least as deep, while
+    3.14.10 bounds both by the stack and reads some hundred thousand levels
+    it cannot write back.
     """
     data = json.loads(text)
     if not isinstance(data, dict):
