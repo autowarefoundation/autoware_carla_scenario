@@ -2078,10 +2078,9 @@ def test_the_packaging_model_is_version_and_invalid_version_as_in_the_package() 
     local = _methods(version)["local"]
     assert "property" in _decorators(local)
     assert ast.unparse(local.returns) == "Optional[str]"  # type: ignore[arg-type]
-    assert (
-        typing.get_type_hints(packaging.version.Version.local.fget)["return"]
-        == typing.Optional[str]
-    )
+    python_local = inspect.getattr_static(packaging.version.Version, "local")
+    assert isinstance(python_local, property) and python_local.fget is not None
+    assert typing.get_type_hints(python_local.fget)["return"] == typing.Optional[str]
     # InvalidVersion is a ValueError, built from nothing or one message.
     invalid = _definitions("version", _PACKAGING_MODEL)["InvalidVersion"][0]
     assert isinstance(invalid, ast.ClassDef)
