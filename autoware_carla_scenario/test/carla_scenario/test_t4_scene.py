@@ -1233,6 +1233,30 @@ def test_cli_refuses_one_log_named_twice_into_one_directory(
     )
 
 
+def test_the_grid_finds_the_logs_and_the_stems_that_collide(tmp_path: Path) -> None:
+    from autoware_carla_scenario.t4_scene.convert import LOG_SUFFIX
+    from autoware_carla_scenario.t4_scene.grid import stem_collision, trajectory_logs
+
+    assert LOG_SUFFIX == ".trajectory.jsonl"
+    for name in ("b/Run", "a/Run", "a/Other"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f"{name}{LOG_SUFFIX}").write_text("")
+    named = tmp_path / "named.txt"
+    logs = trajectory_logs([named, tmp_path])
+    assert logs == [
+        named,
+        tmp_path / "a" / f"Other{LOG_SUFFIX}",
+        tmp_path / "a" / f"Run{LOG_SUFFIX}",
+        tmp_path / "b" / f"Run{LOG_SUFFIX}",
+    ]
+    assert trajectory_logs([]) == []
+    assert stem_collision(logs[:3], tmp_path) is None
+    assert stem_collision(logs, Path("out")) == (
+        f"{logs[2]} and {logs[3]} would both be written to out/Run.*; "
+        "convert them without -o"
+    )
+
+
 def test_cli_checks_its_options_before_it_looks_for_logs(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,

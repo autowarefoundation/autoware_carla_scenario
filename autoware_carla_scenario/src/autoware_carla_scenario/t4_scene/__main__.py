@@ -10,18 +10,7 @@ from typing import Optional
 
 from ..constants import FIXED_DELTA_SECONDS, tick_multiple
 from .convert import LOG_SUFFIX, checked_rear_axle_offset, write_t4_scene
-from .grid import checked_max_distance, scene_stem
-
-
-def _logs(paths: list[Path]) -> list[Path]:
-    """The trajectory logs *paths* name: a log itself, or every log under a directory."""
-    logs: list[Path] = []
-    for path in paths:
-        if path.is_dir():
-            logs.extend(sorted(path.rglob(f"*{LOG_SUFFIX}")))
-        else:
-            logs.append(path)
-    return logs
+from .grid import checked_max_distance, stem_collision, trajectory_logs
 
 
 def main(argv: Optional[list[str]] = None) -> int:
@@ -98,19 +87,13 @@ def main(argv: Optional[list[str]] = None) -> int:
     except ValueError as error:
         parser.error(str(error))
 
-    logs = _logs(args.paths)
+    logs = trajectory_logs(args.paths)
     if not logs:
         parser.error("no trajectory log found")
     if args.output_dir is not None:
-        stems: dict[str, Path] = {}
-        for log in logs:
-            stem = scene_stem(log.name)
-            if stem in stems:
-                parser.error(
-                    f"{stems[stem]} and {log} would both be written to "
-                    f"{args.output_dir / stem}.*; convert them without -o"
-                )
-            stems[stem] = log
+        collision = stem_collision(logs, args.output_dir)
+        if collision is not None:
+            parser.error(collision)
     failed = False
     for log in logs:
         try:
