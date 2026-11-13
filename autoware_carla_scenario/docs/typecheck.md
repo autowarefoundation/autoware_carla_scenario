@@ -2586,7 +2586,8 @@ the first:
   Codon lacks (`inspect`, `concurrent.futures`, `importlib` beyond
   `importlib.metadata`, or more of `os`, `pathlib`, `shutil`,
   `signal`, `socket`, `subprocess`, `tempfile`, `threading`, `dataclasses`,
-  `importlib.metadata` or `urllib.parse` than their shims declare), at module
+  `getpass`, `importlib.metadata` or `urllib.parse` than their shims
+  declare), at module
   level or inside a function the check calls. This is most of the tooling
   around a run (the editor, the UI, authoring, the sweeper's expansion and
   Hydra sweeper, the SLURM launcher's submitting side, the recordings and
@@ -3178,7 +3179,7 @@ What Codon 0.19 needs that Python does not, beyond
   and the files of `codon/` in step):
 
   <!-- shims:start -->
-  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `hashlib`,
+  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `getpass`, `hashlib`,
   `importlib.metadata`, `ipaddress`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `platform`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions`, `urllib.parse`, `uuid` and `xml.etree.ElementTree`
@@ -3329,7 +3330,11 @@ What Codon 0.19 needs that Python does not, beyond
   nil UUID's in the check, as nothing runs), and `UUID(hex)` of a `str`, the
   first of CPython's parameters; the rest of `UUID` (`int`, `bytes`,
   `version`, ...), `uuid1()`, `uuid3()`, `uuid5()` and the namespaces are
-  not declared. `fcntl` declares `flock(fd, operation, /)`, of
+  not declared. `getpass` declares `getuser()`, of no argument, as in
+  CPython 3.10, giving a `str` (empty in the check, as nothing runs), the user
+  `hils.host_devices` sets the devices up for when `SUDO_USER` is unset;
+  `getpass()`, the prompt for a password, and `GetPassWarning` are not
+  declared. `fcntl` declares `flock(fd, operation, /)`, of
   an `int` descriptor or a file object (what has `fileno()`), and `LOCK_SH`,
   `LOCK_EX`, `LOCK_NB` and `LOCK_UN` (Linux's values); nothing is locked.
   `os.path` declares `join()`,

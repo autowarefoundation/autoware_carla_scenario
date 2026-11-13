@@ -18,6 +18,7 @@ configuration and runs hilspy's playbooks.
 
 from __future__ import annotations
 
+import getpass
 import os
 import re
 from collections.abc import Iterable
@@ -134,8 +135,6 @@ class HostSetup:
 
 
 def _user() -> str:
-    import getpass  # noqa: PLC0415 - Codon has nothing for it (docs/typecheck.md)
-
     return os.environ.get("SUDO_USER") or getpass.getuser()
 
 
