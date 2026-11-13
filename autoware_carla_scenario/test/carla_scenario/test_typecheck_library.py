@@ -5252,6 +5252,7 @@ _THIRD_PARTY_MODELS = {
     "dotenv",
     "lanelet2",
     "lxml",
+    "packaging",
     "pyxodr",
 }
 

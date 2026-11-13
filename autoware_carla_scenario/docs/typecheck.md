@@ -950,7 +950,8 @@ What `test_typecheck_model.py` compares, model by model:
   re-export, and the `__init__` of a checked subpackage, which models
   nothing), so a model file no test compares fails the suite.
 - **Third-party models**: carla_driver_interface's geometry, python-dotenv's
-  `load_dotenv`, pyxodr's `RoadNetwork` and lxml's element.
+  `load_dotenv`, packaging's `Version` and `InvalidVersion`, pyxodr's `RoadNetwork` and
+  lxml's element.
 
 A constant whose model value is a literal (a `str`, `int`, `float` or a tuple
 of them) is compared by its value and type (a tuple's items' too: `1` is no
@@ -1051,7 +1052,8 @@ scenario.py:4: error: autoware_carla_scenario.route.parse_route_search is not pa
 ```
 
 Third-party packages the framework reads are modelled as
-far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv;
+far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv,
+packaging;
 see *Making a module compile*), and a scenario may use what
 those models declare.
 
@@ -3682,6 +3684,13 @@ What Codon 0.19 needs that Python does not, beyond
   an `os.PathLike` (a stream, an `IO[str]` Codon has no type for, is not
   taken). Nothing else of the package is declared (`dotenv_values()`), and
   a scenario may use what is, as it may the shims.
+- **packaging is modelled** as far as `authoring.framework_pin` uses it,
+  with the installed package's signatures, which `test_typecheck_model.py`
+  compares: `codon/packaging/version.codon` declares `Version(version)`,
+  whose `local` is a `str` or `None`, and `InvalidVersion`, a `ValueError`
+  built from nothing or one message. Nothing else of a `Version` (its
+  comparisons, `release`, `public`, ...) or of the package (`parse()`,
+  `packaging.specifiers`) is declared.
 - **carla_canvas** is modelled for `canvas.use_canvas()`: `codon/carla_canvas/plugin.codon`
   declares `plugin_path() -> Path` and nothing else. carla_canvas is not a
   dependency of this package, so `test_typecheck_model.py` cannot compare it with
