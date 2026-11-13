@@ -23,6 +23,7 @@ from typing import Any
 
 from ..config_flags import check_flag
 from ..seed import check_whole_number
+from .port_slots import PORT_SLOT_WIDTH, SlotPorts
 
 __all__ = [
     "DEFAULT_ENV_PASSTHROUGH",
@@ -92,16 +93,20 @@ def _sensitive(name: str) -> bool:
 
 
 def launcher_type(cfg: Mapping[str, Any] | None) -> str:
-    """``launcher.type`` of *cfg*: ``local`` when it has no ``launcher``.
+    """``launcher.type`` of *cfg*: ``local`` when it has no ``launcher``, or
+    its ``type`` is missing or null.
 
     Raises:
-        ValueError: The type is not one of :data:`LAUNCHER_TYPES`.
+        ValueError: The type is not one of :data:`LAUNCHER_TYPES`: ``false``,
+            ``0`` or ``""`` is no launcher, not ``local``.
     """
     launcher = None if cfg is None else cfg.get("launcher")
     if launcher is None:
         return "local"
-    kind = str(launcher.get("type") or "local")
-    if kind not in LAUNCHER_TYPES:
+    kind = launcher.get("type")
+    if kind is None:
+        return "local"
+    if not isinstance(kind, str) or kind not in LAUNCHER_TYPES:
         raise ValueError(
             f"Unknown launcher.type: {kind!r}. Expected one of: "
             + ", ".join(repr(t) for t in LAUNCHER_TYPES)
@@ -206,14 +211,29 @@ def _optional_str(value: Any, name: str) -> str | None:
 
 
 def _str_list(value: Any, name: str) -> tuple[str, ...]:
-    """A list setting: a list of text, or one string as a list of one."""
+    """A list setting: a list of text, or one string as a list of one.
+
+    A null or blank item is refused: it would land as an empty ``sbatch``
+    argument (or an empty line), not as no item.
+    """
     if value is None:
         return ()
     if isinstance(value, str):
-        return (value,)
-    if not isinstance(value, (list, tuple)):
+        items: list[Any] = [value]
+    elif isinstance(value, (list, tuple)):
+        items = list(value)
+    else:
         raise ValueError(f"launcher.{name} must be a list, got {value!r}")
-    return tuple(_optional_str(v, name) or "" for v in value)
+    texts: list[str] = []
+    for item in items:
+        text = _optional_str(item, name)
+        if text is None or not text.strip():
+            raise ValueError(
+                f"launcher.{name} must be a list of non-blank text, "
+                f"got the item {item!r}"
+            )
+        texts.append(text)
+    return tuple(texts)
 
 
 def _check_remote_path(value: str, name: str) -> None:
@@ -406,10 +426,18 @@ class SlurmSettings:
                     "each command on a line of its own"
                 )
         if "env" in data:
-            env = data["env"] or {}
+            # Only null is no variables: [], 0 or "" is no mapping.
+            env = {} if data["env"] is None else data["env"]
             if not isinstance(env, Mapping):
                 raise ValueError(f"launcher.env must be a mapping, got {env!r}")
-            options["env"] = {str(k): str(v) for k, v in env.items()}
+            values: dict[str, str] = {}
+            for k, v in env.items():
+                # Text or a number, as _optional_str takes it; "" is a value
+                # (export NAME=''), null is not "None".
+                if isinstance(v, bool) or not isinstance(v, (str, int, float)):
+                    raise ValueError(f"launcher.env.{k} must be text, got {v!r}")
+                values[str(k)] = str(v)
+            options["env"] = values
             for name in options["env"]:
                 # Written into the job script as `export NAME=...`: a name no
                 # shell takes is an error there, or a command (#1891).
@@ -465,13 +493,15 @@ class SlurmSettings:
             # At least 1: each task takes a slot of ports.
             options["port_slots"] = _whole_number(data["port_slots"], "port_slots")
         settings = cls(**options)
-        if (
-            settings.port_base < 1024
-            or settings.port_base + (settings.port_slots * 10) > 65535
-        ):
+        # The last slot starts PORT_SLOT_WIDTH * (slots - 1) above the base
+        # and uses the first ports of its width (port_slots.SlotPorts).
+        last = settings.port_base + PORT_SLOT_WIDTH * (settings.port_slots - 1)
+        highest = max(SlotPorts(settings.port_slots - 1, last).ports())
+        if settings.port_base < 1024 or highest > 65535:
             raise ValueError(
                 "launcher.port_base/port_slots must keep every task's ports within "
-                f"1024-65535 (got base {settings.port_base}, {settings.port_slots} slots)"
+                f"1024-65535 (got base {settings.port_base}, {settings.port_slots} "
+                f"slots: ports up to {highest})"
             )
         return settings
 
