@@ -404,6 +404,10 @@ def replace(
 O_WRONLY = 1
 O_EXCL = 128
 
+# The flag of os.open() slurm.scripts writes a job script over an older one
+# with (Linux's value, as O_CREAT's above; 0o1000 on x86_64 and aarch64).
+O_TRUNC = 512
+
 # The flags maps.cache opens an entry's lock file with (Linux's values, the
 # same on x86_64 and aarch64: O_CLOEXEC is 0o2000000 on both).
 O_RDWR = 2

@@ -7,9 +7,9 @@ script and command line of the job collecting the batch after its array
 environment up as the tasks' does; and the state of each
 task ``squeue`` lists (:func:`squeue_task_states`).  Plain text from the
 launcher's settings and what they read of the batch's manifest
-(:class:`ScriptInputs`), with nothing of the file system, of SLURM or of the
-manifest's JSON: :mod:`.submit` writes and runs them, and the library check
-compiles this module (docs/typecheck.md).
+(:class:`ScriptInputs`), with nothing of SLURM or of the manifest's JSON:
+:mod:`.submit` writes them with :func:`_write_script` and runs them, and the
+library check compiles this module (docs/typecheck.md).
 
 Also where the launcher's files of a batch are (:class:`BatchPaths`, with the
 indices of the submissions it holds) and the SHA-256 of a file
@@ -19,6 +19,7 @@ indices of the submissions it holds) and the SHA-256 of a file
 from __future__ import annotations
 
 import hashlib
+import os
 import re
 import shlex
 from collections.abc import Mapping
@@ -64,6 +65,25 @@ def file_sha256(path: Path) -> str:
             digest.update(block)
             block = stream.read(1 << 20)
     return digest.hexdigest()
+
+
+def _write_script(path: Path, text: str) -> None:
+    """Write *text* to the job script *path*, making its directory if missing.
+
+    Only the user's, as it exports the recorded environment: once written,
+    the script (or the file a symlink there points to) is made mode 0o700,
+    whatever the umask.  A script this creates is created with that mode
+    (less the umask), so no other user (root aside) can open it at any time.
+    One already there is truncated and written with the mode it had, which
+    may let others read it until the chmod: ``os.open``'s mode applies only
+    when it creates the file.
+    """
+    path.parent.mkdir(parents=True, exist_ok=True)
+    # 0o700: Codon has no octal literal.
+    fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 448)
+    with os.fdopen(fd, "w", encoding="utf-8") as stream:
+        stream.write(text)
+    path.chmod(448)
 
 
 @dataclass(frozen=True)

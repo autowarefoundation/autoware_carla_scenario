@@ -3301,7 +3301,7 @@ What Codon 0.19 needs that Python does not, beyond
   follow_symlinks=True)` (`False`: nothing is asked) and its modes, and
   `open(path, flags, mode=0o777, *, dir_fd=None)` (a descriptor, `0`:
   nothing is opened) with the flags `O_RDONLY`, `O_WRONLY`, `O_RDWR`,
-  `O_CREAT`, `O_EXCL` and `O_CLOEXEC` (Linux's values) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
+  `O_CREAT`, `O_EXCL`, `O_TRUNC` and `O_CLOEXEC` (Linux's values) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
   errors=None, newline=None, closefd=True)`, a file object (`typing.IO`, as
   `Path.open()` gives), and what `slurm.manifest` creates a file
   exclusively with: `link(src, dst, *, src_dir_fd=None, dst_dir_fd=None,

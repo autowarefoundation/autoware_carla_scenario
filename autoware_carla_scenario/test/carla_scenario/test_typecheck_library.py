@@ -5403,6 +5403,16 @@ def test_the_errno_and_os_shim_constants_slurm_manifest_reads_are_cpythons() -> 
             assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
 
 
+@pytest.mark.codon_selftest
+def test_the_os_shims_o_trunc_slurm_scripts_writes_a_job_script_with_is_cpythons() -> (
+    None
+):
+    import os
+
+    shim = (model_dir() / "os" / "__init__.codon").read_text()
+    assert re.search(rf"^O_TRUNC = {int(os.O_TRUNC)}$", shim, re.MULTILINE)
+
+
 # ---------------------------------------------------------------------------
 # os.fstat(), os.write(), the errno codes of a missing flock and uuid.uuid4():
 # what slurm.start_lock creates and reads a lock file with

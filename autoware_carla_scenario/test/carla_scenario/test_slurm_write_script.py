@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 
-from autoware_carla_scenario.slurm import submit
+from autoware_carla_scenario.slurm import scripts, submit
 
 # -- the oracle: slurm/submit.py as it was -------------------------------------
 
@@ -247,3 +247,9 @@ def test_a_failing_step_fails_as_it_did(
                 monkeypatch.setattr(Path, "mkdir", real_mkdir)
             results.append((outcome, list(calls), _tree(base)))
         assert results[0] == results[1]
+
+
+def test_submit_re_exports_the_checked_writer() -> None:
+    # The library check compiles slurm.scripts (#2124); submit_cases() calls
+    # the writer through submit's name, so a patch of it there still applies.
+    assert submit._write_script is scripts._write_script
