@@ -271,7 +271,9 @@ def write_submission(
     for field, value in submission.ListFields():
         if field.name == "scenario_rollouts":
             continue
-        if field.label == field.LABEL_REPEATED:
+        # The metadata are scalars and repeated scalars; told apart by the
+        # value, as ``FieldDescriptor.label`` is gone from protobuf 7.
+        if hasattr(value, "extend"):
             getattr(header, field.name).extend(value)
         else:
             setattr(header, field.name, value)
