@@ -208,6 +208,33 @@ def _acs_reduce(function, iterable, *initial):
         compile_error("functools.reduce takes at most three arguments")
 
 
+class _acs_memoryview:
+    """What the checker puts in place of memoryview(obj) (typecheck/transform.py):
+    a view of bytes (a str in the check, which reads bytes as str, so a str
+    CPython refuses passes too), true while it is not empty and sliced into
+    another view (`view[n:]`), which os.write() takes. The rest of CPython's
+    memoryview (indexing an item, tobytes(), release(), a view of another
+    buffer, `with`) is not declared."""
+
+    _data: str
+
+    def __init__(self, obj: str):
+        self._data = obj
+
+    def __len__(self) -> int:
+        return len(self._data)
+
+    def __bool__(self) -> bool:
+        return len(self._data) > 0
+
+    def __getitem__(self, s: Slice) -> _acs_memoryview:
+        return _acs_memoryview(self._data[s])
+
+    # What os.write() (os/__init__.codon) tells a view by.
+    def _acs_memoryview_bytes(self) -> str:
+        return self._data
+
+
 def _acs_callable(value) -> bool:
     """What the checker puts in place of callable(value): Codon 0.19 has no
     callable(), and decides it from the type when it compiles."""

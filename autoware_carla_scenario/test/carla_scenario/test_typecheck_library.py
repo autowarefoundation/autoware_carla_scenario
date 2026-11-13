@@ -6180,6 +6180,224 @@ def test_the_parse_qsl_shim_declares_cpythons_leading_parameters() -> None:
 
 
 # ---------------------------------------------------------------------------
+# OSError's (errno, strerror, filename), its strerror and filename,
+# memoryview(), os.ftruncate(), os.fsync(), os.chown(), shutil.copymode() and
+# Path.stat()'s owner: what tools.file_writes writes a file with
+# ---------------------------------------------------------------------------
+
+
+_FILE_WRITES = """
+from __future__ import annotations
+
+import os
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Optional
+
+
+class _Partial(OSError):
+    \"\"\"A write that failed half way.\"\"\"
+
+
+def in_place(path: Path, data: bytes) -> int:
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        try:
+            os.ftruncate(fd, 0)
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view) :]
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise _Partial(exc.errno, exc.strerror, str(path)) from exc
+    return len(memoryview(data)[1:]) + os.write(fd, data)
+
+
+def atomically(path: Path, data: bytes) -> None:
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=".x.", suffix=".tmp")
+    tmp = Path(name)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
+        os.fsync(handle.fileno())
+        os.fsync(fd=handle.fileno())
+    shutil.copymode(path, tmp)
+    shutil.copymode(str(path), name, follow_symlinks=False)
+    stat = path.stat()
+    os.chown(tmp, stat.st_uid, stat.st_gid)
+    os.chown(name, uid=stat.st_uid, gid=-1, follow_symlinks=False)
+    os.replace(tmp, path)
+
+
+def described(
+    path: Path, exc: OSError, io: IOError, missing: FileNotFoundError
+) -> str:
+    if exc.filename is not None and os.fspath(exc.filename) in (
+        str(path),
+        os.path.realpath(path),
+    ):
+        return str(exc)
+    reason: Optional[str] = exc.strerror
+    return f"{path}: {exc} {reason} {io.strerror} {io.filename} {missing.filename}"
+
+
+def built(code: int) -> str:
+    made = OSError(code, "message", "file")
+    unknown = OSError(None, None, "file")
+    partial = _Partial(code, None, "file")
+    return str(made) + str(unknown) + str(partial.errno)
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_shims_take_what_tools_file_writes_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_FILE_WRITES, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too, or a form
+        # CPython takes that the shims do not declare.
+        ("os.ftruncate(fd, 0)", "os.ftruncate(fd)"),
+        ("os.ftruncate(fd, 0)", "os.ftruncate(fd=fd, length=0)"),
+        ("os.fsync(handle.fileno())", "os.fsync()"),
+        ("os.fsync(handle.fileno())", "os.fsync(handle)"),
+        ("os.chown(tmp, stat.st_uid, stat.st_gid)", "os.chown(tmp, stat.st_uid)"),
+        (
+            "os.chown(tmp, stat.st_uid, stat.st_gid)",
+            "os.chown(tmp, stat.st_uid, stat.st_gid, None)",
+        ),
+        ("shutil.copymode(path, tmp)", "shutil.copymode(path)"),
+        ("shutil.copymode(path, tmp)", "shutil.copymode(path, tmp, False)"),
+        ("stat.st_uid, stat.st_gid)", "stat.st_user, stat.st_gid)"),
+        ("reason: Optional[str] = exc.strerror", "reason = exc.strerr"),
+        ("{missing.filename}", "{missing.filename()}"),
+        (
+            "_Partial(exc.errno, exc.strerror, str(path))",
+            "_Partial(exc.errno, exc.strerror, str(path), filename2=None)",
+        ),
+        (
+            "_Partial(exc.errno, exc.strerror, str(path))",
+            "FileNotFoundError(exc.errno, exc.strerror, str(path))",
+        ),
+        ('OSError(code, "message", "file")', 'OSError(code, "message")'),
+        ("view = memoryview(data)", "view = memoryview()"),
+        ("view[os.write(fd, view) :]", "view[os.write(fd, 5) :]"),
+        ("len(memoryview(data)[1:])", "len(memoryview(data).tobytes())"),
+    ],
+    ids=[
+        "ftruncate-no-length",
+        "ftruncate-positional-only",
+        "fsync-no-descriptor",
+        "fsync-file-object-undeclared",
+        "chown-no-group",
+        "chown-keyword-only",
+        "copymode-no-destination",
+        "copymode-keyword-only",
+        "stat-unknown-attribute",
+        "oserror-unknown-attribute",
+        "oserror-filename-not-callable",
+        "oserror-no-keyword",
+        "subclass-of-one-message",
+        "oserror-errno-and-strerror-undeclared",
+        "memoryview-no-object",
+        "write-int-data",
+        "memoryview-tobytes-undeclared",
+    ],
+)
+def test_the_shims_refuse_what_cpython_refuses_of_tools_file_writes_calls(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _FILE_WRITES.replace(right, wrong, 1)
+    assert source != _FILE_WRITES
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_shims_tools_file_writes_calls_declare_cpythons_signatures() -> None:
+    import errno
+    import inspect
+    import os
+    import shutil
+
+    def declared(path: Path) -> dict[str, ast.arguments]:
+        return {
+            node.name: node.args
+            for node in ast.parse(path.read_text()).body
+            if isinstance(node, ast.FunctionDef)
+        }
+
+    def names(args: ast.arguments) -> tuple[list[str], list[str]]:
+        return [a.arg for a in args.args], [a.arg for a in args.kwonlyargs]
+
+    def python(function: Any) -> tuple[list[str], list[str]]:
+        parameters = inspect.signature(function).parameters.values()
+        return (
+            [p.name for p in parameters if p.kind is p.POSITIONAL_OR_KEYWORD],
+            [p.name for p in parameters if p.kind is p.KEYWORD_ONLY],
+        )
+
+    os_shim = declared(model_dir() / "os" / "__init__.codon")
+    shutil_shim = declared(model_dir() / "shutil.codon")
+    # chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True),
+    # copymode(src, dst, *, follow_symlinks=True) and fsync(fd).
+    assert names(os_shim["chown"]) == python(os.chown)
+    assert names(shutil_shim["copymode"]) == python(shutil.copymode)
+    assert names(os_shim["fsync"]) == python(os.fsync) == (["fd"], [])
+    # ftruncate(fd, length, /): two values by position only, a `*args` here.
+    kinds = [p.kind for p in inspect.signature(os.ftruncate).parameters.values()]
+    assert kinds == [inspect.Parameter.POSITIONAL_ONLY] * 2
+    assert os_shim["ftruncate"].vararg is not None and not os_shim["ftruncate"].args
+    assert (
+        '_positional_only(args, 2, "ftruncate()")'
+        in (model_dir() / "os" / "__init__.codon").read_text()
+    )
+    # What CPython makes of what the check takes and refuses.
+    with pytest.raises(TypeError):
+        os.ftruncate(fd=0, length=0)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        os.chown("x", 0, 0, None)  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        shutil.copymode("x", "y", False)  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        OSError(errno.EIO, "x", "f", filename2=None)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        memoryview()  # type: ignore[call-arg]
+    built = OSError(errno.ENOSPC, "No space left on device", "/a/b")
+    assert str(built) == "[Errno 28] No space left on device: '/a/b'"
+    assert (built.errno, built.strerror, built.filename) == (
+        errno.ENOSPC,
+        "No space left on device",
+        "/a/b",
+    )
+    assert str(OSError(None, None, "f")) == "[Errno None] None: 'f'"
+    plain = OSError("message")
+    assert (plain.errno, plain.strerror, plain.filename) == (None, None, None)
+    # A view is true while not empty and sliced past what os.write() wrote.
+    view = memoryview(b"abc")
+    assert view and not view[3:] and not view[9:]
+    fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        assert bytes(view[os.write(fd, view) :]) == b""
+    finally:
+        os.close(fd)
+    # The format _exceptions.codon builds the message of the three in.
+    shim = (model_dir() / "autoware_carla_scenario" / "_exceptions.codon").read_text()
+    assert (
+        '"[Errno " + str(errno) + "] " + str(strerror) + ": " + repr(filename)' in shim
+    )
+
+
+# ---------------------------------------------------------------------------
 # getpass.getuser(): whom hils.host_devices sets the devices up for
 # ---------------------------------------------------------------------------
 
