@@ -1069,6 +1069,208 @@ def test_cli_fails_on_a_log_it_cannot_convert(
     assert "no ego" in capsys.readouterr().err
 
 
+# -- the command line's logs and its stems, pinned before they moved ----------
+
+
+def _recording_cli(
+    monkeypatch: pytest.MonkeyPatch, failing: tuple[str, ...] = ()
+) -> list[tuple[Path, Optional[Path]]]:
+    """Replace the conversion the command calls: each log it converts, in
+    order, with the output directory; a log named in *failing* raises."""
+    import autoware_carla_scenario.t4_scene.__main__ as cli
+
+    calls: list[tuple[Path, Optional[Path]]] = []
+
+    def convert(log: Path, output_dir: Optional[Path], **_: Any) -> tuple[Path, Any]:
+        calls.append((log, output_dir))
+        if log.name in failing:
+            raise ValueError(f"cannot convert {log.name}")
+        resource = None if "nomap" in log.name else Path(f"{log}.map")
+        return Path(f"{log}.scene"), resource
+
+    monkeypatch.setattr(cli, "write_t4_scene", convert)
+    return calls
+
+
+def test_cli_takes_a_log_as_named_and_every_log_under_a_directory_sorted(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls = _recording_cli(monkeypatch)
+    runs = tmp_path / "runs"
+    for name in ("b/Z", "a/Y", "a/sub/X", "c/W", "Ä/V"):
+        (runs / name).parent.mkdir(parents=True, exist_ok=True)
+        (runs / f"{name}.trajectory.jsonl").write_text("")
+    # Not logs: no suffix, another suffix, a directory named like a log.
+    (runs / "a" / "notes.txt").write_text("")
+    (runs / "a" / "Y.trajectory.json").write_text("")
+    (runs / "d" / "dir.trajectory.jsonl").mkdir(parents=True)
+    (runs / "d" / "dir.trajectory.jsonl" / "In.trajectory.jsonl").write_text("")
+    given = tmp_path / "any-name.txt"  # a file is taken as it is named
+    missing = tmp_path / "missing.trajectory.jsonl"  # and so is a missing one
+    code = main([str(given), str(runs), str(missing), str(given), "--no-map"])
+    assert code == 0
+    assert [log for log, _ in calls] == [
+        given,
+        runs / "a" / "Y.trajectory.jsonl",
+        runs / "a" / "sub" / "X.trajectory.jsonl",
+        runs / "b" / "Z.trajectory.jsonl",
+        runs / "c" / "W.trajectory.jsonl",
+        runs / "d" / "dir.trajectory.jsonl",
+        runs / "d" / "dir.trajectory.jsonl" / "In.trajectory.jsonl",
+        runs / "Ä" / "V.trajectory.jsonl",
+        missing,
+        given,
+    ]
+    assert all(output is None for _, output in calls)
+    out = capsys.readouterr().out
+    assert out == "".join(f"{log}.scene (map: {log}.map)\n" for log, _ in calls)
+
+
+def test_cli_reports_each_log_it_cannot_convert_and_goes_on(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls = _recording_cli(monkeypatch, failing=("B.trajectory.jsonl",))
+    for name in ("A", "B", "C-nomap"):
+        (tmp_path / f"{name}.trajectory.jsonl").write_text("")
+    assert main([str(tmp_path), "-o", str(tmp_path / "out")]) == 1
+    assert [output for _, output in calls] == [tmp_path / "out"] * 3
+    captured = capsys.readouterr()
+    a, b, c = (tmp_path / f"{n}.trajectory.jsonl" for n in ("A", "B", "C-nomap"))
+    assert captured.out == f"{a}.scene (map: {a}.map)\n{c}.scene\n"
+    assert captured.err == f"{b}: cannot convert B.trajectory.jsonl\n"
+
+
+def _cli_error(capsys: pytest.CaptureFixture[str], argv: list[str]) -> str:
+    """The last line the command writes before it exits with status 2."""
+    with pytest.raises(SystemExit) as raised:
+        main(argv)
+    assert raised.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.startswith("usage: scenario-t4scene ")
+    return captured.err.splitlines(keepends=True)[-1]
+
+
+def test_cli_refuses_an_empty_directory_byte_for_byte(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    calls = _recording_cli(monkeypatch)
+    (tmp_path / "empty").mkdir()
+    line = _cli_error(capsys, [str(tmp_path / "empty"), "--no-map"])
+    assert line == "scenario-t4scene: error: no trajectory log found\n"
+    assert calls == []
+
+
+@pytest.mark.parametrize(
+    ("names", "first", "second", "stem"),
+    [
+        (["0/Run.trajectory.jsonl", "1/Run.trajectory.jsonl"], 0, 1, "Run"),
+        (
+            [
+                "0/Run.trajectory.jsonl",
+                "1/Run.trajectory.jsonl",
+                "2/Run.trajectory.jsonl",
+            ],
+            0,
+            1,
+            "Run",
+        ),
+        (
+            ["0/Run.trajectory.jsonl", "1/Other.trajectory.jsonl", "2/Run.json"],
+            0,
+            2,
+            "Run",
+        ),
+        (["0/日本.trajectory.jsonl", "1/日本.trajectory.jsonl"], 0, 1, "日本"),
+        (["0/a.b.trajectory.jsonl", "1/a.b.c"], 0, 1, "a.b"),
+    ],
+    ids=["two", "three", "other-suffix", "non-ascii", "dotted"],
+)
+def test_cli_refuses_two_logs_of_one_stem_byte_for_byte(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    names: list[str],
+    first: int,
+    second: int,
+    stem: str,
+) -> None:
+    calls = _recording_cli(monkeypatch)
+    paths = [tmp_path / name for name in names]
+    for path in paths:
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text("")
+    out = tmp_path / "out dir"
+    line = _cli_error(capsys, [*map(str, paths), "-o", str(out), "--no-map"])
+    assert line == (
+        f"scenario-t4scene: error: {paths[first]} and {paths[second]} would both "
+        f"be written to {out / stem}.*; convert them without -o\n"
+    )
+    assert calls == []
+    # Beside each log, they do not collide.
+    assert main([*map(str, paths), "--no-map"]) == 0
+    assert [log for log, _ in calls] == paths
+
+
+def test_cli_refuses_one_log_named_twice_into_one_directory(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _recording_cli(monkeypatch)
+    log = tmp_path / "Run.trajectory.jsonl"
+    log.write_text("")
+    line = _cli_error(capsys, [str(log), str(tmp_path), "-o", "rel"])
+    assert line == (
+        f"scenario-t4scene: error: {log} and {log} would both be written to "
+        "rel/Run.*; convert them without -o\n"
+    )
+
+
+def test_the_grid_finds_the_logs_and_the_stems_that_collide(tmp_path: Path) -> None:
+    from autoware_carla_scenario.t4_scene.convert import LOG_SUFFIX
+    from autoware_carla_scenario.t4_scene.grid import stem_collision, trajectory_logs
+
+    assert LOG_SUFFIX == ".trajectory.jsonl"
+    for name in ("b/Run", "a/Run", "a/Other"):
+        (tmp_path / name).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / f"{name}{LOG_SUFFIX}").write_text("")
+    named = tmp_path / "named.txt"
+    logs = trajectory_logs([named, tmp_path])
+    assert logs == [
+        named,
+        tmp_path / "a" / f"Other{LOG_SUFFIX}",
+        tmp_path / "a" / f"Run{LOG_SUFFIX}",
+        tmp_path / "b" / f"Run{LOG_SUFFIX}",
+    ]
+    assert trajectory_logs([]) == []
+    assert stem_collision(logs[:3], tmp_path) is None
+    assert stem_collision(logs, Path("out")) == (
+        f"{logs[2]} and {logs[3]} would both be written to out/Run.*; "
+        "convert them without -o"
+    )
+
+
+def test_cli_checks_its_options_before_it_looks_for_logs(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    _recording_cli(monkeypatch)
+    (tmp_path / "empty").mkdir()
+    line = _cli_error(capsys, [str(tmp_path / "empty"), "--step=0.03"])
+    assert line == (
+        "scenario-t4scene: error: --step=0.03 is not a positive multiple of the "
+        "0.05 s tick\n"
+    )
+
+
 # -- as each run ends (t4scene.enabled) ---------------------------------------
 
 

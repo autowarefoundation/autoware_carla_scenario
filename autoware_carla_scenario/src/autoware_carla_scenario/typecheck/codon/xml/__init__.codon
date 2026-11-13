@@ -1,0 +1,2 @@
+# Python's xml package, for the checker (docs/typecheck.md): only
+# etree.ElementTree (xml/etree/ElementTree.codon).

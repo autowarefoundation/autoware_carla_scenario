@@ -75,17 +75,33 @@ def write_case_errored(
     """
     directory.mkdir(parents=True, exist_ok=True)
     path = directory / CASE_ERRORED
-    data: dict[str, Any] = {
-        "schema": CASE_ERRORED_SCHEMA,
-        "overrides": list(overrides),
-        "exit_code": exit_code,
-        "attempts": attempts,
-        "reason": reason,
-    }
+    # The object `json.dumps(..., indent=2, ensure_ascii=False)` writes, a
+    # member at a time: each value is of its own type, which one dict of them
+    # all could not be in Codon (docs/typecheck.md).
+    members = [
+        _member(
+            json.dumps({"schema": CASE_ERRORED_SCHEMA}, indent=2, ensure_ascii=False)
+        ),
+        _member(
+            json.dumps({"overrides": list(overrides)}, indent=2, ensure_ascii=False)
+        ),
+        _member(json.dumps({"exit_code": exit_code}, indent=2, ensure_ascii=False)),
+        _member(json.dumps({"attempts": attempts}, indent=2, ensure_ascii=False)),
+        _member(json.dumps({"reason": reason}, indent=2, ensure_ascii=False)),
+    ]
     if unfinished:
-        data["unfinished"] = True
-    write_text_atomically(path, json.dumps(data, indent=2, ensure_ascii=False))
+        members.append(
+            _member(json.dumps({"unfinished": True}, indent=2, ensure_ascii=False))
+        )
+    write_text_atomically(path, "{\n" + ",\n".join(members) + "\n}")
     return path
+
+
+def _member(single: str) -> str:
+    """The one member of *single*, ``json.dumps({key: value}, indent=2,
+    ensure_ascii=False)``, as it is laid out in any object of members at that
+    depth: the text between the braces (``"{\\n"`` and ``"\\n}"``)."""
+    return single[2:-2]
 
 
 def write_case_unfinished(
