@@ -2476,9 +2476,10 @@ signal states it sets, and its command-line options, mode bits, vehicle types
 and type files, with the command line of `randomTrips.py` and the options of
 each demand it generates: `traffic.sumo.options`, #1679, and where SUMO is,
 the network's files and the demand `randomTrips.py` generates for it:
-`traffic.sumo.network`, #1967; not the conversion of the map with roadgen,
-the signal table read off roadgen's traces or the crossings read with
-`xml.etree.ElementTree`, which the check leaves uncalled), the signal
+`traffic.sumo.network`, #1967, and the crossings read off the network
+with `xml.etree.ElementTree`; not the conversion of the map with roadgen or
+the signal table read off roadgen's traces, which the check leaves
+uncalled), the signal
 controllers, the adversity math, the measures, the metrics (and which of the
 CommonRoad metrics are heavy, the environment that turns them off and the
 checks of their periods: `heavy_metrics`, #1689, and the `commonroad`
@@ -3164,7 +3165,7 @@ What Codon 0.19 needs that Python does not, beyond
   `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `hashlib`,
   `importlib.metadata`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `platform`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
-  `typing`, `typing_extensions` and `urllib.parse`
+  `typing`, `typing_extensions`, `urllib.parse` and `xml.etree.ElementTree`
   <!-- shims:end -->
 
   `tempfile` declares `mkstemp(suffix=None, prefix=None, dir=None,
@@ -3178,6 +3179,13 @@ What Codon 0.19 needs that Python does not, beyond
   `codon/_stdlib/` (#422): they add
   `collections.OrderedDict` and `itertools.pairwise`, as listed under
   "Standard library names Codon lacks".
+  `xml.etree.ElementTree` declares what `traffic.sumo.network` reads a
+  network's crossings with: `iterparse(source)` of a file name (no file
+  object, no `events` or `parser`), which gives no element in the check, of
+  `(event, element)` pairs, and an element's `tag`, `get(key, default=None)`
+  (a `str` or `None` default, an `Optional[str]`) and `clear()`.
+  `parse()`, `fromstring()`, `SubElement()`, `ParseError`, an element's
+  `attrib`, `find()`, `findall()` and the rest are not declared.
 
   Each shim takes the
   arguments CPython takes, so the check accepts what CPython accepts and

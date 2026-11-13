@@ -1,0 +1,36 @@
+# The part of Python's xml.etree.ElementTree the checked framework names, for
+# the checker (docs/typecheck.md): what traffic.sumo.network reads a SUMO
+# network's crossings with, iterparse() of a file name and the elements it
+# gives (their tag, get() of an attribute, clear()), with CPython 3.10's
+# signatures or narrower ones, the oldest Python the package supports.
+# Nothing here runs: no file is read and iterparse() gives no element.
+# parse(), fromstring(), ElementTree, SubElement, ParseError, an element's
+# attrib, text, find() and iteration, and the rest are not declared, so the
+# check refuses them.
+
+
+# An element of a document: its tag (a str; iterparse() gives no comment or
+# processing instruction, whose tag is a function) and its attributes, read
+# by get(key, default=None), which gives the default, None unless given, for
+# an attribute the element lacks. Only a str or None default is declared.
+# clear() drops its attributes, text and children.
+class Element:
+    tag: str
+
+    def __init__(self, tag: str):
+        self.tag = tag
+
+    def get(self, key: str, default: Optional[str] = None) -> Optional[str]:
+        return default
+
+    def clear(self) -> None:
+        pass
+
+
+# iterparse(source, events=None, parser=None): the (event, element) pair of
+# each element as its end tag is read. Only a file name is declared for the
+# source (CPython also takes a file object), and neither events nor parser:
+# every event is "end".
+def iterparse(source: str) -> Generator[Tuple[str, Element]]:
+    if False:
+        yield ("end", Element(""))

@@ -1,0 +1,7 @@
+# Python's xml.etree package, for the checker (docs/typecheck.md): only its
+# ElementTree submodule (ElementTree.codon). Codon 0.19 finds a submodule by
+# `from xml.etree import ElementTree` only when the package imports it, so
+# this one does, as importlib/__init__.codon does for metadata. Nothing of
+# xml.etree itself is declared, and neither is cElementTree or ElementPath.
+
+import xml.etree.ElementTree as ElementTree
