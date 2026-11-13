@@ -353,3 +353,21 @@ def test_the_package_exists_error_pickles_as_it_did() -> None:
         except Exception as exc:  # noqa: BLE001 -- compared
             outcomes.append(("raised", _error(exc), None))
     assert outcomes[0] == outcomes[1]
+
+
+def test_the_generator_re_exports_the_placements_own_objects() -> None:
+    """``scaffold.generator``'s names are ``scaffold.placement``'s objects,
+    which the library check compiles (#2144), and the package's
+    ``PackageExistsError`` is the same class."""
+    from autoware_carla_scenario import scaffold
+    from autoware_carla_scenario.scaffold import placement
+
+    for name in (
+        "PackageExistsError",
+        "_occupied",
+        "_RENAME_ONTO_OCCUPIED",
+        "_move_into_place",
+    ):
+        assert getattr(generator, name) is getattr(placement, name), name
+    assert scaffold.PackageExistsError is placement.PackageExistsError
+    assert generator.create_scenario_package.__module__ == generator.__name__

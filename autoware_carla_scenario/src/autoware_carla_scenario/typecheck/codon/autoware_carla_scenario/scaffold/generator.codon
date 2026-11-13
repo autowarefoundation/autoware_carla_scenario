@@ -12,7 +12,11 @@ from pathlib import Path
 
 
 # The package directory create_scenario_package() would replace; Python's
-# derives from FileExistsError.
+# derives from FileExistsError. It is the checked scaffold.placement's
+# (#2144), which scaffold.generator re-exports; it is declared here as it was
+# before it moved, and the checked scaffold package still imports it from
+# scaffold.generator, so a scenario importing it from either compiles (and
+# fails to build one) as it did.
 class PackageExistsError:
     # No fields: Codon would build one with no arguments too (docs/typecheck.md).
     def __init__(self):
