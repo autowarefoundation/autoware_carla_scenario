@@ -349,3 +349,25 @@ def test_a_row_count_parses_as_before(count: Any, op: Any) -> None:
         assert _outcome(forms.parse_records, _RECORDS, posted) == _outcome(
             _old_parse_records, _RECORDS, posted
         )
+
+
+def test_forms_re_exports_the_moved_names() -> None:
+    from autoware_carla_scenario.editor import form_values
+
+    assert forms._parse_list_int is form_values.parse_list_int
+    assert forms._parse_int_text is form_values.parse_int_text
+    assert forms._row_count is form_values.row_count
+    assert forms._LIST_SEPARATORS is form_values.LIST_SEPARATORS
+    assert forms._MAX_RECORDS is form_values.MAX_RECORDS
+
+
+@pytest.mark.parametrize("text", [*_ALL_TEXTS[:200]])
+def test_the_checked_split_is_the_old_one(text: str) -> None:
+    from autoware_carla_scenario.editor import form_values
+
+    def old_split(t: str) -> list[int]:
+        return [
+            _old_parse_list_int(part) for part in _OLD_LIST_SEPARATORS.split(t) if part
+        ]
+
+    assert _outcome(form_values.parse_int_text, text) == _outcome(old_split, text)
