@@ -22,7 +22,8 @@ The modules that write each output keep their own name for its suffix
 (``rerun.RECORDING_SUFFIX``, ``t4_settings.DATASET_SUFFIX``,
 ``traffic.sumo.backend.OUTPUT_SUFFIX`` ...);
 ``test_run_outputs.py`` keeps them equal to the ones here.  Those of a run's
-environment and lock and of its T4Scene and map are defined here, and
+environment and lock, of its T4Scene and map and of its WOSAC rollout are
+defined here, and
 ``environment`` and ``t4_scene.convert`` re-export them under the names they
 had (#1713); so is the metrics' scratch recording, which ``rerun_metrics``
 re-exports, and the ODD archive, openodd's ``ODD_ARCHIVE_SUFFIX``, which
@@ -60,6 +61,8 @@ __all__ = [
     "T4SCENE_MAP_SUFFIX",
     "T4SCENE_SUFFIX",
     "TRAJECTORY_SUFFIX",
+    "WOSAC_AGENTS_SUFFIX",
+    "WOSAC_SUFFIX",
     "recording_path",
     "run_output_paths",
     "run_outputs_exist",
@@ -94,6 +97,11 @@ LOCK_SUFFIX = "_requirements.lock"
 T4SCENE_SUFFIX = ".t4scene.pb"
 #: The map of that T4Scene: ``{stem}.t4scene.map.pb``.
 T4SCENE_MAP_SUFFIX = ".t4scene.map.pb"
+#: The trajectory log as one WOSAC rollout (``scenario-wosac export``):
+#: ``{stem}.wosac.pb``.
+WOSAC_SUFFIX = ".wosac.pb"
+#: The agents and time grid of that rollout: ``{stem}.wosac.json``.
+WOSAC_AGENTS_SUFFIX = ".wosac.json"
 
 #: The files a run writes as ``{stem}{suffix}``.
 RUN_FILE_SUFFIXES: tuple[str, ...] = (
@@ -118,6 +126,10 @@ RUN_FILE_SUFFIXES: tuple[str, ...] = (
     # The T4Scene of the trajectory log and its map (t4scene.enabled).
     T4SCENE_SUFFIX,
     T4SCENE_MAP_SUFFIX,
+    # The WOSAC rollout of the trajectory log and its agents (scenario-wosac
+    # export): a run again under the stem must not leave one to be packed.
+    WOSAC_SUFFIX,
+    WOSAC_AGENTS_SUFFIX,
 )
 
 #: The directories a run writes as ``{stem}{suffix}``.

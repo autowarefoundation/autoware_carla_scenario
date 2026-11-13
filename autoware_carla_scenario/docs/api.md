@@ -413,6 +413,7 @@ Defined in `pyproject.toml`'s `[project.scripts]`, in that order:
 | `scenario-editor` | `autoware_carla_scenario.editor:main` | Scenario Editor: a web UI for authoring scenarios and exporting them as packages; a separate application from `viewer`. See [Scenario Editor](scenario_editor.md). |
 | `scenario-hils` | `autoware_carla_scenario.hils.cli:main` | Stream a run's ego to devices under test (CAN, GNSS, LiDAR, cameras); needs the `hils` extra. See [HILS Bridge](hils.md). |
 | `scenario-t4scene` | `autoware_carla_scenario.t4_scene.__main__:main` | Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit. See [T4 Scene](t4_scene.md). |
+| `scenario-wosac` | `autoware_carla_scenario.wosac.__main__:main` | Write runs' trajectory logs as Waymo Open Sim Agents Challenge rollouts, and pack them by scenario as a submission. See [WOSAC Rollouts](wosac.md). |
 
 The `scenario` command also exposes Python-level helpers for downstream
 packages, in `autoware_carla_scenario.examples.run` unless noted:

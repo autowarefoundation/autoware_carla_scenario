@@ -11,7 +11,8 @@ included: the `autoware_carla_scenario_rerun` package (the `rerun` extra;
 `rerun.enabled=true` runs it on each log as its run ends) makes a Rerun
 recording of it, which is how a run is seen ([Seeing a run](usage.md#seeing-a-run)).
 `scenario-t4scene` writes it as a T4Scene, the scene exchange format of
-tier4/e2e-devkit ([T4 Scene](t4_scene.md)).
+tier4/e2e-devkit ([T4 Scene](t4_scene.md)), and `scenario-wosac` as a rollout
+of the Waymo Open Sim Agents Challenge ([WOSAC Rollouts](wosac.md)).
 
 Its format is published as a JSON Schema of one line, the contract for readers
 in any language: `schemas/trajectory.schema.json` in the package and in the

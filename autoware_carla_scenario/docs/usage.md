@@ -22,6 +22,7 @@ The package provides these CLI commands:
 | [`scenario-editor`](scenario_editor.md) | FastAPI + Uvicorn | Web UI for authoring scenarios and exporting reproducible packages |
 | [`scenario-hils`](hils.md) | argparse | Stream a run's ego to devices under test (CAN, GNSS, LiDAR, cameras); needs the `hils` extra |
 | [`scenario-t4scene`](t4_scene.md) | argparse | Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit |
+| [`scenario-wosac`](wosac.md) | argparse | Write runs' trajectory logs as WOSAC rollouts, and pack them as a submission |
 
 `viewer` and `scenario-editor` are separate applications on separate ports, and
 neither starts the other.
@@ -1363,7 +1364,7 @@ started in the same second as another run or a batch gets `HH-MM-SS-1`, then
 | `{ScenarioName}_odd.tar.gz` | The run's ODD as the files it was read from (an ODD read from OpenODD YAML; openodd's transmission archive, named by its revision; see [Versions of an ODD](odd.md#versions-of-an-odd)) |
 | `{ScenarioName}_requirements.lock` | What the run ran with: every installed distribution pinned, in the requirements format (`pip install -r`), headed by the framework, the scenario's package, Python and the platform. A distribution from git is pinned to its commit; an editable one (a checkout) names its directory, commit and whether it had uncommitted changes |
 | `{ScenarioName}_environment.json` | The same, structured; `_result.json` carries its summary (`environment`: the framework, the scenario's package, key dependencies, and the lock's id -- the SHA-256 of what it pins -- so runs on one environment can be found by it) |
-| `{ScenarioName}.trajectory.jsonl` | The run, tick by tick, and the map, plan, conditions and verdict ([Trajectory Log](trajectory_log.md)); make it a Rerun recording to see the run ([Seeing a run](#seeing-a-run)), or a T4Scene for tier4/e2e-devkit with `scenario-t4scene` ([T4 Scene](t4_scene.md)) |
+| `{ScenarioName}.trajectory.jsonl` | The run, tick by tick, and the map, plan, conditions and verdict ([Trajectory Log](trajectory_log.md)); make it a Rerun recording to see the run ([Seeing a run](#seeing-a-run)), or a T4Scene for tier4/e2e-devkit with `scenario-t4scene` ([T4 Scene](t4_scene.md)), or a Waymo Open Sim Agents Challenge rollout with `scenario-wosac` ([WOSAC Rollouts](wosac.md)) |
 | `{ScenarioName}.rrd` | The Rerun recording of the trajectory log, with `rerun.enabled=true` ([Seeing a run](#seeing-a-run)) |
 | `{ScenarioName}.sensors.rrd` | The driver's sensors recorded during the run (`rerun.lidar`, `rerun.cameras`); merged into `{ScenarioName}.rrd` and removed, so only left behind by a run or merge that did not finish ([Sensors in the recording](#sensors-in-the-recording)) |
 | `{ScenarioName}.metrics.rrd` | Not written with the converter the `rerun` extra pins, which draws the metrics itself. A converter that does not draw them gets the run's metrics written here as scalars, then merged into `{ScenarioName}.rrd` and removed, so the file is only left behind by a run killed during that merge ([Metrics in the recording](#metrics-in-the-recording)) |

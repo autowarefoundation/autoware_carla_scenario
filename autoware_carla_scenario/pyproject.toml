@@ -236,3 +236,6 @@ scenario-editor = "autoware_carla_scenario.editor:main"
 scenario-hils = "autoware_carla_scenario.hils.cli:main"
 # Write runs' trajectory logs as T4Scenes for tier4/e2e-devkit (docs/t4_scene.md).
 scenario-t4scene = "autoware_carla_scenario.t4_scene.__main__:main"
+# Write runs' trajectory logs as Waymo Open Sim Agents Challenge rollouts, and
+# pack them by scenario as a submission (docs/wosac.md).
+scenario-wosac = "autoware_carla_scenario.wosac.__main__:main"
