@@ -64,6 +64,7 @@ __all__ = [
     "run_output_paths",
     "run_outputs_exist",
     "remove_run_outputs",
+    "result_json_line",
     "run_output_stems",
     "sensors_recording_path",
     "trajectory_stem",
@@ -192,6 +193,15 @@ def remove_run_outputs(directory: Path, stem: str) -> None:
             shutil.rmtree(path)
         else:
             path.unlink(missing_ok=True)
+
+
+def result_json_line(output_dir: Path, file_stem: str) -> str:
+    """The line naming the result a run named *file_stem* wrote in
+    *output_dir*, or saying it wrote none (writing it failed)."""
+    json_path = (output_dir / f"{file_stem}{RESULT_SUFFIX}").resolve()
+    if json_path.is_file():
+        return f"Result JSON: {json_path}"
+    return f"Result JSON: not written ({json_path})"
 
 
 def run_output_stems(directory: Path, job_log: str | None) -> set[str]:

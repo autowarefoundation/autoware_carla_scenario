@@ -172,3 +172,17 @@ def test_the_lanelet_sweeper_is_seen_on_the_command_line(
     argv: list[str], requested: bool
 ) -> None:
     assert run._lanelet_sweeper_requested_in_argv(argv) is requested
+
+
+def test_the_helpers_are_the_checked_modules_under_their_old_names() -> None:
+    # Moved out of examples.run, which the library check cannot compile, into
+    # run_outputs and run_dirs, which it does (#2116); the old names are the
+    # same objects, so a caller or a patch of either reaches the one function.
+    from autoware_carla_scenario import run_dirs, run_outputs
+
+    assert run._result_json_line is run_outputs.result_json_line
+    assert (
+        run._lanelet_sweeper_requested_in_argv
+        is run_dirs.lanelet_sweeper_requested_in_argv
+    )
+    assert run.RESULT_SUFFIX == run_outputs.RESULT_SUFFIX
