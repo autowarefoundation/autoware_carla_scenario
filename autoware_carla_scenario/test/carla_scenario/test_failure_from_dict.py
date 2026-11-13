@@ -305,7 +305,14 @@ def _result_members(failure: Any) -> JsonMembers:
     return members
 
 
-_MISSING = object()
+class _Missing:
+    """No ``failure`` member: by name in a test's id, the same in each worker."""
+
+    def __repr__(self) -> str:
+        return "<missing>"
+
+
+_MISSING = _Missing()
 
 _CALLER_FAILURES: list[Any] = [
     _MISSING,
