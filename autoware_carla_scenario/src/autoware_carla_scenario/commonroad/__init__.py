@@ -25,7 +25,12 @@ from .session import (
     configure_commonroad_metrics,
     evaluate_commonroad,
 )
-from .worker import WORKER_ENV, CommonRoadWorker, CommonRoadWorkerError, worker_command
+from .worker import CommonRoadWorker
+
+# The command that starts the worker and its error are the checked
+# worker_start's (#2116), which commonroad.worker re-exports too: the same
+# objects, imported from where they are defined.
+from .worker_start import WORKER_ENV, CommonRoadWorkerError, worker_command
 
 __all__ = [
     "DEFAULT_METRIC_PERIODS_S",

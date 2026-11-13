@@ -28,14 +28,20 @@ import json
 import logging
 import os
 import select
-import shlex
-import shutil
 import signal
 import subprocess
 import threading
 import time
 from pathlib import Path
 from typing import Any, Callable, Optional, Sequence
+
+# The command that starts the worker and the worker's error are the checked
+# worker_start's (#2116): the same objects, re-exported.
+from .worker_start import _EXCERPT_CHARS as _EXCERPT_CHARS
+from .worker_start import WORKER_ENV, CommonRoadWorkerError, worker_command
+from .worker_start import WORKER_SCRIPT as WORKER_SCRIPT
+from .worker_start import _checkout_project as _checkout_project
+from .worker_start import _excerpt
 
 __all__ = [
     "WORKER_ENV",
@@ -45,20 +51,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-#: The environment variable that names the command starting the worker.
-WORKER_ENV = "AUTOWARE_CARLA_SCENARIO_COMMONROAD_WORKER"
-#: The worker's console script.
-WORKER_SCRIPT = "commonroad-metrics-worker"
-
-
-class CommonRoadWorkerError(RuntimeError):
-    """The worker could not be started, or failed to answer."""
-
-
-#: How much of an answer out of protocol an error quotes.
-_EXCERPT_CHARS = 200
-
 
 #: How long :meth:`CommonRoadWorker.close` lets the worker exit before
 #: killing it, in seconds.
@@ -74,47 +66,6 @@ _READ_CHUNK = 65536
 
 #: The longest wait one ``poll()`` takes, in milliseconds (a C ``int``).
 _MAX_POLL_MS = 2**31 - 1
-
-
-def _excerpt(line: str) -> str:
-    """*line*, stripped and cut to :data:`_EXCERPT_CHARS`, quoted."""
-    text = line.strip()
-    if len(text) > _EXCERPT_CHARS:
-        text = text[:_EXCERPT_CHARS] + "..."
-    return repr(text)
-
-
-def _checkout_project() -> Optional[Path]:
-    """``commonroad_metrics/`` of the repository this package was installed
-    from in place (``uv sync`` installs the workspace editable), if any."""
-    # src/autoware_carla_scenario/commonroad/worker.py -> the repository root.
-    root = Path(__file__).resolve().parents[4]
-    project = root / "commonroad_metrics"
-    return project if (project / "pyproject.toml").is_file() else None
-
-
-def worker_command() -> list[str]:
-    """The command that starts the worker (the module's docstring says how it
-    is chosen).
-
-    Raises:
-        CommonRoadWorkerError: No way to start it was found.
-    """
-    configured = os.environ.get(WORKER_ENV, "").strip()
-    if configured:
-        return shlex.split(configured)
-    script = shutil.which(WORKER_SCRIPT)
-    if script:
-        return [script]
-    project = _checkout_project()
-    uv = shutil.which("uv")
-    if project is not None and uv:
-        return [uv, "run", "--quiet", "--project", str(project), WORKER_SCRIPT]
-    raise CommonRoadWorkerError(
-        f"the CommonRoad metrics need their worker ({WORKER_SCRIPT}): install the "
-        f"commonroad_metrics project (Python 3.10 or 3.11) and put it on the PATH, "
-        f"or name the command in ${WORKER_ENV}"
-    )
 
 
 class CommonRoadWorker:

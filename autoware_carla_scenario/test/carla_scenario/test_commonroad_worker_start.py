@@ -187,3 +187,53 @@ def test_an_excerpt_is_the_same() -> None:
     ]
     for line in lines:
         assert cr_worker._excerpt(line) == _old_excerpt(line)
+
+
+def test_the_worker_s_names_are_worker_command_s() -> None:
+    from autoware_carla_scenario.commonroad import worker_start as checked
+
+    assert cr_worker.CommonRoadWorkerError is checked.CommonRoadWorkerError
+    assert cr_worker.worker_command is checked.worker_command
+    assert cr_worker._checkout_project is checked._checkout_project
+    assert cr_worker._excerpt is checked._excerpt
+    assert cr_worker.WORKER_ENV is checked.WORKER_ENV
+    assert cr_worker.WORKER_SCRIPT is checked.WORKER_SCRIPT
+    assert cr_worker._EXCERPT_CHARS is checked._EXCERPT_CHARS
+
+
+class _OldCommonRoadWorkerError(RuntimeError):
+    """The worker could not be started, or failed to answer."""
+
+
+@pytest.mark.parametrize(
+    ("args", "kwargs"),
+    [
+        ((), {}),
+        (("the worker failed",), {}),
+        (("a", 2, None), {}),
+        ((), {"message": "m"}),
+        (("m",), {"x": 1}),
+    ],
+)
+def test_an_error_is_built_as_before(args: tuple, kwargs: dict) -> None:
+    # The constructor Codon needs hands on what it is given: the same args,
+    # message, repr, pickle and copy as RuntimeError's, and the same
+    # TypeError for a keyword.
+    import copy
+    import pickle
+
+    def built(cls: type) -> object:
+        try:
+            error = cls(*args, **kwargs)
+        except Exception as exc:  # noqa: BLE001 - compared, whatever it is
+            return (type(exc), str(exc).replace(cls.__name__, "E"))
+        return (
+            error.args,
+            str(error),
+            repr(error).replace(cls.__name__, "E"),
+            pickle.loads(pickle.dumps(error)).args,
+            type(pickle.loads(pickle.dumps(error))) is cls,
+            copy.copy(error).args,
+        )
+
+    assert built(cr_worker.CommonRoadWorkerError) == built(_OldCommonRoadWorkerError)
