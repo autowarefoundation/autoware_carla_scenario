@@ -2497,7 +2497,7 @@ reading either, JSON objects of mixed value types), what a set of runs
 left unrecorded (`gate.unrecorded`, #2124: the batches under a directory, a
 local batch's summary read for its errored and pending cases, and the
 `--multirun` jobs given up or never started; not a SLURM batch's manifest,
-which `gate.evaluate` reads and re-exports them),
+which `gate.evaluate` reads; it re-exports them),
 and the typed criteria its evaluator judges (`gate.criteria`: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
 baseline; and `gate.report`, #1738: a verdict's and a comparison's Markdown,
@@ -4086,7 +4086,11 @@ What Codon 0.19 needs that Python does not, beyond
   raise a subclass of a built-in exception that has none of its own
   (`'MapSourceError' object has no attribute '_pytype'`), so it takes the
   message and passes it on: `def __init__(self, message: str) -> None:
-  super().__init__(message)` (`maps/source.py`).
+  super().__init__(message)` (`maps/source.py`). One that hands on whatever
+  it is given, as Exception's own does, takes `*args: str, **kwargs: str`
+  and passes them on (`hils/host_devices.py`'s `HostSetupError`): Python
+  builds it as before, with the same arguments, message and repr, and the
+  same TypeError for a keyword.
 - **`except (A, B):` is split by the check**: Codon 0.19 takes one class
   per `except` clause ("expected type expression"), so the check rewrites a
   tuple written out into one clause per class, in the tuple's order, each
