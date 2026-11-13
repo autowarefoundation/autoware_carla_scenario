@@ -327,15 +327,6 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         "HilsConfigError and SensorSpec are the checked hils.sensor_spec's; "
         "the package imports HilsConfigError and SensorSpec from there)",
     ),
-    f"{_PACKAGE}.commonroad.worker": _each(
-        "WORKER_ENV CommonRoadWorkerError worker_command",
-        "how the CommonRoad worker is started, which the runner does after a "
-        "run, not a scenario; the model declares only the CommonRoadWorker "
-        "the checked commonroad package re-exports of commonroad.worker "
-        "(WORKER_ENV, CommonRoadWorkerError and worker_command() are the "
-        "checked commonroad.worker_start's; the package imports them from "
-        "there)",
-    ),
     f"{_PACKAGE}.scaffold.generator": {
         "TEMPLATES_DIR": (
             "the directory of the templates beside the Python module, which "

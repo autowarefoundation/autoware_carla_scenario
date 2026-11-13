@@ -1057,13 +1057,14 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     "pedestrian/soma": (pedestrian_soma, ("SomaMotion", "load_soma_motion")),
     # What the checked commonroad package re-exports of commonroad.session
     # (concurrent.futures, the workers) and commonroad.worker (select,
-    # subprocess, JSON objects of mixed value types): every name of
-    # session's __all__ and the worker class, the classes by name, the
-    # functions compile errors. WORKER_ENV, CommonRoadWorkerError and
-    # worker_command(), which commonroad.worker re-exports too, are the
-    # checked commonroad.worker_start's (#2116).
+    # subprocess, JSON objects of mixed value types): every name of their
+    # __all__, the classes by name, the functions compile errors.
+    # WORKER_ENV, CommonRoadWorkerError and worker_command() are the checked
+    # commonroad.worker_start's (#2116), which commonroad.worker re-exports:
+    # its model still declares them, so a scenario importing them from it
+    # compiles as before.
     "commonroad/session": (commonroad_session, tuple(commonroad_session.__all__)),
-    "commonroad/worker": (commonroad_worker, ("CommonRoadWorker",)),
+    "commonroad/worker": (commonroad_worker, tuple(commonroad_worker.__all__)),
     # What the checked hils package re-exports of hils.config (yaml, a
     # document of any shape): the classes by name, the functions compile
     # errors. SensorSpec and HilsConfigError, which hils.config re-exports
@@ -1119,6 +1120,7 @@ _UNBUILDABLE: dict[str, str] = {
     # after a run, and the worker processes it starts.
     "CommonRoadSettings": "commonroad/session",
     "CommonRoadWorker": "commonroad/worker",
+    "CommonRoadWorkerError": "commonroad/worker",
     # What the checked hils package re-exports of hils.config: the HILS
     # bridge's configuration, which scenario-hils reads on the HILS PC.
     "DeviceSpec": "hils/config",
