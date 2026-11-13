@@ -74,7 +74,9 @@ def spin_lidar_points(
     follows the left-hand rule: ``wz`` turns x toward y), to where the sensor
     would have seen it at its ray's time -- small angles, first order -- so a
     driver correcting the motion over each point's time gets back a cloud of
-    one instant.  *points* is CARLA's ``[N, 4]``; so is the result.
+    one instant.  *points* holds CARLA's ``x, y, z, intensity`` in its first
+    four columns, ``[N, 4]`` or wider (the bridge passes each point's arc as a
+    fifth); the result is ``[N, 4]``, those four.
     """
     # Differences first: epoch seconds do not fit a float32 (CARLA's points are).
     dt = (timestamp - np.asarray(measured, np.float64)) + np.asarray(rays, np.float64)
