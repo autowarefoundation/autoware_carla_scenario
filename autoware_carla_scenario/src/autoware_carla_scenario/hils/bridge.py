@@ -17,6 +17,11 @@ for an ECU's message, sleep) run at four points:
   are attached after the steps, so that nothing they measured while the
   steps waited (nothing is sent meanwhile) reaches the ECUs late, or piles
   up in memory;
+* ``warmup`` -- right after, with the sensors attached and the world followed
+  (the run ticks it, its vehicles held on their brakes): the ECUs getting
+  ready to drive on what they measure.  The run waits for these steps too
+  before its clock starts -- its warm-up, as for an ego whose stack has to
+  localize, route and engage;
 * ``scenario_end`` -- when it ends: the run's ``end``, the run going away, or
   the ego disappearing; then the periodic messages stop and the sensors go;
 * ``shutdown`` -- when the bridge stops (Ctrl-C, SIGTERM).
@@ -78,6 +83,7 @@ from .measurements import (
     lidar_scan_fields,
     ray_times,
     spin_lidar_points,
+    steady_revolution_start,
 )
 from .signals import EgoState, ego_signals
 
@@ -343,6 +349,8 @@ class _SensorDevice:
         #: arrived, the sensor's motion then); its points carry the id (column 4).
         self._arcs: Dict[int, Tuple[float, Tuple[float, ...]]] = {}
         self._next_arc = 0
+        #: When the last revolution sent started (wall clock), for the next.
+        self._last_start: Optional[float] = None
         #: Gathers a LiDAR's arcs into revolutions (under :attr:`_convert_lock`).
         self._revolution: Optional[LidarRevolution] = None
         #: The attach generation (:meth:`attach`, :meth:`detach`); written by
@@ -413,6 +421,7 @@ class _SensorDevice:
                 revolution = LidarRevolution(frequency, dt, fov)
             with self._convert_lock:
                 self._revolution = revolution
+                self._last_start = None
             actor.listen(functools.partial(self._on_data, generation))
         except BaseException:
             _discard(actor, self.spec.name)
@@ -537,9 +546,14 @@ class _SensorDevice:
         arcs = [self._arcs[int(k)] for k in known]
         measured = np.array([a[0] for a in arcs])[index]
         motion = np.array([a[1] for a in arcs])[index]
-        rays = ray_times(revolution, self._revolution.period)  # type: ignore[union-attr]
-        # The start that centres the rays' times on the measuring times.
-        start = float(np.mean(measured - rays))
+        period = self._revolution.period  # type: ignore[union-attr]
+        rays = ray_times(revolution, period)
+        # The start that centres the rays' times on the measuring times, kept
+        # on the sensor's period.
+        start = steady_revolution_start(
+            float(np.mean(measured - rays)), self._last_start, period
+        )
+        self._last_start = start
         # Arcs before the last one in this revolution are sent whole.
         for k in [k for k in self._arcs if k < int(ids.max())]:
             del self._arcs[k]
@@ -807,7 +821,9 @@ class HilsBridge:
 
     def _run_steps(self, phase: str, strict: bool) -> None:
         """Run *phase*'s steps; the first failure raises when *strict*, else
-        each is logged and the rest still run."""
+        each is logged and the rest still run.  The ``warmup`` steps follow
+        the world while they wait (:meth:`_pump`)."""
+        live = phase == "warmup"
         steps = self.config.steps(phase)
         if not steps:
             return
@@ -816,27 +832,28 @@ class HilsBridge:
         try:
             for step in steps:
                 try:
-                    self._run_step(step, since)
+                    self._run_step(step, since, live)
                 except HilsStepError as exc:
                     if strict:
                         raise HilsStepError(f"{phase}: {exc}") from exc
                     logger.warning("%s: %s", phase, exc)
         finally:
-            # The clock followed the wall clock meanwhile: the next tick must
-            # not add the world time that passed as well.
-            self._last_time = None
+            if not live:
+                # The clock followed the wall clock meanwhile: the next tick
+                # must not add the world time that passed as well.
+                self._last_time = None
 
-    def _run_step(self, step: StepSpec, since: float) -> None:
+    def _run_step(self, step: StepSpec, since: float, live: bool = False) -> None:
         logger.info("  %s", step.describe())
         if step.kind == "sleep":
-            self._pump(lambda: False, step.seconds)
+            self._pump(lambda: False, step.seconds, live)
             return
         if step.kind == "wait":
             receiver = self._receivers[step.device]
             assert step.name is not None
             name: str = step.name
             if not self._pump(
-                lambda: receiver.seen(name, step.match, since), step.seconds
+                lambda: receiver.seen(name, step.match, since), step.seconds, live
             ):
                 expected = f" with {dict(step.match)}" if step.match else ""
                 raise HilsStepError(
@@ -853,9 +870,17 @@ class HilsBridge:
         except Exception as exc:  # noqa: BLE001 - hilspy.Error, or a missing signal
             raise HilsStepError(f"{step.describe()} failed: {exc}") from exc
 
-    def _pump(self, done: Callable[[], bool], seconds: float) -> bool:
+    def _pump(
+        self, done: Callable[[], bool], seconds: float, live: bool = False
+    ) -> bool:
         """Wait up to *seconds* for *done*; the simulated clock follows the wall
-        clock meanwhile.  Whether *done* came true."""
+        clock meanwhile, or, *live*, the world's ticks are served
+        (:meth:`step`).  Whether *done* came true.
+
+        Raises:
+            HilsStepError: *live*, and the scenario ended meanwhile (its ego
+                went away).
+        """
         start = last = time.monotonic()
         while True:
             if done():
@@ -863,6 +888,11 @@ class HilsBridge:
             now = time.monotonic()
             if now - start >= seconds:
                 return False
+            if live:
+                self.step(min(_TICK_POLL_S, seconds - (now - start)))
+                if not self._active:
+                    raise HilsStepError("the scenario ended")
+                continue
             time.sleep(min(_STEP_POLL_S, seconds - (now - start)))
             now = time.monotonic()
             if self.clock is not None:
@@ -883,7 +913,7 @@ class HilsBridge:
 
     def _begin(self, ego: "carla.Actor", scenario: str) -> None:
         """Start a scenario for *ego*: periodic messages, the
-        ``scenario_start`` steps, then the sensors.
+        ``scenario_start`` steps, the sensors, then the ``warmup`` steps.
 
         The sensors are attached once the steps are over, failed or not:
         nothing a sensor measures is sent until the scenario is live (the
@@ -892,9 +922,12 @@ class HilsBridge:
         -- unbounded -- for the first flush to send stale.  Nothing in a step
         needs a sensor.
 
+        The ``warmup`` steps wait on what the ECUs make of the sensors, so
+        they run with the world followed (:meth:`step`), as a scenario runs.
+
         Raises:
-            HilsStepError: A scenario_start step failed (the scenario is still
-                running, and ends as any other).
+            HilsStepError: A scenario_start or warmup step failed (the scenario
+                is still running, and ends as any other).
         """
         assert self._world is not None
         self._ego = ego
@@ -930,6 +963,7 @@ class HilsBridge:
                     logger.exception(
                         "%s: failed to attach the sensor", sensor_device.spec.name
                     )
+        self._run_steps("warmup", strict=True)
 
     def _finish(self) -> None:
         """End the scenario: remove the sensors, carry what its cuts stopped

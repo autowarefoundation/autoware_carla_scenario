@@ -77,14 +77,25 @@ def write_case_errored(
     path = directory / CASE_ERRORED
     # The object `json.dumps(..., indent=2, ensure_ascii=False)` writes, a
     # member at a time: each value is of its own type, which one dict of them
-    # all could not be in Codon (docs/typecheck.md).
+    # all could not be in Codon (docs/typecheck.md).  The overrides, the one
+    # member that can nest, are laid out with json.dump(), which takes json's
+    # encoder written in Python on every version (as write_json does): it
+    # raises RecursionError a thousand levels down.  json.dumps() takes the C
+    # encoder for indent=2 from Python 3.13 on, which on 3.14 goes as deep as
+    # the stack allows, laying out an indent that grows with each level: an
+    # override nested a hundred thousand deep took gigabytes before it gave up.
+    overrides_chunks = _Chunks()
+    json.dump(
+        {"overrides": list(overrides)},
+        overrides_chunks,
+        indent=2,
+        ensure_ascii=False,
+    )
     members = [
         _member(
             json.dumps({"schema": CASE_ERRORED_SCHEMA}, indent=2, ensure_ascii=False)
         ),
-        _member(
-            json.dumps({"overrides": list(overrides)}, indent=2, ensure_ascii=False)
-        ),
+        _member(overrides_chunks.text()),
         _member(json.dumps({"exit_code": exit_code}, indent=2, ensure_ascii=False)),
         _member(json.dumps({"attempts": attempts}, indent=2, ensure_ascii=False)),
         _member(json.dumps({"reason": reason}, indent=2, ensure_ascii=False)),
@@ -95,6 +106,23 @@ def write_case_errored(
         )
     write_text_atomically(path, "{\n" + ",\n".join(members) + "\n}")
     return path
+
+
+class _Chunks:
+    """What ``json.dump()`` writes to: the chunks it writes, joined by
+    :meth:`text`."""
+
+    _parts: list[str]
+
+    def __init__(self) -> None:
+        self._parts = list[str]()
+
+    def write(self, chunk: str) -> int:
+        self._parts.append(chunk)
+        return len(chunk)
+
+    def text(self) -> str:
+        return "".join(self._parts)
 
 
 def _member(single: str) -> str:

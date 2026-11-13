@@ -419,10 +419,14 @@ def test_from_value_raises_what_write_json_raises(
 def test_from_value_refuses_a_circular_object(tmp_path: Path) -> None:
     looped: dict[str, Any] = {}
     looped["self"] = looped
-    with pytest.raises(ValueError, match="^Circular reference detected$"):
+    # str(), not match=: from 3.14.10 json adds a note ("when serializing
+    # dict item 'self'"), which match= reads as part of the message.
+    with pytest.raises(ValueError) as written:
         write_json(tmp_path / "doc.json", looped)
-    with pytest.raises(ValueError, match="^Circular reference detected$"):
+    assert str(written.value) == "Circular reference detected"
+    with pytest.raises(ValueError) as read:
         JsonMembers.from_value(looped)
+    assert str(read.value) == "Circular reference detected"
 
 
 @pytest.mark.skipif(
@@ -488,8 +492,47 @@ def test_parse_object_reads_what_json_loads_reads_nested_however_deep() -> None:
         assert members.value("a") == members.value("deep")
 
 
+def _written_back(data: Any) -> None:
+    """Write each member of *data* (what ``json.loads()`` read) back as
+    :func:`parse_object` writes it, raising what that raises: the C encoder's
+    :class:`RecursionError` where it cannot go as deep as ``json.loads()``
+    read (Python 3.14.10, which bounds both by the stack and encodes fewer
+    levels than it decodes; earlier versions encode at least as deep)."""
+    if isinstance(data, dict):
+        for value in data.values():
+            json.dumps(value, ensure_ascii=False)
+
+
+def _returns_or_stops(call: Any) -> None:
+    """Call *call*, a reader of a record :func:`_written_back` refused: one
+    that writes the deep member back stops on the encoder's
+    :class:`RecursionError`, one that leaves it unread returns; neither
+    raises anything else."""
+    try:
+        call()
+    except RecursionError:
+        pass
+
+
+def _too_deep_to_load() -> int:
+    """A depth of array ``json.loads()`` does not read here, doubling from
+    the deepest the search of :func:`_loads_limit` covers (3.14.10 reads far
+    deeper); 0 when it reads every depth tried."""
+    depth = 2 * _loads_limit()
+    while depth <= 1 << 23:
+        try:
+            json.loads(_nested(depth))
+        except RecursionError:
+            return depth
+        depth *= 2
+    return 0
+
+
 def test_parse_object_raises_what_json_loads_raises_nested_too_deep() -> None:
-    text = '{"deep": ' + _nested(2 * _loads_limit()) + "}"
+    depth = _too_deep_to_load()
+    if depth == 0:
+        pytest.skip("json.loads() reads every depth tried here")
+    text = '{"deep": ' + _nested(depth) + "}"
     with pytest.raises(RecursionError):
         json.loads(text)
     with pytest.raises(RecursionError):
@@ -500,10 +543,11 @@ def test_parse_object_raises_what_json_loads_raises_nested_too_deep() -> None:
 def test_a_member_too_deep_to_lay_out_raises_as_write_json_does(
     tmp_path: Path, depth: int
 ) -> None:
-    # Laid out as write_json lays it out: by json's encoder written in Python
-    # up to Python 3.12, which lays out five hundred levels but not five
-    # thousand (which json.loads() reads on 3.12), and by its C encoder from
-    # 3.13 on, which lays out both.
+    # Laid out as write_json lays it out: json.dump() takes json's encoder
+    # written in Python on every version, which lays out five hundred levels
+    # but not five thousand (which json.loads() reads on 3.12). json.dumps()
+    # takes the C encoder from 3.13 on, which on 3.14 lays out both, so the
+    # members must not lay out with it.
     text = '{"a": 1, "deep": ' + _nested(depth) + "}"
     if depth >= _loads_limit():
         pytest.skip("json.loads() reads no text this deep here")
