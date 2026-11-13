@@ -1,6 +1,6 @@
 """The request guard the web applications (``viewer``, ``scenario-editor``) share.
 
-Both bind the loopback interface (:mod:`.serve_cli`), but a loopback binding
+Both bind the loopback interface (:mod:`.serve_bind`), but a loopback binding
 only keeps other *machines* out: a web page open in the user's own browser can
 still send requests to ``127.0.0.1``.  :class:`RequestGuard`, an ASGI
 middleware installed in both applications, refuses the two ways such a page
@@ -52,7 +52,7 @@ from starlette.exceptions import HTTPException
 from starlette.requests import Request
 from starlette.responses import PlainTextResponse
 
-from .serve_cli import DEFAULT_HOST, is_loopback
+from .serve_bind import DEFAULT_HOST, is_loopback
 
 __all__ = [
     "FRAME_HEADERS",

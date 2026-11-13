@@ -409,3 +409,262 @@ def test_the_console_script_answers_help(prog: str) -> None:
     assert result.returncode == 0, result.stderr
     assert f"usage: {prog}" in result.stdout
     assert "Uvicorn running" not in result.stderr
+
+
+# ---------------------------------------------------------------------------
+# Pins of what serve_cli does, byte for byte, kept as it is when its checkable
+# part moves into a module the library check compiles.
+# ---------------------------------------------------------------------------
+
+
+def test_serve_cli_exports_the_same_names() -> None:
+    from autoware_carla_scenario import serve_cli
+
+    assert serve_cli.__all__ == [
+        "DEFAULT_HOST",
+        "add_bind_arguments",
+        "check_port",
+        "is_loopback",
+        "port",
+        "warn_if_exposed",
+    ]
+    assert serve_cli.DEFAULT_HOST == "127.0.0.1"
+
+
+@pytest.mark.parametrize(
+    ("host", "loopback"),
+    [
+        # The name, upper or lower case, with any dots at its end.
+        ("localhost.", True),
+        ("Localhost.", True),
+        ("LOCALHOST.", True),
+        ("localhost..", True),
+        ("localhost.localdomain", False),
+        ("x.localhost", False),
+        ("[localhost]", False),
+        # IPv4: all of 127.0.0.0/8, written as ipaddress reads it only.
+        ("127.255.255.255", True),
+        ("128.0.0.1", False),
+        ("127.1", False),
+        ("127.0.0.01", False),
+        (" 127.0.0.1", False),
+        ("127.0.0.1 ", False),
+        # Brackets are stripped from either end, however many.
+        ("[127.0.0.1]", True),
+        ("[[::1]]", True),
+        ("::1]", True),
+        # IPv6: ::1 however it is written, an IPv4-mapped loopback address,
+        # a scoped one; not another embedding of 127.0.0.1.
+        ("0:0:0:0:0:0:0:1", True),
+        ("::1%lo", True),
+        ("[::ffff:127.0.0.1]", True),
+        ("::ffff:7f00:1", True),
+        ("::ffff:127.0.0.1%lo", True),
+        ("::ffff:127.0.0.1%1", True),
+        ("::ffff:0:127.0.0.1", False),
+        ("::127.0.0.1", False),
+        ("64:ff9b::7f00:1", False),
+        ("2002:7f00:1::", False),
+        ("fe80::1%eth0", False),
+    ],
+)
+def test_is_loopback_reads_hosts_as_before(host: str, loopback: bool) -> None:
+    assert is_loopback(host) is loopback
+
+
+@pytest.mark.parametrize(
+    ("host", "shown"),
+    [
+        ("0.0.0.0", "0.0.0.0"),  # noqa: S104
+        ("::", "[::]"),
+        ("[::]", "[::]"),
+        ("fe80::1%eth0", "[fe80::1%eth0]"),
+        ("box.lan", "box.lan"),
+        ("", ""),
+        ("::ffff:192.168.0.1", "[::ffff:192.168.0.1]"),
+    ],
+)
+def test_warn_if_exposed_writes_one_line_to_stderr(
+    host: str, shown: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    warn_if_exposed("prog", host, 1234, "edit drafts")
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err == (
+        f"prog: WARNING: listening on {shown}:1234 with no authentication; "
+        "anyone who can reach this port can edit drafts. Pass --host "
+        "127.0.0.1 to serve this machine only.\n"
+    )
+
+
+@pytest.mark.parametrize(
+    "host", ["127.0.0.1", "::1", "[::1]", "localhost", "LOCALHOST."]
+)
+def test_warn_if_exposed_says_nothing_of_loopback(
+    host: str, capsys: pytest.CaptureFixture[str]
+) -> None:
+    warn_if_exposed("prog", host, 1234, "edit drafts")
+    assert capsys.readouterr() == ("", "")
+
+
+def test_warn_if_exposed_writes_to_the_stderr_of_the_call(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import io
+
+    stream = io.StringIO()
+    monkeypatch.setattr(sys, "stderr", stream)
+    warn_if_exposed("viewer", "box.lan", 9000, "read the recordings")
+    assert stream.getvalue() == (
+        "viewer: WARNING: listening on box.lan:9000 with no authentication; "
+        "anyone who can reach this port can read the recordings. Pass --host "
+        "127.0.0.1 to serve this machine only.\n"
+    )
+
+
+@pytest.mark.parametrize(
+    ("number", "message"),
+    [
+        (0, "must be within 1-65535, got 0"),
+        (65536, "must be within 1-65535, got 65536"),
+    ],
+)
+def test_check_port_raises_a_plain_value_error(number: int, message: str) -> None:
+    with pytest.raises(ValueError) as exc:
+        check_port(number)
+    assert type(exc.value) is ValueError
+    assert exc.value.args == (message,)
+
+
+@pytest.mark.parametrize(
+    ("text", "message"),
+    [
+        ("0", "must be within 1-65535, got 0"),
+        ("70000", "must be within 1-65535, got 70000"),
+        ("abc", "expected an integer, got 'abc'"),
+        ("", "expected an integer, got ''"),
+        ("1.0", "expected an integer, got '1.0'"),
+    ],
+)
+def test_port_raises_an_argument_type_error_without_a_cause(
+    text: str, message: str
+) -> None:
+    with pytest.raises(argparse.ArgumentTypeError) as exc:
+        port(text)
+    assert exc.value.args == (message,)
+    assert exc.value.__cause__ is None
+    assert exc.value.__suppress_context__ is True
+
+
+def test_port_reads_what_int_reads() -> None:
+    assert [port(text) for text in (" 80 ", "8_080", "+443", "٨٠")] == [
+        80,
+        8080,
+        443,
+        80,
+    ]
+
+
+def _bind_parser(
+    monkeypatch: pytest.MonkeyPatch, **env: str
+) -> argparse.ArgumentParser:
+    from autoware_carla_scenario.serve_cli import add_bind_arguments
+
+    for name in ("PIN_HOST", "PIN_PORT"):
+        monkeypatch.delenv(name, raising=False)
+    for name, value in env.items():
+        monkeypatch.setenv(name, value)
+    parser = argparse.ArgumentParser(prog="pin")
+    add_bind_arguments(
+        parser, host_env="PIN_HOST", port_env="PIN_PORT", default_port=9100
+    )
+    return parser
+
+
+def test_add_bind_arguments_adds_host_and_port(monkeypatch: pytest.MonkeyPatch) -> None:
+    parser = _bind_parser(monkeypatch)
+    actions = {a.dest: a for a in parser._actions}
+    assert sorted(actions) == ["help", "host", "port"]
+    host, port_action = actions["host"], actions["port"]
+    assert host.option_strings == ["--host"]
+    assert host.default == "127.0.0.1"
+    assert host.type is None
+    assert host.help == (
+        "address to bind (env PIN_HOST; default 127.0.0.1, this machine only). "
+        "0.0.0.0 serves every interface, with no authentication"
+    )
+    assert port_action.option_strings == ["--port"]
+    assert port_action.default == "9100"
+    assert port_action.type is port
+    assert port_action.help == "port to listen on, 1-65535 (env PIN_PORT; default 9100)"
+    assert vars(parser.parse_args([])) == {"host": "127.0.0.1", "port": 9100}
+
+
+@pytest.mark.parametrize(
+    ("env", "argv", "parsed"),
+    [
+        (
+            {"PIN_HOST": "box.lan", "PIN_PORT": "81"},
+            [],
+            {"host": "box.lan", "port": 81},
+        ),
+        ({"PIN_HOST": "", "PIN_PORT": ""}, [], {"host": "127.0.0.1", "port": 9100}),
+        (
+            {"PIN_HOST": "box.lan", "PIN_PORT": "81"},
+            ["--host", "::", "--port", "82"],
+            {"host": "::", "port": 82},
+        ),
+        ({}, ["--host="], {"host": "", "port": 9100}),
+    ],
+)
+def test_add_bind_arguments_reads_the_environment_then_the_flags(
+    env: dict[str, str],
+    argv: list[str],
+    parsed: dict[str, Any],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parser = _bind_parser(monkeypatch, **env)
+    assert vars(parser.parse_args(argv)) == parsed
+
+
+@pytest.mark.parametrize(
+    ("env", "argv", "error"),
+    [
+        ({}, ["--port", "0"], "argument --port: must be within 1-65535, got 0"),
+        ({}, ["--port", "x"], "argument --port: expected an integer, got 'x'"),
+        (
+            {"PIN_PORT": "99999"},
+            [],
+            "argument --port: must be within 1-65535, got 99999",
+        ),
+        ({}, ["--port"], "argument --port: expected one argument"),
+    ],
+)
+def test_add_bind_arguments_refuses_a_bad_port_with_exit_2(
+    env: dict[str, str],
+    argv: list[str],
+    error: str,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    parser = _bind_parser(monkeypatch, **env)
+    with pytest.raises(SystemExit) as exc:
+        parser.parse_args(argv)
+    assert exc.value.code == 2
+    out, err = capsys.readouterr()
+    assert out == ""
+    assert err.endswith(f"\npin: error: {error}\n")
+    assert err.startswith("usage: pin [-h] [--host HOST] [--port PORT]\n")
+
+
+def test_serve_cli_re_exports_serve_binds_functions_themselves() -> None:
+    """What needs no argparse is serve_bind's: the same objects, not wrappers,
+    so a call goes as deep as it did."""
+    from autoware_carla_scenario import serve_bind, serve_cli, web_guard
+    from autoware_carla_scenario.editor import app, service
+
+    for name in ("DEFAULT_HOST", "check_port", "is_loopback", "warn_if_exposed"):
+        assert getattr(serve_cli, name) is getattr(serve_bind, name), name
+    assert web_guard.is_loopback is serve_bind.is_loopback
+    assert web_guard.DEFAULT_HOST is app.DEFAULT_HOST is serve_bind.DEFAULT_HOST
+    assert service.check_port is serve_bind.check_port

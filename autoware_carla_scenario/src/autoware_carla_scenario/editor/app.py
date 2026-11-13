@@ -27,7 +27,7 @@ from ..authoring._builders_generated import ONCE_ACTIONS, OVERRIDING_ACTIONS
 from ..authoring.hydra_config import run_map_group
 from ..authoring.models import SIGNAL_STATE_NAMES, actor_kind
 from ..authoring.persistence import DraftStore, default_draft_dir
-from ..serve_cli import DEFAULT_HOST
+from ..serve_bind import DEFAULT_HOST
 from ..trajectory.authoring import (
     format_relative_vertices,
     format_route_vertices,
