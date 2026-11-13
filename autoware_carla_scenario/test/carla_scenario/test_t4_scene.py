@@ -126,6 +126,33 @@ def _numeric(array: pb.NumericArray) -> np.ma.MaskedArray:
     return np.ma.MaskedArray(data, mask=mask)
 
 
+def _rotations(ego: pb.EgoSequence) -> np.ndarray:
+    return np.asarray(_numeric(ego.poses_3d))[:, :3, :3]
+
+
+def _poses(ego: pb.EgoSequence) -> np.ma.MaskedArray:
+    """The planar x/y/yaw the devkit derives from ``poses_3d``."""
+    transforms = _numeric(ego.poses_3d)
+    yaw = np.arctan2(transforms[:, 1, 0], transforms[:, 0, 0])
+    return np.ma.column_stack([transforms[:, 0, 3], transforms[:, 1, 3], yaw])
+
+
+def _velocities(ego: pb.EgoSequence) -> np.ma.MaskedArray:
+    return _numeric(ego.velocities_3d)[:, :2]
+
+
+def _speeds(ego: pb.EgoSequence) -> np.ndarray:
+    """The signed forward speed: the velocity along the body's x axis."""
+    velocities = np.asarray(_numeric(ego.velocities_3d))
+    return np.einsum("ti,ti->t", velocities, _rotations(ego)[:, :, 0])
+
+
+def _body_angular(ego: pb.EgoSequence) -> np.ndarray:
+    """``angular_velocities_3d`` (scene axes) in the body's axes."""
+    angular = np.asarray(_numeric(ego.angular_velocities_3d))
+    return np.einsum("tji,tj->ti", _rotations(ego), angular)
+
+
 # -- frames and time ------------------------------------------------------
 
 
@@ -137,7 +164,7 @@ def test_ego_is_its_rear_axle_in_the_map_frame(tmp_path: Path) -> None:
         _tick(100, _state(1, 10.0, 20.0, yaw=90.0)),
     )
     scene = trajectory_log_to_t4_scene(log, with_map=False).scene
-    pose = _numeric(scene.ego.poses)[0]
+    pose = _poses(scene.ego)[0]
     # Origin (10, 20) -> map (1010, 1980); the rear axle 1.2 m behind it, along -y.
     np.testing.assert_allclose(pose, [1010.0, 1980.0 + 1.2, -math.pi / 2], atol=1e-9)
     pose_3d = _numeric(scene.ego.poses_3d)[0]
@@ -180,6 +207,9 @@ def test_only_a_boolean_true_tags_the_scene_passed(
     )
     assert tag in tags
     assert [t for t in tags if t.startswith("result:")] == [tag]
+    # key:value, every one: the devkit refuses a bare tag.
+    assert "source:autoware_carla_scenario" in tags
+    assert all(":" in t and t.split(":", 1)[0] and t.split(":", 1)[1] for t in tags)
 
 
 def test_ego_velocity_flips_y_and_speed_is_along_the_heading(tmp_path: Path) -> None:
@@ -187,10 +217,8 @@ def test_ego_velocity_flips_y_and_speed_is_along_the_heading(tmp_path: Path) -> 
     state = _state(1, 0.0, 0.0, yaw=-90.0, vy=-5.0)
     log = _write_log(tmp_path / "Run.trajectory.jsonl", EGO, _tick(100, state))
     scene = trajectory_log_to_t4_scene(log, with_map=False).scene
-    np.testing.assert_allclose(
-        _numeric(scene.ego.velocities)[0], [0.0, 5.0], atol=1e-12
-    )
-    assert _numeric(scene.ego.longitudinal_speeds)[0] == pytest.approx(5.0)
+    np.testing.assert_allclose(_velocities(scene.ego)[0], [0.0, 5.0], atol=1e-12)
+    assert _speeds(scene.ego)[0] == pytest.approx(5.0)
 
 
 #: A kinematic bicycle turning left: its rear axle (``base_link``) moves along
@@ -255,8 +283,8 @@ def _turn_scene(tmp_path: Path, ticks: list[dict]) -> pb.T4Scene:
 def test_a_turning_egos_velocity_is_its_rear_axles(tmp_path: Path) -> None:
     ticks, truths = _bicycle_turn(11)
     scene = _turn_scene(tmp_path, ticks)
-    velocities = _numeric(scene.ego.velocities)
-    headings = _numeric(scene.ego.poses)[:, 2]
+    velocities = _velocities(scene.ego)
+    headings = _poses(scene.ego)[:, 2]
     assert len(velocities) == 6 and not velocities.mask.any()
     for row, velocity in enumerate(velocities):
         left = np.array([-math.sin(headings[row]), math.cos(headings[row])])
@@ -264,12 +292,10 @@ def test_a_turning_egos_velocity_is_its_rear_axles(tmp_path: Path) -> None:
         assert float(velocity @ left) == pytest.approx(0.0, abs=1e-9)
         assert float(np.linalg.norm(velocity)) == pytest.approx(_SPEED)
         np.testing.assert_allclose(velocity, truths[2 * row], atol=1e-9)
-    np.testing.assert_allclose(
-        _numeric(scene.ego.longitudinal_speeds), _SPEED, atol=1e-9
-    )
+    np.testing.assert_allclose(_speeds(scene.ego), _SPEED, atol=1e-9)
     # The body angular velocity, counter-clockwise in the right-handed frame.
     np.testing.assert_allclose(
-        _numeric(scene.ego.angular_velocities),
+        _body_angular(scene.ego),
         np.tile([0.0, 0.0, _YAW_RATE], (6, 1)),
         atol=1e-12,
     )
@@ -288,8 +314,8 @@ def test_the_turns_origin_velocity_is_its_positions_rate() -> None:
 def test_a_straight_egos_velocity_is_unchanged(tmp_path: Path) -> None:
     ticks, truths = _bicycle_turn(3, yaw_rate=0.0)
     scene = _turn_scene(tmp_path, ticks)
-    np.testing.assert_allclose(_numeric(scene.ego.velocities)[0], truths[0], atol=1e-12)
-    assert _numeric(scene.ego.longitudinal_speeds)[0] == pytest.approx(_SPEED)
+    np.testing.assert_allclose(_velocities(scene.ego)[0], truths[0], atol=1e-12)
+    assert _speeds(scene.ego)[0] == pytest.approx(_SPEED)
 
 
 def test_a_log_without_angular_velocity_keeps_the_origins_velocity(
@@ -299,9 +325,9 @@ def test_a_log_without_angular_velocity_keeps_the_origins_velocity(
     scene = _turn_scene(tmp_path, ticks)
     origin = ticks[0]["actors"][0]
     np.testing.assert_allclose(
-        _numeric(scene.ego.velocities)[0], [origin[7], -origin[8]], atol=1e-12
+        _velocities(scene.ego)[0], [origin[7], -origin[8]], atol=1e-12
     )
-    assert _numeric(scene.ego.longitudinal_speeds)[0] == pytest.approx(_SPEED)
+    assert _speeds(scene.ego)[0] == pytest.approx(_SPEED)
     assert not scene.ego.HasField("angular_velocities")
 
 
@@ -322,7 +348,7 @@ def test_rear_axle_offset_can_be_given(tmp_path: Path) -> None:
     scene = trajectory_log_to_t4_scene(
         log, with_map=False, rear_axle_offset_m=-1.5
     ).scene
-    assert _numeric(scene.ego.poses)[0][0] == pytest.approx(1000.0 - 1.5)
+    assert _poses(scene.ego)[0][0] == pytest.approx(1000.0 - 1.5)
     assert scene.ego.shape.base_link_to_front == pytest.approx(0.1 + 2.4 + 1.5)
 
 
@@ -334,13 +360,13 @@ def test_the_rear_axle_is_the_one_the_run_recorded(tmp_path: Path) -> None:
         _tick(100, _state(1, 0.0, 0.0)),
     )
     scene = trajectory_log_to_t4_scene(log, with_map=False).scene
-    assert _numeric(scene.ego.poses)[0][0] == pytest.approx(1000.0 - 1.5)
+    assert _poses(scene.ego)[0][0] == pytest.approx(1000.0 - 1.5)
     assert scene.ego.shape.base_link_to_front == pytest.approx(0.1 + 2.4 + 1.5)
     # Given, it wins over the log's.
     given = trajectory_log_to_t4_scene(
         log, with_map=False, rear_axle_offset_m=-1.0
     ).scene
-    assert _numeric(given.ego.poses)[0][0] == pytest.approx(1000.0 - 1.0)
+    assert _poses(given.ego)[0][0] == pytest.approx(1000.0 - 1.0)
 
 
 def test_the_ego_shows_the_turn_indicators_the_log_records(tmp_path: Path) -> None:
@@ -406,7 +432,7 @@ def test_rows_are_a_uniform_grid_and_a_missing_tick_is_unavailable(
         400_000_000,
     ]
     assert list(_numeric(scene.ego.available)) == [True, True, False, True, True]
-    assert list(np.ma.getmaskarray(_numeric(scene.ego.poses))[:, 0]) == [
+    assert list(np.ma.getmaskarray(_poses(scene.ego))[:, 0]) == [
         False,
         False,
         True,
@@ -1565,7 +1591,7 @@ def test_the_converter_takes_any_finite_rear_axle_offset(
     scene = trajectory_log_to_t4_scene(
         _one_car_log(tmp_path), with_map=False, rear_axle_offset_m=offset
     ).scene
-    assert np.isfinite(_numeric(scene.ego.poses).compressed()).all()
+    assert np.isfinite(_poses(scene.ego).compressed()).all()
     assert math.isfinite(scene.ego.shape.base_link_to_front)
 
 

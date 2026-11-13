@@ -98,6 +98,11 @@ def _numeric(array: pb.NumericArray) -> np.ndarray:
     return np.frombuffer(array.data, dtype=dtype).reshape(tuple(array.shape))
 
 
+def _planar_x(ego: pb.EgoSequence) -> np.ndarray:
+    """The ego's x on each row, from its ``poses_3d``."""
+    return _numeric(ego.poses_3d)[:, 0, 3]
+
+
 def _run(
     ticks: int, history_rows: int = 3, extras: bool = True, wz: float = 0.0
 ) -> LiveT4Scene:
@@ -160,7 +165,7 @@ def test_the_next_tick_still_has_every_row_it_shows() -> None:
     scene = live.scene("run")
     assert scene is not None
     assert list(_numeric(scene.ego.available)) == [True, True, True]
-    assert not np.frombuffer(scene.ego.accelerations.mask, dtype="?").any()
+    assert not np.frombuffer(scene.ego.accelerations_3d.mask, dtype="?").any()
 
 
 def test_a_short_run_has_the_rows_it_has() -> None:
@@ -175,10 +180,26 @@ def test_the_ego_carries_what_the_policy_was_told() -> None:
     ego = scene.ego
     # The fake ego faces CARLA's +y (yaw 90), the map's -y: its rig's +x
     # acceleration points along the map's -y.
-    np.testing.assert_allclose(_numeric(ego.accelerations)[-1], [0.0, -1.0], atol=1e-9)
+    np.testing.assert_allclose(
+        _numeric(ego.accelerations_3d)[-1], [0.0, -1.0, 0.0], atol=1e-9
+    )
     # The velocity the policy was told (base_link's), not the actor's origin's.
-    np.testing.assert_allclose(_numeric(ego.velocities)[-1], [0.25, -9.5], atol=1e-9)
-    np.testing.assert_allclose(_numeric(ego.angular_velocities)[-1], [0.0, 0.0, 0.1])
+    np.testing.assert_allclose(
+        _numeric(ego.velocities_3d)[-1, :2], [0.25, -9.5], atol=1e-9
+    )
+    # In the scene's axes; about z, which the yaw does not turn.
+    np.testing.assert_allclose(
+        _numeric(ego.angular_velocities_3d)[-1], [0.0, 0.0, 0.1], atol=1e-12
+    )
+    # None of the legacy planar fields, which the devkit refuses.
+    for legacy in (
+        "poses",
+        "velocities",
+        "accelerations",
+        "longitudinal_speeds",
+        "angular_velocities",
+    ):
+        assert not ego.HasField(legacy), legacy
     np.testing.assert_allclose(_numeric(ego.tire_steering_angles), 0.02)
     assert list(_numeric(ego.odometry_timestamps_ns)) == list(
         _numeric(scene.timestamps_ns)
@@ -189,7 +210,7 @@ def test_the_ego_carries_what_the_policy_was_told() -> None:
 def test_without_extras_they_are_masked_not_zero() -> None:
     scene = _run(ticks=5, extras=False).scene("run")
     assert scene is not None
-    for array in (scene.ego.accelerations, scene.ego.tire_steering_angles):
+    for array in (scene.ego.accelerations_3d, scene.ego.tire_steering_angles):
         assert array.HasField("mask")
         assert np.frombuffer(array.mask, dtype="?").all()
 
@@ -197,7 +218,7 @@ def test_without_extras_they_are_masked_not_zero() -> None:
 def test_without_extras_the_angular_velocity_is_the_logs() -> None:
     scene = _run(ticks=5, extras=False, wz=-math.degrees(0.2)).scene("run")
     assert scene is not None
-    array = scene.ego.angular_velocities
+    array = scene.ego.angular_velocities_3d
     assert not np.frombuffer(array.mask, dtype="?").any()
     # CARLA's clockwise -z is the right-handed frame's counter-clockwise +z.
     np.testing.assert_allclose(_numeric(array), [[0.0, 0.0, 0.2]] * 3, atol=1e-3)
@@ -283,9 +304,9 @@ def test_a_drive_off_the_grid_is_the_current_row(policy_timestep_s: float) -> No
         assert stamps[-1] == now_ns
         assert list(_numeric(scene.ego.odometry_timestamps_ns)) == stamps
         # The ego's state is the drive's tick's, not one 50 ms old.
-        assert _numeric(scene.ego.poses)[-1, 0] == pytest.approx(x, abs=1e-6)
+        assert _planar_x(scene.ego)[-1] == pytest.approx(x, abs=1e-6)
         assert list(_numeric(scene.ego.available)) == [True] * len(frames)
-        assert not np.frombuffer(scene.ego.accelerations.mask, dtype="?").any()
+        assert not np.frombuffer(scene.ego.accelerations_3d.mask, dtype="?").any()
         # The sweep taken on the drive's tick is on its row, at its time.
         assert [row.HasField("value") for row in scene.lidar.rows] == [False] * (
             len(frames) - 1
@@ -370,7 +391,7 @@ def test_a_drive_on_the_grid_is_what_the_log_converts_to() -> None:
         converted = log_to_scene(grid, frames, len(frames) - 1, "run", None)
         for field in ("timestamps_ns", "frame_indices", "annotations"):
             assert getattr(scene, field) == getattr(converted, field), field
-        assert scene.ego.poses == converted.ego.poses
+        assert scene.ego.poses_3d == converted.ego.poses_3d
         assert scene.ego.available == converted.ego.available
 
 
@@ -400,7 +421,7 @@ def test_a_scene_keeps_the_poses_unrounded() -> None:
     scene = live.scene("run")
     assert scene is not None
     # Facing the map's -y, base_link is behind the origin along y, not x.
-    assert _numeric(scene.ego.poses)[-1, 0] == pytest.approx(0.1234567, abs=1e-12)
+    assert _planar_x(scene.ego)[-1] == pytest.approx(0.1234567, abs=1e-12)
 
 
 def _straight(*ids: int) -> RouteGraph:

@@ -74,6 +74,7 @@ message RigidTransform3D {
 message SceneMetadata {
   string scene_id = 1;
   optional string recording_id = 2;
+  // Sample-level key:value labels; split at first colon, allow multiple values per key.
   repeated string tags = 3;
 }
 message EgoShape {
@@ -85,23 +86,26 @@ message EgoShape {
   optional double base_link_to_rear_axle = 5;
 }
 message EgoSequence {
-  NumericArray poses = 1; // float64 [T,3] x/y/yaw, metres/radians, Scene axes.
-  NumericArray velocities = 2; // float64 [T,2], m/s, Scene axes.
-  NumericArray accelerations = 3; // float64 [T,2], m/s^2, Scene axes.
+  NumericArray poses = 1 [deprecated = true]; // float64 [T,3] x/y/yaw, metres/radians, Scene axes.
+  NumericArray velocities = 2 [deprecated = true]; // float64 [T,2], m/s, Scene axes.
+  NumericArray accelerations = 3 [deprecated = true]; // float64 [T,2], m/s^2, Scene axes.
   EgoShape shape = 4;
   NumericArray available = 5; // bool [T], no masked elements; absent means every time present.
-  NumericArray longitudinal_speeds = 6; // float64 [T], signed forward m/s.
-  NumericArray angular_velocities = 7; // float64 [T,3], body x/y/z, rad/s; masks per axis.
+  NumericArray longitudinal_speeds = 6 [deprecated = true]; // float64 [T], signed forward m/s.
+  NumericArray angular_velocities = 7 [deprecated = true]; // float64 [T,3], body x/y/z, rad/s; masks per axis.
   NumericArray tire_steering_angles = 8; // float64 [T], rad.
   NumericArray steering_wheel_angles = 9; // float64 [T], rad.
   // int64 [T]: unknown=0, disabled=1, left=2, right=3, hazard=4.
   NumericArray turn_indicators = 10;
-  NumericArray poses_3d = 11; // float64 [T,4,4], body-to-Scene rigid transforms, metres.
+  NumericArray poses_3d = 11; // float64 [T,4,4], vehicle-to-Scene transforms (partial translation allowed), metres.
   NumericArray odometry_timestamps_ns = 12; // int64 [T], reference ns, masks mark unknown.
   NumericArray acceleration_timestamps_ns = 13; // int64 [T].
   NumericArray tire_steering_timestamps_ns = 14; // int64 [T].
   NumericArray steering_wheel_timestamps_ns = 15; // int64 [T].
   NumericArray turn_indicator_timestamps_ns = 16; // int64 [T].
+  NumericArray velocities_3d = 17; // float64 [T,3], Scene axes, m/s.
+  NumericArray accelerations_3d = 18; // float64 [T,3], Scene axes, m/s^2.
+  NumericArray angular_velocities_3d = 19; // float64 [T,3], Scene axes, rad/s.
 }
 message OptionalString { optional string value = 1; }
 message StringColumn { repeated OptionalString values = 1; }
@@ -127,7 +131,7 @@ message CylinderAnnotations {
   NumericArray labels = 5; // int64 [N], public ObjectCategory values.
   StringColumn track_ids = 6; // [N], known IDs unique across groups within a batch.
   NumericArray orientations = 7; // float64 [N,4], object-to-Frame/Scene xyzw quaternion.
-  NumericArray diameters = 8; // float64 [N], metres.
+  NumericArray diameters = 8; // float64 [N], diameter, metres.
   NumericArray heights = 9; // float64 [N], object-axis height, metres.
 }
 message PolygonAnnotations {
@@ -181,23 +185,25 @@ message T4Scene {
 }
 
 // Registered separately, once per resource. SHA-256 covers the encoding,
-// projection profile and exact OSM bytes; it is not a semantic geometry hash.
+// projection profile and exact encoded bytes; it is not a semantic geometry hash.
 message MapResource {
   enum Encoding {
     ENCODING_UNSPECIFIED = 0;
     LANELET2_OSM = 1;
+    // simple-lanelet2 object-graph snapshot, including its own format version.
+    SIMPLE_LANELET2_SNAPSHOT = 2;
   }
   enum Projection {
     PROJECTION_UNSPECIFIED = 0;
     // Already projected metres in MapData axes, including supplied local submaps.
-    // Every node has exact local_x/local_y/ele tags. Auxiliary lat/lon encode
+    // For OSM, every node has exact local_x/local_y/ele tags. Auxiliary lat/lon encode
     // the same coordinates with Mercator(0,0); they are NOT real geolocation.
     // Readers restore local coordinates and rebuild spatial indices after IO.
     LOCAL_METERS = 1;
   }
   string sha256 = 1; // 64 lowercase hex characters; content identity, not a locator.
   Encoding encoding = 2;
-  bytes data = 3; // Lanelet2 OSM XML; native IDs, relations and custom centerlines.
+  bytes data = 3; // Payload in the selected encoding; preserves native map geometry.
   Projection projection = 4; // Required explicit coordinate interpretation.
 }
 message MapReference {

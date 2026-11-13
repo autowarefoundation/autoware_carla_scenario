@@ -128,7 +128,7 @@ class EgoShape(_message.Message):
     def __init__(self, length: _Optional[float] = ..., width: _Optional[float] = ..., wheel_base: _Optional[float] = ..., base_link_to_front: _Optional[float] = ..., base_link_to_rear_axle: _Optional[float] = ...) -> None: ...
 
 class EgoSequence(_message.Message):
-    __slots__ = ("poses", "velocities", "accelerations", "shape", "available", "longitudinal_speeds", "angular_velocities", "tire_steering_angles", "steering_wheel_angles", "turn_indicators", "poses_3d", "odometry_timestamps_ns", "acceleration_timestamps_ns", "tire_steering_timestamps_ns", "steering_wheel_timestamps_ns", "turn_indicator_timestamps_ns")
+    __slots__ = ("poses", "velocities", "accelerations", "shape", "available", "longitudinal_speeds", "angular_velocities", "tire_steering_angles", "steering_wheel_angles", "turn_indicators", "poses_3d", "odometry_timestamps_ns", "acceleration_timestamps_ns", "tire_steering_timestamps_ns", "steering_wheel_timestamps_ns", "turn_indicator_timestamps_ns", "velocities_3d", "accelerations_3d", "angular_velocities_3d")
     POSES_FIELD_NUMBER: _ClassVar[int]
     VELOCITIES_FIELD_NUMBER: _ClassVar[int]
     ACCELERATIONS_FIELD_NUMBER: _ClassVar[int]
@@ -145,6 +145,9 @@ class EgoSequence(_message.Message):
     TIRE_STEERING_TIMESTAMPS_NS_FIELD_NUMBER: _ClassVar[int]
     STEERING_WHEEL_TIMESTAMPS_NS_FIELD_NUMBER: _ClassVar[int]
     TURN_INDICATOR_TIMESTAMPS_NS_FIELD_NUMBER: _ClassVar[int]
+    VELOCITIES_3D_FIELD_NUMBER: _ClassVar[int]
+    ACCELERATIONS_3D_FIELD_NUMBER: _ClassVar[int]
+    ANGULAR_VELOCITIES_3D_FIELD_NUMBER: _ClassVar[int]
     poses: NumericArray
     velocities: NumericArray
     accelerations: NumericArray
@@ -161,7 +164,10 @@ class EgoSequence(_message.Message):
     tire_steering_timestamps_ns: NumericArray
     steering_wheel_timestamps_ns: NumericArray
     turn_indicator_timestamps_ns: NumericArray
-    def __init__(self, poses: _Optional[_Union[NumericArray, _Mapping]] = ..., velocities: _Optional[_Union[NumericArray, _Mapping]] = ..., accelerations: _Optional[_Union[NumericArray, _Mapping]] = ..., shape: _Optional[_Union[EgoShape, _Mapping]] = ..., available: _Optional[_Union[NumericArray, _Mapping]] = ..., longitudinal_speeds: _Optional[_Union[NumericArray, _Mapping]] = ..., angular_velocities: _Optional[_Union[NumericArray, _Mapping]] = ..., tire_steering_angles: _Optional[_Union[NumericArray, _Mapping]] = ..., steering_wheel_angles: _Optional[_Union[NumericArray, _Mapping]] = ..., turn_indicators: _Optional[_Union[NumericArray, _Mapping]] = ..., poses_3d: _Optional[_Union[NumericArray, _Mapping]] = ..., odometry_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., acceleration_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., tire_steering_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., steering_wheel_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., turn_indicator_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
+    velocities_3d: NumericArray
+    accelerations_3d: NumericArray
+    angular_velocities_3d: NumericArray
+    def __init__(self, poses: _Optional[_Union[NumericArray, _Mapping]] = ..., velocities: _Optional[_Union[NumericArray, _Mapping]] = ..., accelerations: _Optional[_Union[NumericArray, _Mapping]] = ..., shape: _Optional[_Union[EgoShape, _Mapping]] = ..., available: _Optional[_Union[NumericArray, _Mapping]] = ..., longitudinal_speeds: _Optional[_Union[NumericArray, _Mapping]] = ..., angular_velocities: _Optional[_Union[NumericArray, _Mapping]] = ..., tire_steering_angles: _Optional[_Union[NumericArray, _Mapping]] = ..., steering_wheel_angles: _Optional[_Union[NumericArray, _Mapping]] = ..., turn_indicators: _Optional[_Union[NumericArray, _Mapping]] = ..., poses_3d: _Optional[_Union[NumericArray, _Mapping]] = ..., odometry_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., acceleration_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., tire_steering_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., steering_wheel_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., turn_indicator_timestamps_ns: _Optional[_Union[NumericArray, _Mapping]] = ..., velocities_3d: _Optional[_Union[NumericArray, _Mapping]] = ..., accelerations_3d: _Optional[_Union[NumericArray, _Mapping]] = ..., angular_velocities_3d: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
 
 class OptionalString(_message.Message):
     __slots__ = ("value",)
@@ -313,8 +319,10 @@ class MapResource(_message.Message):
         __slots__ = ()
         ENCODING_UNSPECIFIED: _ClassVar[MapResource.Encoding]
         LANELET2_OSM: _ClassVar[MapResource.Encoding]
+        SIMPLE_LANELET2_SNAPSHOT: _ClassVar[MapResource.Encoding]
     ENCODING_UNSPECIFIED: MapResource.Encoding
     LANELET2_OSM: MapResource.Encoding
+    SIMPLE_LANELET2_SNAPSHOT: MapResource.Encoding
     class Projection(int, metaclass=_enum_type_wrapper.EnumTypeWrapper):
         __slots__ = ()
         PROJECTION_UNSPECIFIED: _ClassVar[MapResource.Projection]
