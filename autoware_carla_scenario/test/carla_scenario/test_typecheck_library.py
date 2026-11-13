@@ -5400,6 +5400,125 @@ def test_the_errno_and_os_shim_constants_slurm_manifest_reads_are_cpythons() -> 
 
 
 # ---------------------------------------------------------------------------
+# os.fstat(), os.write(), the errno codes of a missing flock and uuid.uuid4():
+# what slurm.start_lock creates and reads a lock file with
+# ---------------------------------------------------------------------------
+
+
+_START_LOCK = """
+from __future__ import annotations
+
+import errno
+import os
+import uuid
+from pathlib import Path
+
+
+def create(path: Path, token: str) -> int:
+    fd = os.open(path, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 420)
+    written = os.write(fd, token.encode("utf-8"))
+    st = os.fstat(fd)
+    again = os.fstat(fd=fd)
+    os.close(fd)
+    return written + st.st_dev + st.st_ino + st.st_mtime_ns + again.st_size
+
+
+def seconds(fd: int) -> float:
+    return os.fstat(fd).st_mtime + os.stat("x").st_mtime_ns
+
+
+def sibling(path: Path) -> Path:
+    return path.with_name(f"{path.name}.probe.{uuid.uuid4().hex}")
+
+
+def held(token: str) -> bool:
+    made = uuid.UUID(token)
+    return made.hex == token[:8]
+
+
+def codes() -> frozenset[int]:
+    return frozenset({errno.ENOSYS, errno.ENOLCK, errno.EINVAL, errno.ENOTSUP})
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_os_errno_and_uuid_shims_take_what_slurm_start_lock_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_START_LOCK, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too.
+        ('os.write(fd, token.encode("utf-8"))', "os.write(fd)"),
+        ('os.write(fd, token.encode("utf-8"))', "os.write(fd=fd, data=token)"),
+        ('os.write(fd, token.encode("utf-8"))', "os.write(path, token)"),
+        ("os.fstat(fd).st_mtime", "os.fstat(fd).st_mtim"),
+        ("os.fstat(fd).st_mtime", 'os.fstat("x").st_mtime'),
+        ("os.fstat(fd).st_mtime", "os.fstat(fd, None).st_mtime"),
+        ("uuid.uuid4().hex", "uuid.uuid4(4).hex"),
+        ("uuid.uuid4().hex", "uuid.uuid4().hexx"),
+        ("uuid.uuid4().hex", "uuid.uuid4().hex()"),
+        ("uuid.UUID(token)", "uuid.UUID()"),
+        ("errno.ENOLCK", "errno.ENOLOCK"),
+    ],
+    ids=[
+        "write-no-data",
+        "write-positional-only",
+        "write-descriptor-int",
+        "fstat-unknown-attribute",
+        "fstat-descriptor-int",
+        "fstat-one-argument",
+        "uuid4-no-argument",
+        "uuid-unknown-attribute",
+        "uuid-hex-not-callable",
+        "uuid-needs-a-value",
+        "errno-unknown-name",
+    ],
+)
+def test_the_os_errno_and_uuid_shims_refuse_what_cpython_refuses_of_start_lock_calls(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _START_LOCK.replace(right, wrong, 1)
+    assert source != _START_LOCK
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_errno_codes_and_uuid_hex_slurm_start_lock_reads_are_cpythons() -> None:
+    import errno
+    import os
+    import uuid
+
+    shim = (model_dir() / "errno.codon").read_text()
+    for name in ("EINVAL", "ENOLCK", "ENOSYS"):
+        value = int(getattr(errno, name))
+        assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
+    # The nil UUID the shim's uuid4() stands for: 32 lowercase hex digits.
+    assert '"0" * 32' in (model_dir() / "uuid.codon").read_text()
+    assert uuid.UUID(int=0).hex == "0" * 32
+    assert re.fullmatch(r"[0-9a-f]{32}", uuid.uuid4().hex)
+    # The arguments CPython takes and refuses, as the shim declares them.
+    assert uuid.UUID("0" * 32).hex == "0" * 32
+    with pytest.raises(TypeError):
+        uuid.uuid4(4)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        uuid.UUID()  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        os.write(fd=1, data=b"")  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        os.fstat(1, None)  # type: ignore[call-arg]
+    assert os.fstat(fd=0).st_mode == os.fstat(0).st_mode
+
+
+# ---------------------------------------------------------------------------
 # The xml.etree.ElementTree shim: what traffic.sumo.network reads a network's
 # crossings with
 # ---------------------------------------------------------------------------

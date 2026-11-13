@@ -6948,7 +6948,6 @@ _STDLIB_REFUSALS: dict[str, tuple[str, str, str, str]] = {
     ),
     "io": ("import io\n", "", "io has no Codon model", "pathlib.Path"),
     "csv": ("import csv\n", "", "csv has no Codon model", "split(',')"),
-    "uuid": ("import uuid\n", "", "uuid has no Codon model", "os.getpid()"),
 }
 
 

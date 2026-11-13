@@ -756,3 +756,26 @@ def test_the_server_clock_probes_once_while_polling_a_fresh_lock(
         "probe",
         "monotonic",
     ]
+
+
+def test_the_worker_re_exports_the_start_locks_own_objects() -> None:
+    """slurm.worker's names are slurm.start_lock's objects, so a test that
+    patches the worker's _create_lock or _remove_stale still reaches the
+    worker's _take_over() and _exclusive_file(), which stay there."""
+    from autoware_carla_scenario.slurm import start_lock
+
+    for name in (
+        "_NO_FLOCK_ERRNOS",
+        "_LockId",
+        "_ServerClock",
+        "_create_lock",
+        "_lock_identity",
+        "_lock_sibling",
+        "_release_lock",
+        "_remove_stale",
+        "_server_now",
+    ):
+        assert getattr(worker, name) is getattr(start_lock, name), name
+    for name in ("_take_over", "_exclusive_file", "_start_lock"):
+        assert getattr(worker, name).__module__ == worker.__name__
+    assert worker._TAKEOVER_STALE_AFTER == 10.0
