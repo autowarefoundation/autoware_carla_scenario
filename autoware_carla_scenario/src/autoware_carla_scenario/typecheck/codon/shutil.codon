@@ -1,6 +1,6 @@
 # The part of Python's shutil the checked framework names, for the checker
-# (docs/typecheck.md): copy(), copy2(), copyfile(), copytree(), move(),
-# rmtree() and which(), with CPython 3.10's signatures, the oldest Python the
+# (docs/typecheck.md): copy(), copy2(), copyfile(), copymode(), copytree(),
+# move(), rmtree() and which(), with CPython 3.10's signatures, the oldest Python the
 # package supports. A path is a str or a pathlib.Path (os.PathLike). The
 # callables CPython also takes (rmtree()'s `onerror`, move()'s
 # `copy_function`, copytree()'s `ignore` and `copy_function`) are not
@@ -76,6 +76,14 @@ def copytree(
 ):
     fspath(src)
     return _destination(dst)
+
+
+# copymode(src, dst, *, follow_symlinks=True): gives *dst* the permission
+# bits of *src* (nothing is changed here); it returns None.
+def copymode(src, dst, *_kw, follow_symlinks: bool = True) -> None:
+    _keyword_only(_kw, "copymode(): follow_symlinks")
+    fspath(src)
+    fspath(dst)
 
 
 def move(src, dst):

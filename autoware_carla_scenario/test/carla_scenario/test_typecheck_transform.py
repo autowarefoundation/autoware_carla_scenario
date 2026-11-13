@@ -935,6 +935,25 @@ def test_callable_is_checked_by_the_stand_in() -> None:
     assert "ok = _acs_callable(x.check)" in _transform("ok = callable(x.check)\n")
 
 
+def test_memoryview_is_checked_by_the_stand_in() -> None:
+    # Codon 0.19 has no memoryview: _acs_memoryview is a view of bytes that
+    # os.write() takes (tools.file_writes). Only a call of one value is.
+    out = _transform(
+        """
+        view = memoryview(data)
+        while view:
+            view = view[os.write(fd, view) :]
+        other = memoryview(object=data)
+        """
+    )
+    assert "view = _acs_memoryview(data)" in out
+    assert "other = memoryview(object=data)" in out
+    imported = ast.parse(PRELUDE).body[1]
+    assert isinstance(imported, ast.ImportFrom)
+    assert imported.module == "autoware_carla_scenario._tc"
+    assert "_acs_memoryview" in [alias.name for alias in imported.names]
+
+
 def test_object_setattr_with_a_constant_name_is_an_assignment() -> None:
     # A frozen dataclass sets its fields with object.__setattr__, which Codon
     # 0.19 lacks; the call keeps its lines inside brackets.

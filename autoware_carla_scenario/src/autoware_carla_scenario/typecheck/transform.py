@@ -127,7 +127,9 @@ which :func:`transform_source_lines` maps back onto the handler):
   have a fixed length.  So does a return annotation ``tuple[X, ...]``
   (``Optional[tuple[X, ...]]`` an ``Optional[List[X]]``), so the value
   returned is checked; a parameter's is dropped.  ``callable(x)``, which
-  Codon 0.19 lacks, becomes ``_acs_callable(x)``.
+  Codon 0.19 lacks, becomes ``_acs_callable(x)``, and ``memoryview(x)``,
+  which it lacks too, ``_acs_memoryview(x)``: a view of bytes that is true
+  while not empty, is sliced into another and is what ``os.write()`` takes.
 * ``object.__setattr__(obj, "name", value)`` (a frozen dataclass setting a
   field) becomes ``obj.name = (value)``; a ``field(init=False)`` without a
   default gets an empty value of its type (``List[float]()``), since Codon's
@@ -251,7 +253,7 @@ PRELUDE = (
     "_acs_dict_into, _acs_list_into\n"
     "from autoware_carla_scenario._tc import _Required as _acs_Required, "
     "_acs_Returning, _acs_callable, _acs_tuple, _acs_reduce, _acs_some, "
-    "_acs_some_if, _acs_count, _acs_index, _acs_KeywordOnly\n"
+    "_acs_some_if, _acs_count, _acs_index, _acs_KeywordOnly, _acs_memoryview\n"
     "from enum import IntEnum as _acs_IntEnum, IntFlag as _acs_IntFlag, "
     "StrEnum as _acs_StrEnum\n"
     "from autoware_carla_scenario._exceptions import "
@@ -406,7 +408,11 @@ _DROPPED_FUNCTION_DECORATORS = {"abstractmethod", "abc.abstractmethod"}
 #: one argument: the ``_tc`` stand-in the call goes to instead.  ``tuple(x)``
 #: of a list or a generator is a list (Codon's tuples have a fixed length; a
 #: tuple stays itself); ``callable(x)`` is decided when Codon compiles.
-_RENAMED_BUILTINS = {"tuple": "_acs_tuple", "callable": "_acs_callable"}
+_RENAMED_BUILTINS = {
+    "tuple": "_acs_tuple",
+    "callable": "_acs_callable",
+    "memoryview": "_acs_memoryview",
+}
 
 #: Enum bases (``enum.X`` too), and the value type a base implies.
 _ENUM_BASES = {"Enum", "IntEnum", "StrEnum", "Flag", "IntFlag"}

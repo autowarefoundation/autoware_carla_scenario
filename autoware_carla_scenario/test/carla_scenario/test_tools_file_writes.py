@@ -33,6 +33,7 @@ from typing import Any
 import pytest
 
 from autoware_carla_scenario.tools import detect_no_3d_model_lanelets as tool
+from autoware_carla_scenario.tools import file_writes
 
 # -- the oracles: tools/detect_no_3d_model_lanelets.py as it was ---------------
 
@@ -700,3 +701,14 @@ def test_the_error_is_described_as_it_was(tmp_path: Path) -> None:
         assert _outcome(lambda: tool._describe_os_error(named_str, error), base) == (
             _outcome(lambda: _old_describe_os_error(named_str, error), base)
         )
+
+
+def test_the_tool_re_exports_the_checked_writers() -> None:
+    # The same objects, under the names they had in the tool (#2135).
+    for name in (
+        "_PartialWriteError",
+        "_write_in_place",
+        "_write_atomically",
+        "_describe_os_error",
+    ):
+        assert getattr(tool, name) is getattr(file_writes, name), name
