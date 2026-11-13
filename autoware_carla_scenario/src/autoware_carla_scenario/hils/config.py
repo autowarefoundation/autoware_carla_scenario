@@ -684,9 +684,14 @@ def _step(
         )
     _only(section, ("send", "name", "fields", "data", "id"), where)
     # Raw data has no fields: any `fields` but null alongside it (even an
-    # empty mapping) contradicts it rather than being dropped (#2126).
-    if bool(name) == ("data" in section) or (
-        "data" in section and section.get("fields") is not None
+    # empty mapping) contradicts it rather than being dropped (#2126). Only a
+    # missing or null `name` is no name, so a falsy one ("", 0) beside raw
+    # data is refused too, and an `id` (raw data's) beside a name is not
+    # dropped (#2128). Without data, a falsy name names no message, as for a
+    # wait or a periodic message.
+    raw = "data" in section
+    if (raw and (name is not None or section.get("fields") is not None)) or (
+        not raw and (not name or section.get("id") is not None)
     ):
         raise HilsConfigError(
             f"{where}: a send has either a name (and fields) or raw data"
