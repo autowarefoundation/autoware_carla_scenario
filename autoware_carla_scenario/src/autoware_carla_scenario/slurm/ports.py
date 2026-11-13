@@ -30,6 +30,8 @@ task on the node holds (``<lock dir>/autoware_carla_scenario-ros-domain-<id>.loc
 so the Autoware stacks and ROS 2 egos of tasks sharing a node never share a
 DDS domain.  Not part of the port slot: a slot's index runs to
 ``launcher.port_slots`` (1000 by default), past the 233 domains ROS 2 has.
+The worker reads a domain id an environment holds with :func:`_env_domain_id`
+and checks the range of one before it takes it with :func:`_take_domain`.
 
 The arithmetic of the slots is in :mod:`.port_slots`, which the library check
 compiles (docs/typecheck.md); this module takes the slots and re-exports it.
@@ -256,6 +258,29 @@ class RosDomains:
             stream.close()
         self._held.clear()
         self._mapped.clear()
+
+
+def _env_domain_id(value: str, key: str) -> int:
+    """``ROS_DOMAIN_ID`` as an environment holds it (a ``str``), as an int;
+    refused naming *key* unless it is a whole number."""
+    text = value.strip()
+    if not (text.isascii() and text.isdigit()):
+        raise ValueError(
+            f"{key} must be a ROS domain id, a whole number from 0 to "
+            f"{MAX_ROS_DOMAIN_ID}, got {value!r}"
+        )
+    return int(text)
+
+
+def _take_domain(domains: RosDomains, wanted: int, key: str) -> int:
+    """The task's domain for *wanted*, the value of *key*; an id out of
+    range refused naming the key."""
+    if not 0 <= wanted <= MAX_ROS_DOMAIN_ID:
+        raise ValueError(
+            f"{key} must be a ROS domain id, a whole number from 0 to "
+            f"{MAX_ROS_DOMAIN_ID}, got {wanted}"
+        )
+    return domains.take(wanted)
 
 
 def carla_processes_on_port(port: int) -> list[int]:

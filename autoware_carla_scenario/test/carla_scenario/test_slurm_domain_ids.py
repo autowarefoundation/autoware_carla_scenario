@@ -16,7 +16,7 @@ from typing import Any
 import pytest
 
 from autoware_carla_scenario.constants import MAX_ROS_DOMAIN_ID
-from autoware_carla_scenario.slurm import worker
+from autoware_carla_scenario.slurm import ports, worker
 from autoware_carla_scenario.slurm.ports import RosDomains
 
 # -- the oracles: slurm/worker.py as it was ------------------------------------
@@ -159,3 +159,9 @@ def test_a_real_domain_is_taken_as_it_was(tmp_path: Any) -> None:
     finally:
         new.release()
         old.release()
+
+
+def test_the_worker_re_exports_the_checked_functions() -> None:
+    # The library check compiles slurm.ports (#2124).
+    assert worker._env_domain_id is ports._env_domain_id
+    assert worker._take_domain is ports._take_domain
