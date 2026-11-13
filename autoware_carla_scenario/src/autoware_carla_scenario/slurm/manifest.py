@@ -299,13 +299,8 @@ def _link_exclusive(path: Path, fd: int, tmp: str, text: str) -> bool:
         except FileExistsError:
             return os.stat(tmp).st_nlink == 2
         except OSError as exc:
-            if TYPE_CHECKING:
-                # OSError's errno, which the check does not declare
-                # (docs/typecheck.md): the fallback is compiled for any error.
-                pass
-            else:
-                if exc.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
-                    raise
+            if exc.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
+                raise
             try:
                 # 0o600: Codon has no octal literal.
                 created = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 384)

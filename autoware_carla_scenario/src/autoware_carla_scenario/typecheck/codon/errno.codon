@@ -1,14 +1,12 @@
 # The part of Python's errno the checked framework names, for the checker
 # (docs/typecheck.md). EPERM, ENOTSUP and EOPNOTSUPP came first, for the codes
-# slurm.manifest tells a file system without hard links by; but it reads them
-# only in the `else` branch of an `if TYPE_CHECKING:` escape (the check does
-# not declare OSError's errno), which Codon never compiles, so no compiled
-# framework module uses EPERM (the shim tests do). ENOSYS, ENOLCK and EINVAL
-# were added since for slurm.start_lock's _NO_FLOCK_ERRNOS, the codes it tells
-# a file system without flock by, which also holds ENOTSUP and EOPNOTSUPP and
-# is compiled. They are ints, as in CPython; the values are Linux's, the only
-# system the package runs on (the same on x86_64 and aarch64). The other codes
-# and errorcode are not declared.
+# slurm.manifest's _link_exclusive() tells a file system without hard links
+# by, testing an OSError's `errno` (declared in _exceptions.codon) against
+# them. ENOSYS, ENOLCK and EINVAL were added since for slurm.start_lock's
+# _NO_FLOCK_ERRNOS, the codes it tells a file system without flock by, which
+# also holds ENOTSUP and EOPNOTSUPP. They are ints, as in CPython; the values
+# are Linux's, the only system the package runs on (the same on x86_64 and
+# aarch64). The other codes and errorcode are not declared.
 
 EPERM = 1
 EINVAL = 22

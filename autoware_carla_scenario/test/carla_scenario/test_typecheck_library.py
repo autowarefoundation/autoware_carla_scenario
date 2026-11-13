@@ -5304,8 +5304,8 @@ def test_shim_list() -> None:
 
 
 # ---------------------------------------------------------------------------
-# os.link(), os.stat(), os.open(), os.fdopen(), the errno shim and
-# FileExistsError: what slurm.manifest creates a submission record
+# os.link(), os.stat(), os.open(), os.fdopen(), the errno shim, OSError's
+# errno and FileExistsError: what slurm.manifest creates a submission record
 # exclusively with
 # ---------------------------------------------------------------------------
 
@@ -5323,7 +5323,9 @@ def create(path: Path, tmp: str, text: str) -> bool:
         os.link(tmp, path)
     except FileExistsError:
         return os.stat(tmp).st_nlink == 2
-    except OSError:
+    except OSError as exc:
+        if exc.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
+            raise
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 384)
         except FileExistsError:
@@ -5335,6 +5337,13 @@ def create(path: Path, tmp: str, text: str) -> bool:
 
 def codes() -> int:
     return errno.EPERM + errno.ENOTSUP + errno.EOPNOTSUPP
+
+
+def code_of(error: OSError, missing: FileNotFoundError, io: IOError) -> bool:
+    code = error.errno
+    if code is None or missing.errno is None or io.errno is None:
+        return False
+    return code == errno.EPERM
 
 
 def sizes(path: str) -> float:
@@ -5365,6 +5374,8 @@ def test_the_os_and_errno_shims_take_what_slurm_manifest_calls(
         ("os.stat(tmp).st_nlink", "os.stat(tmp, None).st_nlink"),
         ("errno.EPERM", "errno.EPERMS"),
         ("FileExistsError:\n        return os", "FileExistError:\n        return os"),
+        ("exc.errno not in", "exc.errnum not in"),
+        ("exc.errno not in", "exc.errno() not in"),
     ],
     ids=[
         "link-no-destination",
@@ -5373,6 +5384,8 @@ def test_the_os_and_errno_shims_take_what_slurm_manifest_calls(
         "stat-keyword-only",
         "errno-unknown-name",
         "unknown-exception",
+        "oserror-unknown-attribute",
+        "oserror-errno-not-callable",
     ],
 )
 def test_the_os_and_errno_shims_refuse_what_cpython_refuses_of_manifest_calls(

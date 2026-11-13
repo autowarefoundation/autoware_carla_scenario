@@ -3503,7 +3503,11 @@ What Codon 0.19 needs that Python does not, beyond
   test it with `isinstance()` before reading it as an `int`. Each
   takes no message or one value by position, as CPython does; a keyword
   (`TimeoutError(message=...)`) and `OSError`'s `(errno, strerror)` and
-  their attributes (`errno`, `filename`) are refused. Nothing in these
+  the `filename` they fill are refused. `OSError`'s (and `IOError`'s, and
+  each subclass's) `errno` is declared, an `Optional[int]`, as CPython's is
+  `None` for an `OSError` of one message: test it as CPython needs
+  (`exc.errno in (errno.EPERM, ...)`, which is `False` for `None`);
+  `slurm.manifest` tells a file system without hard links by it. Nothing in these
   shims runs: no environment is read, no file is copied, no process is
   signalled, no signal handler is installed and no exit function is
   registered. `hashlib` declares `sha256(string=b"", *,
