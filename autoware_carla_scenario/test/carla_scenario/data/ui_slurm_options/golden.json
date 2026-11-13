@@ -350,8 +350,8 @@
    ]
   },
   "gres-unicode": "ValueError: gres 'ä' has characters sbatch does not take",
-  "int-bool": "ValueError: array_parallelism must be a number, not 'True'",
-  "int-float": "ValueError: array_parallelism must be a number, not '1.5'",
+  "int-bool": "ValueError: array_parallelism must be a whole number, not 'True'",
+  "int-float": "ValueError: array_parallelism must be a whole number, not '1.5'",
   "int-negative": "ValueError: array_parallelism must be at least 1",
   "int-underscore": {
    "fields": {
@@ -372,7 +372,7 @@
     "launcher.array_parallelism=10"
    ]
   },
-  "int-word": "ValueError: cases_per_task must be a number, not 'two'",
+  "int-word": "ValueError: cases_per_task must be a whole number, not 'two'",
   "int-zero": "ValueError: cases_per_task must be at least 1",
   "mem-bad": "ValueError: mem '12 G' has characters sbatch does not take",
   "mem-list": "ValueError: mem '12G,4G' has characters sbatch does not take",
@@ -430,18 +430,19 @@
     "python": null,
     "remote_cwd": null,
     "setup": [],
-    "start_stagger_seconds": null,
+    "start_stagger_seconds": 0.0,
     "time": null
    },
    "overrides": [
     "launcher=slurm",
     "launcher.array_parallelism=3",
-    "launcher.cases_per_task=1"
+    "launcher.cases_per_task=1",
+    "launcher.start_stagger_seconds=0.0"
    ]
   },
   "order-env-before-time": "ValueError: '1BAD' is not an environment variable name",
   "order-number-ranges": "ValueError: array_parallelism must be at least 1",
-  "order-numbers": "ValueError: cases_per_task must be a number, not 'y'",
+  "order-numbers": "ValueError: cases_per_task must be a whole number, not 'y'",
   "order-partition-before-mem": "ValueError: partition 'a b' has characters sbatch does not take",
   "order-paths-before-setup": "ValueError: python 'a b' is not a path the launcher takes (letters, digits, _ . : / @ + -, and ~ or ~/ first)",
   "order-setup-before-numbers": "ValueError: setup line '${X}': write $NAME rather than ${NAME} (or set launcher.setup in a config)",

@@ -98,7 +98,9 @@ def _pair(
         )
     low = -math.inf if value[0] is None else value[0]
     high = math.inf if value[1] is None else value[1]
-    if low > high:
+    # Not ``low > high``: a NaN end compares false either way, and openodd
+    # refuses it when the knob is built (#2134).
+    if not low <= high:
         return ControlDiagnostic(
             path, f"expected [low, high] with low <= high, got {list(value)!r}"
         )

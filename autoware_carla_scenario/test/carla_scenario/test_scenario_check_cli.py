@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import math
+from typing import Any
+
 import pytest
 
 from autoware_carla_scenario.typecheck.cli import main
@@ -116,6 +119,59 @@ def test_an_unknown_measure_is_a_warning_with_a_suggestion() -> None:
         ("controls.vehicle_ahead_gap", "warning")
     ]
     assert "did you mean 'vehicle_ahead_gap_m'?" in found[0].message
+
+
+@pytest.mark.parametrize(
+    ("field", "pair", "shown"),
+    [
+        ("range", [math.nan, 1.0], "[nan, 1.0]"),
+        ("range", [0.0, math.nan], "[0.0, nan]"),
+        ("limits", [math.nan, None], "[nan, None]"),
+        ("limits", [None, math.nan], "[None, nan]"),
+    ],
+)
+def test_a_nan_end_of_a_control_pair_is_refused(
+    field: str, pair: list[Any], shown: str
+) -> None:
+    """A NaN end compares false with the other, so ``low > high`` let it
+    through to fail when the knob is built (#2134)."""
+    from omegaconf import OmegaConf  # noqa: PLC0415
+
+    from autoware_carla_scenario.odd.controls import validate_controls  # noqa: PLC0415
+
+    cfg = OmegaConf.create({"scenario": {"npc_gap_m": 1.0}})
+    spec = {"key": "scenario.npc_gap_m", field: pair}
+    found = validate_controls({"vehicle_ahead_gap_m": spec}, cfg)
+    assert [(d.path, d.message, d.severity) for d in found] == [
+        (
+            f"controls.vehicle_ahead_gap_m.{field}",
+            f"expected [low, high] with low <= high, got {shown}",
+            "error",
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "pair"),
+    [
+        ("range", [0.0, 1.0]),
+        ("range", [1.0, 1.0]),
+        ("range", [0.0, math.inf]),
+        ("limits", [0.0, None]),
+        ("limits", [None, None]),
+        ("limits", [-math.inf, 3.0]),
+    ],
+)
+def test_a_control_pair_with_low_up_to_high_is_taken(
+    field: str, pair: list[Any]
+) -> None:
+    from omegaconf import OmegaConf  # noqa: PLC0415
+
+    from autoware_carla_scenario.odd.controls import validate_controls  # noqa: PLC0415
+
+    cfg = OmegaConf.create({"scenario": {"npc_gap_m": 1.0}})
+    spec = {"key": "scenario.npc_gap_m", field: pair}
+    assert validate_controls({"vehicle_ahead_gap_m": spec}, cfg) == []
 
 
 def test_the_shipped_controls_are_valid() -> None:
