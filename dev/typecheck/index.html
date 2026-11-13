@@ -4568,7 +4568,7 @@ this list, the check's additions and the tests in step:</p>
 instead:</p>
 <!-- stdlib-refused:start -->
 <p><code>dataclasses.asdict</code>, <code>dataclasses.InitVar</code>, <code>dataclasses.KW_ONLY</code>, <code>functools.wraps</code>, <code>math.ulp</code>, <code>contextlib.contextmanager</code>, <code>warnings</code>,
-<code>json.JSONEncoder</code>, <code>types</code>, <code>textwrap</code>, <code>traceback</code>, <code>io</code>, <code>csv</code>, <code>uuid</code></p>
+<code>json.JSONEncoder</code>, <code>types</code>, <code>textwrap</code>, <code>traceback</code>, <code>io</code>, <code>csv</code></p>
 <!-- stdlib-refused:end -->
 
 <ul>
@@ -4595,8 +4595,7 @@ instead:</p>
   <code>traceback</code>: log with <code>logger.exception</code>. <code>io</code>: use a <code>str</code>, or a
   <code>pathlib.Path</code> opened with <code>open()</code>. <code>csv</code>: read the file with
   <code>Path.read_text().splitlines()</code> and <code>split(",")</code> each line, and write one
-  with <code>",".join(fields)</code> and <code>Path.write_text()</code>. <code>uuid</code>: use a counter, or
-  <code>os.getpid()</code> for an id that differs per process.</li>
+  with <code>",".join(fields)</code> and <code>Path.write_text()</code>.</li>
 <li><code>time.strftime()</code> and <code>datetime.strftime()</code> are not modelled (Codon's
   <code>datetime</code> has neither, nor <code>__format__</code>): the error says so; format the
   fields instead, <code>f"{now.year:04d}{now.month:02d}{now.day:02d}"</code> for <code>now =
@@ -4883,9 +4882,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-325 of the package's 439
-modules (74%; about 102,700 of
-170,500 lines) are <code>CHECKED</code>: the kinematics, the
+326 of the package's 440
+modules (74%; about 102,900 of
+170,600 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4964,7 +4963,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 325 CHECKED modules</summary>
+<summary>The 326 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -6014,6 +6013,10 @@ with the first paragraph of its docstring:</p>
 <td>The <code>launcher</code> config: who runs a batch's cases (docs/slurm.md).</td>
 </tr>
 <tr>
+<td><code>slurm.start_lock</code></td>
+<td>The files of the SLURM worker's start lock where a file system has no <code>flock</code>.</td>
+</tr>
+<tr>
 <td><code>slurm.status</code></td>
 <td>What <code>scenario-slurm status</code> prints of a SLURM batch, what <code>cancel</code> cancels of it, whether it is busy, so that <code>resubmit</code> refuses it, and which of its cases <code>resubmit --cases</code> names.</td>
 </tr>
@@ -6523,7 +6526,7 @@ the first:</p>
 <li><code>authoring.codegen</code>: imports argparse, importlib, inspect, difflib, and templating (jinja2) and authoring.registry (<code>Any</code> field defaults), which are not checked</li>
 <li><code>authoring.compiler</code>: reaches pydantic models through authoring.models</li>
 <li><code>authoring.hydra_config</code>: reaches pydantic models through authoring.models; imports yaml, authoring.persistence (yaml) and, inside scenario_map_refusal() and map_group_no_3d_model_lanelet_ids(), the registry (omegaconf, importlib), which are neither checked nor modelled; builds config trees as <code>dict[str, Any]</code> of mixed value types (<code>ROUTE_CONFIG_DEFAULTS</code>, build_scenario_config()), which Codon cannot express</li>
-<li><code>authoring.models</code>: imports pydantic, uuid</li>
+<li><code>authoring.models</code>: imports pydantic</li>
 <li><code>authoring.package_export</code>: imports more of importlib.metadata than its shim declares (<code>metadata()</code>), annotates a field and a parameter <code>dict[str, Any]</code>, which Codon cannot express, and, at module level, authoring.models (pydantic), authoring.persistence (yaml), authoring.hydra_config and authoring.validator (pydantic, through authoring.models), templating (jinja2) and authoring.wheelhouse (jinja2, packaging.specifiers), which are not checked and have no model; its naming rules and the framework pin's README lines are the checked authoring.package_names'</li>
 <li><code>authoring.persistence</code>: imports yaml, and authoring.models (pydantic), which is not checked and has no model</li>
 <li><code>authoring.registry</code>: FieldSpec.default is Any and holds str, int, float, bool, list or None across the spec table, which Codon has no type for; rule_symbol takes object, and searchable_lanelet_fields a union of spec classes; the spec table is built when the module is imported (243 FieldSpec calls), so no UNCALLED entry can leave the Any-typed defaults out, and typing FieldSpec.default would change what the editor, validator and codegen read</li>
@@ -6554,8 +6557,8 @@ the first:</p>
 <li><code>editor.map_preview</code>: imports authoring.models (pydantic) and authoring.hydra_config (yaml, and pydantic through authoring.models), which are not checked and have no model</li>
 <li><code>editor.routes</code>: imports fastapi, starlette, pydantic (<code>ValidationError</code>), web_guard (starlette), which is not checked, and anyio inside a function</li>
 <li><code>editor.scenario_map</code>: imports authoring.models (pydantic), authoring.hydra_config (yaml, and pydantic through authoring.models) and editor.map_preview, which are not checked and have no model</li>
-<li><code>editor.service</code>: imports yaml, zipfile, stat, uuid and weakref (<code>WeakValueDictionary</code>), which Codon has nothing for, and <code>contextlib.contextmanager</code>; reaches pydantic models through authoring.models; takes form fields as <code>Mapping[str, Any]</code>, which Codon cannot express; the gate fields the inspector edits and how they are shown are the checked editor.gate_fields's, and the name a new row gets the checked editor.naming's</li>
-<li><code>entity.carla_driver_entity</code>: imports carla_driver_interface.driver (<code>TurnIndicator</code>) and carla_driver_interface.protocol, which its model (geometry only) does not declare, uuid, driver.renderer (the protocol's messages) and rerun_lidar (<code>active_recorder()</code>; the Rerun SDK; <code>CameraMount</code> is the checked rerun_sensor_mount's, #1688), and, inside functions, driver.hdmap_export (itself excluded) and t4_scene.live (t4_scene.convert; also under <code>TYPE_CHECKING</code>), which are neither checked nor modelled, and <code>active_recording()</code>, <code>offer_driver_sensors()</code> and <code>withdraw_driver_sensors()</code> from t4, which the t4 model does not declare; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)</li>
+<li><code>editor.service</code>: imports yaml, zipfile, stat and weakref (<code>WeakValueDictionary</code>), which Codon has nothing for, and <code>contextlib.contextmanager</code>; reaches pydantic models through authoring.models; takes form fields as <code>Mapping[str, Any]</code>, which Codon cannot express; the gate fields the inspector edits and how they are shown are the checked editor.gate_fields's, and the name a new row gets the checked editor.naming's</li>
+<li><code>entity.carla_driver_entity</code>: imports carla_driver_interface.driver (<code>TurnIndicator</code>) and carla_driver_interface.protocol, which its model (geometry only) does not declare, driver.renderer (the protocol's messages) and rerun_lidar (<code>active_recorder()</code>; the Rerun SDK; <code>CameraMount</code> is the checked rerun_sensor_mount's, #1688), and, inside functions, driver.hdmap_export (itself excluded) and t4_scene.live (t4_scene.convert; also under <code>TYPE_CHECKING</code>), which are neither checked nor modelled, and <code>active_recording()</code>, <code>offer_driver_sensors()</code> and <code>withdraw_driver_sensors()</code> from t4, which the t4 model does not declare; builds an EgoDriverGrpcClient (grpc), which its model refuses to build, and encodes camera frames with encode_frame_jpeg (cv2)</li>
 <li><code>entity.hils_entity</code>: imports hils.protocol (socket), which is neither checked nor modelled, for its <code>LineReader</code>, whose <code>read()</code> returns <code>List[Dict[str, Any]]</code>; uses more of socket than its shim declares (<code>settimeout()</code>, <code>sendall()</code>); takes and sends messages of any shape (<code>Any</code>, <code>Mapping[str, Any]</code>), and builds its config from a mapping through <code>cls.__dataclass_fields__</code> and <code>cls(**values)</code>, which Codon cannot express</li>
 <li><code>examples</code>: re-exports examples.run (omegaconf, hydra) and the registry (omegaconf, importlib)</li>
 <li><code>examples.compose_errors</code>: imports difflib, and, inside functions, hydra and omegaconf (their errors), the registry (omegaconf, importlib) and examples.run (hydra, omegaconf), which are neither checked nor modelled; reads a composed config of any shape (<code>Any</code>), which Codon cannot express</li>
@@ -6601,7 +6604,7 @@ the first:</p>
 <li><code>serve_cli</code>: imports argparse: port() raises <code>argparse.ArgumentTypeError</code> for a bad --port value and add_bind_arguments() adds options to an <code>argparse.ArgumentParser</code>; the default host, the port range, which hosts are loopback ones and the warning are the checked serve_bind's, which it re-exports</li>
 <li><code>slurm.cli</code>: imports argparse, and slurm.submit, which are not checked, and reads the manifest as a <code>dict</code> reads it (the checked slurm.manifest's uncalled Manifest.get() and <code>manifest[key]</code>, values of any type); what it collects, and which unfinished cases it resubmits, are the checked slurm.collect's, and what <code>status</code> prints, whether a batch is busy (the resubmit's check), which cases <code>resubmit --cases</code> names and what <code>cancel</code> cancels the checked slurm.status'</li>
 <li><code>slurm.submit</code>: imports omegaconf (inside functions), which is not checked, and more of os than its shim declares (<code>os.O_TRUNC</code>), and takes the manifest as it builds it (<code>dict[str, Any]</code>) or as it is read back (the checked slurm.manifest's Manifest, through its uncalled get() and <code>manifest[key]</code>, values of any type) and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built by the checked slurm.scripts, and run, as squeue, scancel and scontrol are, by the checked slurm.queue; following a submission until it ends and what a submitter says of it once submitted (follow, after_submit) are the checked slurm.follow's, which it re-exports</li>
-<li><code>slurm.worker</code>: imports traceback, uuid, <code>contextlib.contextmanager</code>, more of errno, os, threading and importlib than their shims declare (<code>errno.ENOSYS</code>, <code>errno.ENOLCK</code>, <code>errno.EINVAL</code>, <code>os.fstat()</code>, <code>os.write()</code>, <code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled, and, inside run_task(), typecheck.mode (the checker, outside the library check); imports <code>RerunConverter</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>report()</code> from rerun, which is not checked, and the rerun model declares neither <code>report()</code> nor <code>RerunConverter.close()</code>, and its <code>RerunConverter.wait()</code> returns None, not the RerunConversion records the worker passes to <code>rerun_errors()</code>; compares config values of any type (<code>Any</code>); the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's, and whether a differing config string names the same file the checked slurm.same_files' (#1720)</li>
+<li><code>slurm.worker</code>: imports traceback, <code>contextlib.contextmanager</code>, more of threading and importlib than their shims declare (<code>threading.Event</code>, <code>importlib.import_module()</code>), omegaconf (inside functions), and, inside functions, commonroad.session (concurrent.futures) and examples.run (hydra, omegaconf), which are neither checked nor modelled, and, inside run_task(), typecheck.mode (the checker, outside the library check); imports <code>RerunConverter</code> (under <code>TYPE_CHECKING</code>) and, inside a function, <code>report()</code> from rerun, which is not checked, and the rerun model declares neither <code>report()</code> nor <code>RerunConverter.close()</code>, and its <code>RerunConverter.wait()</code> returns None, not the RerunConversion records the worker passes to <code>rerun_errors()</code>; compares config values of any type (<code>Any</code>); the files of the start lock where the file system has no flock (creating, reading, releasing and removing a stale one, the file server's clock, <code>_NO_FLOCK_ERRNOS</code>) are the checked slurm.start_lock's (#2116), which it re-exports; the start-turn wait, the reading of a process's status, the sum of a process tree's resident memory, the memory report and the bridges' addresses are the checked slurm.task_timing's, and whether a differing config string names the same file the checked slurm.same_files' (#1720)</li>
 <li><code>sweeper</code>: re-exports, besides the checked sweeper.bindings, sweeper.constraints and sweeper.map_loader, sweeper.expand (omegaconf) and sweeper.lanelet_constraint_sweeper (hydra)</li>
 <li><code>sweeper.expand</code>: imports omegaconf, and openodd inside a function; imports <code>OddDraws</code> (under <code>TYPE_CHECKING</code>) and <code>ODD_CASE_KEY</code>, <code>QUANTILE_DRAWS</code>, <code>case_settings()</code>, <code>check_sample_settings()</code>, <code>controls_from_mapping()</code>, <code>encode_case()</code>, <code>sample_draws()</code>, <code>scenario_backend()</code>, <code>search_from_config()</code>, <code>seed_setting()</code> and <code>whole_number_setting()</code> from odd.sampler (inside _with_odd_samples(), _refuse_overridden(), _config_seed(), _case_index() and expand_config()), <code>lanelet_readings()</code> from odd.route (inside _case_readings()) and <code>ControlsError</code> and <code>validate_controls()</code> from odd.controls (inside scenario_controls()), which the odd model does not declare; expand_sweep() and expand_route() take the sweep, the route search, the map and the ODD as <code>Any</code> and <code>Mapping[..., Any]</code>, which Codon cannot express; the lanelet a base case is on, whether a drawn case fits a base case and which base case each drawn case is put on are the checked sweeper.case_choice's, and the lanelet key a walk-back moves (<code>_walk_back_lanelet_key()</code>) is the checked sweeper.bindings's (#1697), which it re-exports</li>
 <li><code>sweeper.lanelet_constraint_sweeper</code>: imports omegaconf, hydra, tqdm, sweeper.expand (omegaconf) and hydra_compat (argparse, hydra), and, inside functions, examples.run (hydra, omegaconf) and odd.controls (omegaconf, difflib; <code>ControlsError</code> and <code>format_diagnostics()</code>), which are neither checked nor modelled; derives hydra's <code>Sweeper</code> and <code>CompactHydraException</code>; imports <code>RerunUnavailableError</code> from rerun, which the rerun model does not declare, and, inside a function, <code>T4UnavailableError</code> from t4, which the t4 model does not declare; its cases are forked, stopped and waited for by the checked sweeper.isolation, a case's timeout is checked as a whole number of seconds and its verdict read as an exit status by the checked sweeper.job_status (#1712), and the stems its case runs left in a directory are worked out by the checked run_outputs</li>
@@ -7160,7 +7163,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
 <p><code>__future__</code>, <code>abc</code>, <code>atexit</code>, <code>contextlib</code>, <code>dataclasses</code>, <code>enum</code>, <code>errno</code>, <code>fcntl</code>, <code>fnmatch</code>, <code>hashlib</code>,
   <code>importlib.metadata</code>, <code>ipaddress</code>, <code>json</code>, <code>keyword</code>, <code>logging</code>, <code>os</code>, <code>os.path</code>, <code>pathlib</code>, <code>platform</code>, <code>queue</code>,
   <code>shlex</code>, <code>shutil</code>, <code>signal</code>, <code>socket</code>, <code>subprocess</code>, <code>sys</code>, <code>tempfile</code>, <code>threading</code>,
-  <code>typing</code>, <code>typing_extensions</code>, <code>urllib.parse</code> and <code>xml.etree.ElementTree</code>
+  <code>typing</code>, <code>typing_extensions</code>, <code>urllib.parse</code>, <code>uuid</code> and <code>xml.etree.ElementTree</code>
   <!-- shims:end -->
 </p>
 <p><code>tempfile</code> declares <code>mkstemp(suffix=None, prefix=None, dir=None,
@@ -7296,10 +7299,18 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>Path.open()</code> gives), and what <code>slurm.manifest</code> creates a file
   exclusively with: <code>link(src, dst, *, src_dir_fd=None, dst_dir_fd=None,
   follow_symlinks=True)</code> (nothing is linked) and <code>stat(path, *,
-  dir_fd=None, follow_symlinks=True)</code>, whose result has <code>st_mode</code>,
-  <code>st_nlink</code>, <code>st_size</code> and <code>st_mtime</code> (all zero) and nothing else. <code>errno</code>
-  declares <code>EPERM</code>, <code>ENOTSUP</code> and <code>EOPNOTSUPP</code> (Linux's values) and no
-  other code. <code>fcntl</code> declares <code>flock(fd, operation, /)</code>, of
+  dir_fd=None, follow_symlinks=True)</code>, and what <code>slurm.start_lock</code> creates
+  and reads a lock file with: <code>fstat(fd)</code> and <code>write(fd, data, /)</code> (of bytes,
+  a <code>str</code> in the check, which reads bytes as str; <code>0</code>: nothing is written).
+  The result of <code>stat()</code> and <code>fstat()</code> has <code>st_dev</code>, <code>st_ino</code>, <code>st_mode</code>,
+  <code>st_nlink</code>, <code>st_size</code>, <code>st_mtime</code> and <code>st_mtime_ns</code> (all zero) and
+  nothing else. <code>errno</code> declares <code>EPERM</code>, <code>EINVAL</code>, <code>ENOLCK</code>, <code>ENOSYS</code>,
+  <code>ENOTSUP</code> and <code>EOPNOTSUPP</code> (Linux's values) and no other code. <code>uuid</code>
+  declares <code>uuid4()</code>, of no argument, and its <code>UUID</code>'s <code>hex</code> (a <code>str</code>; the
+  nil UUID's in the check, as nothing runs), and <code>UUID(hex)</code> of a <code>str</code>, the
+  first of CPython's parameters; the rest of <code>UUID</code> (<code>int</code>, <code>bytes</code>,
+  <code>version</code>, ...), <code>uuid1()</code>, <code>uuid3()</code>, <code>uuid5()</code> and the namespaces are
+  not declared. <code>fcntl</code> declares <code>flock(fd, operation, /)</code>, of
   an <code>int</code> descriptor or a file object (what has <code>fileno()</code>), and <code>LOCK_SH</code>,
   <code>LOCK_EX</code>, <code>LOCK_NB</code> and <code>LOCK_UN</code> (Linux's values); nothing is locked.
   <code>os.path</code> declares <code>join()</code>,
@@ -8643,7 +8654,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 12:28:39 UTC"><span class="timeago" datetime="2026-11-13T12:28:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 12:28:39 UTC">2026-11-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 13:28:00 UTC"><span class="timeago" datetime="2026-11-13T13:28:00+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 13:28:00 UTC">2026-11-13</span>
   </span>
 
     
