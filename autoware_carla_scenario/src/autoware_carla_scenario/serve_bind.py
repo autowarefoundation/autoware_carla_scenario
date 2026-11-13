@@ -56,8 +56,12 @@ def is_loopback(host: str) -> bool:
         address = ipaddress.ip_address(host.strip("[]"))
     except ValueError:
         return False  # A host name: it may resolve to anything.
-    if isinstance(address, ipaddress.IPv6Address) and address.ipv4_mapped:
-        return address.ipv4_mapped.is_loopback
+    if isinstance(address, ipaddress.IPv6Address):
+        # The member, for Codon, which reads no attribute of one member off
+        # the union ip_address() gives (docs/typecheck.md).
+        v6: ipaddress.IPv6Address = address
+        if v6.ipv4_mapped:
+            return v6.ipv4_mapped.is_loopback
     return address.is_loopback
 
 

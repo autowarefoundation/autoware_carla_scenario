@@ -5530,3 +5530,135 @@ def test_map_resources_reason_names_each_element_tree_name_the_shim_lacks() -> N
     assert used, "map_resource no longer uses ElementTree"
     for name in sorted(used):
         assert f"`{name}()`" in reason, name
+
+
+# ---------------------------------------------------------------------------
+# The ipaddress shim: what serve_bind reads a host's address with
+# ---------------------------------------------------------------------------
+
+
+_IPADDRESS = """
+from __future__ import annotations
+
+import ipaddress
+from ipaddress import IPv4Address, IPv6Address, ip_address
+
+
+def is_loopback(host: str) -> bool:
+    try:
+        address = ipaddress.ip_address(host.strip("[]"))
+    except ValueError:
+        return False
+    if isinstance(address, ipaddress.IPv6Address):
+        v6: ipaddress.IPv6Address = address
+        if v6.ipv4_mapped:
+            return v6.ipv4_mapped.is_loopback
+    return address.is_loopback
+
+
+def written(text: str) -> bool:
+    four = IPv4Address(text)
+    six = IPv6Address(address=text)
+    mapped = six.ipv4_mapped
+    if mapped is None:
+        return four.is_loopback or six.is_loopback
+    return mapped.is_loopback and ip_address(address=text).is_loopback
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_ipaddress_shim_takes_what_serve_bind_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    assert (model_dir() / "ipaddress.codon").is_file()
+    result = _check_case(_IPADDRESS, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError, an AttributeError or an ImportError in CPython
+        # too (the unnarrowed read, of an IPv4Address).
+        ('ipaddress.ip_address(host.strip("[]"))', "ipaddress.ip_address()"),
+        ('ipaddress.ip_address(host.strip("[]"))', "ipaddress.ip_address(host, 4)"),
+        ("ip_address(address=text)", "ip_address(addr=text)"),
+        ("IPv4Address(text)", "IPv4Address()"),
+        ("four.is_loopback or", "four.is_loopbak or"),
+        ("return address.is_loopback", "return address.is_loopback()"),
+        ("v6.ipv4_mapped:", "v6.ipv6_mapped:"),
+        ("mapped = six.ipv4_mapped", "mapped = four.ipv4_mapped"),
+        ("if v6.ipv4_mapped:", "if address.ipv4_mapped:"),
+        ('ipaddress.ip_address(host.strip("[]"))', "ipaddress.ip_network(host)"),
+        (
+            "from ipaddress import IPv4Address, IPv6Address, ip_address",
+            "from ipaddress import IPv4Address, IPv6Address, ip_addr",
+        ),
+    ],
+    ids=[
+        "ip-address-no-address",
+        "ip-address-two-arguments",
+        "ip-address-unknown-keyword",
+        "ipv4-address-no-address",
+        "unknown-attribute",
+        "property-called",
+        "unknown-ipv6-attribute",
+        "ipv4-mapped-of-ipv4",
+        "ipv4-mapped-unnarrowed",
+        "unknown-function",
+        "not-in-the-module",
+    ],
+)
+def test_the_ipaddress_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _IPADDRESS.replace(right, wrong, 1)
+    assert source != _IPADDRESS
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_ipaddress_shim_declares_only_cpythons_names_and_parameters() -> None:
+    import inspect
+    import ipaddress
+
+    tree = ast.parse((model_dir() / "ipaddress.codon").read_text(encoding="utf-8"))
+    functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    assert set(functions) == {"ip_address"}
+    assert set(classes) == {"IPv4Address", "IPv6Address"}
+    members: dict[str, set[str]] = {
+        name: {n.name for n in node.body if isinstance(n, ast.FunctionDef)}
+        for name, node in classes.items()
+    }
+    assert members == {
+        "IPv4Address": {"__init__", "is_loopback"},
+        "IPv6Address": {"__init__", "is_loopback", "ipv4_mapped"},
+    }
+    for name, declared_members in members.items():
+        python = getattr(ipaddress, name)
+        for member in declared_members - {"__init__"}:
+            assert isinstance(inspect.getattr_static(python, member), property)
+    # Each declares CPython's leading parameters, by their names, and no
+    # other: narrower than CPython's, never wider.
+    inits = {
+        name: next(
+            n
+            for n in node.body
+            if isinstance(n, ast.FunctionDef) and n.name == "__init__"
+        )
+        for name, node in classes.items()
+    }
+    for declared, python in (
+        (functions["ip_address"], ipaddress.ip_address),
+        (inits["IPv4Address"], ipaddress.IPv4Address.__init__),
+        (inits["IPv6Address"], ipaddress.IPv6Address.__init__),
+    ):
+        names = [a.arg for a in declared.args.args if a.arg != "self"]
+        cpython = [p for p in inspect.signature(python).parameters if p != "self"]
+        assert names == cpython[: len(names)], declared.name
+    assert "ipaddress" in _shim_modules()

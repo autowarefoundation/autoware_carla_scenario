@@ -1,0 +1,53 @@
+# The part of Python's ipaddress the checked framework reads, for the checker
+# (docs/typecheck.md): whether an address is a loopback one, with CPython
+# 3.10's signatures, the oldest Python the package supports, or narrower
+# ones:
+#
+# - ip_address(address) of a str (no int or bytes), giving an IPv4Address or
+#   an IPv6Address, as a Union Codon decides isinstance() on when the
+#   program runs. Python raises ValueError for text that is neither; nothing
+#   here reads the text.
+# - IPv4Address(address) and IPv6Address(address) of a str, and their
+#   is_loopback; an IPv6Address's ipv4_mapped, the IPv4Address it embeds
+#   (::ffff:a.b.c.d) or None. Each holds the text it is given, so a
+#   constructor takes exactly one argument, as CPython's does (Codon gives a
+#   class with no field a constructor of none).
+#
+# Codon reads an attribute off the Union only where every member has it:
+# narrow an address to IPv6Address with isinstance() and an annotated local
+# before reading its ipv4_mapped. It does not refuse an attribute that no
+# member has, read off the Union (CPython's AttributeError).
+#
+# ip_network(), ip_interface(), the networks, the other is_* properties and
+# the rest are not declared, so the check refuses them. Nothing here runs:
+# every address is an IPv4Address that is not a loopback one, and maps none.
+
+
+class IPv4Address:
+    _address: str
+
+    def __init__(self, address: str):
+        self._address = address
+
+    @property
+    def is_loopback(self) -> bool:
+        return False
+
+
+class IPv6Address:
+    _address: str
+
+    def __init__(self, address: str):
+        self._address = address
+
+    @property
+    def is_loopback(self) -> bool:
+        return False
+
+    @property
+    def ipv4_mapped(self) -> Optional[IPv4Address]:
+        return Optional[IPv4Address]()
+
+
+def ip_address(address: str) -> Union[IPv4Address, IPv6Address]:
+    return Union[IPv4Address, IPv6Address](IPv4Address(address))

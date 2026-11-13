@@ -3163,7 +3163,7 @@ What Codon 0.19 needs that Python does not, beyond
 
   <!-- shims:start -->
   `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `hashlib`,
-  `importlib.metadata`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `platform`, `queue`,
+  `importlib.metadata`, `ipaddress`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `platform`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions`, `urllib.parse` and `xml.etree.ElementTree`
   <!-- shims:end -->
@@ -3186,6 +3186,17 @@ What Codon 0.19 needs that Python does not, beyond
   (a `str` or `None` default, an `Optional[str]`) and `clear()`.
   `parse()`, `fromstring()`, `SubElement()`, `ParseError`, an element's
   `attrib`, `find()`, `findall()` and the rest are not declared.
+  `ipaddress` declares what `serve_bind.is_loopback()` reads a host with:
+  `ip_address(address)` of a `str` (no `int` or `bytes`), giving an
+  `IPv4Address` or an `IPv6Address` as a `Union` Codon decides `isinstance`
+  on when the program runs, and of either its `is_loopback`, and of an
+  `IPv6Address` its `ipv4_mapped` (an `Optional[IPv4Address]`). Codon reads
+  no attribute of one member off the union, so narrow it with `isinstance`
+  and assign it to a local annotated with the member (`v6:
+  ipaddress.IPv6Address = address`), which Python reads as a plain
+  assignment; an attribute no member has, read off the union, is not
+  refused. `ip_network()`, `ip_interface()`, the other `is_*`
+  properties and the rest are not declared.
 
   Each shim takes the
   arguments CPython takes, so the check accepts what CPython accepts and
