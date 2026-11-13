@@ -239,8 +239,8 @@ _KINDS = {
 
 def _signature(obj: Any) -> inspect.Signature:
     """*obj*'s signature. An exception class that keeps the constructor of a
-    builtin exception (CommonRoadWorkerError, a RuntimeError with no
-    __init__ of its own) takes any positional arguments, as BaseException
+    builtin exception (a RuntimeError subclass with no __init__ of its
+    own) takes any positional arguments, as BaseException
     does, which inspect cannot read from the builtin."""
     if inspect.isclass(obj) and issubclass(obj, BaseException):
         for base in obj.__mro__:
@@ -1059,6 +1059,10 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # (concurrent.futures, the workers) and commonroad.worker (select,
     # subprocess, JSON objects of mixed value types): every name of their
     # __all__, the classes by name, the functions compile errors.
+    # WORKER_ENV, CommonRoadWorkerError and worker_command() are the checked
+    # commonroad.worker_start's (#2116), which commonroad.worker re-exports:
+    # its model still declares them, so a scenario importing them from it
+    # compiles as before.
     "commonroad/session": (commonroad_session, tuple(commonroad_session.__all__)),
     "commonroad/worker": (commonroad_worker, tuple(commonroad_worker.__all__)),
     # What the checked hils package re-exports of hils.config (yaml, a

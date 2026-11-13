@@ -3722,7 +3722,8 @@ What Codon 0.19 needs that Python does not, beyond
   `_polyder_at_zero()`, #731,
   which `test_t4_settings.py` compares with numpy). Nor does Codon unpack a
   generator (`c, d, e = (float(v) for v in cde)`): read `cde[0]`, `cde[1]`,
-  `cde[2]`.
+  `cde[2]` (`hils.lidar_spin.spin_lidar_points()` reads its motion's six
+  columns so, one product at a time and in the generator's order, #2116).
 - **numpy is Codon's own**, so `import numpy as np` compiles
   (`utils/powertrain.py`). Codon compares no `np.float32` with a Python
   `float`: convert the float (`x <= np.float32(max_rpm)`), which is what
@@ -4396,9 +4397,13 @@ What Codon 0.19 needs that Python does not, beyond
   the CommonRoad metrics after a run, not a scenario
   (`CommonRoadSettings` leaves out `workers` and `heavy_metrics`, whose
   defaults the machine and the environment decide: `_OMITTED_PARAMETERS`;
-  `CommonRoadWorkerError`, a `RuntimeError` with no constructor of its own,
-  takes `*args`, as Python's does), and `DeviceSpec`, `FieldSource`,
-  `HilsConfig` and `MessageSpec` (`hils/config.codon`, yaml and a document
+  `CommonRoadWorkerError` takes `*args` and `**kwargs`, as Python's hands
+  both on to `RuntimeError`'s; it, `worker_command()` and `WORKER_ENV` are
+  the checked `commonroad.worker_start`'s, which `commonroad.worker`
+  re-exports and the package imports from there; `commonroad/worker.codon`
+  still declares them, for a scenario importing them from
+  `commonroad.worker`), and `DeviceSpec`, `FieldSource`, `HilsConfig` and
+  `MessageSpec` (`hils/config.codon`, yaml and a document
   of any shape), which the checked `hils` package re-exports with
   `load_config()` and `parse_config()`, `compile_error`s too: scenario-hils
   reads the HILS bridge's configuration on the HILS PC, not a scenario (the
