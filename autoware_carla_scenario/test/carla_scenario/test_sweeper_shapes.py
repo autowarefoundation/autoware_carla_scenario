@@ -474,3 +474,25 @@ def test_the_sweeper_reports_a_bad_shape_in_one_line(
     assert len(lines) == 1, lines
     assert lines[0].startswith("Error: cut_in/left: sweep."), lines
     sweeper.launcher.launch.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("section", "what"),
+    [("route", "a route search"), ("odd_sample", "its settings")],
+)
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [([], "a list, []"), (0, "0"), (False, "False"), ("", "''"), (True, "True")],
+)
+def test_a_route_or_odd_sample_that_is_not_a_mapping_is_refused(
+    section: str, what: str, value: Any, shown: str
+) -> None:
+    """``sweep.route: false`` and ``sweep.odd_sample: 0`` are not read as no
+    sweep, and ``sweep.odd_sample: true`` is not an AttributeError (#2134)."""
+    expected = f"sweep.{section} must be {what} (a mapping), got {shown}"
+    with pytest.raises(ValueError) as error:
+        expand_module.check_constraint_keys({section: value})
+    assert str(error.value) == expected
+    with pytest.raises(ValueError) as error:
+        expand_module.expand_config(OmegaConf.create({"sweep": {section: value}}))
+    assert str(error.value) == expected

@@ -529,15 +529,16 @@ def _refuse_overridden(
 
 def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
     """Refuse a ``sweep.constraints`` with more than one target key, and a
-    ``sweep.constraints``, ``sweep.bindings`` or ``sweep.exclude`` of the
-    wrong shape.
+    ``sweep.constraints``, ``sweep.bindings``, ``sweep.exclude``,
+    ``sweep.route`` or ``sweep.odd_sample`` of the wrong shape.
 
     A sweep enumerates one parameter; the others a case needs are derived from
     its lanelet by ``sweep.bindings``.  A second key used to be ANDed into the
     first one's search and dropped, so it is refused rather than half honoured.
     ``sweep.constraints`` maps that key to a list of constraints,
     ``sweep.bindings`` maps each key it sets to a binding (a mapping), and
-    ``sweep.exclude`` maps each key to a list of values (or null).
+    ``sweep.exclude`` maps each key to a list of values (or null), and
+    ``sweep.route`` and ``sweep.odd_sample`` are mappings (or null).
     Callers run this before loading the map, so a bad config fails at once
     rather than after a clone.
 
@@ -547,6 +548,12 @@ def check_constraint_keys(sweep: Mapping[Any, Any]) -> None:
     """
     # Only a missing section or null is empty: [], 0, false or "" is not a
     # mapping (#2134).
+    for key, what in (("route", "a route search"), ("odd_sample", "its settings")):
+        value = sweep.get(key)
+        if value is not None and not isinstance(value, Mapping):
+            raise ValueError(
+                f"sweep.{key} must be {what} (a mapping), got {_shape(value)}"
+            )
     constraints_cfg = _section(sweep, "constraints")
     if not isinstance(constraints_cfg, Mapping):
         raise ValueError(
