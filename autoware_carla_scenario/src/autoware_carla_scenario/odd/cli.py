@@ -36,6 +36,11 @@ from typing import Any, Optional, Sequence
 
 from .registry import odd_builder, odd_names, resolve_odd
 
+# The split of the arguments into scenario configs and overrides, and the
+# metres per bucket printed, are the checked odd.route_text's (#2135).
+from .route_text import _format_buckets as _format_buckets
+from .route_text import _split_items
+
 __all__ = ["main"]
 
 #: The parameters of the ODD builders that take a list, and what the list holds.
@@ -244,15 +249,7 @@ def _scenario_configs(items: Sequence[str]) -> tuple[list[str], list[str]]:
     from ..registry import get_conf_dirs  # noqa: PLC0415
     from ..scenario_glob import resolve_scenario_glob  # noqa: PLC0415
 
-    patterns: list[str] = []
-    overrides: list[str] = []
-    for item in items:
-        if item.startswith("scenario="):
-            patterns.append(item[len("scenario=") :])
-        elif "=" in item:
-            overrides.append(item)
-        else:
-            patterns.append(item)
+    patterns, overrides = _split_items(items)
     names: list[str] = []
     for pattern in patterns:
         if run._is_glob_pattern(pattern):
@@ -287,10 +284,6 @@ def _format_route(coverage: Any) -> list[str]:
             + ", ".join(str(ll.lanelet_id) for ll in undecided)
         )
     return lines
-
-
-def _format_buckets(buckets: dict[str, float]) -> str:
-    return ", ".join(f"{label} {metres:.1f} m" for label, metres in buckets.items())
 
 
 def _route(spec: str, items: Sequence[str], as_json: bool) -> int:
