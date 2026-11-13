@@ -3162,7 +3162,7 @@ What Codon 0.19 needs that Python does not, beyond
 
   <!-- shims:start -->
   `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `hashlib`,
-  `importlib.metadata`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `queue`,
+  `importlib.metadata`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `platform`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions` and `urllib.parse`
   <!-- shims:end -->
