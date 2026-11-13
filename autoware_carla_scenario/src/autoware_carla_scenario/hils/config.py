@@ -683,7 +683,11 @@ def _step(
             seconds=timeout,
         )
     _only(section, ("send", "name", "fields", "data", "id"), where)
-    if bool(name) == ("data" in section):
+    # Raw data has no fields: any `fields` but null alongside it (even an
+    # empty mapping) contradicts it rather than being dropped (#2126).
+    if bool(name) == ("data" in section) or (
+        "data" in section and section.get("fields") is not None
+    ):
         raise HilsConfigError(
             f"{where}: a send has either a name (and fields) or raw data"
         )
@@ -743,7 +747,11 @@ def _lifecycle(
     _only(section, PHASES, "lifecycle")
     phases: Dict[str, Tuple[StepSpec, ...]] = {}
     for phase in PHASES:
-        steps = section.get(phase) or []
+        # Only a missing phase or null has no steps: false, 0 or "" is not a
+        # list (#2126).
+        steps = section.get(phase)
+        if steps is None:
+            steps = []
         if not isinstance(steps, list):
             raise HilsConfigError(f"lifecycle.{phase}: expected a list of steps")
         phases[phase] = tuple(
