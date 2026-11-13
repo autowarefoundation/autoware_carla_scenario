@@ -351,10 +351,26 @@ def test_the_readers_read_a_failure_as_before(failure: Any) -> None:
     assert readable_result(members) is old_readable
 
 
-def test_the_readers_raise_recursion_error_for_a_failure_nested_deep() -> None:
-    # Deeper than json.loads() reads on any version (some ten thousand
-    # levels on Python 3.12), written by hand: json.dumps() cannot write it.
+def _too_deep_for_loads() -> int:
+    """A nesting json.loads() does not read, called as deep in the stack as
+    this function is: some ten thousand levels on Python 3.12, but from 3.14
+    its limit is the thread's stack, which reads a hundred thousand on some
+    hosts."""
     depth = 100_000
+    while True:
+        try:
+            json.loads("[" * depth + "]" * depth)
+        except RecursionError:
+            return depth
+        if depth >= 10_000_000:
+            pytest.skip("json.loads() reads ten million levels here")
+        depth *= 10
+
+
+def test_the_readers_raise_recursion_error_for_a_failure_nested_deep() -> None:
+    # Deeper than json.loads() reads here, written by hand: json.dumps()
+    # cannot write it.  The readers call json.loads() deeper in the stack.
+    depth = _too_deep_for_loads()
     members = JsonMembers()
     members.put("failure", '{"also_triggered": [' + "[" * depth + "]" * depth + "]}")
     texts = {"failure": members.value_text("failure")}
