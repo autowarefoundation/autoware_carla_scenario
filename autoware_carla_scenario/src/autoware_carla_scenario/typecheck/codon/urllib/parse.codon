@@ -134,3 +134,11 @@ class ParseResult:
 # are not declared.
 def urlparse(url: str, scheme: str = "", allow_fragments: bool = True) -> ParseResult:
     return ParseResult(scheme, "", url, "", "", "")
+
+
+# parse_qsl(qs, keep_blank_values=False): the (name, value) pairs of a query
+# string, as CPython 3.10's first two parameters take it; its
+# strict_parsing, encoding, errors, max_num_fields and separator are not
+# declared, nor are a bytes query and parse_qs(). Nothing is parsed: no pair.
+def parse_qsl(qs: str, keep_blank_values: bool = False) -> List[Tuple[str, str]]:
+    return List[Tuple[str, str]]()

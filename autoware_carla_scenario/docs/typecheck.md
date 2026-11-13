@@ -2493,7 +2493,11 @@ parameters' probes: `odd.traffic_ranges`, #1680; not the probes themselves,
 `__init__`, its per-run record and probe, finding and writing the markers
 of the `--multirun` jobs given up, and finding the plans of the sweeps
 (`gate.errored` and `gate.sweep_plan`, #1967; not writing the plans or
-reading either, JSON objects of mixed value types),
+reading either, JSON objects of mixed value types), what a set of runs
+left unrecorded (`gate.unrecorded`, #2124: the batches under a directory, a
+local batch's summary read for its errored and pending cases, and the
+`--multirun` jobs given up or never started; not a SLURM batch's manifest,
+which `gate.evaluate` reads; it re-exports them),
 and the typed criteria its evaluator judges (`gate.criteria`: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
 baseline; and `gate.report`, #1738: a verdict's and a comparison's Markdown,
@@ -2502,7 +2506,11 @@ and the records grouped by scenario; not the evaluator itself, which reads the
 gate's pydantic model and openodd's merged coverage), the HILS bridge's wire format (a command's values included)
 and its configuration's sensor spec and the check of a field's signal name
 (not the YAML reading around it, `hils.config`; the `hils` package's
-`__init__`, which re-exports them, is checked), how an error shows an integer too long for
+`__init__`, which re-exports them, is checked), the virtual devices
+`scenario-hils --setup` creates for a configuration's devices, each validated
+in turn (`hils.host_devices`, #2124; not the playbooks' variables, a dict of
+mixed value types, or running them with ansible-runner, `hils.host_setup`,
+which re-exports it), how an error shows an integer too long for
 `repr()` (`value_text.huge_integer()`, which `hils.config` re-exports, #1704), the
 example scenarios and their configs, the SLURM launcher's job scripts (and
 how one is written, #2124), where
@@ -3527,7 +3535,13 @@ What Codon 0.19 needs that Python does not, beyond
   be valid on every supported Python anyway. `urllib.parse`
   declares `urlsplit()`, `urlunsplit()`, `unquote()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
-  and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
+  and `geturl()`), `urlparse()` and `ParseResult` (its six parts, likewise;
+  not `geturl()`), and `parse_qsl(qs, keep_blank_values=False)`, the first
+  two of CPython 3.10's parameters, of a `str` query, giving a
+  `list[tuple[str, str]]` of its pairs (none in the check: nothing is
+  parsed), with which `hils.host_devices` reads a device's `fd` option;
+  `strict_parsing`, `encoding`, `errors`, `max_num_fields` and `separator`,
+  a bytes query and `parse_qs()` are not declared. A scenario sees the same shims: it may import `pathlib`,
   `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata`,
   `urllib.parse`, `signal`, `atexit`, `shlex`, `fnmatch`, `keyword` and `sys` and call what they
   declare,
@@ -4072,7 +4086,11 @@ What Codon 0.19 needs that Python does not, beyond
   raise a subclass of a built-in exception that has none of its own
   (`'MapSourceError' object has no attribute '_pytype'`), so it takes the
   message and passes it on: `def __init__(self, message: str) -> None:
-  super().__init__(message)` (`maps/source.py`).
+  super().__init__(message)` (`maps/source.py`). One that hands on whatever
+  it is given, as Exception's own does, takes `*args: str, **kwargs: str`
+  and passes them on (`hils/host_devices.py`'s `HostSetupError`): Python
+  builds it as before, with the same arguments, message and repr, and the
+  same TypeError for a keyword.
 - **`except (A, B):` is split by the check**: Codon 0.19 takes one class
   per `except` clause ("expected type expression"), so the check rewrites a
   tuple written out into one clause per class, in the tuple's order, each
