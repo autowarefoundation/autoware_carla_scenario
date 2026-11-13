@@ -5,7 +5,9 @@
   left, z up; intensity 0-255).  hilspy's ``lidar:MODEL`` codec encodes one
   *revolution* into a sensor's packets, while CARLA measures the arc swept in
   one tick, so :class:`LidarRevolution` (:mod:`.lidar_revolution`, re-exported
-  here) gathers the arcs into revolutions.
+  here) gathers the arcs into revolutions, and :mod:`.lidar_spin` (also
+  re-exported here) dates a revolution's rays and re-observes its points as
+  a spinning sensor's.
 * A camera's BGRA image becomes one frame, as the device expects it
   (:data:`CAMERA_ENCODINGS`).
 
@@ -19,6 +21,8 @@ from typing import Dict, Tuple
 import numpy as np
 
 from .lidar_revolution import LidarRevolution
+from .lidar_spin import ray_times, spin_lidar_points
+from .lidar_spin import steady_revolution_start as steady_revolution_start
 
 __all__ = [
     "CAMERA_ENCODINGS",
@@ -44,77 +48,6 @@ CAMERA_ENCODINGS: Tuple[str, ...] = ("bgra", "bgr", "rgb", "jpeg", "png")
 def lidar_points(raw: bytes | memoryview | np.ndarray) -> FloatPoints:
     """A ray-cast LiDAR buffer as an ``[N, 4]`` float32 array (sensor frame)."""
     return np.frombuffer(raw, dtype=np.float32).reshape(-1, 4)
-
-
-def ray_times(points: np.ndarray, period: float) -> np.ndarray:
-    """Seconds after a revolution's start a turning sensor fires each point's ray.
-
-    hilspy dates the ray of azimuth ``atan2(y, x)`` (CARLA's sensor frame,
-    clockwise from forward) ``azimuth / 360`` of *period* after the scan's
-    timestamp, as the sensor fires it.
-    """
-    y, x = points[:, 1].astype(np.float64), points[:, 0].astype(np.float64)
-    return np.mod(np.arctan2(y, x), 2.0 * np.pi) * (period / (2.0 * np.pi))
-
-
-def steady_revolution_start(
-    measured: float, previous: float | None, period: float, gain: float = 0.2
-) -> float:
-    """When a revolution measured to start at *measured* is dated, *previous*
-    being the last one's start.
-
-    A turning sensor starts each revolution one *period* after the last, and
-    its packets' times never step back.  CARLA's ticks come a few ms early or
-    late on the wall clock, so the measured starts jitter; dated as they are,
-    a revolution can start before the last one's packets end, which a viewer
-    such as PandarView shows as a missing wedge.  The start therefore follows
-    the period and only drifts later toward the measured one (*gain* of the
-    difference): CARLA ticks no faster than the wall clock, so the measured
-    starts do not run ahead for long.  Where one is a whole period off (a
-    revolution missed, a stall) the stream restarts on it.  The points are
-    re-observed for the start chosen (:func:`spin_lidar_points`), so the
-    cloud stays right.
-    """
-    if previous is None:
-        return measured
-    expected = previous + period
-    error = measured - expected
-    if abs(error) >= period:
-        return measured
-    return expected + max(0.0, gain * error)
-
-
-def spin_lidar_points(
-    points: np.ndarray,
-    measured: np.ndarray,
-    motion: np.ndarray,
-    timestamp: float,
-    rays: np.ndarray,
-) -> np.ndarray:
-    """Re-observe a revolution's points as a spinning sensor would have seen them.
-
-    CARLA casts each tick's arc at once, from where the sensor was then
-    (*measured*, per point); a turning sensor fires each ray at
-    ``timestamp + rays`` (:func:`ray_times`).  Each point moves, with the
-    sensor's *motion* then held constant (per point ``vx, vy, vz`` in m/s and
-    ``wx, wy, wz`` in rad/s, CARLA's sensor frame, whose angular velocity
-    follows the left-hand rule: ``wz`` turns x toward y), to where the sensor
-    would have seen it at its ray's time -- small angles, first order -- so a
-    driver correcting the motion over each point's time gets back a cloud of
-    one instant.  *points* is CARLA's ``[N, 4]``; so is the result.
-    """
-    # Differences first: epoch seconds do not fit a float32 (CARLA's points are).
-    dt = (timestamp - np.asarray(measured, np.float64)) + np.asarray(rays, np.float64)
-    vx, vy, vz, wx, wy, wz = (motion[:, k] * dt for k in range(6))
-    a = points[:, 0] - vx
-    b = points[:, 1] - vy
-    c = points[:, 2] - vz
-    out = np.empty((len(points), 4), np.float32)
-    out[:, 0] = a - wy * c + wz * b
-    out[:, 1] = b - wz * a + wx * c
-    out[:, 2] = c - wx * b + wy * a
-    out[:, 3] = points[:, 3]
-    return out
 
 
 def lidar_scan_fields(

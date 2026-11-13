@@ -3707,7 +3707,8 @@ What Codon 0.19 needs that Python does not, beyond
   `_polyder_at_zero()`, #731,
   which `test_t4_settings.py` compares with numpy). Nor does Codon unpack a
   generator (`c, d, e = (float(v) for v in cde)`): read `cde[0]`, `cde[1]`,
-  `cde[2]`.
+  `cde[2]` (`hils.lidar_spin.spin_lidar_points()` reads its motion's six
+  columns so, one product at a time and in the generator's order, #2116).
 - **numpy is Codon's own**, so `import numpy as np` compiles
   (`utils/powertrain.py`). Codon compares no `np.float32` with a Python
   `float`: convert the float (`x <= np.float32(max_rpm)`), which is what

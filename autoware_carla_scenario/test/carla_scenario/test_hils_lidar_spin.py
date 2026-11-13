@@ -243,3 +243,13 @@ def test_steady_revolution_start_is_bit_identical() -> None:
         assert _bits(
             measurements.steady_revolution_start(measured, previous, period)
         ) == _bits(_old_steady_revolution_start(measured, previous, period))
+
+
+def test_measurements_re_exports_lidar_spin_s_functions() -> None:
+    from autoware_carla_scenario.hils import lidar_spin
+
+    assert measurements.ray_times is lidar_spin.ray_times
+    assert measurements.spin_lidar_points is lidar_spin.spin_lidar_points
+    assert measurements.steady_revolution_start is lidar_spin.steady_revolution_start
+    assert "ray_times" in measurements.__all__
+    assert "spin_lidar_points" in measurements.__all__
