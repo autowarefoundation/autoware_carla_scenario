@@ -5391,3 +5391,142 @@ def test_the_errno_and_os_shim_constants_slurm_manifest_reads_are_cpythons() -> 
         for name in names:
             value = int(getattr(python, name))
             assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
+
+
+# ---------------------------------------------------------------------------
+# The xml.etree.ElementTree shim: what traffic.sumo.network reads a network's
+# crossings with
+# ---------------------------------------------------------------------------
+
+
+_ELEMENT_TREE = """
+from __future__ import annotations
+
+import xml.etree.ElementTree as ET
+from pathlib import Path
+from typing import Optional
+from xml.etree import ElementTree
+from xml.etree.ElementTree import Element, iterparse
+
+
+def crossings(net_file: Path) -> dict[str, frozenset[str]]:
+    out: dict[str, frozenset[str]] = {}
+    for _event, element in ElementTree.iterparse(str(net_file)):
+        if element.tag == "edge" and element.get("function") == "crossing":
+            out[str(element.get("id"))] = frozenset(
+                (element.get("crossingEdges") or "").split()
+            )
+        element.clear()
+    return out
+
+
+def first(path: str) -> Optional[str]:
+    for event, element in iterparse(path):
+        found: Element = element
+        return event + found.tag + ET.Element("x").tag
+    return None
+
+
+def defaulted(element: ET.Element) -> str:
+    named = element.get("name", "unnamed")
+    absent = element.get("absent", None)
+    if named is None or absent is not None:
+        return ""
+    return named
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_element_tree_shim_takes_what_traffic_sumo_network_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_ELEMENT_TREE, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError, an AttributeError or an ImportError in CPython
+        # too.
+        ("ElementTree.iterparse(str(net_file))", "ElementTree.iterparse()"),
+        ('element.get("function")', "element.get()"),
+        ('element.get("name", "unnamed")', 'element.get("name", "unnamed", 1)'),
+        ('element.get("name", "unnamed")', 'element.get("name", fallback="x")'),
+        ("element.clear()", "element.clear(1)"),
+        ("element.tag ==", "element.tags =="),
+        ("ElementTree.iterparse(", "ElementTree.iterparsed("),
+        (
+            "from xml.etree.ElementTree import Element, iterparse",
+            "from xml.etree import Element, iterparse",
+        ),
+    ],
+    ids=[
+        "iterparse-no-source",
+        "get-no-key",
+        "get-three-arguments",
+        "get-unknown-keyword",
+        "clear-arguments",
+        "unknown-attribute",
+        "unknown-function",
+        "not-in-the-package",
+    ],
+)
+def test_the_element_tree_shim_refuses_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _ELEMENT_TREE.replace(right, wrong, 1)
+    assert source != _ELEMENT_TREE
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_element_tree_shim_declares_only_cpythons_names_and_parameters() -> None:
+    import inspect
+    import xml.etree.ElementTree as ET
+
+    shim = model_dir() / "xml" / "etree" / "ElementTree.codon"
+    tree = ast.parse(shim.read_text(encoding="utf-8"))
+    functions = {n.name: n for n in tree.body if isinstance(n, ast.FunctionDef)}
+    classes = {n.name: n for n in tree.body if isinstance(n, ast.ClassDef)}
+    assert set(functions) == {"iterparse"}
+    assert set(classes) == {"Element"}
+    methods = {
+        n.name: n for n in classes["Element"].body if isinstance(n, ast.FunctionDef)
+    }
+    assert set(methods) == {"__init__", "get", "clear"}
+    # Each declares CPython's leading parameters, by their names, and no
+    # other: narrower than CPython's, never wider.
+    for declared, python in (
+        (functions["iterparse"], ET.iterparse),
+        (methods["get"], ET.Element.get),
+        (methods["clear"], ET.Element.clear),
+    ):
+        names = [a.arg for a in declared.args.args if a.arg != "self"]
+        cpython = [p for p in inspect.signature(python).parameters if p != "self"]
+        assert names == cpython[: len(names)], declared.name
+    # The packages only import the submodule, so they name no module of
+    # their own (test_shim_list).
+    assert "xml.etree.ElementTree" in _shim_modules()
+    assert not {"xml", "xml.etree"} & _shim_modules()
+
+
+def test_map_resources_reason_names_each_element_tree_name_the_shim_lacks() -> None:
+    """t4_scene.map_resource's reason lists every name of xml.etree.ElementTree
+    it uses beyond the shim's (`ET.<name>` and an element's methods)."""
+    import importlib
+
+    # t4_scene re-exports a map_resource() function under the module's name.
+    module = importlib.import_module("autoware_carla_scenario.t4_scene.map_resource")
+    source = Path(str(module.__file__)).read_text(encoding="utf-8")
+    shim = model_dir() / "xml" / "etree" / "ElementTree.codon"
+    declared = set(re.findall(r"^(?:def|class) (\w+)", shim.read_text(), re.M))
+    used = set(re.findall(r"\bET\.(\w+)\b", source)) - declared
+    reason = EXCLUDED["autoware_carla_scenario.t4_scene.map_resource"]
+    assert used, "map_resource no longer uses ElementTree"
+    for name in sorted(used):
+        assert f"`{name}()`" in reason, name

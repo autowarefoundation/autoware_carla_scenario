@@ -4,8 +4,11 @@ far from it a road user is still one of the scene's objects.
 
 t4_scene.convert (the offline converter), t4_scene.live (the scenes written
 as a run goes) and the ``scenario-t4scene`` command share these, so they
-agree on what a step, a stem and a row mean.  Nothing here reads a log or
-builds a message.
+agree on what a step, a stem and a row mean.  The command finds the logs it
+converts here too, and the two of one stem it refuses to write into one
+directory (:func:`trajectory_logs`, :func:`stem_collision`), so that the
+library check compiles them (docs/typecheck.md): the command itself parses
+its arguments with argparse.  Nothing here reads a log or builds a message.
 """
 
 from __future__ import annotations
@@ -24,7 +27,9 @@ __all__ = [
     "is_ego",
     "on_scene",
     "scene_stem",
+    "stem_collision",
     "step_frames",
+    "trajectory_logs",
 ]
 
 
@@ -113,6 +118,34 @@ def scene_stem(name: str) -> str:
     if name.endswith(TRAJECTORY_SUFFIX):
         return name[: -len(TRAJECTORY_SUFFIX)]
     return Path(name).stem
+
+
+def trajectory_logs(paths: list[Path]) -> list[Path]:
+    """The trajectory logs *paths* name: a log itself, or every log under a
+    directory (``*.trajectory.jsonl``, sorted)."""
+    logs: list[Path] = []
+    for path in paths:
+        if path.is_dir():
+            logs.extend(sorted(path.rglob(f"*{TRAJECTORY_SUFFIX}")))
+        else:
+            logs.append(path)
+    return logs
+
+
+def stem_collision(logs: list[Path], output_dir: Path) -> Optional[str]:
+    """Why *logs* cannot all be written into *output_dir*, or ``None``: the
+    first two of them of one stem (:func:`scene_stem`), whose scenes would
+    overwrite each other there.  ``scenario-t4scene -o`` refuses them."""
+    stems: dict[str, Path] = {}
+    for log in logs:
+        stem = scene_stem(log.name)
+        if stem in stems:
+            return (
+                f"{stems[stem]} and {log} would both be written to "
+                f"{output_dir / stem}.*; convert them without -o"
+            )
+        stems[stem] = log
+    return None
 
 
 def is_ego(role: str) -> bool:
