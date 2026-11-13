@@ -201,7 +201,10 @@ def host_setup(config: HilsConfig) -> HostSetup:
                     f"{where}: {name!r} is not an interface name (at most 15 "
                     "letters, digits, '_', '.' or '-')"
                 )
-            vcan[name] = vcan.get(name, False) or _flag(url.query, "fd", where)
+            # Read the flag first: every device's ``fd`` is validated, even
+            # when an earlier one on the interface already made it FD.
+            fd = _flag(url.query, "fd", where)
+            vcan[name] = vcan.get(name, False) or fd
         elif url.scheme == "v4l2":
             match = _VIDEO_DEVICE.fullmatch(url.netloc + url.path)
             if match is None:
