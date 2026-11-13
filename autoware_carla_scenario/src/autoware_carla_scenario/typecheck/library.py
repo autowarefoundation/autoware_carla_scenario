@@ -592,7 +592,6 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.traffic.sumo.network.SignalTable.__init__": "takes roadgen's trace (`trace: Any`, a roadgen.Trace), which has no Codon model",
     "autoware_carla_scenario.traffic.sumo.network.SignalTable.load": "imports roadgen (the `sumo` extra) inside it, which has no Codon model, and builds the table with SignalTable.__init__, itself uncalled",
     "autoware_carla_scenario.traffic.sumo.network.SignalTable.links": "asks roadgen's trace (`Any`) what a signal became in SUMO, answers of mixed value types (`dict[str, Any]`), which Codon cannot express",
-    "autoware_carla_scenario.traffic.sumo.network._sumo_package_homes": "imports the eclipse-sumo package (the `sumo` extra) inside it, which has no Codon model; sumo_home calls it in the `else` branch of `if TYPE_CHECKING:`",
     "autoware_carla_scenario.traffic.sumo.network.build_network": "imports roadgen (the `sumo` extra) inside it, which has no Codon model, and converts the map with it",
     "autoware_carla_scenario.traffic.traffic_manager.TrafficManagerBackend.describe": _DETAILS,
     "autoware_carla_scenario.coordinate.projection._projector_info": f"{_YAML} (map_projector_info.yaml, with yaml, imported inside it, which Codon does not have); only read_map_origin and read_projector_type call it",

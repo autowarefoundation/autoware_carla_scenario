@@ -2091,6 +2091,23 @@ def test_the_packaging_model_is_version_and_invalid_version_as_in_the_package() 
     assert str(packaging.version.InvalidVersion("x")) == "x"
 
 
+#: The model of the eclipse-sumo package's `sumo` module: what the checked
+#: traffic.sumo.network reads of it.
+_SUMO_MODEL = model_dir() / "sumo"
+
+
+def test_the_sumo_model_is_the_packages_sumo_home() -> None:
+    definitions = _definitions("__init__", _SUMO_MODEL)
+    assert sorted(definitions) == ["SUMO_HOME", "__file__"]
+    for name in definitions:
+        node = definitions[name][0]
+        assert isinstance(node, ast.AnnAssign), name
+        assert ast.unparse(node.annotation) == "str", name
+    sumo = pytest.importorskip("sumo", reason="eclipse-sumo (the sumo extra)")
+    assert isinstance(sumo.SUMO_HOME, str)
+    assert isinstance(sumo.__file__, str)
+
+
 # ---------------------------------------------------------------------------
 # What Python exports, the model declares or leaves out on purpose (#237)
 # ---------------------------------------------------------------------------

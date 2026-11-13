@@ -950,8 +950,9 @@ What `test_typecheck_model.py` compares, model by model:
   re-export, and the `__init__` of a checked subpackage, which models
   nothing), so a model file no test compares fails the suite.
 - **Third-party models**: carla_driver_interface's geometry, python-dotenv's
-  `load_dotenv`, packaging's `Version` and `InvalidVersion`, pyxodr's `RoadNetwork` and
-  lxml's element.
+  `load_dotenv`, packaging's `Version` and `InvalidVersion`, eclipse-sumo's
+  `SUMO_HOME` (where it is installed), pyxodr's `RoadNetwork` and lxml's
+  element.
 
 A constant whose model value is a literal (a `str`, `int`, `float` or a tuple
 of them) is compared by its value and type (a tuple's items' too: `1` is no
@@ -1053,7 +1054,7 @@ scenario.py:4: error: autoware_carla_scenario.route.parse_route_search is not pa
 
 Third-party packages the framework reads are modelled as
 far as it reads them (lanelet2, pyxodr, carla_driver_interface, python-dotenv,
-packaging;
+packaging, eclipse-sumo;
 see *Making a module compile*), and a scenario may use what
 those models declare.
 
@@ -3691,6 +3692,11 @@ What Codon 0.19 needs that Python does not, beyond
   built from nothing or one message. Nothing else of a `Version` (its
   comparisons, `release`, `public`, ...) or of the package (`parse()`,
   `packaging.specifiers`) is declared.
+- **eclipse-sumo is modelled** as far as `traffic.sumo.network` uses it to
+  find SUMO: `codon/sumo/__init__.codon` declares the `sumo` module's
+  `SUMO_HOME` and `__file__`, both `str`, and nothing else. eclipse-sumo is
+  optional (the `sumo` extra), so `test_typecheck_model.py` compares the model
+  with the package only where it is installed.
 - **carla_canvas** is modelled for `canvas.use_canvas()`: `codon/carla_canvas/plugin.codon`
   declares `plugin_path() -> Path` and nothing else. carla_canvas is not a
   dependency of this package, so `test_typecheck_model.py` cannot compare it with

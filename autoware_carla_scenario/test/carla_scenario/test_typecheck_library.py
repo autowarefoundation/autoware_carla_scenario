@@ -5254,6 +5254,7 @@ _THIRD_PARTY_MODELS = {
     "lxml",
     "packaging",
     "pyxodr",
+    "sumo",
 }
 
 
