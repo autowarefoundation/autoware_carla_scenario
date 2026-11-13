@@ -6177,3 +6177,94 @@ def test_the_parse_qsl_shim_declares_cpythons_leading_parameters() -> None:
         ("fd", ""),
     ]
     assert parse_qsl(qs="fd&x=1") == [("x", "1")]
+
+
+# ---------------------------------------------------------------------------
+# getpass.getuser(): whom hils.host_devices sets the devices up for
+# ---------------------------------------------------------------------------
+
+
+_GETUSER = """
+from __future__ import annotations
+
+import getpass
+import os
+from getpass import getuser
+
+
+def user() -> str:
+    return os.environ.get("SUDO_USER") or getpass.getuser()
+
+
+def named() -> int:
+    name: str = getuser()
+    return len(name.strip())
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_getpass_shim_takes_what_hils_host_devices_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_GETUSER, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too, or a
+        # function CPython has that the shim does not declare.
+        ("getpass.getuser()", 'getpass.getuser("root")'),
+        ("getpass.getuser()", "getpass.getuser(user=None)"),
+        ("getpass.getuser()", "getpass.getuser"),
+        ("name.strip()", "name.strip().pw_name"),
+        ("getpass.getuser()", 'getpass.getpass("password: ")'),
+        ("getpass.getuser()", "getpass.GetPassWarning()"),
+    ],
+    ids=[
+        "no-argument",
+        "no-keyword",
+        "a-function-not-a-str",
+        "a-str-not-a-record",
+        "getpass-undeclared",
+        "warning-undeclared",
+    ],
+)
+def test_the_getpass_shim_refuses_what_it_does_not_declare(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _GETUSER.replace(right, wrong, 1)
+    assert source != _GETUSER
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_getpass_shim_declares_cpythons_getuser() -> None:
+    import getpass
+    import inspect
+
+    shim = ast.parse((model_dir() / "getpass.codon").read_text()).body
+    functions = [n for n in shim if isinstance(n, ast.FunctionDef)]
+    # getuser() and nothing else: no getpass(), no GetPassWarning.
+    assert [f.name for f in functions] == ["getuser"]
+    assert not [n for n in shim if isinstance(n, ast.ClassDef)]
+    declared = functions[0].args
+    assert not (declared.args or declared.kwonlyargs or declared.posonlyargs)
+    assert declared.vararg is None and declared.kwarg is None
+    returns = functions[0].returns
+    assert returns is not None and ast.unparse(returns) == "str"
+    # CPython 3.10's getuser() takes no argument and gives a str.
+    assert not inspect.signature(getpass.getuser).parameters
+    with pytest.raises(TypeError):
+        getpass.getuser("root")  # type: ignore[call-arg]
+    try:
+        assert isinstance(getpass.getuser(), str)
+    except OSError:  # no login name anywhere (3.13 on; KeyError before)
+        pass
+    except KeyError:
+        pass
