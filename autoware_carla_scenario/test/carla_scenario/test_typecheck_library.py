@@ -233,6 +233,29 @@ def test_an_excluded_reason_names_no_api_its_shim_declares() -> None:
     assert not wrong, "\n".join(wrong)
 
 
+def test_a_reason_says_codon_has_nothing_for_no_module_with_a_shim() -> None:
+    # A standard module with a shim is one Codon has something for: a reason
+    # names what of it the shim lacks ("more of X than its shim declares"),
+    # not X among the modules "which Codon has nothing for" -- as
+    # examples.run's did of platform once platform had a shim.
+    wrong = []
+    for table in (EXCLUDED, UNCALLED):
+        for name, reason in table.items():
+            for found in re.finditer(r"which Codon has nothing for", reason):
+                # The list the clause closes: back to the `;`, the `imports`
+                # or the `inside f(),` it starts at.
+                listed = re.split(r";|\bimports\b|\(\)[,:]? ", reason[: found.start()])[
+                    -1
+                ]
+                listed = re.sub(r"\([^()]*\)", "", listed)
+                for module in re.findall(
+                    r"(?<![\w.`])([a-z_]\w*(?:\.[a-z_]\w*)*)(?![\w`(])", listed
+                ):
+                    if _shim(module) is not None:
+                        wrong.append(f"{name}: {module} has a shim")
+    assert not wrong, "\n".join(wrong)
+
+
 _DOCS = Path(__file__).resolve().parents[2] / "docs" / "typecheck.md"
 _HOOK = Path(__file__).resolve().parents[2] / "mkdocs_hooks" / "typecheck_library.py"
 
