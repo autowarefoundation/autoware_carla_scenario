@@ -4048,7 +4048,14 @@ def _herd(path: Path, waiters: int, worker: Any) -> tuple[int, list[str]]:
 
 
 def _count_removals(monkeypatch: pytest.MonkeyPatch, worker: Any) -> list[str]:
-    """The tokens of the locks taken over as stale, as they are."""
+    """The tokens of the locks taken over as stale, as they are.
+
+    ``_take_over()``, the only caller of ``_remove_stale()``, is
+    ``slurm.start_lock``'s (#2144), and calls that module's: it is replaced
+    there, and in the worker, which re-exports both, alike.
+    """
+    from autoware_carla_scenario.slurm import start_lock
+
     real = worker._remove_stale
     removed: list[str] = []
 
@@ -4059,6 +4066,7 @@ def _count_removals(monkeypatch: pytest.MonkeyPatch, worker: Any) -> list[str]:
         return done
 
     monkeypatch.setattr(worker, "_remove_stale", remove)
+    monkeypatch.setattr(start_lock, "_remove_stale", remove)
     return removed
 
 
@@ -4071,7 +4079,7 @@ def test_waiters_taking_over_one_stale_lock_do_not_both_hold_it(
     tasks hold the lock at once."""
     import threading
 
-    from autoware_carla_scenario.slurm import worker
+    from autoware_carla_scenario.slurm import start_lock, worker
 
     path = tmp_path / "start.lock.excl"
     _stale_lock(path)
@@ -4108,7 +4116,10 @@ def test_waiters_taking_over_one_stale_lock_do_not_both_hold_it(
         return made
 
     monkeypatch.setattr(worker, "_take_over", take_over)
+    # The lock is created by the worker's _exclusive_file() and its takeover
+    # mutex by start_lock's _take_over() (#2144): each reads its own module's.
     monkeypatch.setattr(worker, "_create_lock", create)
+    monkeypatch.setattr(start_lock, "_create_lock", create)
     removed = _count_removals(monkeypatch, worker)
     holding: list[str] = []
     most = [0]
@@ -4184,9 +4195,10 @@ def test_a_herd_on_the_mutex_of_a_killed_waiter_takes_the_lock_over_once(
     """#1360: a waiter killed holding the takeover mutex; the waiters behind
     it all find the mutex stale at the same moment, and only one of them
     takes the lock over."""
-    from autoware_carla_scenario.slurm import worker
+    from autoware_carla_scenario.slurm import start_lock, worker
 
-    monkeypatch.setattr(worker, "_TAKEOVER_STALE_AFTER", 0.5)
+    # Read by start_lock's _take_over() (#2144), its only reader.
+    monkeypatch.setattr(start_lock, "_TAKEOVER_STALE_AFTER", 0.5)
     path = tmp_path / "start.lock.excl"
     _stale_lock(path)
     _takeover_mutex(path, 1).write_text("killed-host:1:waiter")  # fresh
@@ -4229,9 +4241,10 @@ def test_a_gap_below_a_dead_takeover_generation_is_climbed_past(
     2 and no generation 1: a waiter neither hangs nor spins on them."""
     import threading
 
-    from autoware_carla_scenario.slurm import worker
+    from autoware_carla_scenario.slurm import start_lock, worker
 
-    monkeypatch.setattr(worker, "_TAKEOVER_STALE_AFTER", 0.3)
+    # Read by start_lock's _take_over() (#2144), its only reader.
+    monkeypatch.setattr(start_lock, "_TAKEOVER_STALE_AFTER", 0.3)
     path = tmp_path / "start.lock.excl"
     _stale_lock(path)
     dead = _takeover_mutex(path, 2)
@@ -4245,7 +4258,10 @@ def test_a_gap_below_a_dead_takeover_generation_is_climbed_past(
         created.append(lock.name)
         return bool(real_create(lock, token))
 
+    # The worker's _exclusive_file() and start_lock's _take_over() each read
+    # their own module's (#2144).
     monkeypatch.setattr(worker, "_create_lock", create)
+    monkeypatch.setattr(start_lock, "_create_lock", create)
     acquired = threading.Event()
 
     def hold() -> None:
@@ -4258,6 +4274,7 @@ def test_a_gap_below_a_dead_takeover_generation_is_climbed_past(
     thread.join(10)
     # Generation 1 is won once, left while it is live, then climbed past.
     attempts = [name for name in created if ".takeover." in name]
+    assert attempts  # the mutex is created through the patched _create_lock
     assert len(attempts) < 20, attempts
     assert list(tmp_path.iterdir()) == []
 

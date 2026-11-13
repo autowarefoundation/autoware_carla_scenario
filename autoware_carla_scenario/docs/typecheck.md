@@ -3007,7 +3007,15 @@ of a target that exists (`PackageExistsError`, a `FileExistsError` whose
 `root` is declared at class level), split out of `scaffold.generator`
 (argparse, jinja2), which re-exports them (#2144). A test that replaces
 `generator._occupied` to reach the rename's own refusal replaces
-`placement._occupied` too, which the move reads.
+`placement._occupied` too, which the move reads. `slurm.start_lock`, split
+out of `slurm.worker` for the files of the start lock (#2116), holds the
+takeover of a stale lock too, one waiter at a time (`_take_over()` and the
+age of a dead waiter's mutex, `_TAKEOVER_STALE_AFTER`, #2144); the worker
+re-exports them and keeps taking the lock (`_exclusive_file()`, a
+`contextmanager`). A test that shortens that age or watches the takeover's
+`_create_lock()` and `_remove_stale()` replaces `start_lock`'s, which
+`_take_over()` reads (and, for `_create_lock()`, the worker's too, which
+`_exclusive_file()` reads).
 
 Each checked module gets the `__file__` Python sets on it (its source's path,
 a `str`), which Codon 0.19 does not, bound on the last line of the prelude so

@@ -759,9 +759,12 @@ def test_the_server_clock_probes_once_while_polling_a_fresh_lock(
 
 
 def test_the_worker_re_exports_the_start_locks_own_objects() -> None:
-    """slurm.worker's names are slurm.start_lock's objects, so a test that
-    patches the worker's _create_lock or _remove_stale still reaches the
-    worker's _take_over() and _exclusive_file(), which stay there."""
+    """slurm.worker's names are slurm.start_lock's objects.  _take_over()
+    and _TAKEOVER_STALE_AFTER moved there too (#2144): a test that replaces
+    what _take_over() reads (_create_lock, _remove_stale,
+    _TAKEOVER_STALE_AFTER) replaces start_lock's; the worker's
+    _exclusive_file() and _start_lock() stay there, and read the worker's
+    _create_lock and _take_over."""
     from autoware_carla_scenario.slurm import start_lock
 
     for name in (
@@ -774,11 +777,14 @@ def test_the_worker_re_exports_the_start_locks_own_objects() -> None:
         "_release_lock",
         "_remove_stale",
         "_server_now",
+        "_take_over",
+        "_TAKEOVER_STALE_AFTER",
     ):
         assert getattr(worker, name) is getattr(start_lock, name), name
-    for name in ("_take_over", "_exclusive_file", "_start_lock"):
+    assert worker._take_over.__module__ == start_lock.__name__
+    for name in ("_exclusive_file", "_start_lock"):
         assert getattr(worker, name).__module__ == worker.__name__
-    assert worker._TAKEOVER_STALE_AFTER == 10.0
+    assert start_lock._TAKEOVER_STALE_AFTER == 10.0
 
 
 # -- _take_over (#2144) --------------------------------------------------------

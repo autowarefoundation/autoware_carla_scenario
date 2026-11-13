@@ -69,6 +69,8 @@ from .start_lock import _lock_sibling as _lock_sibling
 from .start_lock import _release_lock as _release_lock
 from .start_lock import _remove_stale as _remove_stale
 from .start_lock import _server_now as _server_now
+from .start_lock import _take_over as _take_over
+from .start_lock import _TAKEOVER_STALE_AFTER as _TAKEOVER_STALE_AFTER
 from .task_timing import (
     rss_report,
     start_delay,
@@ -422,87 +424,6 @@ def _raise_interrupt(signum: int, _frame: object) -> None:
     signal.signal(signal.SIGTERM, signal.SIG_IGN)
     signal.signal(signal.SIGUSR1, signal.SIG_IGN)
     raise KeyboardInterrupt(f"signal {signal.Signals(signum).name}")
-
-
-#: How old (by the file server's clock) the takeover mutex of a lock file is
-#: when the waiter holding it was killed: it is held for a few file
-#: operations only.
-_TAKEOVER_STALE_AFTER = 10.0
-
-
-def _take_over(
-    path: Path, stale: _LockId, clock: _ServerClock, stale_after: float, token: str
-) -> bool:
-    """Remove the lock at *path* judged stale as *stale*, if it still is it,
-    one waiter at a time; whether this waiter removed it (and need not wait
-    before trying the lock again).
-
-    The waiters taking over one stale lock share a mutex keyed to its
-    identity and made of generations: ``<path>.takeover.<ino>-<mtime>.<g>``,
-    created with ``O_EXCL``.  A waiter creates generation 1, or generation
-    g+1 once it has seen generation g and found it stale (its creator was
-    killed: :data:`_TAKEOVER_STALE_AFTER` seconds by the server's clock).
-    Creating never removes anything, so each generation has one winner, and
-    a waiter that finds the newest generation live leaves the takeover to
-    its creator.  The winner of generation g backs off, leaving its
-    generation in place, if generation g+1 exists; otherwise it checks
-    again that *path* is still *stale* and stale, unlinks it
-    (:func:`_remove_stale`), and removes generations 1 to g.  Except in the
-    cases below:
-
-    - Of the waiters that judged lock L1 stale together, one removes it;
-      the others find generation g live, or, once it is removed, win a
-      generation of their own, find *path* free or holding a fresh lock L2
-      (another identity), and leave it alone.  No waiter renames, puts back
-      or removes a live lock.
-    - A waiter killed while holding generation g leaves it and L1: after
-      :data:`_TAKEOVER_STALE_AFTER` seconds one waiter wins g+1 and removes
-      both; the waiters that arrive together find generation g stale at once
-      and still only one of them wins g+1.  A missing generation below a
-      dead one (its winner stalled, found itself superseded by a winner that
-      was then killed) is won again, left in place, and climbed past once
-      it is stale.  A mutex of a lock already removed only leads its winner
-      to find the lock gone.
-
-    The cases: a holder alive past its staleness.  The holder of L1 if it
-    held it past *stale_after* (which the stagger's spacing + 60 s rules out
-    but for a stalled node); or the winner of generation g if it stalled for
-    :data:`_TAKEOVER_STALE_AFTER` seconds, so that g+1 was won as well (two
-    winners of the mutex) -- right between its last check of *path* and its
-    unlink while the winner of g+1 removed L1 and a task made L2, it removes
-    L2.  Only then may two tasks hold the lock.
-    """
-    prefix = f"{path.name}.takeover.{stale[1]}-{stale[2]}."
-    generation = 1
-    while True:
-        mutex = path.with_name(f"{prefix}{generation}")
-        if _create_lock(mutex, token):
-            break
-        seen = _lock_identity(mutex)
-        if seen is None:
-            continue  # removed by a winner that found L1 gone: try it again
-        if not clock.stale(seen[1], _TAKEOVER_STALE_AFTER):
-            return False  # its winner is taking the lock over
-        generation += 1
-    if path.with_name(f"{prefix}{generation + 1}").exists():
-        # Superseded (this generation was missing, or this waiter stalled):
-        # generation g+1's winner removes 1 to g+1, or, if it was killed,
-        # this generation goes stale and the next waiter climbs past both.
-        # Removing it here would leave a gap below a dead g+1 that every
-        # waiter would fill and back off from, for ever.
-        return False
-    seen = _lock_identity(path)
-    removed = (
-        seen is not None
-        and seen[0] == stale
-        and clock.stale(seen[1], stale_after)
-        and _remove_stale(path, stale)
-    )
-    # The lock judged stale is gone: its mutex goes too.
-    for old in range(generation, 0, -1):
-        with contextlib.suppress(OSError):
-            os.unlink(path.with_name(f"{prefix}{old}"))
-    return removed
 
 
 @contextlib.contextmanager
