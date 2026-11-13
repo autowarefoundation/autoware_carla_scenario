@@ -10,9 +10,10 @@ choice of the web viewer ``VIEWER_RERUN_WEB_VIEWER`` makes: none, a URL
 (:func:`local_package`), with the CDN (:func:`cdn_url`) as the fallback.
 
 Split out of ``ui.recordings``, which re-exports every name moved here and
-keeps what reads the package's JSON, hashes a log's path, downloads and
-unpacks the package and calls the converter, so that the library check
-compiles it (``docs/typecheck.md``, "Checking the framework itself").
+keeps what reads the package's JSON, downloads and unpacks the package and
+calls the converter, so that the library check compiles it
+(``docs/typecheck.md``, "Checking the framework itself"); how the viewer's
+files are put in place is the checked ``ui.recording_files``' (#2124).
 """
 
 from __future__ import annotations

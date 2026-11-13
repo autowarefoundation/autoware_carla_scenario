@@ -40,6 +40,13 @@ import zlib
 from pathlib import Path
 from typing import Any
 
+# The viewer's file helpers, compiled by the library check (ui.recording_files,
+# #2124); the names they had here stay importable from here.
+from .recording_files import _fresh as _fresh
+from .recording_files import _publish as _publish
+from .recording_files import _swap_into_place as _swap_into_place
+from .recording_files import cached_recording_name
+
 # The web viewer's selection and the path rules, compiled by the library check
 # (ui.web_viewer_paths); the names they had here stay importable from here.
 from .web_viewer_paths import _ENV_CACHE as _ENV_CACHE
@@ -137,16 +144,13 @@ def web_viewer_version() -> str:
 
 
 def _cached_recording(trajectory: Path) -> Path:
-    """Where a recording is kept when the log's directory cannot be written."""
-    digest = hashlib.sha256(str(trajectory.resolve()).encode()).hexdigest()[:24]
-    return _cache_root() / "recordings" / f"{digest}.rrd"
+    """Where a recording is kept when the log's directory cannot be written.
 
-
-def _fresh(recording: Path, trajectory: Path) -> bool:
-    try:
-        return recording.stat().st_mtime >= trajectory.stat().st_mtime
-    except OSError:
-        return False
+    ui.recording_files' name, under this module's ``_cache_root()``: looked
+    up here at each call, so that a patch of ``recordings._cache_root``
+    reaches it."""
+    name = cached_recording_name(trajectory)
+    return _cache_root() / "recordings" / name
 
 
 _locks: dict[str, threading.Lock] = {}
@@ -167,23 +171,6 @@ def _map_dir() -> str | None:
         return env
     default = Path.home() / "autoware_data" / "maps"
     return str(default) if default.is_dir() else None
-
-
-def _publish(tmp: Path, out: Path, replace: bool) -> None:
-    """Rename *tmp* to *out*; without *replace*, only while there is no *out*
-    (``FileExistsError`` otherwise), so a file written there meanwhile -- by a
-    run converting its own log -- is kept."""
-    if replace:
-        os.replace(tmp, out)
-        return
-    try:
-        os.link(tmp, out)  # fails, atomically, when out exists
-    except FileExistsError:
-        raise
-    except OSError:  # a file system without hard links
-        if os.path.lexists(out):
-            raise FileExistsError(str(out)) from None
-        os.replace(tmp, out)
 
 
 def _convert(trajectory: Path, out: Path, replace: bool = True) -> None:
@@ -377,24 +364,3 @@ def _unpack_web_viewer(data: bytes, directory: Path) -> None:
                 (directory / name).write_bytes(source.read())
     except (tarfile.TarError, EOFError, zlib.error) as error:
         raise RecordingError(f"The tarball cannot be read: {error}") from error
-
-
-def _swap_into_place(staging: Path, target: Path) -> None:
-    """Move the directory *staging* to *target*, replacing a copy already
-    there; the old copy is moved aside first, and back if the move fails."""
-    old: Path | None = None
-    if target.exists():
-        old = Path(tempfile.mkdtemp(prefix=f".{target.name}.old.", dir=target.parent))
-        try:
-            os.replace(target, old)
-        except OSError:
-            old.rmdir()  # still the empty directory mkdtemp made
-            raise
-    try:
-        os.replace(staging, target)
-    except OSError:
-        if old is not None:
-            os.replace(old, target)
-        raise
-    if old is not None:
-        shutil.rmtree(old, ignore_errors=True)

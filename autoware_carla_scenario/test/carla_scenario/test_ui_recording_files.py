@@ -28,7 +28,7 @@ from typing import Any
 
 import pytest
 
-from autoware_carla_scenario.ui import recordings
+from autoware_carla_scenario.ui import recording_files, recordings
 from autoware_carla_scenario.ui.web_viewer_paths import _cache_root
 
 # -- the oracles: ui/recordings.py as it was -----------------------------------
@@ -193,6 +193,7 @@ def _both(
         "missing/x.trajectory.jsonl",
         "é中.trajectory.jsonl",
         "link.trajectory.jsonl",
+        "loop.trajectory.jsonl",
         "",
     ],
 )
@@ -219,9 +220,12 @@ def test_the_cached_recording_is_where_it_was(
     (tmp_path / "a" / "b").mkdir(parents=True)
     (tmp_path / "run.trajectory.jsonl").write_text("{}\n")
     (tmp_path / "link.trajectory.jsonl").symlink_to("run.trajectory.jsonl")
+    (tmp_path / "loop.trajectory.jsonl").symlink_to("loop.trajectory.jsonl")
     monkeypatch.chdir(tmp_path)
     for path in (Path(trajectory), tmp_path / trajectory):
-        assert recordings._cached_recording(path) == _old_cached_recording(path)
+        assert _outcome(tmp_path, partial(recordings._cached_recording, path)) == (
+            _outcome(tmp_path, partial(_old_cached_recording, path))
+        )
 
 
 def test_a_patch_of_recordings_cache_root_reaches_the_cached_recording(
@@ -489,3 +493,9 @@ def test_a_failing_mkdtemp_is_raised_as_it_was(
     )
     assert len(asked) == 2
     assert asked[0] == asked[1]
+
+
+def test_recordings_re_exports_the_checked_helpers() -> None:
+    # The library check compiles ui.recording_files (#2124).
+    for name in ("_fresh", "_publish", "_swap_into_place"):
+        assert getattr(recordings, name) is getattr(recording_files, name)
