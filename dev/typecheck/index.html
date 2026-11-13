@@ -4883,8 +4883,8 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-324 of the package's 438
-modules (74%; about 102,600 of
+325 of the package's 439
+modules (74%; about 102,700 of
 170,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
@@ -4949,7 +4949,9 @@ of the T4Scene converter (CARLA's world frame to Autoware's <code>map</code> fra
 and quaternions of its angles, and the check of the ego's rear-axle offset:
 <code>t4_scene.frames</code>, #1665, #1697; the converter
 itself, which reads the log's mixed-type records and builds protobuf
-messages, re-exports it), the file names of a driver policy's map set and the
+messages, re-exports it), the OSM bytes of a T4Scene's map resource and the
+digest that names them (<code>t4_scene.osm</code>, #2116; <code>t4_scene.map_resource</code>,
+which builds the protobuf <code>MapResource</code>, re-exports them), the file names of a driver policy's map set and the
 id it is written under (<code>driver.hdmap_files</code>, #1728; <code>driver.hdmap_export</code>,
 which writes the set with roadgen, re-exports them), what the weather rules
 read and which <code>vehicles</code> entry of <code>environment.rules</code> a vehicle follows
@@ -4962,7 +4964,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 324 CHECKED modules</summary>
+<summary>The 325 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -6068,6 +6070,10 @@ with the first paragraph of its docstring:</p>
 <td>The pure pieces of a T4Scene's time grid: the step in ticks, the scene's stem, who the ego is, who is on the scene, the ego's turn indicator and how far from it a road user is still one of the scene's objects.</td>
 </tr>
 <tr>
+<td><code>t4_scene.osm</code></td>
+<td>A Lanelet2 map as the OSM XML of the T4Scene contract's <code>LOCAL_METERS</code> profile, and the SHA-256 that names it (docs/t4_scene.md).</td>
+</tr>
+<tr>
 <td><code>t4_settings</code></td>
 <td>What a run's T4 dataset holds: its settings, names and categories, and the OpenCV model of an F-theta camera.</td>
 </tr>
@@ -6540,7 +6546,7 @@ the first:</p>
 <li><code>coverage.report</code>: re-exports openodd's coverage merge and report (a Rust extension)</li>
 <li><code>declarative</code>: imports authoring.builders, authoring.compiler, authoring.models (pydantic) and authoring.persistence (yaml), which are not checked and have no model</li>
 <li><code>driver.egodriver_client</code>: imports grpc, google.protobuf, numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, importlib, and carla_driver_interface's contract, policies, server, service, driver, inprocess and protocol, which its model (geometry only) does not declare</li>
-<li><code>driver.hdmap_export</code>: imports more of errno and tempfile than their shims declare (<code>ENOENT</code>, <code>EEXIST</code> and <code>ENOTEMPTY</code>, its <code>_RACES</code>; <code>TemporaryDirectory()</code>), and, inside <code>_import_roadgen()</code>, roadgen, which has no Codon model; _can_export() and _export() test for and call roadgen's exporter by a name held in a variable, through hasattr() and getattr() (<code>export_{name}</code>), which Codon does not compile; export_map() reads an OSError's <code>errno</code>, which the check refuses; _file_digest() reads the file in chunks with the two-argument <code>iter(callable, sentinel)</code>, and Codon's <code>iter()</code> takes one argument; builds the manifest and its format records as <code>Dict[str, Any]</code> of mixed value types, which Codon cannot express; the file names of a map set, where each format is written (<code>MAP_FORMATS</code>) and map_id_for() are the checked driver.hdmap_files's (#1728), which it re-exports</li>
+<li><code>driver.hdmap_export</code>: imports more of errno than its shim declares (<code>ENOENT</code>, <code>EEXIST</code> and <code>ENOTEMPTY</code>, its <code>_RACES</code>), and, inside <code>_import_roadgen()</code>, roadgen, which has no Codon model; export_map() names its scratch directory <code>with tempfile.TemporaryDirectory(...) as scratch</code>, which Codon binds to the manager, not to the directory's name; _can_export() and _export() test for and call roadgen's exporter by a name held in a variable, through hasattr() and getattr() (<code>export_{name}</code>), which Codon does not compile; export_map() reads an OSError's <code>errno</code>, which the check refuses; _file_digest() reads the file in chunks with the two-argument <code>iter(callable, sentinel)</code>, and Codon's <code>iter()</code> takes one argument; builds the manifest and its format records as <code>Dict[str, Any]</code> of mixed value types, which Codon cannot express; the file names of a map set, where each format is written (<code>MAP_FORMATS</code>) and map_id_for() are the checked driver.hdmap_files's (#1728), which it re-exports</li>
 <li><code>driver.renderer</code>: imports carla_driver_interface.protocol (the protobuf messages it builds and reads: CarlaRendererData, CarlaActorState, CarlaWeather, TrafficLight, StopPoint, LidarSweep, the TrafficLightState values, and common_pb2's AABB, DynamicState and Vec3), which its model (geometry only) does not declare; and _weather() reads the weather's fields by a name held in a variable, through getattr(), and passes them to CarlaWeather as ** a dict, neither of which Codon compiles; and the velocity it reports for an actor is a measured Vector3 or CARLA's Vector3D in one conditional expression, which Codon cannot type; which light governs the ego and where it stops for it are the checked driver.stop_lines'</li>
 <li><code>editor</code>: imports argparse and serve_cli (argparse), which is not checked; imports uvicorn and editor.app (fastapi) inside main()</li>
 <li><code>editor.app</code>: imports fastapi and web_guard (starlette), and authoring.models (pydantic), authoring.hydra_config, authoring.persistence, authoring._builders_generated and editor.service (pydantic, through authoring.models), authoring.registry, trajectory.authoring and editor.forms, and, inside create_app(), editor.routes (fastapi), which are neither checked nor modelled</li>
@@ -6559,7 +6565,7 @@ the first:</p>
 <li><code>hils.bridge</code>: imports hilspy (a Rust extension) at module level under TYPE_CHECKING, for its <code>Channel</code>, <code>Periodic</code> and <code>Clock</code> annotations, and inside _require_hilspy(), which hands the module on as a <code>types.ModuleType</code> value, and typesafe_carla's CPython package inside HilsBridge, which it holds as <code>_carla: Any</code>; uses more of threading than its shim declares (<code>Event</code>); holds hilspy's messages, CARLA's measurements and the queues that carry them typed <code>Any</code>; and builds on hils.link and hils.protocol (socket), hils.measurements (cv2) and hils.config (yaml), which are neither checked nor modelled</li>
 <li><code>hils.cli</code>: imports argparse and importlib.resources, and serve_cli (argparse) and hils.config (yaml) and, inside main(), hils.bridge (hilspy) and, inside _setup(), hils.host_setup (ansible_runner), which are neither checked nor modelled</li>
 <li><code>hils.config</code>: imports yaml inside load_config(), and reads a parsed YAML document of any shape (<code>Any</code>), holds a constant field value as <code>Constant = Union[str, int, float, bool]</code> and a device's codec options as <code>Mapping[str, Any]</code>, none of which Codon can express; imports at module level hils.protocol (socket) and hils.measurements (cv2), which are neither checked nor modelled; what YAML 1.1 makes of a plain scalar is the checked hils.yaml11's, and SensorSpec, the LiDAR attribute checks, the relative files, the check of a field's signal name (<code>checked_signal()</code>, its <code>_signal()</code>), CLOCKS, PHASES and HilsConfigError the checked hils.sensor_spec's, which it re-exports, as it does the checked value_text's <code>huge_integer()</code> (its <code>_huge()</code>, #1704); hils/config.codon declares what the checked hils package re-exports of it</li>
-<li><code>hils.host_setup</code>: imports importlib.resources and getpass, and, inside AnsibleRunner, ansible_runner, which Codon has nothing for, and more of urllib.parse and tempfile than their shims declare (<code>parse_qsl()</code>, <code>TemporaryDirectory()</code>); builds on hils.config (yaml), which is neither checked nor modelled; holds the playbooks' variables as <code>Dict[str, Any]</code> of mixed value types, which Codon cannot express</li>
+<li><code>hils.host_setup</code>: imports importlib.resources and getpass, and, inside AnsibleRunner, ansible_runner, which Codon has nothing for, and more of urllib.parse than its shim declares (<code>parse_qsl()</code>); AnsibleRunner names its data directory <code>with tempfile.TemporaryDirectory(...) as data</code>, which Codon binds to the manager, not to the directory's name; builds on hils.config (yaml), which is neither checked nor modelled; holds the playbooks' variables as <code>Dict[str, Any]</code> of mixed value types, which Codon cannot express</li>
 <li><code>hils.link</code>: imports more of socket than its shim declares (<code>socket.create_server()</code>, <code>socket.has_dualstack_ipv6()</code>, <code>socket.timeout</code>, and a socket's <code>settimeout()</code>, <code>accept()</code>, <code>sendall()</code> and <code>shutdown()</code>, and <code>socket.SHUT_RDWR</code>), and builds on hils.protocol (socket), which is neither checked nor modelled</li>
 <li><code>hils.measurements</code>: imports cv2 inside camera_frame(), and takes a buffer that is bytes, a memoryview or a numpy array, which Codon cannot express, and reads it with <code>np.frombuffer()</code>, which takes only a str in Codon; declares <code>FloatPoints</code> at module level as <code>np.ndarray[tuple[int, int], np.dtype[np.float32]]</code>, which is not Codon's <code>ndarray[dtype, ndim]</code>; returns a LiDAR scan's fields as a <code>Dict[str, np.ndarray]</code> of float32 and uint8 arrays, which Codon cannot express; the gathering of a LiDAR's arcs into revolutions is the checked hils.lidar_revolution's, and the dating of a revolution's rays and its start and the re-observing of its points as a spinning sensor's (<code>ray_times()</code>, <code>steady_revolution_start()</code>, <code>spin_lidar_points()</code>) the checked hils.lidar_spin's (#2116), which it re-exports</li>
 <li><code>hils.protocol</code>: imports selectors, which Codon has nothing for, and more of socket than its shim declares (<code>socket.timeout</code>, and LineReader reads the bridge's socket with <code>recv()</code>), and reads JSON messages of any shape, which LineReader.read() returns as <code>List[Dict[str, Any]]</code> and Codon cannot express; what needs none of these, command_value() included, is hils.wire, which it re-exports</li>
@@ -6604,7 +6610,7 @@ the first:</p>
 <li><code>t4_scene._proto.t4_scene_pb2</code>: imports google.protobuf</li>
 <li><code>t4_scene.convert</code>: reads JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) with orjson, imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks, and builds protobuf messages (t4_scene._proto); its frame math (the map frame's positions and angles, the rotations and quaternions) is the checked t4_scene.frames (#1665), and so is the check of a rear-axle offset (<code>checked_rear_axle_offset()</code>, #1697), which it re-exports for t4_scene.live and t4_scene.__main__; the suffixes of a T4Scene and its map (<code>SCENE_SUFFIX</code>, <code>MAP_SUFFIX</code>) are the checked run_outputs's (#1713); t4_scene.codon models the write_t4_scene() the checked t4_scene.exporter calls</li>
 <li><code>t4_scene.live</code>: builds the run's scenes with t4_scene.convert, which is not checked, from a subclass of trajectory_recorder's TrajectoryRecorder (excluded), and imports numpy.typing (<code>NDArray</code>); entity.carla_driver_entity (excluded) is all that uses it</li>
-<li><code>t4_scene.map_resource</code>: imports more of xml.etree.ElementTree than its shim declares (<code>fromstring()</code>, <code>SubElement()</code>, <code>tostring()</code>, an element's <code>findall()</code>, <code>find()</code>, <code>attrib</code> and <code>set()</code>), and more of tempfile than its shim declares (<code>TemporaryDirectory()</code>), reads more of lanelet2 than its model declares (<code>lanelet2.io.writeRobust()</code>, <code>lanelet2.projection.MercatorProjector</code> and a projector's <code>reverse()</code>), and builds protobuf messages (t4_scene._proto)</li>
+<li><code>t4_scene.map_resource</code>: builds protobuf messages (t4_scene._proto); the OSM bytes it carries and their digest (<code>local_meters_osm()</code>, <code>resource_digest()</code>, <code>CENTERLINE_INVERTED_TAG</code>) are the checked t4_scene.osm's (#2116), which it re-exports</li>
 <li><code>t4_scene.route</code>: Codon crashes compiling RouteGraph.of(), which builds the lane graph with lanelet2's routing graph (a segmentation fault, or an assertion at translate.cpp:193); imports numpy.typing (<code>NDArray</code>), which Codon's numpy lacks; holds the lane graph as <code>Mapping[int, tuple[int, ...]]</code> attributes; and moves a map's points with <code>Lanelet.resetCache()</code> and <code>LineString3d.__setitem__()</code>, which the lanelet2 model does not declare; t4_scene.convert and t4_scene.live, which are not checked, are all that use it</li>
 <li><code>templating</code>: imports jinja2; its filters escape with the checked text_escape</li>
 <li><code>tools.detect_no_3d_model_lanelets</code>: imports omegaconf, yaml, tqdm, argparse, and serve_cli (argparse), which is not checked</li>
@@ -7158,11 +7164,19 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <!-- shims:end -->
 </p>
 <p><code>tempfile</code> declares <code>mkstemp(suffix=None, prefix=None, dir=None,
-  text=False)</code> and <code>mkdtemp(suffix=None, prefix=None, dir=None)</code> only, with CPython 3.10's signature (a <code>str</code> or an
+  text=False)</code>, <code>mkdtemp(suffix=None, prefix=None, dir=None)</code> and
+  <code>TemporaryDirectory(suffix=None, prefix=None, dir=None,
+  ignore_cleanup_errors=False)</code> only, with CPython 3.10's signatures (a <code>str</code> or an
   <code>os.PathLike</code> directory; bytes affixes are not declared). The check only
   compiles it, so its body is a stub that makes no file (it is typed to give
   <code>(int, str)</code>, the descriptor and the name; <code>mkdtemp()</code> gives the <code>str</code>
-  name). <code>NamedTemporaryFile()</code>, <code>TemporaryDirectory()</code>, <code>gettempdir()</code> and the
+  name, and a <code>TemporaryDirectory</code> its <code>name</code>). Codon binds a <code>with</code>
+  statement's target to the manager itself, not to what <code>__enter__()</code>
+  returns, so <code>with TemporaryDirectory() as d</code> makes <code>d</code> the manager in the
+  check (CPython's is the name), and a use of it as a <code>str</code> or a path fails
+  the check: hold the manager and read its <code>name</code> (<code>scratch =
+  TemporaryDirectory(); with scratch: ... scratch.name</code>, as <code>t4_scene.osm</code>
+  does). <code>NamedTemporaryFile()</code>, <code>gettempdir()</code> and the
   rest are not declared and fail the check. Two more modules are not
   shims but extensions of Codon's own <code>collections</code> and <code>itertools</code>, in
   <code>codon/_stdlib/</code> (#422): they add
@@ -7172,9 +7186,18 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   network's crossings with: <code>iterparse(source)</code> of a file name (no file
   object, no <code>events</code> or <code>parser</code>), which gives no element in the check, of
   <code>(event, element)</code> pairs, and an element's <code>tag</code>, <code>get(key, default=None)</code>
-  (a <code>str</code> or <code>None</code> default, an <code>Optional[str]</code>) and <code>clear()</code>.
-  <code>parse()</code>, <code>fromstring()</code>, <code>SubElement()</code>, <code>ParseError</code>, an element's
-  <code>attrib</code>, <code>find()</code>, <code>findall()</code> and the rest are not declared.
+  (a <code>str</code> or <code>None</code> default, an <code>Optional[str]</code>) and <code>clear()</code>; and what
+  <code>t4_scene.osm</code> rewrites the OSM file Lanelet2 wrote with:
+  <code>fromstring(text)</code>, an element's <code>attrib</code> (a <code>Dict[str, str]</code>),
+  <code>find(path)</code> (an <code>Optional[Element]</code>), <code>findall(path)</code> and
+  <code>set(key, value)</code> (by position only, as in CPython),
+  <code>SubElement(parent, tag, attrib={}, **extra)</code> (the three by position only,
+  as CPython's C implementation takes them; <code>str</code> attribute values) and
+  <code>tostring(element, encoding=None, method=None, *, xml_declaration=None)</code>.
+  The check reads bytes as <code>str</code>, so <code>fromstring()</code> takes and <code>tostring()</code>
+  gives a <code>str</code>; a path is any <code>str</code> (ElementPath's syntax is not checked).
+  <code>parse()</code>, <code>ParseError</code>, an element's <code>text</code>, its children and iteration,
+  and the rest are not declared.
   <code>ipaddress</code> declares what <code>serve_bind.is_loopback()</code> reads a host with:
   <code>ip_address(address)</code> of a <code>str</code> (no <code>int</code> or <code>bytes</code>), giving an
   <code>IPv4Address</code> or an <code>IPv6Address</code> as a <code>Union</code> Codon decides <code>isinstance</code>
@@ -7561,7 +7584,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>coordinate.projection._read_local_tags()</code> edits a <code>Local</code> map with (a
   <code>Point3d</code>'s <code>x</code>/<code>y</code>/<code>z</code> setters, <code>LaneletMap()</code> and an <code>add()</code> of each
   primitive),
-  <code>BasicPoint2d</code>, <code>BasicPoint3d</code>, <code>GPSPoint</code>, and the lanelets whose bound a
+  <code>BasicPoint2d</code>, <code>BasicPoint3d</code> (built from <code>x</code>, <code>y</code> and <code>z</code>), <code>GPSPoint</code>,
+  a point layer's points by id (<code>pointLayer[id]</code>), and the lanelets whose bound a
   line string is
   (<code>LaneletLayer.findUsages()</code>, of a line string only); <code>lanelet2.geometry</code>'s
   <code>to2D()</code>, <code>length()</code>, <code>length2d()</code> (of a lanelet), <code>toArcCoordinates()</code>
@@ -7574,13 +7598,16 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   simple-lanelet2 hands them out: lanelet2's own binding wraps each in a
   <code>ConstLaneletOrArea</code>, which <code>route.geometry</code> still unwraps at run time);
   <code>lanelet2.traffic_rules.create()</code>
-  with its <code>Locations</code> and <code>Participants</code>; <code>lanelet2.io.Origin</code> and
-  <code>lanelet2.io.load(filename, projector)</code>; <code>lanelet2.projection</code>'s
-  <code>UtmProjector</code> and <code>LocalCartesianProjector</code> (with <code>forward()</code> of a
-  <code>GPSPoint</code>); and Autoware's <code>MGRSProjector</code>, <code>TransverseMercatorProjector</code>,
+  with its <code>Locations</code> and <code>Participants</code>; <code>lanelet2.io.Origin</code>,
+  <code>lanelet2.io.load(filename, projector)</code> and
+  <code>lanelet2.io.writeRobust(filename, map, projector)</code> (the errors, a list of
+  <code>str</code>), which <code>t4_scene.osm</code> writes a map with; <code>lanelet2.projection</code>'s
+  <code>UtmProjector</code>, <code>LocalCartesianProjector</code> and <code>MercatorProjector</code> (with
+  <code>forward()</code> of a <code>GPSPoint</code>, and <code>MercatorProjector</code>'s <code>reverse()</code> of a
+  <code>BasicPoint3d</code>); and Autoware's <code>MGRSProjector</code>, <code>TransverseMercatorProjector</code>,
   <code>AutowareTrafficLight</code> and <code>RoadMarking</code>. Each module's header says what
-  it leaves out; parts of the API the framework does not use yet (writing a
-  map, routes, matching, any other editing) are not declared, and the check refuses
+  it leaves out; parts of the API the framework does not use yet (<code>write()</code>,
+  routes, matching, any other editing) are not declared, and the check refuses
   them. <code>MapManager</code> (<code>coordinate.map_manager</code>, checked) and
   <code>sweeper.map_loader</code> load the map with them and hand it out as these
   classes, and <code>MapManager</code> its <code>routing_graph</code> too. Python's
@@ -8616,7 +8643,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 09:34:34 UTC"><span class="timeago" datetime="2026-11-13T09:34:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 09:34:34 UTC">2026-11-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 12:28:39 UTC"><span class="timeago" datetime="2026-11-13T12:28:39+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 12:28:39 UTC">2026-11-13</span>
   </span>
 
     
