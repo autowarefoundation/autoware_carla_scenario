@@ -82,7 +82,7 @@ from ..maps import (
     resolve_map,
 )
 from ..authoring.validator import ValidationReport, validate_document
-from ..serve_cli import check_port
+from ..serve_bind import check_port
 from .forms import field_present, parse_int_list, parse_params
 from .gate_fields import (
     GATE_CONSISTENCY_FIELDS,

@@ -116,8 +116,8 @@ def _dying_with_this_process(argv: List[str]) -> List[str]:
 def _is_loopback_literal(name: str) -> bool:
     """Whether *name* (lower case, unbracketed) is ``localhost`` or a loopback
     address: IPv4 ``127.0.0.0/8``, IPv6 ``::1`` or IPv4-mapped
-    ``::ffff:127.x.y.z`` -- what serve_cli's ``is_loopback`` takes, spelled out
-    without ``ipaddress``, which the library check cannot compile.
+    ``::ffff:127.x.y.z`` -- what serve_bind's ``is_loopback`` takes, spelled out
+    without ``ipaddress``.
     """
     if name == "localhost" or name.endswith(".localhost"):
         return True

@@ -655,3 +655,16 @@ def test_add_bind_arguments_refuses_a_bad_port_with_exit_2(
     assert out == ""
     assert err.endswith(f"\npin: error: {error}\n")
     assert err.startswith("usage: pin [-h] [--host HOST] [--port PORT]\n")
+
+
+def test_serve_cli_re_exports_serve_binds_functions_themselves() -> None:
+    """What needs no argparse is serve_bind's: the same objects, not wrappers,
+    so a call goes as deep as it did."""
+    from autoware_carla_scenario import serve_bind, serve_cli, web_guard
+    from autoware_carla_scenario.editor import app, service
+
+    for name in ("DEFAULT_HOST", "check_port", "is_loopback", "warn_if_exposed"):
+        assert getattr(serve_cli, name) is getattr(serve_bind, name), name
+    assert web_guard.is_loopback is serve_bind.is_loopback
+    assert web_guard.DEFAULT_HOST is app.DEFAULT_HOST is serve_bind.DEFAULT_HOST
+    assert service.check_port is serve_bind.check_port
