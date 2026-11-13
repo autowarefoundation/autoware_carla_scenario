@@ -8,7 +8,8 @@ messages are JSON objects, one per line, each with a ``type``:
 runner -> bridge
 ``start``                 a scenario starts: ``scenario`` (its name), ``ego_id``
                           (the ego's actor id).  The bridge runs its
-                          ``scenario_start`` steps, then answers ``ready``.
+                          ``scenario_start`` and ``warmup`` steps, then
+                          answers ``ready``.
 ``end``                   the scenario ends: the bridge runs its
                           ``scenario_end`` steps, then answers ``ended``.
 ``disconnect``            stop data (fault injection): ``id`` (names the
