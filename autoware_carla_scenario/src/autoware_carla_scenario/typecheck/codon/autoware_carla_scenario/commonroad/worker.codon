@@ -1,13 +1,16 @@
 # Model of autoware_carla_scenario.commonroad.worker (docs/typecheck.md),
-# which imports select, shlex and subprocess and speaks to the CommonRoad
-# worker, a process of its own, in JSON objects of mixed value types. The
-# checked commonroad package re-exports WORKER_ENV, CommonRoadWorker,
-# CommonRoadWorkerError and worker_command(), and only the names are needed:
-# no checked module builds, raises or calls them. They start the worker,
-# which the runner does after a run, not a scenario: each class is declared by
-# name and constructor, the function with Python's signature, and every
-# constructor and function body is a compile error, so a scenario that starts
-# a worker fails its check.
+# which imports select and subprocess and speaks to the CommonRoad worker, a
+# process of its own, in JSON objects of mixed value types. The checked
+# commonroad package re-exports CommonRoadWorker of it, and only the name is
+# needed: no checked module builds or calls it. WORKER_ENV,
+# CommonRoadWorkerError and worker_command() are the checked
+# commonroad.worker_start's, which commonroad.worker re-exports and the
+# package imports from there; they are declared here too, as they were before
+# they moved (#2116), so a scenario importing them from commonroad.worker
+# compiles as it did. They start the worker, which the runner does after a
+# run, not a scenario: each class is declared by name and constructor, the
+# function with Python's signature, and every constructor and function body
+# is a compile error, so a scenario that starts a worker fails its check.
 
 # The environment variable that names the command starting the worker, with
 # Python's value.
@@ -15,9 +18,9 @@ WORKER_ENV: str = "AUTOWARE_CARLA_SCENARIO_COMMONROAD_WORKER"
 
 
 # The worker could not be started, or failed to answer. Python's derives from
-# RuntimeError and takes RuntimeError's arguments.
+# RuntimeError and hands its arguments on to RuntimeError's.
 class CommonRoadWorkerError:
-    def __init__(self, *args):
+    def __init__(self, *args, **kwargs):
         compile_error("CommonRoadWorkerError is not modelled: the static check "
                       "cannot build one (typecheck/codon/autoware_carla_scenario/"
                       "commonroad/worker.codon)")
