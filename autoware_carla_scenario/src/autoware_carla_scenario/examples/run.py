@@ -108,11 +108,20 @@ from autoware_carla_scenario.coordinate.snap import check_ray_distances
 from autoware_carla_scenario.run_dirs import (
     asks_for_no_job,
     is_multirun_mode_override as _is_multirun_mode_override,
+    lanelet_sweeper_requested_in_argv as _lanelet_sweeper_requested_in_argv,
     multirun_requested_in_argv as _multirun_requested_in_argv,
     reserve_timestamped_dir,
     sets_hydra_key as _sets_hydra_key,
 )
-from autoware_carla_scenario.run_outputs import RESULT_SUFFIX, remove_run_outputs
+
+# _lanelet_sweeper_requested_in_argv() and _result_json_line() are
+# run_dirs' and run_outputs', which the library check compiles; RESULT_SUFFIX
+# stays importable from here, as it was.
+from autoware_carla_scenario.run_outputs import (
+    RESULT_SUFFIX,  # noqa: F401
+    remove_run_outputs,
+    result_json_line as _result_json_line,
+)
 from autoware_carla_scenario.run_timeout import run_timeout_seconds
 from autoware_carla_scenario.scenario_config import EntityConfig
 from autoware_carla_scenario.seed import DEFAULT_SEED, MAX_SEED, set_run_seed
@@ -3823,15 +3832,6 @@ def _run_scenario(
     return result
 
 
-def _result_json_line(output_dir: Path, file_stem: str) -> str:
-    """The line naming the result a run named *file_stem* wrote in
-    *output_dir*, or saying it wrote none (writing it failed)."""
-    json_path = (output_dir / f"{file_stem}{RESULT_SUFFIX}").resolve()
-    if json_path.is_file():
-        return f"Result JSON: {json_path}"
-    return f"Result JSON: not written ({json_path})"
-
-
 #: The cases of a ``--multirun`` run in this process (Hydra's basic sweeper)
 #: that failed, and how many ran: :func:`main` exits 1 when any failed.  The
 #: lanelet sweeper runs its cases in forked children, which this does not see;
@@ -4102,18 +4102,6 @@ def _main() -> None:
         RESUME_FROM_ENV, str(resume_from) if resume_from > 0 else None
     ):
         _dispatch(resume_from, resume_into)
-
-
-def _lanelet_sweeper_requested_in_argv(argv: list[str]) -> bool:
-    """Whether *argv* selects the lanelet sweeper
-    (``hydra/sweeper=lanelet_constraint``, with or without ``+``).  Read
-    before Hydra composes, so a sweeper a config file selects is not seen."""
-    for arg in argv:
-        name, sep, value = arg.lstrip("+").partition("=")
-        if sep and name == "hydra/sweeper":
-            if value.strip().strip("'\"") == "lanelet_constraint":
-                return True
-    return False
 
 
 def _dispatch(resume_from: int, resume_into: str | None = None) -> None:

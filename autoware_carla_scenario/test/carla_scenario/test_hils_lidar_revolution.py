@@ -782,7 +782,10 @@ def _spin(
     """Re-observe points measured at once; *motion* is ``(vx, vy, vz, wz)`` or all six."""
     if len(motion) == 4:
         motion = (*motion[:3], 0.0, 0.0, motion[3])
-    points = np.array([[x, y, z, 0.5] for x, y, z in xyz], np.float64)
+    # float64 points: Python takes any float dtype; hils.lidar_spin's
+    # annotation names hils.bridge's float32 revolution, which the library
+    # check calls it with (test_hils_lidar_spin.py pins both).
+    points: np.ndarray = np.array([[x, y, z, 0.5] for x, y, z in xyz], np.float64)
     n = len(points)
     return measurements.spin_lidar_points(
         points,

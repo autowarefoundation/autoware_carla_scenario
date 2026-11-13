@@ -239,8 +239,8 @@ _KINDS = {
 
 def _signature(obj: Any) -> inspect.Signature:
     """*obj*'s signature. An exception class that keeps the constructor of a
-    builtin exception (CommonRoadWorkerError, a RuntimeError with no
-    __init__ of its own) takes any positional arguments, as BaseException
+    builtin exception (a RuntimeError subclass with no __init__ of its
+    own) takes any positional arguments, as BaseException
     does, which inspect cannot read from the builtin."""
     if inspect.isclass(obj) and issubclass(obj, BaseException):
         for base in obj.__mro__:
@@ -1059,6 +1059,10 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # (concurrent.futures, the workers) and commonroad.worker (select,
     # subprocess, JSON objects of mixed value types): every name of their
     # __all__, the classes by name, the functions compile errors.
+    # WORKER_ENV, CommonRoadWorkerError and worker_command() are the checked
+    # commonroad.worker_start's (#2116), which commonroad.worker re-exports:
+    # its model still declares them, so a scenario importing them from it
+    # compiles as before.
     "commonroad/session": (commonroad_session, tuple(commonroad_session.__all__)),
     "commonroad/worker": (commonroad_worker, tuple(commonroad_worker.__all__)),
     # What the checked hils package re-exports of hils.config (yaml, a
@@ -2052,6 +2056,59 @@ def test_the_dotenv_model_is_load_dotenv_as_in_the_package() -> None:
     _assert_declared_as_in_python(
         "load_dotenv", "__init__", dotenv.load_dotenv, root=_DOTENV_MODEL
     )
+
+
+#: The model of the third-party packaging: what the checked
+#: authoring.framework_pin reads of a version, compared with the installed
+#: package.
+_PACKAGING_MODEL = model_dir() / "packaging"
+
+
+def test_the_packaging_model_is_version_and_invalid_version_as_in_the_package() -> None:
+    import packaging.version
+
+    assert _public(_definitions("version", _PACKAGING_MODEL)) == [
+        "InvalidVersion",
+        "Version",
+    ]
+    assert _public(_definitions("__init__", _PACKAGING_MODEL)) == []
+    _assert_declared_as_in_python(
+        "Version", "version", packaging.version.Version, root=_PACKAGING_MODEL
+    )
+    version = _definitions("version", _PACKAGING_MODEL)["Version"][0]
+    assert isinstance(version, ast.ClassDef)
+    assert sorted(_methods(version)) == ["__init__", "local"]
+    # A str or None in the package too.
+    local = _methods(version)["local"]
+    assert "property" in _decorators(local)
+    assert ast.unparse(local.returns) == "Optional[str]"  # type: ignore[arg-type]
+    python_local = inspect.getattr_static(packaging.version.Version, "local")
+    assert isinstance(python_local, property) and python_local.fget is not None
+    assert typing.get_type_hints(python_local.fget)["return"] == typing.Optional[str]
+    # InvalidVersion is a ValueError, built from nothing or one message.
+    invalid = _definitions("version", _PACKAGING_MODEL)["InvalidVersion"][0]
+    assert isinstance(invalid, ast.ClassDef)
+    assert [ast.unparse(b) for b in invalid.bases] == ["Static[ValueError]"]
+    assert packaging.version.InvalidVersion.__bases__ == (ValueError,)
+    assert str(packaging.version.InvalidVersion()) == ""
+    assert str(packaging.version.InvalidVersion("x")) == "x"
+
+
+#: The model of the eclipse-sumo package's `sumo` module: what the checked
+#: traffic.sumo.network reads of it.
+_SUMO_MODEL = model_dir() / "sumo"
+
+
+def test_the_sumo_model_is_the_packages_sumo_home() -> None:
+    definitions = _definitions("__init__", _SUMO_MODEL)
+    assert sorted(definitions) == ["SUMO_HOME", "__file__"]
+    for name in definitions:
+        node = definitions[name][0]
+        assert isinstance(node, ast.AnnAssign), name
+        assert ast.unparse(node.annotation) == "str", name
+    sumo = pytest.importorskip("sumo", reason="eclipse-sumo (the sumo extra)")
+    assert isinstance(sumo.SUMO_HOME, str)
+    assert isinstance(sumo.__file__, str)
 
 
 # ---------------------------------------------------------------------------

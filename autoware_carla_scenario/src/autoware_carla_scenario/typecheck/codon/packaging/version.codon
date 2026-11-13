@@ -1,0 +1,24 @@
+# Model of packaging.version (docs/typecheck.md): what the checked
+# authoring.framework_pin reads of a version, with the installed package's
+# signatures, which test_typecheck_model.py compares.
+#
+# Version(version: str), whose `local` is the local label (`1.2.3+abc` has
+# "abc") or None, and InvalidVersion, the ValueError the constructor raises
+# for what is not a PEP 440 version, built from nothing or one message. The
+# rest of a Version (its comparisons, release, pre, post, dev, public, ...)
+# and of the package (parse(), specifiers, requirements, ...) is not
+# declared. Nothing here runs: no version is parsed.
+
+
+class InvalidVersion(Static[ValueError]):
+    def __init__(self, message: str = ""):
+        super().__init__(message)
+
+
+class Version:
+    def __init__(self, version: str):
+        pass
+
+    @property
+    def local(self) -> Optional[str]:
+        return Optional[str]()

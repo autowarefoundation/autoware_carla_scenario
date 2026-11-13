@@ -1,0 +1,11 @@
+# Model of the eclipse-sumo package's `sumo` module (docs/typecheck.md): what
+# the checked traffic.sumo.network reads of it to find SUMO. eclipse-sumo is
+# optional (the `sumo` extra), so test_typecheck_model.py compares this with
+# the package only where it is installed.
+#
+# SUMO_HOME, the directory the package holds SUMO in (a str, as in the
+# package), and the module's __file__. Nothing else of the package is
+# declared. Nothing here runs: neither is a real path.
+
+SUMO_HOME: str = ""
+__file__: str = ""

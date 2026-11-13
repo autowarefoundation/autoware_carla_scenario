@@ -332,7 +332,6 @@ def _version_problem(version: str) -> Optional[str]:
     It must be a valid PEP 440 version without a local label
     (``1.2.3+local``), which no package index serves.
     """
-    # packaging has no model (typecheck/library.py: UNCALLED).
     from packaging.version import InvalidVersion, Version  # noqa: PLC0415
 
     try:
@@ -459,11 +458,7 @@ def resolve_framework_pin(*, dev_mode: bool = False) -> Pin:
 
     version = (os.environ.get(VERSION_ENV) or "").strip()
     if version:
-        if TYPE_CHECKING:
-            # packaging has no model (typecheck/library.py: UNCALLED).
-            problem: Optional[str] = None
-        else:
-            problem = _version_problem(version)
+        problem = _version_problem(version)
         if problem is not None:
             raise PinResolutionError(
                 f"{VERSION_ENV} must be an exact released version of "
