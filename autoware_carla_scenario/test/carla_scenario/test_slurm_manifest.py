@@ -806,6 +806,57 @@ def test_reserve_submission_without_hard_links_creates_the_file_exclusively(
     assert _names(path.parent) == ["0.json"]
 
 
+class _LinkError(OSError):
+    """An OSError of another class, as a library may raise."""
+
+
+@pytest.mark.parametrize(
+    ("make", "fallback"),
+    [
+        # Python compares the code by ==: a subclass, a bool or a float equal
+        # to a code is taken; a code of another type (a str) and a code given
+        # by keyword-less construction of more values are read as Python
+        # reads them.
+        (lambda: PermissionError(errno.EPERM, "Operation not permitted"), True),
+        (lambda: _LinkError(errno.ENOTSUP, "Not supported"), True),
+        (lambda: OSError(float(errno.EOPNOTSUPP), "Not supported"), True),
+        (lambda: OSError(True, "one"), True),
+        (lambda: OSError(str(errno.EPERM), "a str"), False),
+        (lambda: OSError(errno.EPERM, "x", "file", 0, "other"), True),
+        (lambda: OSError(errno.EPERM), False),
+        (lambda: _LinkError(), False),
+    ],
+    ids=["permission-error", "subclass", "float", "bool", "str", "five", "one", "none"],
+)
+def test_reserve_submission_falls_back_by_the_code_python_compares(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    umask_022: None,
+    make: Callable[[], OSError],
+    fallback: bool,
+) -> None:
+    # Pins _link_exclusive()'s test of the link error's errno (#2124), which
+    # the library check compiles: what Python reads of it is unchanged.
+    layout = _layout(tmp_path)
+    error = make()
+
+    def link(src: Any, dst: Any) -> None:
+        raise error
+
+    monkeypatch.setattr(os, "link", link)
+    record: dict[str, Any] = {}
+    if fallback:
+        assert layout.reserve_submission(record) == 0
+        assert layout.submission(0).read_bytes() == b'{\n  "index": 0\n}\n'
+        assert _mode(layout.submission(0)) == 0o600
+        assert _names(layout.submission(0).parent) == ["0.json"]
+    else:
+        with pytest.raises(OSError) as info:
+            layout.reserve_submission(record)
+        assert info.value is error
+        assert _names(layout.submission(0).parent) == []
+
+
 def test_reserve_submission_without_hard_links_passes_over_a_taken_index(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

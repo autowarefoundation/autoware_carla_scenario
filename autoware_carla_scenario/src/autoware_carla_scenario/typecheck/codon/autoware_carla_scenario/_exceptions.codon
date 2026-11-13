@@ -11,8 +11,9 @@
 # CPython's other forms are not declared, so the check refuses them: a keyword
 # (CPython's OSError takes none, ImportError only `name` and `path`), other
 # values (`OSError(errno, strerror)`, but for two strs where a subclass is
-# derived from, below), and the attributes they fill (`errno`, `filename`,
-# `name`).
+# derived from, below), and the attributes they fill (`filename`, `name`):
+# OSError's `errno` is declared (below), None as for an OSError of one
+# message.
 
 import internal.static as static
 
@@ -76,12 +77,29 @@ class OSError:
     def args(self) -> Tuple[str]:
         return (self.message,)
 
+    # `e.errno`, the error's code: Optional[int], as CPython's is None for
+    # an OSError raised without one (`OSError("x")`, the only form declared
+    # here) and an int for one the system raised. CPython keeps whatever
+    # the first of two to five values was (`OSError("a", "b").errno` is
+    # "a"), a form refused here, so this is narrower than CPython's: code
+    # reading it tests it as CPython needs (`exc.errno in (errno.EPERM,
+    # ...)` is False for None or a str). None in the check, where nothing
+    # runs; the subclasses below inherit it.
+    @property
+    def errno(self) -> Optional[int]:
+        return Optional[int]()
+
 
 @extend
 class IOError:
     @property
     def args(self) -> Tuple[str]:
         return (self.message,)
+
+    # CPython's IOError is OSError: its `errno` too.
+    @property
+    def errno(self) -> Optional[int]:
+        return Optional[int]()
 
 
 @extend

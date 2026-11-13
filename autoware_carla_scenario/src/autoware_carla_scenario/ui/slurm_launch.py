@@ -202,7 +202,9 @@ def _now_iso() -> str:
     """Now, in UTC to the second, as ISO 8601 (``2026-01-01T00:00:00+00:00``):
     when a :class:`Submission` started."""
     if TYPE_CHECKING:
-        # Codon's datetime has no timezone and no isoformat(): the check
+        # Codon's datetime has no timezone (no `timezone.utc`, no
+        # `now(tz)`): it holds no tzinfo, so an aware datetime and the UTC
+        # offset its isoformat() ends with cannot be expressed. The check
         # compiles a str in its place (docs/typecheck.md).
         return ""
     else:

@@ -2537,7 +2537,9 @@ recording, which `rerun_metrics` re-exports, and of the ODD archive, which
 in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
 entities are the sensors', the parse of `rerun rrd print` and the scan of a
 recording's bytes for those entities: `rerun_sensor_mount`, #1688, #1697; not `rerun_lidar`, which holds the Rerun SDK as
-`Any` and re-exports it), the frame math
+`Any` and re-exports it), how converting a run's logs into Rerun recordings
+went and the run's summary of it (`rerun_report`, #2124; not `rerun`, which
+runs the converter on a thread pool and re-exports it), the frame math
 of the T4Scene converter (CARLA's world frame to Autoware's `map` frame, and the rotations
 and quaternions of its angles, and the check of the ego's rear-axle offset:
 `t4_scene.frames`, #1665, #1697; the converter
@@ -3511,7 +3513,15 @@ What Codon 0.19 needs that Python does not, beyond
   test it with `isinstance()` before reading it as an `int`. Each
   takes no message or one value by position, as CPython does; a keyword
   (`TimeoutError(message=...)`) and `OSError`'s `(errno, strerror)` and
-  their attributes (`errno`, `filename`) are refused. Nothing in these
+  the `filename` they fill are refused. `OSError`'s (and `IOError`'s, and
+  each subclass's) `errno` is declared, an `Optional[int]`, as CPython's is
+  `None` for an `OSError` of one message and the code for one the system
+  raised; CPython's is whatever the first of two to five values was
+  (`OSError("a", "b").errno` is `"a"`), a form the check refuses, so code
+  catching another's error tests it as CPython needs
+  (`exc.errno in (errno.EPERM, ...)`, which is `False` for `None` or a
+  `str`) rather than doing arithmetic on it;
+  `slurm.manifest` tells a file system without hard links by it. Nothing in these
   shims runs: no environment is read, no file is copied, no process is
   signalled, no signal handler is installed and no exit function is
   registered. `hashlib` declares `sha256(string=b"", *,
