@@ -7,6 +7,7 @@ them back is metadata-driven too: this module never looks at a primitive's
 
 from __future__ import annotations
 
+import math
 import re
 from typing import Any, Mapping, Sequence
 
@@ -149,7 +150,12 @@ def parse_value(spec: FieldSpec, raw: Any, *, present: bool) -> Any:
     if spec.kind in INT_KINDS:
         return int(text)
     if spec.kind == "number":
-        return float(text)
+        number = float(text)
+        # "nan" and "inf" parse, but no field means them (the validator's
+        # _coercible_float, and the service's _as_float, #934).
+        if not math.isfinite(number):
+            raise ValueError(f"must be a finite number, got {raw!r}")
+        return number
     if spec.kind in (*INT_LIST_KINDS, "int_list_or_ref"):
         return parse_int_list(text)
     if spec.kind == "trajectory":

@@ -499,7 +499,11 @@ def parse_route_search(raw: Mapping[str, Any]) -> RouteSearchSpec:
     unknown = sorted(set(raw) - _SEARCH_KEYS)
     if unknown:
         raise ValueError(f"a route search does not take {unknown}")
-    segments_raw = raw.get("segments") or []
+    # Only a missing key or null has no segments: false or 0 is not a list
+    # (#2134).
+    segments_raw = raw.get("segments")
+    if segments_raw is None:
+        segments_raw = []
     if not isinstance(segments_raw, Sequence) or isinstance(segments_raw, str):
         raise ValueError("route segments must be a list")
     if not segments_raw:

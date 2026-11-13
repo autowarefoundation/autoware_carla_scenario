@@ -4857,6 +4857,25 @@ def test_a_form_number_that_is_not_finite_is_refused(raw: str) -> None:
     assert _as_float("", "Timeout", 60.0) == 60.0
 
 
+@pytest.mark.parametrize("raw", ["nan", "inf", "-inf", "NaN", "1e400"])
+def test_a_number_field_that_is_not_finite_is_refused(raw: str) -> None:
+    """The inspector's number fields refuse what _as_float refuses (#934,
+    #2134): no field means a NaN or an infinity."""
+    from autoware_carla_scenario.authoring.registry import FieldSpec
+    from autoware_carla_scenario.editor.forms import parse_params, parse_value
+
+    spec = FieldSpec("speed", "Speed", "number", 1.0)
+    with pytest.raises(ValueError) as error:
+        parse_value(spec, raw, present=True)
+    assert str(error.value) == f"must be a finite number, got {raw!r}"
+    with pytest.raises(ValueError) as error:
+        parse_params((spec,), {"speed": raw})
+    assert str(error.value) == f"Speed: must be a finite number, got {raw!r}"
+    assert parse_value(spec, " 12.5 ", present=True) == 12.5
+    assert parse_value(spec, "-3", present=True) == -3.0
+    assert parse_value(spec, "", present=True) == 1.0
+
+
 class TestTheGate:
     """A logical scenario's gate, edited in the scenario inspector (docs/gate.md).
 

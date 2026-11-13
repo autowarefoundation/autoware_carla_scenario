@@ -312,6 +312,59 @@ def test_a_sweep_section_of_the_wrong_shape_is_refused_before_the_map(
         expand_module.check_constraint_keys(sweep)
 
 
+_SECTION_MESSAGES = {
+    "constraints": "sweep.constraints must map the one parameter it sweeps (such "
+    "as ego.spawn_lanelet_id) to a list of constraints, got {}",
+    "bindings": "sweep.bindings must map each parameter it sets to a binding "
+    "({{type: ...}}), got {}",
+    "exclude": "sweep.exclude must map each parameter to the list of values a "
+    "case may not hold there, got {}",
+}
+
+
+@pytest.mark.parametrize("section", sorted(_SECTION_MESSAGES))
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [([], "a list, []"), (0, "0"), (False, "False"), ("", "''"), (5, "5")],
+)
+def test_a_falsy_sweep_section_is_refused_as_the_wrong_shape(
+    section: str, value: Any, shown: str
+) -> None:
+    """Only a missing section or null is empty: ``[]``, ``0``, ``false`` and
+    ``""`` get the error a truthy wrong shape does (#2134)."""
+    sweep: dict[str, Any] = {"constraints": {_PICK: [{}]}, section: value}
+    expected = _SECTION_MESSAGES[section].format(shown)
+    with pytest.raises(ValueError) as error:
+        expand_module.check_constraint_keys(sweep)
+    assert str(error.value) == expected
+    with pytest.raises(ValueError) as error:
+        expand_sweep(sweep, lanelet_map=None)
+    assert str(error.value) == expected
+
+
+@pytest.mark.parametrize(
+    ("value", "shown"), [([], "a list, []"), (0, "0"), (False, "False"), ("", "''")]
+)
+def test_a_falsy_constraints_section_alone_is_not_read_as_no_sweep(
+    value: Any, shown: str
+) -> None:
+    """``sweep.constraints: []`` is refused, not run as a concrete config
+    (#2134)."""
+    cfg = OmegaConf.create({"sweep": {"constraints": value}})
+    with pytest.raises(ValueError) as error:
+        expand_module.expand_config(cfg)
+    assert str(error.value) == _SECTION_MESSAGES["constraints"].format(shown)
+
+
+@pytest.mark.parametrize("section", sorted(_SECTION_MESSAGES))
+def test_a_null_or_missing_sweep_section_is_empty(section: str) -> None:
+    for sweep in ({section: None}, {}):
+        expand_module.check_constraint_keys(sweep)
+    assert expand_module.expand_config(
+        OmegaConf.create({"sweep": {section: None}}), ["a=1"]
+    ) == [["a=1"]]
+
+
 @pytest.mark.parametrize(
     ("sweep", "message"),
     [
@@ -421,3 +474,25 @@ def test_the_sweeper_reports_a_bad_shape_in_one_line(
     assert len(lines) == 1, lines
     assert lines[0].startswith("Error: cut_in/left: sweep."), lines
     sweeper.launcher.launch.assert_not_called()
+
+
+@pytest.mark.parametrize(
+    ("section", "what"),
+    [("route", "a route search"), ("odd_sample", "its settings")],
+)
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [([], "a list, []"), (0, "0"), (False, "False"), ("", "''"), (True, "True")],
+)
+def test_a_route_or_odd_sample_that_is_not_a_mapping_is_refused(
+    section: str, what: str, value: Any, shown: str
+) -> None:
+    """``sweep.route: false`` and ``sweep.odd_sample: 0`` are not read as no
+    sweep, and ``sweep.odd_sample: true`` is not an AttributeError (#2134)."""
+    expected = f"sweep.{section} must be {what} (a mapping), got {shown}"
+    with pytest.raises(ValueError) as error:
+        expand_module.check_constraint_keys({section: value})
+    assert str(error.value) == expected
+    with pytest.raises(ValueError) as error:
+        expand_module.expand_config(OmegaConf.create({"sweep": {section: value}}))
+    assert str(error.value) == expected
