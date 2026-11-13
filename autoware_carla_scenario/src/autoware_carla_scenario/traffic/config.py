@@ -100,7 +100,13 @@ class TrafficConfig:
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "TrafficConfig":
-        """Return a config built from a plain mapping (e.g. a Hydra node)."""
+        """Return a config built from a plain mapping (e.g. a Hydra node).
+
+        ``options``, ``vehicles``, ``pedestrians`` and ``bicycles`` are
+        mappings; only an absent or null one is empty (the defaults), while
+        ``false``, ``0``, ``""`` or a list is refused, naming the key, rather
+        than read as the defaults (#2143).
+        """
         from ..utils.config import checked_options  # noqa: PLC0415
 
         if "parameters" in mapping:
@@ -109,13 +115,19 @@ class TrafficConfig:
                 "traffic.vehicles, pedestrian parameters traffic.pedestrians"
             )
         checked = checked_options(cls, mapping)
-        options = checked.get("options") or {}
+
+        def section(key: str) -> Mapping[str, Any]:
+            value = checked.get(key)
+            if value is None:
+                return {}
+            if not isinstance(value, Mapping):
+                raise ValueError(f"traffic.{key} must be a mapping, got {value!r}")
+            return value
+
         return cls(
             backend=str(checked.get("backend", "traffic_manager")),
-            options=dict(options),
-            vehicles=VehicleParameters.from_mapping(checked.get("vehicles") or {}),
-            pedestrians=PedestrianParameters.from_mapping(
-                checked.get("pedestrians") or {}
-            ),
-            bicycles=BicycleParameters.from_mapping(checked.get("bicycles") or {}),
+            options=dict(section("options")),
+            vehicles=VehicleParameters.from_mapping(section("vehicles")),
+            pedestrians=PedestrianParameters.from_mapping(section("pedestrians")),
+            bicycles=BicycleParameters.from_mapping(section("bicycles")),
         )
