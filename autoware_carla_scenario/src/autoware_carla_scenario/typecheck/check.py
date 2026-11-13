@@ -237,7 +237,6 @@ _UNMODELLED_HINTS = {
     "csv": "read the file with Path.read_text().splitlines() and split(',') "
     "on each line (a quoted field needs more care), and write one with "
     "','.join(fields) and Path.write_text()",
-    "uuid": "use a counter, or os.getpid() for an id that differs per process",
 }
 
 

@@ -1,0 +1,25 @@
+# The part of Python's uuid the checked framework names, for the checker
+# (docs/typecheck.md): uuid4(), a random UUID, and its hex, the 32 lowercase
+# hex digits CPython's UUID.hex gives (slurm.start_lock names its probe files
+# with them). uuid4() takes no argument, as in CPython 3.10. Nothing here
+# runs: the UUID is the nil one, and its hex 32 zeros. UUID(hex) builds one
+# of a str, CPython's first parameter (its other ones, bytes, fields, int,
+# ..., are not declared, so `UUID()` is refused, as CPython refuses it); its
+# other attributes (int, bytes, fields, version, ...), uuid1(), uuid3(),
+# uuid5(), NAMESPACE_DNS and the rest are not declared.
+
+
+class UUID:
+    _hex: str
+
+    def __init__(self, hex: str):
+        self._hex = hex
+
+    # hex: a str of 32 lowercase hex digits, read as an attribute.
+    @property
+    def hex(self) -> str:
+        return self._hex
+
+
+def uuid4() -> UUID:
+    return UUID("0" * 32)

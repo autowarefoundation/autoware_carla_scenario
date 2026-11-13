@@ -1,10 +1,14 @@
 # The part of Python's errno the checked framework names, for the checker
 # (docs/typecheck.md): the error codes slurm.manifest tells a file system
-# without hard links by (EPERM, ENOTSUP, EOPNOTSUPP). They are ints, as in
-# CPython; the values are Linux's, the only system the package runs on (the
-# same on x86_64 and aarch64). The other codes and errorcode are not
-# declared.
+# without hard links by (EPERM, ENOTSUP, EOPNOTSUPP), and those
+# slurm.start_lock tells one without flock by (ENOSYS, ENOLCK, EINVAL, beside
+# the last two). They are ints, as in CPython; the values are Linux's, the
+# only system the package runs on (the same on x86_64 and aarch64). The other
+# codes and errorcode are not declared.
 
 EPERM = 1
+EINVAL = 22
+ENOLCK = 37
+ENOSYS = 38
 ENOTSUP = 95
 EOPNOTSUPP = 95

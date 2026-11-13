@@ -2126,7 +2126,7 @@ instead:
 
 <!-- stdlib-refused:start -->
 `dataclasses.asdict`, `dataclasses.InitVar`, `dataclasses.KW_ONLY`, `functools.wraps`, `math.ulp`, `contextlib.contextmanager`, `warnings`,
-`json.JSONEncoder`, `types`, `textwrap`, `traceback`, `io`, `csv`, `uuid`
+`json.JSONEncoder`, `types`, `textwrap`, `traceback`, `io`, `csv`
 <!-- stdlib-refused:end -->
 
 - `dataclasses.asdict` returns a `dict[str, Any]`: build the dict from the
@@ -2152,8 +2152,7 @@ instead:
   `traceback`: log with `logger.exception`. `io`: use a `str`, or a
   `pathlib.Path` opened with `open()`. `csv`: read the file with
   `Path.read_text().splitlines()` and `split(",")` each line, and write one
-  with `",".join(fields)` and `Path.write_text()`. `uuid`: use a counter, or
-  `os.getpid()` for an id that differs per process.
+  with `",".join(fields)` and `Path.write_text()`.
 - `time.strftime()` and `datetime.strftime()` are not modelled (Codon's
   `datetime` has neither, nor `__format__`): the error says so; format the
   fields instead, `f"{now.year:04d}{now.month:02d}{now.day:02d}"` for `now =
@@ -3170,7 +3169,7 @@ What Codon 0.19 needs that Python does not, beyond
   `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `hashlib`,
   `importlib.metadata`, `ipaddress`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `platform`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
-  `typing`, `typing_extensions`, `urllib.parse` and `xml.etree.ElementTree`
+  `typing`, `typing_extensions`, `urllib.parse`, `uuid` and `xml.etree.ElementTree`
   <!-- shims:end -->
 
   `tempfile` declares `mkstemp(suffix=None, prefix=None, dir=None,
@@ -3307,10 +3306,18 @@ What Codon 0.19 needs that Python does not, beyond
   `Path.open()` gives), and what `slurm.manifest` creates a file
   exclusively with: `link(src, dst, *, src_dir_fd=None, dst_dir_fd=None,
   follow_symlinks=True)` (nothing is linked) and `stat(path, *,
-  dir_fd=None, follow_symlinks=True)`, whose result has `st_mode`,
-  `st_nlink`, `st_size` and `st_mtime` (all zero) and nothing else. `errno`
-  declares `EPERM`, `ENOTSUP` and `EOPNOTSUPP` (Linux's values) and no
-  other code. `fcntl` declares `flock(fd, operation, /)`, of
+  dir_fd=None, follow_symlinks=True)`, and what `slurm.start_lock` creates
+  and reads a lock file with: `fstat(fd)` and `write(fd, data, /)` (of bytes,
+  a `str` in the check, which reads bytes as str; `0`: nothing is written).
+  The result of `stat()` and `fstat()` has `st_dev`, `st_ino`, `st_mode`,
+  `st_nlink`, `st_size`, `st_mtime` and `st_mtime_ns` (all zero) and
+  nothing else. `errno` declares `EPERM`, `EINVAL`, `ENOLCK`, `ENOSYS`,
+  `ENOTSUP` and `EOPNOTSUPP` (Linux's values) and no other code. `uuid`
+  declares `uuid4()`, of no argument, and its `UUID`'s `hex` (a `str`; the
+  nil UUID's in the check, as nothing runs), and `UUID(hex)` of a `str`, the
+  first of CPython's parameters; the rest of `UUID` (`int`, `bytes`,
+  `version`, ...), `uuid1()`, `uuid3()`, `uuid5()` and the namespaces are
+  not declared. `fcntl` declares `flock(fd, operation, /)`, of
   an `int` descriptor or a file object (what has `fileno()`), and `LOCK_SH`,
   `LOCK_EX`, `LOCK_NB` and `LOCK_UN` (Linux's values); nothing is locked.
   `os.path` declares `join()`,
