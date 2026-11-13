@@ -21,7 +21,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..batch_report import _Result, print_summary
 from ..failure import Failure, FailureCategory
@@ -117,12 +117,7 @@ class RecordedResult(_Result):
         failure_json = _value_json(self.members, "failure")
         if failure_json == "null":
             return None
-        if TYPE_CHECKING:
-            # Failure.from_dict() reads a mapping of any values, which Codon
-            # cannot express (typecheck/library.py's UNCALLED).
-            return None
-        else:
-            return Failure.from_dict(json.loads(failure_json))
+        return Failure.from_dict(json.loads(failure_json))
 
     def to_dict(self) -> dict[str, Any]:
         return {key: self.members.value(key) for key in self.members.keys()}
