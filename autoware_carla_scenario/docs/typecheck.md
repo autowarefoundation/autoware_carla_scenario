@@ -3999,7 +3999,9 @@ What Codon 0.19 needs that Python does not, beyond
 - **`memoryview(x)`**, which Codon 0.19 lacks too, is checked as a view of
   bytes (`_acs_memoryview`): true while it is not empty, sliced into another
   view, and taken by `os.write()`, which is what a loop writing all of a
-  buffer needs (`tools.file_writes`).
+  buffer needs (`tools.file_writes`). A `memoryview` (or `callable`, or
+  `tuple`) the code binds itself, a parameter, an import or a function of
+  that name, is its own and is left as it is.
 - **Annotate a local that starts as `None`** (`spawn_points:
   Optional[list[carla.Transform]] = None`): Codon types it by its first
   assignment, and on a branch it then compiles alone it can crash without a

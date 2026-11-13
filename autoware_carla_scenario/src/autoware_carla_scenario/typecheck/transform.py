@@ -407,7 +407,9 @@ _DROPPED_FUNCTION_DECORATORS = {"abstractmethod", "abc.abstractmethod"}
 #: Builtins Codon 0.19 lacks, or has for fewer kinds of argument, called with
 #: one argument: the ``_tc`` stand-in the call goes to instead.  ``tuple(x)``
 #: of a list or a generator is a list (Codon's tuples have a fixed length; a
-#: tuple stays itself); ``callable(x)`` is decided when Codon compiles.
+#: tuple stays itself); ``callable(x)`` is decided when Codon compiles;
+#: ``memoryview(x)`` is a view of bytes.  A name the code binds itself is
+#: left alone (``_shadowed``).
 _RENAMED_BUILTINS = {
     "tuple": "_acs_tuple",
     "callable": "_acs_callable",
@@ -2819,6 +2821,10 @@ class _Rewriter(ShadowScopes):
         elif (
             isinstance(node.func, ast.Name)
             and node.func.id in _RENAMED_BUILTINS
+            # A `tuple`, `callable` or `memoryview` the code binds itself
+            # (a parameter, an import, a function) is its own, not the
+            # builtin the stand-in is for.
+            and not self._shadowed(node.func.id)
             and len(node.args) == 1
             and not node.keywords
         ):

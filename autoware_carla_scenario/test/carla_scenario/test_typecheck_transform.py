@@ -954,6 +954,49 @@ def test_memoryview_is_checked_by_the_stand_in() -> None:
     assert "_acs_memoryview" in [alias.name for alias in imported.names]
 
 
+@pytest.mark.parametrize("name", ["tuple", "callable", "memoryview"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f({name}):\n    return {name}(x)",
+        "def f():\n    {name} = g\n    return {name}(x)",
+        "def f():\n    global {name}\n    {name} = g\ndef h():\n    return {name}(x)",
+        "{name} = g\ny = {name}(x)",
+        "from m import {name}\ny = {name}(x)",
+        "def {name}(v):\n    return v\ny = {name}(x)",
+        "class A:\n    {name} = g\n    y = {name}(x)",
+    ],
+)
+def test_a_renamed_builtin_is_left_alone_where_the_code_binds_it(
+    name: str, source: str
+) -> None:
+    # The code's own `tuple`, `callable` or `memoryview` is not the builtin
+    # the _tc stand-in is for.
+    out = _transform(source.format(name=name) + "\n")
+    assert f"{name}(x)" in out and f"_acs_{name}(" not in out
+
+
+@pytest.mark.parametrize("name", ["tuple", "callable", "memoryview"])
+@pytest.mark.parametrize(
+    "source",
+    [
+        "def f({name}):\n    return {name}\ny = {name}(x)",
+        "class A:\n    {name} = g\n    def m(self):\n        return {name}(x)",
+        "class A:\n    def {name}(self):\n        return 1\ny = {name}(x)",
+        "y = obj.{name}(x)",
+    ],
+)
+def test_a_renamed_builtin_is_the_stand_in_where_it_is_the_builtin(
+    name: str, source: str
+) -> None:
+    out = _transform(source.format(name=name) + "\n")
+    if source.startswith("y = obj."):
+        # An attribute of that name is the object's, never the builtin.
+        assert f"obj.{name}(x)" in out and f"_acs_{name}(" not in out
+    else:
+        assert f"_acs_{name}(x)" in out
+
+
 def test_object_setattr_with_a_constant_name_is_an_assignment() -> None:
     # A frozen dataclass sets its fields with object.__setattr__, which Codon
     # 0.19 lacks; the call keeps its lines inside brackets.
