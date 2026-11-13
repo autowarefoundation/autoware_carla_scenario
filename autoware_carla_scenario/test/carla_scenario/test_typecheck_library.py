@@ -5513,3 +5513,20 @@ def test_the_element_tree_shim_declares_only_cpythons_names_and_parameters() -> 
     # their own (test_shim_list).
     assert "xml.etree.ElementTree" in _shim_modules()
     assert not {"xml", "xml.etree"} & _shim_modules()
+
+
+def test_map_resources_reason_names_each_element_tree_name_the_shim_lacks() -> None:
+    """t4_scene.map_resource's reason lists every name of xml.etree.ElementTree
+    it uses beyond the shim's (`ET.<name>` and an element's methods)."""
+    import importlib
+
+    # t4_scene re-exports a map_resource() function under the module's name.
+    module = importlib.import_module("autoware_carla_scenario.t4_scene.map_resource")
+    source = Path(str(module.__file__)).read_text(encoding="utf-8")
+    shim = model_dir() / "xml" / "etree" / "ElementTree.codon"
+    declared = set(re.findall(r"^(?:def|class) (\w+)", shim.read_text(), re.M))
+    used = set(re.findall(r"\bET\.(\w+)\b", source)) - declared
+    reason = EXCLUDED["autoware_carla_scenario.t4_scene.map_resource"]
+    assert used, "map_resource no longer uses ElementTree"
+    for name in sorted(used):
+        assert f"`{name}()`" in reason, name
