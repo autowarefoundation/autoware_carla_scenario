@@ -4883,9 +4883,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-322 of the package's 436
-modules (74%; about 102,400 of
-170,400 lines) are <code>CHECKED</code>: the kinematics, the
+324 of the package's 438
+modules (74%; about 102,600 of
+170,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -4962,7 +4962,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 322 CHECKED modules</summary>
+<summary>The 324 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -5238,6 +5238,10 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>commonroad.map</code></td>
 <td>The world's map as a CommonRoad scenario, converted by roadgen and cached.</td>
+</tr>
+<tr>
+<td><code>commonroad.worker_start</code></td>
+<td>The command that starts the CommonRoad worker, and the worker's error.</td>
 </tr>
 <tr>
 <td><code>conditions</code></td>
@@ -5662,6 +5666,10 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>hils.lidar_revolution</code></td>
 <td>A LiDAR's per-tick arcs, gathered into the whole revolutions a sensor sends.</td>
+</tr>
+<tr>
+<td><code>hils.lidar_spin</code></td>
+<td>A LiDAR revolution's points dated and re-observed as a spinning sensor's.</td>
 </tr>
 <tr>
 <td><code>hils.sensor_spec</code></td>
@@ -6525,7 +6533,7 @@ the first:</p>
 <li><code>autoware_stack.devcontainer</code>: imports yaml; reads a JSONC and a Compose document of values of any type (<code>Any</code>), which Codon cannot express. The checked autoware_stack.docker and the package take what they use of it (<code>DevContainer</code>, <code>DevContainerError</code>, <code>read_devcontainer()</code>, <code>DEFAULT_WORKSPACE_MOUNT</code>) from its model (autoware_stack/devcontainer.codon); its JSONC, <code>${VAR}</code> interpolation and workspaceMount text parsers are the checked autoware_stack.devcontainer_text's</li>
 <li><code>carla_install</code>: imports tqdm, argparse, urllib.request, http, email, tarfile, and more of pathlib and shutil than their shims declare (<code>PurePosixPath</code>, <code>shutil.disk_usage()</code>), and reads the install's stamp from JSON of any value types; its paths, lock file, needed room, swap, and the decision whether an install is current and the conditional request that asks so, are the checked carla_install_paths's, which it re-exports</li>
 <li><code>commonroad.session</code>: imports concurrent.futures, and commonroad.worker and, inside a function, metric_batch, which are not checked; holds the workers' settings as values of any type (<code>dict[str, Any]</code>); which metrics are heavy, the environment that turns them off and the period checks are the checked heavy_metrics' (#1689), which it re-exports; commonroad/session.codon declares what the checked commonroad package re-exports of it</li>
-<li><code>commonroad.worker</code>: imports select (<code>select.poll()</code>, <code>select.POLLIN</code>), which Codon has nothing for, and more of os than its shim declares (<code>os.read()</code>, <code>os.set_blocking()</code>), and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express; commonroad/worker.codon declares what the checked commonroad package re-exports of it</li>
+<li><code>commonroad.worker</code>: imports select (<code>select.poll()</code>, <code>select.POLLIN</code>), which Codon has nothing for, and more of os than its shim declares (<code>os.read()</code>, <code>os.set_blocking()</code>), and speaks to the worker in JSON objects of mixed value types (<code>dict[str, Any]</code>), which Codon cannot express; the command that starts the worker, the worker's error and the excerpt an error quotes (<code>worker_command()</code>, <code>CommonRoadWorkerError</code>, <code>WORKER_ENV</code>, <code>WORKER_SCRIPT</code>, <code>_checkout_project()</code>, <code>_excerpt()</code>) are the checked commonroad.worker_start's (#2116), which it re-exports; what is left is CommonRoadWorker, the running worker; commonroad/worker.codon declares it, which the checked commonroad package re-exports, and, for a scenario importing them from commonroad.worker, <code>WORKER_ENV</code>, <code>CommonRoadWorkerError</code> and <code>worker_command()</code></li>
 <li><code>coverage.cod</code>: re-exports openodd's COD export (a Rust extension)</li>
 <li><code>coverage.collector</code>: derives openodd's collector (a Rust extension); imports <code>types.SimpleNamespace</code>, which Codon has nothing for; the names a versioned measure's cover items are written under are the checked coverage.item_names's</li>
 <li><code>coverage.items</code>: re-exports openodd's cover items (a Rust extension)</li>
@@ -6553,7 +6561,7 @@ the first:</p>
 <li><code>hils.config</code>: imports yaml inside load_config(), and reads a parsed YAML document of any shape (<code>Any</code>), holds a constant field value as <code>Constant = Union[str, int, float, bool]</code> and a device's codec options as <code>Mapping[str, Any]</code>, none of which Codon can express; imports at module level hils.protocol (socket) and hils.measurements (cv2), which are neither checked nor modelled; what YAML 1.1 makes of a plain scalar is the checked hils.yaml11's, and SensorSpec, the LiDAR attribute checks, the relative files, the check of a field's signal name (<code>checked_signal()</code>, its <code>_signal()</code>), CLOCKS, PHASES and HilsConfigError the checked hils.sensor_spec's, which it re-exports, as it does the checked value_text's <code>huge_integer()</code> (its <code>_huge()</code>, #1704); hils/config.codon declares what the checked hils package re-exports of it</li>
 <li><code>hils.host_setup</code>: imports importlib.resources and getpass, and, inside AnsibleRunner, ansible_runner, which Codon has nothing for, and more of urllib.parse and tempfile than their shims declare (<code>parse_qsl()</code>, <code>TemporaryDirectory()</code>); builds on hils.config (yaml), which is neither checked nor modelled; holds the playbooks' variables as <code>Dict[str, Any]</code> of mixed value types, which Codon cannot express</li>
 <li><code>hils.link</code>: imports more of socket than its shim declares (<code>socket.create_server()</code>, <code>socket.has_dualstack_ipv6()</code>, <code>socket.timeout</code>, and a socket's <code>settimeout()</code>, <code>accept()</code>, <code>sendall()</code> and <code>shutdown()</code>, and <code>socket.SHUT_RDWR</code>), and builds on hils.protocol (socket), which is neither checked nor modelled</li>
-<li><code>hils.measurements</code>: imports cv2 inside camera_frame(), and takes a buffer that is bytes, a memoryview or a numpy array, which Codon cannot express, and reads it with <code>np.frombuffer()</code>, which takes only a str in Codon; declares <code>FloatPoints</code> at module level as <code>np.ndarray[tuple[int, int], np.dtype[np.float32]]</code>, which is not Codon's <code>ndarray[dtype, ndim]</code>; returns a LiDAR scan's fields as a <code>Dict[str, np.ndarray]</code> of float32 and uint8 arrays, which Codon cannot express; the gathering of a LiDAR's arcs into revolutions is the checked hils.lidar_revolution's, which it re-exports</li>
+<li><code>hils.measurements</code>: imports cv2 inside camera_frame(), and takes a buffer that is bytes, a memoryview or a numpy array, which Codon cannot express, and reads it with <code>np.frombuffer()</code>, which takes only a str in Codon; declares <code>FloatPoints</code> at module level as <code>np.ndarray[tuple[int, int], np.dtype[np.float32]]</code>, which is not Codon's <code>ndarray[dtype, ndim]</code>; returns a LiDAR scan's fields as a <code>Dict[str, np.ndarray]</code> of float32 and uint8 arrays, which Codon cannot express; the gathering of a LiDAR's arcs into revolutions is the checked hils.lidar_revolution's, and the dating of a revolution's rays and its start and the re-observing of its points as a spinning sensor's (<code>ray_times()</code>, <code>steady_revolution_start()</code>, <code>spin_lidar_points()</code>) the checked hils.lidar_spin's (#2116), which it re-exports</li>
 <li><code>hils.protocol</code>: imports selectors, which Codon has nothing for, and more of socket than its shim declares (<code>socket.timeout</code>, and LineReader reads the bridge's socket with <code>recv()</code>), and reads JSON messages of any shape, which LineReader.read() returns as <code>List[Dict[str, Any]]</code> and Codon cannot express; what needs none of these, command_value() included, is hils.wire, which it re-exports</li>
 <li><code>hydra_compat</code>: imports argparse and hydra (<code>hydra._internal.utils</code>), which is neither checked nor modelled; derives <code>argparse.ArgumentParser</code> and <code>types.ModuleType</code>, and replaces a module global of <code>hydra._internal.utils</code> at import</li>
 <li><code>maps.road_network_cache</code>: imports io (<code>BytesIO</code>, <code>BufferedIOBase</code>), pickle (<code>Pickler</code>, <code>Unpickler</code>) and weakref (<code>WeakKeyDictionary</code>); pickles pyxodr's objects typed <code>Any</code>, which Codon cannot express; maps/road_network_cache.codon models what MapManager uses of it</li>
@@ -7699,7 +7707,8 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   <code>_polyder_at_zero()</code>, #731,
   which <code>test_t4_settings.py</code> compares with numpy). Nor does Codon unpack a
   generator (<code>c, d, e = (float(v) for v in cde)</code>): read <code>cde[0]</code>, <code>cde[1]</code>,
-  <code>cde[2]</code>.
+  <code>cde[2]</code> (<code>hils.lidar_spin.spin_lidar_points()</code> reads its motion's six
+  columns so, one product at a time and in the generator's order, #2116).
 - <strong>numpy is Codon's own</strong>, so <code>import numpy as np</code> compiles
   (<code>utils/powertrain.py</code>). Codon compares no <code>np.float32</code> with a Python
   <code>float</code>: convert the float (<code>x &lt;= np.float32(max_rpm)</code>), which is what
@@ -8368,9 +8377,13 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
   the CommonRoad metrics after a run, not a scenario
   (<code>CommonRoadSettings</code> leaves out <code>workers</code> and <code>heavy_metrics</code>, whose
   defaults the machine and the environment decide: <code>_OMITTED_PARAMETERS</code>;
-  <code>CommonRoadWorkerError</code>, a <code>RuntimeError</code> with no constructor of its own,
-  takes <code>*args</code>, as Python's does), and <code>DeviceSpec</code>, <code>FieldSource</code>,
-  <code>HilsConfig</code> and <code>MessageSpec</code> (<code>hils/config.codon</code>, yaml and a document
+  <code>CommonRoadWorkerError</code> takes <code>*args</code> and <code>**kwargs</code>, as Python's hands
+  both on to <code>RuntimeError</code>'s; it, <code>worker_command()</code> and <code>WORKER_ENV</code> are
+  the checked <code>commonroad.worker_start</code>'s, which <code>commonroad.worker</code>
+  re-exports and the package imports from there; <code>commonroad/worker.codon</code>
+  still declares them, for a scenario importing them from
+  <code>commonroad.worker</code>), and <code>DeviceSpec</code>, <code>FieldSource</code>, <code>HilsConfig</code> and
+  <code>MessageSpec</code> (<code>hils/config.codon</code>, yaml and a document
   of any shape), which the checked <code>hils</code> package re-exports with
   <code>load_config()</code> and <code>parse_config()</code>, <code>compile_error</code>s too: scenario-hils
   reads the HILS bridge's configuration on the HILS PC, not a scenario (the
@@ -8603,7 +8616,7 @@ module too (<code>SetSpeedAction</code>'s default <code>SpeedCondition</code> fr
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 08:28:17 UTC"><span class="timeago" datetime="2026-11-13T08:28:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 08:28:17 UTC">2026-11-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 09:34:34 UTC"><span class="timeago" datetime="2026-11-13T09:34:34+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 09:34:34 UTC">2026-11-13</span>
   </span>
 
     
