@@ -242,6 +242,14 @@ class FileNotFoundError(Static[OSError]):
         self.python_type = self.__class__._pytype
 
 
+class BlockingIOError(Static[OSError]):
+    _pytype: ClassVar[cobj] = cobj()
+
+    def __init__(self, *args, **kwargs):
+        super().__init__("BlockingIOError", _message(args, kwargs, "BlockingIOError()"))
+        self.python_type = self.__class__._pytype
+
+
 class FileExistsError(Static[OSError]):
     _pytype: ClassVar[cobj] = cobj()
 

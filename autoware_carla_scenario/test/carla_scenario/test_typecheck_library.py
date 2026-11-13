@@ -5229,7 +5229,11 @@ def test_the_fcntl_and_os_shim_constants_are_cpythons() -> None:
             fcntl,
             ("LOCK_SH", "LOCK_EX", "LOCK_NB", "LOCK_UN"),
         ),
-        (model_dir() / "os" / "__init__.codon", os, ("O_RDONLY", "O_CREAT")),
+        (
+            model_dir() / "os" / "__init__.codon",
+            os,
+            ("O_RDONLY", "O_RDWR", "O_CREAT", "O_CLOEXEC"),
+        ),
     ]
     for path, python, names in shims:
         shim = path.read_text()
@@ -5665,3 +5669,95 @@ def test_the_ipaddress_shim_declares_only_cpythons_names_and_parameters() -> Non
         cpython = [p for p in inspect.signature(python).parameters if p != "self"]
         assert names == cpython[: len(names)], declared.name
     assert "ipaddress" in _shim_modules()
+
+
+# ---------------------------------------------------------------------------
+# os.O_RDWR, os.O_CLOEXEC and BlockingIOError: what maps.cache's _lock_file()
+# and autoware_stack.docker's _lock_workspace() lock a file with
+# ---------------------------------------------------------------------------
+
+
+_WAITING_LOCK = """
+from __future__ import annotations
+
+import fcntl
+import logging
+import os
+
+logger = logging.getLogger(__name__)
+
+
+def lock(key: str) -> int:
+    flags = os.O_RDWR | os.O_CREAT | os.O_CLOEXEC
+    try:
+        fd = os.open(key, flags, 420)
+    except OSError:
+        return -1
+    try:
+        try:
+            fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+        except BlockingIOError:
+            logger.info("Waiting for %s", key)
+            fcntl.flock(fd, fcntl.LOCK_EX)
+    except OSError as exc:
+        os.close(fd)
+        logger.warning("%s: %s", key, exc)
+        return -1
+    except BaseException:
+        os.close(fd)
+        raise
+    return fd
+
+
+def busy(fd: int) -> bool:
+    try:
+        fcntl.flock(fd, fcntl.LOCK_EX | fcntl.LOCK_NB)
+    except BlockingIOError as exc:
+        return isinstance(exc, OSError)
+    return False
+
+
+def refused() -> BlockingIOError:
+    error = BlockingIOError("taken")
+    if str(error) != "taken":
+        raise BlockingIOError()
+    return error
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_os_shim_and_blocking_io_error_take_what_the_lock_helpers_call(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_WAITING_LOCK, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError, an AttributeError or a NameError in CPython too.
+        ("os.O_RDWR | os.O_CREAT", "os.O_RDRW | os.O_CREAT"),
+        ("os.O_CREAT | os.O_CLOEXEC", "os.O_CREAT | os.O_CLOSEXEC"),
+        ("except BlockingIOError:", "except BlockingIOErrors:"),
+        ('BlockingIOError("taken")', 'BlockingIOError(message="taken")'),
+        ("flags = os.O_RDWR", 'flags = "rw" + os.O_RDWR'),
+    ],
+    ids=[
+        "o-rdwr-misspelt",
+        "o-cloexec-misspelt",
+        "unknown-exception",
+        "exception-keyword",
+        "flag-is-an-int",
+    ],
+)
+def test_the_os_shim_and_blocking_io_error_refuse_what_cpython_refuses(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _WAITING_LOCK.replace(right, wrong, 1)
+    assert source != _WAITING_LOCK
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
