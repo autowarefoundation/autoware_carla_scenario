@@ -39,7 +39,6 @@ from collections.abc import Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
-from ..constants import MAX_ROS_DOMAIN_ID
 from ..run_outputs import remove_run_outputs
 from ..run_timeout import run_timeout_seconds
 from ..seed import check_whole_number
@@ -57,6 +56,8 @@ from .ports import (
     first_slot,
     kill_carla_on_port,
 )
+from .ports import _env_domain_id as _env_domain_id
+from .ports import _take_domain as _take_domain
 from .same_files import SameFiles
 from .settings import SlurmSettings
 from .start_lock import _NO_FLOCK_ERRNOS as _NO_FLOCK_ERRNOS
@@ -201,29 +202,6 @@ def worker_overrides(
         changes[tm_key] = slot.traffic_manager
         OmegaConf.update(cfg, tm_key, slot.traffic_manager, merge=False, force_add=True)
     return changes
-
-
-def _env_domain_id(value: str, key: str) -> int:
-    """``ROS_DOMAIN_ID`` as an environment holds it (a ``str``), as an int;
-    refused naming *key* unless it is a whole number."""
-    text = value.strip()
-    if not (text.isascii() and text.isdigit()):
-        raise ValueError(
-            f"{key} must be a ROS domain id, a whole number from 0 to "
-            f"{MAX_ROS_DOMAIN_ID}, got {value!r}"
-        )
-    return int(text)
-
-
-def _take_domain(domains: RosDomains, wanted: int, key: str) -> int:
-    """The task's domain for *wanted*, the value of *key*; an id out of
-    range refused naming the key."""
-    if not 0 <= wanted <= MAX_ROS_DOMAIN_ID:
-        raise ValueError(
-            f"{key} must be a ROS domain id, a whole number from 0 to "
-            f"{MAX_ROS_DOMAIN_ID}, got {wanted}"
-        )
-    return domains.take(wanted)
 
 
 def _domain_overrides(cfg: "DictConfig", domains: RosDomains) -> dict[str, Any]:
