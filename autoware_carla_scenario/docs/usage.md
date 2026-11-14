@@ -1617,11 +1617,14 @@ uv run scenario ego.entity=carla_driver driver.address=localhost:50051
 
 | Value | Behaviour |
 | --- | --- |
-| `autopilot` (default) | CARLA's TrafficManager drives the ego |
+| `autopilot` (default; also when `ego.entity` is null) | CARLA's TrafficManager drives the ego |
 | `autoware` | Autoware drives the ego, over the `AutowareBridge`; with `autoware.launcher` the framework starts a fresh Autoware per scenario ([Autoware as the Ego](autoware.md)) |
 | `carla_driver` | An external policy drives the ego |
 | `ros2` | ROS 2 nodes drive the ego over DDS, with no bridge node ([ROS 2 over DDS](ros2.md)) |
 | `hils` | ECUs under test drive the ego, through the resident HILS bridge `scenario-hils` (`hils.host`, `hils.port`; [HILS Bridge](hils.md)) |
+
+Any other value (`false`, `''`, `Autoware`) is refused before anything
+starts, showing it: `Unknown ego.entity: False. Expected one of: ...`.
 
 Common overrides:
 

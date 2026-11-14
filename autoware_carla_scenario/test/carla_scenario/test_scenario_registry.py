@@ -1191,6 +1191,28 @@ class TestBuildEgoEntity:
         with pytest.raises(ValueError, match="Unknown ego.entity"):
             build_ego_entity(cfg)
 
+    def test_a_null_entity_selects_autopilot(self) -> None:
+        """#2161: not refused as the unknown entity 'None'."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = OmegaConf.create({"ego": {"entity": None}})
+        assert run.ego_entity_name(cfg) == "autopilot"
+        assert run.build_ego_entity(cfg) is None
+        assert run.build_autoware_launcher(cfg) is None
+        shipped = _shipped(["ego.entity=null"])
+        run.check_run_config(shipped)
+
+    @pytest.mark.parametrize("value", [False, 0, "", "Autoware"])
+    def test_an_entity_that_names_none_is_refused_showing_it(
+        self, value: object
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = OmegaConf.create({"ego": {"entity": value}})
+        with pytest.raises(ValueError) as refused:
+            run.ego_entity_name(cfg)
+        assert str(refused.value).startswith(f"Unknown ego.entity: {value!r}. ")
+
 
 class TestBuildAutowareLauncher:
     """``autoware.launcher`` selects who starts Autoware for each scenario."""

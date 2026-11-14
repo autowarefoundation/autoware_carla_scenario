@@ -666,8 +666,7 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
             the group holds a key no launcher reads, or a setting the type
             reads is refused, naming it.
     """
-    ego_cfg = cfg.get("ego") or {}
-    if str(ego_cfg.get("entity", "autopilot")) != "autoware":
+    if _ego_entity_setting(cfg) != "autoware":
         return None
     autoware_cfg = cfg.get("autoware")
     launcher_cfg = None if autoware_cfg is None else autoware_cfg.get("launcher")
@@ -978,7 +977,7 @@ def _native_autoware_interface(cfg: DictConfig) -> bool:
         raise ValueError(
             f"ego.native_autoware_interface must be true or false, got {native!r}"
         )
-    entity = str(ego_cfg.get("entity", "autopilot"))
+    entity = _ego_entity_setting(cfg)
     if native and entity != "autoware":
         raise ValueError(
             "ego.native_autoware_interface=true needs ego.entity=autoware "
@@ -1054,9 +1053,22 @@ EGO_ENTITIES: tuple[str, ...] = (
 )
 
 
+def _ego_entity_setting(cfg: Any) -> Any:
+    """``ego.entity`` of *cfg* as written, unchecked: ``autopilot`` when the
+    config has no ``ego`` group or the key is absent or null (#2161), not the
+    unknown entity ``'None'``.  Every reader of the key -- a run's, a batch's
+    check and a Slurm task's -- reads it through this; :func:`ego_entity_name`
+    checks it.
+    """
+    ego_cfg = cfg.get("ego") or {}
+    value = ego_cfg.get("entity")
+    return "autopilot" if value is None else value
+
+
 def ego_entity_name(cfg: DictConfig) -> str:
     """``ego.entity`` of *cfg*, checked: one of :data:`EGO_ENTITIES`;
-    ``autopilot`` when the config has no ``ego`` group or does not set it.
+    ``autopilot`` when the config has no ``ego`` group or does not set it, or
+    sets it to null (:func:`_ego_entity_setting`).
 
     :func:`check_batch_configs` calls this, so a run, a batch or a lanelet
     sweep naming an unknown entity is refused before anything starts rather
@@ -1065,9 +1077,8 @@ def ego_entity_name(cfg: DictConfig) -> str:
     Raises:
         ValueError: naming the key, when it names no entity.
     """
-    ego_cfg = cfg.get("ego") or {}
-    entity = str(ego_cfg.get("entity", "autopilot"))
-    if entity not in EGO_ENTITIES:
+    entity = _ego_entity_setting(cfg)
+    if not isinstance(entity, str) or entity not in EGO_ENTITIES:
         expected = ", ".join(repr(name) for name in EGO_ENTITIES)
         raise ValueError(
             f"Unknown ego.entity: {entity!r}. Expected one of: {expected}."
@@ -2675,9 +2686,7 @@ def check_batch_configs(
                 name: _to_dict(cfg[name]) if cfg.get(name) is not None else None
                 for name in ("server", "traffic", "traffic_manager", "autoware")
             }
-            settings["ego.entity"] = str(
-                (cfg.get("ego") or {}).get("entity", "autopilot")
-            )
+            settings["ego.entity"] = str(_ego_entity_setting(cfg))
             key = json.dumps(
                 settings,
                 sort_keys=True,
@@ -3195,7 +3204,7 @@ def _check_driver_settings(cfg: DictConfig) -> None:
         ValueError: When :class:`~autoware_carla_scenario.driver.DriverClientConfig`
             or the trajectory follower's ``driver.control`` refuses them.
     """
-    if str((cfg.get("ego") or {}).get("entity", "autopilot")) != "carla_driver":
+    if _ego_entity_setting(cfg) != "carla_driver":
         return
     driver_cfg = cfg.get("driver")
     if driver_cfg is None:
@@ -3249,7 +3258,7 @@ def _check_ros2_settings(cfg: DictConfig) -> None:
             :class:`~autoware_carla_scenario.ros2.Ros2EgoConfig` does, headed
             ``ros2:``.
     """
-    if str((cfg.get("ego") or {}).get("entity", "autopilot")) != "ros2":
+    if _ego_entity_setting(cfg) != "ros2":
         return
     ros2_cfg = cfg.get("ros2")
     if ros2_cfg is None:

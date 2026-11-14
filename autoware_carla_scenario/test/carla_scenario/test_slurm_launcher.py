@@ -2015,6 +2015,33 @@ def test_the_worker_reads_the_launcher_type_as_a_run_does(
         domains.release()
 
 
+@pytest.mark.parametrize("entity", ["ros2", "autoware"])
+def test_the_worker_reads_the_ego_entity_as_a_run_does(
+    entity: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One reader of ego.entity for a task and a local run, so a null entity
+    is autopilot for both (#2161)."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot, RosDomains
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    read: list[object] = []
+    reader = run._ego_entity_setting
+
+    def spy(cfg: object) -> object:
+        read.append(cfg)
+        return reader(cfg)
+
+    cfg = run._compose_config(_CONCRETE, [f"ego.entity={entity}"])
+    monkeypatch.setattr(run, "_ego_entity_setting", spy)
+    domains = RosDomains(tmp_path)
+    try:
+        worker_overrides(cfg, PortSlot(index=0, base=20000), domains)
+    finally:
+        domains.release()
+    assert read
+
+
 def test_worker_leaves_the_ros_domains_alone_without_a_holder() -> None:
     from autoware_carla_scenario.examples import run
     from autoware_carla_scenario.slurm.ports import PortSlot
