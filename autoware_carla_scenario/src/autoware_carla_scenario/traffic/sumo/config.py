@@ -473,8 +473,9 @@ class SumoBackendConfig:
             nearest to the ego first; ``None`` for no limit, ``0`` for none
             (they drive in SUMO only, where its traffic still sees them).
         mesoscopic: Simulate SUMO's vehicles far from the ego (and from every
-            vehicle CARLA drives) in a mesoscopic queue model instead of in
-            SUMO, with no actor in CARLA, and put them back into SUMO -- and
+            vehicle CARLA drives) in a mesoscopic model -- SUMO's own
+            (``--mesosim``, a second SUMO) or the in-process queue model, as
+            its ``engine`` says -- instead of in SUMO, with no actor in CARLA, and put them back into SUMO -- and
             CARLA -- when they come near
             (:class:`~autoware_carla_scenario.traffic.fidelity.MesoscopicConfig`).
             Off by default.
