@@ -6393,7 +6393,7 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>195 functions and methods of those modules are <code>UNCALLED</code>
+<p>196 functions and methods of those modules are <code>UNCALLED</code>
 (59 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
@@ -6406,7 +6406,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 195 UNCALLED functions and methods, and why</summary>
+<summary>The 196 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6577,6 +6577,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>traffic.build_traffic_manager</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express</li>
 <li><code>traffic.config.TrafficConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
 <li><code>traffic.config.TrafficManagerBackendConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
+<li><code>traffic.config.traffic_backend_name</code>: takes the traffic.backend setting as a value of any type (<code>Any</code>: None or a backend's name; a bool, a number, empty text or a list to refuse), which Codon cannot express; only TrafficConfig.from_mapping, itself uncalled, and the unchecked slurm.worker and examples.run call it</li>
 <li><code>traffic.fidelity.MesoscopicConfig.from_mapping</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and checks its keys with utils.config, which reads a dataclass's fields from its class (<code>type</code>); utils.config is imported inside it, so it is not compiled</li>
 <li><code>traffic.parameters.BicycleParameters.from_mapping</code>: takes a traffic.vehicles, traffic.pedestrians or traffic.bicycles node as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and builds the parameters with <code>**</code> of the <code>dict[str, Any]</code> that _spreads_from, itself uncalled, returns</li>
 <li><code>traffic.parameters.PedestrianParameters.from_mapping</code>: takes a traffic.vehicles, traffic.pedestrians or traffic.bicycles node as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express, and builds the parameters with <code>**</code> of the <code>dict[str, Any]</code> that _spreads_from, itself uncalled, returns</li>
