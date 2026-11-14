@@ -38,7 +38,30 @@ from .parameters import BicycleParameters, PedestrianParameters, VehicleParamete
 __all__ = [
     "TrafficConfig",
     "TrafficManagerBackendConfig",
+    "traffic_backend_name",
 ]
+
+#: The backend a ``traffic`` group without one (or with a null one) selects.
+DEFAULT_TRAFFIC_BACKEND = "traffic_manager"
+
+
+def traffic_backend_name(value: Any) -> str:
+    """The backend name the ``traffic.backend`` setting *value* selects.
+
+    An absent or null one (*value* ``None``) is ``traffic_manager``; a
+    non-empty string is itself; anything else is refused, naming the key
+    (#2156).  The one reader of the setting, so the backend built
+    (:meth:`TrafficConfig.from_mapping`) and the TrafficManager port a
+    SLURM task is given agree (#2160).
+
+    Raises:
+        ValueError: If *value* is neither ``None`` nor a non-empty string.
+    """
+    if value is None:
+        return DEFAULT_TRAFFIC_BACKEND
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"traffic.backend must be a backend's name, got {value!r}")
+    return value
 
 
 @dataclass
@@ -126,15 +149,8 @@ class TrafficConfig:
                 raise ValueError(f"traffic.{key} must be a mapping, got {value!r}")
             return value
 
-        backend = checked.get("backend")
-        if backend is None:
-            backend = "traffic_manager"
-        elif not isinstance(backend, str) or not backend:
-            raise ValueError(
-                f"traffic.backend must be a backend's name, got {backend!r}"
-            )
         return cls(
-            backend=backend,
+            backend=traffic_backend_name(checked.get("backend")),
             options=dict(section("options")),
             vehicles=VehicleParameters.from_mapping(section("vehicles")),
             pedestrians=PedestrianParameters.from_mapping(section("pedestrians")),
