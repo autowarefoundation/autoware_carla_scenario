@@ -310,12 +310,13 @@ def _backend_tm_port_key(cfg: "DictConfig", port: int) -> str | None:
     """
     from omegaconf import OmegaConf  # noqa: PLC0415
 
+    from ..traffic.config import traffic_backend_name  # noqa: PLC0415
     from ..traffic.registry import tm_port_option  # noqa: PLC0415
 
     traffic = cfg.get("traffic")
     if traffic is None:
         return None
-    option = tm_port_option(str(traffic.get("backend", "traffic_manager")))
+    option = tm_port_option(traffic_backend_name(traffic.get("backend")))
     if option is None:
         return None
     options = traffic.get("options")
