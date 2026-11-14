@@ -1958,6 +1958,25 @@ class TestEgoNumbersAreRefusedByTheirKey:
         route = build_planned_route(cfg)
         assert (route.start.s, route.start.t) == (1.0, -1.0)
 
+    @pytest.mark.parametrize("key", ["spawn_s", "spawn_t", "spawn_heading", "goal_s"])
+    def test_a_null_pose_number_is_zero(self, key: str) -> None:
+        """#2161: a null ego.spawn_s or ego.goal_s was refused as "must be a
+        number, got None", as spawn_t and spawn_heading were before #2143."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._cfg("ego", key, None)
+        ego, spawn, _ = run.build_ego_and_spawn(cfg)
+        route = run.build_planned_route(cfg)
+        assert ego.goal_pose is not None
+        if key == "goal_s":
+            assert ego.goal_pose.s == 0.0
+        else:
+            assert getattr(spawn, key.removeprefix("spawn_")) == 0.0
+            assert getattr(route.start, key.removeprefix("spawn_")) == 0.0
+        shipped = _shipped([])
+        shipped.ego[key] = None
+        run.check_run_config(shipped)
+
 
 #: The ego's and entity's numbers a run refuses unless finite (#1809): the
 #: speed and the retry steps also below zero, the poses at any finite value.

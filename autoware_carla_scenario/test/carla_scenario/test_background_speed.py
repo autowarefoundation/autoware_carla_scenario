@@ -301,6 +301,32 @@ def test_the_config_refuses_a_bad_rate_or_gap_naming_the_key(
         add_background_traffic(config, _scenario())
 
 
+@pytest.mark.parametrize(
+    ("key", "default"),
+    [("speed_kmh", 30.0), ("min_gap_m", 15.0), ("vehicles_per_minute", 0.0)],
+)
+def test_a_null_source_number_is_its_default(key: str, default: float) -> None:
+    """#2161: null was refused, the speed with float()'s own message."""
+    from autoware_carla_scenario.examples.run import background_traffic_settings
+
+    settings = background_traffic_settings(
+        _with_background("30.0", f"background_traffic.source.{key}=null")
+    )
+    assert settings is not None
+    assert getattr(settings, key) == default
+
+
+def test_a_speed_that_is_no_number_is_refused_in_the_configs_words() -> None:
+    """#2161: not "could not convert string to float: 'fast'"."""
+    from autoware_carla_scenario.examples.run import background_traffic_settings
+
+    with pytest.raises(ValueError) as refused:
+        background_traffic_settings(_with_background("fast"))
+    assert str(refused.value) == (
+        "background_traffic.source.speed_kmh: 'fast' is not a number"
+    )
+
+
 def _speed_errors(speed: Any) -> list[str]:
     document = ScenarioDocument(
         actions=[

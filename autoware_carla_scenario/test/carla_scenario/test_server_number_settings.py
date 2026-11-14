@@ -43,7 +43,7 @@ def test_the_shipped_settings_and_valid_ones_are_accepted() -> None:
     [
         *[
             ("cooldown_seconds", v)
-            for v in ["-1", "-0.5", "nan", "inf", "true", "'2.0'", "null"]
+            for v in ["-1", "-0.5", "nan", "inf", "true", "'2.0'"]
         ],
         *[
             ("max_tick_rate_hz", v)
@@ -123,12 +123,23 @@ def test_a_negative_server_count_is_refused(key: str) -> None:
         run.check_run_config(cfg)
 
 
-def test_a_null_cooldown_max_retries_is_refused() -> None:
+def test_a_null_cooldown_is_none_and_a_null_retry_count_no_retry() -> None:
+    """#2161: each has a default, which null is, as absent is."""
     from autoware_carla_scenario.examples import run
 
-    cfg = _shipped(["server.cooldown_max_retries=null"])
+    cfg = _shipped(["server.cooldown_seconds=null", "server.cooldown_max_retries=null"])
+    run.check_run_config(cfg)
+    assert run._cooldown_seconds(cfg) == 0.0
+    assert run.cooldown_max_retries(cfg) == 0
+
+
+def test_a_cooldown_retry_count_that_is_no_number_is_still_refused() -> None:
+    from autoware_carla_scenario.examples import run
+
+    cfg = _shipped(["server.cooldown_max_retries=abc"])
     with pytest.raises(
-        run.RunConfigError, match=r"^server\.cooldown_max_retries must be a whole"
+        run.RunConfigError,
+        match=r"^server\.cooldown_max_retries must be a whole number, got 'abc'",
     ):
         run.check_run_config(cfg)
 

@@ -347,7 +347,8 @@ def _check_ego_numbers(cfg: DictConfig) -> None:
     0 or more (:func:`_spawn_retry_max_count`), as building the ego would
     (:func:`build_ego_and_spawn`), so a batch refuses them before CARLA
     starts (#1809, #1984).  A key that is absent or null is left to the
-    build, which reads its default or refuses it.
+    build, which reads it as its default (:func:`_given`; a pose's 0,
+    #2143, #2161) or, for one with none, refuses it.
 
     Raises:
         ValueError: naming the key of the value refused.
@@ -540,11 +541,13 @@ def build_spawn_pose(cfg: DictConfig) -> Lanelet2Pose:
     lane's direction of travel -- the same pose an NPC's document spawn is
     (``spawn.t`` and ``spawn.heading``).  A config that predates the last two
     keys spawns on the centreline facing along the lane, as it always did.
+    Each of ``ego.spawn_s``, ``ego.spawn_t`` and ``ego.spawn_heading`` that is
+    absent or null is 0 (#2143, #2161).
     """
     ego_cfg = cfg.ego
     return Lanelet2Pose(
         lanelet_id=_lanelet_id("ego.spawn_lanelet_id", ego_cfg.spawn_lanelet_id),
-        s=_ego_number("ego.spawn_s", ego_cfg.spawn_s),
+        s=_ego_number("ego.spawn_s", _given(ego_cfg, "spawn_s", 0.0)),
         t=_ego_number("ego.spawn_t", _given(ego_cfg, "spawn_t", 0.0)),
         heading=_ego_number("ego.spawn_heading", _given(ego_cfg, "spawn_heading", 0.0)),
     )
@@ -554,7 +557,8 @@ def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
     """Extract the ego's goal pose from ``ego.goal_lanelet_id`` / ``ego.goal_s``.
 
     Returns ``None`` when no goal is configured, which does not yet mean the run
-    has none: a scenario may derive its own in ``setup()``.
+    has none: a scenario may derive its own in ``setup()``.  An absent or null
+    ``ego.goal_s`` is 0, the start of the lanelet (#2161).
     """
     ego_cfg = cfg.get("ego") or {}
     goal_lanelet_id = ego_cfg.get("goal_lanelet_id")
@@ -562,7 +566,7 @@ def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
         return None
     return Lanelet2Pose(
         lanelet_id=_lanelet_id("ego.goal_lanelet_id", goal_lanelet_id),
-        s=_ego_number("ego.goal_s", ego_cfg.get("goal_s", 0.0)),
+        s=_ego_number("ego.goal_s", _given(ego_cfg, "goal_s", 0.0)),
     )
 
 
@@ -605,7 +609,7 @@ def build_planned_route(cfg: DictConfig, name: str = "") -> PlannedRoute:
         raise RouteError("no ego.spawn_lanelet_id: the route has no start")
     start = Lanelet2Pose(
         lanelet_id=_lanelet_id("ego.spawn_lanelet_id", spawn_lanelet_id),
-        s=_ego_number("ego.spawn_s", ego_cfg.get("spawn_s", 0.0)),
+        s=_ego_number("ego.spawn_s", _given(ego_cfg, "spawn_s", 0.0)),
         t=_ego_number("ego.spawn_t", _given(ego_cfg, "spawn_t", 0.0)),
         heading=_ego_number("ego.spawn_heading", _given(ego_cfg, "spawn_heading", 0.0)),
     )
@@ -1461,17 +1465,14 @@ def _server_number(
 
 def _cooldown_seconds(cfg: DictConfig) -> float:
     """``server.cooldown_seconds``, checked: a finite number of seconds, 0 or
-    more.  A NaN or negative cooldown used to be read as none.
+    more; absent or null is 0, no cooldown (#2161).  A NaN or negative
+    cooldown used to be read as none.
 
     Raises:
         ValueError: naming the key.
     """
-    cooldown = _server_number(cfg, "cooldown_seconds", 0.0, positive=False)
-    if cooldown is None:
-        raise ValueError(
-            "server.cooldown_seconds must be a finite number >= 0 (got None)"
-        )
-    return cooldown
+    cooldown = _server_number(cfg, "cooldown_seconds", None, positive=False)
+    return 0.0 if cooldown is None else cooldown
 
 
 def _max_tick_rate_hz(cfg: DictConfig) -> float | None:
@@ -1765,7 +1766,9 @@ def build_backend_pool(cfg: DictConfig) -> BackendPool:
 def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
     """What writes each run's trajectory log as a T4Scene as the run ends,
     when the first of *cfgs* that sets ``t4scene.enabled`` does, with its
-    ``step_s`` and ``max_distance_m``; ``None`` otherwise.
+    ``step_s`` and ``max_distance_m``; ``None`` otherwise.  An absent or null
+    ``step_s`` is 0.1 s (#2161) and an absent ``max_distance_m`` 100 m; a null
+    ``max_distance_m`` takes every road user, as it always did.
 
     Raises:
         ValueError: ``t4scene.step_s`` is a bool, not a number or not a
@@ -1779,7 +1782,7 @@ def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
         # Handed over as read: the exporter refuses a bool, which float()
         # would turn into a 1 s step or a 1 m distance (#1502, #1231).
         return T4SceneExporter(
-            step_s=t4scene_cfg.get("step_s", 0.1),
+            step_s=_given(t4scene_cfg, "step_s", 0.1),
             max_distance_m=t4scene_cfg.get("max_distance_m", 100.0),
         )
     return None
@@ -2189,7 +2192,7 @@ def _log_batch_plan(
             cfg.ego.vehicle_type,
             cfg.ego.initial_speed_kmh,
             cfg.ego.spawn_lanelet_id,
-            cfg.ego.spawn_s,
+            _given(cfg.ego, "spawn_s", 0.0),
             (
                 f"lanelet:{goal_pose.lanelet_id} s:{goal_pose.s:.1f}"
                 if goal_pose is not None
@@ -2324,14 +2327,15 @@ def _batch_queue(
 
 def cooldown_max_retries(cfg: DictConfig) -> int:
     """``server.cooldown_max_retries``, checked: a whole number (``2`` or
-    ``2.0``; not ``1.9``, a boolean or null), 0 or more.
+    ``2.0``; not ``1.9`` or a boolean), 0 or more; absent or null is 0, no
+    retry (#2161).
 
     Raises:
         ValueError: naming the key, when it is not a whole number, or when it
             is negative: a zero-attempt loop would record every scenario as
             errored without running it.
     """
-    value = (cfg.get("server") or {}).get("cooldown_max_retries", 0)
+    value = _given(cfg.get("server") or {}, "cooldown_max_retries", 0)
     retries = whole_number_setting("server.cooldown_max_retries", value, minimum=0)
     if retries is None:
         raise ValueError(
@@ -3620,8 +3624,9 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     ``source.speed_kmh`` is finite and at least 1 km/h
     (:func:`~autoware_carla_scenario.traffic.base.check_background_speed`),
     and ``source.vehicles_per_minute`` and ``source.min_gap_m`` finite and
-    not negative.  Read by :func:`add_background_traffic` and checked up
-    front by :func:`check_batch_configs`.
+    not negative; each of these three absent or null is its default (30 km/h,
+    15 m, none a minute; #2161).  Read by :func:`add_background_traffic` and
+    checked up front by :func:`check_batch_configs`.
 
     Raises:
         ValueError: naming the key of the first value refused.
@@ -3644,9 +3649,17 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     )
     # Refused here, naming the key, whether or not a source is built from it:
     # 0 would be traffic that never moves (#967).
-    speed_value = source.get("speed_kmh", 30.0)
+    speed_value = _given(source, "speed_kmh", 30.0)
     try:
-        speed_kmh = check_background_speed(_float_of_text(speed_value))
+        speed = _float_of_text(speed_value)
+    except ValueError:
+        # Not float()'s "could not convert string to float: ..." (#2161).
+        raise ValueError(
+            f"background_traffic.source.speed_kmh: {shown(speed_value)} is not a "
+            "number"
+        ) from None
+    try:
+        speed_kmh = check_background_speed(speed)
     except ValueError as exc:
         raise ValueError(
             f"background_traffic.source.speed_kmh: {shown(speed_value)} is not a "
@@ -3656,7 +3669,7 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     def finite_amount(key: str, default: float) -> float:
         # Refused here, naming the key: NaN would fail `rate > 0` and be
         # dropped without a word, infinity would crash the run (#1321).
-        value = source.get(key, default)
+        value = _given(source, key, default)
         try:
             amount = _float_of_text(value)
         except ValueError as exc:
