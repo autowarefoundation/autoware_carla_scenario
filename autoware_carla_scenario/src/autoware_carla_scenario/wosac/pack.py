@@ -26,6 +26,7 @@ from pathlib import Path
 from typing import Any, Optional
 
 from google.protobuf import json_format
+from google.protobuf.message import DecodeError
 
 from ..run_outputs import WOSAC_SUFFIX
 from ..t4_scene.grid import files_under
@@ -65,8 +66,16 @@ def rollout_files(paths: list[Path]) -> list[Path]:
 
 
 def read_rollouts(path: Path | str) -> pb.ScenarioRollouts:
-    """The ``ScenarioRollouts`` serialised in the file at *path*."""
-    return pb.ScenarioRollouts.FromString(Path(path).read_bytes())
+    """The ``ScenarioRollouts`` serialised in the file at *path*.
+
+    Raises:
+        ValueError: If the file does not hold one (a truncated export, a
+            stray file), naming the file.
+    """
+    try:
+        return pb.ScenarioRollouts.FromString(Path(path).read_bytes())
+    except DecodeError as error:
+        raise ValueError(f"{path}: not a ScenarioRollouts ({error})") from None
 
 
 def read_submission(paths: Iterable[Path | str]) -> pb.SimAgentsChallengeSubmission:
@@ -74,7 +83,12 @@ def read_submission(paths: Iterable[Path | str]) -> pb.SimAgentsChallengeSubmiss
     ``scenario_rollouts`` every shard's, its metadata the last shard's."""
     submission = pb.SimAgentsChallengeSubmission()
     for path in paths:
-        submission.MergeFromString(Path(path).read_bytes())
+        try:
+            submission.MergeFromString(Path(path).read_bytes())
+        except DecodeError as error:
+            raise ValueError(
+                f"{path}: not a SimAgentsChallengeSubmission ({error})"
+            ) from None
     return submission
 
 
@@ -177,10 +191,10 @@ def merge_rollouts(
             users a run spawns.
 
     Raises:
-        ValueError: If a message has no ``scenario_id``, a scenario has not
-            *num_rollouts* rollouts, its rollouts simulate different agents
-            (and not *common_agents*), or two of its trajectories differ in
-            length.
+        ValueError: If a message has no ``scenario_id`` or no joint scene,
+            a scenario has not *num_rollouts* rollouts, its rollouts simulate
+            different agents (and not *common_agents*), or two of its
+            trajectories differ in length.
     """
     if num_rollouts is not None:
         num_rollouts = checked_count(num_rollouts, "num_rollouts", 1)
@@ -188,6 +202,8 @@ def merge_rollouts(
     for message, source in rollouts:
         if not message.scenario_id:
             raise ValueError(f"{source} has no scenario_id")
+        if not message.joint_scenes:
+            raise ValueError(f"{source} has no joint scene")
         scenes = scenarios.setdefault(message.scenario_id, [])
         scenes.extend((scene, source) for scene in message.joint_scenes)
     # Each scenario's source messages are let go once it is merged.

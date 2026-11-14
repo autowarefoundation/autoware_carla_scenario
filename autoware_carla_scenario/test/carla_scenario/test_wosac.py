@@ -520,6 +520,22 @@ def test_a_rollout_without_a_scenario_id_is_refused() -> None:
         merge_rollouts([(pb.ScenarioRollouts(joint_scenes=[pb.JointScene()]), "f")])
 
 
+def test_a_rollout_without_a_joint_scene_is_refused() -> None:
+    """A ``TypeError`` from merging no scene before #2156."""
+    with pytest.raises(ValueError, match="f has no joint scene"):
+        merge_rollouts([(pb.ScenarioRollouts(scenario_id="a"), "f")])
+
+
+def test_a_file_that_is_no_rollout_is_refused_naming_it(tmp_path: Path) -> None:
+    """A ``DecodeError`` traceback before #2156."""
+    bad = tmp_path / "Bad.wosac.pb"
+    bad.write_bytes(b"\xff\xff\xff")
+    with pytest.raises(ValueError, match=f"{bad}: not a ScenarioRollouts"):
+        read_rollouts(bad)
+    with pytest.raises(ValueError, match=f"{bad}: not a SimAgentsChallengeSubmission"):
+        read_submission([bad])
+
+
 # -- the submission ------------------------------------------------------------
 
 
@@ -628,6 +644,17 @@ def test_the_command_reports_a_bad_pack(
         main(["pack", str(tmp_path), "-o", str(tmp_path / "s"), "--rollouts", "2"]) == 1
     )
     assert "scenario 'Run' has 1 rollouts, not 2" in capsys.readouterr().err
+
+
+def test_the_command_reports_a_file_that_is_no_rollout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bad = tmp_path / "Bad.wosac.pb"
+    bad.write_bytes(b"\xff\xff\xff")
+    assert main(["pack", str(tmp_path), "-o", str(tmp_path / "s")]) == 1
+    assert f"scenario-wosac pack: {bad}: not a ScenarioRollouts" in (
+        capsys.readouterr().err
+    )
 
 
 def test_the_command_reports_a_log_it_cannot_export(
