@@ -583,8 +583,15 @@ def test_the_atomic_writer_gives_the_temporary_file_the_owner(
     for owner in ((0, 0), (12345, 678), (1, 2)):
         real_stat = Path.stat
 
-        def stat(self: Path, *args: Any, _owner: tuple[int, int] = owner) -> Any:
-            found = real_stat(self, *args)
+        def stat(
+            self: Path,
+            *args: Any,
+            _owner: tuple[int, int] = owner,
+            **kwargs: Any,
+        ) -> Any:
+            # **kwargs: Python 3.13's Path.is_file() calls
+            # self.stat(follow_symlinks=...).
+            found = real_stat(self, *args, **kwargs)
             if self.name != "map.yaml":
                 return found
             fields = list(found)
