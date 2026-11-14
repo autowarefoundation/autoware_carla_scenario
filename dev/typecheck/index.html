@@ -4928,9 +4928,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-336 of the package's 463
-modules (73%; about 104,100 of
-172,800 lines) are <code>CHECKED</code>: the kinematics, the
+336 of the package's 465
+modules (72%; about 104,300 of
+174,300 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6389,7 +6389,7 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>194 functions and methods of those modules are <code>UNCALLED</code>
+<p>195 functions and methods of those modules are <code>UNCALLED</code>
 (59 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
@@ -6402,7 +6402,7 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 194 UNCALLED functions and methods, and why</summary>
+<summary>The 195 UNCALLED functions and methods, and why</summary>
 <ul>
 <li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
@@ -6567,6 +6567,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>sweeper.isolation._run_in_child</code>: takes the signal mask signal.pthread_sigmask() returns, a <code>set[int | signal.Signals]</code>, which Codon cannot express (a set of a union); _launch_isolated calls it with the mask it holds, so its body is compiled through it</li>
 <li><code>t4_settings.T4Settings.from_driver</code>: takes the <code>t4</code> config section (<code>Mapping[str, Any]</code>: a Hydra node of mixed value types), which Codon cannot express, and builds the settings with <code>**</code> of a <code>dict[str, Any]</code></li>
 <li><code>traffic.base.TrafficBackend.describe</code>: builds a dict[str, Any] of mixed value types, which Codon cannot express</li>
+<li><code>traffic.build_hybrid</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express</li>
 <li><code>traffic.build_none</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express</li>
 <li><code>traffic.build_sumo</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express</li>
 <li><code>traffic.build_traffic_manager</code>: takes a backend's options as <code>Mapping[str, Any]</code>, a Hydra node of mixed value types, which Codon cannot express</li>
@@ -6600,7 +6601,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 127 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 129 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6630,7 +6631,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 127 EXCLUDED modules, and why</summary>
+<summary>The 129 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped</li>
@@ -6733,6 +6734,8 @@ the first:</p>
 <li><code>tools.detect_no_3d_model_lanelets</code>: imports omegaconf, yaml, tqdm, argparse, and serve_cli (argparse), which is not checked; writing the map configuration in place or through a temporary file, and describing the error of either (<code>_write_in_place()</code>, <code>_write_atomically()</code>, <code>_PartialWriteError</code>, <code>_describe_os_error()</code>), are the checked tools.file_writes' (#2135), which it re-exports</li>
 <li><code>traffic.registry</code>: holds backend factories behind the <code>TrafficBackendFactory</code> alias, <code>Callable[[Mapping[str, Any]], TrafficBackend]</code> ("expected type expression"), and takes their options as <code>Mapping[str, Any]</code>, which Codon cannot express; load_traffic_backend_plugins and the _walk_traffic_backend_plugins it calls import, inside them, autoware_carla_scenario.registry (<code>_PLUGIN_LOAD_LOCK</code>, <code>load_entry_point_plugins()</code>), which is neither checked nor modelled and is the first error the check reports (UNCALLED entries for both would skip those imports, but not the alias); traffic.codon models it for the traffic package</li>
 <li><code>traffic.sumo.backend</code>: imports traci, sumolib and libsumo inside its functions, and builds its network and reads its signals and crossings with build_network(), SignalTable and crossing_edges() of the checked traffic.sumo.network, which the check leaves build_network() and SignalTable uncalled of, for roadgen; holds SUMO's connection as <code>_traci: Any</code> (traci or libsumo, whichever _load_traci() finds) and sumolib's network as <code>_net: Any</code>, and takes CARLA's world, its actors and the scenario's entities typed <code>Any</code>, which Codon cannot express; the signal states it sets, SUMO's step per CARLA tick and the links a program lets go together are the checked traffic.sumo.signal_states', and its command-line options, mode bits, vehicle types and type files the checked traffic.sumo.options'</li>
+<li><code>traffic.sumo.hybrid</code>: reads SUMO's network with sumolib (imported inside its functions) as <code>Any</code> values, which Codon cannot express, and holds the mesoscopic model as a union of the checked traffic.mesoscopic's and the excluded traffic.sumo.mesosim's; the TrafficManager side it extends is the checked traffic.traffic_manager</li>
+<li><code>traffic.sumo.mesosim</code>: starts SUMO as a process of its own (subprocess, socket) and holds a TraCI connection to it as <code>_conn: Any</code> (traci, imported inside its functions), which Codon cannot express; the vehicles it holds are the checked traffic.mesoscopic's MesoVehicle and its roads its MesoLink</li>
 <li><code>trajectory.authoring</code>: parses document values of <code>Any</code> (YAML rows, editor fields) into <code>dict[str, Any]</code>, which Codon cannot express; what it does with the editor's text and with parsed rows is the checked trajectory.vertex_text's, and the typed builders it re-exports (the goal, via lanelets, timing and lanelet path) are the checked trajectory.authored's</li>
 <li><code>trajectory_recorder</code>: writes JSON-lines records of mixed value types (<code>dict[str, Any]</code>, which Codon cannot express) serialised with orjson (module level; <code>orjson.JSONEncodeError</code>), reads the projector's settings with yaml (inside <code>_projector_info</code>), and neither has a Codon model; trajectory_recorder.codon models what scenario_runner uses of it</li>
 <li><code>ui</code>: imports argparse and serve_cli (argparse), which is not checked; imports uvicorn, ui.app (fastapi) and the registry (omegaconf, importlib) inside main(), and ui.recordings (tarfile) inside a function</li>
