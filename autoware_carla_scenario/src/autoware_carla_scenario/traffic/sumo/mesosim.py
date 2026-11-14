@@ -22,13 +22,15 @@ What SUMO's mesoscopic model does not do, this module does around it:
   segment it is in (``--meso-edgelength`` long); the model here moves it on
   from there at its speed, up to the segment's end, so a vehicle that becomes
   microscopic comes back where it would be rather than up to a segment behind.
-* **A vehicle told to stand.** SUMO refuses a top speed of 0, and a speed
-  change takes effect only at the next segment, so a vehicle held to a stop
-  would crawl on through the segment it is in or never leave it.  One told to
-  stand is taken out of SUMO and held where it is, and goes back in, from
-  there, once it may drive again.  A speed it is told to keep (above
-  standing) takes it out and puts it back in at once, so the new speed holds
-  from where it is rather than from the next segment.
+* **A vehicle told to stand.** SUMO's mesoscopic model refuses a top speed
+  of 0, implements neither ``setSpeed`` nor ``resume``, and takes a speed
+  change only at the next segment.  One told to stand is taken out of SUMO
+  and held where it is, and goes back in, from there, once it may drive
+  again.  It does not hold up those behind it meanwhile: a stop that never
+  ends would, but SUMO does not wake the vehicles queued behind a vehicle
+  taken out of it, so they would stand on after it drove off.  A speed it
+  is told to keep (above standing) takes it out and puts it back in at once,
+  so the new speed holds from where it is rather than from the next segment.
 * **Signals.** The microscopic SUMO's signals are the run's (after CARLA's,
   when CARLA's are the authority); each step copies the ones that changed
   into this one, whose junction control (``--meso-junction-control``) then
@@ -386,7 +388,7 @@ class SumoMesoscopicTraffic:
                 f"{vehicle_id}: a new route must start on {vehicle.link} "
                 f"(got {list(route)[:1]})"
             )
-        if vehicle_id not in self._held:
+        if vehicle_id in self._sumo_ids:
             from traci.exceptions import TraCIException  # noqa: PLC0415
 
             try:
@@ -444,20 +446,29 @@ class SumoMesoscopicTraffic:
         if self._junction_control and self._signal_states is not None:
             self._copy_signals(self._signal_states())
         self._step_to(now)
+        from traci.exceptions import TraCIException  # noqa: PLC0415
+
         ids = self._sumo_ids
-        in_sumo = set(conn.vehicle.getIDList())
-        departed = [i for i in self._pending if ids[i] in in_sumo]
-        for vehicle_id in departed:
-            self._pending.discard(vehicle_id)
-            conn.vehicle.subscribe(
-                ids[vehicle_id],
-                (_VAR_ROAD_ID, _VAR_ROUTE_INDEX, _VAR_LANEPOSITION, _VAR_SPEED),
-            )
-        arrived: list[MesoVehicle] = []
-        gone = [i for i in self._running if ids[i] not in in_sumo]
+        # No list of every vehicle: one in SUMO is subscribed to from the
+        # step it departs, and one that has left is missing from the results.
+        departed: list[str] = []
+        gone: list[str] = []
         if self._pending:
             waiting = set(conn.simulation.getPendingVehicles())
-            gone += [i for i in self._pending if ids[i] not in waiting]
+            for vehicle_id in [i for i in self._pending if ids[i] not in waiting]:
+                self._pending.discard(vehicle_id)
+                try:
+                    conn.vehicle.subscribe(
+                        ids[vehicle_id],
+                        (_VAR_ROAD_ID, _VAR_ROUTE_INDEX, _VAR_LANEPOSITION, _VAR_SPEED),
+                    )
+                except TraCIException:
+                    gone.append(vehicle_id)  # in and out within the step
+                    continue
+                departed.append(vehicle_id)
+        results = conn.vehicle.getAllSubscriptionResults()
+        gone += [i for i in self._running if ids[i] not in results]
+        arrived: list[MesoVehicle] = []
         for vehicle_id in gone:
             ids.pop(vehicle_id, None)
             self._pending.discard(vehicle_id)
@@ -466,7 +477,6 @@ class SumoMesoscopicTraffic:
             if vehicle is not None:
                 vehicle.index = len(vehicle.route) - 1
                 arrived.append(vehicle)
-        results = conn.vehicle.getAllSubscriptionResults()
         for vehicle_id in [*self._running, *departed]:
             values = results.get(ids.get(vehicle_id, ""))
             vehicle = self._vehicles.get(vehicle_id)
