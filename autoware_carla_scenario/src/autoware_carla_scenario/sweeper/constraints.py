@@ -191,12 +191,11 @@ def _unresolved(values: Any) -> bool:
     """
     if not isinstance(values, str):
         return False
-    if TYPE_CHECKING:
-        return False
-    else:
-        import re  # noqa: PLC0415 -- run time only
+    import re  # noqa: PLC0415
 
-        return re.fullmatch(r"\s*\$\{[^{}]+\}\s*", values) is not None
+    # str(): the check compiles this for callers' non-str fields too; past
+    # the isinstance() above it is *values* itself.
+    return re.fullmatch(r"\s*\$\{[^{}]+\}\s*", str(values)) is not None
 
 
 def _lanelet_ids(owner: str, name: str, values: Any) -> tuple[int, ...]:
