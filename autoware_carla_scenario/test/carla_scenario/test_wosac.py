@@ -351,6 +351,38 @@ def test_an_object_id_is_its_roles_whatever_the_actor_id(tmp_path: Path) -> None
     assert 0 <= object_id_of("npc1") < 2**31
 
 
+@pytest.mark.parametrize(
+    ("role", "object_id"),
+    [
+        # Computed with int.from_bytes(digest[:4], "big") before wosac.ids
+        # read them off the hex digest (#2158): a rollout's ids never change.
+        ("ego", 1071303995),
+        ("Ego", 1071303995),
+        ("hero", 1071303995),
+        ("npc_1", 705440643),
+        ("pedestrian", 1963785820),
+        ("CutInVehicle", 65601598),
+        ("", 1672528962),
+    ],
+)
+def test_object_ids_are_pinned(role: str, object_id: int) -> None:
+    assert object_id_of(role) == object_id
+
+
+def test_the_id_helpers_are_importable_where_they_were() -> None:
+    """#2158 moved them into wosac.ids, which convert.py and pack.py import."""
+    from autoware_carla_scenario import wosac
+    from autoware_carla_scenario.wosac import convert, ids, pack
+
+    for name in ("scenario_id_of", "object_id_of", "checked_count"):
+        assert getattr(convert, name) is getattr(ids, name), name
+        assert name in convert.__all__ and name in ids.__all__, name
+    assert convert._checked_object_ids is ids._checked_object_ids
+    assert pack.checked_count is ids.checked_count
+    assert wosac.object_id_of is ids.object_id_of
+    assert wosac.scenario_id_of is ids.scenario_id_of
+
+
 def test_object_ids_can_be_given(tmp_path: Path) -> None:
     log = _write_log(tmp_path / "Run.trajectory.jsonl")
     rollout = trajectory_log_to_rollout(log, object_ids={"ego": 7, "npc1": 3})

@@ -31,7 +31,7 @@ from google.protobuf.message import DecodeError
 from ..run_outputs import WOSAC_SUFFIX
 from ..t4_scene.grid import files_under
 from ._proto import sim_agents_submission_pb2 as pb
-from .convert import checked_count
+from .ids import checked_count
 
 __all__ = [
     "SHARD_PREFIX",

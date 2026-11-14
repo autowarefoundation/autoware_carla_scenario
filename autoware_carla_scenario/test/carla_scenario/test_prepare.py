@@ -595,11 +595,23 @@ class TestDockerSettingsAreChecked:
             ),
             ("timeout_s", float("nan"), "must be finite and above 0"),
             ("timeout_s", -5.0, "must be finite and above 0"),
-            ("timeout_s", None, "must be a number of seconds"),
+            ("timeout_s", False, "must be a number of seconds"),
             ("gpu_memory_mb", -1, "must not be negative"),
             ("gpu_memory_mb", 1.5, "must be a whole number"),
             ("memory_mb", "16000", "must be a whole number"),
             ("memory_mb", float("inf"), "must be finite"),
+            # Each handed to the container as its str() before #2158.
+            ("model", False, "must be non-empty text, got False"),
+            ("model", "", "must be non-empty text, got ''"),
+            ("model", " ", "must be non-empty text, got ' '"),
+            ("model", 3, "must be non-empty text, got 3"),
+            ("hf_home", False, "must be non-empty text, got False"),
+            ("hf_home", "", "must be non-empty text, got ''"),
+            ("hf_home", ["~/hf"], "must be non-empty text, got \\['~/hf'\\]"),
+            ("acceleration", False, "must be one of none, compile, trt, got False"),
+            ("acceleration", "", "must be one of none, compile, trt, got ''"),
+            ("acceleration", "fast", "must be one of none, compile, trt, got 'fast'"),
+            ("acceleration", "TRT", "must be one of none, compile, trt"),
         ],
     )
     def test_a_bad_ardy_setting_is_refused_naming_its_key(
@@ -629,6 +641,61 @@ class TestDockerSettingsAreChecked:
         assert ArdyBackend.from_settings({"docker_args": None})._settings == (
             ArdyBackend.from_settings({})._settings
         )
+
+    def test_an_absent_or_null_ardy_setting_is_the_default(self) -> None:
+        """Null is the default for every key (#2158), as for image and gpus
+        (#2143): not ``ARDY_MODEL='None'``, not a mount of ``None:/hf``, and
+        not refused as "must be a number of seconds, got None"."""
+        keys = (
+            "image",
+            "model",
+            "acceleration",
+            "gpus",
+            "hf_home",
+            "gpu_memory_mb",
+            "memory_mb",
+            "startup_timeout_s",
+            "timeout_s",
+            "pull",
+            "docker_args",
+        )
+        default = ArdyBackend.from_settings({})
+        null = ArdyBackend.from_settings(dict.fromkeys(keys))
+        assert null._settings == default._settings
+        assert null.timeout_s == default.timeout_s == 120.0
+        settings = default._settings
+        assert settings.env == {
+            "ARDY_MODEL": "soma",
+            "ARDY_ACCELERATION": "none",
+            "HF_HOME": "/hf",
+        }
+        assert settings.mounts == ("~/.cache/huggingface:/hf",)
+        assert settings.pull == "missing"
+        assert settings.startup_timeout_s == 1800.0
+        assert settings.resources == Resources(gpu_memory_mb=24000, memory_mb=16000)
+
+    @pytest.mark.parametrize("acceleration", ["none", "compile", "trt"])
+    def test_the_ardy_text_settings_are_passed_on(self, acceleration: str) -> None:
+        settings = ArdyBackend.from_settings(
+            {"model": "other", "acceleration": acceleration, "hf_home": "/data/hf"}
+        )._settings
+        assert settings.env["ARDY_MODEL"] == "other"
+        assert settings.env["ARDY_ACCELERATION"] == acceleration
+        assert settings.mounts == ("/data/hf:/hf",)
+
+    def test_the_shared_reader_takes_null_as_the_default(self) -> None:
+        read = docker_module.read_docker_settings(
+            "soma",
+            dict.fromkeys(("pull", "startup_timeout_s", "gpu_memory_mb", "memory_mb")),
+            image="img:1",
+            container_port=1,
+            startup_timeout_s=30.0,
+            gpu_memory_mb=10,
+            memory_mb=20,
+        )
+        assert read.pull == "missing"
+        assert read.startup_timeout_s == 30.0
+        assert read.resources == Resources(gpu_memory_mb=10, memory_mb=20)
 
     def test_the_shared_reader_names_any_backend(self) -> None:
         with pytest.raises(ValueError, match=r"^backends\.soma\.pull must"):
@@ -727,6 +794,12 @@ class TestBackendSettingsInTheBatchCheck:
             ("backends.ardy.timeout_s=nan", "timeout_s"),
             ("backends.ardy.docker_args='--shm-size=8g'", "docker_args"),
             ("backends.ardy.memory_mb=1.5", "memory_mb"),
+            # Refused only inside the container, after the pull, before #2158.
+            ("backends.ardy.model=false", "model"),
+            ("backends.ardy.model=''", "model"),
+            ("backends.ardy.hf_home=false", "hf_home"),
+            ("backends.ardy.acceleration=fast", "acceleration"),
+            ("backends.ardy.acceleration=false", "acceleration"),
         ],
     )
     def test_a_bad_setting_is_refused(self, override: str, key: str) -> None:
@@ -744,6 +817,22 @@ class TestBackendSettingsInTheBatchCheck:
         )
         with pytest.raises(run.RunConfigError, match=r"backends\.ardy must be"):
             run.check_batch_configs([cfg])
+
+    def test_null_settings_pass(self) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = run._compose_config(
+            "adversity/nade",
+            [
+                "map=town10hd_opt",
+                "backends.ardy.model=null",
+                "backends.ardy.hf_home=null",
+                "backends.ardy.acceleration=null",
+                "backends.ardy.timeout_s=null",
+                "backends.ardy.pull=null",
+            ],
+        )
+        run.check_batch_configs([cfg])
 
     def test_the_shipped_config_passes(self) -> None:
         from autoware_carla_scenario.examples import run

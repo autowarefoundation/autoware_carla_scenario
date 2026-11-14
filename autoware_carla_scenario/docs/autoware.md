@@ -303,7 +303,7 @@ such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
 
 | Setting | Default | Meaning |
 | --- | --- | --- |
-| `workspace` | `~/autoware` | The `autowarefoundation/autoware` clone |
+| `workspace` | `~/autoware` | The `autowarefoundation/autoware` clone; `null` is the default, and anything but a non-empty path (`false`, `''`) is refused, naming `autoware.launcher.workspace` |
 | `devcontainer` | `universe-devel-cuda` | The `.devcontainer/` variant whose image and mount are used |
 | `image` | `null` | An image to use instead of the dev container's |
 | `workspace_mount` | `null` | Where to mount the workspace instead of where the dev container does |
