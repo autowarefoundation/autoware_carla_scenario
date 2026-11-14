@@ -105,7 +105,9 @@ class TrafficConfig:
         ``options``, ``vehicles``, ``pedestrians`` and ``bicycles`` are
         mappings; only an absent or null one is empty (the defaults), while
         ``false``, ``0``, ``""`` or a list is refused, naming the key, rather
-        than read as the defaults (#2143).
+        than read as the defaults (#2143). ``backend`` is a non-empty
+        string; an absent or null one is ``traffic_manager``, while any
+        other value is refused, naming the key (#2156).
         """
         from ..utils.config import checked_options  # noqa: PLC0415
 
