@@ -595,6 +595,15 @@ without an import anywhere in this repository:
 my_simulator = "my_package:register"
 ```
 
+A backend that drives through a CARLA TrafficManager names the option of its
+own its port is read from, so a run reports the port it uses and a SLURM task
+points it at its slot's port ([SLURM, Ports](slurm.md#ports)), as the built-in
+`traffic_manager` and `hybrid` (`port`) and `sumo` (`tm_port`) do:
+
+```python
+register_backend("my_simulator", MySimulatorBackend, tm_port_option="tm_port")
+```
+
 Registering a name that is already taken replaces it, which is how a package
 overrides a built-in backend (`traffic_manager`, `sumo`, ...). It is still
 reported: `load_traffic_backend_plugins()` logs a warning naming the entry point
@@ -1575,10 +1584,14 @@ done around it:
   segment it is in; the backend moves it on from there at its speed, up to
   the segment's end, so it comes back where it would be rather than up to a
   segment behind.
-- **A speed it is told.** SUMO takes a new speed only at the next segment and
-  refuses a top speed of 0. A vehicle told a new speed is taken out and put
-  back in where it is, so the speed holds from there; one told to stand is
-  held out of SUMO, where it is, until it may drive again.
+- **A speed it is told.** SUMO takes a new speed only at the next segment,
+  refuses a top speed of 0 and implements neither `setSpeed` nor `resume` in
+  its mesoscopic model. A vehicle told a new speed is taken out and put back
+  in where it is, so the speed holds from there; one told to stand is held
+  out of SUMO, where it is, until it may drive again. Those behind it do not
+  queue up behind it meanwhile: a stop that never ends would hold them, but
+  SUMO does not wake the vehicles queued behind one taken out of its
+  mesoscopic model, so they would stand on after it drove off.
 - **Its id.** Each time a vehicle goes into SUMO's mesoscopic model it does so
   under an id of its own there (`<id>@meso<n>`), so one that leaves and comes
   back in the same step is not refused. The backend, and everything that asks

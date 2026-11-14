@@ -313,6 +313,8 @@ _PUBLISHED_COLOR = (220, 30, 40, 255)
 #: begins with this, then its SUMO id.
 _MIRROR_PREFIX = "sumo:"
 _DRIVEN_COLOR = (30, 90, 220, 255)
+#: TraCI's variable of a signal's state string (``TL_RED_YELLOW_GREEN_STATE``).
+_TL_RED_YELLOW_GREEN_STATE = 0x20
 #: moveToXY's keepRoute for a person: placed exactly where it is (2), on
 #: whatever lane is there whoever may use it (4).  Without the 4 a pedestrian
 #: crossing the road is put on the nearest footway, where no vehicle sees it.
@@ -703,6 +705,9 @@ class SumoTrafficBackend(TrafficBackend):
         self._signal_states: dict[str, str] = {}
         #: Edge id -> the lane shape a mesoscopic vehicle on it is placed on.
         self._meso_roads: Optional[MesoRoads] = None
+        #: Whether the signals' states are subscribed to, for the mesoscopic
+        #: SUMO (:meth:`_micro_signal_states`).
+        self._signals_subscribed = False
         self._route_count = 0
         #: How many vehicles became mesoscopic, and microscopic, this run.
         self._level_changes = [0, 0]
@@ -1556,6 +1561,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._edge_signals = {}
         self._signal_states = {}
         self._meso_roads = None
+        self._signals_subscribed = False
         self._level_changes = [0, 0]
         handed_ambient = [
             self._external[sumo_id]
@@ -4139,9 +4145,23 @@ class SumoTrafficBackend(TrafficBackend):
         )
 
     def _micro_signal_states(self) -> dict[str, str]:
-        """Every signal's state in this SUMO, for SUMO's mesoscopic one."""
+        """Every signal's state in this SUMO, for SUMO's mesoscopic one.
+
+        Read from a subscription to each signal's state, made once: SUMO
+        sends them with each step, rather than a call per signal per step.
+        The mesoscopic model steps after this one, and nothing sets a signal
+        in between, so the state a step sent is the one it would read.
+        """
         tls = self._traci.trafficlight
-        return {i: str(tls.getRedYellowGreenState(i)) for i in tls.getIDList()}
+        if not self._signals_subscribed:
+            for signal in tls.getIDList():
+                tls.subscribe(signal, (_TL_RED_YELLOW_GREEN_STATE,))
+            self._signals_subscribed = True
+        return {
+            signal: str(values[_TL_RED_YELLOW_GREEN_STATE])
+            for signal, values in tls.getAllSubscriptionResults().items()
+            if _TL_RED_YELLOW_GREEN_STATE in values
+        }
 
     def _meso_gate(self, from_edge: str, to_edge: str) -> bool:
         """Whether SUMO's signals let a vehicle from *from_edge* on to *to_edge*.

@@ -19,7 +19,7 @@ backend costs nothing until one is built.
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Mapping
+from typing import Any, Callable, Mapping, Optional
 
 from .base import TrafficBackend
 from .parameters import BicycleParameters, PedestrianParameters, VehicleParameters
@@ -34,6 +34,7 @@ __all__ = [
     "available_backends",
     "get_backend_factory",
     "build_backend",
+    "tm_port_option",
     "load_traffic_backend_plugins",
 ]
 
@@ -45,6 +46,10 @@ TrafficBackendFactory = Callable[[Mapping[str, Any]], TrafficBackend]
 
 _BACKENDS: dict[str, TrafficBackendFactory] = {}
 
+#: Name -> the option of a backend that drives through a TrafficManager its
+#: port is read from (:func:`tm_port_option`).
+_TM_PORT_OPTIONS: dict[str, str] = {}
+
 #: Whether the entry-point walk has already run in this process.  Set only
 #: once the walk is over (#2037).
 _plugins_loaded = False
@@ -54,7 +59,12 @@ _plugins_loaded = False
 _plugins_loading = False
 
 
-def register_backend(name: str, factory: TrafficBackendFactory) -> None:
+def register_backend(
+    name: str,
+    factory: TrafficBackendFactory,
+    *,
+    tm_port_option: Optional[str] = None,
+) -> None:
     """Make *factory* selectable as ``traffic.backend=<name>``.
 
     Re-registering a name replaces it, which is what a package overriding a
@@ -65,8 +75,16 @@ def register_backend(name: str, factory: TrafficBackendFactory) -> None:
         name: The name the config selects this backend by.
         factory: Callable taking the backend's options mapping and returning a
             :class:`~autoware_carla_scenario.traffic.base.TrafficBackend`.
+        tm_port_option: For a backend that drives through a CARLA
+            TrafficManager, the option of its own (``traffic.options.<it>``)
+            the TrafficManager's port is read from: where a run reports the
+            port and a SLURM task sets its own.  ``None``: none.
     """
     _BACKENDS[name] = factory
+    if tm_port_option is None:
+        _TM_PORT_OPTIONS.pop(name, None)
+    else:
+        _TM_PORT_OPTIONS[name] = tm_port_option
 
 
 def unregister_backend(name: str) -> None:
@@ -76,6 +94,15 @@ def unregister_backend(name: str) -> None:
     the next test.
     """
     _BACKENDS.pop(name, None)
+    _TM_PORT_OPTIONS.pop(name, None)
+
+
+def tm_port_option(name: str) -> Optional[str]:
+    """The option the backend *name* reads its TrafficManager's port from
+    (``port``, ``tm_port``), or ``None`` for one without a TrafficManager or
+    unknown; backends of installed packages included."""
+    load_traffic_backend_plugins()
+    return _TM_PORT_OPTIONS.get(name)
 
 
 def available_backends() -> list[str]:

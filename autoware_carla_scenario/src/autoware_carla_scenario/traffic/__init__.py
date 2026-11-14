@@ -171,10 +171,10 @@ def register_builtin_backends() -> None:
     way to put it back, and reaching into the module for a private factory is a
     worse way to say that.
     """
-    register_backend("traffic_manager", build_traffic_manager)
+    register_backend("traffic_manager", build_traffic_manager, tm_port_option="port")
     register_backend("none", build_none)
-    register_backend("sumo", build_sumo)
-    register_backend("hybrid", build_hybrid)
+    register_backend("sumo", build_sumo, tm_port_option="tm_port")
+    register_backend("hybrid", build_hybrid, tm_port_option="port")
 
 
 register_builtin_backends()

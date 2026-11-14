@@ -296,11 +296,6 @@ def _record_domains(task: Any, domains: RosDomains | None) -> None:
         task.update(ros_domains={str(k): v for k, v in sorted(domains.mapping.items())})
 
 
-#: The option each built-in backend reads the TrafficManager's port from
-#: (``conf/traffic/<backend>.yaml``).
-_TM_PORT_OPTIONS = {"traffic_manager": "port", "hybrid": "port", "sumo": "tm_port"}
-
-
 def _backend_tm_port_key(cfg: "DictConfig", port: int) -> str | None:
     """The traffic backend's TrafficManager port option, when it must be set.
 
@@ -315,10 +310,12 @@ def _backend_tm_port_key(cfg: "DictConfig", port: int) -> str | None:
     """
     from omegaconf import OmegaConf  # noqa: PLC0415
 
+    from ..traffic.registry import tm_port_option  # noqa: PLC0415
+
     traffic = cfg.get("traffic")
     if traffic is None:
         return None
-    option = _TM_PORT_OPTIONS.get(str(traffic.get("backend", "traffic_manager")))
+    option = tm_port_option(str(traffic.get("backend", "traffic_manager")))
     if option is None:
         return None
     options = traffic.get("options")

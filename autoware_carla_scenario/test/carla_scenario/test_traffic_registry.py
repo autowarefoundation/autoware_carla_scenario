@@ -120,6 +120,11 @@ class TestPluginCollisions:
             traffic_registry, "_BACKENDS", dict(traffic_registry._BACKENDS)
         )
         monkeypatch.setattr(
+            traffic_registry,
+            "_TM_PORT_OPTIONS",
+            dict(traffic_registry._TM_PORT_OPTIONS),
+        )
+        monkeypatch.setattr(
             "importlib.metadata.entry_points", lambda *, group: list(entry_points)
         )
         monkeypatch.setattr(traffic_registry, "_plugins_loaded", False)
@@ -160,6 +165,11 @@ class TestPluginCollisions:
         for order in ([first, second], [second, first]):
             caplog.clear()
             monkeypatch.setattr(traffic_registry, "_BACKENDS", dict(builtins))
+            monkeypatch.setattr(
+                traffic_registry,
+                "_TM_PORT_OPTIONS",
+                dict(traffic_registry._TM_PORT_OPTIONS),
+            )
             with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
                 self._load(monkeypatch, order)
                 # Sorted by distribution name: sumo_b loads last, whichever
@@ -190,6 +200,11 @@ class TestConcurrentPluginLoading:
 
         monkeypatch.setattr(
             traffic_registry, "_BACKENDS", dict(traffic_registry._BACKENDS)
+        )
+        monkeypatch.setattr(
+            traffic_registry,
+            "_TM_PORT_OPTIONS",
+            dict(traffic_registry._TM_PORT_OPTIONS),
         )
         monkeypatch.setattr(traffic_registry, "_plugins_loaded", False)
 
@@ -388,3 +403,32 @@ class TestSelectingFromTheRealConfig:
             assert set(cfg.traffic.pedestrians) == set(
                 PEDESTRIAN_PARAMETER_BACKENDS
             ), group
+
+
+def test_each_backend_says_where_its_traffic_manager_port_is() -> None:
+    from autoware_carla_scenario.traffic import NullTrafficBackend
+    from autoware_carla_scenario.traffic.registry import (
+        register_backend,
+        tm_port_option,
+        unregister_backend,
+    )
+
+    assert tm_port_option("traffic_manager") == "port"
+    assert tm_port_option("hybrid") == "port"
+    assert tm_port_option("sumo") == "tm_port"
+    assert tm_port_option("none") is None
+    assert tm_port_option("no-such-backend") is None
+    try:
+        register_backend(
+            "_tm_plugin", lambda options: NullTrafficBackend(), tm_port_option="tm"
+        )
+        assert tm_port_option("_tm_plugin") == "tm"
+        # Registered again without one: it has none any more.
+        register_backend("_tm_plugin", lambda options: NullTrafficBackend())
+        assert tm_port_option("_tm_plugin") is None
+        register_backend(
+            "_tm_plugin", lambda options: NullTrafficBackend(), tm_port_option="tm"
+        )
+    finally:
+        unregister_backend("_tm_plugin")
+    assert tm_port_option("_tm_plugin") is None

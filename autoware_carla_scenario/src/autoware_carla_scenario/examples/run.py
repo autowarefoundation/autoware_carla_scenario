@@ -135,6 +135,7 @@ from autoware_carla_scenario.typecheck.mode import (
     typecheck_mode,
 )
 from autoware_carla_scenario.traffic.base import check_background_speed
+from autoware_carla_scenario.traffic.registry import tm_port_option
 from autoware_carla_scenario.traffic import (
     TrafficBackend,
     TrafficConfig,
@@ -1228,10 +1229,6 @@ def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
     return backend
 
 
-#: The option each built-in backend reads the TrafficManager's port from.
-_TM_PORT_OPTIONS = {"traffic_manager": "port", "hybrid": "port", "sumo": "tm_port"}
-
-
 def _traffic_manager_port_text(cfg: DictConfig) -> str:
     """The TrafficManager port the backend *cfg* selects will use, as text.
 
@@ -1246,7 +1243,7 @@ def _traffic_manager_port_text(cfg: DictConfig) -> str:
         port = _legacy_traffic_manager_options(cfg).get("port")
     else:
         backend = str(traffic.get("backend", "traffic_manager"))
-        option = _TM_PORT_OPTIONS.get(backend)
+        option = tm_port_option(backend)
         if option is None:
             return f"- (traffic backend {backend})"
         options = traffic.get("options")
