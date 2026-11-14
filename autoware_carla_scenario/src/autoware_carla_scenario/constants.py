@@ -24,6 +24,16 @@ DEFAULT_TM_PORT: int = 8100
 # (entity_role.EGO_ROLE_ALIASES, which must stay the same; the tests check it).
 EGO_ROLES = ("ego", "hero")
 
+# CARLA's bicycles: the vehicle blueprints whose ``base_type`` is ``bicycle``.
+# The trajectory log keeps an actor's blueprint, not its ``base_type``, so a
+# reader of it (wosac) tells a cyclist by these; the SUMO backend mirrors a
+# SUMO bicycle as one of them by default.
+CARLA_BICYCLE_BLUEPRINTS = (
+    "vehicle.bh.crossbike",
+    "vehicle.diamondback.century",
+    "vehicle.gazelle.omafiets",
+)
+
 # The simulation step the runner drives the world at (20 Hz).
 #
 # Named here because three places have to agree on it: the runner applies it to

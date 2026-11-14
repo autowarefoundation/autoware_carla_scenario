@@ -390,6 +390,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.waypoint_arrival",
     "autoware_carla_scenario.weather_inputs",
     "autoware_carla_scenario.world_reset",
+    "autoware_carla_scenario.wosac._proto",
 )
 
 #: The reason of a method that builds a dict of mixed value types.
@@ -806,6 +807,19 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.utils.config": "reads the fields of a dataclass it is handed as a class (`type`, dataclasses.fields), takes the options as `Mapping[str, Any]` and, in checked_str_list(), a list setting of any type (`value: Any`), which Codon cannot express",
     "autoware_carla_scenario.weather_rules": "imports openodd (a Rust extension), reads rule files and `environment.rules` as `Mapping[str, Any]`, and imports odd.backend inside a function, which Codon cannot express; weather_rules.codon models what visibility and actions.environment use of it; the quantities, the weather inputs, `rule_values()` and which `vehicles` entry a vehicle follows (`vehicle_entry()`) are the checked weather_inputs's (#1732)",
     "autoware_carla_scenario.web_guard": "an ASGI middleware: takes ASGI scopes and messages as `MutableMapping[str, Any]` and calls the application and `send` as async callables, which Codon cannot express; imports starlette",
+    "autoware_carla_scenario.wosac": "re-exports wosac.convert and wosac.pack, which are not checked, and the generated protobuf modules (wosac._proto), which import google.protobuf",
+    "autoware_carla_scenario.wosac.__main__": "the scenario-wosac command: imports argparse, yaml and orjson, and wosac.convert and wosac.pack, which are not checked; the logs it exports and the two of one stem it refuses to write into one directory are the checked t4_scene.grid's (`trajectory_logs()`, `stem_collision()`)",
+    "autoware_carla_scenario.wosac._proto.camera_tokens_pb2": "imports google.protobuf",
+    "autoware_carla_scenario.wosac._proto.compressed_lidar_pb2": "imports google.protobuf",
+    "autoware_carla_scenario.wosac._proto.dataset_pb2": "imports google.protobuf",
+    "autoware_carla_scenario.wosac._proto.keypoint_pb2": "imports google.protobuf",
+    "autoware_carla_scenario.wosac._proto.label_pb2": "imports google.protobuf",
+    "autoware_carla_scenario.wosac._proto.map_pb2": "imports google.protobuf",
+    "autoware_carla_scenario.wosac._proto.scenario_pb2": "imports google.protobuf",
+    "autoware_carla_scenario.wosac._proto.sim_agents_submission_pb2": "imports google.protobuf",
+    "autoware_carla_scenario.wosac._proto.vector_pb2": "imports google.protobuf",
+    "autoware_carla_scenario.wosac.convert": "reads trajectory logs with t4_scene.convert, which is not checked (JSON-lines records of mixed value types, `dict[str, Any]`, which Codon cannot express), with its presence check and box poses (`_Log.present()`, `box_poses()`), writes them with orjson and builds protobuf messages (wosac._proto); the suffixes it writes are the checked run_outputs's, and the blueprints of a cyclist the checked constants's (`CARLA_BICYCLE_BLUEPRINTS`)",
+    "autoware_carla_scenario.wosac.pack": "imports tarfile and google.protobuf (`json_format`), and builds protobuf messages (wosac._proto); takes the submission's metadata as `Mapping[str, Any]`, which Codon cannot express",
 }
 
 #: Model modules (``codon/autoware_carla_scenario/<name>.codon``) the library
