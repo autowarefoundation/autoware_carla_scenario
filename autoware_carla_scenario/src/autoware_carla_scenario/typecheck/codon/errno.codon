@@ -4,13 +4,22 @@
 # by, testing an OSError's `errno` (declared in _exceptions.codon) against
 # them. ENOSYS, ENOLCK and EINVAL were added since for slurm.start_lock's
 # _NO_FLOCK_ERRNOS, the codes it tells a file system without flock by, which
-# also holds ENOTSUP and EOPNOTSUPP. They are ints, as in CPython; the values
+# also holds ENOTSUP and EOPNOTSUPP, and EACCES and EROFS for
+# carla_install_paths' _UNWRITABLE_ERRNOS, the codes of a lock file that
+# cannot be created or written (with EPERM), and EEXIST, ENOTEMPTY and
+# ENOTDIR for scaffold.placement's _RENAME_ONTO_OCCUPIED, the codes of a
+# rename onto an occupied directory. They are ints, as in CPython; the values
 # are Linux's, the only system the package runs on (the same on x86_64 and
 # aarch64). The other codes and errorcode are not declared.
 
 EPERM = 1
+EACCES = 13
+EEXIST = 17
+ENOTDIR = 20
 EINVAL = 22
+EROFS = 30
 ENOLCK = 37
 ENOSYS = 38
+ENOTEMPTY = 39
 ENOTSUP = 95
 EOPNOTSUPP = 95

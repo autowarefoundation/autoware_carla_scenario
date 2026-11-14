@@ -5546,6 +5546,141 @@ def test_the_errno_codes_and_uuid_hex_slurm_start_lock_reads_are_cpythons() -> N
 
 
 # ---------------------------------------------------------------------------
+# errno.EACCES and errno.EROFS: what carla_install_paths tells a lock file
+# that cannot be created or written by (#2144)
+# ---------------------------------------------------------------------------
+
+
+_LOCK_FILE = """
+from __future__ import annotations
+
+import errno
+import sys
+from pathlib import Path
+from typing import IO, Optional
+
+_CODES = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
+
+
+def opened(lock: Path) -> Optional[IO[str]]:
+    try:
+        return lock.open("a")
+    except OSError as exc:
+        if exc.errno not in _CODES:
+            raise
+        print(f"cannot create {lock} ({exc})", file=sys.stderr)
+    return None
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_errno_shim_takes_what_carla_install_paths_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_LOCK_FILE, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # An AttributeError in CPython too.
+        ("errno.EROFS", "errno.EROFFS"),
+        ("errno.EACCES", "errno.EACCESS"),
+    ],
+    ids=["erofs-misspelt", "eacces-misspelt"],
+)
+def test_the_errno_shim_refuses_what_cpython_refuses_of_carla_install_paths(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _LOCK_FILE.replace(right, wrong, 1)
+    assert source != _LOCK_FILE
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_errno_codes_carla_install_paths_reads_are_cpythons() -> None:
+    import errno
+
+    shim = (model_dir() / "errno.codon").read_text()
+    for name in ("EACCES", "EROFS"):
+        value = int(getattr(errno, name))
+        assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
+
+
+# ---------------------------------------------------------------------------
+# errno.EEXIST, errno.ENOTEMPTY and errno.ENOTDIR: what scaffold.placement
+# tells a rename onto an occupied directory by (#2144)
+# ---------------------------------------------------------------------------
+
+
+_RENAME_ONTO = """
+from __future__ import annotations
+
+import errno
+import os
+from pathlib import Path
+
+_CODES = frozenset({errno.EEXIST, errno.ENOTEMPTY, errno.ENOTDIR})
+
+
+def moved(staging: Path, root: Path) -> bool:
+    try:
+        os.rename(staging, root)
+    except OSError as exc:
+        if exc.errno in _CODES:
+            return False
+        raise
+    return True
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_errno_shim_takes_what_scaffold_placement_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_RENAME_ONTO, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # An AttributeError in CPython too.
+        ("errno.EEXIST", "errno.EEXISTS"),
+        ("errno.ENOTEMPTY", "errno.ENOTEMPTYDIR"),
+        ("errno.ENOTDIR", "errno.ENODIR"),
+    ],
+    ids=["eexist-misspelt", "enotempty-misspelt", "enotdir-misspelt"],
+)
+def test_the_errno_shim_refuses_what_cpython_refuses_of_scaffold_placement(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _RENAME_ONTO.replace(right, wrong, 1)
+    assert source != _RENAME_ONTO
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_errno_codes_scaffold_placement_reads_are_cpythons() -> None:
+    import errno
+
+    shim = (model_dir() / "errno.codon").read_text()
+    for name in ("EEXIST", "ENOTEMPTY", "ENOTDIR"):
+        value = int(getattr(errno, name))
+        assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
+    assert not hasattr(errno, "ENODIR")  # what the refusal above misspells
+
+
+# ---------------------------------------------------------------------------
 # The xml.etree.ElementTree shim: what traffic.sumo.network reads a network's
 # crossings with
 # ---------------------------------------------------------------------------

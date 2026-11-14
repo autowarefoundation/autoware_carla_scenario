@@ -2995,6 +2995,27 @@ current and the headers of the conditional request too (`_current_of()`,
 that a value of another type, in a stamp edited by hand, decides as it did. A
 constant a test replaces in the excluded module (`_UNPACKED_PER_PACKED`) is
 passed to the checked function (`_room_needed()`) rather than read there.
+The opening of the lock file is there too (`_open_lock()` and the errnos of a
+lock file that cannot be written, `_UNWRITABLE_ERRNOS`, #2144): it opens the
+file with `lock.open(mode)`, the same file object as `open(lock, mode)` in
+Python, since Codon's `open()` takes no `Path` and gives no `IO`; a test that
+makes the lock read-only patches `Path.open`, as `carla_install` no longer
+calls `open()`. Holding the lock (`_locked()`, a `contextmanager`) stays in
+`carla_install`. `scaffold.placement` is one too: how `scenario-new` puts a
+rendered package in place (`_move_into_place()`, `_occupied()`) and the error
+of a target that exists (`PackageExistsError`, a `FileExistsError` whose
+`root` is declared at class level), split out of `scaffold.generator`
+(argparse, jinja2), which re-exports them (#2144). A test that replaces
+`generator._occupied` to reach the rename's own refusal replaces
+`placement._occupied` too, which the move reads. `slurm.start_lock`, split
+out of `slurm.worker` for the files of the start lock (#2116), holds the
+takeover of a stale lock too, one waiter at a time (`_take_over()` and the
+age of a dead waiter's mutex, `_TAKEOVER_STALE_AFTER`, #2144); the worker
+re-exports them and keeps taking the lock (`_exclusive_file()`, a
+`contextmanager`). A test that shortens that age or watches the takeover's
+`_create_lock()` and `_remove_stale()` replaces `start_lock`'s, which
+`_take_over()` reads (and, for `_create_lock()`, the worker's too, which
+`_exclusive_file()` reads).
 
 Each checked module gets the `__file__` Python sets on it (its source's path,
 a `str`), which Codon 0.19 does not, bound on the last line of the prelude so
@@ -3344,8 +3365,9 @@ What Codon 0.19 needs that Python does not, beyond
   item, `tobytes()`, `release()` and the rest are not declared.
   The result of `stat()` and `fstat()` has `st_dev`, `st_ino`, `st_mode`,
   `st_nlink`, `st_size`, `st_mtime` and `st_mtime_ns` (all zero) and
-  nothing else. `errno` declares `EPERM`, `EINVAL`, `ENOLCK`, `ENOSYS`,
-  `ENOTSUP` and `EOPNOTSUPP` (Linux's values) and no other code. `uuid`
+  nothing else. `errno` declares `EPERM`, `EACCES`, `EEXIST`, `ENOTDIR`,
+  `EINVAL`, `EROFS`, `ENOLCK`, `ENOSYS`, `ENOTEMPTY`, `ENOTSUP` and
+  `EOPNOTSUPP` (Linux's values) and no other code. `uuid`
   declares `uuid4()`, of no argument, and its `UUID`'s `hex` (a `str`; the
   nil UUID's in the check, as nothing runs), and `UUID(hex)` of a `str`, the
   first of CPython's parameters; the rest of `UUID` (`int`, `bytes`,
@@ -4490,7 +4512,11 @@ What Codon 0.19 needs that Python does not, beyond
   (`scaffold/generator.codon`, argparse and jinja2), which the checked
   `scaffold` package re-exports with `create_scenario_package()`,
   `resolve_names()` and `main()`, `compile_error`s as well: they write a new
-  scenario package (`scenario-new`), not a scenario, and
+  scenario package (`scenario-new`), not a scenario (`PackageExistsError` is
+  the checked `scaffold.placement`'s, #2144, which `scaffold.generator`
+  re-exports; the package still imports it from `scaffold.generator`, and
+  `scaffold/generator.codon` still declares it, so a scenario importing it
+  from either finds the `compile_error` it did), and
   `CommonRoadSettings` (`commonroad/session.codon`) and `CommonRoadWorker`
   and `CommonRoadWorkerError` (`commonroad/worker.codon`, worker processes
   spoken to in JSON), which the checked `commonroad` package re-exports with

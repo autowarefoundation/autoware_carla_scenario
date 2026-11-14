@@ -893,13 +893,20 @@ class TestCreateScenarioPackage:
         from autoware_carla_scenario.scaffold import (  # noqa: PLC0415
             PackageExistsError,
             generator,
+            placement,
         )
 
         root = tmp_path / "dup_pkg"
+        # Both checks see nothing at the target: create_scenario_package()'s
+        # (generator's _occupied) and _move_into_place()'s, which reads its
+        # own module's since it moved into scaffold.placement (#2144).
         monkeypatch.setattr(generator, "_occupied", lambda _root: False)
+        monkeypatch.setattr(placement, "_occupied", lambda _root: False)
         self._occupy_while_rendering(monkeypatch, root)
-        with pytest.raises(PackageExistsError):
+        with pytest.raises(PackageExistsError) as raised:
             create_scenario_package("dup_pkg", output_dir=tmp_path)
+        # Refused by the rename, not by a check before it.
+        assert isinstance(raised.value.__cause__, OSError)
         assert sorted(p.name for p in root.iterdir()) == ["theirs.txt"]
         assert sorted(p.name for p in tmp_path.iterdir()) == ["dup_pkg"]
 
