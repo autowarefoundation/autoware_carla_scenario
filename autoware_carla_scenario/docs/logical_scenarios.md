@@ -195,6 +195,13 @@ Unknown keys are refused (`extra="forbid"`), so a typo is an error, not a
 silently ignored constraint. A junction segment does not take lane keys and
 vice versa.
 
+A lane segment's `shape` and a junction segment's `turn` left null are `any`,
+as when absent. Any value not in the table is refused, showing it -- `false`,
+`0` or `''` too, which used to read as `any` and so let a mistyped constraint
+match every segment (`segments[0].shape must be one of [...], got False`). A
+path's `approach` and `turn` and a segment's `kind` have no default: null is
+refused the same way.
+
 ### Route vertices (`path_source: route`)
 
 A *Set Goal* card with `path_source: route` lists its vertices in
