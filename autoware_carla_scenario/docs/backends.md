@@ -135,14 +135,21 @@ backends:
 scenario scenario=... backends.ardy.image=ghcr.io/hakuturu583/carla_ardy_backend:0.2.0
 ```
 
-The settings every container backend shares are checked when the backend is
-built, before any image is pulled or container started:
+The settings are checked when the backend is built, before any image is
+pulled or container started. A key that is absent or null takes its default.
+The settings every container backend shares:
 
+- `image` is a non-empty image name, and `gpus` `auto`, `all`, `none` or what
+  `docker run --gpus` takes (`device=N`, a count);
 - `pull` is `missing`, `always` or `never`;
 - `startup_timeout_s` (and ARDY's `timeout_s`) is a finite number of seconds
   above 0;
 - `gpu_memory_mb` and `memory_mb` are whole numbers, not negative;
 - `docker_args` is a list (`[--shm-size=8g]`), never a string.
+
+ARDY's own settings: `model` and `hf_home` are non-empty text, and
+`acceleration` is `none`, `compile` or `trt`. A `false`, a number or `''` is
+refused rather than handed to the container as its text.
 
 A value refused is an error naming its key, such as
 `backends.ardy.startup_timeout_s must be finite and above 0, got -1`. A
