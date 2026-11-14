@@ -30,16 +30,20 @@ flowchart TB
         TM["TrafficManagerBackend<br/>(default)"]
         NONE["NullTrafficBackend<br/>('none')"]
         SUMO["SumoTrafficBackend<br/>('sumo')"]
+        HYB["HybridTrafficBackend<br/>('hybrid')"]
         EXT["your backend<br/>(entry point)"]
     end
 
     BE --- TM
     BE --- NONE
     BE --- SUMO
+    BE --- HYB
     BE --- EXT
     TM --> CTM["CARLA TrafficManager"]
     SUMO --> LS["SUMO (libsumo)"]
     SUMO -.->|"scenario vehicles"| TM
+    HYB -->|"near: in CARLA"| CTM
+    HYB -->|"far: mesoscopic"| MS["SUMO --mesosim<br/>or the queue model"]
     EXT -.-> SIM["another traffic simulator"]
 ```
 
@@ -72,6 +76,7 @@ uv run scenario scenario=intersection_passing/left_turn traffic=none
 | `traffic_manager` (default) | CARLA's TrafficManager drives every vehicle that is not under external control. |
 | `none` | Nothing is driven and no ambient vehicle is created. |
 | `sumo` | SUMO fills the road with its own traffic, co-simulated on the world's road network; see [The SUMO backend](#the-sumo-backend). Needs the `sumo` extra. |
+| `hybrid` | CARLA's TrafficManager near the ego, a mesoscopic model far from it: background traffic far from every other vehicle leaves CARLA and comes back as it nears one; see [The hybrid backend](#the-hybrid-backend). For wide maps. Needs the `sumo` extra. |
 
 !!! warning "`traffic=none` and the default ego"
 
@@ -728,17 +733,18 @@ log says why, once each time the entity becomes mesoscopic. The parts that are t
   microscopic one. It is what the `sumo` backend's far traffic runs in by
   default (`mesoscopic.engine: sumo`, [below](#the-sumo-backend)).
 
-**Only the `sumo` backend simulates far traffic mesoscopically**
-(`traffic.options.mesoscopic`, [below](#the-sumo-backend)). Under
-`traffic_manager` every vehicle is microscopic, an actor in CARLA wherever it
-is on the map, and `traffic.options.mesoscopic` is an unknown option there
-(an error, like any other). This is by choice, not an omission: the
-TrafficManager exposes neither the route it plans for a vehicle nor a road
-graph, so taking its vehicles out of CARLA and bringing them back would mean
-rebuilding both from the map and guessing where each vehicle was heading. A
-run whose traffic far from the ego matters takes `traffic=sumo` with
-`mesoscopic.enabled=true`; the measurements on Town10HD_Opt
-([below](#measured-on-town10hd_opt)) show what that saves.
+**Two backends simulate far traffic mesoscopically**: `sumo`, with
+`traffic.options.mesoscopic.enabled=true` ([below](#the-sumo-backend)), and
+`hybrid`, which is the TrafficManager with a mesoscopic model behind it
+([below](#the-hybrid-backend)). Under `traffic_manager` every vehicle is
+microscopic, an actor in CARLA wherever it is on the map, and
+`traffic.options.mesoscopic` is an unknown option there (an error, like any
+other): the TrafficManager exposes neither the route it plans for a vehicle
+nor a road graph, so `hybrid` takes both from SUMO's network of the map, and
+moves only the traffic it owns, its background vehicles. The measurements on
+Town10HD_Opt ([below](#measured-on-town10hd_opt)) show what the `sumo`
+backend's saves; on a map that small little is far from the ego, so either
+pays off on a wide one.
 
 ## Using a backend from Python
 
@@ -979,6 +985,89 @@ traffic rather than about three scripted cars. The seam is what makes answering
 it possible without a second scenario framework: the same map, the same scenario
 document, the same conditions and the same result format, with the traffic model
 swapped.
+
+## The hybrid backend
+
+`traffic=hybrid` keeps CARLA's TrafficManager for every vehicle in CARLA --
+the ego, the scenario's vehicles, the background traffic near them -- and
+moves the background traffic far from all of them into a mesoscopic model of
+the map's roads, out of CARLA, bringing each back, on autopilot, as it nears
+one. It is the TrafficManager's way of driving on a map too wide to fill with
+actors: what is out of CARLA costs CARLA nothing, and the TrafficManager
+drives only the vehicles someone can see.
+
+```bash
+# The TrafficManager, with background traffic beyond 200 m (250 m back out)
+# simulated by SUMO's mesoscopic model.
+uv run scenario scenario=... traffic=hybrid
+
+# Nearer, looking 6 s ahead, never more than 60 background vehicles in CARLA.
+uv run scenario scenario=... traffic=hybrid \
+    traffic.options.mesoscopic.micro_radius_m=120 \
+    traffic.options.mesoscopic.horizon_s=6 \
+    traffic.options.mesoscopic.max_microscopic=60
+
+# The in-process queue model instead of a second SUMO.
+uv run scenario scenario=... traffic=hybrid traffic.options.mesoscopic.engine=queue
+```
+
+It is the `traffic_manager` backend in everything else -- the same
+manoeuvres, the same vehicle parameters (`traffic.vehicles`, those
+`traffic_manager` supports), the same background traffic
+([below](#background-traffic)) -- and with `mesoscopic.enabled=false` it is
+that backend exactly.
+
+**Which vehicles change level.** Only background traffic
+(`spawn_background`, the [background traffic](#background-traffic) actions):
+the TrafficManager backend keeps a scenario vehicle's route, lane changes
+and parameters by its actor, and a condition may read that actor at any
+time, so the scenario's own vehicles stay in CARLA
+(`mesoscopic.scenario_vehicles: true` is refused). The focus points are the
+ego and every other vehicle in CARLA that is not background traffic; a run
+with none of those changes nobody's level. Each decision
+(`update_interval_s`) is `plan_fidelity`'s, with every option of
+`MesoscopicConfig` as the `sumo` backend reads it: the radii, `horizon_s`,
+`max_microscopic` -- which here bounds the background vehicles in CARLA.
+
+**How a vehicle leaves CARLA.** The backend finds the road of SUMO's network
+the vehicle is on, by its position and heading (within 3.5 m of a lane of the
+road, and within 60 degrees of its direction: not in a junction, which waits
+for the next decision), puts it there in the mesoscopic model, capped at the
+speed it was spawned with, and destroys its actor. The TrafficManager tells
+nobody where it was going, so the model gives it a route on from there, a
+road chosen at random at each junction -- as the TrafficManager chooses its
+own -- six roads ahead, and six more as it nears their end; a vehicle that
+reaches a dead end leaves the run, as the TrafficManager's would. The routes
+are drawn from the run's seed.
+
+**How it comes back.** On the nearest driving lane to where the model has
+it (the model has no lanes: its rightmost lane a car may use), facing along
+it, as the same blueprint with the same `role_name` (its handle), at the
+model's speed, on autopilot again and capped at its speed as before. A spot
+CARLA refuses (taken) leaves it out until the next decision.
+`background_vehicles()` reports every background vehicle wherever it is --
+one out of CARLA where the model has it, with no height -- and
+`background_actors()` only those in CARLA; `remove_background()` takes one
+out of either.
+
+| `traffic.options` | Default | Meaning |
+| --- | --- | --- |
+| `port` | `traffic_manager.port`, else 8100 | The TrafficManager's port, as `traffic_manager`'s. |
+| `mesoscopic` | `enabled: true` | `MesoscopicConfig`, as the `sumo` backend's ([below](#the-sumo-backend)), on by default here; `scenario_vehicles` is refused. |
+| `net_path` | `null` | A SUMO network of the map to use as it is, instead of converting the world's OpenDRIVE. |
+| `cache_dir` | `null` | Where converted networks are cached (the `sumo` backend's cache). |
+
+**The engines.** `mesoscopic.engine: sumo` (the default) is SUMO's own
+mesoscopic simulation, a second SUMO (`--mesosim`, `segment_length_m`),
+written to `<output_dir>/<stem>.sumo/sumo_meso.log`; its junctions run SUMO's
+own signal programs, since CARLA's lights are matched to SUMO's only by the
+`sumo` backend. `engine: queue` is the in-process queue model
+(`headway_s`, `jam_spacing_m`), which holds nobody at a junction here, having
+no signals to read.
+
+`describe()` adds `mesoscopic` -- the engine, the radii and the changes of
+level so far -- and `fidelity_census()` counts the vehicles the
+TrafficManager drives as microscopic and the model's as mesoscopic.
 
 ## The SUMO backend
 

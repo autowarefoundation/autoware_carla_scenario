@@ -533,10 +533,14 @@ class SumoMesoscopicTraffic:
         """Remove *vehicle_id* from SUMO, if it is there."""
         sumo_id = self._sumo_ids.pop(vehicle_id, None)
         self._pending.discard(vehicle_id)
-        self._running.pop(vehicle_id, None)
+        subscribed = self._running.pop(vehicle_id, None) is not None
         if sumo_id is None:
             return
         try:
+            if subscribed:
+                # Else SUMO keeps answering the subscription of a vehicle it
+                # no longer has, with an error on its console each step.
+                self._conn.vehicle.unsubscribe(sumo_id)
             self._conn.vehicle.remove(sumo_id)
         except Exception as exc:  # noqa: BLE001 - it may have arrived this step
             logger.debug("SUMO (mesoscopic): removing %s: %s", vehicle_id, exc)

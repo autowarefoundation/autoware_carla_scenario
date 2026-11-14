@@ -318,7 +318,7 @@ def _record_domains(task: Any, domains: RosDomains | None) -> None:
 
 #: The option each built-in backend reads the TrafficManager's port from
 #: (``conf/traffic/<backend>.yaml``).
-_TM_PORT_OPTIONS = {"traffic_manager": "port", "sumo": "tm_port"}
+_TM_PORT_OPTIONS = {"traffic_manager": "port", "hybrid": "port", "sumo": "tm_port"}
 
 
 def _backend_tm_port_key(cfg: "DictConfig", port: int) -> str | None:

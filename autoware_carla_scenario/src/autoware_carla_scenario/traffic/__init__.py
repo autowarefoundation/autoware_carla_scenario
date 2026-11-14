@@ -112,6 +112,7 @@ __all__ = [
     "build_traffic_manager",
     "build_none",
     "build_sumo",
+    "build_hybrid",
     "register_builtin_backends",
     "TurningAtJunctions",
     "WalkedEntity",
@@ -151,6 +152,18 @@ def build_sumo(options: Mapping[str, Any]) -> TrafficBackend:
     return SumoTrafficBackend(SumoBackendConfig.from_mapping(options))
 
 
+def build_hybrid(options: Mapping[str, Any]) -> TrafficBackend:
+    """Build the hybrid backend -- the TrafficManager near the ego, a
+    mesoscopic model far from it -- from its options mapping.
+
+    Like :func:`build_sumo`, it imports SUMO's tools only when a run is
+    prepared.
+    """
+    from .sumo.hybrid import HybridBackendConfig, HybridTrafficBackend  # noqa: PLC0415
+
+    return HybridTrafficBackend(HybridBackendConfig.from_mapping(options))
+
+
 def register_builtin_backends() -> None:
     """Register the backends this package ships.
 
@@ -161,6 +174,7 @@ def register_builtin_backends() -> None:
     register_backend("traffic_manager", build_traffic_manager)
     register_backend("none", build_none)
     register_backend("sumo", build_sumo)
+    register_backend("hybrid", build_hybrid)
 
 
 register_builtin_backends()
