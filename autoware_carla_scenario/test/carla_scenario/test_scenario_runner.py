@@ -1292,6 +1292,27 @@ class TestTheDefaultTimeout:
         assert run_timeout_seconds({"scenario": {"timeout_seconds": None}}) == 60.0
         assert run_timeout_seconds(OmegaConf.create({})) == 60.0
 
+    @pytest.mark.parametrize(
+        ("scenario", "shown"),
+        [(False, "False (bool)"), (0, "0 (int)"), ([], "[] (list)"), ("", "'' (str)")],
+    )
+    def test_a_scenario_group_that_is_no_mapping_is_refused(self, scenario, shown):
+        """#2143: read as no timeout (the default) before; only an absent or
+        null ``scenario`` sets none."""
+        from autoware_carla_scenario.run_timeout import run_timeout_seconds
+
+        with pytest.raises(ValueError) as refused:
+            run_timeout_seconds({"scenario": scenario})
+        assert str(refused.value) == f"scenario must be a mapping, got {shown}"
+
+    def test_a_null_scenario_group_sets_no_timeout(self):
+        from omegaconf import OmegaConf
+
+        from autoware_carla_scenario.run_timeout import run_timeout_seconds
+
+        assert run_timeout_seconds({"scenario": None}) == 60.0
+        assert run_timeout_seconds(OmegaConf.create({"scenario": None})) == 60.0
+
     @pytest.mark.parametrize("timeout", ["fast", "15", True, False, [15], {"s": 1}])
     def test_the_command_line_refuses_a_timeout_that_is_not_a_number(self, timeout):
         """#1188: a ValueError naming the key, not a bare TypeError."""

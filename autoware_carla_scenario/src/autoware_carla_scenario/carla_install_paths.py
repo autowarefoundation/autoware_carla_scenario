@@ -3,7 +3,8 @@
 The path logic of :mod:`autoware_carla_scenario.carla_install`, which
 re-exports every name it uses: the install directory and its launcher (which
 :class:`~autoware_carla_scenario.server.CarlaServerManager` looks for), a
-package given as a local path, the lock file and the room an install needs,
+package given as a local path, the lock file, how it is opened, and the room
+an install needs,
 the renames that put a complete download in place of an old install, and
 whether an install is current and the conditional request that asks the server
 so. It needs nothing Codon lacks, so the library check compiles it from its
@@ -13,11 +14,13 @@ of the stamp's JSON stay in ``carla_install``.
 
 from __future__ import annotations
 
+import errno
 import os
 import re
 import shutil
+import sys
 from pathlib import Path
-from typing import Optional
+from typing import IO, Optional
 
 HOME_ENV = "AUTOWARE_CARLA_SCENARIO_HOME"
 """Overrides the framework's home directory, ``~/.autoware_carla_scenario``."""
@@ -73,6 +76,39 @@ def _replaced(target: Path) -> Path:
 def _lock_path(target: Path) -> Path:
     """The file whose ``flock`` lets one run at a time install into *target*."""
     return target.with_name(target.name + ".lock")
+
+
+#: The errors of a lock file that cannot be created or written: a read-only
+#: file system, or a directory of another user's.
+_UNWRITABLE_ERRNOS = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
+
+
+def _open_lock(lock: Path) -> Optional[IO[str]]:
+    """*lock* opened to ``flock``: for writing, else read-only, else nothing.
+
+    ``lock.open(mode)`` is ``open(lock, mode)`` in Python, the same file
+    object; Codon's ``open()`` takes no ``Path`` and gives no ``IO``.
+
+    Raises:
+        OSError: *lock* cannot be created for a reason other than permissions
+            or a read-only file system.
+    """
+    try:
+        lock.parent.mkdir(parents=True, exist_ok=True)
+        return lock.open("a")  # noqa: SIM115 -- the caller closes it
+    except OSError as exc:
+        if exc.errno not in _UNWRITABLE_ERRNOS:
+            raise
+        error = exc
+    try:
+        return lock.open()  # noqa: SIM115 -- a shared lock: carla_install._locked
+    except OSError:
+        print(
+            f"scenario-setup: cannot create {lock} ({error}); going ahead "
+            "unlocked, so run only one scenario-setup for it at a time",
+            file=sys.stderr,
+        )
+        return None
 
 
 def _room_needed(packed: int, per_packed: float = _UNPACKED_PER_PACKED) -> int:

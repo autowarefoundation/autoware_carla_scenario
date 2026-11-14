@@ -5304,8 +5304,8 @@ def test_shim_list() -> None:
 
 
 # ---------------------------------------------------------------------------
-# os.link(), os.stat(), os.open(), os.fdopen(), the errno shim and
-# FileExistsError: what slurm.manifest creates a submission record
+# os.link(), os.stat(), os.open(), os.fdopen(), the errno shim, OSError's
+# errno and FileExistsError: what slurm.manifest creates a submission record
 # exclusively with
 # ---------------------------------------------------------------------------
 
@@ -5323,7 +5323,9 @@ def create(path: Path, tmp: str, text: str) -> bool:
         os.link(tmp, path)
     except FileExistsError:
         return os.stat(tmp).st_nlink == 2
-    except OSError:
+    except OSError as exc:
+        if exc.errno not in (errno.EPERM, errno.ENOTSUP, errno.EOPNOTSUPP):
+            raise
         try:
             fd = os.open(path, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 384)
         except FileExistsError:
@@ -5335,6 +5337,13 @@ def create(path: Path, tmp: str, text: str) -> bool:
 
 def codes() -> int:
     return errno.EPERM + errno.ENOTSUP + errno.EOPNOTSUPP
+
+
+def code_of(error: OSError, missing: FileNotFoundError, io: IOError) -> bool:
+    code = error.errno
+    if code is None or missing.errno is None or io.errno is None:
+        return False
+    return code == errno.EPERM
 
 
 def sizes(path: str) -> float:
@@ -5365,6 +5374,8 @@ def test_the_os_and_errno_shims_take_what_slurm_manifest_calls(
         ("os.stat(tmp).st_nlink", "os.stat(tmp, None).st_nlink"),
         ("errno.EPERM", "errno.EPERMS"),
         ("FileExistsError:\n        return os", "FileExistError:\n        return os"),
+        ("exc.errno not in", "exc.errnum not in"),
+        ("exc.errno not in", "exc.errno() not in"),
     ],
     ids=[
         "link-no-destination",
@@ -5373,6 +5384,8 @@ def test_the_os_and_errno_shims_take_what_slurm_manifest_calls(
         "stat-keyword-only",
         "errno-unknown-name",
         "unknown-exception",
+        "oserror-unknown-attribute",
+        "oserror-errno-not-callable",
     ],
 )
 def test_the_os_and_errno_shims_refuse_what_cpython_refuses_of_manifest_calls(
@@ -5401,6 +5414,16 @@ def test_the_errno_and_os_shim_constants_slurm_manifest_reads_are_cpythons() -> 
         for name in names:
             value = int(getattr(python, name))
             assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
+
+
+@pytest.mark.codon_selftest
+def test_the_os_shims_o_trunc_slurm_scripts_writes_a_job_script_with_is_cpythons() -> (
+    None
+):
+    import os
+
+    shim = (model_dir() / "os" / "__init__.codon").read_text()
+    assert re.search(rf"^O_TRUNC = {int(os.O_TRUNC)}$", shim, re.MULTILINE)
 
 
 # ---------------------------------------------------------------------------
@@ -5520,6 +5543,141 @@ def test_the_errno_codes_and_uuid_hex_slurm_start_lock_reads_are_cpythons() -> N
     with pytest.raises(TypeError):
         os.fstat(1, None)  # type: ignore[call-arg]
     assert os.fstat(fd=0).st_mode == os.fstat(0).st_mode
+
+
+# ---------------------------------------------------------------------------
+# errno.EACCES and errno.EROFS: what carla_install_paths tells a lock file
+# that cannot be created or written by (#2144)
+# ---------------------------------------------------------------------------
+
+
+_LOCK_FILE = """
+from __future__ import annotations
+
+import errno
+import sys
+from pathlib import Path
+from typing import IO, Optional
+
+_CODES = frozenset({errno.EACCES, errno.EPERM, errno.EROFS})
+
+
+def opened(lock: Path) -> Optional[IO[str]]:
+    try:
+        return lock.open("a")
+    except OSError as exc:
+        if exc.errno not in _CODES:
+            raise
+        print(f"cannot create {lock} ({exc})", file=sys.stderr)
+    return None
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_errno_shim_takes_what_carla_install_paths_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_LOCK_FILE, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # An AttributeError in CPython too.
+        ("errno.EROFS", "errno.EROFFS"),
+        ("errno.EACCES", "errno.EACCESS"),
+    ],
+    ids=["erofs-misspelt", "eacces-misspelt"],
+)
+def test_the_errno_shim_refuses_what_cpython_refuses_of_carla_install_paths(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _LOCK_FILE.replace(right, wrong, 1)
+    assert source != _LOCK_FILE
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_errno_codes_carla_install_paths_reads_are_cpythons() -> None:
+    import errno
+
+    shim = (model_dir() / "errno.codon").read_text()
+    for name in ("EACCES", "EROFS"):
+        value = int(getattr(errno, name))
+        assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
+
+
+# ---------------------------------------------------------------------------
+# errno.EEXIST, errno.ENOTEMPTY and errno.ENOTDIR: what scaffold.placement
+# tells a rename onto an occupied directory by (#2144)
+# ---------------------------------------------------------------------------
+
+
+_RENAME_ONTO = """
+from __future__ import annotations
+
+import errno
+import os
+from pathlib import Path
+
+_CODES = frozenset({errno.EEXIST, errno.ENOTEMPTY, errno.ENOTDIR})
+
+
+def moved(staging: Path, root: Path) -> bool:
+    try:
+        os.rename(staging, root)
+    except OSError as exc:
+        if exc.errno in _CODES:
+            return False
+        raise
+    return True
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_errno_shim_takes_what_scaffold_placement_reads(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_RENAME_ONTO, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # An AttributeError in CPython too.
+        ("errno.EEXIST", "errno.EEXISTS"),
+        ("errno.ENOTEMPTY", "errno.ENOTEMPTYDIR"),
+        ("errno.ENOTDIR", "errno.ENODIR"),
+    ],
+    ids=["eexist-misspelt", "enotempty-misspelt", "enotdir-misspelt"],
+)
+def test_the_errno_shim_refuses_what_cpython_refuses_of_scaffold_placement(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _RENAME_ONTO.replace(right, wrong, 1)
+    assert source != _RENAME_ONTO
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_errno_codes_scaffold_placement_reads_are_cpythons() -> None:
+    import errno
+
+    shim = (model_dir() / "errno.codon").read_text()
+    for name in ("EEXIST", "ENOTEMPTY", "ENOTDIR"):
+        value = int(getattr(errno, name))
+        assert re.search(rf"^{name} = {value}$", shim, re.MULTILINE), name
+    assert not hasattr(errno, "ENODIR")  # what the refusal above misspells
 
 
 # ---------------------------------------------------------------------------
@@ -6051,3 +6209,415 @@ def test_the_os_shim_and_blocking_io_error_refuse_what_cpython_refuses(
     assert source != _WAITING_LOCK
     result = _check_case(source, tmp_path, monkeypatch)
     assert not result.ok, wrong
+
+
+# ---------------------------------------------------------------------------
+# urllib.parse.parse_qsl(): what hils.host_devices reads a device's boolean
+# option with
+# ---------------------------------------------------------------------------
+
+
+_PARSE_QSL = """
+from __future__ import annotations
+
+import urllib.parse
+from urllib.parse import parse_qsl, urlsplit
+
+
+def flag(url: str, key: str) -> bool:
+    values = [
+        v for k, v in parse_qsl(urlsplit(url).query, keep_blank_values=True) if k == key
+    ]
+    return bool(values) and values[-1].lower() in ("", "1", "true")
+
+
+def pairs(query: str) -> int:
+    found = urllib.parse.parse_qsl(query) + parse_qsl(qs=query)
+    first: tuple[str, str] = found[0]
+    return len(found) + len(first[0] + first[1]) + len(parse_qsl(query, False))
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_urllib_parse_shim_takes_what_hils_host_devices_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_PARSE_QSL, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too, or a
+        # parameter CPython has that the shim does not declare.
+        ("parse_qsl(qs=query)", "parse_qsl()"),
+        ("parse_qsl(qs=query)", "parse_qsl(query=query)"),
+        ("parse_qsl(qs=query)", "parse_qsl(query, keep_blank=True)"),
+        ("parse_qsl(qs=query)", "parse_qsl(query, strict_parsing=True)"),
+        ("parse_qsl(qs=query)", "parse_qsl(query, separator=';')"),
+        ("parse_qsl(qs=query)", "parse_qsl(query, False, False)"),
+        ("parse_qsl(qs=query)", "parse_qsl(5)"),
+        ("first[0] + first[1]", "first[0] + first[2]"),
+        ("urllib.parse.parse_qsl(query)", "urllib.parse.parse_qs(query)"),
+    ],
+    ids=[
+        "no-query",
+        "query-keyword",
+        "unknown-keyword",
+        "strict-parsing-undeclared",
+        "separator-undeclared",
+        "third-positional-undeclared",
+        "query-int",
+        "pair-of-two",
+        "parse-qs-undeclared",
+    ],
+)
+def test_the_urllib_parse_shim_refuses_what_it_does_not_declare_of_parse_qsl(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _PARSE_QSL.replace(right, wrong, 1)
+    assert source != _PARSE_QSL
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_parse_qsl_shim_declares_cpythons_leading_parameters() -> None:
+    import inspect
+    from urllib.parse import parse_qsl
+
+    shim = {
+        node.name: node.args
+        for node in ast.parse((model_dir() / "urllib" / "parse.codon").read_text()).body
+        if isinstance(node, ast.FunctionDef)
+    }
+    declared = shim["parse_qsl"]
+    python = list(inspect.signature(parse_qsl).parameters.values())
+    names = [a.arg for a in declared.args]
+    assert (
+        names == [p.name for p in python[: len(names)]] == ["qs", "keep_blank_values"]
+    )
+    assert python[1].default is False
+    assert ast.literal_eval(declared.defaults[-1]) is False
+    assert declared.vararg is None and declared.kwarg is None
+    assert not declared.kwonlyargs
+    # What CPython makes of what the check takes.
+    assert parse_qsl("fd&x=1&fd=", keep_blank_values=True) == [
+        ("fd", ""),
+        ("x", "1"),
+        ("fd", ""),
+    ]
+    assert parse_qsl(qs="fd&x=1") == [("x", "1")]
+
+
+# ---------------------------------------------------------------------------
+# OSError's (errno, strerror, filename), its strerror and filename,
+# memoryview(), os.ftruncate(), os.fsync(), os.chown(), shutil.copymode() and
+# Path.stat()'s owner: what tools.file_writes writes a file with
+# ---------------------------------------------------------------------------
+
+
+_FILE_WRITES = """
+from __future__ import annotations
+
+import os
+import shutil
+import tempfile
+from pathlib import Path
+from typing import Optional
+
+
+class _Partial(OSError):
+    \"\"\"A write that failed half way.\"\"\"
+
+
+def in_place(path: Path, data: bytes) -> int:
+    fd = os.open(path, os.O_WRONLY)
+    try:
+        try:
+            os.ftruncate(fd, 0)
+            view = memoryview(data)
+            while view:
+                view = view[os.write(fd, view) :]
+        finally:
+            os.close(fd)
+    except OSError as exc:
+        raise _Partial(exc.errno, exc.strerror, str(path)) from exc
+    return len(memoryview(data)[1:]) + os.write(fd, data)
+
+
+def atomically(path: Path, data: bytes) -> None:
+    fd, name = tempfile.mkstemp(dir=path.parent, prefix=".x.", suffix=".tmp")
+    tmp = Path(name)
+    with os.fdopen(fd, "wb") as handle:
+        handle.write(data)
+        os.fsync(handle.fileno())
+        os.fsync(fd=handle.fileno())
+    shutil.copymode(path, tmp)
+    shutil.copymode(str(path), name, follow_symlinks=False)
+    stat = path.stat()
+    os.chown(tmp, stat.st_uid, stat.st_gid)
+    os.chown(name, uid=stat.st_uid, gid=-1, follow_symlinks=False)
+    os.replace(tmp, path)
+
+
+def described(
+    path: Path, exc: OSError, io: IOError, missing: FileNotFoundError
+) -> str:
+    if exc.filename is not None and os.fspath(exc.filename) in (
+        str(path),
+        os.path.realpath(path),
+    ):
+        return str(exc)
+    reason: Optional[str] = exc.strerror
+    return f"{path}: {exc} {reason} {io.strerror} {io.filename} {missing.filename}"
+
+
+def built(code: int) -> str:
+    made = OSError(code, "message", "file")
+    unknown = OSError(None, None, "file")
+    partial = _Partial(code, None, "file")
+    return str(made) + str(unknown) + str(partial.errno)
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_shims_take_what_tools_file_writes_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_FILE_WRITES, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too, or a form
+        # CPython takes that the shims do not declare.
+        ("os.ftruncate(fd, 0)", "os.ftruncate(fd)"),
+        ("os.ftruncate(fd, 0)", "os.ftruncate(fd=fd, length=0)"),
+        ("os.fsync(handle.fileno())", "os.fsync()"),
+        ("os.fsync(handle.fileno())", "os.fsync(handle)"),
+        ("os.chown(tmp, stat.st_uid, stat.st_gid)", "os.chown(tmp, stat.st_uid)"),
+        (
+            "os.chown(tmp, stat.st_uid, stat.st_gid)",
+            "os.chown(tmp, stat.st_uid, stat.st_gid, None)",
+        ),
+        ("shutil.copymode(path, tmp)", "shutil.copymode(path)"),
+        ("shutil.copymode(path, tmp)", "shutil.copymode(path, tmp, False)"),
+        ("stat.st_uid, stat.st_gid)", "stat.st_user, stat.st_gid)"),
+        ("reason: Optional[str] = exc.strerror", "reason = exc.strerr"),
+        ("{missing.filename}", "{missing.filename()}"),
+        (
+            "_Partial(exc.errno, exc.strerror, str(path))",
+            "_Partial(exc.errno, exc.strerror, str(path), filename2=None)",
+        ),
+        (
+            "_Partial(exc.errno, exc.strerror, str(path))",
+            "FileNotFoundError(exc.errno, exc.strerror, str(path))",
+        ),
+        ('OSError(code, "message", "file")', 'OSError(code, "message")'),
+        ("view = memoryview(data)", "view = memoryview()"),
+        ("view[os.write(fd, view) :]", "view[os.write(fd, 5) :]"),
+        ("len(memoryview(data)[1:])", "len(memoryview(data).tobytes())"),
+    ],
+    ids=[
+        "ftruncate-no-length",
+        "ftruncate-positional-only",
+        "fsync-no-descriptor",
+        "fsync-file-object-undeclared",
+        "chown-no-group",
+        "chown-keyword-only",
+        "copymode-no-destination",
+        "copymode-keyword-only",
+        "stat-unknown-attribute",
+        "oserror-unknown-attribute",
+        "oserror-filename-not-callable",
+        "oserror-no-keyword",
+        "subclass-of-one-message",
+        "oserror-errno-and-strerror-undeclared",
+        "memoryview-no-object",
+        "write-int-data",
+        "memoryview-tobytes-undeclared",
+    ],
+)
+def test_the_shims_refuse_what_cpython_refuses_of_tools_file_writes_calls(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _FILE_WRITES.replace(right, wrong, 1)
+    assert source != _FILE_WRITES
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_shims_tools_file_writes_calls_declare_cpythons_signatures() -> None:
+    import errno
+    import inspect
+    import os
+    import shutil
+
+    def declared(path: Path) -> dict[str, ast.arguments]:
+        return {
+            node.name: node.args
+            for node in ast.parse(path.read_text()).body
+            if isinstance(node, ast.FunctionDef)
+        }
+
+    def names(args: ast.arguments) -> tuple[list[str], list[str]]:
+        return [a.arg for a in args.args], [a.arg for a in args.kwonlyargs]
+
+    def python(function: Any) -> tuple[list[str], list[str]]:
+        parameters = inspect.signature(function).parameters.values()
+        return (
+            [p.name for p in parameters if p.kind is p.POSITIONAL_OR_KEYWORD],
+            [p.name for p in parameters if p.kind is p.KEYWORD_ONLY],
+        )
+
+    os_shim = declared(model_dir() / "os" / "__init__.codon")
+    shutil_shim = declared(model_dir() / "shutil.codon")
+    # chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True),
+    # copymode(src, dst, *, follow_symlinks=True) and fsync(fd).
+    assert names(os_shim["chown"]) == python(os.chown)
+    assert names(shutil_shim["copymode"]) == python(shutil.copymode)
+    assert names(os_shim["fsync"]) == python(os.fsync) == (["fd"], [])
+    # ftruncate(fd, length, /): two values by position only, a `*args` here.
+    kinds = [p.kind for p in inspect.signature(os.ftruncate).parameters.values()]
+    assert kinds == [inspect.Parameter.POSITIONAL_ONLY] * 2
+    assert os_shim["ftruncate"].vararg is not None and not os_shim["ftruncate"].args
+    assert (
+        '_positional_only(args, 2, "ftruncate()")'
+        in (model_dir() / "os" / "__init__.codon").read_text()
+    )
+    # What CPython makes of what the check takes and refuses.
+    with pytest.raises(TypeError):
+        os.ftruncate(fd=0, length=0)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        os.chown("x", 0, 0, None)  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        shutil.copymode("x", "y", False)  # type: ignore[misc]
+    with pytest.raises(TypeError):
+        OSError(errno.EIO, "x", "f", filename2=None)  # type: ignore[call-arg]
+    with pytest.raises(TypeError):
+        memoryview()  # type: ignore[call-arg]
+    built = OSError(errno.ENOSPC, "No space left on device", "/a/b")
+    assert str(built) == "[Errno 28] No space left on device: '/a/b'"
+    assert (built.errno, built.strerror, built.filename) == (
+        errno.ENOSPC,
+        "No space left on device",
+        "/a/b",
+    )
+    assert str(OSError(None, None, "f")) == "[Errno None] None: 'f'"
+    plain = OSError("message")
+    assert (plain.errno, plain.strerror, plain.filename) == (None, None, None)
+    # A view is true while not empty and sliced past what os.write() wrote.
+    view = memoryview(b"abc")
+    assert view and not view[3:] and not view[9:]
+    fd = os.open(os.devnull, os.O_WRONLY)
+    try:
+        assert bytes(view[os.write(fd, view) :]) == b""
+    finally:
+        os.close(fd)
+    # The format _exceptions.codon builds the message of the three in.
+    shim = (model_dir() / "autoware_carla_scenario" / "_exceptions.codon").read_text()
+    assert (
+        '"[Errno " + str(errno) + "] " + str(strerror) + ": " + repr(filename)' in shim
+    )
+
+
+# ---------------------------------------------------------------------------
+# getpass.getuser(): whom hils.host_devices sets the devices up for
+# ---------------------------------------------------------------------------
+
+
+_GETUSER = """
+from __future__ import annotations
+
+import getpass
+import os
+from getpass import getuser
+
+
+def user() -> str:
+    return os.environ.get("SUDO_USER") or getpass.getuser()
+
+
+def named() -> int:
+    name: str = getuser()
+    return len(name.strip())
+"""
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+def test_the_getpass_shim_takes_what_hils_host_devices_calls(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    result = _check_case(_GETUSER, tmp_path, monkeypatch)
+    assert result.ok, result.format()
+
+
+@pytest.mark.codon_selftest
+@needs_codon
+@pytest.mark.parametrize(
+    ("right", "wrong"),
+    [
+        # Each is a TypeError or an AttributeError in CPython too, or a
+        # function CPython has that the shim does not declare.
+        ("getpass.getuser()", 'getpass.getuser("root")'),
+        ("getpass.getuser()", "getpass.getuser(user=None)"),
+        ("getpass.getuser()", "getpass.getuser"),
+        ("name.strip()", "name.strip().pw_name"),
+        ("getpass.getuser()", 'getpass.getpass("password: ")'),
+        ("getpass.getuser()", "getpass.GetPassWarning()"),
+    ],
+    ids=[
+        "no-argument",
+        "no-keyword",
+        "a-function-not-a-str",
+        "a-str-not-a-record",
+        "getpass-undeclared",
+        "warning-undeclared",
+    ],
+)
+def test_the_getpass_shim_refuses_what_it_does_not_declare(
+    right: str, wrong: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    source = _GETUSER.replace(right, wrong, 1)
+    assert source != _GETUSER
+    result = _check_case(source, tmp_path, monkeypatch)
+    assert not result.ok, wrong
+
+
+@pytest.mark.codon_selftest
+def test_the_getpass_shim_declares_cpythons_getuser() -> None:
+    import getpass
+    import inspect
+
+    shim = ast.parse((model_dir() / "getpass.codon").read_text()).body
+    functions = [n for n in shim if isinstance(n, ast.FunctionDef)]
+    # getuser() and nothing else: no getpass(), no GetPassWarning.
+    assert [f.name for f in functions] == ["getuser"]
+    assert not [n for n in shim if isinstance(n, ast.ClassDef)]
+    declared = functions[0].args
+    assert not (declared.args or declared.kwonlyargs or declared.posonlyargs)
+    assert declared.vararg is None and declared.kwarg is None
+    returns = functions[0].returns
+    assert returns is not None and ast.unparse(returns) == "str"
+    # CPython 3.10's getuser() takes no argument and gives a str.
+    assert not inspect.signature(getpass.getuser).parameters
+    with pytest.raises(TypeError):
+        getpass.getuser("root")  # type: ignore[call-arg]
+    try:
+        assert isinstance(getpass.getuser(), str)
+    except OSError:  # no login name anywhere (3.13 on; KeyError before)
+        pass
+    except KeyError:
+        pass

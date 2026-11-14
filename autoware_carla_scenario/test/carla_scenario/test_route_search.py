@@ -141,6 +141,21 @@ class TestParsing:
         with pytest.raises(ValueError, match=message):
             parse_route_search(search)
 
+    @pytest.mark.parametrize("value", [0, False, "", 0.0, 5, "lane", {}])
+    def test_segments_that_are_not_a_list_are_refused(self, value: Any) -> None:
+        """A falsy ``segments`` is not read as no segments (#2134)."""
+        with pytest.raises(ValueError) as error:
+            parse_route_search({"segments": value})
+        assert str(error.value) == "route segments must be a list"
+
+    @pytest.mark.parametrize("search", [{}, {"segments": None}, {"segments": []}])
+    def test_missing_null_or_empty_segments_are_none(
+        self, search: dict[str, Any]
+    ) -> None:
+        with pytest.raises(ValueError) as error:
+            parse_route_search(search)
+        assert str(error.value) == "a route search needs at least one segment"
+
     @pytest.mark.parametrize(
         ("field", "value", "message"),
         [
@@ -584,9 +599,9 @@ class TestTheMatchAsConfig:
                 lanelet_ids=["1", 2.0],
                 segment_kinds=["lane", "lane"],
                 segment_ends=["5", 10],
-                segment_lanelet_counts=[True, 1],
+                segment_lanelet_counts=[1.0, " 1 "],
                 start_s="1.5",
-                end_s=True,
+                end_s=1,
                 index="3",
             )
         )
@@ -594,6 +609,74 @@ class TestTheMatchAsConfig:
         assert match.lanelet_ids == (1, 2)
         assert [(m.start, m.end) for m in match.segments] == [(0.0, 5.0), (5.0, 10.0)]
         assert (match.start_s, match.end_s, match.index) == (1.5, 1.0, 3)
+
+    @pytest.mark.parametrize(
+        ("key", "value", "message"),
+        [
+            # int() truncated these to another lanelet, count or match.
+            ("lanelet_ids", [1, 242.7], "242\\.7 is not a whole number"),
+            ("lanelet_ids", [True, 2], "True is not a whole number"),
+            ("lanelet_ids", [1, None], "None is not a whole number"),
+            ("lanelet_ids", [1, ""], "'' is not a whole number"),
+            ("segment_lanelet_counts", [True, 1], "True is not a whole number"),
+            ("segment_lanelet_counts", [1.5], "1\\.5 is not a whole number"),
+            ("index", 2.5, "2\\.5 is not a whole number"),
+            ("index", True, "True is not a whole number"),
+            # `x or 0` read these as 0.
+            ("index", False, "False is not a whole number"),
+            ("index", "", "'' is not a whole number"),
+            ("index", [], "\\[\\] is not a whole number"),
+            ("start_s", False, "False is not a number"),
+            ("start_s", "", "'' is not a number"),
+            ("start_s", [], "\\[\\] is not a number"),
+            ("end_s", True, "True is not a number"),
+            ("end_s", False, "False is not a number"),
+            ("segment_ends", [True], "True is not a number"),
+            # A string was iterated a character at a time: '12' is [1, 2].
+            ("lanelet_ids", "12", "'12' is not a list"),
+            ("lanelet_ids", {"a": 1}, "\\{'a': 1\\} is not a list"),
+            ("lanelet_ids", 12, "12 is not a list"),
+            ("lanelet_ids", False, "False is not a list"),
+            ("lanelet_ids", "", "'' is not a list"),
+            ("segment_kinds", "lane", "'lane' is not a list"),
+            ("segment_ends", "10", "'10' is not a list"),
+            ("segment_lanelet_counts", "2", "'2' is not a list"),
+            ("junction_turns", "left", "'left' is not a list"),
+            ("junction_turns", False, "False is not a list"),
+        ],
+    )
+    def test_a_value_of_the_wrong_kind_is_refused_by_its_key(
+        self, key: str, value: Any, message: str
+    ) -> None:
+        """#2143: only an absent or null key is its default; a fraction, a
+        boolean, a blank or a string for a list is refused, not truncated,
+        read as 0 or iterated."""
+        with pytest.raises(ValueError, match=rf"^scenario\.route\.{key}: {message}$"):
+            RouteMatch.from_config(self._config(**{key: value}))
+
+    def test_only_an_absent_or_null_key_is_its_default(self) -> None:
+        absent = self._config()
+        del absent["start_s"], absent["end_s"]
+        null = self._config(start_s=None, end_s=None, index=None)
+        for config in (absent, null):
+            match = RouteMatch.from_config(config)
+            assert match is not None
+            assert (match.start_s, match.end_s, match.index) == (0.0, 0.0, 0)
+        # A null list is no route, as an absent or empty one is.
+        assert RouteMatch.from_config({"lanelet_ids": None}) is None
+        match = RouteMatch.from_config(self._config(junction_turns=None))
+        assert match is not None and match.segments[0].turn == ""
+
+    def test_omegaconf_lists_and_whole_floats_are_read_as_before(self) -> None:
+        from omegaconf import OmegaConf
+
+        config = OmegaConf.create(
+            self._config(lanelet_ids=[1, 2.0], index=2.0, start_s=0, end_s="9")
+        )
+        match = RouteMatch.from_config(config)
+        assert match is not None
+        assert (match.lanelet_ids, match.index) == ((1, 2), 2)
+        assert (match.start_s, match.end_s) == (0.0, 9.0)
 
     def test_an_anchor_the_route_lacks(self) -> None:
         match = RouteMatch(

@@ -19,6 +19,7 @@ from dataclasses import dataclass, replace
 from pathlib import Path
 from typing import Any, Optional
 
+from ..config_flags import check_flag
 from .resolver import (
     ResolvedMap,
     _short_map_name,
@@ -39,28 +40,41 @@ def _setting(map_config: Any, key: str) -> Optional[str]:
     The same map is described by a :class:`~...scenario_config.MapConfig`, by an
     OmegaConf node, and by the editor's :class:`~...authoring.models.MapRef`;
     reading a key off all three is the only thing this module needs from them.
+    With *key* absent the value is ``None``; text is returned stripped, and
+    ``None`` for a blank one.
     """
-    if map_config is None:
-        return None
-    if hasattr(map_config, key):
-        value = getattr(map_config, key)
-    else:
-        try:
-            value = map_config[key]  # OmegaConf nodes and plain dicts
-        except (KeyError, TypeError):
-            return None
+    value = _value(map_config, key)
     if value is None:
         return None
     text = str(value).strip()
     return text or None
 
 
+def _value(map_config: Any, key: str) -> Any:
+    """One ``map`` setting off a config of any shape (:func:`_setting`), as
+    it holds it; ``None`` when it holds none."""
+    if map_config is None:
+        return None
+    if hasattr(map_config, key):
+        return getattr(map_config, key)
+    try:
+        return map_config[key]  # OmegaConf nodes and plain dicts
+    except (KeyError, TypeError):
+        return None
+
+
 def _flag(map_config: Any, key: str) -> bool:
-    """Read one boolean ``map`` setting, defaulting to off when it is absent."""
-    text = _setting(map_config, key)
-    if text is None:
+    """Read one boolean ``map`` setting, off when it is absent or null, and
+    otherwise as every config switch is read
+    (:func:`~...config_flags.check_flag`): a boolean, ``"true"``/``"false"``
+    (``yes``/``no``, ``on``/``off``, ``1``/``0``) or the integer 1 or 0 --
+    a typo (``"ture"``), ``2`` or ``"enabled"`` is refused, naming
+    ``map.<key>``, rather than read as off (#2143).
+    """
+    value = _value(map_config, key)
+    if value is None:
         return False
-    return text.strip().lower() in {"1", "true", "yes", "on"}
+    return check_flag(f"map.{key}", value)
 
 
 @dataclass(frozen=True)

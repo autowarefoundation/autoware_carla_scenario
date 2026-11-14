@@ -32,10 +32,17 @@ import os
 import shutil
 import tempfile
 from concurrent.futures import Future, ThreadPoolExecutor
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from types import ModuleType
 from typing import Any, Optional, Union
+
+# How a conversion went, and the run's summary of them, are the checked
+# rerun_report's (#2124); the names they had here stay importable from here.
+from .rerun_report import RerunConversion as RerunConversion
+from .rerun_report import _draw_radius_argument as _draw_radius_argument
+from .rerun_report import latest as latest
+from .rerun_report import report as report
 
 # The suffix of the log a recording is made from, and of the recording, and
 # the run a log is of (``_label``): the path rule is the checked
@@ -96,36 +103,6 @@ def recording_path(trajectory: Union[str, Path]) -> Path:
     ``X.trajectory.jsonl``, where the converter writes it by default
     (:func:`.run_outputs.recording_path`, which takes a ``Path``)."""
     return _recording_path(Path(trajectory))
-
-
-@dataclass(frozen=True)
-class RerunConversion:
-    """How converting one trajectory log went.
-
-    Attributes:
-        label: The run the log belongs to (its file stem, ``CutInScenario-3``).
-        trajectory: The log.
-        recording: The recording made of it, or that would have been.
-        error: Why the conversion failed (``ExceptionType: message``), or
-            ``None`` when it did not.
-        stats: What the converter returned (``Stats``): ticks, actors, the
-            record types and fields it skipped, ...; ``None`` on failure.
-        skipped: The log converted, but the recording was not replaced
-            (:func:`convert_outputs`: it holds sensors that could not be
-            kept); *error* says why.
-    """
-
-    label: str
-    trajectory: Path
-    recording: Path
-    error: Optional[str] = None
-    stats: Optional[dict[str, Any]] = field(default=None, compare=False)
-    skipped: bool = False
-
-    @property
-    def ok(self) -> bool:
-        """Whether the recording was written."""
-        return self.error is None
 
 
 @dataclass
@@ -342,39 +319,6 @@ class RerunConverter:
         self.close()
 
 
-def latest(conversions: list[RerunConversion]) -> list[RerunConversion]:
-    """*conversions* with only the last of each recording's, in the order the
-    recordings were first converted.
-
-    A retried run is converted again into the recording of the attempt it
-    replaces, so :meth:`RerunConverter.wait` returns that recording twice;
-    the earlier conversion no longer says how it went.
-    """
-    last: dict[str, RerunConversion] = {}
-    for conversion in conversions:
-        last[str(conversion.recording)] = conversion
-    return list(last.values())
-
-
-def report(conversions: list[RerunConversion]) -> str:
-    """One line on *conversions*, then one per failure, for a run's summary.
-
-    A recording converted more than once (a retried run) counts once, by its
-    last conversion (:func:`latest`).
-    """
-    conversions = latest(conversions)
-    failed = [c for c in conversions if not c.ok]
-    lines = [
-        f"Rerun recordings: {len(conversions) - len(failed)}/{len(conversions)} "
-        "written (open one with: rerun <file.rrd>)"
-    ]
-    lines.extend(
-        f"  [{'SKIPPED' if c.skipped else 'FAILED'}] {c.label}: {c.error}"
-        for c in failed
-    )
-    return "\n".join(lines)
-
-
 def _install(
     label: str,
     trajectory: Path,
@@ -461,12 +405,6 @@ def _installed(
         return _install(label, trajectory, converted, stats, overwrite=overwrite)
     except Exception as exc:  # noqa: BLE001 - reported, not raised
         return _failed(label, trajectory, f"{type(exc).__name__}: {exc}")
-
-
-def _draw_radius_argument(draw_radius_m: Optional[float]) -> dict[str, float]:
-    """The converter's keyword for *draw_radius_m*; none when ``None``, so that
-    what does not ask for it goes on as it did."""
-    return {} if draw_radius_m is None else {"draw_radius_m": draw_radius_m}
 
 
 def _failed(label: str, trajectory: Path, error: str) -> RerunConversion:

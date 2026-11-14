@@ -330,3 +330,56 @@ def test_a_missing_rerun_sdk_exits_2(
     )
     assert code == 2
     assert "no Rerun SDK" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize("key", ["spawn_t", "spawn_heading"])
+@pytest.mark.parametrize(
+    ("value", "expected"),
+    [
+        ("null", 0.0),
+        ("0", 0.0),
+        ("1.5", 1.5),
+        ("'1.5'", 1.5),
+        ("-2", -2.0),
+        ("false", 0.0),
+        ("true", 1.0),
+        ("''", None),
+        ("abc", None),
+        ("nan", None),
+        ("[]", None),
+    ],
+)
+def test_the_preflight_and_the_build_read_the_spawn_offset_alike(
+    key: str, value: str, expected: float | None
+) -> None:
+    """``ego.spawn_t`` and ``ego.spawn_heading``: what the batch preflight
+    refuses, building the ego and planning its route refuse, naming the key;
+    what it lets through they read as the same number.  ``''`` was refused by
+    the one and read as 0.0 by the others (#2143)."""
+    from autoware_carla_scenario.examples import run
+
+    cfg = _shipped([f"ego.{key}={value}"])
+    field = "t" if key == "spawn_t" else "heading"
+    if expected is None:
+        for read in (
+            run._check_ego_numbers,
+            run.build_spawn_pose,
+            run.build_planned_route,
+        ):
+            with pytest.raises(ValueError, match=rf"^ego\.{key} must be"):
+                read(cfg)
+        return
+    run._check_ego_numbers(cfg)
+    assert getattr(run.build_spawn_pose(cfg), field) == expected
+    assert getattr(run.build_planned_route(cfg).start, field) == expected
+
+
+@pytest.mark.parametrize("key", ["spawn_t", "spawn_heading"])
+def test_an_absent_spawn_offset_is_zero(key: str) -> None:
+    from autoware_carla_scenario.examples import run
+
+    cfg = _shipped([f"~ego.{key}"])
+    field = "t" if key == "spawn_t" else "heading"
+    run._check_ego_numbers(cfg)
+    assert getattr(run.build_spawn_pose(cfg), field) == 0.0
+    assert getattr(run.build_planned_route(cfg).start, field) == 0.0

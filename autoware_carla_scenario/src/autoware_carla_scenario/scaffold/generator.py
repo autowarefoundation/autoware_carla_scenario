@@ -17,10 +17,8 @@ from __future__ import annotations
 
 import argparse
 import ast
-import errno
 import functools
 import importlib.metadata
-import os
 import shutil
 import sys
 import tempfile
@@ -41,6 +39,14 @@ from .names import (
     _validate_scenario_name,
 )
 
+# Putting a rendered package in place, which the library check compiles from
+# its own module; every name of it is re-exported here, where it has always
+# been imported from (the same objects).
+from .placement import _RENAME_ONTO_OCCUPIED as _RENAME_ONTO_OCCUPIED
+from .placement import PackageExistsError as PackageExistsError
+from .placement import _move_into_place as _move_into_place
+from .placement import _occupied as _occupied
+
 
 class ScaffoldResult(NamedTuple):
     """Result of :func:`create_scenario_package`."""
@@ -49,21 +55,6 @@ class ScaffoldResult(NamedTuple):
     root: Path
     #: The resolved template variables (see :func:`resolve_names`).
     names: dict[str, str]
-
-
-class PackageExistsError(FileExistsError):
-    """The target directory of :func:`create_scenario_package` already exists.
-
-    Its message names the Python API's ``force=True``; :attr:`root` lets a
-    caller with another way to replace it (``scenario-new --force``) say so.
-    """
-
-    def __init__(self, root: Path) -> None:
-        super().__init__(
-            f"Target directory already exists: {root} (pass force=True to replace it)."
-        )
-        #: The package directory that already exists.
-        self.root = root
 
 
 #: Directory holding the ``*.jinja`` templates shipped with this package.
@@ -602,58 +593,6 @@ def create_scenario_package(
         shutil.rmtree(holder, ignore_errors=True)
 
     return ScaffoldResult(root=root, names=names)
-
-
-def _occupied(root: Path) -> bool:
-    """Whether anything, a dangling symlink included, is at *root*."""
-    return root.exists() or root.is_symlink()
-
-
-#: What a rename onto an occupied *root* fails with: a non-empty directory
-#: (``ENOTEMPTY``, or ``EEXIST`` on some systems) or a non-directory.
-_RENAME_ONTO_OCCUPIED = frozenset({errno.EEXIST, errno.ENOTEMPTY, errno.ENOTDIR})
-
-
-def _move_into_place(staging: Path, root: Path, *, force: bool) -> None:
-    """Move the complete package *staging* to *root*.
-
-    Without *force*, whatever appeared at *root* while the package was being
-    rendered is left alone and :class:`PackageExistsError` raised: *root* is
-    checked again just before the move, and the move is a plain rename, which
-    refuses a non-empty directory or a file that appears after that check.
-
-    With *force*, an existing *root* is first renamed aside, beside it, and
-    removed only once *staging* is in place, so a failed move restores it
-    instead of leaving neither package behind.
-    """
-    if not force:
-        if _occupied(root):
-            raise PackageExistsError(root)
-        try:
-            os.rename(staging, root)
-        except OSError as exc:
-            if exc.errno in _RENAME_ONTO_OCCUPIED:
-                raise PackageExistsError(root) from exc
-            raise
-        return
-    if not _occupied(root):
-        os.replace(staging, root)
-        return
-    aside = Path(tempfile.mkdtemp(prefix=f".{root.name}.old-", dir=root.parent))
-    old = aside / root.name
-    try:
-        os.replace(root, old)
-    except BaseException:
-        # The old package was not moved: drop the empty holder and leave it.
-        shutil.rmtree(aside, ignore_errors=True)
-        raise
-    try:
-        os.replace(staging, root)
-    except BaseException:
-        os.replace(old, root)
-        shutil.rmtree(aside, ignore_errors=True)
-        raise
-    shutil.rmtree(aside, ignore_errors=True)
 
 
 # ---------------------------------------------------------------------------

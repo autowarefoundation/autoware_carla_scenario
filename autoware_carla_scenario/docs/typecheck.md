@@ -2493,7 +2493,11 @@ parameters' probes: `odd.traffic_ranges`, #1680; not the probes themselves,
 `__init__`, its per-run record and probe, finding and writing the markers
 of the `--multirun` jobs given up, and finding the plans of the sweeps
 (`gate.errored` and `gate.sweep_plan`, #1967; not writing the plans or
-reading either, JSON objects of mixed value types),
+reading either, JSON objects of mixed value types), what a set of runs
+left unrecorded (`gate.unrecorded`, #2124: the batches under a directory, a
+local batch's summary read for its errored and pending cases, and the
+`--multirun` jobs given up or never started; not a SLURM batch's manifest,
+which `gate.evaluate` reads; it re-exports them),
 and the typed criteria its evaluator judges (`gate.criteria`: the criterion
 results, the trajectory consistency, the case coverage and the changes from a
 baseline; and `gate.report`, #1738: a verdict's and a comparison's Markdown,
@@ -2502,18 +2506,34 @@ and the records grouped by scenario; not the evaluator itself, which reads the
 gate's pydantic model and openodd's merged coverage), the HILS bridge's wire format (a command's values included)
 and its configuration's sensor spec and the check of a field's signal name
 (not the YAML reading around it, `hils.config`; the `hils` package's
-`__init__`, which re-exports them, is checked), how an error shows an integer too long for
+`__init__`, which re-exports them, is checked), the virtual devices
+`scenario-hils --setup` creates for a configuration's devices, each validated
+in turn (`hils.host_devices`, #2124; not the playbooks' variables, a dict of
+mixed value types, or running them with ansible-runner, `hils.host_setup`,
+which re-exports it), how `detect-no-3d-model` writes the map configuration
+it edits, through a temporary file or in place, and reports the error of
+either (`tools.file_writes`, #2135; not the edit of the YAML text, the CARLA
+ray casts or the command line, `tools.detect_no_3d_model_lanelets`, which
+re-exports it), how an error shows an integer too long for
 `repr()` (`value_text.huge_integer()`, which `hils.config` re-exports, #1704), the
-example scenarios and their configs, the SLURM launcher's job scripts, where
+example scenarios and their configs, the SLURM launcher's job scripts (and
+how one is written, #2124), where
 a batch's files are and which submissions it holds (`slurm.scripts`, #1648),
 and its calls of SLURM's command-line tools (`sbatch`, `squeue`, `scancel`,
 `scontrol`, `sinfo`: `slurm.queue`, #1634), the naming rules of
 `scenario-new` (`scaffold.names`, #1654) and those of the Scenario Editor's
 export, which ids it refuses and the framework pin's lines in
 the package's README (`authoring.package_names`, #1695; the rule against the
-framework's own name is `scaffold.names`', which both apply), where the viewer keeps its
+framework's own name is `scaffold.names`', which both apply), the whole
+numbers the Scenario Editor's forms post, a list field's ids and a record
+list's row count (`editor.form_values`, #2135; not the parsing of a form
+against a field's spec, `editor.forms`, which re-exports them), where the viewer keeps its
 recordings and its copy of Rerun's web viewer, and which web viewer it picks
-(`ui.web_viewer_paths`, #1672), what a run names its outputs, the path
+(`ui.web_viewer_paths`, #1672), and how it puts them in place on disk
+(`ui.recording_files`, #2124), what the viewer reads off a request and links
+a session with (`ui.request_values`, #2135: whether a body is sent as JSON, a
+session's reference, the ODD attribute a query names; not `ui.app`, which
+serves the requests and re-exports it), what a run names its outputs, the path
 rule of a trajectory log and its recordings among them (`run_outputs`, #1678:
 the stem a log is of, its recording and its sensor recording, which `rerun`,
 `rerun_lidar` and `ui.web_viewer_paths` all name them with; `ui.case_paths`
@@ -2527,7 +2547,9 @@ recording, which `rerun_metrics` re-exports, and of the ODD archive, which
 in a run's recording (a camera's mount, the colours of a LiDAR sweep, which
 entities are the sensors', the parse of `rerun rrd print` and the scan of a
 recording's bytes for those entities: `rerun_sensor_mount`, #1688, #1697; not `rerun_lidar`, which holds the Rerun SDK as
-`Any` and re-exports it), the frame math
+`Any` and re-exports it), how converting a run's logs into Rerun recordings
+went and the run's summary of it (`rerun_report`, #2124; not `rerun`, which
+runs the converter on a thread pool and re-exports it), the frame math
 of the T4Scene converter (CARLA's world frame to Autoware's `map` frame, and the rotations
 and quaternions of its angles, and the check of the ego's rear-axle offset:
 `t4_scene.frames`, #1665, #1697; the converter
@@ -2541,7 +2563,9 @@ read and which `vehicles` entry of `environment.rules` a vehicle follows
 (`weather_inputs`, #1732; `weather_rules`, which reads the rules with openodd,
 re-exports it), the fields of a control and of `sweep.odd_sample` and the keys
 a sweep sets (`odd.control_fields`, #1733; `odd.controls` and `odd.sampler`
-re-export them), and the parts of the
+re-export them), what `scenario-odd route` reads off its command line and the
+metres per bucket it prints (`odd.route_text`, #2135; not `odd.cli`, which
+expands the scenario configs' globs and re-exports it), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 `__init__` re-exports what is not checked through models of it (see *A class
 a checked package only re-exports* below). Each checked module is listed here
@@ -2574,7 +2598,8 @@ the first:
   Codon lacks (`inspect`, `concurrent.futures`, `importlib` beyond
   `importlib.metadata`, or more of `os`, `pathlib`, `shutil`,
   `signal`, `socket`, `subprocess`, `tempfile`, `threading`, `dataclasses`,
-  `importlib.metadata` or `urllib.parse` than their shims declare), at module
+  `getpass`, `importlib.metadata` or `urllib.parse` than their shims
+  declare), at module
   level or inside a function the check calls. This is most of the tooling
   around a run (the editor, the UI, authoring, the sweeper's expansion and
   Hydra sweeper, the SLURM launcher's submitting side, the recordings and
@@ -2970,6 +2995,27 @@ current and the headers of the conditional request too (`_current_of()`,
 that a value of another type, in a stamp edited by hand, decides as it did. A
 constant a test replaces in the excluded module (`_UNPACKED_PER_PACKED`) is
 passed to the checked function (`_room_needed()`) rather than read there.
+The opening of the lock file is there too (`_open_lock()` and the errnos of a
+lock file that cannot be written, `_UNWRITABLE_ERRNOS`, #2144): it opens the
+file with `lock.open(mode)`, the same file object as `open(lock, mode)` in
+Python, since Codon's `open()` takes no `Path` and gives no `IO`; a test that
+makes the lock read-only patches `Path.open`, as `carla_install` no longer
+calls `open()`. Holding the lock (`_locked()`, a `contextmanager`) stays in
+`carla_install`. `scaffold.placement` is one too: how `scenario-new` puts a
+rendered package in place (`_move_into_place()`, `_occupied()`) and the error
+of a target that exists (`PackageExistsError`, a `FileExistsError` whose
+`root` is declared at class level), split out of `scaffold.generator`
+(argparse, jinja2), which re-exports them (#2144). A test that replaces
+`generator._occupied` to reach the rename's own refusal replaces
+`placement._occupied` too, which the move reads. `slurm.start_lock`, split
+out of `slurm.worker` for the files of the start lock (#2116), holds the
+takeover of a stale lock too, one waiter at a time (`_take_over()` and the
+age of a dead waiter's mutex, `_TAKEOVER_STALE_AFTER`, #2144); the worker
+re-exports them and keeps taking the lock (`_exclusive_file()`, a
+`contextmanager`). A test that shortens that age or watches the takeover's
+`_create_lock()` and `_remove_stale()` replaces `start_lock`'s, which
+`_take_over()` reads (and, for `_create_lock()`, the worker's too, which
+`_exclusive_file()` reads).
 
 Each checked module gets the `__file__` Python sets on it (its source's path,
 a `str`), which Codon 0.19 does not, bound on the last line of the prelude so
@@ -3166,7 +3212,7 @@ What Codon 0.19 needs that Python does not, beyond
   and the files of `codon/` in step):
 
   <!-- shims:start -->
-  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `hashlib`,
+  `__future__`, `abc`, `atexit`, `contextlib`, `dataclasses`, `enum`, `errno`, `fcntl`, `fnmatch`, `getpass`, `hashlib`,
   `importlib.metadata`, `ipaddress`, `json`, `keyword`, `logging`, `os`, `os.path`, `pathlib`, `platform`, `queue`,
   `shlex`, `shutil`, `signal`, `socket`, `subprocess`, `sys`, `tempfile`, `threading`,
   `typing`, `typing_extensions`, `urllib.parse`, `uuid` and `xml.etree.ElementTree`
@@ -3266,9 +3312,9 @@ What Codon 0.19 needs that Python does not, beyond
   the tail of a job's log, #1647; it takes `whence` by keyword, as `typing.IO`
   declares it, where a CPython file object takes it by position only),
   `write()` (of a `str`, read as bytes too), iteration over the lines and
-  `with`. `stat()` (no argument) returns a result of the five fields the
-  framework reads (`st_dev`, `st_ino`, `st_size`, `st_mtime_ns`, `st_mtime`),
-  all zero (`lstat()` too), and `replace(target)` and `rename(target)` (a
+  `with`. `stat()` (no argument) returns a result of the seven fields the
+  framework reads (`st_dev`, `st_ino`, `st_uid`, `st_gid`, `st_size`,
+  `st_mtime_ns`, `st_mtime`), all zero (`lstat()` too), and `replace(target)` and `rename(target)` (a
   `str` or an `os.PathLike`) return the new `Path`; nothing is read or
   renamed. `touch(mode=0o666, exist_ok=True)`, `rmdir()`,
   `chmod(mode, *, follow_symlinks=True)`, `write_bytes(data)` (a `str` here, as
@@ -3301,23 +3347,36 @@ What Codon 0.19 needs that Python does not, beyond
   follow_symlinks=True)` (`False`: nothing is asked) and its modes, and
   `open(path, flags, mode=0o777, *, dir_fd=None)` (a descriptor, `0`:
   nothing is opened) with the flags `O_RDONLY`, `O_WRONLY`, `O_RDWR`,
-  `O_CREAT`, `O_EXCL` and `O_CLOEXEC` (Linux's values) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
+  `O_CREAT`, `O_EXCL`, `O_TRUNC` and `O_CLOEXEC` (Linux's values) and `fdopen(fd, mode="r", buffering=-1, encoding=None,
   errors=None, newline=None, closefd=True)`, a file object (`typing.IO`, as
   `Path.open()` gives), and what `slurm.manifest` creates a file
   exclusively with: `link(src, dst, *, src_dir_fd=None, dst_dir_fd=None,
   follow_symlinks=True)` (nothing is linked) and `stat(path, *,
   dir_fd=None, follow_symlinks=True)`, and what `slurm.start_lock` creates
   and reads a lock file with: `fstat(fd)` and `write(fd, data, /)` (of bytes,
-  a `str` in the check, which reads bytes as str; `0`: nothing is written).
+  a `str` in the check, which reads bytes as str, or a `memoryview` of them;
+  `0`: nothing is written), and what `tools.file_writes` writes a file
+  with: `ftruncate(fd, length, /)`, `fsync(fd)` (of an `int`; the object
+  with a `fileno()` CPython also takes is not declared) and `chown(path,
+  uid, gid, *, dir_fd=None, follow_symlinks=True)`; nothing is cut, synced
+  or given away. `memoryview(obj)` of bytes is declared as far as
+  `tools.file_writes` uses it: a view is true while it is not empty and
+  sliced into another (`view[n:]`), which `os.write()` takes; indexing an
+  item, `tobytes()`, `release()` and the rest are not declared.
   The result of `stat()` and `fstat()` has `st_dev`, `st_ino`, `st_mode`,
   `st_nlink`, `st_size`, `st_mtime` and `st_mtime_ns` (all zero) and
-  nothing else. `errno` declares `EPERM`, `EINVAL`, `ENOLCK`, `ENOSYS`,
-  `ENOTSUP` and `EOPNOTSUPP` (Linux's values) and no other code. `uuid`
+  nothing else. `errno` declares `EPERM`, `EACCES`, `EEXIST`, `ENOTDIR`,
+  `EINVAL`, `EROFS`, `ENOLCK`, `ENOSYS`, `ENOTEMPTY`, `ENOTSUP` and
+  `EOPNOTSUPP` (Linux's values) and no other code. `uuid`
   declares `uuid4()`, of no argument, and its `UUID`'s `hex` (a `str`; the
   nil UUID's in the check, as nothing runs), and `UUID(hex)` of a `str`, the
   first of CPython's parameters; the rest of `UUID` (`int`, `bytes`,
   `version`, ...), `uuid1()`, `uuid3()`, `uuid5()` and the namespaces are
-  not declared. `fcntl` declares `flock(fd, operation, /)`, of
+  not declared. `getpass` declares `getuser()`, of no argument, as in
+  CPython 3.10, giving a `str` (empty in the check, as nothing runs), the user
+  `hils.host_devices` sets the devices up for when `SUDO_USER` is unset;
+  `getpass()`, the prompt for a password, and `GetPassWarning` are not
+  declared. `fcntl` declares `flock(fd, operation, /)`, of
   an `int` descriptor or a file object (what has `fileno()`), and `LOCK_SH`,
   `LOCK_EX`, `LOCK_NB` and `LOCK_UN` (Linux's values); nothing is locked.
   `os.path` declares `join()`,
@@ -3331,7 +3390,8 @@ What Codon 0.19 needs that Python does not, beyond
   (likewise), `copytree(src, dst, symlinks=False, ignore=None,
   copy_function=None, ignore_dangling_symlinks=False, dirs_exist_ok=False)`,
   `copy2(src, dst, *,
-  follow_symlinks=True)`, `move(src, dst)`, `rmtree(path,
+  follow_symlinks=True)`, `copymode(src, dst, *, follow_symlinks=True)`
+  (which returns `None`), `move(src, dst)`, `rmtree(path,
   ignore_errors=False)` and `which(cmd, mode=1, path=None)` of a `str`
   command; the callables CPython also takes (`onerror`, `copy_function`)
   are not declared (nor `copytree()`'s `ignore` and `copy_function`).
@@ -3500,8 +3560,27 @@ What Codon 0.19 needs that Python does not, beyond
   CPython's is whatever it was raised with (an `int`, a `str` or `None`), so
   test it with `isinstance()` before reading it as an `int`. Each
   takes no message or one value by position, as CPython does; a keyword
-  (`TimeoutError(message=...)`) and `OSError`'s `(errno, strerror)` and
-  their attributes (`errno`, `filename`) are refused. Nothing in these
+  (`TimeoutError(message=...)`) and `OSError`'s `(errno, strerror)` are
+  refused. `OSError(errno, strerror, filename)` is declared of an
+  `Optional[int]`, an `Optional[str]` and a `str` (CPython takes any value
+  for each), with which `tools.file_writes` raises another's error as its
+  own, and so is it for a class a checked module derives from `OSError`;
+  the subclasses above still take one message (`FileNotFoundError(errno,
+  strerror, filename)` is refused). `OSError`'s (and `IOError`'s, and
+  each subclass's) `errno` is declared, an `Optional[int]`, as CPython's is
+  `None` for an `OSError` of one message and the code for one the system
+  raised; CPython's is whatever the first of two to five values was
+  (`OSError("a", "b").errno` is `"a"`), a form the check refuses, so code
+  catching another's error tests it as CPython needs
+  (`exc.errno in (errno.EPERM, ...)`, which is `False` for `None` or a
+  `str`) rather than doing arithmetic on it;
+  `slurm.manifest` tells a file system without hard links by it. Its
+  `strerror` and `filename` are declared too, each an `Optional[str]`:
+  CPython's are `None` for an `OSError` of one message, and whatever the
+  second and the third of three to five values were, and the system's
+  `filename` is the path as it was given (a `Path`, or bytes), so these are
+  narrower than CPython's; `tools.file_writes` passes the filename to
+  `os.fspath()` before comparing it with a path. Nothing in these
   shims runs: no environment is read, no file is copied, no process is
   signalled, no signal handler is installed and no exit function is
   registered. `hashlib` declares `sha256(string=b"", *,
@@ -3525,7 +3604,13 @@ What Codon 0.19 needs that Python does not, beyond
   be valid on every supported Python anyway. `urllib.parse`
   declares `urlsplit()`, `urlunsplit()`, `unquote()` and `SplitResult` (its five parts,
   as attributes and as a tuple, `hostname`, `port`, `username`, `password`
-  and `geturl()`). A scenario sees the same shims: it may import `pathlib`,
+  and `geturl()`), `urlparse()` and `ParseResult` (its six parts, likewise;
+  not `geturl()`), and `parse_qsl(qs, keep_blank_values=False)`, the first
+  two of CPython 3.10's parameters, of a `str` query, giving a
+  `list[tuple[str, str]]` of its pairs (none in the check: nothing is
+  parsed), with which `hils.host_devices` reads a device's `fd` option;
+  `strict_parsing`, `encoding`, `errors`, `max_num_fields` and `separator`,
+  a bytes query and `parse_qs()` are not declared. A scenario sees the same shims: it may import `pathlib`,
   `hashlib`, `os`, `shutil`, `subprocess`, `importlib.metadata`,
   `urllib.parse`, `signal`, `atexit`, `shlex`, `fnmatch`, `keyword` and `sys` and call what they
   declare,
@@ -3946,6 +4031,12 @@ What Codon 0.19 needs that Python does not, beyond
   (`Trajectory.is_relative`).
 - **`callable(x)`** is checked as `hasattr(x, "__call__")`, which Codon
   decides when it compiles: Codon 0.19 has no `callable`.
+- **`memoryview(x)`**, which Codon 0.19 lacks too, is checked as a view of
+  bytes (`_acs_memoryview`): true while it is not empty, sliced into another
+  view, and taken by `os.write()`, which is what a loop writing all of a
+  buffer needs (`tools.file_writes`). A `memoryview` (or `callable`, or
+  `tuple`) the code binds itself, a parameter, an import or a function of
+  that name, is its own and is left as it is.
 - **Annotate a local that starts as `None`** (`spawn_points:
   Optional[list[carla.Transform]] = None`): Codon types it by its first
   assignment, and on a branch it then compiles alone it can crash without a
@@ -4070,7 +4161,11 @@ What Codon 0.19 needs that Python does not, beyond
   raise a subclass of a built-in exception that has none of its own
   (`'MapSourceError' object has no attribute '_pytype'`), so it takes the
   message and passes it on: `def __init__(self, message: str) -> None:
-  super().__init__(message)` (`maps/source.py`).
+  super().__init__(message)` (`maps/source.py`). One that hands on whatever
+  it is given, as Exception's own does, takes `*args: str, **kwargs: str`
+  and passes them on (`hils/host_devices.py`'s `HostSetupError`): Python
+  builds it as before, with the same arguments, message and repr, and the
+  same TypeError for a keyword.
 - **`except (A, B):` is split by the check**: Codon 0.19 takes one class
   per `except` clause ("expected type expression"), so the check rewrites a
   tuple written out into one clause per class, in the tuple's order, each
@@ -4417,7 +4512,11 @@ What Codon 0.19 needs that Python does not, beyond
   (`scaffold/generator.codon`, argparse and jinja2), which the checked
   `scaffold` package re-exports with `create_scenario_package()`,
   `resolve_names()` and `main()`, `compile_error`s as well: they write a new
-  scenario package (`scenario-new`), not a scenario, and
+  scenario package (`scenario-new`), not a scenario (`PackageExistsError` is
+  the checked `scaffold.placement`'s, #2144, which `scaffold.generator`
+  re-exports; the package still imports it from `scaffold.generator`, and
+  `scaffold/generator.codon` still declares it, so a scenario importing it
+  from either finds the `compile_error` it did), and
   `CommonRoadSettings` (`commonroad/session.codon`) and `CommonRoadWorker`
   and `CommonRoadWorkerError` (`commonroad/worker.codon`, worker processes
   spoken to in JSON), which the checked `commonroad` package re-exports with

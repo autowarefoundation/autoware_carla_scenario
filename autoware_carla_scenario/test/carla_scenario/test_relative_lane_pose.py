@@ -171,6 +171,13 @@ class TestThePose:
                 RelativeLanePose(d_lane=value)  # type: ignore[arg-type]
         assert RelativeLanePose(d_lane=np.int64(-1)).d_lane == -1  # type: ignore[arg-type]
 
+    @pytest.mark.parametrize("value", [math.inf, math.nan, None, "2.5", "2"])
+    def test_a_value_int_refuses_is_no_d_lane_either(self, value: object) -> None:
+        """int() of inf, nan, None or "2.5" raises its own OverflowError,
+        TypeError or ValueError; the pose names the field instead (#2151)."""
+        with pytest.raises(ValueError, match=r"d_lane must be a whole number"):
+            RelativeLanePose(d_lane=value)  # type: ignore[arg-type]
+
     def test_a_trajectory_with_one_is_relative(self) -> None:
         mixed = Trajectory(
             "mixed",

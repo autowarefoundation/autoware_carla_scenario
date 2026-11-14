@@ -4,6 +4,15 @@ Pins what ``local_meters_osm()`` writes and ``resource_digest()`` hashes, and
 the refusals of a map the ``LOCAL_METERS`` profile cannot hold, on small maps
 built here and on the fixture map, so that moving the helpers into a module
 the library check compiles (#2116) changes nothing.
+
+The float text in the bytes -- the auxiliary ``lat``/``lon`` the Mercator
+projector gives, and on the fixture map every coordinate, which loading
+projects from the file's lat/lon -- comes from the platform's libm and
+differs in its last digits between x86_64 and aarch64.  So no pin spells it
+out: the small maps' bytes take their ``lat``/``lon`` from the projector in
+this process, and the fixture map's bytes are compared with
+:func:`_old_local_meters_osm`, a verbatim copy of the implementation before
+the move, run in this process on the same map.
 """
 
 from __future__ import annotations
@@ -11,12 +20,16 @@ from __future__ import annotations
 import hashlib
 import importlib
 import math
+import platform
+import tempfile
+import xml.etree.ElementTree as ET
 from pathlib import Path
 from typing import Any
 
 import lanelet2
 import lanelet2.core
 import lanelet2.io
+import lanelet2.projection
 import pytest
 
 from autoware_carla_scenario.coordinate.projection import load_lanelet2, map_origin
@@ -96,31 +109,46 @@ def _fixture() -> Any:
     return lanelet_map
 
 
+#: The projector local_meters_osm() takes the auxiliary lat/lon from.
+_PROJECTOR = lanelet2.projection.MercatorProjector(lanelet2.io.Origin(0, 0))
+
+
+def _lat_lon(x: float, y: float, z: float = 0.0) -> bytes:
+    """A node's ``lat="..." lon="..."`` for the point (x, y, z), through the
+    projector in this process: the digits are the platform's, the text
+    around them is pinned."""
+    gps = _PROJECTOR.reverse(lanelet2.core.BasicPoint3d(x, y, z))
+    return b'lat="%s" lon="%s"' % (repr(gps.lat).encode(), repr(gps.lon).encode())
+
+
 _HEAD = (
     b"<?xml version='1.0' encoding='utf-8'?>\n"
     b'<osm version="0.6" upload="false" generator="lanelet2">\n'
 )
 _NODES = (
-    b'  <node id="1" visible="true" version="1" lat="0.0" lon="0.0">\n'
+    b'  <node id="1" visible="true" version="1" ' + _lat_lon(0.0, 0.0, 0.5) + b">\n"
     b'    <tag k="ele" v="0.5" />\n'
     b'  <tag k="local_x" v="0.0" /><tag k="local_y" v="0.0" /></node>\n'
-    b'  <node id="2" visible="true" version="1" lat="0.0"'
-    b' lon="8.983152841195213e-05"><tag k="local_x" v="10.0" />'
+    b'  <node id="2" visible="true" version="1" '
+    + _lat_lon(10.0, 0.0)
+    + b'><tag k="local_x" v="10.0" />'
     b'<tag k="local_y" v="0.0" /><tag k="ele" v="0.0" /></node>\n'
-    b'  <node id="3" visible="true" version="1" lat="3.1441034934687195e-05"'
-    b' lon="0.0"><tag k="local_x" v="0.0" /><tag k="local_y" v="3.5" />'
+    b'  <node id="3" visible="true" version="1" '
+    + _lat_lon(0.0, 3.5)
+    + b'><tag k="local_x" v="0.0" /><tag k="local_y" v="3.5" />'
     b'<tag k="ele" v="0.0" /></node>\n'
-    b'  <node id="4" visible="true" version="1" lat="3.1441034934687195e-05"'
-    b' lon="8.983152841195213e-05">\n'
+    b'  <node id="4" visible="true" version="1" ' + _lat_lon(10.0, 3.5, 1.25) + b">\n"
     b'    <tag k="ele" v="1.25" />\n'
     b'  <tag k="local_x" v="10.0" /><tag k="local_y" v="3.5" /></node>\n'
 )
 _CENTER_NODES = (
-    b'  <node id="5" visible="true" version="1" lat="1.5720517481554452e-05"'
-    b' lon="0.0"><tag k="local_x" v="0.0" /><tag k="local_y" v="1.75" />'
+    b'  <node id="5" visible="true" version="1" '
+    + _lat_lon(0.0, 1.75)
+    + b'><tag k="local_x" v="0.0" /><tag k="local_y" v="1.75" />'
     b'<tag k="ele" v="0.0" /></node>\n'
-    b'  <node id="6" visible="true" version="1" lat="1.5720517481554452e-05"'
-    b' lon="8.983152841195213e-05"><tag k="local_x" v="10.0" />'
+    b'  <node id="6" visible="true" version="1" '
+    + _lat_lon(10.0, 1.75)
+    + b'><tag k="local_x" v="10.0" />'
     b'<tag k="local_y" v="1.75" /><tag k="ele" v="0.0" /></node>\n'
 )
 _BOUNDS = (
@@ -182,12 +210,13 @@ _EXPECTED = {
     + _centerline_way(5, 6)
     + _relation("yes"),
     "tagged": _HEAD
-    + b'  <node id="1" visible="true" version="1" lat="0.0" lon="0.0">\n'
+    + b'  <node id="1" visible="true" version="1" '
+    + _lat_lon(0.0, 0.0, 0.5)
+    + b">\n"
     b'    <tag k="ele" v="0.5" />\n'
     b'    <tag k="ele" v="0.5" />\n'
     b'  <tag k="local_x" v="0.0" /><tag k="local_y" v="0.0" /></node>\n'
-    b'  <node id="2" visible="true" version="1" lat="0.0"'
-    b' lon="8.983152841195213e-05">\n'
+    b'  <node id="2" visible="true" version="1" ' + _lat_lon(10.0, 0.0) + b">\n"
     b'    <tag k="local_x" v="10.0" />\n'
     b'  <tag k="local_y" v="0.0" /><tag k="ele" v="0.0" /></node>\n'
     + _NODES[_NODES.index(b'  <node id="3"') :]
@@ -216,6 +245,7 @@ def test_local_meters_osm_writes_these_bytes(name: str) -> None:
     data = local_meters_osm(lanelet_map)
     assert type(data) is bytes
     assert data == _EXPECTED[name]
+    assert data == _old_local_meters_osm(lanelet_map)
     # The same bytes again: the map is not changed by writing it.
     assert local_meters_osm(lanelet_map) == data
 
@@ -230,16 +260,88 @@ def test_writing_leaves_the_map_as_it_was() -> None:
     assert CENTERLINE_INVERTED_TAG not in lanelet_map.laneletLayer[20].attributes
 
 
-#: The fixture map's resource: its length and SHA-256.
+def _old_auxiliary_gps(
+    projector: lanelet2.projection.MercatorProjector, x: float, y: float, z: float
+) -> lanelet2.core.GPSPoint:
+    """``_auxiliary_gps()`` as t4_scene.map_resource had it before the move
+    (#2122), verbatim: the oracle the fixture map's bytes are compared with."""
+    if not all(math.isfinite(v) for v in (x, y, z)):
+        raise ValueError(f"the map has a point at ({x}, {y}, {z}), which is not finite")
+    gps = projector.reverse(lanelet2.core.BasicPoint3d(x, y, z))
+    back = projector.forward(gps)
+    if abs(back.x - x) > 1e-6 or abs(back.y - y) > 1e-6:
+        raise ValueError(
+            f"the map's point ({x}, {y}) is too far out for the LOCAL_METERS profile"
+        )
+    return gps
+
+
+def _old_local_meters_osm(lanelet_map: lanelet2.core.LaneletMap) -> bytes:
+    """``local_meters_osm()`` as t4_scene.map_resource had it before the move
+    (#2122), verbatim but for the helper's name."""
+    projector = lanelet2.projection.MercatorProjector(lanelet2.io.Origin(0, 0))
+    gps = {
+        point.id: _old_auxiliary_gps(projector, point.x, point.y, point.z)
+        for point in lanelet_map.pointLayer
+    }
+    with tempfile.TemporaryDirectory(prefix="t4scene-osm-") as directory:
+        path = Path(directory) / "map.osm"
+        errors = lanelet2.io.writeRobust(str(path), lanelet_map, projector)
+        if errors:
+            raise ValueError(f"Lanelet2 could not write the map: {errors[:3]}")
+        root = ET.fromstring(path.read_bytes())
+    for node in root.findall("node"):
+        point = lanelet_map.pointLayer[int(node.attrib["id"])]
+        lat_lon = gps[point.id]
+        node.set("lat", repr(lat_lon.lat))
+        node.set("lon", repr(lat_lon.lon))
+        tags = {tag.attrib["k"]: tag for tag in node.findall("tag")}
+        for name, value in (
+            ("local_x", point.x),
+            ("local_y", point.y),
+            ("ele", point.z),
+        ):
+            tag = tags.get(name)
+            if tag is None:
+                tag = ET.SubElement(node, "tag", k=name)
+            tag.set("v", repr(float(value)))
+    ways = {int(way.attrib["id"]): way for way in root.findall("way")}
+    for relation in root.findall("relation"):
+        member = relation.find("member[@role='centerline']")
+        if member is None:
+            continue
+        line = lanelet_map.laneletLayer[int(relation.attrib["id"])].centerline
+        stored = [
+            int(nd.attrib["ref"])
+            for nd in ways[int(member.attrib["ref"])].findall("nd")
+        ]
+        desired = [point.id for point in line]
+        if desired not in (stored, stored[::-1]):
+            raise ValueError("Lanelet2 wrote a custom centerline with other points")
+        tag = relation.find(f"tag[@k='{CENTERLINE_INVERTED_TAG}']")
+        if tag is None:
+            tag = ET.SubElement(relation, "tag", k=CENTERLINE_INVERTED_TAG)
+        tag.set("v", "yes" if desired != stored else "no")
+    return ET.tostring(root, encoding="utf-8", xml_declaration=True)
+
+
+#: The fixture map's resource on x86_64: its length and SHA-256.  Its float
+#: text is the platform's (aarch64's is 5 bytes longer), so only an x86_64
+#: run checks these; every run compares with the pre-move oracle.
 _FIXTURE_LENGTH = 12545566
 _FIXTURE_SHA256 = "d0b87b29079de2ba1940eccecad310b99080f5ba4d41a6267a855bebf43760ce"
 
 
 def test_the_fixture_maps_bytes_are_these() -> None:
-    data = local_meters_osm(_fixture())
+    lanelet_map = _fixture()
+    data = local_meters_osm(lanelet_map)
     assert data.startswith(_HEAD)
-    assert len(data) == _FIXTURE_LENGTH
-    assert hashlib.sha256(data).hexdigest() == _FIXTURE_SHA256
+    assert data.endswith(b"</osm>")
+    assert data.count(b"<node ") == len(lanelet_map.pointLayer)
+    assert data == _old_local_meters_osm(lanelet_map)
+    if platform.machine() in ("x86_64", "AMD64"):
+        assert len(data) == _FIXTURE_LENGTH
+        assert hashlib.sha256(data).hexdigest() == _FIXTURE_SHA256
 
 
 def test_the_resource_digest_hashes_the_profile_then_the_bytes() -> None:
@@ -307,15 +409,28 @@ def test_a_point_the_profile_cannot_hold_is_refused(
 
 
 @pytest.mark.parametrize(
-    ("x", "y", "length"),
-    [(1e9, 0.0, 271), (0.0, 3e7, 269), (0.0, 2e7, 269)],
+    ("x", "y", "local"),
+    [
+        (1e9, 0.0, b'<tag k="local_x" v="1000000000.0" /><tag k="local_y" v="0.0" />'),
+        (0.0, 3e7, b'<tag k="local_x" v="0.0" /><tag k="local_y" v="30000000.0" />'),
+        (0.0, 2e7, b'<tag k="local_x" v="0.0" /><tag k="local_y" v="20000000.0" />'),
+    ],
 )
 def test_a_far_point_mercator_takes_back_is_written(
-    x: float, y: float, length: int
+    x: float, y: float, local: bytes
 ) -> None:
     lanelet_map = lanelet2.core.LaneletMap()
     lanelet_map.add(_point(1, x, y))
-    assert len(local_meters_osm(lanelet_map)) == length
+    data = local_meters_osm(lanelet_map)
+    assert data == (
+        _HEAD
+        + b'  <node id="1" visible="true" version="1" '
+        + _lat_lon(x, y)
+        + b">"
+        + local
+        + b'<tag k="ele" v="0.0" /></node>\n</osm>'
+    )
+    assert data == _old_local_meters_osm(lanelet_map)
 
 
 def test_a_map_lanelet2_cannot_write_is_refused_with_its_first_errors() -> None:

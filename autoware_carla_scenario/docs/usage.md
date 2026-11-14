@@ -2096,7 +2096,9 @@ With `"launcher": "slurm"`, `"slurm"` holds the `launcher.*` keys:
 `{"partition": "main", "array_parallelism": 2, "cases_per_task": null,
 "time": "02:00:00", "mem": "12G", "gres": null, "start_stagger_seconds": 30,
 "remote_cwd": "workspace/OnePlanner", "python": ".venv/bin/python",
-"setup": "source ~/env.sh", "env": {"NAME": "value"}}` (`setup`: a shell line
+"setup": "source ~/env.sh", "env": {"NAME": "value"}}` (a number: a JSON
+number or its text, unset when missing, null or blank, so `0` is a count of
+0 and refused, and `0` seconds no stagger; `setup`: a shell line
 per line, without `${...}` or a backslash continuing it; `env`: `NAME=value`
 lines, or a mapping, each value exported as written, so without `${...}` either
 -- an OmegaConf interpolation in the override the viewer passes on).

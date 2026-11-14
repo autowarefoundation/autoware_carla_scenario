@@ -1803,6 +1803,59 @@ def test_a_raw_send_and_a_named_send_still_parse(
     assert named.fields["On"].constant == 0
 
 
+@pytest.mark.parametrize("key", ["messages", "inputs"])
+@pytest.mark.parametrize("value", [False, 0, 0.0, "", {}, 1, "x"])
+def test_device_messages_or_inputs_that_are_not_a_list_are_refused(
+    dbc: Path, key: str, value: Any
+) -> None:
+    """A falsy `messages` or `inputs` is not read as none (#2134)."""
+    document = _hils_config("mem://x", dbc)
+    document["devices"]["can"][key] = value
+    with pytest.raises(HilsConfigError) as error:
+        parse_config(document)
+    assert str(error.value) == f"devices.can.{key}: expected a list"
+
+
+@pytest.mark.parametrize("key", ["messages", "inputs"])
+@pytest.mark.parametrize("value", [None, []])
+def test_device_messages_or_inputs_that_are_null_or_empty_are_none(
+    dbc: Path, key: str, value: Any
+) -> None:
+    document = _hils_config("mem://x", dbc)
+    document["devices"]["can"][key] = value
+    [device] = parse_config(document).devices
+    assert getattr(device, key) == ()
+    del document["devices"]["can"][key]
+    [device] = parse_config(document).devices
+    assert getattr(device, key) == ()
+
+
+@pytest.mark.parametrize("value", [False, 0, 1, 0.0])
+def test_a_canvas_that_is_not_text_is_refused(dbc: Path, value: Any) -> None:
+    """A falsy `canvas` is not read as none (#2134): it is not text."""
+    with pytest.raises(HilsConfigError) as error:
+        parse_config({**_hils_config("mem://x", dbc), "canvas": value})
+    assert str(error.value).startswith("canvas: expected text, got ")
+
+
+def test_an_empty_canvas_is_refused(dbc: Path) -> None:
+    """`canvas: ""` names no file: it would resolve to the directory (#2134)."""
+    with pytest.raises(HilsConfigError) as error:
+        parse_config({**_hils_config("mem://x", dbc), "canvas": ""})
+    assert str(error.value) == (
+        'canvas: "" names no file; leave canvas out, or null, for none'
+    )
+
+
+def test_a_missing_or_null_canvas_is_none(dbc: Path, tmp_path: Path) -> None:
+    assert parse_config(_hils_config("mem://x", dbc)).canvas is None
+    document = {**_hils_config("mem://x", dbc), "canvas": None}
+    assert parse_config(document).canvas is None
+    document["canvas"] = "canvas.yaml"
+    expected = (tmp_path / "canvas.yaml").resolve()
+    assert parse_config(document, tmp_path).canvas == expected
+
+
 @pytest.mark.parametrize(
     "step",
     [

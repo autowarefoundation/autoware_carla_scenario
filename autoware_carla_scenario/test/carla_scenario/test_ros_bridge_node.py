@@ -367,10 +367,49 @@ def _operation_mode(mode: int, engaged: bool) -> SimpleNamespace:
     )
 
 
+#: How many times, and for how long, :func:`_repeat_until` steps the node.
+#: Each step's gRPC call is bounded by the node's own timeout (1 s for
+#: GetMission, 5 s for ReportReadiness), so this only ends a test whose node
+#: never gets there.
+_STEPS = 20
+_STEPS_TIMEOUT_S = 30.0
+
+
+def _repeat_until(step: Callable[[], None], predicate: Callable[[], Any]) -> None:
+    """Run *step* until *predicate* holds: at least once, at most ``_STEPS`` times.
+
+    A step's GetMission and ReportReadiness are blocking calls to the real
+    server, and on a loaded machine one can time out -- the first, which also
+    connects the channel, most of all.  The node retries it on its next tick
+    (or route watch), so a test that waits on the round trip steps the node
+    until it has landed, as its timer would, instead of once (#2148).
+    Whatever a test says did *not* happen is unaffected: the node never
+    reaches the bridge any sooner for being stepped more.
+    """
+    deadline = time.monotonic() + _STEPS_TIMEOUT_S
+    for _ in range(_STEPS):
+        step()
+        if predicate():
+            return
+        if time.monotonic() > deadline:
+            break
+    raise AssertionError(f"not reached after {_STEPS} steps: {predicate}")
+
+
+def _tick_until(node: Any, predicate: Callable[[], Any]) -> None:
+    """Tick *node* until *predicate* holds (see :func:`_repeat_until`)."""
+    _repeat_until(node._tick, predicate)  # noqa: SLF001
+
+
+def _watching(node: Any) -> bool:
+    """Whether the node has reported ready and started its route watch."""
+    return any(t.callback == node._watch_route for t in node.timers)  # noqa: SLF001
+
+
 def _drive_to_ready(node: Any) -> None:
     """Route, engage and report ready, as Autoware would answer."""
     node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001 - AD API up
-    node._tick()  # noqa: SLF001 - the mission
+    _tick_until(node, lambda: _route_calls(node))  # the mission
     _route_calls(node)[-1][1].answer(True)
     node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001
     node._on_operation_mode_state(_operation_mode(1, False))  # noqa: SLF001
@@ -379,7 +418,7 @@ def _drive_to_ready(node: Any) -> None:
     node._on_operation_mode_state(  # noqa: SLF001
         _operation_mode(OPERATION_MODE_AUTONOMOUS, True)
     )
-    node._tick()  # noqa: SLF001 - reports readiness
+    _tick_until(node, lambda: _watching(node))  # reports readiness
 
 
 def _watch(node: Any) -> None:
@@ -387,6 +426,12 @@ def _watch(node: Any) -> None:
     watches = [t for t in node.timers if t.callback == node._watch_route]  # noqa: SLF001
     assert len(watches) == 1, "the route watch is running"
     watches[0].callback()
+
+
+def _watch_until(node: Any, predicate: Callable[[], Any]) -> None:
+    """Route-watch *node* until *predicate* holds: a re-route is seen only once
+    its GetMission lands (see :func:`_repeat_until`)."""
+    _repeat_until(lambda: _watch(node), predicate)
 
 
 # ---------------------------------------------------------------------------
@@ -401,7 +446,7 @@ def test_the_route_asked_for_passes_through_the_scenarios_waypoints(
     node = _node(node_module, bridge)
     node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001 - AD API up
 
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: _route_calls(node))
 
     ((request, _future),) = _route_calls(node)
     assert _xs(request) == ([30.0, 60.0], 90.0)
@@ -415,7 +460,7 @@ def test_a_mission_without_waypoints_asks_for_none(
     node = _node(node_module, bridge)
     node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001 - AD API up
 
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: _route_calls(node))
 
     ((request, _future),) = _route_calls(node)
     assert _xs(request) == ([], 90.0)
@@ -450,7 +495,7 @@ def test_a_re_route_changes_autowares_route(
     assert _change_calls(node) == []
 
     bridge.reroute(BridgePose.from_yaw(120.0, 0.0, 0.0, 0.0), _WAYPOINTS)
-    _watch(node)
+    _watch_until(node, lambda: _change_calls(node))
 
     ((request, future),) = _change_calls(node)
     assert _xs(request) == ([30.0, 60.0], 120.0)
@@ -464,7 +509,7 @@ def test_a_re_route_changes_autowares_route(
     assert len(_change_calls(node)) == 1
 
     bridge.reroute(_GOAL)
-    _watch(node)
+    _watch_until(node, lambda: len(_change_calls(node)) == 2)
     assert [_xs(call[0]) for call in _change_calls(node)] == [
         ([30.0, 60.0], 120.0),
         ([], 90.0),
@@ -478,7 +523,7 @@ def test_no_route_change_before_readiness(
     bridge.configure(_INITIAL, _GOAL)
     node = _node(node_module, bridge)
     node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001 - AD API up
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: _route_calls(node))
     _route_calls(node)[-1][1].answer(True)
     node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001
 
@@ -493,8 +538,8 @@ def test_no_route_change_before_readiness(
     node._on_operation_mode_state(  # noqa: SLF001
         _operation_mode(OPERATION_MODE_AUTONOMOUS, True)
     )
-    node._tick()  # noqa: SLF001 - ready now
-    _watch(node)
+    _tick_until(node, lambda: _watching(node))  # ready now
+    _watch_until(node, lambda: _change_calls(node))
 
     ((request, _future),) = _change_calls(node)
     assert _xs(request) == ([], 120.0)
@@ -513,7 +558,7 @@ def test_a_change_waits_for_the_route_to_be_set(
     assert _change_calls(node) == []
 
     node._on_route_state(_route_state(ROUTE_STATE_SET))  # noqa: SLF001
-    _watch(node)
+    _watch_until(node, lambda: _change_calls(node))
     assert len(_change_calls(node)) == 1
 
 
@@ -525,7 +570,7 @@ def test_a_rejected_change_is_retried_then_given_up_on(
     _drive_to_ready(node)
     bridge.reroute(BridgePose.from_yaw(120.0, 0.0, 0.0, 0.0))
 
-    _watch(node)
+    _watch_until(node, lambda: _change_calls(node))
     _change_calls(node)[-1][1].answer(False, "reroute is not safe")
     _watch(node)  # retried
     _change_calls(node)[-1][1].answer(False, "reroute is not safe")
@@ -538,7 +583,7 @@ def test_a_rejected_change_is_retried_then_given_up_on(
 
     # A later re-route is tried afresh.
     bridge.reroute(BridgePose.from_yaw(150.0, 0.0, 0.0, 0.0))
-    _watch(node)
+    _watch_until(node, lambda: len(_change_calls(node)) == 3)
     assert _xs(_change_calls(node)[-1][0]) == ([], 150.0)
 
 
@@ -554,7 +599,7 @@ def test_a_re_route_after_arrival_clears_the_route_sets_it_and_engages_again(
     node._on_operation_mode_state(_operation_mode(1, False))  # noqa: SLF001 - STOP
 
     bridge.reroute(BridgePose.from_yaw(120.0, 0.0, 0.0, 0.0), _WAYPOINTS)
-    _watch(node)
+    _watch_until(node, lambda: node.clients[ROUTING_CLEAR_ROUTE_SERVICE].calls)
 
     assert _change_calls(node) == []
     clears = node.clients[ROUTING_CLEAR_ROUTE_SERVICE].calls
@@ -628,7 +673,7 @@ def test_the_node_does_not_ask_for_the_mission_before_the_ad_api_is_up(
     assert not bridge.client_connected
 
     node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: bridge.client_connected)
     assert bridge.client_connected
     assert len(_route_calls(node)) == 1
 
@@ -642,7 +687,7 @@ def test_the_node_waits_only_for_the_services_it_calls(
     node.clients["/api/localization/initialize"].ready = False
     node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
 
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: bridge.client_connected)
 
     assert bridge.client_connected
 
@@ -668,7 +713,12 @@ def test_the_node_stops_asking_while_the_ad_api_is_down(
     assert len(errors) == 1 and "went away" in errors[0]
 
     node.clients[ROUTING_SET_ROUTE_POINTS_SERVICE].ready = True
-    _watch(node)
+
+    def _asked_again() -> bool:
+        since = bridge.seconds_since_mission_poll()
+        return since is not None and since < silent
+
+    _watch_until(node, _asked_again)
     back = bridge.seconds_since_mission_poll()
     assert back is not None and back < silent
 
@@ -722,8 +772,7 @@ def test_a_stack_whose_ad_api_is_not_up_stays_in_the_paced_boot_phase(
 
         _set_services_ready(node, True)
         node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
-        node._tick()  # noqa: SLF001
-        assert bridge.client_connected
+        _tick_until(node, lambda: bridge.client_connected)
         for _ in range(5):
             entity.on_tick(world, 0.0)
         assert entity.termination_reason == "The Autoware stack not ready after 5 ticks"
@@ -759,7 +808,7 @@ def test_initializing_localization_does_not_wait_for_a_route_state(
     assert waiting and "localization state" in waiting[-1]
 
     node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: initialize)
     # It has the mission, but has not reported in: it cannot be routed yet.
     assert bridge.seconds_since_mission_poll() is not None
     assert not bridge.client_connected
@@ -769,7 +818,7 @@ def test_initializing_localization_does_not_wait_for_a_route_state(
     initialize[-1][1].answer(True)
     node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
     assert _route_calls(node) == []
-    node._tick()  # noqa: SLF001 - reports in
+    _tick_until(node, lambda: bridge.client_connected)  # reports in
     assert bridge.client_connected and not bridge.is_ready()
     node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
     assert len(_route_calls(node)) == 1
@@ -781,7 +830,7 @@ def test_initializing_localization_does_not_wait_for_a_route_state(
     node._on_operation_mode_state(  # noqa: SLF001
         _operation_mode(OPERATION_MODE_AUTONOMOUS, True)
     )
-    node._tick()  # noqa: SLF001
+    _tick_until(node, bridge.is_ready)
     assert bridge.is_ready()
 
 
@@ -808,17 +857,27 @@ class _RpcError(grpc.RpcError):
         return "UNAVAILABLE"
 
 
-def _readiness_reports(node: Any, monkeypatch: pytest.MonkeyPatch) -> list[bool]:
-    """Record each ReportReadiness the node sends (it still reaches the bridge)."""
-    reports: list[bool] = []
+def _readiness_reports(
+    node: Any, monkeypatch: pytest.MonkeyPatch
+) -> tuple[list[bool], list[bool]]:
+    """Record each ReportReadiness the node sends, and each that reaches the bridge.
+
+    Whether a call lands within one tick is up to the machine (the node
+    retries one that fails on its next tick, #2148), so a test waits for it
+    to land and checks what landed -- but one that says the node does not
+    report checks what it sent, failed attempts included.
+    """
+    sent: list[bool] = []
+    landed: list[bool] = []
     send = node._client.report_readiness  # noqa: SLF001
 
     def _report(ready: bool, timeout: Any = None) -> None:
-        reports.append(ready)
+        sent.append(ready)
         send(ready, timeout=timeout)
+        landed.append(ready)
 
     monkeypatch.setattr(node._client, "report_readiness", _report)  # noqa: SLF001
-    return reports
+    return sent, landed
 
 
 def test_the_node_reports_in_once_localization_is_initialized(
@@ -835,29 +894,32 @@ def test_the_node_reports_in_once_localization_is_initialized(
         initialize_localization=True,
         require_localization_initialized=True,
     )
-    reports = _readiness_reports(node, monkeypatch)
+    sent, reports = _readiness_reports(node, monkeypatch)
     initialize = node.clients["/api/localization/initialize"].calls
     node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
 
-    for _ in range(5):
+    _tick_until(node, lambda: initialize)  # the mission
+    initialize[-1][1].answer(False, "ndt_align not ready")
+    for _ in range(4):
         node._tick()  # noqa: SLF001
         initialize[-1][1].answer(False, "ndt_align not ready")
     assert len(initialize) == 5
     assert bridge.seconds_since_mission_poll() is not None
-    assert reports == []
+    assert sent == []
     assert not bridge.client_connected
 
     node._tick()  # noqa: SLF001
     initialize[-1][1].answer(True)
     node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: reports)
     assert reports == [False]
     assert bridge.client_connected and not bridge.is_ready()
 
-    # Once only.
+    # Once only: not even tried again.
+    tried = len(sent)
     node._tick()  # noqa: SLF001
     node._tick()  # noqa: SLF001
-    assert reports == [False]
+    assert reports == [False] and len(sent) == tried
 
 
 def test_a_gnss_initialized_stack_reports_in_without_an_initialize(
@@ -873,10 +935,10 @@ def test_a_gnss_initialized_stack_reports_in_without_an_initialize(
         initialize_localization=True,
         require_localization_initialized=True,
     )
-    reports = _readiness_reports(node, monkeypatch)
+    sent, reports = _readiness_reports(node, monkeypatch)
     node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
 
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: reports)
 
     assert node.clients["/api/localization/initialize"].calls == []
     assert reports == [False]
@@ -896,14 +958,15 @@ def test_a_gnss_initialization_while_the_nodes_is_pending_reports_in(
         initialize_localization=True,
         require_localization_initialized=True,
     )
-    reports = _readiness_reports(node, monkeypatch)
+    sent, reports = _readiness_reports(node, monkeypatch)
+    initialize = node.clients["/api/localization/initialize"].calls
     node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
-    node._tick()  # noqa: SLF001
-    assert len(node.clients["/api/localization/initialize"].calls) == 1
-    assert reports == []
+    _tick_until(node, lambda: initialize)
+    assert len(initialize) == 1
+    assert sent == []
 
     node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: reports)
 
     assert reports == [False]
 
@@ -918,13 +981,13 @@ def test_a_node_that_does_not_initialize_localization_reports_in_with_the_missio
     """Its gate already waited for the mission planner: it can be routed."""
     bridge.configure(_INITIAL, _GOAL)
     node = _node(node_module, bridge, auto_engage=auto_engage)
-    reports = _readiness_reports(node, monkeypatch)
+    sent, reports = _readiness_reports(node, monkeypatch)
     node._on_route_state(_route_state(ROUTE_STATE_UNKNOWN))  # noqa: SLF001
     node._tick()  # noqa: SLF001
-    assert reports == [] and bridge.seconds_since_mission_poll() is None
+    assert sent == [] and bridge.seconds_since_mission_poll() is None
 
     node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: reports)
 
     assert reports == [False]
     assert bridge.client_connected and not bridge.is_ready()
@@ -947,14 +1010,15 @@ def test_a_node_without_auto_engage_reports_in_once_localized(
         require_localization_initialized=True,
         auto_engage=auto_engage,
     )
-    reports = _readiness_reports(node, monkeypatch)
+    sent, reports = _readiness_reports(node, monkeypatch)
     node.clients["/api/operation_mode/change_to_autonomous"].ready = auto_engage
+    initialize = node.clients["/api/localization/initialize"].calls
     node._on_localization_state(SimpleNamespace(state=_UNINITIALIZED))  # noqa: SLF001
-    node._tick()  # noqa: SLF001
-    node.clients["/api/localization/initialize"].calls[-1][1].answer(True)
+    _tick_until(node, lambda: initialize)
+    initialize[-1][1].answer(True)
     node._on_localization_state(SimpleNamespace(state=_INITIALIZED))  # noqa: SLF001
 
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: reports)
 
     assert reports == [False]
 
@@ -977,13 +1041,17 @@ def test_a_failed_report_in_is_retried(
 
     monkeypatch.setattr(node._client, "report_readiness", _report)  # noqa: SLF001
     node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
-    node._tick()  # noqa: SLF001
+    _tick_until(node, lambda: attempts)  # the mission, then the failed report
+    assert attempts == [False]
     assert not bridge.client_connected
     assert [m for level, m in node.logger.records if level == "warning"]
 
     node._tick()  # noqa: SLF001
+    assert attempts == [False, False]  # retried on the next tick
+    _tick_until(node, lambda: bridge.client_connected)
 
-    assert attempts == [False, False]
+    # More than once if the retry failed too, and only ever "booted".
+    assert set(attempts) == {False}
     assert bridge.client_connected
 
 
@@ -1054,6 +1122,10 @@ def test_ticks_stay_paced_until_the_stack_can_be_routed(
                 SimpleNamespace(state=_UNINITIALIZED)
             )
         node._on_route_state(_route_state(ROUTE_STATE_UNKNOWN))  # noqa: SLF001
+        if initialize_localization:
+            # The mission, which the first initialize waits for.
+            _tick_until(node, lambda: initialize)
+            initialize[-1][1].answer(False, "ndt_align not ready")
 
         started = time.monotonic()
         for _ in range(20):
@@ -1070,7 +1142,7 @@ def test_ticks_stay_paced_until_the_stack_can_be_routed(
         if initialize_localization:
             # It has the mission, and the scenario says so, once.
             assert bridge.seconds_since_mission_poll() is not None
-            assert len(initialize) == 20
+            assert len(initialize) == 21
             assert len(took) == 1
         else:
             assert bridge.seconds_since_mission_poll() is None
@@ -1085,8 +1157,7 @@ def test_ticks_stay_paced_until_the_stack_can_be_routed(
             )
         else:
             node._on_route_state(_route_state(ROUTE_STATE_UNSET))  # noqa: SLF001
-        node._tick()  # noqa: SLF001
-        assert bridge.client_connected
+        _tick_until(node, lambda: bridge.client_connected)
 
         started = time.monotonic()
         for _ in range(5):

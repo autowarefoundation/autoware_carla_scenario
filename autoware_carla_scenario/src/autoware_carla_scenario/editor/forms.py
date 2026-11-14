@@ -3,11 +3,15 @@
 The inspector renders controls from :class:`FieldSpec` metadata, so parsing
 them back is metadata-driven too: this module never looks at a primitive's
 ``type``, only at the kinds of fields its spec declares.
+
+The whole numbers a form posts -- a list field's items and a record list's
+row count -- are parsed by :mod:`.form_values`, which the library check
+compiles (#2135).
 """
 
 from __future__ import annotations
 
-import re
+import math
 from typing import Any, Mapping, Sequence
 
 from ..trajectory.authoring import (
@@ -23,6 +27,11 @@ from ..authoring.registry import (
     default_params,
     read_bool,
 )
+from .form_values import LIST_SEPARATORS as _LIST_SEPARATORS  # noqa: F401  (its old name)
+from .form_values import MAX_RECORDS as _MAX_RECORDS  # noqa: F401  (its old name)
+from .form_values import parse_int_text as _parse_int_text
+from .form_values import parse_list_int as _parse_list_int
+from .form_values import row_count as _row_count
 
 __all__ = [
     "bool_choice",
@@ -41,14 +50,6 @@ __all__ = [
 #: ``up`` or ``down`` with ``:<i>`` (``partials/fields.html`` writes them).
 _ROWS = "__rows"
 _OP = "__op"
-
-#: More records than any list is written with, so a forged row count is
-#: refused rather than looped over.
-_MAX_RECORDS = 1000
-
-#: Separators accepted in a list-of-integers field: commas, spaces, newlines.
-_LIST_SEPARATORS = re.compile(r"[,\s]+")
-
 
 #: What a nullable bool's three-way select posts for each choice: keep the
 #: run's setting (``None``), on, off.
@@ -91,18 +92,6 @@ def _parse_bool(raw: Any) -> bool:
     return flag
 
 
-def _parse_list_int(part: str) -> int:
-    """Return one item of an id list as an int.
-
-    Raises:
-        ValueError: If *part* is not a whole number.
-    """
-    try:
-        return int(part)
-    except ValueError:
-        raise ValueError(f"must be whole numbers, got {part!r}") from None
-
-
 def parse_int_list(raw: Any) -> Any:
     """Return *raw* as a list of ints, or verbatim when it is an interpolation.
 
@@ -116,7 +105,7 @@ def parse_int_list(raw: Any) -> Any:
         return []
     if REFERENCE_PATTERN.match(text):
         return text
-    return [_parse_list_int(part) for part in _LIST_SEPARATORS.split(text) if part]
+    return _parse_int_text(text)
 
 
 def parse_value(spec: FieldSpec, raw: Any, *, present: bool) -> Any:
@@ -149,7 +138,12 @@ def parse_value(spec: FieldSpec, raw: Any, *, present: bool) -> Any:
     if spec.kind in INT_KINDS:
         return int(text)
     if spec.kind == "number":
-        return float(text)
+        number = float(text)
+        # "nan" and "inf" parse, but no field means them (the validator's
+        # _coercible_float, and the service's _as_float, #934).
+        if not math.isfinite(number):
+            raise ValueError(f"must be a finite number, got {raw!r}")
+        return number
     if spec.kind in (*INT_LIST_KINDS, "int_list_or_ref"):
         return parse_int_list(text)
     if spec.kind == "trajectory":
@@ -216,9 +210,7 @@ def parse_records(spec: FieldSpec, form: Mapping[str, Any]) -> list[dict[str, An
         ValueError: If a record's field cannot be parsed, or the row count or
             the button is malformed.
     """
-    count = int(str(form[f"{spec.name}.{_ROWS}"]))
-    if not 0 <= count <= _MAX_RECORDS:
-        raise ValueError(f"{count} rows")
+    count = _row_count(str(form[f"{spec.name}.{_ROWS}"]))
     # Each row's fields, by row, in one pass over the form.
     posted: list[dict[str, Any]] = [{} for _ in range(count)]
     prefix = f"{spec.name}."

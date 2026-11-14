@@ -18,7 +18,7 @@ from collections.abc import Iterator
 from email.message import Message
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import IO, Optional
+from typing import Any, Optional
 import urllib.error
 
 import pytest
@@ -739,14 +739,7 @@ def test_an_unwritable_lock_file_does_not_stop_a_check(
     if not lock_left:
         lock.unlink()
     opened: list[str] = []
-
-    def read_only_open(file: Path, mode: str = "r") -> IO[str]:
-        opened.append(mode)
-        if mode != "r":
-            raise PermissionError(errno.EACCES, "Permission denied", str(file))
-        return open(file, mode)  # noqa: SIM115
-
-    monkeypatch.setattr(carla_install, "open", read_only_open, raising=False)
+    _read_only(monkeypatch, opened)
     capsys.readouterr()
     assert install(url) == install_dir() / LAUNCHER
     captured = capsys.readouterr()
@@ -756,15 +749,26 @@ def test_an_unwritable_lock_file_does_not_stop_a_check(
     assert lock.exists() is lock_left
 
 
-def _read_only(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The lock file can be opened read-only only, as in another user's install."""
+def _read_only(
+    monkeypatch: pytest.MonkeyPatch, opened: Optional[list[str]] = None
+) -> None:
+    """The lock file can be opened read-only only, as in another user's install.
 
-    def read_only_open(file: Path, mode: str = "r") -> IO[str]:
+    The lock is opened with ``Path.open()`` (``carla_install_paths._open_lock``,
+    #2144): the modes it is opened in are appended to *opened*.
+    """
+    real = Path.open
+
+    def read_only_open(file: Path, mode: str = "r", *args: Any, **kwargs: Any) -> Any:
+        if file.name != "carla.lock":
+            return real(file, mode, *args, **kwargs)
+        if opened is not None:
+            opened.append(mode)
         if mode != "r":
             raise PermissionError(errno.EACCES, "Permission denied", str(file))
-        return open(file, mode)  # noqa: SIM115
+        return real(file, mode, *args, **kwargs)
 
-    monkeypatch.setattr(carla_install, "open", read_only_open, raising=False)
+    monkeypatch.setattr(Path, "open", read_only_open)
 
 
 def _nfs_flock(monkeypatch: pytest.MonkeyPatch) -> None:

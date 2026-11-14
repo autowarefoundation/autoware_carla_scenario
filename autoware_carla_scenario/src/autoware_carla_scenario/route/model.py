@@ -499,7 +499,11 @@ def parse_route_search(raw: Mapping[str, Any]) -> RouteSearchSpec:
     unknown = sorted(set(raw) - _SEARCH_KEYS)
     if unknown:
         raise ValueError(f"a route search does not take {unknown}")
-    segments_raw = raw.get("segments") or []
+    # Only a missing key or null has no segments: false or 0 is not a list
+    # (#2134).
+    segments_raw = raw.get("segments")
+    if segments_raw is None:
+        segments_raw = []
     if not isinstance(segments_raw, Sequence) or isinstance(segments_raw, str):
         raise ValueError("route segments must be a list")
     if not segments_raw:
@@ -710,22 +714,60 @@ class RouteMatch:
     def from_config(cls, raw: Mapping[str, Any]) -> Optional["RouteMatch"]:
         """The match ``scenario.route`` holds, or ``None`` when it holds none.
 
+        Only an absent or null key is its default (no lanelets, ``0``): a
+        whole number is ``2``, ``2.0`` or ``"2"`` -- not ``2.5``, which
+        ``int()`` truncated, a boolean or a blank, as every whole-number
+        setting a run reads (:func:`_whole_number`) -- and a list key is a
+        list, not a string, which would be read a character at a time
+        (#2143).
+
         Raises:
             ValueError: On keys that do not describe one route, naming the
-                key of a value that is not a number.
+                key of a value that is not a number, not a whole number or
+                not a list.
         """
 
         def whole(key: str, value: Any) -> int:
-            # int() as before; what it cannot read, refused by its key (#1660).
+            # The rule of every whole-number setting (_whole_number): no
+            # truncated 2.5, boolean or blank; refused by its key (#1660,
+            # #2143).
+            number: Optional[int] = None
             try:
-                return int(value)
-            except (TypeError, ValueError, OverflowError):
+                number = _whole_number(key, value)
+            except ValueError:
+                number = None
+            if number is None:
                 raise ValueError(
                     f"scenario.route.{key}: {shown(value)} is not a whole number"
+                )
+            return number
+
+        def items(key: str) -> list[Any]:
+            # A list key's items; absent or null is none (#2143).
+            value = raw.get(key)
+            if value is None:
+                return []
+            if isinstance(value, (str, bytes)) or isinstance(value, Mapping):
+                raise ValueError(f"scenario.route.{key}: {shown(value)} is not a list")
+            try:
+                return list(value)
+            except TypeError:
+                raise ValueError(
+                    f"scenario.route.{key}: {shown(value)} is not a list"
                 ) from None
 
+        def given(key: str, default: Any) -> Any:
+            # The key's value; *default* only when absent or null (#2143).
+            value = raw.get(key)
+            return default if value is None else value
+
         def number(key: str, value: Any) -> float:
-            # float() as before; what it cannot read, refused by its key (#1660).
+            # float() as before; what it cannot read, refused by its key
+            # (#1660), and a boolean, which it read as 0 or 1 (#2143).
+            if isinstance(value, bool):
+                raise ValueError(
+                    f"scenario.route.{key}: {shown(value)} is not a number"
+                )
             try:
                 return float(value)
             except (TypeError, ValueError):
@@ -737,16 +779,15 @@ class RouteMatch:
                     f"scenario.route.{key}: {shown(value)} is not finite"
                 ) from None
 
-        lanelet_ids = [whole("lanelet_ids", v) for v in (raw.get("lanelet_ids") or [])]
+        lanelet_ids = [whole("lanelet_ids", v) for v in items("lanelet_ids")]
         if not lanelet_ids:
             return None
-        kinds = [str(v) for v in (raw.get("segment_kinds") or [])]
-        ends = [number("segment_ends", v) for v in (raw.get("segment_ends") or [])]
+        kinds = [str(v) for v in items("segment_kinds")]
+        ends = [number("segment_ends", v) for v in items("segment_ends")]
         counts = [
-            whole("segment_lanelet_counts", v)
-            for v in (raw.get("segment_lanelet_counts") or [])
+            whole("segment_lanelet_counts", v) for v in items("segment_lanelet_counts")
         ]
-        turns = [str(v) for v in (raw.get("junction_turns") or [])]
+        turns = [str(v) for v in items("junction_turns")]
         if not (len(kinds) == len(ends) == len(counts)) or not kinds:
             raise ValueError(
                 "scenario.route: segment_kinds, segment_ends and "
@@ -774,10 +815,10 @@ class RouteMatch:
             start, first = end, first + count
         return cls(
             lanelet_ids=tuple(lanelet_ids),
-            start_s=number("start_s", raw.get("start_s") or 0.0),
-            end_s=number("end_s", raw.get("end_s") or 0.0),
+            start_s=number("start_s", given("start_s", 0.0)),
+            end_s=number("end_s", given("end_s", 0.0)),
             segments=tuple(segments),
-            index=whole("index", raw.get("index") or 0),
+            index=whole("index", given("index", 0)),
         )
 
 

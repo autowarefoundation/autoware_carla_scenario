@@ -26,9 +26,10 @@ import signal
 import subprocess
 import sys
 import threading
+import time
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from ..slurm.manifest import (
     BatchLayout,
@@ -129,13 +130,17 @@ class SlurmOptions(_SlurmOptions):
             return value or None
 
         def number(key: str, kind: type) -> Any:
-            value = text(key)
+            # Unset only when missing, null or blank: JSON's 0 is the number
+            # 0, as "0" is, not an unset field.
+            raw = data.get(key)
+            value = None if raw is None else str(raw).strip() or None
             if value is None:
                 return None
             try:
                 parsed = kind(value)
             except ValueError as exc:
-                raise ValueError(f"{key} must be a number, not {value!r}") from exc
+                what = "a whole number" if kind is int else "a number"
+                raise ValueError(f"{key} must be {what}, not {value!r}") from exc
             check_at_least(key, parsed, 0 if kind is float else 1)
             return parsed
 
@@ -200,15 +205,16 @@ def build_command(
 
 def _now_iso() -> str:
     """Now, in UTC to the second, as ISO 8601 (``2026-01-01T00:00:00+00:00``):
-    when a :class:`Submission` started."""
-    if TYPE_CHECKING:
-        # Codon's datetime has no timezone and no isoformat(): the check
-        # compiles a str in its place (docs/typecheck.md).
-        return ""
-    else:
-        from datetime import datetime, timezone  # noqa: PLC0415
+    when a :class:`Submission` started.
 
-        return datetime.now(timezone.utc).isoformat(timespec="seconds")
+    ``datetime.now(timezone.utc).isoformat(timespec="seconds")``, spelled out
+    from :func:`time.gmtime`'s fields, as Codon's datetime holds no timezone
+    (no ``timezone.utc``, no aware ``now()``) and the check compiles this.
+    """
+    now = time.gmtime()
+    date = f"{now.tm_year:04d}-{now.tm_mon:02d}-{now.tm_mday:02d}"
+    clock = f"{now.tm_hour:02d}:{now.tm_min:02d}:{now.tm_sec:02d}"
+    return f"{date}T{clock}+00:00"
 
 
 @dataclass

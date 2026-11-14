@@ -404,6 +404,10 @@ def replace(
 O_WRONLY = 1
 O_EXCL = 128
 
+# The flag of os.open() slurm.scripts writes a job script over an older one
+# with (Linux's value, as O_CREAT's above; 0o1000 on x86_64 and aarch64).
+O_TRUNC = 512
+
 # The flags maps.cache opens an entry's lock file with (Linux's values, the
 # same on x86_64 and aarch64: O_CLOEXEC is 0o2000000 on both).
 O_RDWR = 2
@@ -468,13 +472,50 @@ def fstat(fd: int) -> stat_result:
 
 
 # write(fd, data, /): writes *data*, bytes (a str here: the check reads bytes
-# as str, so a str CPython refuses passes too), to the descriptor; the number
-# of bytes written (0 here, as nothing is written).
+# as str, so a str CPython refuses passes too) or a memoryview of them (the
+# stand-in the checker puts in place of memoryview(), _tc.codon), to the
+# descriptor; the number of bytes written (0 here, as nothing is written).
 def write(*args) -> int:
     _positional_only(args, 2, "write()")
     fd: int = args[0]
-    data: str = args[1]
+    data = args[1]
+    if isinstance(data, str):
+        pass
+    elif hasattr(data, "_acs_memoryview_bytes"):
+        pass
+    else:
+        compile_error("write(): the data is bytes or a memoryview")
     return 0
+
+
+# ftruncate(fd, length, /): cuts the descriptor's file to *length* bytes
+# (nothing is cut here).
+def ftruncate(*args) -> None:
+    _positional_only(args, 2, "ftruncate()")
+    fd: int = args[0]
+    length: int = args[1]
+
+
+# fsync(fd): writes the descriptor's file out to the disk; an int, by
+# position or as `fd` (CPython also takes an object with a fileno(), which
+# is not declared). Nothing is written here.
+def fsync(fd: int) -> None:
+    pass
+
+
+# chown(path, uid, gid, *, dir_fd=None, follow_symlinks=True): gives *path*
+# that owner and group (nothing is changed here). A descriptor is not
+# declared.
+def chown(
+    path,
+    uid: int,
+    gid: int,
+    *_kw,
+    dir_fd: Optional[int] = None,
+    follow_symlinks: bool = True,
+) -> None:
+    _keyword_only(_kw, "chown(): dir_fd, follow_symlinks")
+    fspath(path)
 
 
 # walk(top, topdown=True, onerror=None, followlinks=False): a generator of
