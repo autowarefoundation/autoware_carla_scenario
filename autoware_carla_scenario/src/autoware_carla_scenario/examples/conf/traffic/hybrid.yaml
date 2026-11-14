@@ -1,0 +1,101 @@
+# @package _global_
+traffic:
+  # CARLA's TrafficManager drives every vehicle in CARLA, as under
+  # traffic_manager; background traffic far from the ego (and from every
+  # other vehicle that is not background traffic) leaves CARLA for a
+  # mesoscopic model of the map's roads -- SUMO's network of it, so this
+  # needs the `sumo` extra -- and comes back on autopilot as it nears one.
+  # For wide maps; the scenario's own vehicles stay in CARLA.
+  backend: hybrid
+  options:
+    # As traffic_manager's (traffic_manager.port decides where it is set).
+    port: ${oc.select:traffic_manager.port,null}
+    # A SUMO network of the map to use as it is (null: convert the world's
+    # OpenDRIVE, cached in cache_dir, null: the sumo backend's cache).
+    net_path: null
+    cache_dir: null
+    mesoscopic:
+      # Off: the TrafficManager alone, as traffic=traffic_manager.
+      enabled: true
+      # Back into CARLA this close; out further than meso_radius_m (null:
+      # 1.25 x micro_radius_m).
+      micro_radius_m: 200.0
+      meso_radius_m: null
+      update_interval_s: 1.0
+      # Also microscopic: a vehicle that will come within micro_radius_m in
+      # the next horizon_s seconds (0: where it is now only).
+      horizon_s: 0.0
+      # At most this many background vehicles in CARLA at once, the nearest
+      # (null: no limit).
+      max_microscopic: null
+      # The model far traffic runs in: sumo (a second SUMO with --mesosim, in
+      # segments of segment_length_m, at junctions run by SUMO's own signal
+      # programs) or queue (the in-process model, headway_s and
+      # jam_spacing_m its capacity, holding nobody at a junction).
+      engine: sumo
+      segment_length_m: 20.0
+      headway_s: 1.5
+      jam_spacing_m: 7.5
+      junction_control: true
+  # How vehicles drive and pedestrians walk, in the terms every backend
+  # shares (VehicleParameters / PedestrianParameters,
+  # docs/traffic_backends.md). Each numeric parameter is a spread, {mean,
+  # std}: every vehicle and every pedestrian draws its own value from a
+  # normal distribution cut to the parameter's bounds (std null or 0: all the
+  # same). An ODD can draw both (odd.traffic_probes). null: the backend's own
+  # default. A field this backend does not support is an error naming the
+  # backends that do.
+  vehicles:
+    # Desired speed as a multiple of the speed limit (traffic_manager, sumo).
+    speed_factor: {mean: null, std: null}
+    # Gap kept to the vehicle ahead when standing, m (traffic_manager, sumo).
+    min_gap_m: {mean: null, std: null}
+    # Change lanes of their own accord (traffic_manager, sumo).
+    lane_changes: null
+    # Probabilities (0-1) of ignoring lights, signs, vehicles and
+    # walkers, and of a random lane change (traffic_manager only).
+    ignore_lights: {mean: null, std: null}
+    ignore_signs: {mean: null, std: null}
+    ignore_vehicles: {mean: null, std: null}
+    ignore_walkers: {mean: null, std: null}
+    random_lane_changes: {mean: null, std: null}
+    # Acceleration and braking, m/s^2, reaction time, s, and driver
+    # imperfection, 0-1 (sumo only).
+    accel: {mean: null, std: null}
+    decel: {mean: null, std: null}
+    reaction_time_s: {mean: null, std: null}
+    imperfection: {mean: null, std: null}
+    # Most lateral speed, m/s, and (with traffic.options.lateral_resolution_m,
+    # SUMO's sublane model) most lateral acceleration, m/s^2 (sumo only).
+    max_lateral_speed_mps: {mean: null, std: null}
+    max_lateral_accel: {mean: null, std: null}
+    # Hold the traffic to the speed it stops from within what its
+    # drivers see in the run's weather (traffic_manager, sumo; on by
+    # default for sumo, off unless true for traffic_manager).
+    follow_visibility: null
+  # SUMO's pedestrians (sumo only: the TrafficManager drives no pedestrians).
+  pedestrians:
+    # Walking speed, m/s.
+    walking_speed_mps: {mean: null, std: null}
+    # Gap kept to the person ahead, m.
+    min_gap_m: {mean: null, std: null}
+    # Walk onto a crossing whose light has been red for less than this, s.
+    red_light_violation_s: {mean: null, std: null}
+  # How bicycles ride (BicycleParameters; sumo only: only SUMO simulates
+  # bicycles). Each a spread, {mean, std}, every rider drawing its own value
+  # (null: SUMO's bicycle default). traffic.vehicles does not reach bicycles.
+  bicycles:
+    # Speed on a free road, m/s (SUMO: 5.56, 20 km/h).
+    max_speed_mps: {mean: null, std: null}
+    # Acceleration and braking, m/s^2 (SUMO: 1.2 and 3).
+    accel: {mean: null, std: null}
+    decel: {mean: null, std: null}
+    # Gap kept to the one ahead when standing, m (SUMO: 0.5).
+    min_gap_m: {mean: null, std: null}
+    # Reaction time, s, and imperfection, 0-1 (SUMO: 1 and 0.5).
+    reaction_time_s: {mean: null, std: null}
+    imperfection: {mean: null, std: null}
+    # Most lateral speed, m/s: how quickly a rider moves across the lane.
+    max_lateral_speed_mps: {mean: null, std: null}
+    # Ride on through a light red for less than this, s (null: stop at red).
+    red_light_violation_s: {mean: null, std: null}

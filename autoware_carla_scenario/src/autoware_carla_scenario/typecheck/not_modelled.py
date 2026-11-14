@@ -300,7 +300,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             "TrafficManagerBackendConfig TrafficParameterError "
             "VEHICLE_PARAMETER_BACKENDS "
             "PEDESTRIAN_PARAMETER_BACKENDS BICYCLE_PARAMETER_BACKENDS build_none "
-            "build_sumo build_traffic_manager "
+            "build_hybrid build_sumo build_traffic_manager "
             "register_builtin_backends",
             _TRAFFIC_BACKEND,
         ),

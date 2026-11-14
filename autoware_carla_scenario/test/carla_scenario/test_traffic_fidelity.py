@@ -24,6 +24,7 @@ from autoware_carla_scenario.traffic import (
 from autoware_carla_scenario.traffic.fidelity import (
     FidelityCandidate,
     MesoscopicConfig,
+    closest_approach,
     plan_fidelity,
 )
 from autoware_carla_scenario.traffic.mesoscopic import MesoLink, MesoscopicTraffic
@@ -258,6 +259,101 @@ def test_the_plan_changes_the_ones_that_matter_most_first() -> None:
     assert plan_fidelity(config, candidates, []) == ([], [])
     config.enabled = False
     assert plan_fidelity(config, candidates, [(0.0, 0.0)]) == ([], [])
+
+
+def test_the_closest_approach_is_within_the_horizon() -> None:
+    # Now, without a horizon or a velocity.
+    assert closest_approach(30.0, 40.0, 0.0, 0.0, 10.0) == pytest.approx(50.0)
+    assert closest_approach(30.0, 40.0, -3.0, -4.0, 0.0) == pytest.approx(50.0)
+    # Heading straight in at 5 m/s: 10 m off after 8 s, there after 10 s.
+    assert closest_approach(30.0, 40.0, -3.0, -4.0, 8.0) == pytest.approx(10.0)
+    assert closest_approach(30.0, 40.0, -3.0, -4.0, 20.0) == pytest.approx(0.0)
+    # Moving away: now is the closest.
+    assert closest_approach(30.0, 40.0, 3.0, 4.0, 20.0) == pytest.approx(50.0)
+    # Passing by, 10 m off at the closest.
+    assert closest_approach(-100.0, 10.0, 10.0, 0.0, 20.0) == pytest.approx(10.0)
+
+
+def test_a_horizon_brings_a_vehicle_in_before_it_is_near() -> None:
+    config = MesoscopicConfig(
+        enabled=True, micro_radius_m=100.0, meso_radius_m=150.0, horizon_s=10.0
+    )
+    candidates = [
+        # 200 m off, 15 m/s towards the ego: within 100 m in under 7 s.
+        FidelityCandidate("coming", MESO, 200.0, 0.0, -15.0, 0.0),
+        # As far, as fast, the other way.
+        FidelityCandidate("going", MESO, 200.0, 0.0, 15.0, 0.0),
+        # A microscopic one leaving the 150 m, that will be back within it.
+        FidelityCandidate("returning", MICRO, 160.0, 0.0, -10.0, 0.0),
+        FidelityCandidate("leaving", MICRO, 160.0, 0.0, 10.0, 0.0),
+    ]
+    to_meso, to_micro = plan_fidelity(config, candidates, [(0.0, 0.0)])
+    assert to_micro == ["coming"]
+    assert to_meso == ["leaving"]
+    # Without the horizon, only where they are counts.
+    config.horizon_s = 0.0
+    to_meso, to_micro = plan_fidelity(config, candidates, [(0.0, 0.0)])
+    assert to_micro == []
+    assert sorted(to_meso) == ["leaving", "returning"]
+
+
+def test_a_horizon_counts_the_focus_points_velocity_too() -> None:
+    config = MesoscopicConfig(enabled=True, micro_radius_m=50.0, horizon_s=8.0)
+    parked = [FidelityCandidate("parked", MESO, 150.0, 0.0)]
+    assert plan_fidelity(config, parked, [(0.0, 0.0)]) == ([], [])
+    # The ego drives at it at 15 m/s: 30 m off in 8 s.
+    assert plan_fidelity(config, parked, [(0.0, 0.0)], [(15.0, 0.0)]) == (
+        [],
+        ["parked"],
+    )
+    # Only the focus points with a velocity given move.
+    assert plan_fidelity(
+        config, parked, [(0.0, 0.0), (1000.0, 0.0)], [(-15.0, 0.0)]
+    ) == ([], [])
+
+
+def test_at_most_max_microscopic_are_microscopic_the_nearest() -> None:
+    config = MesoscopicConfig(
+        enabled=True, micro_radius_m=100.0, meso_radius_m=150.0, max_microscopic=2
+    )
+    candidates = [
+        FidelityCandidate("micro_10", MICRO, 10.0, 0.0),
+        FidelityCandidate("micro_80", MICRO, 80.0, 0.0),
+        FidelityCandidate("meso_5", MESO, 5.0, 0.0),
+        FidelityCandidate("meso_50", MESO, 50.0, 0.0),
+        FidelityCandidate("meso_500", MESO, 500.0, 0.0),
+    ]
+    to_meso, to_micro = plan_fidelity(config, candidates, [(0.0, 0.0)])
+    # Within the radius, four would be; the two nearest are.
+    assert to_micro == ["meso_5"]
+    assert to_meso == ["micro_80"]
+    config.max_microscopic = 0
+    to_meso, to_micro = plan_fidelity(config, candidates, [(0.0, 0.0)])
+    assert to_micro == [] and to_meso == ["micro_80", "micro_10"]
+    config.max_microscopic = None
+    to_meso, to_micro = plan_fidelity(config, candidates, [(0.0, 0.0)])
+    assert to_micro == ["meso_5", "meso_50"] and to_meso == []
+
+
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        ({"horizon_s": -1.0}, "horizon_s must be finite and not negative"),
+        ({"horizon_s": math.inf}, "horizon_s must be finite and not negative"),
+        ({"horizon_s": True}, "horizon_s must be finite and not negative"),
+        ({"max_microscopic": -1}, "max_microscopic must be a whole number"),
+        ({"max_microscopic": 2.5}, "max_microscopic must be a whole number"),
+        ({"max_microscopic": True}, "max_microscopic must be a whole number"),
+        ({"engine": "vissim"}, "mesoscopic.engine must be one of sumo, queue"),
+    ],
+)
+def test_the_look_ahead_and_the_budget_are_checked(
+    options: dict[str, Any], message: str
+) -> None:
+    with pytest.raises(ValueError, match=message):
+        MesoscopicConfig.from_mapping(options)
+    with pytest.raises(ValueError, match=message):
+        SumoBackendConfig.from_mapping({"mesoscopic": options})
 
 
 # ---------------------------------------------------------------------------

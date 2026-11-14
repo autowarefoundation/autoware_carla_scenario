@@ -1229,7 +1229,7 @@ def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
 
 
 #: The option each built-in backend reads the TrafficManager's port from.
-_TM_PORT_OPTIONS = {"traffic_manager": "port", "sumo": "tm_port"}
+_TM_PORT_OPTIONS = {"traffic_manager": "port", "hybrid": "port", "sumo": "tm_port"}
 
 
 def _traffic_manager_port_text(cfg: DictConfig) -> str:

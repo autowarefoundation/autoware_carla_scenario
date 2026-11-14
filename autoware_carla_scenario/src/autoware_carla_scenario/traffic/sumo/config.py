@@ -473,8 +473,9 @@ class SumoBackendConfig:
             nearest to the ego first; ``None`` for no limit, ``0`` for none
             (they drive in SUMO only, where its traffic still sees them).
         mesoscopic: Simulate SUMO's vehicles far from the ego (and from every
-            vehicle CARLA drives) in a mesoscopic queue model instead of in
-            SUMO, with no actor in CARLA, and put them back into SUMO -- and
+            vehicle CARLA drives) in a mesoscopic model -- SUMO's own
+            (``--mesosim``, a second SUMO) or the in-process queue model, as
+            its ``engine`` says -- instead of in SUMO, with no actor in CARLA, and put them back into SUMO -- and
             CARLA -- when they come near
             (:class:`~autoware_carla_scenario.traffic.fidelity.MesoscopicConfig`).
             Off by default.
@@ -639,4 +640,10 @@ class SumoBackendConfig:
         """The directory converted networks are cached in."""
         if self.cache_dir:
             return Path(self.cache_dir).expanduser()
-        return Path.home() / ".cache" / "autoware_carla_scenario" / "sumo"
+        return default_cache_dir()
+
+
+def default_cache_dir() -> Path:
+    """Where converted networks are cached unless ``cache_dir`` says
+    otherwise: one cache for every backend that converts the world's map."""
+    return Path.home() / ".cache" / "autoware_carla_scenario" / "sumo"

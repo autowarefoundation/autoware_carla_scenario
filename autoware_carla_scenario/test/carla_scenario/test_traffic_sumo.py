@@ -3512,11 +3512,18 @@ class _LeavingEntity(DrivenEntity):
         return True
 
 
+@pytest.fixture(params=["sumo", "queue"])
+def meso_engine(request: pytest.FixtureRequest) -> str:
+    """Each model far traffic may run in: SUMO's own, and the queue model."""
+    return str(request.param)
+
+
 def _mesoscopic(
-    crossroads: Path, tmp_path: Path, **options: Any
+    crossroads: Path, tmp_path: Path, engine: str = "sumo", **options: Any
 ) -> tuple[Any, _FakeWorld, _LeavingEntity, _FakeActor]:
     """A started backend whose NPC (SUMO's, and free to leave CARLA) drives
-    away east from an ego standing at the west end of arm 0."""
+    away east from an ego standing at the west end of arm 0, its far traffic
+    in *engine*."""
     from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
     from autoware_carla_scenario.traffic.sumo.config import AmbientTrafficConfig
 
@@ -3526,6 +3533,7 @@ def _mesoscopic(
         "meso_radius_m": 50.0,
         "update_interval_s": 0.0,
         "scenario_vehicles": True,
+        "engine": engine,
         **options.pop("mesoscopic", {}),
     }
     ego_published = options.pop("ego_published", True)
@@ -3570,9 +3578,9 @@ def _tick_until(backend: Any, world: _FakeWorld, done: Any, ticks: int = 600) ->
 
 @needs_sumo
 def test_a_far_vehicle_leaves_sumo_and_carla_and_comes_back_near(
-    crossroads: Path, tmp_path: Path
+    crossroads: Path, tmp_path: Path, meso_engine: str
 ) -> None:
-    backend, world, entity, ego = _mesoscopic(crossroads, tmp_path)
+    backend, world, entity, ego = _mesoscopic(crossroads, tmp_path, meso_engine)
     tc = backend._traci
     npc = entity.actor
     (sumo_id,) = backend._driven
@@ -3618,9 +3626,9 @@ def test_a_far_vehicle_leaves_sumo_and_carla_and_comes_back_near(
 
 @needs_sumo
 def test_a_mesoscopic_vehicle_takes_its_manoeuvres_as_far_as_it_can(
-    crossroads: Path, tmp_path: Path, caplog: pytest.LogCaptureFixture
+    crossroads: Path, tmp_path: Path, meso_engine: str, caplog: pytest.LogCaptureFixture
 ) -> None:
-    backend, world, entity, ego = _mesoscopic(crossroads, tmp_path)
+    backend, world, entity, ego = _mesoscopic(crossroads, tmp_path, meso_engine)
     (sumo_id,) = backend._driven
     try:
         _tick_until(
@@ -3654,9 +3662,11 @@ def test_a_mesoscopic_vehicle_takes_its_manoeuvres_as_far_as_it_can(
 
 @needs_sumo
 def test_an_ego_sumo_drives_is_a_focus_point_too(
-    crossroads: Path, tmp_path: Path
+    crossroads: Path, tmp_path: Path, meso_engine: str
 ) -> None:
-    backend, world, entity, ego = _mesoscopic(crossroads, tmp_path, ego_published=False)
+    backend, world, entity, ego = _mesoscopic(
+        crossroads, tmp_path, meso_engine, ego_published=False
+    )
     try:
         assert backend._external == {} and len(backend._driven) == 2
         ego_entity = next(e for e in backend._driven.values() if e.actor is ego)
@@ -3675,10 +3685,10 @@ def test_an_ego_sumo_drives_is_a_focus_point_too(
 
 @needs_sumo
 def test_the_scenarios_vehicles_stay_in_carla_unless_let_go(
-    crossroads: Path, tmp_path: Path
+    crossroads: Path, tmp_path: Path, meso_engine: str
 ) -> None:
     backend, world, entity, _ego = _mesoscopic(
-        crossroads, tmp_path, mesoscopic={"scenario_vehicles": False}
+        crossroads, tmp_path, meso_engine, mesoscopic={"scenario_vehicles": False}
     )
     try:
         for i in range(300):
@@ -3691,13 +3701,29 @@ def test_the_scenarios_vehicles_stay_in_carla_unless_let_go(
 
 
 @needs_sumo
+def test_a_budget_of_no_microscopic_vehicle_sends_even_a_near_one_away(
+    crossroads: Path, tmp_path: Path, meso_engine: str
+) -> None:
+    # The NPC starts 30 m from the ego, well within the 40 m radius.
+    backend, world, entity, _ego = _mesoscopic(
+        crossroads, tmp_path, meso_engine, mesoscopic={"max_microscopic": 0}
+    )
+    try:
+        backend.tick(world, 0.0)
+        assert entity.simulation_fidelity is SimulationFidelity.MESOSCOPIC
+        assert backend.describe()["mesoscopic"]["engine"] == meso_engine
+    finally:
+        backend.close()
+
+
+@needs_sumo
 def test_a_background_vehicle_the_queue_model_holds_has_no_height(
-    crossroads: Path, tmp_path: Path
+    crossroads: Path, tmp_path: Path, meso_engine: str
 ) -> None:
     # The queue model places a vehicle on a lane's 2D shape: its height is
     # not known (None), so a sink or a construction zone places it in plan
     # view (#1586).  One SUMO drives has its height.
-    backend, world, _entity, _ego = _mesoscopic(crossroads, tmp_path)
+    backend, world, _entity, _ego = _mesoscopic(crossroads, tmp_path, meso_engine)
     try:
         near = backend.spawn_background(
             world, _carla_transform(-100.0, 5.25, 0.0), speed_kmh=5.0
@@ -3717,10 +3743,10 @@ def test_a_background_vehicle_the_queue_model_holds_has_no_height(
 
 @needs_sumo
 def test_only_the_traffic_near_the_ego_is_in_sumo_and_carla(
-    crossroads: Path, tmp_path: Path
+    crossroads: Path, tmp_path: Path, meso_engine: str
 ) -> None:
     backend, world, _entity, ego = _mesoscopic(
-        crossroads, tmp_path, period_s=0.5, warmup_s=20.0
+        crossroads, tmp_path, meso_engine, period_s=0.5, warmup_s=20.0
     )
     tc = backend._traci
     try:

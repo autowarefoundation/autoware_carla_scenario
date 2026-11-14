@@ -103,7 +103,7 @@ traffic:
     spawn_radius_m: null
     max_vehicles: null
     # Simulate traffic far from what CARLA drives (the ego, and the scenario's
-    # vehicles the TrafficManager drives) in a mesoscopic queue model, out of
+    # vehicles the TrafficManager drives) in a mesoscopic model, out of
     # SUMO and out of CARLA, and bring it back when it comes near.
     mesoscopic:
       enabled: false
@@ -115,6 +115,17 @@ traffic:
       # Let the scenario's own vehicles SUMO drives leave CARLA too: such an
       # entity has no actor while it is far (entity.simulation_fidelity).
       scenario_vehicles: false
+      # Also microscopic: a vehicle that will come within micro_radius_m in
+      # the next horizon_s seconds (0: where it is now only).
+      horizon_s: 0.0
+      # At most this many of them microscopic at once, the nearest (null: no
+      # limit).
+      max_microscopic: null
+      # The model the far traffic runs in: sumo (a second SUMO with
+      # --mesosim, in segments of segment_length_m) or queue (the in-process
+      # queue model, whose capacity headway_s and jam_spacing_m are).
+      engine: sumo
+      segment_length_m: 20.0
       headway_s: 1.5
       jam_spacing_m: 7.5
       junction_control: true
