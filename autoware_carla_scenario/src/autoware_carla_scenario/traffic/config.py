@@ -124,8 +124,15 @@ class TrafficConfig:
                 raise ValueError(f"traffic.{key} must be a mapping, got {value!r}")
             return value
 
+        backend = checked.get("backend")
+        if backend is None:
+            backend = "traffic_manager"
+        elif not isinstance(backend, str) or not backend:
+            raise ValueError(
+                f"traffic.backend must be a backend's name, got {backend!r}"
+            )
         return cls(
-            backend=str(checked.get("backend", "traffic_manager")),
+            backend=backend,
             options=dict(section("options")),
             vehicles=VehicleParameters.from_mapping(section("vehicles")),
             pedestrians=PedestrianParameters.from_mapping(section("pedestrians")),
