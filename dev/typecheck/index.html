@@ -6761,7 +6761,7 @@ the first:</p>
 <li><code>wosac._proto.sim_agents_submission_pb2</code>: imports google.protobuf</li>
 <li><code>wosac._proto.vector_pb2</code>: imports google.protobuf</li>
 <li><code>wosac.convert</code>: reads trajectory logs with t4_scene.convert, which is not checked (JSON-lines records of mixed value types, <code>dict[str, Any]</code>, which Codon cannot express), with its presence check and box poses (<code>_Log.present()</code>, <code>box_poses()</code>), writes them with orjson and builds protobuf messages (wosac._proto); the suffixes it writes are the checked run_outputs's, and the blueprints of a cyclist the checked constants's (<code>CARLA_BICYCLE_BLUEPRINTS</code>)</li>
-<li><code>wosac.pack</code>: imports tarfile and google.protobuf (<code>json_format</code>), and builds protobuf messages (wosac._proto); takes the submission's metadata as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
+<li><code>wosac.pack</code>: imports tarfile and google.protobuf (<code>json_format</code>, <code>message.DecodeError</code>), and builds protobuf messages (wosac._proto); takes the submission's metadata as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
 </ul>
 </details>
 <p>The scenario check is not limited by this: it compiles every scenario against
