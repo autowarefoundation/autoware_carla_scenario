@@ -595,6 +595,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.traffic.config.TrafficConfig.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.fidelity.MesoscopicConfig.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.config.TrafficManagerBackendConfig.from_mapping": _FROM_MAPPING,
+    "autoware_carla_scenario.traffic.config.traffic_backend_name": "takes the traffic.backend setting as a value of any type (`Any`: None or a backend's name; a bool, a number, empty text or a list to refuse), which Codon cannot express; only TrafficConfig.from_mapping, itself uncalled, and the unchecked slurm.worker and examples.run call it",
     "autoware_carla_scenario.traffic.parameters._described": "takes and returns a value of any type (`Any`: a Spread's describe() or the value unchanged), which Codon cannot express; only VehicleParameters.describe(), itself uncalled, calls it",
     "autoware_carla_scenario.traffic.parameters._number_of": "takes one config value of any type (`Any`: a number or numeric text, `'1.5'` read as 1.5; a bool, other text, None, a list or a mapping to refuse), which Codon cannot express; only _spread_of, itself uncalled, calls it",
     "autoware_carla_scenario.traffic.parameters._spread_of": "takes one config value of any type (`Any`: None, a Spread, a `{mean, std}` mapping, a number or numeric text; a bool, other text, a list or a mapping with other keys to refuse), which Codon cannot express; only _spreads_from, itself uncalled, calls it",
