@@ -5012,3 +5012,24 @@ def test_resubmit_with_nothing_to_resubmit_collects_only_without_dry_run(
     else:
         assert code == 1
         assert collected == [tmp_path]
+
+
+@pytest.mark.parametrize(
+    "stamp",
+    [0, 1, 951782400, 1767225599, 1767225600, 4102444799, 253402300799],
+)
+def test_now_iso_matches_aware_datetime_isoformat(
+    monkeypatch: pytest.MonkeyPatch, stamp: int
+) -> None:
+    """A Submission's start time is spelled out from time.gmtime() so the
+    Codon check compiles it; it must be exactly what
+    ``datetime.now(timezone.utc).isoformat(timespec="seconds")`` gives."""
+    from datetime import datetime, timezone
+
+    from autoware_carla_scenario.ui import slurm_launch
+
+    real_gmtime = time.gmtime
+    monkeypatch.setattr(slurm_launch.time, "gmtime", lambda *args: real_gmtime(stamp))
+    expected = datetime.fromtimestamp(stamp, timezone.utc).isoformat(timespec="seconds")
+    assert slurm_launch._now_iso() == expected
+    assert slurm_launch.Submission(command=["sbatch"]).started == expected
