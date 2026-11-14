@@ -645,9 +645,17 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     232).  The argument lists (``launch``, ``colcon_args``, ``docker_args``,
     ``command``) must be lists, not strings, of strings or numbers; ``env``
     and ``mounts`` mappings of strings or numbers; ``bridge_parameters`` a
-    mapping; ``workspace`` a non-empty path.  A null ``type`` or ``workspace``
-    is its default (``none``, ``~/autoware``).  :func:`check_batch_configs` calls this, so a batch or a sweep is
-    refused for any of these before its first scenario starts.
+    mapping; ``workspace`` a non-empty path; ``devcontainer``, ``docker`` and
+    ``container_prefix`` non-empty text, and ``image``, ``workspace_mount``,
+    ``gpus`` and ``user`` null or non-empty text.  A null setting is its
+    default (#2158, #2161): ``type`` is ``none``, ``workspace``
+    ``~/autoware``, and ``build``, ``rosdep``, ``stop_timeout_s``,
+    ``devcontainer``, ``docker`` and ``container_prefix`` those of
+    :class:`~autoware_carla_scenario.autoware_stack.DockerAutowareConfig`;
+    a null argument list or mapping is empty, and a null ``gpus`` no GPU, as
+    they always were.  :func:`check_batch_configs` calls this, so a batch or a
+    sweep is refused for any of these before its first scenario starts, and
+    before any container is started or workspace prepared.
 
     Raises:
         ValueError: If ``autoware.launcher.type`` names an unknown launcher,
@@ -684,9 +692,7 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
         )
         raise ValueError(msg)
 
-    # Null is the default (#2158), not the unknown type 'None'.
-    kind_value = settings.pop("type", None)
-    kind = "none" if kind_value is None else str(kind_value)
+    kind = _launcher_kind(settings.pop("type", None))
     if kind == "none":
         return None
 
@@ -704,7 +710,16 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
         raise ValueError(msg)
     stop_timeout_s = _launcher_stop_timeout_s(settings)
     if kind == "docker":
-        options = {k: v for k, v in settings.items() if k in docker_fields}
+        # Null is the field's default (#2161), as it is the workspace's,
+        # below: a null build or rosdep used to be refused, and a null
+        # devcontainer, docker or container_prefix handed on as None.  A null
+        # argument list or mapping stays none and a null gpus no GPU, as the
+        # docs have them.
+        options = {
+            k: v
+            for k, v in settings.items()
+            if k in docker_fields and (v is not None or k not in _NULL_IS_DEFAULT)
+        }
         # Null is the default; false, a number or '' is refused rather than
         # made Path("False") (#2158).
         workspace = options.get("workspace")
@@ -718,8 +733,10 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
         options["workspace"] = Path(workspace)
         # Absent is empty, refused naming the key.
         options.setdefault("launch", ())
-        # The settings' types are checked here, naming the key (the
-        # _launcher_* helpers do); their values by the config, below.
+        # The argument lists' and mappings' types are checked here, naming
+        # the key (the _launcher_* helpers do); the text settings' types and
+        # every value by DockerAutowareConfig, below, whose refusal is headed
+        # with the group.
         for name in ("launch", "colcon_args", "docker_args"):
             if name in options:
                 options[name] = _launcher_str_list(name, options[name])
@@ -772,10 +789,38 @@ def _finite_number(value: Any) -> bool:
         return False
 
 
+#: The ``autoware.launcher`` keys of :class:`DockerAutowareConfig` fields that
+#: a null leaves at the field's default (:func:`build_autoware_launcher`,
+#: #2161).  ``workspace`` and ``stop_timeout_s`` are read on their own, with
+#: the same rule.
+_NULL_IS_DEFAULT = frozenset(
+    {
+        "build",
+        "rosdep",
+        "devcontainer",
+        "image",
+        "workspace_mount",
+        "user",
+        "docker",
+        "container_prefix",
+    }
+)
+
+
+def _launcher_kind(value: Any) -> str:
+    """The launcher type ``autoware.launcher.type`` *value* names, as a run
+    and a Slurm task read it: ``none`` when it is absent or null (#2158), not
+    the unknown type ``'None'``; any other value as its text, which
+    :func:`build_autoware_launcher` refuses unless ``none``, ``docker`` or
+    ``command``."""
+    return "none" if value is None else str(value)
+
+
 def _launcher_stop_timeout_s(settings: dict[str, Any]) -> float:
     """``autoware.launcher.stop_timeout_s`` of *settings*, checked: a finite
-    number of seconds -- an int or a float, not a bool, a string or null --
-    above 0, as the bridge's timeouts are.  Each launcher type reads it.
+    number of seconds -- an int or a float, not a bool or a string -- above
+    0, as the bridge's timeouts are; absent or null is 20 s, the default
+    (#2161).  Each launcher type reads it.
 
     A NaN never times out (``Popen.wait(timeout=nan)``), so a stack that
     ignores ``SIGINT`` would never be escalated and the batch would hang; 0 or
@@ -784,7 +829,7 @@ def _launcher_stop_timeout_s(settings: dict[str, Any]) -> float:
     Raises:
         ValueError: naming the key.
     """
-    value = settings.get("stop_timeout_s", 20.0)
+    value = _given(settings, "stop_timeout_s", 20.0)
     if not _finite_number(value) or value <= 0:
         raise ValueError(
             "autoware.launcher.stop_timeout_s must be a finite number > 0 "

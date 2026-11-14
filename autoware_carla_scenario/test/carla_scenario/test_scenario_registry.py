@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import sys
 import threading
 from pathlib import Path
@@ -1318,7 +1319,7 @@ class TestBuildAutowareLauncher:
         assert isinstance(launcher, DockerAutowareLauncher)
         assert launcher.config.rosdep is True
 
-    @pytest.mark.parametrize("value", ["ture", "", 2, 0.0, None, [True]])
+    @pytest.mark.parametrize("value", ["ture", "", 2, 0.0, [True]])
     def test_a_rosdep_that_is_no_switch_is_refused(
         self, tmp_path: Path, value: object
     ) -> None:
@@ -1401,6 +1402,102 @@ class TestBuildAutowareLauncher:
         ):
             build_autoware_launcher(cfg)
 
+    @pytest.mark.parametrize(
+        ("key", "default"),
+        [
+            ("build", "auto"),
+            ("rosdep", True),
+            ("devcontainer", "universe-devel-cuda"),
+            ("docker", "docker"),
+            ("container_prefix", "acs-autoware"),
+            ("stop_timeout_s", 20.0),
+            ("image", None),
+            ("workspace_mount", None),
+            ("user", None),
+        ],
+    )
+    def test_a_null_docker_setting_is_its_default(
+        self, tmp_path: Path, key: str, default: object
+    ) -> None:
+        """#2161: null build, rosdep and stop_timeout_s were refused, and a
+        null devcontainer, docker or container_prefix handed on as None."""
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        settings: dict[str, object] = {
+            "type": "docker",
+            "workspace": str(tmp_path),
+            "launch": ["autoware_launch", "x.launch.xml"],
+            key: None,
+        }
+        launcher = build_autoware_launcher(self._cfg("autoware", **settings))
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert getattr(launcher.config, key) == default
+
+    def test_a_null_gpus_is_still_no_gpu(self, tmp_path: Path) -> None:
+        """docs/autoware.md: ``gpus: null`` for none, unlike its default."""
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launcher = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace=str(tmp_path),
+                launch=["autoware_launch", "x.launch.xml"],
+                gpus=None,
+            )
+        )
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.gpus is None
+
+    def test_a_null_command_stop_timeout_is_the_default(self) -> None:
+        """#2161: the command launcher reads null as 20 s too."""
+        from autoware_carla_scenario.autoware_stack import CommandAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launcher = build_autoware_launcher(
+            self._cfg(type="command", command=["true"], stop_timeout_s=None)
+        )
+        assert isinstance(launcher, CommandAutowareLauncher)
+        assert launcher.stop_timeout_s == 20.0
+
+    @pytest.mark.parametrize(
+        ("key", "value", "wanted"),
+        [
+            *(
+                (key, value, "non-empty text")
+                for key in ("devcontainer", "docker", "container_prefix")
+                for value in (False, 0, "", " ", ["x"])
+            ),
+            *(
+                (key, value, "null or non-empty text")
+                for key in ("image", "workspace_mount", "gpus", "user")
+                for value in (False, 3, "", " ", {"a": 1})
+            ),
+        ],
+    )
+    def test_a_text_setting_that_is_no_text_is_refused_before_anything_starts(
+        self, tmp_path: Path, key: str, value: object, wanted: str
+    ) -> None:
+        """#2161: a false devcontainer failed with a TypeError at prepare
+        time, a '' docker reached subprocess, a false workspace_mount was
+        taken as False."""
+        from autoware_carla_scenario.examples import run
+
+        settings: dict[str, object] = {
+            "type": "docker",
+            "workspace": str(tmp_path),
+            "launch": ["autoware_launch", "x.launch.xml"],
+            key: value,
+        }
+        cfg = self._cfg("autoware", **settings)
+        match = rf"^autoware\.launcher\.{key} must be {wanted}, got {re.escape(repr(value))}$"
+        with pytest.raises(ValueError, match=match):
+            run.build_autoware_launcher(cfg)
+        run._AUTOWARE_LAUNCHERS.clear()
+        with pytest.raises(ValueError, match=match):
+            run._check_batch_queue_settings(cfg)
+
     def test_unknown_type_raises(self) -> None:
         from autoware_carla_scenario.examples.run import build_autoware_launcher
 
@@ -1477,7 +1574,7 @@ class TestBuildAutowareLauncher:
     @pytest.mark.parametrize(
         "value",
         [
-            *(float("nan"), float("inf"), -5, 0, "abc", None, True),
+            *(float("nan"), float("inf"), -5, 0, "abc", True),
             pytest.param(10**400, id="huge"),  # too big for a float (#1652)
         ],
     )

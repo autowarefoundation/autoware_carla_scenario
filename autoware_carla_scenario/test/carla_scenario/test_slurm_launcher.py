@@ -1980,6 +1980,41 @@ def test_a_launcher_without_an_autoware_ego_takes_no_domain(tmp_path: Path) -> N
         domains.release()
 
 
+def test_the_worker_reads_the_launcher_type_as_a_run_does(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """One reader of autoware.launcher.type for a task and a local run: a
+    null type is none, so no domain is taken for it (#2161)."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot, RosDomains
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    read: list[object] = []
+    reader = run._launcher_kind
+
+    def spy(value: object) -> str:
+        read.append(value)
+        return reader(value)
+
+    monkeypatch.setattr(run, "_launcher_kind", spy)
+    domains = RosDomains(tmp_path)
+    try:
+        cfg = run._compose_config(
+            _CONCRETE,
+            [
+                "ego.entity=autoware",
+                "autoware.launcher.type=null",
+                "autoware.launcher.ros_domain_ids=[10,11]",
+            ],
+        )
+        changes = worker_overrides(cfg, PortSlot(index=0, base=20000), domains)
+        assert "autoware.launcher.ros_domain_ids" not in changes
+        assert domains.mapping == {}
+        assert read == [None]
+    finally:
+        domains.release()
+
+
 def test_worker_leaves_the_ros_domains_alone_without_a_holder() -> None:
     from autoware_carla_scenario.examples import run
     from autoware_carla_scenario.slurm.ports import PortSlot

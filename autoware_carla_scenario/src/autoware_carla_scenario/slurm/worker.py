@@ -258,7 +258,7 @@ def _domain_overrides(cfg: "DictConfig", domains: RosDomains) -> dict[str, Any]:
     launcher = None if autoware is None else autoware.get("launcher")
     if launcher is None:
         return changes
-    kind = str(launcher.get("type", "none"))
+    kind = run._launcher_kind(launcher.get("type"))
     if kind not in ("docker", "command"):
         return changes
     env = run._launcher_str_mapping("env", plain(launcher.get("env")))

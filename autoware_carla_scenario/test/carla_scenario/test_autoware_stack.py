@@ -1413,6 +1413,34 @@ def test_docker_config_rejects_a_stop_timeout_that_is_not_positive_and_finite(
         )
 
 
+@pytest.mark.parametrize(
+    ("field", "value", "wanted"),
+    [
+        ("devcontainer", None, "non-empty text"),
+        ("devcontainer", "", "non-empty text"),
+        ("docker", None, "non-empty text"),
+        ("docker", " ", "non-empty text"),
+        ("container_prefix", None, "non-empty text"),
+        ("image", "", "null or non-empty text"),
+        ("workspace_mount", False, "null or non-empty text"),
+        ("gpus", 2, "null or non-empty text"),
+        ("user", "", "null or non-empty text"),
+    ],
+)
+def test_docker_config_rejects_a_text_field_that_is_no_text(
+    field: str, value: object, wanted: str
+) -> None:
+    """#2161: a None devcontainer failed at prepare time with a TypeError, a
+    None docker reached subprocess, a None container_prefix named containers
+    "None-..."."""
+    with pytest.raises(ValueError, match=rf"^{field} must be {wanted}, got "):
+        DockerAutowareConfig(
+            workspace=Path("/ws"),
+            launch=("a",),
+            **{field: value},  # type: ignore[arg-type]
+        )
+
+
 @pytest.mark.parametrize("stop_timeout_s", _BAD_STOP_TIMEOUTS)
 def test_command_launcher_rejects_a_stop_timeout_that_is_not_positive_and_finite(
     stop_timeout_s: float,
