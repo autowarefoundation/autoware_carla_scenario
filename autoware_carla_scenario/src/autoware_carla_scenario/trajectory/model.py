@@ -239,9 +239,17 @@ def _whole(owner: str, name: str, value: Any) -> int:
         # element, which the numpy on Python 3.10 (2.2) still converts
         # (#1906), as seed.check_whole_number refuses them.
         raise ValueError(f"{owner}.{name} must be a whole number, got {value!r}")
-    if int(value) != value:
+    try:
+        # int() of None, of nan or inf, or of "2.5" raises its own TypeError,
+        # ValueError or OverflowError; refused here as any other (#2151).
+        whole = int(value)
+    except (TypeError, ValueError, OverflowError):
+        raise ValueError(
+            f"{owner}.{name} must be a whole number, got {value!r}"
+        ) from None
+    if whole != value:
         raise ValueError(f"{owner}.{name} must be a whole number, got {value!r}")
-    return int(value)
+    return whole
 
 
 def _check_anchor(owner: str, anchor: Optional[str]) -> None:

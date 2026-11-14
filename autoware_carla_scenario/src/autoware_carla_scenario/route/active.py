@@ -136,20 +136,40 @@ def lane_place(
         # (docs/typecheck.md).
         given: Lanelet2Pose = position
         return given
-    if TYPE_CHECKING:
-        return None  # the route's poses are not compiled here (docs/typecheck.md)
     from ..trajectory.model import (  # noqa: PLC0415
         RouteCrossingPose,
         RouteLanePose,
         RouteOppositePose,
     )
+
+    # Each class on its own, named as the class, as above.
+    if isinstance(position, RouteLanePose):
+        on_lane: RouteLanePose = position
+        return _lane_place_on_route(on_lane)
+    if isinstance(position, RouteOppositePose):
+        opposite: RouteOppositePose = position
+        return _lane_place_on_route(opposite)
+    if isinstance(position, RouteCrossingPose):
+        crossing: RouteCrossingPose = position
+        return _lane_place_on_route(crossing)
+    return None
+
+
+def _lane_place_on_route(
+    pose: Union[RouteLanePose, RouteOppositePose, RouteCrossingPose],
+) -> Optional[Lanelet2Pose]:
+    """:func:`lane_place` of a route pose on a lane: the Lanelet2 pose the
+    scenario's route places it at; ``None`` with no route, or where it places
+    it at no lane."""
+    from ..coordinate.poses import Lanelet2Pose  # noqa: PLC0415
     from .positions import resolve_route_pose  # noqa: PLC0415
 
-    if not isinstance(position, (RouteLanePose, RouteOppositePose, RouteCrossingPose)):
-        return None
     try:
         # A pose counted from the ego (no anchor) has no ego position here.
-        placed = resolve_route_pose(position, scenario_route_frame())
+        placed = resolve_route_pose(pose, scenario_route_frame())
     except ValueError:
         return None
-    return placed if isinstance(placed, Lanelet2Pose) else None
+    if isinstance(placed, Lanelet2Pose):
+        on: Lanelet2Pose = placed
+        return on
+    return None

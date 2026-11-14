@@ -621,3 +621,54 @@ class TestReference:
             x, y, _ = turning.reference(s)
             px, py, _ = turning.point(s)
             assert math.hypot(x - px, y - py) < 0.05
+
+
+class TestLanePlace:
+    """route.active.lane_place: the lane a spawn shifts along (#2151 compiles
+    its route-pose path in the Codon check)."""
+
+    def test_a_lanelet2_pose_is_its_own_place(self) -> None:
+        from autoware_carla_scenario.route.active import lane_place
+
+        given = Lanelet2Pose(rm.W_IN2, 3.0)
+        assert lane_place(given) is given
+
+    @pytest.mark.parametrize(
+        "position",
+        [
+            RouteLanePose(ds=-15.0, anchor="junction:0:entry"),
+            RouteOppositePose(ds=0.0, anchor="start"),
+            RouteCrossingPose(junction=0, approach="left", distance=-20.0),
+        ],
+    )
+    def test_a_route_pose_on_a_lane_is_where_the_route_places_it(
+        self, loaded: None, position: Any
+    ) -> None:
+        from autoware_carla_scenario.route.active import (
+            lane_place,
+            scenario_route_frame,
+        )
+
+        placed = lane_place(position)
+        assert isinstance(placed, Lanelet2Pose)
+        assert placed == resolve_route_pose(position, scenario_route_frame())
+
+    @pytest.mark.parametrize(
+        "position",
+        [
+            RouteLanePose(ds=1.0),  # counted from the ego: no ego here
+            RouteLanePose(anchor="junction:1:entry"),  # a junction it lacks
+            RouteCrosswalkPose(junction=0),  # on no lane
+            CarlaWorldPose(0.0, 0.0, 0.0),
+        ],
+    )
+    def test_anything_else_has_no_lane_place(self, loaded: None, position: Any) -> None:
+        from autoware_carla_scenario.route.active import lane_place
+
+        assert lane_place(position) is None
+
+    def test_without_a_route_there_is_none(self) -> None:
+        from autoware_carla_scenario.route.active import lane_place
+
+        clear_scenario_route()
+        assert lane_place(RouteLanePose(anchor="start")) is None
