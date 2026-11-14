@@ -804,20 +804,42 @@ class TrafficManagerBackend(TrafficBackend):
         capped at exactly *speed_kmh* and starts at it, as SUMO's are
         (:meth:`TrafficBackend.spawn_background`).
         """
+        speed_kmh = check_background_speed(speed_kmh)
+        return self._spawn_background_actor(
+            world,
+            transform,
+            blueprint or _BACKGROUND_BLUEPRINT,
+            speed_kmh,
+            speed_kmh / 3.6,
+        )
+
+    def _spawn_background_actor(
+        self,
+        world: "carla.World",
+        transform: "carla.Transform",
+        blueprint: str,
+        speed_kmh: Optional[float],
+        start_mps: float,
+        handle: str = "",
+    ) -> Optional[str]:
+        """Spawn background vehicle *handle* (a new one when empty) as
+        :meth:`spawn_background` describes, starting at *start_mps* and capped
+        at *speed_kmh* (``None``: at the TrafficManager's own speed); its
+        handle, or ``None`` where it was refused or the spot is taken."""
         import typesafe_carla.carla as carla  # noqa: PLC0415
 
-        speed_kmh = check_background_speed(speed_kmh)
         lane = _background_lane(world, transform)
         if lane is None:
             return None
         on_lane: "carla.Transform" = lane
         library = world.get_blueprint_library()
-        found = library.filter(blueprint or _BACKGROUND_BLUEPRINT)
+        found = library.filter(blueprint)
         if len(found) == 0:  # A BlueprintLibrary has no truth value in Codon.
             logger.warning("No vehicle blueprint %r for background traffic", blueprint)
             return None
-        self._background_count += 1
-        handle = f"background{self._background_count}"
+        if not handle:
+            self._background_count += 1
+            handle = f"background{self._background_count}"
         chosen = found[0]
         if chosen.has_attribute("role_name"):
             chosen.set_attribute("role_name", handle)
@@ -831,17 +853,17 @@ class TrafficManagerBackend(TrafficBackend):
         if actor is None:
             return None  # The spot is taken; the caller tries elsewhere.
         self._background[handle] = actor
-        speed = speed_kmh / 3.6
         forward = lifted.get_forward_vector()
         actor.set_target_velocity(
-            carla.Vector3D(forward.x * speed, forward.y * speed, 0.0)
+            carla.Vector3D(forward.x * start_mps, forward.y * start_mps, 0.0)
         )
         if self._started:
             self._autopilot(actor, keep=False)
-        tm = self._require_tm("spawn_background")
-        if tm is not None:
-            # Exactly the cap asked for, as SUMO gives it: no floor (#967).
-            self._give_speed(tm, actor, speed_kmh)
+        if speed_kmh is not None:
+            tm = self._require_tm("spawn_background")
+            if tm is not None:
+                # Exactly the cap asked for, as SUMO gives it: no floor (#967).
+                self._give_speed(tm, actor, speed_kmh)
         return handle
 
     def background_vehicles(
@@ -869,7 +891,7 @@ class TrafficManagerBackend(TrafficBackend):
         if handle not in self._background:
             return
         actor = self._background.pop(handle)
-        self._forget_overrides(int(actor.id))
+        self._forget_actor(int(actor.id))
         try:
             actor.destroy()
         except RuntimeError:
@@ -1679,6 +1701,22 @@ class TrafficManagerBackend(TrafficBackend):
         if actor_id in self._paused:
             del self._paused[actor_id]
         self._forget_lead_out(actor_id)
+
+    def _forget_actor(self, actor_id: int) -> None:
+        """Drop everything kept for the actor *actor_id*, which is gone: its
+        id may be another vehicle's next."""
+        if actor_id in self._autopiloted:
+            del self._autopiloted[actor_id]
+        if actor_id in self._exact_kmh:
+            del self._exact_kmh[actor_id]
+        if actor_id in self._speed_differences:
+            del self._speed_differences[actor_id]
+        if actor_id in self._held:
+            del self._held[actor_id]
+        if actor_id in self._own_ignores:
+            del self._own_ignores[actor_id]
+        self._emergencies.discard(actor_id)
+        self._forget_overrides(actor_id)
 
     def _forget_lead_out(self, actor_id: int) -> None:
         """Drop the drive out of a junction's mouth the actor *actor_id* was

@@ -143,8 +143,8 @@ from ..parameters import (
     PedestrianParameters,
     VehicleParameters,
 )
-from ..mesoscopic import MesoLink, MesoscopicTraffic
-from .mesosim import SumoMesoscopicTraffic
+from ..mesoscopic import MesoscopicTraffic
+from .mesosim import MesoRoads, SumoMesoscopicTraffic, build_mesoscopic_model
 from ..traffic_manager import TrafficManagerBackend
 from .config import SumoBackendConfig
 from .geometry import (
@@ -702,7 +702,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._edge_signals: dict[tuple[str, str], list[tuple[str, int]]] = {}
         self._signal_states: dict[str, str] = {}
         #: Edge id -> the lane shape a mesoscopic vehicle on it is placed on.
-        self._edge_shapes: dict[str, list[tuple[float, float]]] = {}
+        self._meso_roads: Optional[MesoRoads] = None
         self._route_count = 0
         #: How many vehicles became mesoscopic, and microscopic, this run.
         self._level_changes = [0, 0]
@@ -1544,7 +1544,7 @@ class SumoTrafficBackend(TrafficBackend):
         for entity in self._meso_entities.values():
             # Out of the run, an entity without an actor is one not spawned.
             self._mark_fidelity(entity, SimulationFidelity.MICROSCOPIC)
-        if isinstance(self._meso, SumoMesoscopicTraffic):
+        if self._meso is not None:
             self._meso.close()
         self._meso = None
         self._meso_entities = {}
@@ -1555,7 +1555,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._stays_microscopic = set()
         self._edge_signals = {}
         self._signal_states = {}
-        self._edge_shapes = {}
+        self._meso_roads = None
         self._level_changes = [0, 0]
         handed_ambient = [
             self._external[sumo_id]
@@ -2688,15 +2688,7 @@ class SumoTrafficBackend(TrafficBackend):
     # ------------------------------------------------------------------
 
     def _opendrive(self, context: TrafficContext) -> str:
-        if context.xodr_path is not None and Path(context.xodr_path).is_file():
-            return Path(context.xodr_path).read_text()
-        if context.world is None:
-            raise TrafficBackendUnavailable(
-                "the SUMO backend needs the world's OpenDRIVE, and the run has neither "
-                "a world nor an OpenDRIVE file"
-            )
-        # The run's map where one is held: get_map() builds a whole new one.
-        return str(run_carla_map(context.world).to_opendrive())
+        return world_opendrive(context, "the SUMO backend")
 
     @staticmethod
     def _sumo_id(actor: Any, entity: Any) -> str:
@@ -4120,18 +4112,11 @@ class SumoTrafficBackend(TrafficBackend):
     ) -> Union[MesoscopicTraffic, SumoMesoscopicTraffic]:
         """The mesoscopic model on every road of the network a car may drive:
         SUMO's own (``engine: sumo``) or the queue model (``engine: queue``)."""
-        links: dict[str, MesoLink] = {}
+        roads = self._meso_roads = MesoRoads(self._net)
         signals: dict[tuple[str, str], list[tuple[str, int]]] = {}
         for edge in self._net.getEdges():
-            if edge.getFunction() != "" or not edge.allows("passenger"):
+            if edge.getID() not in roads.links:
                 continue
-            lanes = [lane for lane in edge.getLanes() if lane.allows("passenger")]
-            links[edge.getID()] = MesoLink(
-                edge.getID(),
-                float(edge.getLength()),
-                len(lanes),
-                float(edge.getSpeed()),
-            )
             for to_edge, conns in edge.getOutgoing().items():
                 for conn in conns:
                     if conn.getTLSID():
@@ -4139,31 +4124,18 @@ class SumoTrafficBackend(TrafficBackend):
                             (conn.getTLSID(), int(conn.getTLLinkIndex()))
                         )
         self._edge_signals = signals
-        config = self._config.mesoscopic
-        if config.engine == "sumo":
-            assert self._network is not None and self._context is not None
-            try:
-                return SumoMesoscopicTraffic(
-                    links,
-                    net_file=self._network.net_file,
-                    binary=binary,
-                    step_length=step_length,
-                    seed=self._context.random_seed,
-                    segment_length_m=config.segment_length_m,
-                    junction_control=config.junction_control,
-                    signal_states=self._micro_signal_states,
-                    additional_files=types,
-                    log_file=out / "sumo_meso.log",
-                )
-            except (OSError, RuntimeError) as exc:
-                raise TrafficBackendError(
-                    f"SUMO's mesoscopic simulation did not start: {exc}"
-                ) from exc
-        return MesoscopicTraffic(
-            links,
-            headway_s=config.headway_s,
-            jam_spacing_m=config.jam_spacing_m,
-            gate=self._meso_gate if config.junction_control else None,
+        assert self._network is not None and self._context is not None
+        return build_mesoscopic_model(
+            self._config.mesoscopic,
+            roads.links,
+            net_file=self._network.net_file,
+            binary=binary,
+            step_length=step_length,
+            seed=self._context.random_seed,
+            log_file=out / "sumo_meso.log",
+            signal_states=self._micro_signal_states,
+            gate=self._meso_gate,
+            additional_files=types,
         )
 
     def _micro_signal_states(self) -> dict[str, str]:
@@ -4255,13 +4227,12 @@ class SumoTrafficBackend(TrafficBackend):
         meso = self._meso
         if meso is None:
             return
-        focus = self._focus_points()
-        if not focus:
-            return
         # Velocities only for a decision that looks ahead: two more calls a
         # vehicle otherwise spent on nothing.
         ahead = self._config.mesoscopic.horizon_s > 0.0
-        focus_velocities = self._focus_velocities() if ahead else []
+        focus, focus_velocities = self._focus(ahead)
+        if not focus:
+            return
         tc = self._traci
         candidates = []
         for sumo_id in tc.vehicle.getIDList():
@@ -4317,28 +4288,26 @@ class SumoTrafficBackend(TrafficBackend):
     def _focus_points(self) -> list[tuple[float, float]]:
         """Where traffic must be microscopic around, in SUMO's frame: the ego,
         whoever drives it, and every vehicle CARLA drives."""
-        focus = []
+        return self._focus(False)[0]
+
+    def _focus(
+        self, velocities: bool
+    ) -> tuple[list[tuple[float, float]], list[tuple[float, float]]]:
+        """:meth:`_focus_points`, and with *velocities* each one's velocity in
+        the same order, in SUMO's frame (its y is CARLA's turned over); one
+        destroyed under us is left out of both."""
+        points: list[tuple[float, float]] = []
+        moving: list[tuple[float, float]] = []
         for actor in self._focus_actors():
             try:
                 pose = self._carla_pose_to_sumo(actor)
+                velocity = actor.get_velocity() if velocities else None
             except RuntimeError:  # destroyed under us
                 continue
-            focus.append((pose.x, pose.y))
-        return focus
-
-    def _focus_velocities(self) -> list[tuple[float, float]]:
-        """The focus points' velocities, in SUMO's frame (its y is CARLA's
-        turned over) and in :meth:`_focus_points`' order; one destroyed under
-        us is left out of both."""
-        velocities = []
-        for actor in self._focus_actors():
-            try:
-                actor.get_transform()  # as _focus_points: destroyed, left out
-                velocity = actor.get_velocity()
-            except RuntimeError:
-                continue
-            velocities.append((float(velocity.x), -float(velocity.y)))
-        return velocities
+            points.append((pose.x, pose.y))
+            if velocity is not None:
+                moving.append((float(velocity.x), -float(velocity.y)))
+        return points, moving
 
     def _may_leave_world(self, sumo_id: str) -> bool:
         """Whether the scenario's vehicle *sumo_id* may become mesoscopic."""
@@ -4521,21 +4490,8 @@ class SumoTrafficBackend(TrafficBackend):
 
         On the rightmost lane a car may use: the queue model has no lanes.
         """
-        import sumolib  # noqa: PLC0415
-
-        assert self._meso is not None
-        link, offset = self._meso.position(sumo_id, now)
-        shape = self._edge_shapes.get(link)
-        if shape is None:
-            lanes = self._net.getEdge(link).getLanes()
-            lane = next((x for x in lanes if x.allows("passenger")), lanes[0])
-            shape = [(float(p[0]), float(p[1])) for p in lane.getShape()]
-            self._edge_shapes[link] = shape
-        # On the shape, whose length is not quite the edge's.
-        offset = min(offset, max(sumolib.geomhelper.polyLength(shape) - 0.01, 0.0))
-        x, y = sumolib.geomhelper.positionAtShapeOffset(shape, offset)
-        rotation = sumolib.geomhelper.rotationAtShapeOffset(shape, offset) or 0.0
-        return Pose2D(float(x), float(y), 0.0, (90.0 - math.degrees(rotation)) % 360.0)
+        assert self._meso is not None and self._meso_roads is not None
+        return self._meso_roads.pose(*self._meso.position(sumo_id, now))
 
     def _meso_carla_pose(self, sumo_id: str, now: float) -> Pose2D:
         """Where the queue model has *sumo_id*, in CARLA's frame: its box
@@ -5370,3 +5326,20 @@ class SumoTrafficBackend(TrafficBackend):
             self._config.warmup_s,
             len(self._ambient),
         )
+
+
+def world_opendrive(context: TrafficContext, who: str) -> str:
+    """The OpenDRIVE of *context*'s world: its file, else the world's map.
+
+    Raises:
+        TrafficBackendUnavailable: The run has neither (*who* needs it).
+    """
+    if context.xodr_path is not None and Path(context.xodr_path).is_file():
+        return Path(context.xodr_path).read_text()
+    if context.world is None:
+        raise TrafficBackendUnavailable(
+            f"{who} needs the world's OpenDRIVE, and the run has neither a world "
+            "nor an OpenDRIVE file"
+        )
+    # The run's map where one is held: get_map() builds a whole new one.
+    return str(run_carla_map(context.world).to_opendrive())

@@ -226,11 +226,9 @@ class _Run:
 
 @pytest.fixture
 def make(grid: Path, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Iterator[Any]:
-    import autoware_carla_scenario.traffic.sumo.hybrid as hybrid_module
     import autoware_carla_scenario.traffic.traffic_manager as tm_module
 
     monkeypatch.setattr(tm_module, "_background_lane", _on_lane)
-    monkeypatch.setattr(hybrid_module, "_background_lane", _on_lane)
     runs: list[_Run] = []
 
     def build(**mesoscopic: Any) -> _Run:
@@ -331,7 +329,7 @@ def test_the_hydra_group_builds_it() -> None:
 def test_the_roads_locate_a_vehicle_and_place_it_back(grid: Path) -> None:
     import sumolib
 
-    from autoware_carla_scenario.traffic.sumo.hybrid import MesoRoads
+    from autoware_carla_scenario.traffic.sumo.mesosim import MesoRoads
 
     roads = MesoRoads(sumolib.net.readNet(str(grid)))
     assert "A0B0" in roads.links and roads.links["A0B0"].lanes == 2

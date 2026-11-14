@@ -224,6 +224,11 @@ class MesoscopicTraffic:
         self._vehicles = {}
         self._queues = {}
 
+    def close(self) -> None:
+        """Nothing to stop: the model is in-process.  As SUMO's mesoscopic
+        model's, so a backend closes either alike."""
+        self.clear()
+
     # ------------------------------------------------------------------
     # Telling a vehicle what to do
     # ------------------------------------------------------------------

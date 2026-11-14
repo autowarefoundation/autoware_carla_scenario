@@ -164,21 +164,22 @@ class MesoscopicConfig:
             )
         both = "positive and finite"
         self.segment_length_m = _number("segment_length_m", self.segment_length_m, both)
+        if not (math.isfinite(self.segment_length_m) and self.segment_length_m > 0.0):
+            raise ValueError(
+                f"segment_length_m must be positive and finite (got {self.segment_length_m!r})"
+            )
         self.horizon_s = _number("horizon_s", self.horizon_s, "finite and not negative")
         if not (math.isfinite(self.horizon_s) and self.horizon_s >= 0.0):
             raise ValueError(
                 f"horizon_s must be finite and not negative (got {self.horizon_s!r})"
             )
-        if self.max_microscopic is not None:
-            count = self.max_microscopic
-            if isinstance(count, bool) or not isinstance(count, int) or count < 0:
-                raise ValueError(
-                    "max_microscopic must be a whole number, not negative, or null "
-                    f"(got {count!r})"
-                )
-        if not (math.isfinite(self.segment_length_m) and self.segment_length_m > 0.0):
+        count = self.max_microscopic
+        if count is not None and (
+            isinstance(count, bool) or not isinstance(count, int) or count < 0
+        ):
             raise ValueError(
-                f"segment_length_m must be positive and finite (got {self.segment_length_m!r})"
+                "max_microscopic must be a whole number, not negative, or null "
+                f"(got {count!r})"
             )
         self.headway_s = _number("headway_s", self.headway_s, both)
         self.jam_spacing_m = _number("jam_spacing_m", self.jam_spacing_m, both)
@@ -326,24 +327,19 @@ def plan_fidelity(
         planned.append(
             (distance, candidate, config.decide(candidate.fidelity, distance))
         )
+    # Over the budget: the furthest of those that would be microscopic,
+    # mesoscopic instead.
+    over: set[str] = set()
     if config.max_microscopic is not None:
-        # The nearest within the budget; any further, mesoscopic.
-        budget = int(config.max_microscopic)
         micro = sorted(
             (distance, candidate.handle)
             for distance, candidate, wanted in planned
             if wanted is SimulationFidelity.MICROSCOPIC
         )
-        over = {handle for _d, handle in micro[budget:]}
-        planned = [
-            (
-                distance,
-                candidate,
-                SimulationFidelity.MESOSCOPIC if candidate.handle in over else wanted,
-            )
-            for distance, candidate, wanted in planned
-        ]
+        over = {handle for _d, handle in micro[int(config.max_microscopic) :]}
     for distance, candidate, wanted in planned:
+        if candidate.handle in over:
+            wanted = SimulationFidelity.MESOSCOPIC
         if wanted is candidate.fidelity:
             continue
         if wanted is SimulationFidelity.MESOSCOPIC:

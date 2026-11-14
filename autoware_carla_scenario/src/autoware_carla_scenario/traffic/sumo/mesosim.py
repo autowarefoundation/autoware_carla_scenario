@@ -39,7 +39,7 @@ from __future__ import annotations
 
 import logging
 import math
-import os
+import random
 import socket
 import subprocess
 import time
@@ -47,14 +47,33 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
 
-from ..mesoscopic import MesoLink, MesoVehicle
+from ...kinematics.angle import normalize_angle_deg
+from ..base import TrafficBackendError
+from ..fidelity import MesoscopicConfig
+from ..mesoscopic import _STANDING_MS, MesoLink, MesoscopicTraffic, MesoVehicle
+from .geometry import Pose2D
 
-__all__ = ["SumoMesoscopicTraffic", "segment_count"]
+__all__ = [
+    "MesoRoads",
+    "SumoMesoscopicTraffic",
+    "build_mesoscopic_model",
+    "segment_count",
+]
 
 logger = logging.getLogger(__name__)
 
-#: A speed slower than this is a vehicle told to stand, m/s (as the queue model's).
-_STANDING_MS = 0.01
+#: Roads a route is given ahead of a vehicle, and given again as it nears its
+#: end: the TrafficManager plans no further than this either.
+ROUTE_EDGES = 6
+#: How far from a road's centre line a vehicle may be and still be on it, m:
+#: half of a wide lane, and some.
+LOCATE_RADIUS_M = 3.5
+#: How far a vehicle's heading may be from its road's to be on it, degrees:
+#: a vehicle changing lanes is still on its road, one on the other
+#: carriageway is not.
+LOCATE_HEADING_DEG = 60.0
+#: The side of a cell of the index of lanes by place, m.
+_CELL_M = 50.0
 
 #: How long SUMO may take to listen for TraCI, s: a large network loads first.
 _CONNECT_TIMEOUT_S = 60.0
@@ -146,6 +165,8 @@ class SumoMesoscopicTraffic:
         self._sumo_ids: dict[str, str] = {}
         self._routes = 0
         self._pushed_signals: dict[str, str] = {}
+        #: The time SUMO has been stepped to: kept here, not asked each step.
+        self._stepped_s = 0.0
         cmd = [
             binary,
             "-n",
@@ -196,7 +217,6 @@ class SumoMesoscopicTraffic:
             [*cmd, "--remote-port", str(port)],
             stdout=subprocess.DEVNULL,
             stderr=subprocess.PIPE,
-            env={**os.environ},
         )
         self._process = process
         deadline = time.monotonic() + _CONNECT_TIMEOUT_S
@@ -239,6 +259,8 @@ class SumoMesoscopicTraffic:
         self._running = {}
         self._held = set()
         self._sumo_ids = {}
+        # The callback is the backend's: a closed model keeps it no longer.
+        self._signal_states = None
 
     @property
     def time(self) -> float:
@@ -414,10 +436,14 @@ class SumoMesoscopicTraffic:
             the model now.
         """
         conn = self._conn
+        if not self._vehicles:
+            # Nothing to follow: SUMO is only kept in time, and the signals
+            # catch up (their diff, _copy_signals) when a vehicle is back.
+            self._step_to(now)
+            return []
         if self._junction_control and self._signal_states is not None:
             self._copy_signals(self._signal_states())
-        if conn.simulation.getTime() < now - 1e-9:
-            conn.simulationStep(now)
+        self._step_to(now)
         ids = self._sumo_ids
         in_sumo = set(conn.vehicle.getIDList())
         departed = [i for i in self._pending if ids[i] in in_sumo]
@@ -469,6 +495,11 @@ class SumoMesoscopicTraffic:
     # ------------------------------------------------------------------
     # Internals
     # ------------------------------------------------------------------
+
+    def _step_to(self, now: float) -> None:
+        if self._stepped_s < now - 1e-9:
+            self._conn.simulationStep(now)
+            self._stepped_s = now
 
     @staticmethod
     def _cap(vehicle: MesoVehicle) -> float:
@@ -583,3 +614,170 @@ class SumoMesoscopicTraffic:
                 logger.debug("SUMO (mesoscopic): signal %s: %s", tls, exc)
                 continue
             self._pushed_signals[tls] = state
+
+
+def build_mesoscopic_model(
+    config: MesoscopicConfig,
+    links: Mapping[str, MesoLink],
+    *,
+    net_file: Path,
+    binary: str,
+    step_length: float,
+    seed: int,
+    log_file: Path,
+    signal_states: Optional[Callable[[], Mapping[str, str]]] = None,
+    gate: Optional[Callable[[str, str], bool]] = None,
+    additional_files: Sequence[str] = (),
+) -> "MesoscopicTraffic | SumoMesoscopicTraffic":
+    """The model far traffic runs in on *links*, as *config* chooses:
+    SUMO's own mesoscopic simulation (``engine: sumo``; *signal_states*
+    copied into it under ``junction_control``) or the queue model
+    (``engine: queue``; *gate* holding it at junctions under
+    ``junction_control``).
+
+    Raises:
+        TrafficBackendError: SUMO's mesoscopic simulation did not start.
+    """
+    if config.engine == "sumo":
+        try:
+            return SumoMesoscopicTraffic(
+                links,
+                net_file=net_file,
+                binary=binary,
+                step_length=step_length,
+                seed=seed,
+                segment_length_m=config.segment_length_m,
+                junction_control=config.junction_control,
+                signal_states=signal_states,
+                additional_files=additional_files,
+                log_file=log_file,
+            )
+        except (OSError, RuntimeError) as exc:
+            raise TrafficBackendError(
+                f"SUMO's mesoscopic simulation did not start: {exc}"
+            ) from exc
+    return MesoscopicTraffic(
+        links,
+        headway_s=config.headway_s,
+        jam_spacing_m=config.jam_spacing_m,
+        gate=gate if config.junction_control else None,
+    )
+
+
+class MesoRoads:
+    """The roads of a SUMO network a car may drive, for a backend whose
+    vehicles are not in SUMO: the mesoscopic model's links, where a point is
+    on them, where a place on them is, and routes on.
+
+    Positions are in SUMO's frame (:mod:`.geometry` turns CARLA's into it):
+    a vehicle's front bumper, as SUMO places a vehicle, and the edge offset
+    along its road's rightmost lane a car may use -- the mesoscopic model has
+    no lanes.
+    """
+
+    def __init__(self, net: Any) -> None:
+        """Index *net* (a ``sumolib.net.Net``)."""
+        self._net = net
+        self.links: dict[str, MesoLink] = {}
+        #: Each road's rightmost lane a car may use: where a vehicle on it is.
+        self._shapes: dict[str, list[tuple[float, float]]] = {}
+        #: Every lane a car may use, as ``(edge, shape)``, and those near each
+        #: cell of the plane, so a point is matched against a few.
+        self._lanes: list[tuple[str, list[tuple[float, float]]]] = []
+        self._cells: dict[tuple[int, int], list[int]] = {}
+        for edge in net.getEdges():
+            if edge.getFunction() != "" or not edge.allows("passenger"):
+                continue
+            lanes = [lane for lane in edge.getLanes() if lane.allows("passenger")]
+            if not lanes:
+                continue
+            edge_id = str(edge.getID())
+            self.links[edge_id] = MesoLink(
+                edge_id, float(edge.getLength()), len(lanes), float(edge.getSpeed())
+            )
+            self._shapes[edge_id] = _shape(lanes[0])
+            for lane in lanes:
+                self._index(edge_id, _shape(lane))
+
+    def _index(self, edge_id: str, shape: list[tuple[float, float]]) -> None:
+        index = len(self._lanes)
+        self._lanes.append((edge_id, shape))
+        xs = [p[0] for p in shape]
+        ys = [p[1] for p in shape]
+        r = LOCATE_RADIUS_M
+        for i in range(_cell(min(xs) - r), _cell(max(xs) + r) + 1):
+            for j in range(_cell(min(ys) - r), _cell(max(ys) + r) + 1):
+                self._cells.setdefault((i, j), []).append(index)
+
+    def locate(
+        self, x: float, y: float, heading_deg: float
+    ) -> Optional[tuple[str, float]]:
+        """The road a vehicle at SUMO's ``(x, y)``, heading *heading_deg*
+        (SUMO's angle: clockwise from north), is on, and how far along it;
+        ``None`` in a junction or off every road, or facing against it."""
+        import sumolib  # noqa: PLC0415
+
+        geom = sumolib.geomhelper
+        best: Optional[tuple[float, str, float]] = None
+        for index in self._cells.get((_cell(x), _cell(y)), ()):
+            edge_id, shape = self._lanes[index]
+            distance = float(geom.distancePointToPolygon((x, y), shape))
+            if distance > LOCATE_RADIUS_M or (best is not None and distance >= best[0]):
+                continue
+            offset = float(
+                geom.polygonOffsetWithMinimumDistanceToPoint((x, y), shape, False)
+            )
+            angle = 90.0 - math.degrees(
+                geom.rotationAtShapeOffset(shape, offset) or 0.0
+            )
+            if _angle_between(angle, heading_deg) > LOCATE_HEADING_DEG:
+                continue
+            best = (distance, edge_id, offset)
+        if best is None:
+            return None
+        _distance, edge_id, offset = best
+        length = self.links[edge_id].length
+        return edge_id, min(max(offset, 0.0), max(length - 0.1, 0.0))
+
+    def pose(self, edge_id: str, offset: float) -> Pose2D:
+        """Where *offset* metres along *edge_id* is, in SUMO's frame, facing
+        along the road (SUMO's angle)."""
+        import sumolib  # noqa: PLC0415
+
+        geom = sumolib.geomhelper
+        shape = self._shapes[edge_id]
+        # On the shape, whose length is not quite the edge's.
+        offset = min(max(offset, 0.0), max(geom.polyLength(shape) - 0.01, 0.0))
+        x, y = geom.positionAtShapeOffset(shape, offset)
+        rotation = geom.rotationAtShapeOffset(shape, offset) or 0.0
+        return Pose2D(float(x), float(y), 0.0, (90.0 - math.degrees(rotation)) % 360.0)
+
+    def route_on(
+        self, route: list[str], rng: random.Random, edges: int = ROUTE_EDGES
+    ) -> list[str]:
+        """*route* extended by up to *edges* roads a car may drive, each taken
+        at random where a road branches; shorter at a dead end."""
+        route = list(route)
+        for _ in range(edges):
+            outgoing = sorted(
+                str(to_edge.getID())
+                for to_edge in self._net.getEdge(route[-1]).getOutgoing()
+                if str(to_edge.getID()) in self.links
+            )
+            if not outgoing:
+                break
+            route.append(rng.choice(outgoing))
+        return route
+
+
+def _shape(lane: Any) -> list[tuple[float, float]]:
+    return [(float(p[0]), float(p[1])) for p in lane.getShape()]
+
+
+def _cell(value: float) -> int:
+    return int(math.floor(value / _CELL_M))
+
+
+def _angle_between(a: float, b: float) -> float:
+    """How far apart two headings are, degrees, 0 to 180."""
+    return abs(normalize_angle_deg(a - b))

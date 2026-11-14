@@ -640,4 +640,10 @@ class SumoBackendConfig:
         """The directory converted networks are cached in."""
         if self.cache_dir:
             return Path(self.cache_dir).expanduser()
-        return Path.home() / ".cache" / "autoware_carla_scenario" / "sumo"
+        return default_cache_dir()
+
+
+def default_cache_dir() -> Path:
+    """Where converted networks are cached unless ``cache_dir`` says
+    otherwise: one cache for every backend that converts the world's map."""
+    return Path.home() / ".cache" / "autoware_carla_scenario" / "sumo"
