@@ -4928,9 +4928,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-336 of the package's 465
-modules (72%; about 104,300 of
-174,400 lines) are <code>CHECKED</code>: the kinematics, the
+337 of the package's 466
+modules (72%; about 104,400 of
+174,500 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5033,7 +5033,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 336 CHECKED modules</summary>
+<summary>The 337 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -6386,6 +6386,10 @@ with the first paragraph of its docstring:</p>
 <td><code>wosac._proto</code></td>
 <td>Generated protobuf modules for the Waymo Open Sim Agents Challenge submission contract.</td>
 </tr>
+<tr>
+<td><code>wosac.ids</code></td>
+<td>The ids of a WOSAC rollout and the counts its writers take (docs/wosac.md).</td>
+</tr>
 </tbody>
 </table>
 </details>
@@ -6760,8 +6764,8 @@ the first:</p>
 <li><code>wosac._proto.scenario_pb2</code>: imports google.protobuf</li>
 <li><code>wosac._proto.sim_agents_submission_pb2</code>: imports google.protobuf</li>
 <li><code>wosac._proto.vector_pb2</code>: imports google.protobuf</li>
-<li><code>wosac.convert</code>: reads trajectory logs with t4_scene.convert, which is not checked (JSON-lines records of mixed value types, <code>dict[str, Any]</code>, which Codon cannot express), with its presence check and box poses (<code>_Log.present()</code>, <code>box_poses()</code>), writes them with orjson and builds protobuf messages (wosac._proto); the suffixes it writes are the checked run_outputs's, and the blueprints of a cyclist the checked constants's (<code>CARLA_BICYCLE_BLUEPRINTS</code>)</li>
-<li><code>wosac.pack</code>: imports tarfile and google.protobuf (<code>json_format</code>, <code>message.DecodeError</code>), and builds protobuf messages (wosac._proto); takes the submission's metadata as <code>Mapping[str, Any]</code>, which Codon cannot express</li>
+<li><code>wosac.convert</code>: reads trajectory logs with t4_scene.convert, which is not checked (JSON-lines records of mixed value types, <code>dict[str, Any]</code>, which Codon cannot express), with its presence check and box poses (<code>_Log.present()</code>, <code>box_poses()</code>), writes them with orjson and builds protobuf messages (wosac._proto); the suffixes it writes are the checked run_outputs's, and the blueprints of a cyclist the checked constants's (<code>CARLA_BICYCLE_BLUEPRINTS</code>), and the ids and counts it takes the checked wosac.ids's (<code>object_id_of()</code>, <code>scenario_id_of()</code>, <code>checked_count()</code>)</li>
+<li><code>wosac.pack</code>: imports tarfile and google.protobuf (<code>json_format</code>, <code>message.DecodeError</code>), and builds protobuf messages (wosac._proto); takes the submission's metadata as <code>Mapping[str, Any]</code>, which Codon cannot express; the counts it takes are the checked wosac.ids's (<code>checked_count()</code>)</li>
 </ul>
 </details>
 <p>The scenario check is not limited by this: it compiles every scenario against

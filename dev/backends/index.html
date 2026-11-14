@@ -2378,15 +2378,21 @@ is optional:</p>
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a>scenario<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>...<span class="w"> </span>backends.ardy.image<span class="o">=</span>ghcr.io/hakuturu583/carla_ardy_backend:0.2.0
 </code></pre></div>
-<p>The settings every container backend shares are checked when the backend is
-built, before any image is pulled or container started:</p>
+<p>The settings are checked when the backend is built, before any image is
+pulled or container started. A key that is absent or null takes its default.
+The settings every container backend shares:</p>
 <ul>
+<li><code>image</code> is a non-empty image name, and <code>gpus</code> <code>auto</code>, <code>all</code>, <code>none</code> or what
+  <code>docker run --gpus</code> takes (<code>device=N</code>, a count);</li>
 <li><code>pull</code> is <code>missing</code>, <code>always</code> or <code>never</code>;</li>
 <li><code>startup_timeout_s</code> (and ARDY's <code>timeout_s</code>) is a finite number of seconds
   above 0;</li>
 <li><code>gpu_memory_mb</code> and <code>memory_mb</code> are whole numbers, not negative;</li>
 <li><code>docker_args</code> is a list (<code>[--shm-size=8g]</code>), never a string.</li>
 </ul>
+<p>ARDY's own settings: <code>model</code> and <code>hf_home</code> are non-empty text, and
+<code>acceleration</code> is <code>none</code>, <code>compile</code> or <code>trt</code>. A <code>false</code>, a number or <code>''</code> is
+refused rather than handed to the container as its text.</p>
 <p>A value refused is an error naming its key, such as
 <code>backends.ardy.startup_timeout_s must be finite and above 0, got -1</code>. A
 run refuses the settings of a backend this package ships (<code>backends.ardy</code>)
@@ -2431,7 +2437,7 @@ checks the shared keys above (check your own keys with its helpers, such as
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 7, 2026 22:02:11 UTC"><span class="timeago" datetime="2026-11-07T22:02:11+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 7, 2026 22:02:11 UTC">2026-11-07</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 14, 2026 20:12:54 UTC"><span class="timeago" datetime="2026-11-14T20:12:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 14, 2026 20:12:54 UTC">2026-11-14</span>
   </span>
 
     
