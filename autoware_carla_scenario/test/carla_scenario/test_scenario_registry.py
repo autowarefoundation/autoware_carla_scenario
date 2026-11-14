@@ -1361,6 +1361,46 @@ class TestBuildAutowareLauncher:
         assert isinstance(launcher, CommandAutowareLauncher)
         assert tuple(launcher.argv) == ("ros2", "launch", "{bridge_address}")
 
+    def test_a_null_type_is_the_default_none(self) -> None:
+        """#2158: not refused as the unknown type 'None'."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        assert build_autoware_launcher(self._cfg(type=None)) is None
+
+    def test_a_null_workspace_is_the_default(self) -> None:
+        """#2158: not Path('None'), a directory ./None the launcher looks for."""
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launcher = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace=None,
+                launch=["autoware_launch", "x.launch.xml"],
+            )
+        )
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.workspace == Path("~/autoware")
+
+    @pytest.mark.parametrize(
+        "workspace", [False, True, 0, 1.5, "", " ", ["/ws"], {"a": 1}]
+    )
+    def test_a_workspace_that_is_no_path_is_refused(self, workspace: object) -> None:
+        """#2158: false was Path('False'), and '' the current directory."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type="docker",
+            workspace=workspace,
+            launch=["autoware_launch", "x.launch.xml"],
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"^autoware\.launcher\.workspace must be a path to the "
+            r"Autoware workspace, got ",
+        ):
+            build_autoware_launcher(cfg)
+
     def test_unknown_type_raises(self) -> None:
         from autoware_carla_scenario.examples.run import build_autoware_launcher
 
