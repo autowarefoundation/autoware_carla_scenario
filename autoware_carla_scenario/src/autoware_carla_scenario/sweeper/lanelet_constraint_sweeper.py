@@ -793,7 +793,7 @@ class LaneletConstraintSweeper(Sweeper):
         # (job_timeout and resume_from: read and checked at step 1.)
         # Refused at step 0 already (check_run_config); read as the run
         # reads them, for a caller that reaches here without it (a null
-        # cooldown is none, #2161).
+        # cooldown is the default 2 s, #2161).
         from ..examples.run import (  # noqa: PLC0415
             _cooldown_seconds,
             cooldown_max_retries,

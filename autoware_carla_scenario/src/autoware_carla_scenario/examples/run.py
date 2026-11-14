@@ -64,6 +64,7 @@ from autoware_carla_scenario import (
     GroundProjectionConfig,
     Lanelet2Pose,
     ScenarioQueue,
+    ServerConfig,
     SpawnTransform,
     TrafficSinkAction,
     TrafficSourceAction,
@@ -1477,14 +1478,15 @@ def _server_number(
 
 def _cooldown_seconds(cfg: DictConfig) -> float:
     """``server.cooldown_seconds``, checked: a finite number of seconds, 0 or
-    more; absent or null is 0, no cooldown (#2161).  A NaN or negative
-    cooldown used to be read as none.
+    more; absent or null is the default, 2 s -- ``ServerConfig``'s, the
+    shipped ``server/localhost.yaml``'s and the docs' (#1267, #2161), not
+    none.  A NaN or negative cooldown used to be read as none.
 
     Raises:
         ValueError: naming the key.
     """
     cooldown = _server_number(cfg, "cooldown_seconds", None, positive=False)
-    return 0.0 if cooldown is None else cooldown
+    return ServerConfig.cooldown_seconds if cooldown is None else cooldown
 
 
 def _max_tick_rate_hz(cfg: DictConfig) -> float | None:

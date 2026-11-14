@@ -786,7 +786,7 @@ negative; `max_vehicles` may be null), `server.cooldown_max_retries` and
 `server.reload_every` (not negative). `2.0` is 2, but `2.5` or `true` is
 refused, naming the key, rather than run as 2 or 1. A null
 `server.cooldown_max_retries` is no retry, as absent is, and a null
-`server.cooldown_seconds` no cooldown.
+`server.cooldown_seconds` the default 2 s cooldown (`0` is none).
 
 It is the seed of:
 
@@ -886,7 +886,7 @@ Defines the default config group composition:
 |-----------|------|---------|-------------|
 | `server.host` | str | `localhost` | CARLA server hostname; a non-blank string. CARLA is launched only for a local host ([installation.md](installation.md#carla-simulator)); at any other the server must already be listening |
 | `server.port` | int | `2000` | CARLA server port |
-| `server.cooldown_seconds` | float | `2.0` | Wait time (seconds) between consecutive scenario runs; a finite number, `0` or more (`0`: none) |
+| `server.cooldown_seconds` | float | `2.0` | Wait time (seconds) between consecutive scenario runs; a finite number, `0` or more (`0`: none; `null`: the default) |
 | `server.cooldown_max_retries` | int | `0` | Maximum retries of a run that raised (not of one that ran and failed); a whole number, `0` or more (`2.0` is 2; `1.9` or `true` is refused) |
 | `server.max_tick_rate_hz` | float | `null` | Upper bound (Hz) on how fast the run ticks the world, or `null` for as fast as the server allows; a finite number above `0` (`20` is real time at the 0.05 s step, which `ego.entity=ros2` wants: [ROS 2](ros2.md#timing)) |
 | `server.fog_density_scale` | float | `null` | `carla.Weather.FogDensityScale` for a server the run starts and for the LiDARs' fog, or `null` to keep the server's own `0.001`; a finite number above `0` ([Driver Interface](driver_interface.md)) |

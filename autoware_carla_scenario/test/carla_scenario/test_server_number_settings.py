@@ -123,14 +123,20 @@ def test_a_negative_server_count_is_refused(key: str) -> None:
         run.check_run_config(cfg)
 
 
-def test_a_null_cooldown_is_none_and_a_null_retry_count_no_retry() -> None:
-    """#2161: each has a default, which null is, as absent is."""
+def test_a_null_cooldown_or_retry_count_is_the_default() -> None:
+    """#2161: each has a default, which null is, as absent is: the
+    documented 2 s cooldown (ServerConfig's and localhost.yaml's, #1267), not
+    none, and no retry."""
+    from autoware_carla_scenario import ServerConfig
     from autoware_carla_scenario.examples import run
 
     cfg = _shipped(["server.cooldown_seconds=null", "server.cooldown_max_retries=null"])
     run.check_run_config(cfg)
-    assert run._cooldown_seconds(cfg) == 0.0
+    assert run._cooldown_seconds(cfg) == ServerConfig.cooldown_seconds == 2.0
     assert run.cooldown_max_retries(cfg) == 0
+    absent = _shipped(["~server.cooldown_seconds", "~server.cooldown_max_retries"])
+    assert run._cooldown_seconds(absent) == 2.0
+    assert run.cooldown_max_retries(absent) == 0
 
 
 def test_a_cooldown_retry_count_that_is_no_number_is_still_refused() -> None:
