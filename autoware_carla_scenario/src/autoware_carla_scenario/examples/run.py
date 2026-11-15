@@ -138,7 +138,7 @@ from autoware_carla_scenario.typecheck.mode import (
 )
 from autoware_carla_scenario.traffic.base import check_background_speed
 from autoware_carla_scenario.traffic.config import traffic_backend_name
-from autoware_carla_scenario.traffic.registry import tm_port_option
+from autoware_carla_scenario.traffic.registry import takes_null_options, tm_port_option
 from autoware_carla_scenario.traffic import (
     TrafficBackend,
     TrafficConfig,
@@ -1298,11 +1298,17 @@ def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
         else TrafficConfig(options=_legacy_traffic_manager_options(cfg))
     )
 
-    # A key left at null is a key the config did not set, not an override of
-    # the backend's own default -- the group declares its keys so that plain
-    # `traffic.options.x=y` overrides work under Hydra's struct mode, and an
-    # interpolation that resolved to nothing leaves the backend's default alone.
-    options = {key: value for key, value in config.options.items() if value is not None}
+    # The groups declare their keys, null included, so that plain
+    # `traffic.options.x=y` overrides work under Hydra's struct mode.  A
+    # built-in backend reads a null itself (#2178): the default of an option
+    # that does not take null -- so an interpolation that resolved to nothing
+    # leaves the default alone -- and a value of its own for one that does
+    # (sumo's `lateral_resolution_m: null`, its lane-based model).  Any other
+    # backend, an installed package's, never sees a null: a key left at null
+    # is a key the config did not set, and is dropped.
+    options = dict(config.options)
+    if not takes_null_options(config.backend):
+        options = {key: value for key, value in options.items() if value is not None}
 
     backend = build_backend(
         config.backend, options, config.vehicles, config.pedestrians, config.bicycles

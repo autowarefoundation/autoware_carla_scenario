@@ -35,6 +35,7 @@ __all__ = [
     "get_backend_factory",
     "build_backend",
     "tm_port_option",
+    "takes_null_options",
     "load_traffic_backend_plugins",
 ]
 
@@ -50,6 +51,10 @@ _BACKENDS: dict[str, TrafficBackendFactory] = {}
 #: port is read from (:func:`tm_port_option`).
 _TM_PORT_OPTIONS: dict[str, str] = {}
 
+#: The names of the backends whose factory is handed a null option as it is
+#: (:func:`takes_null_options`); every other one never sees a null (#2178).
+_NULL_OPTION_BACKENDS: set[str] = set()
+
 #: Whether the entry-point walk has already run in this process.  Set only
 #: once the walk is over (#2037).
 _plugins_loaded = False
@@ -64,6 +69,7 @@ def register_backend(
     factory: TrafficBackendFactory,
     *,
     tm_port_option: Optional[str] = None,
+    takes_null_options: bool = False,
 ) -> None:
     """Make *factory* selectable as ``traffic.backend=<name>``.
 
@@ -79,12 +85,26 @@ def register_backend(
             TrafficManager, the option of its own (``traffic.options.<it>``)
             the TrafficManager's port is read from: where a run reports the
             port and a SLURM task sets its own.  ``None``: none.
+        takes_null_options: Whether a run hands *factory* the options set to
+            null (``traffic.options.x=null``, a YAML group's null placeholder,
+            an ``${oc.select:...,null}`` that resolved to nothing) as they are.
+            ``False`` (the default, and what every backend registered before
+            the flag existed gets): a run drops them, so the factory never sees
+            a null and an option left null is its default.  ``True``: the
+            factory reads a null itself -- as its default, or as a value of its
+            own where an option takes one, as the built-in ``sumo`` backend's
+            ``lateral_resolution_m: null`` (its lane-based model) does (#2178).
+            :func:`build_backend` itself passes options on verbatim either way.
     """
     _BACKENDS[name] = factory
     if tm_port_option is None:
         _TM_PORT_OPTIONS.pop(name, None)
     else:
         _TM_PORT_OPTIONS[name] = tm_port_option
+    if takes_null_options:
+        _NULL_OPTION_BACKENDS.add(name)
+    else:
+        _NULL_OPTION_BACKENDS.discard(name)
 
 
 def unregister_backend(name: str) -> None:
@@ -95,6 +115,7 @@ def unregister_backend(name: str) -> None:
     """
     _BACKENDS.pop(name, None)
     _TM_PORT_OPTIONS.pop(name, None)
+    _NULL_OPTION_BACKENDS.discard(name)
 
 
 def tm_port_option(name: str) -> Optional[str]:
@@ -103,6 +124,16 @@ def tm_port_option(name: str) -> Optional[str]:
     unknown; backends of installed packages included."""
     load_traffic_backend_plugins()
     return _TM_PORT_OPTIONS.get(name)
+
+
+def takes_null_options(name: str) -> bool:
+    """Whether a run hands the backend *name* its null options as they are
+    (``register_backend(..., takes_null_options=True)``): the built-in
+    ``traffic_manager``, ``sumo`` and ``hybrid`` backends, and not a backend
+    an installed package registers without the flag -- one that overrides a
+    built-in name included -- nor an unknown one."""
+    load_traffic_backend_plugins()
+    return name in _NULL_OPTION_BACKENDS
 
 
 def available_backends() -> list[str]:

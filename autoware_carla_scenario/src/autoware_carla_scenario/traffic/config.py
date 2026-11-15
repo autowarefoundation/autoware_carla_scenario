@@ -122,7 +122,9 @@ class TrafficConfig:
         backend: The registered name of the backend.  ``traffic_manager`` is
             the default and is what every scenario written before this config
             existed gets.
-        options: The backend's own options, passed to its factory verbatim.
+        options: The backend's own options, passed to its factory verbatim
+            -- but for the nulls, which a run drops unless the backend is
+            registered with ``takes_null_options`` (#2178).
         vehicles: How the vehicles drive, in the terms every backend shares;
             a field the backend does not support is an error.
         pedestrians: How the pedestrians walk, likewise.
