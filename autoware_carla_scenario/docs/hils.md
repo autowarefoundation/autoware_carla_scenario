@@ -93,8 +93,9 @@ uvx --from 'autoware-carla-scenario[hils]' --with 'carla-canvas[client]>=0.2' \
 
 `--host`, `--port`, `--role-name` and `--listen` override the file's CARLA
 address, ego and run link; a `--port` outside 1-65535 is a usage error
-(exit 2). In a checkout, `uv sync --dev` installs hilspy and
-`uv run scenario-hils hils.yaml` runs it.
+(exit 2), as is an empty `--host`, `--role-name` or `--listen` (the run link
+is turned off only by `runner.listen: null` in the file). In a checkout,
+`uv sync --dev` installs hilspy and `uv run scenario-hils hils.yaml` runs it.
 
 Then run scenarios with the ego driven by the ECUs, on the same CARLA server:
 
@@ -110,6 +111,8 @@ uv run scenario ego.entity=hils hils.host=hils-pc
 | `end_timeout_s` | `30.0` | its `scenario_end` steps (wall clock) |
 | `stale_s` | `0.5` | a command older than this (wall clock) is stale |
 | `on_stale` | `brake` | `brake`, or `hold` the last command, once stale; before any command the ego brakes |
+
+A null `hils.` setting is its default; an empty `host` is refused, and so is a timeout that is not a number (`true`, `"10"`).
 
 ### Setting up the HILS PC
 
@@ -217,10 +220,15 @@ devices:
 | `ego.wait` | `120.0` | seconds (not negative; wall clock) without an ego -- since the bridge reached CARLA, or since the last scenario ended -- before a warning, logged once a wait (it keeps waiting) |
 | `canvas` | none | a carla_canvas configuration: see [carla_canvas](#sensors-rendered-by-carla_canvas) |
 | `clock` | `simulation` | the devices' time: see [Time](#time) |
-| `runner.listen` | `0.0.0.0:7700` | where runs with `ego.entity=hils` reach the bridge: `host:port` or `host` (port 7700); an IPv6 address in brackets, `"[::1]:7700"` or `"[::]"` (quoted: unquoted, YAML reads `[...]` as a list). `"[::]"` also takes IPv4 where the OS supports dual-stack sockets (Linux, by default); elsewhere it is IPv6 only and `0.0.0.0` is for IPv4. An IPv6 address without brackets, such as `::1`, is all host, on port 7700: `fe80::1:7700` is not port 7700 of `fe80::1`. The port is a whole number from 0 to 65535 (0 picks a free one), checked when the file loads; `null`: no run link |
+| `runner.listen` | `0.0.0.0:7700` | where runs with `ego.entity=hils` reach the bridge: `host:port` or `host` (port 7700); an IPv6 address in brackets, `"[::1]:7700"` or `"[::]"` (quoted: unquoted, YAML reads `[...]` as a list). `"[::]"` also takes IPv4 where the OS supports dual-stack sockets (Linux, by default); elsewhere it is IPv6 only and `0.0.0.0` is for IPv4. An IPv6 address without brackets, such as `::1`, is all host, on port 7700: `fe80::1:7700` is not port 7700 of `fe80::1`. The port is a whole number from 0 to 65535 (0 picks a free one), checked when the file loads; `null`: no run link (an empty `""` is refused) |
 | `commands.mode` | `control` | how the ECUs' command drives the ego: see [ECU to simulation](#ecu-to-simulation) |
 | `devices` | | one entry per device, by name |
 | `lifecycle` | none | steps around the bridge and each scenario: see [Lifecycle](#lifecycle) |
+
+A null setting is its default, as a missing one is (`carla: {port: null}` is
+port 2000), but for `runner.listen`, whose null turns the run link off.
+`carla.host`, `ego.role_name` and `runner.listen` refuse empty text, as
+`--host`, `--role-name` and `--listen` do.
 
 Names, addresses and raw bytes are text. YAML 1.1, which the bridge reads,
 turns some unquoted values into something else: `0102` is the octal number 66,

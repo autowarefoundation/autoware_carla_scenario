@@ -61,7 +61,7 @@ from ..utils.turn_indicator import (
     show_autoware_command,
     turn_indicators_of,
 )
-from .externally_driven import ExternallyDrivenEgo
+from .externally_driven import ExternallyDrivenEgo, tire_steering_angle
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -400,7 +400,7 @@ class Ros2EgoEntity(ExternallyDrivenEgo):
             speed_mps=observation.speed_mps,
             # Two server round trips a tick: only when something reads it.
             steering_tire_angle_rad=(
-                _steering_tire_angle(actor)
+                tire_steering_angle(actor)
                 if self._config.steering_status_topic
                 else 0.0
             ),
@@ -639,17 +639,6 @@ def _trajectory_is_finite(command: TrajectoryCommand) -> bool:
             if not math.isfinite(float(pose.quat_xyzw[index])):
                 return False
     return True
-
-
-def _steering_tire_angle(actor: "carla.Actor") -> float:
-    """The front tyres' angle, radians, positive to the left (Autoware's)."""
-    import typesafe_carla.carla as _carla  # noqa: PLC0415
-
-    wheels = _carla.VehicleWheelLocation
-    left = float(actor.get_wheel_steer_angle(wheels.FL_Wheel))
-    right = float(actor.get_wheel_steer_angle(wheels.FR_Wheel))
-    # CARLA reports degrees, positive to the right.
-    return -math.radians(0.5 * (left + right))
 
 
 def _cyclone_transport(config: Ros2EgoConfig) -> Ros2EgoTransport:

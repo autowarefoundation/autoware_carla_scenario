@@ -162,7 +162,9 @@ def test_a_policy_ego_with_a_nan_bridge_setting_is_refused(
 )
 @pytest.mark.parametrize("value", [_NAN, _INF, 0.0, -1.0])
 def test_the_hils_config_refuses(key: str, value: float) -> None:
-    with pytest.raises(ValueError, match=f"^hils\\.{key} must be positive and finite"):
+    with pytest.raises(
+        ValueError, match=f"^hils\\.{key} must be a positive, finite number of seconds"
+    ):
         HilsEgoConfig.from_mapping({key: value})
 
 

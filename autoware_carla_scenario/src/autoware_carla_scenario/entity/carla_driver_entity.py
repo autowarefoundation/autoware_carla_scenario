@@ -72,6 +72,7 @@ from ..t4 import active_recording, offer_driver_sensors, withdraw_driver_sensors
 from ._policy_warmup import PolicyWarmup, _CarriedActor
 from .bridged_ego import BridgeHandshake
 from .externally_driven import ExternallyDrivenEgo
+from .externally_driven import tire_steering_angle as _tire_steering_angle
 
 if TYPE_CHECKING:
     import numpy as np
@@ -1082,17 +1083,6 @@ def _far_end(points: Any) -> Optional[Tuple[float, float, float]]:
             yaw = math.atan2(end[1] - before[1], end[0] - before[0])
             return (float(end[0]), float(end[1]), yaw)
     return None
-
-
-def _tire_steering_angle(actor: "carla.Actor") -> float:
-    """The front tyres' angle, radians, positive to the left (Autoware's)."""
-    import typesafe_carla.carla as _carla  # noqa: PLC0415
-
-    wheels = _carla.VehicleWheelLocation
-    left = float(actor.get_wheel_steer_angle(wheels.FL_Wheel))
-    right = float(actor.get_wheel_steer_angle(wheels.FR_Wheel))
-    # CARLA reports degrees, positive to the right.
-    return -math.radians(0.5 * (left + right))
 
 
 def _live_t4_scene(

@@ -1174,3 +1174,34 @@ def _jpeg() -> bytes:
     ok, encoded = cv2.imencode(".jpg", np.zeros((48, 64, 3), dtype=np.uint8))
     assert ok
     return encoded.tobytes()
+
+
+def test_a_t4_camera_skips_an_attribute_the_server_lacks_with_a_warning(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """T4's own cameras set the blueprint attributes as a driver camera does
+    (sensor.carla_camera.override_blueprint_attribute): one this server's
+    camera lacks is warned about and skipped, not silently dropped (#2170)."""
+    from autoware_carla_scenario.sensor.carla_camera import (  # noqa: PLC0415
+        CarlaCameraSensorConfig,
+    )
+
+    class _Lacking(_Blueprint):
+        def has_attribute(self, name: str) -> bool:
+            return name != "bloom_intensity"
+
+    blueprints: list[_Lacking] = []
+
+    def find(name: str) -> _Lacking:
+        blueprints.append(_Lacking(name))
+        return blueprints[-1]
+
+    world = _World()
+    world.get_blueprint_library = lambda: SimpleNamespace(find=find)  # type: ignore[method-assign]
+    config = CarlaCameraSensorConfig(bloom_intensity=0.675, iso=100.0)
+    with caplog.at_level("WARNING"):
+        t4._FrameCamera(config, 1).attach(world, world.ego)
+    [blueprint] = blueprints
+    assert "bloom_intensity" not in blueprint.attributes
+    assert blueprint.attributes["iso"] == "100.0"
+    assert "has no attribute 'bloom_intensity'" in caplog.text
