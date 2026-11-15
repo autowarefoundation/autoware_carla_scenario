@@ -1484,6 +1484,52 @@ class TestBuildAutowareLauncher:
         assert launcher.stop_timeout_s == 20.0
 
     @pytest.mark.parametrize(
+        ("gpus", "wanted"), [(2, "2"), (1, "1"), ("device=0", "device=0")]
+    )
+    def test_a_gpu_count_is_handed_to_docker_as_text(
+        self, tmp_path: Path, gpus: object, wanted: str
+    ) -> None:
+        """``docker run --gpus 2`` takes a count, as the prepare backends'
+        ``gpus`` does; an int used to reach Docker's argv as an int."""
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._cfg(
+            "autoware",
+            type="docker",
+            workspace=str(tmp_path),
+            launch=["autoware_launch", "x.launch.xml"],
+            gpus=gpus,
+        )
+        run._AUTOWARE_LAUNCHERS.clear()
+        try:
+            launcher = run.build_autoware_launcher(cfg)
+        finally:
+            run._AUTOWARE_LAUNCHERS.clear()
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.gpus == wanted
+
+    def test_a_gpu_count_and_its_text_share_one_launcher(self, tmp_path: Path) -> None:
+        """``gpus: 2`` and ``gpus: '2'`` are one configuration, so one launcher."""
+        from autoware_carla_scenario.examples import run
+
+        def cfg(gpus: object) -> DictConfig:
+            return self._cfg(
+                "autoware",
+                type="docker",
+                workspace=str(tmp_path),
+                launch=["autoware_launch", "x.launch.xml"],
+                gpus=gpus,
+            )
+
+        run._AUTOWARE_LAUNCHERS.clear()
+        try:
+            first = run.build_autoware_launcher(cfg(2))
+            assert run.build_autoware_launcher(cfg("2")) is first
+        finally:
+            run._AUTOWARE_LAUNCHERS.clear()
+
+    @pytest.mark.parametrize(
         ("key", "value", "wanted"),
         [
             *(
@@ -1493,8 +1539,12 @@ class TestBuildAutowareLauncher:
             ),
             *(
                 (key, value, "null or non-empty text")
-                for key in ("image", "workspace_mount", "gpus", "user")
+                for key in ("image", "workspace_mount", "user")
                 for value in (False, 3, "", " ", {"a": 1})
+            ),
+            *(
+                ("gpus", value, "null or non-empty text")
+                for value in (False, True, 0, -1, 1.5, "", " ", {"a": 1})
             ),
         ],
     )
