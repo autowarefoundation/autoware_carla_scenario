@@ -290,8 +290,9 @@ The values the launcher's type reads are checked there too, naming the key:
   `bridge_parameters` a mapping (or null) of ROS parameters. An `env` value is
   given as text or a number (`ROS_LOCALHOST_ONLY: 1`, not `true`).
 - `devcontainer`, `docker` and `container_prefix` must be non-empty text, and
-  `image`, `workspace_mount`, `gpus` and `user` null or non-empty text:
-  `false`, a number or `''` is refused rather than handed to Docker as
+  `image`, `workspace_mount`, `gpus` and `user` null or non-empty text
+  (`gpus` may also be a GPU count, 1 or more, as `docker run --gpus 2` takes):
+  `false`, any other number or `''` is refused rather than handed to Docker as
   `"False"` or used as a dev container path, a Docker CLI or a container name
   of `None`.
 

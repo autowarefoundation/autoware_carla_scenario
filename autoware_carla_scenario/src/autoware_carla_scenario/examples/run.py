@@ -653,7 +653,8 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     and ``mounts`` mappings of strings or numbers; ``bridge_parameters`` a
     mapping; ``workspace`` a non-empty path; ``devcontainer``, ``docker`` and
     ``container_prefix`` non-empty text, and ``image``, ``workspace_mount``,
-    ``gpus`` and ``user`` null or non-empty text.  A null setting is its
+    ``gpus`` and ``user`` null or non-empty text (``gpus`` may also be a GPU
+    count, 1 or more, as ``docker run --gpus 2`` takes).  A null setting is its
     default (#2158, #2161): ``type`` is ``none``, ``workspace``
     ``~/autoware``, and ``build``, ``rosdep``, ``stop_timeout_s``,
     ``devcontainer``, ``docker`` and ``container_prefix`` those of
@@ -755,6 +756,12 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
             options["rosdep"] = check_flag(
                 "autoware.launcher.rosdep", options["rosdep"]
             )
+        # A GPU count is what docker run --gpus takes too (``gpus: 2``), as
+        # the prepare backends read it (prepare.docker); a bool or a count
+        # below 1 is left for DockerAutowareConfig to refuse.
+        gpus = options.get("gpus")
+        if isinstance(gpus, int) and not isinstance(gpus, bool) and gpus >= 1:
+            options["gpus"] = str(gpus)
         options["ros_domain_ids"] = _launcher_ros_domain_ids(settings)
         options["stop_timeout_s"] = stop_timeout_s
         if "bridge_parameters" in options:
