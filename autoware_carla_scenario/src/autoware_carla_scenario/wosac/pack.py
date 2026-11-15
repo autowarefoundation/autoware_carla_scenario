@@ -14,11 +14,19 @@ the challenge's server takes.
 A ``ScenarioRollouts`` file merges as Protobuf merges any message: the
 serialised bytes of two of one ``scenario_id``, concatenated, parse as one
 whose ``joint_scenes`` are both files'.
+
+Whether a scenario's runs are rollouts of it -- one initial state, futures
+that differ only by chance -- is checked from what each run's
+``{stem}.wosac.json`` says (:func:`check_runs`): they ran one concrete
+scenario (one ``scenario_hash``), each with its own seed, and started its
+future from the same state.
 """
 
 from __future__ import annotations
 
+import json
 import logging
+import math
 import tarfile
 from collections import Counter
 from collections.abc import Iterable, Mapping
@@ -28,7 +36,7 @@ from typing import Any, Optional
 from google.protobuf import json_format
 from google.protobuf.message import DecodeError
 
-from ..run_outputs import WOSAC_SUFFIX
+from ..run_outputs import WOSAC_AGENTS_SUFFIX, WOSAC_SUFFIX
 from ..t4_scene.grid import files_under
 from ._proto import sim_agents_submission_pb2 as pb
 from .ids import checked_count
@@ -36,9 +44,13 @@ from .ids import checked_count
 __all__ = [
     "SHARD_PREFIX",
     "TARBALL_NAME",
+    "POSITION_TOLERANCE_M",
+    "HEADING_TOLERANCE_RAD",
     "build_submission",
+    "check_runs",
     "merge_rollouts",
     "read_rollouts",
+    "read_run",
     "read_submission",
     "rollout_files",
     "shard_name",
@@ -52,6 +64,12 @@ logger = logging.getLogger(__name__)
 SHARD_PREFIX = "submission.binproto"
 #: The archive of the shards the challenge's server takes.
 TARBALL_NAME = "submission.tar.gz"
+
+#: How far apart an agent may be, and how differently headed, on the current
+#: row of two rollouts of one scenario (:func:`check_runs`): its history is
+#: simulated too, and a stack that is not deterministic drifts a little.
+POSITION_TOLERANCE_M = 0.5
+HEADING_TOLERANCE_RAD = 0.1
 
 #: The fields of a ``SimulatedTrajectory`` that hold a value per row: these
 #: always, and the optional ones none or as many.
@@ -76,6 +94,174 @@ def read_rollouts(path: Path | str) -> pb.ScenarioRollouts:
         return pb.ScenarioRollouts.FromString(Path(path).read_bytes())
     except DecodeError as error:
         raise ValueError(f"{path}: not a ScenarioRollouts ({error})") from None
+
+
+def read_run(path: Path | str) -> Optional[dict[str, Any]]:
+    """What the run of the rollout file at *path* says of itself: the
+    ``{stem}.wosac.json`` beside its ``{stem}.wosac.pb``, or ``None`` when
+    there is none (a file merged from several, or renamed).
+
+    Raises:
+        ValueError: If the file is there but holds no JSON object.
+    """
+    rollout = Path(path)
+    if not rollout.name.endswith(WOSAC_SUFFIX):
+        return None
+    sidecar = rollout.with_name(
+        rollout.name[: -len(WOSAC_SUFFIX)] + WOSAC_AGENTS_SUFFIX
+    )
+    if not sidecar.is_file():
+        return None
+    try:
+        run = json.loads(sidecar.read_text())
+    except ValueError as error:
+        raise ValueError(f"{sidecar}: not JSON ({error})") from None
+    if not isinstance(run, dict):
+        raise ValueError(f"{sidecar}: not a JSON object")
+    return run
+
+
+def _heading_difference(a: float, b: float) -> float:
+    """How far apart headings *a* and *b* (radians) are, from 0 to pi."""
+    return abs(math.remainder(a - b, math.tau))
+
+
+def _check_scenario_runs(
+    scenario_id: str,
+    runs: list[tuple[Mapping[str, Any], str]],
+    position_tolerance_m: float,
+    heading_tolerance_rad: float,
+) -> None:
+    """The runs of one scenario, checked as rollouts of it (:func:`check_runs`)."""
+    hashes: dict[str, str] = {}
+    seeds: dict[int, str] = {}
+    unknown: list[str] = []
+    for run, source in runs:
+        digest = run.get("scenario_hash")
+        seed = run.get("seed")
+        if digest is None or seed is None:
+            unknown.append(source)
+        if digest is not None:
+            hashes.setdefault(str(digest), source)
+        if seed is not None:
+            seed = int(seed)
+            if seed in seeds:
+                raise ValueError(
+                    f"scenario {scenario_id!r}: {seeds[seed]} and {source} both "
+                    f"ran seed {seed}, so they are one rollout run twice: give "
+                    "every rollout its own seed"
+                )
+            seeds[seed] = source
+    if len(hashes) > 1:
+        (first, a), (second, b) = list(hashes.items())[:2]
+        raise ValueError(
+            f"scenario {scenario_id!r}: {a} and {b} ran different scenarios "
+            f"(scenario_hash {first[:12]}... and {second[:12]}...), which are "
+            "not rollouts of one: give them different scenario ids"
+        )
+    if unknown:
+        logger.warning(
+            "scenario %r: cannot tell that %s ran the scenario with a seed of "
+            "its own: no scenario_hash or seed (a log written before they were "
+            "recorded, or a scenario not built by the scenario command)",
+            scenario_id,
+            ", ".join(unknown),
+        )
+    # The initial state: every agent where the first run has it.
+    reference, reference_source = runs[0]
+    poses = _current_poses(reference)
+    for run, source in runs[1:]:
+        for object_id, pose in _current_poses(run).items():
+            start = poses.get(object_id)
+            if start is None:
+                continue
+            distance = math.dist(pose[:3], start[:3])
+            turn = _heading_difference(pose[3], start[3])
+            if distance > position_tolerance_m or turn > heading_tolerance_rad:
+                raise ValueError(
+                    f"scenario {scenario_id!r}: object {object_id} starts its "
+                    f"future {distance:.3f} m and {turn:.3f} rad away in "
+                    f"{source} from where it does in {reference_source} (at "
+                    f"most {position_tolerance_m:g} m and "
+                    f"{heading_tolerance_rad:g} rad), so they do not share an "
+                    "initial state: is something placed at random before the "
+                    "current row?"
+                )
+
+
+def _current_poses(run: Mapping[str, Any]) -> dict[int, tuple[float, ...]]:
+    """Each agent's pose on the current row of *run*, by object id, in the
+    frame without the map's offsets (two runs may be written in either)."""
+    offset = [float(v) for v in run.get("offset") or (0.0, 0.0, 0.0)]
+    poses: dict[int, tuple[float, ...]] = {}
+    for agent in run.get("agents") or ():
+        current = agent.get("current")
+        if current is None:
+            continue
+        x, y, z, heading = (float(v) for v in current)
+        poses[int(agent["object_id"])] = (
+            x - offset[0],
+            y - offset[1],
+            z - offset[2],
+            heading,
+        )
+    return poses
+
+
+def check_runs(
+    runs: Iterable[tuple[Mapping[str, Any], str]],
+    *,
+    position_tolerance_m: float = POSITION_TOLERANCE_M,
+    heading_tolerance_rad: float = HEADING_TOLERANCE_RAD,
+) -> None:
+    """Check that the runs of each scenario are rollouts of it.
+
+    Whether runs are rollouts of one scenario cannot be told from what they
+    did -- a future that differs may be chance, or a parameter that differs
+    -- so it is told from what they were asked to run, and checked where it
+    can be from where they started:
+
+    * every run of a ``scenario_id`` ran one concrete scenario: one
+      ``scenario_hash`` (:mod:`~autoware_carla_scenario.scenario_hash`);
+    * each with a seed of its own: two of one seed are one rollout twice;
+    * and each agent starts its future -- the current row -- where it does in
+      the first run, within *position_tolerance_m* and
+      *heading_tolerance_rad*: an agent placed at random before it would
+      not.
+
+    A run that does not say its hash or seed (a log written before they were
+    recorded) is let through, with a warning.
+
+    Args:
+        runs: ``(metadata, source)`` pairs: what a run's ``{stem}.wosac.json``
+            holds (:func:`read_run`), and where it came from, which an error
+            names.
+
+    Raises:
+        ValueError: If a scenario's runs ran different scenarios, two ran
+            one seed, or an agent starts two of them apart.
+    """
+    position_tolerance_m = float(position_tolerance_m)
+    heading_tolerance_rad = float(heading_tolerance_rad)
+    for name, value in (
+        ("position_tolerance_m", position_tolerance_m),
+        ("heading_tolerance_rad", heading_tolerance_rad),
+    ):
+        if not math.isfinite(value) or value < 0:
+            raise ValueError(f"{name} must be a finite number >= 0, not {value!r}")
+    scenarios: dict[str, list[tuple[Mapping[str, Any], str]]] = {}
+    for run, source in runs:
+        scenario_id = run.get("scenario_id")
+        if not scenario_id:
+            raise ValueError(f"{source} has no scenario_id")
+        scenarios.setdefault(str(scenario_id), []).append((run, source))
+    for scenario_id in sorted(scenarios):
+        _check_scenario_runs(
+            scenario_id,
+            scenarios[scenario_id],
+            position_tolerance_m,
+            heading_tolerance_rad,
+        )
 
 
 def read_submission(paths: Iterable[Path | str]) -> pb.SimAgentsChallengeSubmission:

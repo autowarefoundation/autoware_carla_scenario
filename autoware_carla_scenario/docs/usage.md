@@ -807,6 +807,12 @@ the runner sets it from the scenario's `random_seed` before `setup()` (and
 component built with `seed=None` takes it when it is built. A scenario that
 draws for itself seeds its own generator from `self.random_seed`.
 
+The seed is also what tells a scenario's rollouts apart: runs of one
+scenario and different seeds are its rollouts, which `scenario-wosac` packs
+for the Waymo Open Sim Agents Challenge. The run writes its seed, and the
+digest of the scenario it ran without it, into its trajectory log
+([WOSAC Rollouts](wosac.md#are-they-rollouts)).
+
 A route search's `seed` (`sweep.route.seed`) is not one of them: unset, the
 matches are not shuffled at all. A config with no `seed` key (a scenario
 package's own `config.yaml` written before it existed) leaves the scenario the

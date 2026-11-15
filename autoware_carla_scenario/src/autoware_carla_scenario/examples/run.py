@@ -124,6 +124,7 @@ from autoware_carla_scenario.run_outputs import (
 )
 from autoware_carla_scenario.run_timeout import run_timeout_seconds
 from autoware_carla_scenario.scenario_config import EntityConfig
+from autoware_carla_scenario.scenario_hash import SCENARIO_SECTIONS, scenario_hash
 from autoware_carla_scenario.seed import DEFAULT_SEED, MAX_SEED, set_run_seed
 from autoware_carla_scenario.server import fog_density_scale_args
 from autoware_carla_scenario.t4 import T4Recorder, T4Settings, T4UnavailableError
@@ -3312,6 +3313,7 @@ def build_scenario(
         ego, scenario = build_scenario_fn(cfg)
         if seed is not None:
             scenario.random_seed = seed
+        _set_scenario_hash(cfg, scenario)
         _apply_ego_config(cfg, scenario)
         add_background_traffic(cfg, scenario)
         add_environment(cfg, scenario)
@@ -3338,6 +3340,7 @@ def build_scenario(
     scenario = builder(ego, scenario_dict, spawn_pose, ground_projection)
     if seed is not None:
         scenario.random_seed = seed
+    _set_scenario_hash(cfg, scenario)
     # Built once: an Autoware ego holds a bridge server, and two of those cannot
     # hold the same address.
     ego_entity = build_ego_entity(cfg)
@@ -3347,6 +3350,28 @@ def build_scenario(
     add_environment(cfg, scenario)
     add_effect_measures(cfg, scenario)
     return ego, scenario
+
+
+def _set_scenario_hash(cfg: DictConfig, scenario: BaseScenario) -> None:
+    """Give *scenario* the digest of the concrete scenario *cfg* runs, its
+    seed aside (:func:`~autoware_carla_scenario.scenario_hash.scenario_hash`):
+    the runner writes it into the run's trajectory log, where
+    ``scenario-wosac`` tells the rollouts of one scenario by it."""
+    # Only the sections it reads are resolved: the rest may interpolate what
+    # only a Hydra job has (its output directory).
+    config: dict[str, Any] = {}
+    for key in SCENARIO_SECTIONS:
+        if key in cfg:
+            node = cfg[key]
+            config[key] = (
+                OmegaConf.to_container(node, resolve=True)
+                if OmegaConf.is_config(node)
+                else node
+            )
+    scenario_class = type(scenario)
+    scenario.scenario_hash = scenario_hash(
+        config, f"{scenario_class.__module__}.{scenario_class.__qualname__}"
+    )
 
 
 def add_effect_measures(cfg: DictConfig, scenario: BaseScenario) -> None:

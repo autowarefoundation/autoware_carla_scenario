@@ -173,6 +173,9 @@ class _Log:
         default_factory=dict
     )
     result: Optional[dict[str, Any]] = None
+    #: What the run was asked to run (``run``: its seed and scenario hash),
+    #: absent from an older log.
+    run: Optional[dict[str, Any]] = None
     #: Ticks between the scene's rows: only the ticks on that grid are kept.
     step_frames: int = 1
     #: Every light's state as of the last tick fed, folded from the deltas.
@@ -235,6 +238,8 @@ class _Log:
             self.despawned.setdefault(int(record["id"]), int(record["frame"]))
         elif kind == "result":
             self.result = dict(record)
+        elif kind == "run":
+            self.run = dict(record)
 
     def forget_before(self, frame: int) -> None:
         """Drop the rows before *frame*: a live log keeps only a window."""

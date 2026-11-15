@@ -635,6 +635,35 @@ def test_no_recording_means_no_start_frame(tmp_path) -> None:
     assert record["start_frame"] is None
 
 
+def test_the_run_record_says_the_seed_and_the_scenario_hash(tmp_path) -> None:
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl")
+    recorder.start(_World())
+    recorder.record_run(7, "ab" * 32)
+    recorder.record_warmup(0, -1, 100)
+    recorder.close()
+    records = _lines(recorder.path)
+    [record] = [r for r in records if r["type"] == "run"]
+    assert record == {"type": "run", "seed": 7, "scenario_hash": "ab" * 32}
+    kinds = [r["type"] for r in records]
+    assert kinds.index("map") < kinds.index("run") < kinds.index("warmup")
+
+
+def test_a_run_without_a_scenario_hash_records_null(tmp_path) -> None:
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl")
+    recorder.start(_World())
+    recorder.record_run(0, None)
+    recorder.close()
+    [record] = [r for r in _lines(recorder.path) if r["type"] == "run"]
+    assert record["scenario_hash"] is None
+
+
+def test_the_schema_refuses_a_run_record_without_a_hex_digest() -> None:
+    assert not _validator().is_valid(
+        {"type": "run", "seed": 0, "scenario_hash": "not a digest"}
+    )
+    assert not _validator().is_valid({"type": "run", "seed": -1, "scenario_hash": None})
+
+
 def test_actors_that_come_later_and_go_are_written_when_they_do(tmp_path) -> None:
     recorder, world = _run(tmp_path)
     world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
@@ -1009,6 +1038,7 @@ def test_the_new_records_never_fail_the_run(tmp_path) -> None:
     recorder.record_condition("pass", 0, "x", True)
     recorder.record_result(MagicMock())
     recorder.record_warmup(1, 0, 1)
+    recorder.record_run(1, None)
     recorder.record_spawn("s", "npc1", 1)
     recorder.record_despawn("d", "npc1", 1)
     recorder.record_metric(1, 0.05, {"offroad": 0.0})

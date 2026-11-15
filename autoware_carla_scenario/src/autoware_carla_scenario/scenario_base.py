@@ -123,6 +123,12 @@ class BaseScenario(ABC):
     _spawn_pose: Optional[Lanelet2Pose]
     _ground_projection: GroundProjectionConfig
     random_seed: int
+    #: The digest of the concrete scenario the run is
+    #: (:func:`~autoware_carla_scenario.scenario_hash.scenario_hash`): what
+    #: the ``scenario`` command derives from its config, its seed aside, so
+    #: that runs of one hash differing in seed are rollouts of one scenario.
+    #: ``None`` when nothing set it.
+    scenario_hash: Optional[str]
     _client: Optional[carla.Client]
     _tm_port: int
     _traffic_backend: Optional[TrafficBackend]
@@ -223,6 +229,7 @@ class BaseScenario(ABC):
         self._spawn_pose = spawn_pose
         self._ground_projection = ground_projection or GroundProjectionConfig()
         self.random_seed = check_seed("random_seed", random_seed)
+        self.scenario_hash = None
         self._client = None
         self._tm_port = DEFAULT_TM_PORT
         self._traffic_backend = None

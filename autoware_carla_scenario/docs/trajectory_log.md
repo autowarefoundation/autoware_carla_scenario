@@ -32,7 +32,7 @@ The format has a version, `schema_version` in the `world` line: **2**. Version
 `schema_version` and none of those records, and still follows the schema.
 The records marked (2) in the table below that are not in that list
 (`rear_axle`, `turn_indicators`, `plan`, `adversity`, `waypoint_arrival`, `collision`, `walker_fallen`, `metric`,
-`spawn`, `despawn`) came later within version 2: a reader of version 2 that does not
+`spawn`, `despawn`, `run`) came later within version 2: a reader of version 2 that does not
 know one skips it. So did the `tick`'s optional `angular_velocity` field and
 the `collision`'s optional `start_frame` field: a file written before one has
 none.
@@ -44,7 +44,7 @@ it does not know reads any later file.
 
 Each line is one record, told apart by `type`; the table below lists every
 type the schema has. A file starts with one `world` line and one `map` line,
-then one `traffic_light` line per light and one `warmup` line. After that come the ticks: each `tick` line is preceded by an
+then one `traffic_light` line per light, one `run` line and one `warmup` line. After that come the ticks: each `tick` line is preceded by an
 `actor` line for every vehicle or walker appearing in it for the first time
 (an ego's followed by a `rear_axle` line) and
 an `actor_gone` line for every one that has gone since the last, and followed
@@ -58,6 +58,7 @@ lines, and last a `condition` line for each condition that changed. A run judged
 {"type":"world","schema_version":2,"map":"Carla/Maps/Town10HD_Opt","episode":7}
 {"type":"map","name":"Town10HD_Opt","source":"git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@c834d5c#autoware_maps/Town10HD_Opt","lanelet2":{"path":"/.../lanelet2_map.osm","sha256":"5d88...","bytes":1234567},"opendrive":{"path":"/.../Town10HD_Opt.xodr","sha256":"9a1f...","bytes":2345678},"projector_info":{"projector_type":"MGRS","vertical_datum":"WGS84","mgrs_grid":"54SUE"},"projector_type":null,"mgrs_offset":[81655.0,50137.5],"z_offset":0.0}
 {"type":"traffic_light","id":9,"opendrive_id":"42","location":[10.0,20.0,0.0],"boxes":[[10.0,20.0,5.0,0.2,0.3,0.6,180.0]],"stops":[[5.0,18.0,0.0,-90.0]]}
+{"type":"run","seed":0,"scenario_hash":"3f1c...e9"}
 {"type":"warmup","ticks":66,"start_frame":34,"end_frame":100}
 {"type":"actor","id":1,"type_id":"vehicle.lincoln.mkz","role":"ego","extent":[2.45,1.07,0.77],"center":[0.0,0.0,0.7]}
 {"type":"tick","frame":100,"t":0.0,"actors":[[1,0.0,1.0,0.0,0.0,0.0,90.0,0.0,0.0,0.0]],"control":{"1":[0.5,0.0,0.0,1]},"lights":{"9":"Red"}}
@@ -76,6 +77,7 @@ lines, and last a `condition` line for each condition that changed. A run judged
 | `actor` | before the first tick a vehicle/walker appears in | `id`, `type_id` (blueprint), `role` (`role_name`), `extent` (bounding box half size), `center` (box centre offset from the actor origin, actor frame) |
 | `tick` | after each `world.tick()` | `frame` (CARLA frame), `t` (scenario seconds), `actors` `[[id,x,y,z,roll,pitch,yaw,vx,vy,vz]]`, `control` `{id: [throttle,steer,brake,gear]}` (egos only), `angular_velocity` `{id: [wx,wy,wz]}` (egos only, deg/s in CARLA's world axes; (2), absent before it was recorded), `lights` `{id: state}` (changes only) |
 | `map` (2) | once, after `world` | `name` (short map name), `source` (`map.directory`, else `map.source`, else null: the one the map was read from, as `map.directory` wins), `lanelet2` / `opendrive` (`{path, sha256, bytes}` of the file read, or null), `projector_info` (`map_projector_info.yaml` as read, or null), `projector_type` (the config's override, or null), `mgrs_offset` `[ox,oy]` and `z_offset` (the loaded Lanelet2 map's, or null) |
+| `run` (2) | once, after the traffic lights | `seed` (the run's seed, `BaseScenario.random_seed`), `scenario_hash` (the SHA-256 of the concrete scenario the run's config describes, its seed aside: `autoware_carla_scenario.scenario_hash`, which [WOSAC Rollouts](wosac.md#scenarios-and-rollouts) tells a scenario's rollouts by; null for a scenario not built by the `scenario` command) |
 | `warmup` (2) | once, before the first tick | `ticks` (frames of the CARLA recording before the scenario clock started: the warm-up), `start_frame` (the frame the recorder started at, null without a recording), `end_frame` (the frame of the first tick, t = 0) |
 | `rear_axle` (2) | right after an ego's `actor` line | `id`, `offset` (where its rear axle -- Autoware's `base_link`, the driver policy's rig origin -- is from the actor origin along its x axis, metres, negative behind: where the ego put its `base_link` for the run -- a driver policy's entity's rig origin (`driver.rear_axle_offset_m`), a ROS 2 ego's odometry (`rear_axle_offset_m`), an Autoware ego's `base_link` (`AutowareBridgeConfig.base_link_offset_m`) -- else from its wheels, else half its box's half-length behind (`-0.5 * extent.x`, a quarter of its length)) |
 | `actor_gone` (2) | before the first tick a vehicle/walker is missing from | `id`, and the `frame` and `t` of that tick |

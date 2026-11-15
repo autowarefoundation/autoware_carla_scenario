@@ -38,6 +38,9 @@ class TrajectoryRecorder:
     def record(self, world: carla.World, elapsed: float) -> None:
         raise NotImplementedError()
 
+    def record_run(self, seed: int, scenario_hash: Optional[str]) -> None:
+        raise NotImplementedError()
+
     def record_warmup(self, ticks: int, start_frame: int, end_frame: int) -> None:
         raise NotImplementedError()
 
