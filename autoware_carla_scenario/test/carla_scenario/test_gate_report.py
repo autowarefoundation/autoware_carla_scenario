@@ -19,11 +19,11 @@ from autoware_carla_scenario.gate.evaluate import (
     GateComparison,
     GateVerdict,
     _by_scenario,
-    _cell,
     compare,
     compare_all,
 )
 from autoware_carla_scenario.gate.record import GateCase, GateRecord
+from autoware_carla_scenario.gate.report import criterion_cell
 
 
 def _rec(
@@ -144,7 +144,7 @@ class TestCell:
         ],
     )
     def test_cell(self, result: Optional[CriterionResult], expected: str) -> None:
-        assert _cell(result) == expected
+        assert criterion_cell(result) == expected
 
 
 class TestComparisonMarkdown:
@@ -371,9 +371,36 @@ class TestCompare:
         ]
         result = compare(baseline, [_rec(digest="f")])
         assert result.warnings == [
-            "the runs ran 2 versions of the document",
+            "baseline: the runs ran 2 versions of the document",
             "the baseline's runs stated another gate; both are judged "
             "against the candidate's",
+            "the baseline and the candidate ran different versions of the " "document",
+        ]
+
+    def test_candidate_warnings_follow_the_baseline_warnings(self) -> None:
+        baseline = [_rec(), _rec(digest="e"), _rec(digest="h")]
+        candidate = [_rec(digest="f"), _rec(digest="g")]
+        result = compare(baseline, candidate)
+        assert result.warnings == [
+            "baseline: the runs ran 3 versions of the document",
+            "candidate: the runs ran 2 versions of the document",
+            "the baseline and the candidate ran different versions of the " "document",
+        ]
+        markdown = result.to_markdown()
+        assert "candidate: the runs ran 2 versions of the document" in markdown
+        assert result.to_dict()["warnings"] == result.warnings
+
+    def test_candidate_warnings_without_a_baseline(self) -> None:
+        result = compare([], [_rec(), _rec(digest="e")])
+        assert result.warnings == ["candidate: the runs ran 2 versions of the document"]
+
+    def test_a_warning_both_sides_give_names_each_side(self) -> None:
+        baseline = [_rec(), _rec(digest="e")]
+        candidate = [_rec(digest="f"), _rec(digest="g")]
+        result = compare(baseline, candidate)
+        assert result.warnings == [
+            "baseline: the runs ran 2 versions of the document",
+            "candidate: the runs ran 2 versions of the document",
             "the baseline and the candidate ran different versions of the " "document",
         ]
 

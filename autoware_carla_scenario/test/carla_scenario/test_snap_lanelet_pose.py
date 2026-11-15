@@ -44,9 +44,6 @@ def _world(monkeypatch: pytest.MonkeyPatch) -> list:
         "autoware_carla_scenario.coordinate.transform.to_opendrive", _refuse
     )
     monkeypatch.setattr(
-        "autoware_carla_scenario.coordinate.transform._lane_center_t", _refuse
-    )
-    monkeypatch.setattr(
         snap_module, "_z_from_nearest_spawn_point", lambda *_a, **_k: _GROUND_Z
     )
     monkeypatch.setattr(

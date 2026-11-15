@@ -1122,11 +1122,23 @@ def _tristate_from_yaml(value: Any) -> Any:
     return value
 
 
+def _refuse_bool(value: Any) -> Any:
+    """Refuse ``true`` / ``false`` for a number, which pydantic reads as 1 / 0.
+
+    The route search refuses them too (``route.model.parse_route_search``).
+    """
+    if isinstance(value, bool):
+        raise ValueError("must be a number, not a boolean")
+    return value
+
+
 class LengthRange(_Node):
     """An inclusive range of metres; an unset bound is open."""
 
     min: Optional[float] = Field(default=None, ge=0.0, allow_inf_nan=False)
     max: Optional[float] = Field(default=None, gt=0.0, allow_inf_nan=False)
+
+    _not_a_bool = field_validator("min", "max", mode="before")(_refuse_bool)
 
 
 class CountRange(_Node):
@@ -1134,6 +1146,8 @@ class CountRange(_Node):
 
     min: Optional[int] = Field(default=None, ge=0)
     max: Optional[int] = Field(default=None, ge=0)
+
+    _not_a_bool = field_validator("min", "max", mode="before")(_refuse_bool)
 
 
 class LaneSegment(_Node):
@@ -1309,6 +1323,10 @@ class RouteSearch(_Node):
         if isinstance(value, bool):
             raise ValueError("must be a whole number, not a boolean")
         return value
+
+    _distance_not_a_bool = field_validator(
+        "ego_spawn_s", "ego_goal_margin", mode="before"
+    )(_refuse_bool)
 
     @property
     def junction_count(self) -> int:

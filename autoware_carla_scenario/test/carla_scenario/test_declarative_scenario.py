@@ -187,6 +187,76 @@ class TestConstruction:
         )
         assert _scenario(config=config).document.entity("ghost") is None
 
+    def test_spawn_overrides_take_a_whole_float_and_zero(self) -> None:
+        config = DeclarativeScenarioConfig(
+            name="cut_in", spawn_overrides={"npc1": {"lanelet_id": 999.0, "s": 0}}
+        )
+        npc = _scenario(config=config).document.entity("npc1")
+        assert npc is not None
+        assert npc.spawn.lanelet_id == 999 and isinstance(npc.spawn.lanelet_id, int)
+        assert npc.spawn.s.value == 0.0
+
+    @pytest.mark.parametrize(
+        ("override", "message"),
+        [
+            (
+                {"lanelet_id": 2.7},
+                "scenario.spawn_overrides.npc1.lanelet_id must be a whole number, "
+                "got 2.7",
+            ),
+            (
+                {"lanelet_id": True},
+                "scenario.spawn_overrides.npc1.lanelet_id must be a whole number, "
+                "got True",
+            ),
+            (
+                {"lanelet_id": ""},
+                "scenario.spawn_overrides.npc1.lanelet_id must be a whole number, "
+                "got ''",
+            ),
+            ({"s": True}, "scenario.spawn_overrides.npc1.s must be a number, got True"),
+            ({"s": " "}, "scenario.spawn_overrides.npc1.s must be a number, got ' '"),
+            (
+                {"s": "far"},
+                "scenario.spawn_overrides.npc1.s must be a number, got 'far'",
+            ),
+            (
+                {"s": float("nan")},
+                "scenario.spawn_overrides.npc1.s must be finite, got nan",
+            ),
+            (
+                5,
+                "scenario.spawn_overrides.npc1 must be a mapping of fields to "
+                "values, got 5",
+            ),
+        ],
+    )
+    def test_a_malformed_spawn_override_is_refused_naming_its_key(
+        self, override: Any, message: str
+    ) -> None:
+        """#2143: ``int()`` read 2.7 as 2 and true as 1, ``float()`` true as
+        1.0, and a non-mapping crashed on ``.get`` naming no key."""
+        config = DeclarativeScenarioConfig(
+            name="cut_in", spawn_overrides={"npc1": override}
+        )
+        with pytest.raises(ValueError) as error:
+            _scenario(config=config)
+        assert str(error.value) == message
+
+    @pytest.mark.parametrize("override", [5, "lanelet", False, [1]])
+    def test_a_param_override_that_is_no_mapping_is_refused(
+        self, override: Any
+    ) -> None:
+        config = DeclarativeScenarioConfig(
+            name="cut_in", param_overrides={"node": override}
+        )
+        with pytest.raises(ValueError) as error:
+            _scenario(config=config)
+        assert str(error.value) == (
+            "scenario.param_overrides.node must be a mapping of fields to "
+            f"values, got {override!r}"
+        )
+
 
 def _scenario_from(config: DeclarativeScenarioConfig) -> DeclarativeScenario:
     return DeclarativeScenario(

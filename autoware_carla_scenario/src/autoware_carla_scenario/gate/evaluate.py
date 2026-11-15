@@ -85,7 +85,6 @@ from .unrecorded import _unstarted_jobs as _unstarted_jobs
 from .report import (
     case_changes,
     comparison_markdown,
-    criterion_cell,
     criterion_changes,
     records_by_scenario,
     verdict_markdown,
@@ -601,10 +600,6 @@ def _summary(verdict: Optional[GateVerdict]) -> Optional[tuple[int, int, bool]]:
     return verdict.passed_runs, verdict.runs, verdict.passed
 
 
-def _cell(result: Optional[CriterionResult]) -> str:
-    return criterion_cell(result)
-
-
 def compare(
     baseline: Sequence[GateRecord],
     candidate: Sequence[GateRecord],
@@ -659,7 +654,13 @@ def compare(
         criteria=criteria,
         newly_failing=newly_failing,
         fixed=fixed,
-        warnings=[*(before.warnings if before else []), *warnings],
+        # Each verdict's warnings name their side: both sides can give the
+        # same text ("the runs ran 2 versions of the document").
+        warnings=[
+            *(f"baseline: {w}" for w in (before.warnings if before else [])),
+            *(f"candidate: {w}" for w in (after.warnings if after else [])),
+            *warnings,
+        ],
     )
 
 

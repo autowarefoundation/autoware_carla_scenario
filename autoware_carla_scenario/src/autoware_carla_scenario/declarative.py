@@ -51,6 +51,7 @@ from .entity.vehicle_entity import (
 )
 from .gate.probe import GateProbe
 from .scenario_base import BaseScenario, EgoConfig
+from .value_text import shown
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -226,22 +227,41 @@ class DeclarativeScenario(BaseScenario):
         This is how a swept NPC spawn reaches the scenario: the sweeper writes
         ``scenario.spawn_overrides.<entity>.lanelet_id=<id>`` and the value
         lands on the entity here, before compilation.
+
+        Only null leaves a value as the document has it.  ``lanelet_id`` is a
+        whole number (``int()`` alone read ``2.7`` as 2 and ``true`` as 1) and
+        ``s`` a finite number, not a boolean or a blank (#2143); an override
+        that is not a mapping is refused, naming its key.
+
+        Raises:
+            ValueError: naming the key, ``scenario.spawn_overrides.<entity>``
+                or ``scenario.spawn_overrides.<entity>.<field>``.
         """
-        for entity_id, override in (self._config.spawn_overrides or {}).items():
+        overrides = self._config.spawn_overrides or {}
+        if not overrides:
+            return
+        # odd.sampler pulls openodd in; only a run with overrides needs it.
+        from .odd.sampler import whole_number_setting  # noqa: PLC0415
+
+        for entity_id, override in overrides.items():
+            if override is None:
+                continue
+            key = f"scenario.spawn_overrides.{entity_id}"
+            _check_override_mapping(key, override)
             entity = self._document.entity(str(entity_id))
             if entity is None:
                 logger.warning(
                     "spawn_overrides names unknown entity %r; ignoring.", entity_id
                 )
                 continue
-            if override is None:
-                continue
-            lanelet_id = override.get("lanelet_id")
+            lanelet_id = whole_number_setting(
+                f"{key}.lanelet_id", override.get("lanelet_id")
+            )
             if lanelet_id is not None:
-                entity.spawn.lanelet_id = int(lanelet_id)
+                entity.spawn.lanelet_id = lanelet_id
             offset = override.get("s")
             if offset is not None:
-                entity.spawn.s.value = float(offset)
+                entity.spawn.s.value = _finite_number(f"{key}.s", offset)
 
     def _apply_param_overrides(self) -> None:
         """Fold ``config.param_overrides`` into the document's action/condition params.
@@ -257,10 +277,15 @@ class DeclarativeScenario(BaseScenario):
         field at a time, ``...<field>.<index>.<sub>=<value>``: the value
         arrives as ``{index: {sub: value}}`` and is merged into that record.
         A whole list replaces the field as any other value does.
+
+        Raises:
+            ValueError: When a node's override is not a mapping, naming
+                ``scenario.param_overrides.<node>``.
         """
         for node_id, override in (self._config.param_overrides or {}).items():
             if override is None:
                 continue
+            _check_override_mapping(f"scenario.param_overrides.{node_id}", override)
             node = self._document.action(str(node_id)) or self._document.condition(
                 str(node_id)
             )
@@ -904,6 +929,37 @@ def _spawn_pose(entity: Entity) -> Lanelet2Pose:
         t=spawn.t,
         heading=spawn.heading,
     )
+
+
+def _check_override_mapping(key: str, override: Any) -> None:
+    """Refuse an override under *key* that is not a mapping of fields.
+
+    ``scenario.spawn_overrides.npc1=5`` used to crash on ``5.get`` with an
+    ``AttributeError`` that named no key.
+    """
+    if not isinstance(override, Mapping):
+        raise ValueError(
+            f"{key} must be a mapping of fields to values, got {shown(override)}"
+        )
+
+
+def _finite_number(key: str, value: Any) -> float:
+    """*value* as a finite number, refused naming *key*.
+
+    ``float()`` alone reads ``true`` as 1.0 and lets NaN and infinities
+    through; a boolean and a blank are no number (#2143).
+    """
+    if isinstance(value, bool) or (isinstance(value, str) and not value.strip()):
+        raise ValueError(f"{key} must be a number, got {shown(value)}")
+    try:
+        number = float(value)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{key} must be a number, got {shown(value)}") from exc
+    except OverflowError:
+        raise ValueError(f"{key} must be finite, got {shown(value)}") from None
+    if not math.isfinite(number):
+        raise ValueError(f"{key} must be finite, got {shown(value)}")
+    return number
 
 
 def _merge_records(
