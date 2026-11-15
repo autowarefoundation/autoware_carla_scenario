@@ -62,7 +62,11 @@ from .driver.observation import (
 from .ego_base_link import ego_base_link
 from .kinematics.walker_motion import WalkerVelocities, is_walker
 from .sensor.base import sensor_tick_s
-from .sensor.carla_camera import BLUEPRINT_ATTRIBUTES, CarlaCameraSensorConfig
+from .sensor.carla_camera import (
+    BLUEPRINT_ATTRIBUTES,
+    CarlaCameraSensorConfig,
+    override_blueprint_attribute,
+)
 from .sensor.carla_lidar import CarlaLidarSensor
 from .t4_settings import (
     DATASET_SUFFIX,
@@ -217,9 +221,9 @@ class _FrameCamera:
             interval_s = self._interval_ticks * FIXED_DELTA_SECONDS
             blueprint.set_attribute("sensor_tick", str(sensor_tick_s(interval_s)))
         for name in BLUEPRINT_ATTRIBUTES:
-            value = getattr(cfg, name)
-            if value is not None and blueprint.has_attribute(name):
-                blueprint.set_attribute(name, str(value))
+            override_blueprint_attribute(
+                blueprint, name, getattr(cfg, name), cfg.sensor_type
+            )
         transform = _carla.Transform(
             _carla.Location(x=cfg.position_x, y=cfg.position_y, z=cfg.position_z),
             _carla.Rotation(roll=cfg.roll, pitch=cfg.pitch, yaw=cfg.yaw),

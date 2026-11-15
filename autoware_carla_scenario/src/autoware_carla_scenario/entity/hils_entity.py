@@ -108,6 +108,11 @@ class HilsEgoConfig:
                 f"hils.host must be a host name or address, got {host!r}; give "
                 "the port as hils.port"
             )
+        if not self.host.strip():
+            raise ValueError(
+                f"hils.host must be a host name or address, got {host!r}; leave "
+                "it out (or null) for the default, localhost"
+            )
         if (
             isinstance(self.port, bool)
             or not isinstance(self.port, int)
@@ -130,14 +135,25 @@ class HilsEgoConfig:
             ("end_timeout_s", self.end_timeout_s),
             ("stale_s", self.stale_s),
         ):
-            if not math.isfinite(seconds) or seconds <= 0.0:
+            # A bool is an int to Python (``stale_s: true`` was 1 s) and
+            # math.isfinite() of a str or None names no key (#2170).
+            if (
+                isinstance(seconds, bool)
+                or not isinstance(seconds, (int, float))
+                or not math.isfinite(seconds)
+                or seconds <= 0.0
+            ):
                 raise ValueError(
-                    f"hils.{key} must be positive and finite, got {seconds}"
+                    f"hils.{key} must be a positive, finite number of seconds, "
+                    f"got {seconds!r}"
                 )
 
     @classmethod
     def from_mapping(cls, values: Mapping[str, Any]) -> "HilsEgoConfig":
         """The configuration the ``hils`` group's *values* give.
+
+        A null setting is the default, as everywhere in the configuration
+        (#2143): ``hils.port: null`` is the default port.
 
         Raises:
             ValueError: A key is not one of the configuration's, or a value is
@@ -150,7 +166,7 @@ class HilsEgoConfig:
                 f"unknown hils setting(s) {', '.join(unknown)}; "
                 f"expected {', '.join(known)}"
             )
-        return cls(**dict(values))
+        return cls(**{key: value for key, value in values.items() if value is not None})
 
 
 class HilsEgoEntity(ExternallyDrivenEgo):

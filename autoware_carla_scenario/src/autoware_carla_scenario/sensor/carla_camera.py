@@ -158,6 +158,33 @@ BLUEPRINT_ATTRIBUTES: tuple[str, ...] = (
 )
 
 
+def override_blueprint_attribute(
+    blueprint: "carla.ActorBlueprint",
+    name: str,
+    value: Optional[float | str],
+    sensor_type: str,
+) -> None:
+    """Set the *sensor_type* *blueprint*'s attribute *name* to *value*, unless
+    it is ``None``: one of :data:`BLUEPRINT_ATTRIBUTES`, which every camera
+    built from a :class:`CarlaCameraSensorConfig` sets this way.
+
+    An attribute this server's camera lacks is skipped, with a warning (CARLA
+    versions add and drop them).
+    """
+    if value is None:
+        return
+    if not blueprint.has_attribute(name):
+        logger.warning(
+            "%s has no attribute %r on this CARLA server; %s=%s is ignored",
+            sensor_type,
+            name,
+            name,
+            value,
+        )
+        return
+    blueprint.set_attribute(name, str(value))
+
+
 class CarlaCameraSensor(CameraSensorBase):
     """CARLA ``sensor.camera.rgb`` sensor implementation.
 
@@ -302,22 +329,11 @@ class CarlaCameraSensor(CameraSensorBase):
     def _override(
         self, camera_bp: "carla.ActorBlueprint", name: str, value: Optional[float | str]
     ) -> None:
-        """Set the blueprint attribute *name* to *value*, unless it is ``None``.
-
-        An attribute this server's camera lacks is skipped, with a warning.
-        """
-        if value is None:
-            return
-        if not camera_bp.has_attribute(name):
-            logger.warning(
-                "%s has no attribute %r on this CARLA server; %s=%s is ignored",
-                self._carla_config.sensor_type,
-                name,
-                name,
-                value,
-            )
-            return
-        camera_bp.set_attribute(name, str(value))
+        """Set the blueprint attribute *name* to *value*, unless it is ``None``
+        (:func:`override_blueprint_attribute`)."""
+        override_blueprint_attribute(
+            camera_bp, name, value, self._carla_config.sensor_type
+        )
 
     def _on_sensor_data(self, data: Union["carla.Image", "carla.SensorData"]) -> None:
         """The sensor's listener: queues the frame for :meth:`get_image`.

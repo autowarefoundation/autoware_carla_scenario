@@ -5,7 +5,7 @@ beside the scenario runner.  It never ticks the world: it waits for the
 runner's ticks (``World.wait_for_tick``), so it works in synchronous mode too.
 
 **Lifecycle.**  The configuration's ``lifecycle`` steps (send a message, wait
-for an ECU's message, sleep) run at four points:
+for an ECU's message, sleep) run at five points:
 
 * ``startup`` -- when the bridge starts, its devices just opened;
 * ``scenario_start`` -- when a scenario starts.  A run with

@@ -333,6 +333,13 @@ def _mapping(value: Any, where: str) -> Mapping[str, Any]:
     return value
 
 
+def _get(section: Mapping[str, Any], key: str, default: Any) -> Any:
+    """*section*'s *key*, or *default* when it is missing or null: a null
+    setting is its default, as for ``lifecycle`` or ``messages`` (#2170)."""
+    value = section.get(key)
+    return default if value is None else value
+
+
 def _only(section: Mapping[str, Any], allowed: Tuple[str, ...], where: str) -> None:
     unknown = sorted(_label(key) for key in set(section) - set(allowed))
     if unknown:
@@ -474,8 +481,8 @@ def _field(value: Any, where: str) -> FieldSource:
             raise HilsConfigError(f"{where}: a mapping names a signal")
         return FieldSource(
             signal=_signal(_text(value["signal"], f"{where}.signal"), where),
-            scale=_finite(value.get("scale", 1.0), f"{where}.scale"),
-            offset=_finite(value.get("offset", 0.0), f"{where}.offset"),
+            scale=_finite(_get(value, "scale", 1.0), f"{where}.scale"),
+            offset=_finite(_get(value, "offset", 0.0), f"{where}.offset"),
         )
     if isinstance(value, str):
         if value.startswith("$$"):
@@ -516,19 +523,19 @@ def _sensor(value: Any, codec: str, where: str) -> SensorSpec:
         ("blueprint", "transform", "attributes", "encoding", "intensity_scale"),
         where,
     )
-    blueprint = _text(section.get("blueprint", ""), f"{where}.blueprint")
+    blueprint = _text(_get(section, "blueprint", ""), f"{where}.blueprint")
     transform = _mapping(section.get("transform"), f"{where}.transform")
     _only(transform, _TRANSFORM_KEYS, f"{where}.transform")
     spec = SensorSpec(
         blueprint=blueprint,
         transform=tuple(  # type: ignore[arg-type]
-            _finite(transform.get(k, 0.0), f"{where}.transform.{k}")
+            _finite(_get(transform, k, 0.0), f"{where}.transform.{k}")
             for k in _TRANSFORM_KEYS
         ),
         attributes=_attributes(section.get("attributes"), f"{where}.attributes"),
-        encoding=_text(section.get("encoding", "bgra"), f"{where}.encoding"),
+        encoding=_text(_get(section, "encoding", "bgra"), f"{where}.encoding"),
         intensity_scale=_finite(
-            section.get("intensity_scale", 255.0), f"{where}.intensity_scale"
+            _get(section, "intensity_scale", 255.0), f"{where}.intensity_scale"
         ),
     )
     codec_name = codec.split(":", 1)[0]
@@ -596,8 +603,8 @@ def _input_source(value: Any, where: str) -> InputSource:
             raise HilsConfigError(f"{where}: a mapping names a field")
         return InputSource(
             field=_text(value["field"], f"{where}.field"),
-            scale=_finite(value.get("scale", 1.0), f"{where}.scale"),
-            offset=_finite(value.get("offset", 0.0), f"{where}.offset"),
+            scale=_finite(_get(value, "scale", 1.0), f"{where}.scale"),
+            offset=_finite(_get(value, "offset", 0.0), f"{where}.offset"),
         )
     if isinstance(value, str):
         return InputSource(field=value)
@@ -674,7 +681,7 @@ def _step(
                     f"{where}.fields.{key}: expected a constant, "
                     f"got {_shown(expected)}"
                 )
-        timeout = _seconds(section.get("timeout", 10.0), f"{where}.timeout")
+        timeout = _seconds(_get(section, "timeout", 10.0), f"{where}.timeout")
         return StepSpec(
             kind="wait",
             device=device,
@@ -773,7 +780,7 @@ def _device(name: str, value: Any, base: Path, mode: str) -> DeviceSpec:
     _only(section, ("url", "codec", "options", "messages", "sensor", "inputs"), where)
     if not section.get("url"):
         raise HilsConfigError(f"{where}: a device has a url")
-    codec = _codec(section.get("codec", "raw"), base, f"{where}.codec")
+    codec = _codec(_get(section, "codec", "raw"), base, f"{where}.codec")
     options = {
         _key_text(k, f"{where}.options"): _relative_file(v, base)
         if k == "profiles" and isinstance(v, str)
@@ -856,7 +863,7 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
     _only(carla, ("host", "port", "timeout"), "carla")
     ego = _mapping(root.get("ego"), "ego")
     _only(ego, ("role_name", "wait"), "ego")
-    clock = _text(root.get("clock", "simulation"), "clock")
+    clock = _text(_get(root, "clock", "simulation"), "clock")
     if clock not in CLOCKS:
         raise HilsConfigError(f"clock: {clock!r} is not one of {', '.join(CLOCKS)}")
     canvas: Optional[Path] = None
@@ -877,6 +884,13 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
             f"runner.listen: expected host:port text, got {_shown(listen)}; quote it "
             f'(listen: "0.0.0.0:{DEFAULT_PORT}"), or null for no run link'
         )
+    # Only null turns the run link off (docs/hils.md): "" is text that names
+    # no address, not a second way to say none (#2170).
+    if listen is not None and not listen.strip():
+        raise HilsConfigError(
+            f"runner.listen: {listen!r} names no address; write host:port, or "
+            "null for no run link"
+        )
     listen = "" if listen is None else listen
     if listen:
         try:
@@ -888,7 +902,7 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
             ) from exc
     commands = _mapping(root.get("commands"), "commands")
     _only(commands, ("mode",), "commands")
-    mode = _text(commands.get("mode", "control"), "commands.mode")
+    mode = _text(_get(commands, "mode", "control"), "commands.mode")
     if mode not in COMMAND_MODES:
         raise HilsConfigError(
             f"commands.mode: {mode!r} is not one of {', '.join(COMMAND_MODES)}"
@@ -900,16 +914,28 @@ def parse_config(document: Any, base: Union[str, Path] = ".") -> HilsConfig:
         k: _device(k, v, base, mode)
         for k, v in _keys(devices_section, "devices").items()
     }
+    host = _text(_get(carla, "host", "localhost"), "carla.host")
+    if not host.strip():
+        raise HilsConfigError(
+            f"carla.host: {host!r} names no host; leave it out, or null, for "
+            "localhost"
+        )
+    role_name = _text(_get(ego, "role_name", str(EGO_ROLE_NAME)), "ego.role_name")
+    if not role_name.strip():
+        raise HilsConfigError(
+            f"ego.role_name: {role_name!r} names no actor; leave it out, or null, "
+            f"for {str(EGO_ROLE_NAME)!r}"
+        )
     return HilsConfig(
         devices=tuple(devices.values()),
         runner_listen=listen,
         command_mode=mode,
         lifecycle=_lifecycle(root.get("lifecycle"), devices),
-        host=_text(carla.get("host", "localhost"), "carla.host"),
-        port=_port(carla.get("port", 2000), "carla.port"),
-        timeout=_seconds(carla.get("timeout", 10.0), "carla.timeout"),
-        role_name=_text(ego.get("role_name", str(EGO_ROLE_NAME)), "ego.role_name"),
-        ego_wait=_seconds(ego.get("wait", 120.0), "ego.wait", zero=True),
+        host=host,
+        port=_port(_get(carla, "port", 2000), "carla.port"),
+        timeout=_seconds(_get(carla, "timeout", 10.0), "carla.timeout"),
+        role_name=role_name,
+        ego_wait=_seconds(_get(ego, "wait", 120.0), "ego.wait", zero=True),
         canvas=canvas,
         clock=clock,
     )

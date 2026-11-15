@@ -173,6 +173,20 @@ def main(argv: Optional[List[str]] = None) -> int:
     except HilsConfigError as exc:
         print(f"scenario-hils: {exc}", file=sys.stderr)
         return 2
+    # An empty override names nothing, as "" does in the file (#2170): it
+    # neither turns the run link off nor sets an empty host or role_name.
+    for flag, value in (
+        ("--host", args.host),
+        ("--role-name", args.role_name),
+        ("--listen", args.listen),
+    ):
+        if value is not None and not value.strip():
+            print(
+                f"scenario-hils: {flag}: {value!r} names nothing; leave it out "
+                "to keep the file's setting",
+                file=sys.stderr,
+            )
+            return 2
     if args.listen is not None:
         # Checked as runner.listen is when the file loads, so --check catches it.
         try:
