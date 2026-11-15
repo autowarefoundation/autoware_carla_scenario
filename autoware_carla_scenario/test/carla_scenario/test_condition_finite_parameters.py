@@ -54,6 +54,19 @@ def test_scalar_rule_takes_a_finite_value_and_tolerance() -> None:
     assert rule.satisfied(1.0)
 
 
+def test_scalar_rule_to_dict_holds_its_tolerance() -> None:
+    """An EQUAL_TO rule's band reaches the run's condition statuses."""
+    rule = ScalarComparisonRule("s", ComparisonRule.EQUAL_TO, 1.0, 0.25)
+    assert rule.to_dict() == {
+        "field": "s",
+        "rule": "EQUAL_TO",
+        "value": 1.0,
+        "tolerance": 0.25,
+    }
+    default = ScalarComparisonRule("s", ComparisonRule.GREATER_THAN, 2.0)
+    assert default.to_dict()["tolerance"] == 1e-6
+
+
 #: Each condition built with ``**kwargs`` for the parameter under test.
 _TOLERANCE: dict[str, Callable[..., object]] = {
     "speed": lambda **kw: SpeedCondition(

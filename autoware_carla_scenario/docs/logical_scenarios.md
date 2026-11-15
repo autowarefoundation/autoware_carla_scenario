@@ -162,9 +162,11 @@ assertions:
 | `max_matches` | int 1..1000 | `64` | How many matches the search returns at most. |
 | `seed` | int or null | `null` | `null` keeps matches sorted (by lanelet ids, then start); an int shuffles the full list with `random.Random(seed)` before `max_matches` cuts it -- a deterministic sample spread over the map. |
 
-The distances must be finite (`nan` and `inf` are refused), and the counts
+The distances must be finite numbers (`nan`, `inf`, a boolean and a blank are
+refused; only an absent key or `null` is the default), and the counts
 (`match_index`, `max_matches`, `seed`) whole numbers: `2` or `2.0`, not `2.5`
-or a boolean. This holds for a hand-written `sweep.route` and a Hydra override
+or a boolean. A range's `min` and `max` are numbers too: `null` leaves a bound
+open, and a boolean or a blank is refused, naming the bound. This holds for a hand-written `sweep.route` and a Hydra override
 (`sweep.route.ego_spawn_s=...`) as for the editor's document.
 
 **Lane segment** (`kind: lane`) -- a stretch of road between junctions (no

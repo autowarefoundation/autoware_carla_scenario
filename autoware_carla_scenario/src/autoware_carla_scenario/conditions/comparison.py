@@ -99,4 +99,6 @@ class ScalarComparisonRule:
             "field": self.field,
             "rule": self.rule.name,
             "value": self.value,
+            # An EQUAL_TO rule holds within this band of the value.
+            "tolerance": self.tolerance,
         }

@@ -195,9 +195,13 @@ class Range:
         bounds: list[Optional[float]] = []
         for key in ("min", "max"):
             raw = value.get(key)
-            if raw is None or (isinstance(raw, str) and not raw.strip()):
+            if raw is None:
                 bounds.append(None)
                 continue
+            # Only null is an open bound: a YAML boolean is no number, and a
+            # blank is refused, not read as unset (#2143).
+            if isinstance(raw, bool) or (isinstance(raw, str) and not raw.strip()):
+                raise ValueError(f"{name}.{key} must be a number, got {raw!r}")
             try:
                 number = float(raw)
             except (TypeError, ValueError) as exc:
@@ -212,15 +216,6 @@ class Range:
             return cls(bounds[0], bounds[1])
         except ValueError as exc:
             raise ValueError(f"{name}: {exc}") from exc
-
-    def as_dict(self) -> dict[str, float]:
-        """The range as ``{min, max}``, unset bounds left out."""
-        out: dict[str, float] = {}
-        if self.min is not None:
-            out["min"] = self.min
-        if self.max is not None:
-            out["max"] = self.max
-        return out
 
 
 @dataclass(frozen=True)
@@ -553,14 +548,18 @@ def _blank(value: Any) -> bool:
 
 
 def _distance(name: str, value: Any) -> float:
-    """A finite, non-negative distance (m) the search reads; unset is ``0``.
+    """A finite, non-negative distance (m) the search reads; null is ``0``.
 
     ``float()`` alone lets a NaN through (every comparison with it is false)
     and an infinity, so both are refused here, with the field's name, as the
-    authoring model refuses them.
+    authoring model refuses them. Only null is the default: ``float()`` also
+    reads ``true`` as 1 m, so a YAML boolean is refused, and so is a blank
+    (#2143).
     """
-    if _blank(value):
+    if value is None:
         return 0.0
+    if isinstance(value, bool) or (isinstance(value, str) and not value.strip()):
+        raise ValueError(f"{name} must be a number, got {value!r}")
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:

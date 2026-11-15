@@ -196,6 +196,10 @@ class TestParsing:
             ("ego_spawn_s", "nan", r"^ego_spawn_s must be finite"),
             ("ego_spawn_s", -1.0, r"^ego_spawn_s must not be negative"),
             ("ego_spawn_s", "far", r"^ego_spawn_s must be a number"),
+            ("ego_spawn_s", True, r"^ego_spawn_s must be a number, got True$"),
+            ("ego_spawn_s", "", r"^ego_spawn_s must be a number, got ''$"),
+            ("ego_goal_margin", False, r"^ego_goal_margin must be a number"),
+            ("ego_goal_margin", " ", r"^ego_goal_margin must be a number"),
             ("ego_goal_margin", float("nan"), r"^ego_goal_margin must be finite"),
             ("ego_goal_margin", float("inf"), r"^ego_goal_margin must be finite"),
             ("ego_goal_margin", -0.5, r"^ego_goal_margin must not be negative"),
@@ -255,6 +259,26 @@ class TestParsing:
             Range.parse(name, 1.5, whole=True)
         with pytest.raises(ValueError, match=r"lanes_left\.min is a count"):
             Range.parse(name, {"min": 1.5, "max": 1.5}, whole=True)
+
+    @pytest.mark.parametrize("bound", ["min", "max"])
+    @pytest.mark.parametrize("raw", [True, False, "", "  "])
+    def test_a_boolean_or_blank_bound_is_refused_with_its_name(
+        self, bound: str, raw: Any
+    ) -> None:
+        """#2143: ``float(True)`` read ``{min: true}`` as 1, and a blank as
+        an open bound; only null leaves a bound open."""
+        for name, whole in (
+            ("segments[0].length", False),
+            ("segments[0].lanes_left", True),
+        ):
+            with pytest.raises(ValueError) as error:
+                Range.parse(name, {bound: raw}, whole=whole)
+            assert str(error.value) == f"{name}.{bound} must be a number, got {raw!r}"
+        assert Range.parse("segments[0].length", {bound: None}) == Range()
+        if not isinstance(raw, str):
+            search = {"segments": [{"kind": "lane", "length": {bound: raw}}]}
+            with pytest.raises(ValueError, match=rf"length\.{bound}"):
+                RouteSearch.model_validate(search)
 
     def test_an_infinite_bare_number_is_refused_with_its_name(self) -> None:
         for whole in (False, True):
