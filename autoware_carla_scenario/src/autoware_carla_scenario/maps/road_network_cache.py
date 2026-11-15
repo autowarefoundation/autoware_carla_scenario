@@ -27,6 +27,7 @@ import io
 import logging
 import os
 import pickle
+import tempfile
 import time
 import weakref
 from collections.abc import Iterable
@@ -195,12 +196,17 @@ def _force(roads: Iterable[Any]) -> None:
 def _dump(network: RoadNetwork, entry: Path) -> None:
     elements = {element: i for i, element in enumerate(network.root.iter())}
     nodes = _nodes(network.road_ids_to_object.values())
-    # Per process, so two runs storing the same key never write one file; the
-    # rename is atomic, so a reader sees one whole entry or none.
-    temporary = entry.with_name(f"{entry.name}.{os.getpid()}.tmp")
+    # Through a scratch file mkstemp names in the entry's directory, as
+    # maps.cache._write_atomically writes: two writers storing the same key --
+    # other processes, or other hosts sharing the map root -- never write one
+    # file (#2165).  The rename is atomic, so a reader sees one whole entry or
+    # none, and the scratch file is removed when the write fails.
+    entry.parent.mkdir(parents=True, exist_ok=True)
+    fd, name = tempfile.mkstemp(
+        prefix=f".{entry.name}.", suffix=".tmp", dir=str(entry.parent)
+    )
     try:
-        entry.parent.mkdir(parents=True, exist_ok=True)
-        with temporary.open("wb") as stream:
+        with os.fdopen(fd, "wb") as stream:
             _Pickler(stream, elements, set(map(id, nodes))).dump(
                 (
                     len(elements),
@@ -209,10 +215,13 @@ def _dump(network: RoadNetwork, entry: Path) -> None:
                     network.road_ids_to_object,
                 )
             )
-        temporary.replace(entry)
-    finally:
+        # What open("wb") makes under the usual umask, not mkstemp's 0o600.
+        os.chmod(name, 0o644)
+        os.replace(name, entry)
+    except BaseException:
         with contextlib.suppress(OSError):
-            temporary.unlink(missing_ok=True)
+            os.unlink(name)
+        raise
 
 
 def _load(network: RoadNetwork, entry: Path) -> dict[str, Any]:

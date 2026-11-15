@@ -81,7 +81,10 @@ def main(argv: Optional[list[str]] = None) -> int:
 
     try:
         tick_multiple(args.step, "--step")
-        checked_max_distance(args.max_distance, "--max-distance", "--all-objects")
+        if not args.all_objects:
+            # --all-objects takes every road user, so --max-distance is unread
+            # and not checked (#2165).
+            checked_max_distance(args.max_distance, "--max-distance", "--all-objects")
         if args.rear_axle_offset is not None:
             checked_rear_axle_offset(args.rear_axle_offset, "--rear-axle-offset")
     except ValueError as error:

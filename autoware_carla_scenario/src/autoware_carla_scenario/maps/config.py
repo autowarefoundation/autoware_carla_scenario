@@ -31,27 +31,37 @@ from .source import redacted_url
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["MapPaths", "resolve_map_paths"]
+__all__ = ["MapPaths", "map_setting", "resolve_map_paths"]
 
 
-def _setting(map_config: Any, key: str) -> Optional[str]:
+def map_setting(map_config: Any, key: str) -> Optional[str]:
     """Read one ``map`` setting off a config, whatever shape it has.
 
     The same map is described by a :class:`~...scenario_config.MapConfig`, by an
     OmegaConf node, and by the editor's :class:`~...authoring.models.MapRef`;
     reading a key off all three is the only thing this module needs from them.
-    With *key* absent the value is ``None``; text is returned stripped, and
-    ``None`` for a blank one.
+    With *key* absent or null the value is ``None``; text is returned
+    stripped, and ``None`` for a blank one -- the editor's ``MapRef`` holds
+    these settings as text fields, where clearing one leaves ``""``.  A number
+    is read as its text (``map.name=2024`` names the map ``"2024"``).
+
+    Raises:
+        ValueError: naming ``map.<key>`` and the value, when it is a boolean
+            (``map.xodr_path=false`` is not a file named ``False``) or neither
+            text nor a number (a list, a mapping) -- refused here rather than
+            failing later as a file or repository that does not exist (#2165).
     """
     value = _value(map_config, key)
     if value is None:
         return None
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise ValueError(f"map.{key} must be text, got {value!r}")
     text = str(value).strip()
     return text or None
 
 
 def _value(map_config: Any, key: str) -> Any:
-    """One ``map`` setting off a config of any shape (:func:`_setting`), as
+    """One ``map`` setting off a config of any shape (:func:`map_setting`), as
     it holds it; ``None`` when it holds none."""
     if map_config is None:
         return None
@@ -102,11 +112,6 @@ class MapPaths:
     projector_type: Optional[str] = None
     xodr_is_derived: bool = False
     overwrite_xodr: bool = False
-
-    @property
-    def from_source(self) -> bool:
-        """Whether these paths came out of a map repository."""
-        return self.resolved is not None and not self.resolved.local
 
     @property
     def derived_xodr(self) -> Optional[Path]:
@@ -161,7 +166,7 @@ def resolve_map_paths(
 
     Args:
         map_config: The ``map`` config group, in any of the shapes
-            :func:`_setting` reads.
+            :func:`map_setting` reads.
         allow_fetch: Whether a source that is not cached yet may be cloned.
             Left off, an uncached source contributes no paths -- which is what
             the editor wants on a render, where fetching is a button rather
@@ -169,16 +174,19 @@ def resolve_map_paths(
         refresh: Fetch the map repository again even when it is already cached.
 
     Raises:
+        ValueError: If a setting is a boolean or neither text nor a number
+            (:func:`map_setting`), or ``map.overwrite_xodr`` is not a switch
+            (:func:`_flag`), naming the key and the value.
         MapSourceError, MapCacheError, MapResolutionError: If ``map.source``
             or ``map.directory`` is set and cannot be resolved.
     """
     return _resolve(
-        directory=_setting(map_config, "directory"),
-        source=_setting(map_config, "source"),
-        lanelet2=_setting(map_config, "lanelet2_path"),
-        xodr=_setting(map_config, "xodr_path"),
-        name=_setting(map_config, "name") or "",
-        projector_type=_setting(map_config, "projector_type"),
+        directory=map_setting(map_config, "directory"),
+        source=map_setting(map_config, "source"),
+        lanelet2=map_setting(map_config, "lanelet2_path"),
+        xodr=map_setting(map_config, "xodr_path"),
+        name=map_setting(map_config, "name") or "",
+        projector_type=map_setting(map_config, "projector_type"),
         overwrite_xodr=_flag(map_config, "overwrite_xodr"),
         allow_fetch=allow_fetch,
         refresh=refresh,

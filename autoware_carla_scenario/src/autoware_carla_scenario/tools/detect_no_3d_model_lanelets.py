@@ -530,6 +530,9 @@ def _resolve_map_config(yaml_path: Path, *, allow_fetch: bool = True) -> MapPath
         MapCacheError,
         MapResolutionError,
         OmegaConfBaseException,
+        # A map.* setting refused, naming it: a boolean path, map.overwrite_xodr
+        # that is no switch (#2143, #2165).
+        ValueError,
     ) as exc:
         raise MapConfigError(f"{yaml_path}: {_one_line(exc)}") from exc
 

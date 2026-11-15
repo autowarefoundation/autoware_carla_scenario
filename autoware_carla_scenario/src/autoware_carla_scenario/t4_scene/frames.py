@@ -101,16 +101,27 @@ def checked_rear_axle_offset(
     it, so any finite value is a place.  NaN or infinity would put the ego's
     every pose and ``base_link_to_front`` at NaN, so either is refused before
     a scene is written.  A bool is refused too: ``true`` is not an offset,
-    though ``float()`` would read it as 1 m.
+    though ``float()`` would read it as 1 m, and so is a string (``"1.5"``),
+    ``None`` or anything else that is not a number, with an error naming
+    *key* (#2165).
 
     Args:
         rear_axle_offset_m: The offset, metres.
         key: The setting's name, which the error names (``--rear-axle-offset``).
 
     Raises:
-        ValueError: If *rear_axle_offset_m* is a bool, or not finite.
+        ValueError: If *rear_axle_offset_m* is a bool, not a number, or not
+            finite.
     """
-    value = float(rear_axle_offset_m)
-    if isinstance(rear_axle_offset_m, bool) or not math.isfinite(value):
-        raise ValueError(f"{key} must be finite, not {rear_axle_offset_m}")
+    error = ValueError(
+        f"{key} must be finite (a number of metres), not {rear_axle_offset_m!r}"
+    )
+    if isinstance(rear_axle_offset_m, bool) or isinstance(rear_axle_offset_m, str):
+        raise error
+    try:
+        value: float = float(rear_axle_offset_m)
+    except (TypeError, ValueError):
+        raise error
+    if not math.isfinite(value):
+        raise error
     return value

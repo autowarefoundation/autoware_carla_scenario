@@ -955,7 +955,10 @@ def load_sweep_map(map_cfg: Any, *, prefix: str = "") -> Any:
             MapResolutionError, MapCacheError), an ``OSError`` resolving it
             (the map cache's root not a directory, say), a Lanelet2 file that
             is missing (``FileNotFoundError``) or that Lanelet2 cannot read
-            (any ``OSError``, or its parser's ``RuntimeError``).
+            (any ``OSError``, or its parser's ``RuntimeError``); or naming
+            ``map.<key>`` and the value, when a setting is refused
+            (:func:`~autoware_carla_scenario.maps.config.map_setting`, a
+            boolean or a list for a path, #2165).
     """
     from ..maps import (  # noqa: PLC0415 -- clones a map on demand
         MapCacheError,
@@ -969,6 +972,8 @@ def load_sweep_map(map_cfg: Any, *, prefix: str = "") -> Any:
         paths = resolve_map_paths(map_cfg)
     except (MapSourceError, MapResolutionError, MapCacheError) as exc:
         raise ValueError(f"{prefix}{exc}") from exc  # each names the map
+    except ValueError as exc:  # a map.* setting refused, naming it (#2165)
+        raise ValueError(f"{prefix}{exc}") from exc
     except OSError as exc:  # the map cache's own directory, say
         raise ValueError(
             f"{prefix}Could not resolve the map{_map_label(map_cfg)}: {exc}"

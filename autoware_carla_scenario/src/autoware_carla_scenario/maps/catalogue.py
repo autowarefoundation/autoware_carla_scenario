@@ -16,7 +16,7 @@ from dataclasses import dataclass
 from typing import Optional
 
 from .cache import GitMapCache
-from .resolver import PREFERRED_LANELET2_NAME
+from .resolver import PREFERRED_LANELET2_NAME, PROJECTOR_INFO_FILENAME
 from .source import MapSource
 
 logger = logging.getLogger(__name__)
@@ -153,7 +153,7 @@ def list_maps(
                 path=directory,
                 lanelet2_name=chosen,
                 has_xodr=any(name.endswith(".xodr") for name in names),
-                has_projector_info="map_projector_info.yaml" in names,
+                has_projector_info=PROJECTOR_INFO_FILENAME in names,
             )
         )
     return entries

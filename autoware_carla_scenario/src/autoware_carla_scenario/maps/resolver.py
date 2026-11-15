@@ -384,7 +384,17 @@ def resolve_map(
             else store.provisioned(at_directory)
         )
         if directory is not None:
-            return _describe(parsed, directory, derived, provisioned=True)
+            # A map unpacked without ``git lfs pull`` is refused here as
+            # resolve_directory and cached_map refuse it (#2165).
+            lanelet2_path = _lanelet2_of(directory, parsed)
+            _refuse_lfs_pointer(lanelet2_path)
+            return _describe(
+                parsed,
+                directory,
+                derived,
+                provisioned=True,
+                lanelet2_path=lanelet2_path,
+            )
     except OSError as exc:
         # Before Python 3.14 ``is_file()`` / ``is_dir()`` / ``glob()`` raise
         # for a name too long, a permission the process lacks or an I/O error
@@ -514,12 +524,24 @@ def _resolve_directory(
             )
     else:
         lanelet2_path = _find_lanelet2(path)
+    _refuse_lfs_pointer(lanelet2_path)
+    return _describe(None, path, derived, lanelet2_path=lanelet2_path)
+
+
+def _refuse_lfs_pointer(lanelet2_path: Path) -> None:
+    """Refuse a Lanelet2 map that is a git-lfs pointer rather than the map.
+
+    Handed to a Lanelet2 parser, a pointer reports a broken map rather than a
+    missing ``git lfs pull``.
+
+    Raises:
+        MapResolutionError: If *lanelet2_path* is a git-lfs pointer.
+    """
     if is_lfs_pointer(lanelet2_path):
         raise MapResolutionError(
             f"{lanelet2_path} is a git-lfs pointer, not a map. Run "
             "`git lfs pull` in the repository it was copied from."
         )
-    return _describe(None, path, derived, lanelet2_path=lanelet2_path)
 
 
 def _peek_ref(store: GitMapCache, source: MapSource) -> Optional[CachedRepo]:

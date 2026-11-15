@@ -225,7 +225,9 @@ An empty `.provisioned_from` (or one holding only comments) lists no
 repository, which turns the shortcut off for that root. A source naming any
 other repository is cloned under `.repos/`, whatever is unpacked at its path;
 the log says so once per directory, at INFO, naming the file to list the
-repository in.
+repository in. An unpacked `.osm` that is still a git-lfs pointer (copied
+without `git lfs pull`) is refused, saying to run `git lfs pull`, rather than
+handed to Lanelet2 as a broken map.
 
 Nothing re-reads a map's *contents* over the network once it is cached;
 `refresh` is the only way to make it fetch again.
@@ -361,6 +363,12 @@ uv run scenario map=town10hd_opt \
 
 `map.xodr_path` and `map.lanelet2_path` still win where they are set, so a
 single file can be overridden without abandoning the source.
+
+`map.source`, `map.directory`, `map.lanelet2_path`, `map.xodr_path`,
+`map.name` and `map.projector_type` are text: unset, null or blank leaves one
+unset, and a number is read as its text, but a boolean
+(`map.xodr_path=false`) or a list is refused before anything runs, naming the
+key and the value, rather than read as a file or repository called `False`.
 
 ### From Python
 
