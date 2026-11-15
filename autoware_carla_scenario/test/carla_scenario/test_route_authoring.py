@@ -357,6 +357,34 @@ class TestValidation:
         assert any("Route junction 2" in m for m in messages)
         assert TrafficLightTarget.ROUTE.value == "route"
 
+    @pytest.mark.parametrize("junction", ["abc", "1.5"])
+    def test_a_route_junction_that_is_no_number_is_reported_not_raised(
+        self, junction: str
+    ) -> None:
+        """validate_document runs on every editor render: raising here made
+        every request for the draft a 500 (#2166)."""
+        raw = _raw()
+        raw["actions"].append(
+            {
+                "id": "light",
+                "type": "traffic_signal",
+                "params": {
+                    "state": "Red",
+                    "target": "route",
+                    "route_junction": junction,
+                },
+            }
+        )
+        report = validate_document(ScenarioDocument.model_validate(raw))
+        junction_errors = [
+            i
+            for i in report.errors
+            if i.path.endswith("route_junction") and i.object_id == "light"
+        ]
+        assert [i.message for i in junction_errors] == [
+            "Route junction must be a whole number."
+        ]
+
     def test_a_spawn_cards_route_pose_is_checked_as_route_vertices_are(self) -> None:
         raw = _raw()
         raw["actions"][4]["params"]["route_pose"] = "crosswalk junction=3 leg=exit"

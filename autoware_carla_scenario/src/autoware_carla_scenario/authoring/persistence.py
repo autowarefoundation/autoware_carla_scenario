@@ -11,7 +11,6 @@ from __future__ import annotations
 import logging
 import os
 import re
-import uuid
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
@@ -26,6 +25,7 @@ except ImportError:  # pragma: no cover -- depends on the installed PyYAML
     from yaml import SafeDumper as _SafeDumper  # type: ignore[assignment]
     from yaml import SafeLoader as _SafeLoader  # type: ignore[assignment]
 
+from ..atomic_file import write_text_atomically
 from .models import ScenarioDocument, new_object_id
 
 #: The tag PyYAML resolves a plain boolean scalar to.
@@ -324,28 +324,18 @@ class DraftStore:
     def _write(self, draft: Draft) -> None:
         """Write *draft* whole or not at all.
 
-        Written aside and renamed into place, so a request reading the draft
-        while another saves it -- the editor serves both at once -- never
-        parses half a file.  The temporary name does not end in ``.yaml``, so
-        :meth:`list` never mistakes it for a draft.
+        Written aside and renamed into place
+        (:func:`~autoware_carla_scenario.atomic_file.write_text_atomically`),
+        so a request reading the draft while another saves it -- the editor
+        serves both at once -- never parses half a file.  The temporary name
+        ends in ``.tmp``, not ``.yaml``, so :meth:`list` never mistakes it for
+        a draft.
 
         Raises:
             OSError: If the drafts directory cannot be created or written to
                 (no permission, a read-only file system, a full disk).  The
                 stored draft, if any, is untouched, and the temporary file is
-                removed as far as the directory allows.
+                removed.
         """
         self.root.mkdir(parents=True, exist_ok=True)
-        path = self.path_for(draft.id)
-        partial = self.root / f".{draft.id}.{uuid.uuid4().hex}.partial"
-        try:
-            with partial.open("x", encoding="utf-8") as stream:
-                stream.write(dump_yaml(draft.to_dict()))
-            os.replace(partial, path)
-        finally:
-            try:
-                partial.unlink(missing_ok=True)
-            except OSError:
-                # Best effort: a directory that refused the write may refuse
-                # this too, and the error worth raising is the write's.
-                logger.warning("Could not remove %s", partial)
+        write_text_atomically(self.path_for(draft.id), dump_yaml(draft.to_dict()))

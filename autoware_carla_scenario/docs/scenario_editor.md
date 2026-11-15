@@ -1043,8 +1043,9 @@ the only thing that outlives the request is the archive, and re-exporting never
 has to overwrite a half-written one.
 
 The response is still the **report** -- warnings, the tool log, whether the
-package's own tests passed -- with the download link in it. Making the response
-the file itself would throw away the very things an export is checked for.
+package's own tests passed, failed or were not run -- with the download link in
+it. Making the response the file itself would throw away the very things an
+export is checked for.
 
 ### One platform, every supported interpreter
 

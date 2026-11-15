@@ -1090,13 +1090,6 @@ class LaneletSlot:
         except (TypeError, ValueError):
             return 0
 
-    def set_lanelet_id(self, value: int) -> None:
-        """Store *value* as this slot's lanelet id."""
-        if isinstance(self.holder, (SpawnSpec, GoalSpec)):
-            self.holder.lanelet_id = value
-        else:
-            self.holder.params[self.field] = value
-
 
 # ---------------------------------------------------------------------------
 # Route search (a logical scenario)
