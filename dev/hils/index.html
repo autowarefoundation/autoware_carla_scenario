@@ -2524,8 +2524,9 @@ command installs it in a cached environment and runs it:</p>
 </code></pre></div>
 <p><code>--host</code>, <code>--port</code>, <code>--role-name</code> and <code>--listen</code> override the file's CARLA
 address, ego and run link; a <code>--port</code> outside 1-65535 is a usage error
-(exit 2). In a checkout, <code>uv sync --dev</code> installs hilspy and
-<code>uv run scenario-hils hils.yaml</code> runs it.</p>
+(exit 2), as is an empty <code>--host</code>, <code>--role-name</code> or <code>--listen</code> (the run link
+is turned off only by <code>runner.listen: null</code> in the file). In a checkout,
+<code>uv sync --dev</code> installs hilspy and <code>uv run scenario-hils hils.yaml</code> runs it.</p>
 <p>Then run scenarios with the ego driven by the ECUs, on the same CARLA server:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>hils<span class="w"> </span>hils.host<span class="o">=</span>hils-pc
 </code></pre></div>
@@ -2570,6 +2571,7 @@ address, ego and run link; a <code>--port</code> outside 1-65535 is a usage erro
 </tr>
 </tbody>
 </table>
+<p>A null <code>hils.</code> setting is its default; an empty <code>host</code> is refused, and so is a timeout that is not a number (<code>true</code>, <code>"10"</code>).</p>
 <h3 id="setting-up-the-hils-pc">Setting up the HILS PC<a class="headerlink" href="#setting-up-the-hils-pc" title="Permanent link">&para;</a></h3>
 <p>The virtual devices the bridge writes to must exist before it opens them: a
 <code>can://vcan0</code> device needs the interface <code>vcan0</code>, a <code>v4l2:///dev/video10</code>
@@ -2713,7 +2715,7 @@ are refused, so a typo fails at start-up instead of being ignored.</p>
 <tr>
 <td><code>runner.listen</code></td>
 <td><code>0.0.0.0:7700</code></td>
-<td>where runs with <code>ego.entity=hils</code> reach the bridge: <code>host:port</code> or <code>host</code> (port 7700); an IPv6 address in brackets, <code>"[::1]:7700"</code> or <code>"[::]"</code> (quoted: unquoted, YAML reads <code>[...]</code> as a list). <code>"[::]"</code> also takes IPv4 where the OS supports dual-stack sockets (Linux, by default); elsewhere it is IPv6 only and <code>0.0.0.0</code> is for IPv4. An IPv6 address without brackets, such as <code>::1</code>, is all host, on port 7700: <code>fe80::1:7700</code> is not port 7700 of <code>fe80::1</code>. The port is a whole number from 0 to 65535 (0 picks a free one), checked when the file loads; <code>null</code>: no run link</td>
+<td>where runs with <code>ego.entity=hils</code> reach the bridge: <code>host:port</code> or <code>host</code> (port 7700); an IPv6 address in brackets, <code>"[::1]:7700"</code> or <code>"[::]"</code> (quoted: unquoted, YAML reads <code>[...]</code> as a list). <code>"[::]"</code> also takes IPv4 where the OS supports dual-stack sockets (Linux, by default); elsewhere it is IPv6 only and <code>0.0.0.0</code> is for IPv4. An IPv6 address without brackets, such as <code>::1</code>, is all host, on port 7700: <code>fe80::1:7700</code> is not port 7700 of <code>fe80::1</code>. The port is a whole number from 0 to 65535 (0 picks a free one), checked when the file loads; <code>null</code>: no run link (an empty <code>""</code> is refused)</td>
 </tr>
 <tr>
 <td><code>commands.mode</code></td>
@@ -2732,6 +2734,10 @@ are refused, so a typo fails at start-up instead of being ignored.</p>
 </tr>
 </tbody>
 </table>
+<p>A null setting is its default, as a missing one is (<code>carla: {port: null}</code> is
+port 2000), but for <code>runner.listen</code>, whose null turns the run link off.
+<code>carla.host</code>, <code>ego.role_name</code> and <code>runner.listen</code> refuse empty text, as
+<code>--host</code>, <code>--role-name</code> and <code>--listen</code> do.</p>
 <p>Names, addresses and raw bytes are text. YAML 1.1, which the bridge reads,
 turns some unquoted values into something else: <code>0102</code> is the octal number 66,
 <code>1:30</code> is 90, and <code>on</code>, <code>off</code>, <code>yes</code> and <code>no</code> are booleans. What was written
@@ -3228,7 +3234,7 @@ each frame the runner ticks. carla_canvas's client is installed with
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 13, 2026 13:47:47 UTC"><span class="timeago" datetime="2026-11-13T13:47:47+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 13, 2026 13:47:47 UTC">2026-11-13</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 15, 2026 03:14:22 UTC"><span class="timeago" datetime="2026-11-15T03:14:22+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 15, 2026 03:14:22 UTC">2026-11-15</span>
   </span>
 
     

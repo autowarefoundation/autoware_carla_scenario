@@ -2846,7 +2846,8 @@ lanelet reads nothing without failing, which the worker's answer does not
 tell apart from a frame with no one to measure from, so a metric that fails
 in every frame on the map but reads nothing off it is not caught. A worker
 that fails during a run (exits, answers out of protocol -- an answer that
-leaves a metric out, or calls it unknown, included -- or does not answer in
+leaves a metric out, or calls it unknown, or gives a value that is not a
+number or null, included -- or does not answer in
 time) fails that run the same way, and takes the pool down with it: the next
 run starts fresh workers rather than reuse a dead one, as does a run that
 finds a pooled worker has exited. When one of the workers cannot be started,
@@ -2866,9 +2867,10 @@ wait as long as it takes.</p>
 least 1), the time step (<code>dt</code>), the horizon (<code>horizon_s</code>), the radius
 (<code>radius_m</code>), CommonRoad-Reach's settings, the command and the timeouts
 (<code>request_timeout_s</code>, <code>start_timeout_s</code>). The periods, <code>dt</code>, <code>horizon_s</code>,
-<code>radius_m</code> and the timeouts (unless <code>None</code>; a bool is refused) must be
-positive and finite: a bad value raises <code>ValueError</code> when the settings are
-built, not later in a run. A timeout far past what <code>poll()</code> waits at once
+<code>radius_m</code> and the timeouts (unless <code>None</code>) must be positive, finite
+numbers -- a bool or a string is refused -- and <code>cache_dir</code> is <code>None</code> or a
+path (a <code>str</code> is taken as one): a bad value raises <code>ValueError</code>, naming the
+field, when the settings are built, not later in a run. A timeout far past what <code>poll()</code> waits at once
 (about 25 days) is waited in pieces.</p>
 <p>AlpaSim's other metrics need more than the world, and are not metrics here:</p>
 <table>
@@ -3045,7 +3047,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 11, 2026 18:48:07 UTC"><span class="timeago" datetime="2026-11-11T18:48:07+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 11, 2026 18:48:07 UTC">2026-11-11</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 15, 2026 03:57:20 UTC"><span class="timeago" datetime="2026-11-15T03:57:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 15, 2026 03:57:20 UTC">2026-11-15</span>
   </span>
 
     
