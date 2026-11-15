@@ -6394,7 +6394,7 @@ with the first paragraph of its docstring:</p>
 </table>
 </details>
 <p>197 functions and methods of those modules are <code>UNCALLED</code>
-(60 of them protected helpers, see <em>What is
+(59 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
 <code>dict[str, Any]</code>), what reads a Hydra config node or a parsed YAML or JSON
@@ -6501,8 +6501,8 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>hils.host_devices.HostSetup.playbooks</code>: builds each playbook's variables as a <code>Dict[str, Any]</code> of mixed value types (a list of interfaces beside a user and booleans), which Codon cannot express; what it derives them from is the checked host_devices()'s</li>
 <li><code>hils.wire.encode</code>: takes a message of any shape (<code>Mapping[str, Any]</code>: JSON values of mixed types), which Codon cannot express</li>
 <li><code>maps.config._flag</code>: reads a boolean <code>map</code> setting with _value, off a config of any shape (<code>map_config: Any</code>), which Codon cannot express; only resolve_map_paths, itself uncalled, calls it, and passes what it reads to the checked _resolve()</li>
-<li><code>maps.config._setting</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>) with _value, which Codon cannot express; only resolve_map_paths, itself uncalled, calls it, and what it reads is resolved by the checked _resolve()</li>
-<li><code>maps.config._value</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only _setting and _flag, both themselves uncalled, call it, and what they read is resolved by the checked _resolve()</li>
+<li><code>maps.config._value</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>: a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; only map_setting and _flag, both themselves uncalled, call it, and what they read is resolved by the checked _resolve()</li>
+<li><code>maps.config.map_setting</code>: reads one <code>map</code> setting off a config of any shape (<code>map_config: Any</code>) with _value, which Codon cannot express; only resolve_map_paths, itself uncalled, and the excluded examples.run (<code>_map_setting()</code>, the batch map check) call it, and what it reads is resolved by the checked _resolve()</li>
 <li><code>maps.config.resolve_map_paths</code>: takes the <code>map</code> config node as <code>Any</code> (a MapConfig, an OmegaConf node or the editor's MapRef, read with hasattr/getattr and indexing), which Codon cannot express; it only reads the settings, and the checked _resolve() resolves them</li>
 <li><code>pedestrian.soma._as_matrices</code>: returns a motion's poses as they come when they are <code>(N, J, 3, 3)</code> matrices, or converts <code>(N, J, 3)</code> axis-angle ones with _rotvec_to_matrix: an array of 3 or 4 dimensions (<code>np.ndarray[Any, ...]</code>), which Codon, typing an array by its number of dimensions, cannot express; only load_soma_motion, itself uncalled, calls it</li>
 <li><code>pedestrian.soma.load_soma_motion</code>: reads a SOMA motion's .npz with <code>numpy.load(..., allow_pickle=False)</code>: Codon's numpy cannot read an .npz, and its load() has no <code>allow_pickle</code>; the checked actions.play_motion, which calls it, imports pedestrian.soma through its model (MODELLED_IMPORTS), so it is not compiled through that call either</li>
