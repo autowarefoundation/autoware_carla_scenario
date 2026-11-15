@@ -11,14 +11,13 @@ new key rather than a stale value.
 
 from __future__ import annotations
 
-import contextlib
 import hashlib
 import json
 import logging
-import os
 from pathlib import Path
 from typing import Callable
 
+from ..atomic_file import write_text_atomically
 from .cache import DERIVED_SUBDIR, map_root
 
 logger = logging.getLogger(__name__)
@@ -131,19 +130,17 @@ def cached_z_offset(
         return value
 
     value = compute()
-    # Per process, so two runs storing the same key never write one file; the
-    # rename is atomic, so a reader sees one whole entry or none.
-    temporary = entry.with_name(f"{entry.name}.{os.getpid()}.tmp")
+    # Through a scratch file mkstemp names, so two writers storing the same
+    # key -- other processes, or other hosts sharing the map root -- never
+    # write one file (#2165); the rename is atomic, so a reader sees one whole
+    # entry or none, and the scratch file is removed when the write fails.
     try:
         entry.parent.mkdir(parents=True, exist_ok=True)
-        temporary.write_text(
+        write_text_atomically(
+            entry,
             _entry_json(value, lanelet2_path, xodr_path, carla_map_name, projection),
-            encoding="utf-8",
         )
-        temporary.replace(entry)
     except OSError:
-        with contextlib.suppress(OSError):
-            temporary.unlink(missing_ok=True)
         logger.warning(
             "Could not cache the Lanelet2 z offset at %s", entry, exc_info=True
         )

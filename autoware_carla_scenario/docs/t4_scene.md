@@ -22,7 +22,7 @@ uv run scenario scenario=cut_in/left t4scene.enabled=true
 |-----------|------|---------|-------------|
 | `t4scene.enabled` | bool | `false` | Write each run as `{ScenarioName}.t4scene.pb` and `{ScenarioName}.t4scene.map.pb` |
 | `t4scene.step_s` | float | `0.1` | The scenes' time step, a positive multiple of the 0.05 s tick (`--step`); another value, a bool (`true`, which would otherwise read as 1 s) or a string is refused before anything runs; `null` is the default |
-| `t4scene.max_distance_m` | float or null | `100.0` | The road users within this distance of the ego are a scene's objects: a positive, finite distance, another value is refused before anything runs; `null` takes all of them (`--max-distance`, `--all-objects`) |
+| `t4scene.max_distance_m` | float or null | `100.0` | The road users within this distance of the ego are a scene's objects: a positive, finite distance, another value is refused before anything runs; `null` takes all of them (`--max-distance`, `--all-objects`; `--all-objects` ignores `--max-distance`, which is then not checked) |
 
 A batch takes the first case's settings, as it does `t4`'s -- a SLURM batch
 too, whichever task runs a case ([SLURM](slurm.md)). The conversion
@@ -168,7 +168,9 @@ What the log does not hold is left out, never made up:
   `base_link_to_rear_axle` is 0. The offset may be any finite number
   (negative behind the origin, positive ahead of it); a `--rear-axle-offset`
   (or `rear_axle_offset_m`) of `nan` or `inf` is refused before anything is
-  written, and so is a log whose `rear_axle` record holds one.
+  written, and so is a log whose `rear_axle` record holds one; so is a
+  `rear_axle_offset_m` or record that is not a number (a boolean, a string
+  such as `"1.5"`, `null` in a record), the error naming the setting.
 - The ego's velocity is its `base_link`'s too. The log records its actor
   origin's, so the rigid-body lever arm is added: `v = v_origin + w x r`,
   `w` the tick's `angular_velocity` and `r` the rotated

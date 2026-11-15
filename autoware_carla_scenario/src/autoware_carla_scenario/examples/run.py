@@ -89,6 +89,7 @@ from autoware_carla_scenario.gate.errored import (
     write_case_unfinished,
 )
 from autoware_carla_scenario.maps import resolve_map_paths
+from autoware_carla_scenario.maps.config import _setting as map_text_setting
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import (
     ODD_CASE_KEY,
@@ -2500,17 +2501,19 @@ _BATCH_MAP_KEYS = (
 
 def _map_setting(cfg: DictConfig, key: str) -> str | bool | None:
     """``map.<key>`` of *cfg* as :func:`resolve_map_paths` reads it: a string
-    stripped, ``None`` when unset or empty; ``overwrite_xodr`` a flag, off
-    when unset and otherwise checked (``check_flag``, #2143).
+    stripped, ``None`` when unset or empty, and a boolean or a value that is
+    neither text nor a number refused (``maps.config._setting``, #2165);
+    ``overwrite_xodr`` a flag, off when unset and otherwise checked
+    (``check_flag``, #2143).
 
     Raises:
-        ValueError: naming ``map.overwrite_xodr``, when it is not a switch.
+        ValueError: naming ``map.<key>``, when the value is refused.
     """
     map_cfg = cfg.get("map") or {}
-    value = map_cfg.get(key)
     if key == "overwrite_xodr":
+        value = map_cfg.get(key)
         return value is not None and check_flag(f"map.{key}", value)
-    return None if value is None else str(value).strip() or None
+    return map_text_setting(map_cfg, key)
 
 
 def check_batch_map(configs: list[DictConfig], labels: list[str] | None = None) -> None:

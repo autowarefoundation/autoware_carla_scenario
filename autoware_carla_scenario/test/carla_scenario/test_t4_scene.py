@@ -531,7 +531,11 @@ def test_a_line_that_is_not_json_in_the_middle_is_refused(tmp_path: Path) -> Non
     ("record", "message"),
     [
         ({"type": "tick", "frame": 101, "t": 0.05}, "missing field 'actors'"),
-        ({"type": "rear_axle", "id": 1, "offset": None}, "NoneType"),
+        (
+            {"type": "rear_axle", "id": 1, "offset": None},
+            "the rear_axle record of actor 1: offset must be finite"
+            " (a number of metres), not None",
+        ),
         ({"type": "tick", "frame": 101, "t": 0.05, "actors": [[1]]}, ""),
         (
             {"type": "tick", "frame": 101, "t": 0.05, "actors": [], "lights": [1]},
@@ -1581,7 +1585,45 @@ def test_cli_takes_a_positive_distance_or_every_object(
     assert _objects(scene) == 1
 
 
+def test_cli_does_not_check_the_distance_all_objects_ignores(
+    tmp_path: Path,
+) -> None:
+    """--all-objects takes every road user, so --max-distance is unread (#2165)."""
+    log = _one_car_log(tmp_path)
+    assert main([str(log), "--no-map", "--all-objects", "--max-distance", "0"]) == 0
+    scene = pb.T4Scene.FromString((tmp_path / f"Run{SCENE_SUFFIX}").read_bytes())
+    assert _objects(scene) == 1
+
+
 _BAD_OFFSETS = (math.nan, math.inf, -math.inf)
+
+
+@pytest.mark.parametrize(
+    ("offset", "shown"),
+    [("1.5", "'1.5'"), ("abc", "'abc'"), (None, "None"), (True, "True"), ([1], "[1]")],
+)
+def test_checked_rear_axle_offset_refuses_what_is_not_a_number(
+    offset: object, shown: str
+) -> None:
+    """A string is not taken because float() reads it, and None or "abc" are
+    refused naming the key, not as a bare TypeError or float()'s message
+    (#2165)."""
+    from autoware_carla_scenario.t4_scene.frames import checked_rear_axle_offset
+
+    with pytest.raises(ValueError) as refused:
+        checked_rear_axle_offset(offset, "t4scene.rear_axle_offset_m")  # type: ignore[arg-type]
+    assert str(refused.value) == (
+        f"t4scene.rear_axle_offset_m must be finite (a number of metres), not {shown}"
+    )
+
+
+def test_checked_rear_axle_offset_shows_a_non_finite_value_as_given() -> None:
+    from autoware_carla_scenario.t4_scene.frames import checked_rear_axle_offset
+
+    with pytest.raises(ValueError, match=r", not nan$"):
+        checked_rear_axle_offset(math.nan)
+    assert checked_rear_axle_offset(-1) == -1.0
+    assert type(checked_rear_axle_offset(-1)) is float
 
 
 @pytest.mark.parametrize("offset", _BAD_OFFSETS)

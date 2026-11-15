@@ -40,12 +40,22 @@ def _setting(map_config: Any, key: str) -> Optional[str]:
     The same map is described by a :class:`~...scenario_config.MapConfig`, by an
     OmegaConf node, and by the editor's :class:`~...authoring.models.MapRef`;
     reading a key off all three is the only thing this module needs from them.
-    With *key* absent the value is ``None``; text is returned stripped, and
-    ``None`` for a blank one.
+    With *key* absent or null the value is ``None``; text is returned
+    stripped, and ``None`` for a blank one -- the editor's ``MapRef`` holds
+    these settings as text fields, where clearing one leaves ``""``.  A number
+    is read as its text (``map.name=2024`` names the map ``"2024"``).
+
+    Raises:
+        ValueError: naming ``map.<key>`` and the value, when it is a boolean
+            (``map.xodr_path=false`` is not a file named ``False``) or neither
+            text nor a number (a list, a mapping) -- refused here rather than
+            failing later as a file or repository that does not exist (#2165).
     """
     value = _value(map_config, key)
     if value is None:
         return None
+    if isinstance(value, bool) or not isinstance(value, (str, int, float)):
+        raise ValueError(f"map.{key} must be text, got {value!r}")
     text = str(value).strip()
     return text or None
 
@@ -102,11 +112,6 @@ class MapPaths:
     projector_type: Optional[str] = None
     xodr_is_derived: bool = False
     overwrite_xodr: bool = False
-
-    @property
-    def from_source(self) -> bool:
-        """Whether these paths came out of a map repository."""
-        return self.resolved is not None and not self.resolved.local
 
     @property
     def derived_xodr(self) -> Optional[Path]:
@@ -169,6 +174,9 @@ def resolve_map_paths(
         refresh: Fetch the map repository again even when it is already cached.
 
     Raises:
+        ValueError: If a setting is a boolean or neither text nor a number
+            (:func:`_setting`), or ``map.overwrite_xodr`` is not a switch
+            (:func:`_flag`), naming the key and the value.
         MapSourceError, MapCacheError, MapResolutionError: If ``map.source``
             or ``map.directory`` is set and cannot be resolved.
     """
