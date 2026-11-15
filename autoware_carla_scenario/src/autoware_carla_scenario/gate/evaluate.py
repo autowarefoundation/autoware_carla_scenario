@@ -654,23 +654,14 @@ def compare(
         criteria=criteria,
         newly_failing=newly_failing,
         fixed=fixed,
-        warnings=_unique(
-            [
-                *(before.warnings if before else []),
-                *(after.warnings if after else []),
-                *warnings,
-            ]
-        ),
+        # Each verdict's warnings name their side: both sides can give the
+        # same text ("the runs ran 2 versions of the document").
+        warnings=[
+            *(f"baseline: {w}" for w in (before.warnings if before else [])),
+            *(f"candidate: {w}" for w in (after.warnings if after else [])),
+            *warnings,
+        ],
     )
-
-
-def _unique(items: list[str]) -> list[str]:
-    """*items* without repeats, in the order each first appears."""
-    out: list[str] = []
-    for item in items:
-        if item not in out:
-            out.append(item)
-    return out
 
 
 def compare_all(

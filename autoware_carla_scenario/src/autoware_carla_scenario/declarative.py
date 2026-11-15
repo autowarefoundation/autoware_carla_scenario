@@ -237,10 +237,13 @@ class DeclarativeScenario(BaseScenario):
             ValueError: naming the key, ``scenario.spawn_overrides.<entity>``
                 or ``scenario.spawn_overrides.<entity>.<field>``.
         """
+        overrides = self._config.spawn_overrides or {}
+        if not overrides:
+            return
         # odd.sampler pulls openodd in; only a run with overrides needs it.
         from .odd.sampler import whole_number_setting  # noqa: PLC0415
 
-        for entity_id, override in (self._config.spawn_overrides or {}).items():
+        for entity_id, override in overrides.items():
             if override is None:
                 continue
             key = f"scenario.spawn_overrides.{entity_id}"
@@ -936,7 +939,7 @@ def _check_override_mapping(key: str, override: Any) -> None:
     """
     if not isinstance(override, Mapping):
         raise ValueError(
-            f"{key} must be a mapping of fields to values, got {override!r}"
+            f"{key} must be a mapping of fields to values, got {shown(override)}"
         )
 
 
@@ -947,15 +950,15 @@ def _finite_number(key: str, value: Any) -> float:
     through; a boolean and a blank are no number (#2143).
     """
     if isinstance(value, bool) or (isinstance(value, str) and not value.strip()):
-        raise ValueError(f"{key} must be a number, got {value!r}")
+        raise ValueError(f"{key} must be a number, got {shown(value)}")
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:
-        raise ValueError(f"{key} must be a number, got {value!r}") from exc
+        raise ValueError(f"{key} must be a number, got {shown(value)}") from exc
     except OverflowError:
         raise ValueError(f"{key} must be finite, got {shown(value)}") from None
     if not math.isfinite(number):
-        raise ValueError(f"{key} must be finite, got {value!r}")
+        raise ValueError(f"{key} must be finite, got {shown(value)}")
     return number
 
 

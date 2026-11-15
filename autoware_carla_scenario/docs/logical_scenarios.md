@@ -163,7 +163,7 @@ assertions:
 | `seed` | int or null | `null` | `null` keeps matches sorted (by lanelet ids, then start); an int shuffles the full list with `random.Random(seed)` before `max_matches` cuts it -- a deterministic sample spread over the map. |
 
 The distances must be finite numbers (`nan`, `inf`, a boolean and a blank are
-refused; only an absent key or `null` is the default), and the counts
+refused; an absent key is the default, as `null` is in a `sweep.route`), and the counts
 (`match_index`, `max_matches`, `seed`) whole numbers: `2` or `2.0`, not `2.5`
 or a boolean. A range's `min` and `max` are numbers too: `null` leaves a bound
 open, and a boolean or a blank is refused, naming the bound. This holds for a hand-written `sweep.route` and a Hydra override
