@@ -124,11 +124,25 @@ def test_a_sumo_switch_is_read_strictly_by_its_key(
         config = SumoBackendConfig.from_mapping(_nested(path, value))
         assert _read(config, path) is expected
     key = ".".join(path)
-    for bad in ("maybe", 2, 0.5, None, ["true"]):
+    for bad in ("maybe", 2, 0.5, ["true"]):
         with pytest.raises(
             ValueError, match=rf"^{re.escape(key)} must be true or false, got "
         ):
             SumoBackendConfig.from_mapping(_nested(path, bad))
+    # Null is the default in a mapping (#2174); the constructor refuses it.
+    config = SumoBackendConfig.from_mapping(_nested(path, None))
+    assert _read(config, path) is default
+    with pytest.raises(
+        ValueError, match=rf"^{re.escape(key)} must be true or false, got None"
+    ):
+        _constructed(path, None)
+
+
+def _constructed(path: tuple[str, ...], value: Any) -> Any:
+    """The config of *path*'s own class, built directly with *value*."""
+    if len(path) == 1:
+        return SumoBackendConfig(**{path[0]: value})
+    return _SECTIONS[path[0]](**{path[1]: value})
 
 
 def test_a_nested_sumo_config_reads_its_switch_when_built_directly() -> None:
@@ -5438,11 +5452,15 @@ def test_the_text_options_are_checked(key: str, optional: bool) -> None:
         assert str(refused.value) == (
             f"traffic.options.{key} must be {requirement} (got {shown})"
         )
+    # Null is the default in a mapping, as an absent key is (#2143); the
+    # constructor refuses it where the field does not take null.
+    default = getattr(SumoBackendConfig(), key)
+    assert getattr(SumoBackendConfig.from_mapping({key: None}), key) == default
     if optional:
-        assert getattr(SumoBackendConfig.from_mapping({key: None}), key) is None
+        assert default is None
     else:
         with pytest.raises(ValueError) as refused:
-            SumoBackendConfig.from_mapping({key: None})
+            SumoBackendConfig(**{key: None})  # type: ignore[arg-type]
         assert str(refused.value) == (
             f"traffic.options.{key} must be non-empty text (got None)"
         )
@@ -5450,11 +5468,57 @@ def test_the_text_options_are_checked(key: str, optional: bool) -> None:
 
 
 def test_the_pedestrians_blueprint_is_checked() -> None:
-    for bad in ("", None, False):
+    for bad in ("", False):
         with pytest.raises(
             ValueError, match=r"^traffic\.options\.pedestrians\.blueprint must be"
         ):
             PedestrianConfig.from_mapping({"blueprint": bad})
+    assert PedestrianConfig.from_mapping({"blueprint": None}) == PedestrianConfig()
+    with pytest.raises(
+        ValueError,
+        match=r"^traffic\.options\.pedestrians\.blueprint must be non-empty text "
+        r"\(got None\)$",
+    ):
+        PedestrianConfig(blueprint=None)  # type: ignore[arg-type]
+
+
+def _takes_null(field: dataclasses.Field) -> bool:
+    return field.default is None or "Optional[" in str(field.type)
+
+
+@pytest.mark.parametrize(
+    "config_cls",
+    [
+        AmbientTrafficConfig,
+        PedestrianConfig,
+        BicycleConfig,
+        MesoscopicConfig,
+        SumoBackendConfig,
+    ],
+)
+def test_a_null_setting_that_does_not_take_null_is_its_default(
+    config_cls: Any,
+) -> None:
+    """Each of them, not only the text options: an absent or null setting is
+    its default (#2143, #2174)."""
+    names = [
+        field.name
+        for field in dataclasses.fields(config_cls)
+        if field.init and not _takes_null(field)
+    ]
+    assert names
+    for name in names:
+        assert config_cls.from_mapping({name: None}) == config_cls(), name
+
+
+def test_a_null_setting_that_takes_null_keeps_it() -> None:
+    """Null is a value of its own where the field is Optional: no curve
+    limit, SUMO's lane-based model -- not the non-null default."""
+    config = SumoBackendConfig.from_mapping(
+        {"curve_lateral_acceleration": None, "lateral_resolution_m": None}
+    )
+    assert config.curve_lateral_acceleration is None
+    assert config.lateral_resolution_m is None
 
 
 def test_the_cache_dir_resolves_to_the_default_only_when_null(tmp_path: Path) -> None:
@@ -5560,11 +5624,17 @@ def test_a_sumo_number_option_refuses_what_is_no_number_by_its_key(
     # or a null in a required field raised a TypeError naming no key (#1663).
     name = re.escape(f"{group}.{key}" if group else key)
     bad: list[Any] = [True, False, "2", "", [1.0], {"a": 1}, 10**400, -(10**400)]
-    if not nullable:
-        bad.append(None)
     for value in bad:
         with pytest.raises(ValueError, match=f"^{name} {message}"):
             _sumo_option(group, key, value)
+    if not nullable:
+        # Null is the default in a mapping (#2174); the constructor refuses it.
+        default = _sumo_option_value(SumoBackendConfig(), group, key)
+        assert _sumo_option_value(_sumo_option(group, key, None), group, key) == (
+            default
+        )
+        with pytest.raises(ValueError, match=f"^{name} {message}"):
+            _constructed((group, key) if group else (key,), None)
     # A huge int is shown without repr()'s digit limit (#1652).
     with pytest.raises(ValueError, match=r"got an integer of about 10\*\*5000\)$"):
         _sumo_option(group, key, 10**5000)

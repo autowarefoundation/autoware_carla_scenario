@@ -1117,9 +1117,12 @@ default; `false`, `0`, `""` or a list is refused before the run, naming it
 failing once the backend reads it. **Its text options** -- `net_path`,
 `route_path`, `cache_dir`, `blueprint`, `binary` and
 `pedestrians.blueprint` -- are non-empty strings: `''`, `false` or `0` is
-refused, naming the option, rather than read as the default. Null is the
-default of the three that default to null (`net_path`, `route_path`,
-`cache_dir`) and is refused for the others. A null `bicycles.blueprints` is
+refused, naming the option, rather than read as the default. **A null
+option is its default**, as an absent one is -- `blueprint: null` is
+`vehicle.lincoln.mkz`, `tm_port: null` the TrafficManager's port -- under
+`traffic.options` and in each of its sections, for the `hybrid` backend's
+options (a null `mesoscopic.enabled` is `true` there) and the
+`traffic_manager` backend's `port` too. So a null `bicycles.blueprints` is
 the default list; `[]` is none, which keeps every SUMO bicycle out of CARLA.
 
 **Its outputs** are the run's own: everything the backend writes -- SUMO's

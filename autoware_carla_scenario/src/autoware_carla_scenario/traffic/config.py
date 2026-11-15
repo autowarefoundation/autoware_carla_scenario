@@ -38,6 +38,7 @@ from .parameters import BicycleParameters, PedestrianParameters, VehicleParamete
 __all__ = [
     "TrafficConfig",
     "TrafficManagerBackendConfig",
+    "check_port",
     "traffic_backend_name",
 ]
 
@@ -102,17 +103,15 @@ class TrafficManagerBackendConfig:
 
         A null ``port`` -- what the YAML groups' ``${oc.select:
         traffic_manager.port,null}`` gives a run with no ``traffic_manager``
-        group -- is the default, as for the ``sumo`` and ``hybrid`` backends.
+        group -- is the default, as every null setting of the ``sumo`` and
+        ``hybrid`` backends that does not take null is.
         """
         # Imported here: utils.config reads a dataclass's fields from its class,
         # which Codon cannot express, and the library check compiles no import
         # in a function it does not call (typecheck/library.py, UNCALLED).
-        from ..utils.config import checked_options  # noqa: PLC0415
+        from ..utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        checked = checked_options(cls, mapping)
-        if checked.get("port") is None:
-            checked.pop("port", None)  # `${oc.select:...,null}`: the default
-        return cls(**checked)
+        return cls(**null_as_default(cls, checked_options(cls, mapping)))
 
 
 @dataclass

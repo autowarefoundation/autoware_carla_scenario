@@ -212,9 +212,10 @@ class AmbientTrafficConfig:
         # Imported here: utils.config reads a dataclass's fields from its class,
         # which Codon cannot express, and the library check compiles no import
         # in a function it does not call (typecheck/library.py, UNCALLED).
-        from ...utils.config import checked_options  # noqa: PLC0415
+        from ...utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        return cls(**checked_options(cls, mapping))
+        # A null setting that does not take null is its default (#2174).
+        return cls(**null_as_default(cls, checked_options(cls, mapping)))
 
 
 @dataclass
@@ -272,9 +273,10 @@ class PedestrianConfig:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "PedestrianConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
-        from ...utils.config import checked_options  # noqa: PLC0415
+        from ...utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        return cls(**checked_options(cls, mapping))
+        # A null setting that does not take null is its default (#2174).
+        return cls(**null_as_default(cls, checked_options(cls, mapping)))
 
 
 def _default_bicycle_blueprints() -> list[str]:
@@ -368,7 +370,11 @@ class BicycleConfig:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "BicycleConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
-        from ...utils.config import checked_options, checked_str_list  # noqa: PLC0415
+        from ...utils.config import (  # noqa: PLC0415
+            checked_options,
+            checked_str_list,
+            null_as_default,
+        )
 
         moved = sorted(set(mapping) & set(BICYCLE_PARAMETER_BACKENDS))
         if moved:
@@ -377,11 +383,10 @@ class BicycleConfig:
                 "is traffic.bicycles now, with the vehicle and pedestrian "
                 "parameters every backend shares (BicycleParameters)"
             )
-        checked = checked_options(cls, mapping)
-        if checked.get("blueprints", "") is None:
-            # Null is the default list, not none at all: an explicit `[]`
-            # is how bicycles are kept out of CARLA (#2174).
-            checked.pop("blueprints")
+        # A null setting that does not take null is its default (#2174):
+        # a null `blueprints` is the default list, not none at all -- an
+        # explicit `[]` is how bicycles are kept out of CARLA.
+        checked = null_as_default(cls, checked_options(cls, mapping))
         if "blueprints" in checked:
             # A string is refused, not split into characters (#1534).
             checked["blueprints"] = checked_str_list(
@@ -682,6 +687,7 @@ class SumoBackendConfig:
             checked_options,
             checked_section,
             checked_str_list,
+            null_as_default,
         )
 
         if "follow_visibility" in mapping:
@@ -690,7 +696,9 @@ class SumoBackendConfig:
                 "traffic.vehicles.follow_visibility, with the other vehicle "
                 "parameters every backend shares (VehicleParameters)"
             )
-        checked = checked_options(cls, mapping)
+        # A null setting that does not take null -- a section, `blueprint`,
+        # `binary`, `tm_port` (`${oc.select:...,null}`) -- is its default.
+        checked = null_as_default(cls, checked_options(cls, mapping))
         sections: dict[str, Any] = {
             "ambient": AmbientTrafficConfig.from_mapping,
             "pedestrians": PedestrianConfig.from_mapping,
@@ -699,17 +707,13 @@ class SumoBackendConfig:
         }
         for key, build in sections.items():
             section = checked_section(f"traffic.options.{key}", checked.get(key))
-            if section is None:
-                checked.pop(key, None)
-            else:
+            if section is not None:
                 checked[key] = build(section)
         if "sumo_args" in checked:
             # A string is refused, not split into characters (#1534).
             checked["sumo_args"] = checked_str_list(
                 "traffic.options.sumo_args", checked["sumo_args"]
             )
-        if checked.get("tm_port") is None:
-            checked.pop("tm_port", None)  # `${oc.select:...,null}`: the default
         return cls(**checked)
 
     def resolved_cache_dir(self) -> Path:

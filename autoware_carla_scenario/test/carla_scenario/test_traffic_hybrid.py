@@ -323,6 +323,10 @@ def test_a_mesoscopic_section_that_is_no_mapping_is_refused(
     )
     # Null is the default, on; handed to the constructor, it is refused.
     assert HybridBackendConfig.from_mapping({"mesoscopic": None}).mesoscopic.enabled
+    # A null `enabled` is this backend's default, on, too (#2174).
+    assert HybridBackendConfig.from_mapping(
+        {"mesoscopic": {"enabled": None}}
+    ).mesoscopic.enabled
     with pytest.raises(ValueError, match="mesoscopic must be a mapping, got None"):
         HybridBackendConfig(mesoscopic=None)  # type: ignore[arg-type]
 

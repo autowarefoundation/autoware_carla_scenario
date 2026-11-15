@@ -112,19 +112,18 @@ class HybridBackendConfig:
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "HybridBackendConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
-        from ...utils.config import checked_options  # noqa: PLC0415
+        from ...utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        checked = checked_options(cls, mapping)
-        if checked.get("mesoscopic") is None:
-            checked.pop("mesoscopic", None)
-        return cls(**checked)
+        # A null `mesoscopic` is the default, on (#2174).
+        return cls(**null_as_default(cls, checked_options(cls, mapping)))
 
 
 def _mesoscopic(mapping: Any) -> MesoscopicConfig:
     """*mapping* as the mesoscopic options, on unless it says otherwise.
 
     A :class:`MesoscopicConfig` is itself; a mapping is read with
-    ``enabled: true`` unless it says otherwise; anything else -- null among
+    ``enabled: true`` unless it says otherwise (a null ``enabled`` is
+    ``true``); anything else -- null among
     it, which :meth:`HybridBackendConfig.from_mapping` has already taken as
     the default -- is refused, naming the key.
     """
@@ -135,7 +134,12 @@ def _mesoscopic(mapping: Any) -> MesoscopicConfig:
     section = checked_section("traffic.options.mesoscopic", mapping)
     if section is None:
         raise ValueError("traffic.options.mesoscopic must be a mapping, got None")
-    return MesoscopicConfig.from_mapping({"enabled": True, **dict(section)})
+    options = dict(section)
+    if options.get("enabled") is None:
+        # On here: a null `enabled` is this backend's default, not
+        # MesoscopicConfig's (#2174).
+        options["enabled"] = True
+    return MesoscopicConfig.from_mapping(options)
 
 
 @dataclass
