@@ -611,10 +611,11 @@ factory: the shipped groups declare their keys as null placeholders so that
 interpolation such as `${oc.select:traffic_manager.port,null}` resolves to
 null when nothing sets it, so a null means "not set" and your factory sees
 the key absent and applies its own default. A backend that reads a null
-itself -- as a value of its own for some option, as the built-in `sumo`,
-`hybrid` and `traffic_manager` backends do -- registers with
-`takes_null_options=True`, and is then handed the nulls as they are; it must
-then read a null as the default of every option that does not take one
+itself -- as a value of its own for some option, as the built-in `sumo`
+backend's `lateral_resolution_m` does -- registers with
+`takes_null_options=True`, as the built-in `sumo`, `hybrid` and
+`traffic_manager` backends do, and is then handed the nulls as they are; it
+must then read a null as the default of every option that does not take one
 (`utils.config.null_as_default` does that for a dataclass):
 
 ```python

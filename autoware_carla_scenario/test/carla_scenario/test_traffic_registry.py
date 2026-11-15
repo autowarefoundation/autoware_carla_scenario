@@ -503,11 +503,14 @@ class TestNullOptions:
         ids=["legacy-port", "legacy-port-null"],
     )
     def test_a_shipped_groups_nulls_change_nothing(
-        self, group: str, overrides: list[str]
+        self, group: str, overrides: list[str], monkeypatch: pytest.MonkeyPatch
     ) -> None:
         """Every null a shipped group declares -- a placeholder, or an
         ``${oc.select:traffic_manager.port,null}`` that resolved to nothing --
-        builds the config dropping it built, before the built-ins took nulls."""
+        builds the config dropping it built, before the built-ins took nulls:
+        the options :func:`build_traffic_backend` hands the factory with the
+        flag and without it build equal configs."""
+        from autoware_carla_scenario.examples import run as run_module
         from autoware_carla_scenario.traffic.config import TrafficManagerBackendConfig
         from autoware_carla_scenario.traffic.sumo.config import SumoBackendConfig
         from autoware_carla_scenario.traffic.sumo.hybrid import HybridBackendConfig
@@ -518,14 +521,24 @@ class TestNullOptions:
             "hybrid": HybridBackendConfig,
         }
         cfg = self._compose([f"traffic={group}", *overrides])
-        options = OmegaConf.to_container(cfg.traffic.options, resolve=True)
-        assert isinstance(options, dict)
-        nulls = [key for key, value in options.items() if value is None]
+        handed: list[dict[str, Any]] = []
+
+        def capture(name: str, options: Mapping[str, Any], *_: Any) -> Any:
+            handed.append(dict(options))
+            return MagicMock()
+
+        monkeypatch.setattr(run_module, "build_backend", capture)
+        run_module.build_traffic_backend(cfg)
+        monkeypatch.setattr(run_module, "takes_null_options", lambda name: False)
+        run_module.build_traffic_backend(cfg)
+        with_nulls, dropped = handed
+        assert all(value is not None for value in dropped.values())
+        nulls = [key for key, value in with_nulls.items() if value is None]
         # traffic_manager's only option is the port, set by the legacy key.
         assert nulls or (group == "traffic_manager" and not overrides)
-        dropped = {key: value for key, value in options.items() if value is not None}
+        assert set(with_nulls) - set(dropped) == set(nulls)
         config_cls = config_classes[group]
-        assert config_cls.from_mapping(options) == config_cls.from_mapping(dropped)
+        assert config_cls.from_mapping(with_nulls) == config_cls.from_mapping(dropped)
 
     def test_every_field_null_is_its_default_but_the_optional_ones(self) -> None:
         """Pins which top-level options a null is not the default of: the
