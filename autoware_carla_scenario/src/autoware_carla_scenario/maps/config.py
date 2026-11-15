@@ -31,10 +31,10 @@ from .source import redacted_url
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["MapPaths", "resolve_map_paths"]
+__all__ = ["MapPaths", "map_setting", "resolve_map_paths"]
 
 
-def _setting(map_config: Any, key: str) -> Optional[str]:
+def map_setting(map_config: Any, key: str) -> Optional[str]:
     """Read one ``map`` setting off a config, whatever shape it has.
 
     The same map is described by a :class:`~...scenario_config.MapConfig`, by an
@@ -61,7 +61,7 @@ def _setting(map_config: Any, key: str) -> Optional[str]:
 
 
 def _value(map_config: Any, key: str) -> Any:
-    """One ``map`` setting off a config of any shape (:func:`_setting`), as
+    """One ``map`` setting off a config of any shape (:func:`map_setting`), as
     it holds it; ``None`` when it holds none."""
     if map_config is None:
         return None
@@ -166,7 +166,7 @@ def resolve_map_paths(
 
     Args:
         map_config: The ``map`` config group, in any of the shapes
-            :func:`_setting` reads.
+            :func:`map_setting` reads.
         allow_fetch: Whether a source that is not cached yet may be cloned.
             Left off, an uncached source contributes no paths -- which is what
             the editor wants on a render, where fetching is a button rather
@@ -175,18 +175,18 @@ def resolve_map_paths(
 
     Raises:
         ValueError: If a setting is a boolean or neither text nor a number
-            (:func:`_setting`), or ``map.overwrite_xodr`` is not a switch
+            (:func:`map_setting`), or ``map.overwrite_xodr`` is not a switch
             (:func:`_flag`), naming the key and the value.
         MapSourceError, MapCacheError, MapResolutionError: If ``map.source``
             or ``map.directory`` is set and cannot be resolved.
     """
     return _resolve(
-        directory=_setting(map_config, "directory"),
-        source=_setting(map_config, "source"),
-        lanelet2=_setting(map_config, "lanelet2_path"),
-        xodr=_setting(map_config, "xodr_path"),
-        name=_setting(map_config, "name") or "",
-        projector_type=_setting(map_config, "projector_type"),
+        directory=map_setting(map_config, "directory"),
+        source=map_setting(map_config, "source"),
+        lanelet2=map_setting(map_config, "lanelet2_path"),
+        xodr=map_setting(map_config, "xodr_path"),
+        name=map_setting(map_config, "name") or "",
+        projector_type=map_setting(map_config, "projector_type"),
         overwrite_xodr=_flag(map_config, "overwrite_xodr"),
         allow_fetch=allow_fetch,
         refresh=refresh,

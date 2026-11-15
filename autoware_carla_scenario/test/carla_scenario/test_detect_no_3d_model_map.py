@@ -339,6 +339,15 @@ def test_malformed_yaml_is_a_one_line_error(
         ),
         ("map:\n  name: M\n  source: not-a-uri\n", "is not a repository URL"),
         ("map:\n  name: M\n  directory: /nonexistent/dir\n", "does not exist"),
+        # A refused map.* setting is a config error too, not a traceback (#2165).
+        (
+            "map:\n  name: M\n  xodr_path: false\n",
+            "map.xodr_path must be text, got False",
+        ),
+        (
+            "map:\n  name: M\n  overwrite_xodr: ture\n",
+            "map.overwrite_xodr must be true or false",
+        ),
     ],
 )
 def test_config_errors_are_one_line(

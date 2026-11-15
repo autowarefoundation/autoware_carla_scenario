@@ -1741,6 +1741,15 @@ class TestResolveMapPaths:
         ):
             run.check_batch_map([case(False), case(None)])
 
+    def test_a_sweep_says_who_refuses_a_bool_path(self) -> None:
+        """load_sweep_map puts its prefix before a refused setting, as before
+        a map it cannot resolve (#2165)."""
+        from autoware_carla_scenario.sweeper.expand import load_sweep_map
+
+        with pytest.raises(ValueError) as refused:
+            load_sweep_map({"name": "A", "xodr_path": False}, prefix="sweep: ")
+        assert str(refused.value) == "sweep: map.xodr_path must be text, got False"
+
 
 def _map_repo(path: Path) -> Path:
     """A repository holding one map at ``map/``, as many single-map repos do."""
