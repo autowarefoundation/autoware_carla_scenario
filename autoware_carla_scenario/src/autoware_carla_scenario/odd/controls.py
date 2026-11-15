@@ -139,7 +139,9 @@ def _check_control(
                         f"{key!r} is not a key of the config{_hint(key, keys or ())}",
                     )
                 )
-    target = spec.get("target", "setting")
+    target = spec.get("target")
+    if target is None:  # Not given, or null: the default (#2171).
+        target = "setting"
     if target not in _CONTROL_TARGETS:
         out.append(
             ControlDiagnostic(

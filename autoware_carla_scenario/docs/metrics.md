@@ -377,7 +377,8 @@ lanelet reads nothing without failing, which the worker's answer does not
 tell apart from a frame with no one to measure from, so a metric that fails
 in every frame on the map but reads nothing off it is not caught. A worker
 that fails during a run (exits, answers out of protocol -- an answer that
-leaves a metric out, or calls it unknown, included -- or does not answer in
+leaves a metric out, or calls it unknown, or gives a value that is not a
+number or null, included -- or does not answer in
 time) fails that run the same way, and takes the pool down with it: the next
 run starts fresh workers rather than reuse a dead one, as does a run that
 finds a pooled worker has exited. When one of the workers cannot be started,
@@ -399,9 +400,10 @@ wait as long as it takes.
 least 1), the time step (`dt`), the horizon (`horizon_s`), the radius
 (`radius_m`), CommonRoad-Reach's settings, the command and the timeouts
 (`request_timeout_s`, `start_timeout_s`). The periods, `dt`, `horizon_s`,
-`radius_m` and the timeouts (unless `None`; a bool is refused) must be
-positive and finite: a bad value raises `ValueError` when the settings are
-built, not later in a run. A timeout far past what `poll()` waits at once
+`radius_m` and the timeouts (unless `None`) must be positive, finite
+numbers -- a bool or a string is refused -- and `cache_dir` is `None` or a
+path (a `str` is taken as one): a bad value raises `ValueError`, naming the
+field, when the settings are built, not later in a run. A timeout far past what `poll()` waits at once
 (about 25 days) is waited in pieces.
 
 AlpaSim's other metrics need more than the world, and are not metrics here:

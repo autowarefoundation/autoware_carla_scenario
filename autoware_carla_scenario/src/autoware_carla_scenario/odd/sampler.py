@@ -88,6 +88,7 @@ from .backend import (
     CARLA_BACKEND,
     DEFAULT_KNOBS,
     CarlaBackend,
+    _attribute_knobs,
     _effect_control,
     weather_effects,
 )
@@ -122,6 +123,9 @@ __all__ = [
     "sample_count",
     "sample_coverage_paths",
     "sample_draws",
+    "sample_knobs",
+    "sample_odd",
+    "sample_strategy",
     "sample_seed",
     "sampler_from_config",
     "scenario_backend",
@@ -244,10 +248,16 @@ def scenario_backend(
     return backend
 
 
-def controls_from_mapping(raw: Optional[Mapping[str, Any]]) -> dict[str, OddKnob]:
+def controls_from_mapping(
+    raw: Optional[Mapping[str, Any]], key: str = "controls"
+) -> dict[str, OddKnob]:
     """Knobs from config, by name: :func:`knobs_from_mapping`, plus ``target``.
 
-    ``target: setting`` (the default) is a raw setting, as without it.
+    *raw* is ``None`` (no knobs) or a mapping, the config's *key*
+    (``controls``, ``sweep.odd_sample.knobs``), which an error names.
+
+    ``target: setting`` (the default, as is ``target: null``) is a raw
+    setting, as without it.
     ``target: measure`` declares that the key takes the measure's value at the
     start itself -- the scenario solves for the placement that makes the
     measure read it (:mod:`autoware_carla_scenario.placement`) -- so it is
@@ -255,13 +265,23 @@ def controls_from_mapping(raw: Optional[Mapping[str, Any]]) -> dict[str, OddKnob
     ``integer`` or ``values``.  ``range`` and ``limits`` it keeps.
 
     Raises:
-        ValueError: On an unknown ``target``, a ``target: measure`` control
-            that maps the value, or what :func:`knobs_from_mapping` refuses.
+        ValueError: On a *raw* that is no mapping (``false``, a list), an
+            unknown ``target``, a ``target: measure`` control that maps the
+            value, or what :func:`knobs_from_mapping` refuses.
     """
+    if raw is None:
+        return {}
+    if not isinstance(raw, Mapping):
+        raise ValueError(f"{key}: expected a mapping of name -> knob, got {raw!r}")
     plain: dict[str, Any] = {}
-    for name, spec in (raw or {}).items():
-        if not isinstance(spec, Mapping) or "target" not in spec:
-            plain[name] = spec
+    for name, spec in raw.items():
+        if not isinstance(spec, Mapping) or spec.get("target") is None:
+            # No target, or null: a raw setting (#2171).
+            plain[name] = (
+                {k: v for k, v in spec.items() if k != "target"}
+                if isinstance(spec, Mapping)
+                else spec
+            )
             continue
         target = spec["target"]
         if target not in CONTROL_TARGETS:
@@ -509,11 +529,72 @@ def sample_coverage_paths(raw: Mapping[str, Any]) -> list[Union[str, Path]]:
     return items
 
 
+def sample_odd(
+    raw: Mapping[str, Any], odd: Union[str, Path, OddDefinition, None] = None
+) -> Union[str, Path, OddDefinition, None]:
+    """The ODD a ``sweep.odd_sample`` mapping draws from: its ``odd``, or
+    *odd* (the run's) when it is not given or null.
+
+    Raises:
+        ValueError: naming ``sweep.odd_sample.odd``, when it is neither an
+            ODD nor a name or path of one (``false``, ``0``, ``""``) (#2171).
+    """
+    value = raw.get("odd")
+    if value is None:
+        return odd
+    if isinstance(value, OddDefinition):
+        return value
+    if not isinstance(value, (str, Path)) or not str(value).strip():
+        raise ValueError(
+            f"sweep.odd_sample.odd: expected the name or path of an ODD, got {value!r}"
+        )
+    return value
+
+
+def sample_knobs(raw: Mapping[str, Any]) -> Mapping[str, Any]:
+    """A ``sweep.odd_sample`` mapping's ``knobs`` as given, by attribute;
+    none when not given or null.
+
+    Raises:
+        ValueError: naming ``sweep.odd_sample.knobs``, when it is not a
+            mapping (``false``, a list) (#2171).
+    """
+    value = raw.get("knobs")
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise ValueError(
+            f"sweep.odd_sample.knobs: expected a mapping of name -> knob, got {value!r}"
+        )
+    return value
+
+
+def sample_strategy(raw: Mapping[str, Any]) -> Optional[str]:
+    """A ``sweep.odd_sample`` mapping's ``strategy``; ``None`` (openodd's
+    default) when not given or null.
+
+    Raises:
+        ValueError: naming ``sweep.odd_sample.strategy``, when it is not a
+            name (``false``, ``0``, ``""``) (#2171).  openodd refuses an
+            unknown name.
+    """
+    value = raw.get("strategy")
+    if value is None:
+        return None
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"sweep.odd_sample.strategy: expected the name of a strategy, got {value!r}"
+        )
+    return value
+
+
 def check_sample_settings(raw: Mapping[str, Any]) -> None:
     """Refuse a ``sweep.odd_sample`` mapping's ``seed``, ``count``,
-    ``tire_friction``, ``visibility`` and ``coverage_from`` when drawing from
-    it would (:func:`sample_seed`, :func:`sample_count`, :func:`sample_draws`,
-    :func:`sample_coverage_paths`): read before anything is drawn, built or
+    ``tire_friction``, ``visibility``, ``coverage_from``, ``odd``, ``knobs``
+    and ``strategy`` when drawing from it would (:func:`sample_seed`,
+    :func:`sample_count`, :func:`sample_draws`,
+    :func:`sample_coverage_paths`, :func:`sample_odd`, :func:`sample_knobs`,
+    :func:`sample_strategy`): read before anything is drawn, built or
     resolved.
 
     Raises:
@@ -524,6 +605,9 @@ def check_sample_settings(raw: Mapping[str, Any]) -> None:
     for name in SAMPLE_DRAWS:
         sample_draws(raw, name)
     sample_coverage_paths(raw)
+    sample_odd(raw)
+    sample_knobs(raw)
+    sample_strategy(raw)
 
 
 def search_from_config(
@@ -562,7 +646,9 @@ def search_from_config(
         ValueError: On an unknown field, a ``seed`` or ``count`` that is
             not a whole number, a ``tire_friction`` or ``visibility`` that
             is not true or false, or a ``coverage_from`` that is not a path
-            or a list of paths (:func:`check_sample_settings`).
+            or a list of paths, an ``odd`` that names no ODD, ``knobs`` or
+            *controls* that are no mapping, or a ``strategy`` that is no name
+            (:func:`check_sample_settings`).
     """
     from ..coverage.report import load_and_merge  # noqa: PLC0415
     from .registry import resolve_odd  # noqa: PLC0415
@@ -582,7 +668,7 @@ def search_from_config(
     unknown = set(flaky or {}) - FLAKY_FIELDS
     if unknown:
         raise ValueError(f"sweep.odd_sample.flaky: unknown fields {sorted(unknown)}")
-    definition = resolve_odd(raw.get("odd") or odd)
+    definition = resolve_odd(sample_odd(raw, odd))
     coverage = None
     paths = sample_coverage_paths(raw)
     resolved = [
@@ -591,8 +677,8 @@ def search_from_config(
     ]
     if resolved:
         coverage = load_and_merge(resolved)
-    strategy = raw.get("strategy")
-    knobs = controls_from_mapping(raw.get("knobs"))
+    strategy = sample_strategy(raw)
+    knobs = controls_from_mapping(sample_knobs(raw), "sweep.odd_sample.knobs")
     scenario_controls = controls_from_mapping(controls)
     backend = scenario_backend(rules, environment_rules)
     # The grip's and the visibility's quantiles, drawn with each case as
@@ -626,7 +712,7 @@ def search_from_config(
         knobs,
         controls=scenario_controls,
         seed=seed,
-        strategy=None if strategy is None else str(strategy),
+        strategy=strategy,
         coverage=coverage,
         weights=weights_from_config(raw.get("weights"), base_dir),
         drawn=drawn.of(definition) if drawn is not None else (),
@@ -680,10 +766,8 @@ def case_settings(
     from the conditions the ODD names (:func:`~.backend.weather_effects`)."""
     settings: dict[str, tuple[str, str]] = {}
     controls = _unreplaced_controls(definition, knobs, controls, backend)
-    for attribute in definition.attributes:
-        knob = knobs.get(attribute.name) or backend.knob(attribute, controls)
-        if knob is not None:
-            settings.setdefault(knob.key, ("attribute", attribute.name))
+    for attribute, knob in _attribute_knobs(definition, knobs, controls, backend):
+        settings.setdefault(knob.key, ("attribute", attribute.name))
     for name, control in controls.items():
         if control.quantity is not None:
             settings.setdefault(control.key, ("control", name))

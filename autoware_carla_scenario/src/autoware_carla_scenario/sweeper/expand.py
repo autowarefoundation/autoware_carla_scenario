@@ -355,6 +355,8 @@ def _with_odd_samples(
         QUANTILE_DRAWS,
         encode_case,
         sample_draws,
+        sample_knobs,
+        sample_odd,
         search_from_config,
     )
 
@@ -370,10 +372,10 @@ def _with_odd_samples(
     buckets: list[dict[str, str]] = []
     map_attributes: list[str] = []
     if lanelet_map is not None:
-        definition = resolve_odd(raw.get("odd") or odd)
+        definition = resolve_odd(sample_odd(raw, odd))
         readings = _case_readings(base_cases, definition, lanelet_map)
         buckets = [{a: b for a, (b, _v) in r.items()} for r in readings]
-        given = dict(raw.get("knobs") or {})
+        given = dict(sample_knobs(raw))
         map_knobs = _map_knobs(definition, buckets, given)
         if map_knobs:
             raw["knobs"] = {**map_knobs, **given}
@@ -485,12 +487,14 @@ def _refuse_overridden(
     from ..odd.sampler import (  # noqa: PLC0415
         case_settings,
         controls_from_mapping,
+        sample_knobs,
+        sample_odd,
         scenario_backend,
     )
 
     settings = case_settings(
-        resolve_odd(raw.get("odd") or odd),
-        controls_from_mapping(raw.get("knobs")),
+        resolve_odd(sample_odd(raw, odd)),
+        controls_from_mapping(sample_knobs(raw), "sweep.odd_sample.knobs"),
         controls_from_mapping(controls),
         scenario_backend(rules, environment_rules),
     )

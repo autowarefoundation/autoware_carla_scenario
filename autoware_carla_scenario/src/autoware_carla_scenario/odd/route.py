@@ -64,7 +64,6 @@ __all__ = [
     "RouteError",
     "RouteLanelet",
     "combine_route_coverage",
-    "lanelet_buckets",
     "lanelet_readings",
     "plan_route",
     "plan_route_coverage",
@@ -319,15 +318,6 @@ def lanelet_readings(
             continue
         found[attribute.name] = (bucket, value)
     return found
-
-
-def lanelet_buckets(
-    odd: OddDefinition, lanelet: Any, lanelet_map: Any, routing_graph: Any
-) -> dict[str, str]:
-    """The bucket of every attribute the map decides on *lanelet*, by name
-    (:func:`lanelet_readings` without the values)."""
-    readings = lanelet_readings(odd, lanelet, lanelet_map, routing_graph)
-    return {name: bucket for name, (bucket, _value) in readings.items()}
 
 
 def _route_of(scenario_or_route: Any) -> Union[PlannedRoute, list[int]]:
