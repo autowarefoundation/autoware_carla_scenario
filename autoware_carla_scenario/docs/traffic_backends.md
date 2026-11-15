@@ -112,7 +112,8 @@ slot's port, which replaces an explicit `traffic.options.port` (or SUMO's
 `tm_port`) with a warning ([SLURM, Ports](slurm.md#ports)).
 Either must be a TCP port, an integer within 1-65535: `0`, `70000` or
 `true` is refused, naming the key, before CARLA is started (a batch's and a
-sweep's cases before any runs), as the SUMO backend's `tm_port` is.
+sweep's cases before any runs), as the SUMO backend's `tm_port` is. A null
+`traffic.options.port` is the default, as under `sumo` and `hybrid`.
 
 ## Traffic parameters
 
@@ -1067,8 +1068,8 @@ out of either.
 | --- | --- | --- |
 | `port` | `traffic_manager.port`, else 8100 | The TrafficManager's port, as `traffic_manager`'s. |
 | `mesoscopic` | `enabled: true` | `MesoscopicConfig`, as the `sumo` backend's ([below](#the-sumo-backend)), on by default here; `scenario_vehicles` is refused. |
-| `net_path` | `null` | A SUMO network of the map to use as it is, instead of converting the world's OpenDRIVE. |
-| `cache_dir` | `null` | Where converted networks are cached (the `sumo` backend's cache). |
+| `net_path` | `null` | A SUMO network of the map to use as it is, instead of converting the world's OpenDRIVE. Non-empty text or null: `''` is refused. |
+| `cache_dir` | `null` | Where converted networks are cached (the `sumo` backend's cache). Non-empty text or null: `''` is refused. |
 
 **The engines.** `mesoscopic.engine: sumo` (the default) is SUMO's own
 mesoscopic simulation, a second SUMO (`--mesosim`, `segment_length_m`),
@@ -1108,6 +1109,21 @@ are ([The switches](usage.md#the-switches)): so a quoted
 `traffic.options.fcd_output='false'` is false. Anything else (`maybe`, `2`,
 null) is refused before the run, naming the option as
 `ambient.enabled must be true or false, got 'maybe'`.
+
+**Its sections** -- `ambient`, `pedestrians`, `bicycles` and `mesoscopic`
+under `traffic.options` -- are mappings. An absent or null one is the
+default; `false`, `0`, `""` or a list is refused before the run, naming it
+(`traffic.options.ambient must be a mapping, got False`), rather than
+failing once the backend reads it. **Its text options** -- `net_path`,
+`route_path`, `cache_dir`, `blueprint`, `binary` and
+`pedestrians.blueprint` -- are non-empty strings: `''`, `false` or `0` is
+refused, naming the option, rather than read as the default. **A null
+option is its default**, as an absent one is -- `blueprint: null` is
+`vehicle.lincoln.mkz`, `tm_port: null` the TrafficManager's port -- under
+`traffic.options` and in each of its sections, for the `hybrid` backend's
+options (a null `mesoscopic.enabled` is `true` there) and the
+`traffic_manager` backend's `port` too. So a null `bicycles.blueprints` is
+the default list; `[]` is none, which keeps every SUMO bicycle out of CARLA.
 
 **Its outputs** are the run's own: everything the backend writes -- SUMO's
 log (`sumo.log`), the demand it generates (`ambient.rou.xml`,
@@ -1262,7 +1278,8 @@ bicycle may use (`randomTrips.py --vclass bicycle`, unweighted, each
 at least `min_distance_m` and under `max_distance_m` long, so `min_distance_m`
 must be less than `max_distance_m`) and are mirrored into CARLA as
 bicycles, each one of `blueprints` (those the world lacks are left out; with
-none left, bicycles ride in SUMO only, where its traffic still sees them), with
+none left, or with `blueprints: []`, bicycles ride in SUMO only, where its
+traffic still sees them; a null `blueprints` is CARLA's bicycles), with
 the role name `sumo:<id>`. They count against limits of their own:
 `radius_m` (the vehicles' `spawn_radius_m` when null) and `max_bicycles`
 (`null`: no limit; `0`: none), apart from `max_vehicles`. A mirror follows its bicycle as

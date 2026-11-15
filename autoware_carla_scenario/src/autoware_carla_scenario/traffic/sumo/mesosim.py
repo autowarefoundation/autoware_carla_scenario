@@ -44,10 +44,11 @@ import math
 import random
 import socket
 import subprocess
+import tempfile
 import time
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Callable, Iterator, Mapping, Optional, Sequence
+from typing import IO, Any, Callable, Iterator, Mapping, Optional, Sequence
 
 from ...kinematics.angle import normalize_angle_deg
 from ..base import TrafficBackendError
@@ -79,6 +80,8 @@ _CELL_M = 50.0
 
 #: How long SUMO may take to listen for TraCI, s: a large network loads first.
 _CONNECT_TIMEOUT_S = 60.0
+#: How long SUMO may take to exit, s, once told to or killed.
+_EXIT_TIMEOUT_S = 5.0
 
 # TraCI's variable ids (traci.constants), named here so the module does not
 # import traci until it starts SUMO.
@@ -199,8 +202,17 @@ class SumoMesoscopicTraffic:
             cmd += ["--log", str(log_file)]
         cmd += list(extra_args)
         self._process: Optional[subprocess.Popen[bytes]] = None
-        self._conn: Any = self._start(cmd)
-        self._types = set(self._conn.vehicletype.getIDList())
+        #: SUMO's standard error: a file, not a pipe nobody drains during the
+        #: run (a full pipe would block SUMO), read when SUMO fails to start.
+        self._stderr: Optional[IO[bytes]] = None
+        self._conn: Any = None
+        self._conn = self._start(cmd)
+        try:
+            self._types = set(self._conn.vehicletype.getIDList())
+        except BaseException:
+            # No object reaches the caller to close: stop SUMO here (#2174).
+            self.close()
+            raise
 
     # ------------------------------------------------------------------
     # SUMO
@@ -215,32 +227,72 @@ class SumoMesoscopicTraffic:
         with socket.socket() as probe:
             probe.bind(("localhost", 0))
             port = int(probe.getsockname()[1])
-        process = subprocess.Popen(  # noqa: S603 - SUMO's own binary
-            [*cmd, "--remote-port", str(port)],
-            stdout=subprocess.DEVNULL,
-            stderr=subprocess.PIPE,
-        )
+        stderr = tempfile.TemporaryFile()  # noqa: SIM115 - closed by _stop_process()
+        self._stderr = stderr
+        try:
+            process = subprocess.Popen(  # noqa: S603 - SUMO's own binary
+                [*cmd, "--remote-port", str(port)],
+                stdout=subprocess.DEVNULL,
+                stderr=stderr,
+            )
+        except BaseException:
+            self._stop_process(kill=True)
+            raise
         self._process = process
         deadline = time.monotonic() + _CONNECT_TIMEOUT_S
-        while True:
-            if process.poll() is not None:
-                err = (
-                    process.stderr.read().decode(errors="replace")
-                    if process.stderr
-                    else ""
-                )
-                raise RuntimeError(f"SUMO (mesoscopic) did not start: {err.strip()}")
-            try:
-                # One try each: traci.connect sleeps a second between its own.
-                return traci.connect(port, numRetries=0, proc=process)
-            except (FatalTraCIError, TraCIException, OSError):
-                if time.monotonic() > deadline:
-                    process.kill()
+        try:
+            while True:
+                if process.poll() is not None:
                     raise RuntimeError(
-                        "SUMO (mesoscopic) did not listen for TraCI "
-                        f"within {_CONNECT_TIMEOUT_S:g} s"
-                    ) from None
-                time.sleep(0.02)
+                        f"SUMO (mesoscopic) did not start: {self._stderr_text()}"
+                    )
+                try:
+                    # One try each: traci.connect sleeps a second between its own.
+                    return traci.connect(port, numRetries=0, proc=process)
+                except (FatalTraCIError, TraCIException, OSError):
+                    if time.monotonic() > deadline:
+                        raise RuntimeError(
+                            "SUMO (mesoscopic) did not listen for TraCI "
+                            f"within {_CONNECT_TIMEOUT_S:g} s"
+                        ) from None
+                    time.sleep(0.02)
+        except BaseException:
+            # Killed and reaped, so no SUMO and no zombie outlives the error.
+            self._stop_process(kill=True)
+            raise
+
+    def _stderr_text(self) -> str:
+        """What SUMO has written to its standard error so far."""
+        stderr = self._stderr
+        if stderr is None:
+            return ""
+        try:
+            stderr.seek(0)
+            return stderr.read().decode(errors="replace").strip()
+        except (OSError, ValueError):
+            return ""
+
+    def _stop_process(self, *, kill: bool) -> None:
+        """Stop SUMO's process -- waiting for it to exit unless *kill*, and
+        killing it if it does not -- reap it, and close its standard error."""
+        process, self._process = self._process, None
+        if process is not None:
+            try:
+                if kill:
+                    process.kill()
+                process.wait(timeout=_EXIT_TIMEOUT_S)
+            except subprocess.TimeoutExpired:
+                process.kill()
+                try:
+                    process.wait(timeout=_EXIT_TIMEOUT_S)
+                except subprocess.TimeoutExpired:
+                    logger.warning(
+                        "SUMO (mesoscopic, pid %s) did not exit when killed",
+                        process.pid,
+                    )
+        stderr, self._stderr = self._stderr, None
+        if stderr is not None:
+            stderr.close()
 
     def close(self) -> None:
         """Stop SUMO."""
@@ -250,12 +302,7 @@ class SumoMesoscopicTraffic:
                 conn.close(False)
             except Exception as exc:  # noqa: BLE001 - teardown must go on
                 logger.debug("SUMO (mesoscopic) close: %s", exc)
-        process, self._process = self._process, None
-        if process is not None:
-            try:
-                process.wait(timeout=5.0)
-            except subprocess.TimeoutExpired:
-                process.kill()
+        self._stop_process(kill=False)
         self._vehicles = {}
         self._pending = set()
         self._running = {}

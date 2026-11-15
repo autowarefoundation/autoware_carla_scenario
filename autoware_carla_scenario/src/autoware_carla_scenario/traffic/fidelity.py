@@ -248,9 +248,10 @@ class MesoscopicConfig:
         # Imported here: utils.config reads a dataclass's fields from its class,
         # which Codon cannot express, and the library check compiles no import
         # in a function it does not call (typecheck/library.py, UNCALLED).
-        from ..utils.config import checked_options  # noqa: PLC0415
+        from ..utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        return cls(**checked_options(cls, mapping))
+        # A null setting that does not take null is its default (#2174).
+        return cls(**null_as_default(cls, checked_options(cls, mapping)))
 
 
 @dataclass

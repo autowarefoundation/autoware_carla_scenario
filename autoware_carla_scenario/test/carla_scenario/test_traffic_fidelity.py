@@ -43,12 +43,11 @@ def test_a_vehicle_is_microscopic_until_a_backend_says_otherwise() -> None:
     entity = DrivenEntity()
     backend = NullTrafficBackend()
     assert entity.simulation_fidelity is MICRO
-    assert backend.fidelity_of(entity) is MICRO
     assert backend.require_microscopic(entity, world=None)  # type: ignore[arg-type]
     assert backend.fidelity_census() == {}
 
     backend._mark_fidelity(entity, MESO)
-    assert backend.fidelity_of(entity) is MESO
+    assert entity.simulation_fidelity is MESO
     # A backend with one level cannot bring it back, and says so.
     assert not TrafficBackend.require_microscopic(backend, entity, None)  # type: ignore[arg-type]
     # The flag is the entity's own, not the class's.
@@ -153,7 +152,11 @@ def test_a_mesoscopic_number_refuses_what_is_no_number_by_its_key(
     # raised a TypeError naming no key (#1663); 10**400 an OverflowError.
     bad: list[Any] = [True, False, "2", "", [1.0], 10**400]
     if not nullable:
-        bad.append(None)
+        # Null is the default in a mapping (#2174); the constructor refuses it.
+        default = getattr(MesoscopicConfig(), key)
+        assert getattr(MesoscopicConfig.from_mapping({key: None}), key) == default
+        with pytest.raises(ValueError, match=f"^{key} {message}"):
+            MesoscopicConfig(**{key: None})  # type: ignore[arg-type]
     for value in bad:
         with pytest.raises(ValueError, match=f"^{key} {message}"):
             MesoscopicConfig.from_mapping({"enabled": True, key: value})
@@ -194,7 +197,11 @@ def test_a_mesoscopic_switch_is_read_strictly_by_its_key(
         assert getattr(config, key) is expected
         sumo = SumoBackendConfig.from_mapping({"mesoscopic": {key: value}})
         assert getattr(sumo.mesoscopic, key) is expected
-    for bad in ("maybe", 2, 0.0, None, [True]):
+    # Null is the default in a mapping (#2174); the constructor refuses it.
+    assert getattr(MesoscopicConfig.from_mapping({key: None}), key) is default
+    with pytest.raises(ValueError, match=r"must be true or false, got None"):
+        MesoscopicConfig(**{key: None})  # type: ignore[arg-type]
+    for bad in ("maybe", 2, 0.0, [True]):
         message = rf"^mesoscopic\.{key} must be true or false, got "
         with pytest.raises(ValueError, match=message):
             MesoscopicConfig.from_mapping({key: bad})
