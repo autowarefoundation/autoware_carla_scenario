@@ -28,9 +28,10 @@ Settings (``backends.ardy`` of the run's config), each optional:
 ``docker_args``      More ``docker run`` arguments: a list.
 ==================== ========================================================
 
-The timeouts must be finite and above 0, the memories whole numbers, not
-negative; a value refused is a ``ValueError`` naming its key
-(``backends.ardy.<key>``), raised by :meth:`ArdyBackend.from_settings`
+Every key absent or null is its default.  ``model`` and ``hf_home`` must be
+non-empty text, ``acceleration`` one of :data:`ACCELERATIONS`, the timeouts
+finite and above 0, the memories whole numbers, not negative; a value refused
+is a ``ValueError`` naming its key (``backends.ardy.<key>``), raised by :meth:`ArdyBackend.from_settings`
 before any image is pulled or container started
 (:func:`~autoware_carla_scenario.prepare.docker.read_docker_settings`).
 """
@@ -50,13 +51,42 @@ from ..prepare.docker import (
 )
 from .motion_client import PedestrianMotionClient
 
-__all__ = ["DEFAULT_IMAGE", "ArdyBackend"]
+__all__ = ["ACCELERATIONS", "DEFAULT_IMAGE", "ArdyBackend"]
 
 #: The image of the backend release this package speaks the contract of.
 DEFAULT_IMAGE = "ghcr.io/hakuturu583/carla_ardy_backend:0.1.0"
 
 #: The port the server listens on in the container.
 CONTAINER_PORT = 50061
+
+#: The ARDY checkpoint run when ``model`` is absent or null.
+DEFAULT_MODEL = "soma"
+
+#: The host's Hugging Face cache mounted when ``hf_home`` is absent or null.
+DEFAULT_HF_HOME = "~/.cache/huggingface"
+
+#: What ``acceleration`` takes: none, ``torch.compile``, or TensorRT.
+ACCELERATIONS = ("none", "compile", "trt")
+
+
+def _text(backend: str, key: str, settings: Mapping[str, Any], default: str) -> str:
+    """*settings*' *key*, text that is not blank; absent or null is *default*.
+
+    ``false`` or a number is refused rather than handed to the container as
+    its ``str()`` (``ARDY_MODEL='None'``, an ``hf_home`` of ``None`` that
+    docker mounts as a named volume, #2158).
+
+    Raises:
+        ValueError: naming the key (``backends.<backend>.<key>``).
+    """
+    value = settings.get(key)
+    if value is None:
+        return default
+    if not isinstance(value, str) or not value.strip():
+        raise ValueError(
+            f"{setting_key(backend, key)} must be non-empty text, got {value!r}"
+        )
+    return value
 
 
 class ArdyBackend(DockerBackend):
@@ -85,10 +115,19 @@ class ArdyBackend(DockerBackend):
                 started.
         """
         name = cls.backend_name
-        hf_home = str(settings.get("hf_home", "~/.cache/huggingface"))
+        hf_home = _text(name, "hf_home", settings, DEFAULT_HF_HOME)
+        model = _text(name, "model", settings, DEFAULT_MODEL)
+        acceleration = settings.get("acceleration")
+        if acceleration is None:
+            acceleration = "none"
+        if not isinstance(acceleration, str) or acceleration not in ACCELERATIONS:
+            raise ValueError(
+                f"{setting_key(name, 'acceleration')} must be one of "
+                f"{', '.join(ACCELERATIONS)}, got {acceleration!r}"
+            )
         env = {
-            "ARDY_MODEL": str(settings.get("model", "soma")),
-            "ARDY_ACCELERATION": str(settings.get("acceleration", "none")),
+            "ARDY_MODEL": model,
+            "ARDY_ACCELERATION": acceleration,
             "HF_HOME": "/hf",
         }
         docker = read_docker_settings(
@@ -103,9 +142,10 @@ class ArdyBackend(DockerBackend):
             gpu_memory_mb=24000,
             memory_mb=16000,
         )
-        timeout_s = positive_seconds(
-            setting_key(name, "timeout_s"), settings.get("timeout_s", 120.0)
-        )
+        timeout_value = settings.get("timeout_s")
+        if timeout_value is None:
+            timeout_value = 120.0
+        timeout_s = positive_seconds(setting_key(name, "timeout_s"), timeout_value)
         return cls(docker, timeout_s=timeout_s)
 
     def ready(self, timeout_s: float) -> bool:

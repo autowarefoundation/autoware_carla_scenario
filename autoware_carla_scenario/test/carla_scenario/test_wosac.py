@@ -351,6 +351,38 @@ def test_an_object_id_is_its_roles_whatever_the_actor_id(tmp_path: Path) -> None
     assert 0 <= object_id_of("npc1") < 2**31
 
 
+@pytest.mark.parametrize(
+    ("role", "object_id"),
+    [
+        # Computed with int.from_bytes(digest[:4], "big") before wosac.ids
+        # read them off the hex digest (#2158): a rollout's ids never change.
+        ("ego", 1071303995),
+        ("Ego", 1071303995),
+        ("hero", 1071303995),
+        ("npc_1", 705440643),
+        ("pedestrian", 1963785820),
+        ("CutInVehicle", 65601598),
+        ("", 1672528962),
+    ],
+)
+def test_object_ids_are_pinned(role: str, object_id: int) -> None:
+    assert object_id_of(role) == object_id
+
+
+def test_the_id_helpers_are_importable_where_they_were() -> None:
+    """#2158 moved them into wosac.ids, which convert.py and pack.py import."""
+    from autoware_carla_scenario import wosac
+    from autoware_carla_scenario.wosac import convert, ids, pack
+
+    for name in ("scenario_id_of", "object_id_of", "checked_count"):
+        assert getattr(convert, name) is getattr(ids, name), name
+        assert name in convert.__all__ and name in ids.__all__, name
+    assert convert._checked_object_ids is ids._checked_object_ids
+    assert pack.checked_count is ids.checked_count
+    assert wosac.object_id_of is ids.object_id_of
+    assert wosac.scenario_id_of is ids.scenario_id_of
+
+
 def test_object_ids_can_be_given(tmp_path: Path) -> None:
     log = _write_log(tmp_path / "Run.trajectory.jsonl")
     rollout = trajectory_log_to_rollout(log, object_ids={"ego": 7, "npc1": 3})
@@ -520,6 +552,22 @@ def test_a_rollout_without_a_scenario_id_is_refused() -> None:
         merge_rollouts([(pb.ScenarioRollouts(joint_scenes=[pb.JointScene()]), "f")])
 
 
+def test_a_rollout_without_a_joint_scene_is_refused() -> None:
+    """A ``TypeError`` from merging no scene before #2156."""
+    with pytest.raises(ValueError, match="f has no joint scene"):
+        merge_rollouts([(pb.ScenarioRollouts(scenario_id="a"), "f")])
+
+
+def test_a_file_that_is_no_rollout_is_refused_naming_it(tmp_path: Path) -> None:
+    """A ``DecodeError`` traceback before #2156."""
+    bad = tmp_path / "Bad.wosac.pb"
+    bad.write_bytes(b"\xff\xff\xff")
+    with pytest.raises(ValueError, match=f"{bad}: not a ScenarioRollouts"):
+        read_rollouts(bad)
+    with pytest.raises(ValueError, match=f"{bad}: not a SimAgentsChallengeSubmission"):
+        read_submission([bad])
+
+
 # -- the submission ------------------------------------------------------------
 
 
@@ -628,6 +676,17 @@ def test_the_command_reports_a_bad_pack(
         main(["pack", str(tmp_path), "-o", str(tmp_path / "s"), "--rollouts", "2"]) == 1
     )
     assert "scenario 'Run' has 1 rollouts, not 2" in capsys.readouterr().err
+
+
+def test_the_command_reports_a_file_that_is_no_rollout(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bad = tmp_path / "Bad.wosac.pb"
+    bad.write_bytes(b"\xff\xff\xff")
+    assert main(["pack", str(tmp_path), "-o", str(tmp_path / "s")]) == 1
+    assert f"scenario-wosac pack: {bad}: not a ScenarioRollouts" in (
+        capsys.readouterr().err
+    )
 
 
 def test_the_command_reports_a_log_it_cannot_export(

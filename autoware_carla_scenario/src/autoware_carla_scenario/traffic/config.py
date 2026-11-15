@@ -38,7 +38,30 @@ from .parameters import BicycleParameters, PedestrianParameters, VehicleParamete
 __all__ = [
     "TrafficConfig",
     "TrafficManagerBackendConfig",
+    "traffic_backend_name",
 ]
+
+#: The backend a ``traffic`` group without one (or with a null one) selects.
+DEFAULT_TRAFFIC_BACKEND = "traffic_manager"
+
+
+def traffic_backend_name(value: Any) -> str:
+    """The backend name the ``traffic.backend`` setting *value* selects.
+
+    An absent or null one (*value* ``None``) is ``traffic_manager``; a
+    non-empty string is itself; anything else is refused, naming the key
+    (#2156).  The one reader of the setting, so the backend built
+    (:meth:`TrafficConfig.from_mapping`) and the TrafficManager port a
+    SLURM task is given agree (#2160).
+
+    Raises:
+        ValueError: If *value* is neither ``None`` nor a non-empty string.
+    """
+    if value is None:
+        return DEFAULT_TRAFFIC_BACKEND
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"traffic.backend must be a backend's name, got {value!r}")
+    return value
 
 
 @dataclass
@@ -105,7 +128,9 @@ class TrafficConfig:
         ``options``, ``vehicles``, ``pedestrians`` and ``bicycles`` are
         mappings; only an absent or null one is empty (the defaults), while
         ``false``, ``0``, ``""`` or a list is refused, naming the key, rather
-        than read as the defaults (#2143).
+        than read as the defaults (#2143). ``backend`` is a non-empty
+        string; an absent or null one is ``traffic_manager``, while any
+        other value is refused, naming the key (#2156).
         """
         from ..utils.config import checked_options  # noqa: PLC0415
 
@@ -125,7 +150,7 @@ class TrafficConfig:
             return value
 
         return cls(
-            backend=str(checked.get("backend", "traffic_manager")),
+            backend=traffic_backend_name(checked.get("backend")),
             options=dict(section("options")),
             vehicles=VehicleParameters.from_mapping(section("vehicles")),
             pedestrians=PedestrianParameters.from_mapping(section("pedestrians")),

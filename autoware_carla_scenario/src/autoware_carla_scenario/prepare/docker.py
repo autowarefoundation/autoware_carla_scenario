@@ -190,7 +190,9 @@ def read_docker_settings(
     is pulled or container started.  ``image`` is text, and ``gpus`` text or
     a count (``docker run --gpus 2``), neither blank; an absent or null one
     is its default, while ``false`` or a number of the wrong kind is refused
-    rather than handed to ``docker`` as ``"False"`` (#2143).
+    rather than handed to ``docker`` as ``"False"`` (#2143).  Every key
+    absent or null is its default (#2158): ``pull: null`` is ``missing``,
+    not refused.
 
     Raises:
         ValueError: naming the key (``backends.<backend>.<key>``) of the
@@ -214,12 +216,23 @@ def read_docker_settings(
             f"{setting_key(backend, 'gpus')} must be auto, all, none or what "
             f"docker run --gpus takes (device=N, a count), got {gpus_value!r}"
         )
-    pull = settings.get("pull", "missing")
+    pull = settings.get("pull")
+    if pull is None:
+        pull = "missing"
     if not isinstance(pull, str) or pull not in PULL_POLICIES:
         raise ValueError(
             f"{setting_key(backend, 'pull')} must be one of "
             f"{', '.join(PULL_POLICIES)}, got {pull!r}"
         )
+    startup_value = settings.get("startup_timeout_s")
+    if startup_value is None:
+        startup_value = startup_timeout_s
+    gpu_memory_value = settings.get("gpu_memory_mb")
+    if gpu_memory_value is None:
+        gpu_memory_value = gpu_memory_mb
+    memory_value = settings.get("memory_mb")
+    if memory_value is None:
+        memory_value = memory_mb
     return DockerSettings(
         image=image_value,
         container_port=container_port,
@@ -233,16 +246,16 @@ def read_docker_settings(
         pull=pull,
         startup_timeout_s=positive_seconds(
             setting_key(backend, "startup_timeout_s"),
-            settings.get("startup_timeout_s", startup_timeout_s),
+            startup_value,
         ),
         resources=Resources(
             gpu_memory_mb=whole_mib(
                 setting_key(backend, "gpu_memory_mb"),
-                settings.get("gpu_memory_mb", gpu_memory_mb),
+                gpu_memory_value,
             ),
             memory_mb=whole_mib(
                 setting_key(backend, "memory_mb"),
-                settings.get("memory_mb", memory_mb),
+                memory_value,
             ),
         ),
     )

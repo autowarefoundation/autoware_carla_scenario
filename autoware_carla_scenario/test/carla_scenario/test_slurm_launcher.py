@@ -2236,6 +2236,29 @@ def test_worker_leaves_the_interpolated_backend_port_following_the_slot(
     assert run.build_traffic_backend(cfg).port == slot.traffic_manager  # type: ignore[attr-defined]
 
 
+def test_worker_moves_the_port_of_a_null_backend_to_the_slot() -> None:
+    """A null ``traffic.backend`` is the TrafficManager backend (#2156), so
+    its port goes to the slot too; read as the backend ``'None'`` and left
+    on the shared port before #2160."""
+    from autoware_carla_scenario.examples import run
+    from autoware_carla_scenario.slurm.ports import PortSlot
+    from autoware_carla_scenario.slurm.worker import worker_overrides
+
+    cfg = run._compose_config(
+        _CONCRETE,
+        [
+            "traffic=traffic_manager",
+            "traffic.backend=null",
+            "traffic.options.port=8101",
+        ],
+    )
+    slot = PortSlot(index=0, base=20000)
+    changes = worker_overrides(cfg, slot)
+    assert changes["traffic.options.port"] == slot.traffic_manager
+    assert run.build_traffic_backend(cfg).port == slot.traffic_manager  # type: ignore[attr-defined]
+    assert run._traffic_manager_port_text(cfg) == str(slot.traffic_manager)
+
+
 def test_worker_adds_no_port_to_a_backend_without_one() -> None:
     from autoware_carla_scenario.examples import run
     from autoware_carla_scenario.slurm.ports import PortSlot

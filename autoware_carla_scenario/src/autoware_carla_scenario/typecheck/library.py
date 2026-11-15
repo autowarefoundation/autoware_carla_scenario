@@ -391,6 +391,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.weather_inputs",
     "autoware_carla_scenario.world_reset",
     "autoware_carla_scenario.wosac._proto",
+    "autoware_carla_scenario.wosac.ids",
 )
 
 #: The reason of a method that builds a dict of mixed value types.
@@ -594,6 +595,7 @@ UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.traffic.config.TrafficConfig.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.fidelity.MesoscopicConfig.from_mapping": _FROM_MAPPING,
     "autoware_carla_scenario.traffic.config.TrafficManagerBackendConfig.from_mapping": _FROM_MAPPING,
+    "autoware_carla_scenario.traffic.config.traffic_backend_name": "takes the traffic.backend setting as a value of any type (`Any`: None or a backend's name; a bool, a number, empty text or a list to refuse), which Codon cannot express; only TrafficConfig.from_mapping, itself uncalled, and the unchecked slurm.worker and examples.run call it",
     "autoware_carla_scenario.traffic.parameters._described": "takes and returns a value of any type (`Any`: a Spread's describe() or the value unchanged), which Codon cannot express; only VehicleParameters.describe(), itself uncalled, calls it",
     "autoware_carla_scenario.traffic.parameters._number_of": "takes one config value of any type (`Any`: a number or numeric text, `'1.5'` read as 1.5; a bool, other text, None, a list or a mapping to refuse), which Codon cannot express; only _spread_of, itself uncalled, calls it",
     "autoware_carla_scenario.traffic.parameters._spread_of": "takes one config value of any type (`Any`: None, a Spread, a `{mean, std}` mapping, a number or numeric text; a bool, other text, a list or a mapping with other keys to refuse), which Codon cannot express; only _spreads_from, itself uncalled, calls it",
@@ -821,8 +823,8 @@ EXCLUDED: dict[str, str] = {
     "autoware_carla_scenario.wosac._proto.scenario_pb2": "imports google.protobuf",
     "autoware_carla_scenario.wosac._proto.sim_agents_submission_pb2": "imports google.protobuf",
     "autoware_carla_scenario.wosac._proto.vector_pb2": "imports google.protobuf",
-    "autoware_carla_scenario.wosac.convert": "reads trajectory logs with t4_scene.convert, which is not checked (JSON-lines records of mixed value types, `dict[str, Any]`, which Codon cannot express), with its presence check and box poses (`_Log.present()`, `box_poses()`), writes them with orjson and builds protobuf messages (wosac._proto); the suffixes it writes are the checked run_outputs's, and the blueprints of a cyclist the checked constants's (`CARLA_BICYCLE_BLUEPRINTS`)",
-    "autoware_carla_scenario.wosac.pack": "imports tarfile and google.protobuf (`json_format`), and builds protobuf messages (wosac._proto); takes the submission's metadata as `Mapping[str, Any]`, which Codon cannot express",
+    "autoware_carla_scenario.wosac.convert": "reads trajectory logs with t4_scene.convert, which is not checked (JSON-lines records of mixed value types, `dict[str, Any]`, which Codon cannot express), with its presence check and box poses (`_Log.present()`, `box_poses()`), writes them with orjson and builds protobuf messages (wosac._proto); the suffixes it writes are the checked run_outputs's, and the blueprints of a cyclist the checked constants's (`CARLA_BICYCLE_BLUEPRINTS`), and the ids and counts it takes the checked wosac.ids's (`object_id_of()`, `scenario_id_of()`, `checked_count()`)",
+    "autoware_carla_scenario.wosac.pack": "imports tarfile and google.protobuf (`json_format`, `message.DecodeError`), and builds protobuf messages (wosac._proto); takes the submission's metadata as `Mapping[str, Any]`, which Codon cannot express; the counts it takes are the checked wosac.ids's (`checked_count()`)",
 }
 
 #: Model modules (``codon/autoware_carla_scenario/<name>.codon``) the library

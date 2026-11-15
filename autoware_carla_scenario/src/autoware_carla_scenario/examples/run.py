@@ -135,6 +135,7 @@ from autoware_carla_scenario.typecheck.mode import (
     typecheck_mode,
 )
 from autoware_carla_scenario.traffic.base import check_background_speed
+from autoware_carla_scenario.traffic.config import traffic_backend_name
 from autoware_carla_scenario.traffic.registry import tm_port_option
 from autoware_carla_scenario.traffic import (
     TrafficBackend,
@@ -645,7 +646,8 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     232).  The argument lists (``launch``, ``colcon_args``, ``docker_args``,
     ``command``) must be lists, not strings, of strings or numbers; ``env``
     and ``mounts`` mappings of strings or numbers; ``bridge_parameters`` a
-    mapping.  :func:`check_batch_configs` calls this, so a batch or a sweep is
+    mapping; ``workspace`` a non-empty path.  A null ``type`` or ``workspace``
+    is its default (``none``, ``~/autoware``).  :func:`check_batch_configs` calls this, so a batch or a sweep is
     refused for any of these before its first scenario starts.
 
     Raises:
@@ -683,7 +685,9 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
         )
         raise ValueError(msg)
 
-    kind = str(settings.pop("type", "none"))
+    # Null is the default (#2158), not the unknown type 'None'.
+    kind_value = settings.pop("type", None)
+    kind = "none" if kind_value is None else str(kind_value)
     if kind == "none":
         return None
 
@@ -702,7 +706,17 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     stop_timeout_s = _launcher_stop_timeout_s(settings)
     if kind == "docker":
         options = {k: v for k, v in settings.items() if k in docker_fields}
-        options["workspace"] = Path(str(options.get("workspace", "~/autoware")))
+        # Null is the default; false, a number or '' is refused rather than
+        # made Path("False") (#2158).
+        workspace = options.get("workspace")
+        if workspace is None:
+            workspace = "~/autoware"
+        if not isinstance(workspace, str) or not workspace.strip():
+            raise ValueError(
+                "autoware.launcher.workspace must be a path to the Autoware "
+                f"workspace, got {workspace!r}"
+            )
+        options["workspace"] = Path(workspace)
         # Absent is empty, refused naming the key.
         options.setdefault("launch", ())
         # The settings' types are checked here, naming the key (the
@@ -1242,7 +1256,7 @@ def _traffic_manager_port_text(cfg: DictConfig) -> str:
     if traffic is None:
         port = _legacy_traffic_manager_options(cfg).get("port")
     else:
-        backend = str(traffic.get("backend", "traffic_manager"))
+        backend = traffic_backend_name(traffic.get("backend"))
         option = tm_port_option(backend)
         if option is None:
             return f"- (traffic backend {backend})"

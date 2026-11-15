@@ -24,9 +24,7 @@ the log skipped the tick) holds its last pose, and is marked invalid in
 
 from __future__ import annotations
 
-import hashlib
 import logging
-import re
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
@@ -38,12 +36,14 @@ import orjson
 from ..constants import CARLA_BICYCLE_BLUEPRINTS
 from ..entity_role import canonical_role_name
 from ..run_outputs import WOSAC_AGENTS_SUFFIX, WOSAC_SUFFIX
-from ..seed import check_whole_number
 
 # The trajectory log's reader and its frame math are the T4Scene export's.
 from ..t4_scene.convert import _Log, _MapFrame, _read_log, box_poses
 from ..t4_scene.grid import is_ego, scene_stem, step_frames
 from ._proto import scenario_pb2, sim_agents_submission_pb2
+
+# The ids and counts are wosac.ids', re-exported here, where they were.
+from .ids import _checked_object_ids, checked_count, object_id_of, scenario_id_of
 
 __all__ = [
     "CURRENT_INDEX",
@@ -70,10 +70,6 @@ CURRENT_INDEX = 10
 FUTURE_STEPS = 80
 
 _TRACK = scenario_pb2.Track
-#: The run counter ``scenario_runner`` appends to a stem taken in the
-#: directory already (``CutInScenario-1``).
-_RUN_COUNTER = re.compile(r"-\d+$")
-_INT32_MAX = 2**31 - 1
 
 
 @dataclass(frozen=True)
@@ -172,24 +168,6 @@ class WosacRollout:
         }
 
 
-def scenario_id_of(stem: str) -> str:
-    """The scenario a run of *stem* is a rollout of, by default: the stem
-    without the run counter a directory's later runs of one scenario get
-    (``CutInScenario-2`` is a rollout of ``CutInScenario``)."""
-    return _RUN_COUNTER.sub("", stem)
-
-
-def object_id_of(role: str) -> int:
-    """The ``object_id`` of an agent of *role*: the first 31 bits of the
-    SHA-256 of its canonical role name (``ego`` and ``hero`` are ``Ego``).
-
-    A run's actor ids are CARLA's, which differ from run to run; a role name
-    is the scenario's, so the same entity has the same id in every rollout.
-    """
-    digest = hashlib.sha256(canonical_role_name(role).encode()).digest()
-    return int.from_bytes(digest[:4], "big") & _INT32_MAX
-
-
 def object_type_of(type_id: str) -> int:
     """The ``Track.ObjectType`` of a CARLA blueprint: a walker is a
     pedestrian, one of CARLA's bicycles a cyclist, any other vehicle a
@@ -201,32 +179,6 @@ def object_type_of(type_id: str) -> int:
     if type_id.startswith("vehicle."):
         return _TRACK.TYPE_VEHICLE
     return _TRACK.TYPE_OTHER
-
-
-def checked_count(
-    value: int, key: str, minimum: int, maximum: Optional[int] = None
-) -> int:
-    """*value* as an int: a whole number (:func:`seed.check_whole_number`)
-    from *minimum* to *maximum* (no limit when ``None``).
-
-    Raises:
-        ValueError: naming *key*.
-    """
-    number = check_whole_number(key, value)
-    if number < minimum or (maximum is not None and number > maximum):
-        bound = f">= {minimum}" if maximum is None else f"from {minimum} to {maximum}"
-        raise ValueError(f"{key} must be a whole number {bound}, not {value!r}")
-    return number
-
-
-def _checked_object_ids(object_ids: Mapping[str, int]) -> dict[str, int]:
-    """*object_ids* keyed by canonical role name, every id an int32 >= 0."""
-    checked: dict[str, int] = {}
-    for role, object_id in object_ids.items():
-        checked[canonical_role_name(str(role))] = checked_count(
-            object_id, f"the object id of {role!r}", 0, _INT32_MAX
-        )
-    return checked
 
 
 def _agents_at(

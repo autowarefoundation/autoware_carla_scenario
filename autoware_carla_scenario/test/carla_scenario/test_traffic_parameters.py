@@ -160,6 +160,25 @@ def test_a_traffic_node_that_is_no_mapping_is_refused(
     assert str(refused.value) == f"traffic.{key} must be a mapping, got {shown}"
 
 
+@pytest.mark.parametrize(
+    ("value", "shown"), [(False, "False"), (0, "0"), ("", "''"), (["sumo"], "['sumo']")]
+)
+def test_a_traffic_backend_that_is_no_name_is_refused(value: Any, shown: str) -> None:
+    """Read as its ``str()`` (``'False'``, ...) before #2156, and refused only
+    later as an unknown backend."""
+    with pytest.raises(ValueError) as refused:
+        TrafficConfig.from_mapping({"backend": value})
+    assert (
+        str(refused.value) == f"traffic.backend must be a backend's name, got {shown}"
+    )
+
+
+def test_a_null_traffic_backend_is_the_default() -> None:
+    """Read as the backend ``'None'`` before #2156."""
+    assert TrafficConfig.from_mapping({"backend": None}).backend == "traffic_manager"
+    assert TrafficConfig.from_mapping({"backend": "sumo"}).backend == "sumo"
+
+
 def test_a_null_traffic_node_is_the_defaults() -> None:
     config = TrafficConfig.from_mapping(
         {"options": None, "vehicles": None, "pedestrians": None, "bicycles": None}
