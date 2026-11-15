@@ -999,15 +999,6 @@ class TrafficBackend:
     # Level of detail -- microscopic near what matters, mesoscopic elsewhere
     # ------------------------------------------------------------------
 
-    def fidelity_of(self, entity: DrivenEntity) -> SimulationFidelity:
-        """How this backend simulates *entity* now.
-
-        The entity's own flag, which this backend keeps current
-        (:meth:`_mark_fidelity`).  A backend with one level never changes it,
-        so every vehicle it drives is microscopic.
-        """
-        return entity.simulation_fidelity
-
     def require_microscopic(self, entity: DrivenEntity, world: "carla.World") -> bool:
         """Make *entity* microscopic now, for something that needs its actor.
 

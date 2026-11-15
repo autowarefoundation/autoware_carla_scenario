@@ -43,12 +43,11 @@ def test_a_vehicle_is_microscopic_until_a_backend_says_otherwise() -> None:
     entity = DrivenEntity()
     backend = NullTrafficBackend()
     assert entity.simulation_fidelity is MICRO
-    assert backend.fidelity_of(entity) is MICRO
     assert backend.require_microscopic(entity, world=None)  # type: ignore[arg-type]
     assert backend.fidelity_census() == {}
 
     backend._mark_fidelity(entity, MESO)
-    assert backend.fidelity_of(entity) is MESO
+    assert entity.simulation_fidelity is MESO
     # A backend with one level cannot bring it back, and says so.
     assert not TrafficBackend.require_microscopic(backend, entity, None)  # type: ignore[arg-type]
     # The flag is the entity's own, not the class's.

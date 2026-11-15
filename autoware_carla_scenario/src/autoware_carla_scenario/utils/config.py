@@ -16,7 +16,7 @@ from __future__ import annotations
 from dataclasses import fields
 from typing import Any, Mapping, Optional, Sequence
 
-__all__ = ["checked_options", "checked_str_list"]
+__all__ = ["checked_options", "checked_section", "checked_str_list"]
 
 
 def checked_options(
@@ -89,3 +89,29 @@ def checked_str_list(key: str, value: Any) -> list[str]:
                 f"{type(item).__name__} {item!r}"
             )
     return [str(item) for item in items]
+
+
+def checked_section(key: str, value: Any) -> Optional[Mapping[str, Any]]:
+    """*value*, a nested options section such as ``traffic.options.ambient``,
+    checked: a mapping is itself, null (an absent section, or
+    ``${oc.select:...,null}``) is ``None`` -- the caller's default.
+
+    ``false``, ``0``, ``""`` or a list is refused rather than read as the
+    default (#2143) or passed on to fail later, naming no key, when the
+    section is read as the options it stands for (#2174).
+
+    Args:
+        key: The section's full name, for the error.
+        value: The value to check.
+
+    Returns:
+        The mapping, or ``None`` for a null section.
+
+    Raises:
+        ValueError: naming *key* and the value, for anything else.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{key} must be a mapping, got {value!r}")
+    return value
