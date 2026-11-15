@@ -36,6 +36,7 @@ from autoware_carla_scenario.odd.probes import (
     intensity_level,
     time_of_day_level,
 )
+from autoware_carla_scenario.odd.controls import validate_controls
 from autoware_carla_scenario.odd.sampler import (
     controls_from_mapping,
     check_sample_settings,
@@ -1614,6 +1615,82 @@ def test_a_measure_targeted_control_maps_nothing(mapping: dict[str, Any]) -> Non
 def test_a_control_target_is_setting_or_measure() -> None:
     with pytest.raises(ValueError, match="target must be one of"):
         controls_from_mapping({"m": {"key": "k", "target": "placement"}})
+
+
+def test_a_null_control_target_is_the_default_setting() -> None:
+    """#2171: ``target: null`` means the default, as everywhere else."""
+    raw = {"key": "scenario.npc_initial_speed_kmh", "offset": 30.0, "range": [-15, 15]}
+
+    assert controls_from_mapping({"m": {**raw, "target": None}}) == (
+        knobs_from_mapping({"m": raw})
+    )
+    assert [
+        d
+        for d in validate_controls({VEHICLE_AHEAD_GAP_M: {**raw, "target": None}})
+        if d.severity == "error"
+    ] == []
+
+
+@pytest.mark.parametrize(
+    ("raw", "key"),
+    [
+        ([{"key": "k"}], "controls"),
+        (False, "controls"),
+        ("k", "controls"),
+        ([1], "sweep.odd_sample.knobs"),
+    ],
+)
+def test_controls_that_are_no_mapping_are_refused(raw: Any, key: str) -> None:
+    """#2171: a list raised AttributeError, and ``false`` meant no controls."""
+    with pytest.raises(ValueError) as raised:
+        controls_from_mapping(raw, key)
+    assert str(raised.value) == (
+        f"{key}: expected a mapping of name -> knob, got {raw!r}"
+    )
+
+
+def test_null_controls_are_none() -> None:
+    assert controls_from_mapping(None) == {}
+    assert controls_from_mapping({}) == {}
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("odd", False, "sweep.odd_sample.odd: expected the name or path of an ODD"),
+        ("odd", 0, "sweep.odd_sample.odd: expected the name or path of an ODD"),
+        ("odd", "", "sweep.odd_sample.odd: expected the name or path of an ODD"),
+        ("knobs", False, "sweep.odd_sample.knobs: expected a mapping"),
+        ("knobs", [1], "sweep.odd_sample.knobs: expected a mapping"),
+        ("strategy", False, "sweep.odd_sample.strategy: expected the name"),
+        ("strategy", 0, "sweep.odd_sample.strategy: expected the name"),
+        ("strategy", "", "sweep.odd_sample.strategy: expected the name"),
+    ],
+)
+def test_odd_sample_settings_of_the_wrong_type_are_refused(
+    field: str, value: Any, message: str
+) -> None:
+    """#2171: ``odd: false`` silently drew from the run's ODD, ``knobs:
+    false`` meant none, ``knobs: [1]`` raised AttributeError and ``strategy:
+    false`` was refused by openodd without the key."""
+    raw = {"count": 1, field: value}
+    for call in (
+        lambda: check_sample_settings(raw),
+        lambda: search_from_config(raw, odd=_gap_odd()),
+    ):
+        with pytest.raises(ValueError) as raised:
+            call()
+        assert str(raised.value).startswith(message)
+        assert repr(value) in str(raised.value)
+
+
+def test_null_odd_sample_settings_take_their_defaults() -> None:
+    sampler, _ = sampler_from_config(
+        {"count": 1, "odd": None, "knobs": None, "strategy": None},
+        odd=_gap_odd(),
+        controls={VEHICLE_AHEAD_GAP_M: "scenario.npc_ahead_m"},
+    )
+    assert sampler.attributes == ["dynamic.lead_gap"]
 
 
 def test_sweep_knobs_may_target_the_measure_too() -> None:

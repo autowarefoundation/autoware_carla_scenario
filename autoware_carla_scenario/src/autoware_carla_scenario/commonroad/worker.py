@@ -68,6 +68,20 @@ _READ_CHUNK = 65536
 _MAX_POLL_MS = 2**31 - 1
 
 
+def _out_of_protocol(
+    op: str, field: str, expected: str, value: Any
+) -> CommonRoadWorkerError:
+    """The error of an answer to *op* whose *field* is not *expected*."""
+    try:
+        shown = json.dumps(value)
+    except (TypeError, ValueError):  # Not JSON-able: never from json.loads().
+        shown = repr(value)
+    return CommonRoadWorkerError(
+        f"the CommonRoad worker answered {op!r} out of protocol: {field} must "
+        f"be {expected}, got {_excerpt(shown)}"
+    )
+
+
 class CommonRoadWorker:
     """A running worker, spoken to one request at a time.
 
@@ -137,12 +151,19 @@ class CommonRoadWorker:
                 {"op": "init", "map": str(map_path), "settings": settings or {}},
                 timeout=timeout,
             )
+            measures = answer.get("measures", [])
+            if not isinstance(measures, list) or not all(
+                isinstance(m, str) for m in measures
+            ):
+                raise _out_of_protocol(
+                    "init", "measures", "a list of measure names", measures
+                )
         except BaseException:
             # Not handed to the caller, so not left running: in a session of
             # its own, nothing else would stop it (an interrupt included).
             self.close()
             raise
-        self.measures: list[str] = list(answer.get("measures", []))
+        self.measures: list[str] = list(measures)
 
     def request(
         self, request: dict[str, Any], *, timeout: Optional[float] = None
@@ -279,10 +300,31 @@ class CommonRoadWorker:
             },
             timeout=timeout,
         )
+        raw_values = answer.get("values", {})
+        if not isinstance(raw_values, dict):
+            raise _out_of_protocol(
+                "evaluate", "values", "an object of measure -> number", raw_values
+            )
         values: dict[str, Optional[float]] = {}
-        for key, value in dict(answer.get("values", {})).items():
-            values[str(key)] = None if value is None else float(value)
-        errors = {str(k): str(v) for k, v in dict(answer.get("errors", {})).items()}
+        for key, value in raw_values.items():
+            if value is not None and (
+                isinstance(value, bool) or not isinstance(value, (int, float))
+            ):
+                raise _out_of_protocol(
+                    "evaluate", f"values[{key!r}]", "a number or null", value
+                )
+            try:
+                values[str(key)] = None if value is None else float(value)
+            except OverflowError:  # An integer too big for a float.
+                raise _out_of_protocol(
+                    "evaluate", f"values[{key!r}]", "a number or null", value
+                ) from None
+        raw_errors = answer.get("errors", {})
+        if not isinstance(raw_errors, dict):
+            raise _out_of_protocol(
+                "evaluate", "errors", "an object of measure -> error", raw_errors
+            )
+        errors = {str(k): str(v) for k, v in raw_errors.items()}
         return values, errors
 
     def _close_if_closing(self, pipe: Any) -> None:
