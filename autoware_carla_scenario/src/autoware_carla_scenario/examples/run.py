@@ -702,6 +702,13 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     if kind == "none":
         return None
 
+    # A GPU count is what docker run --gpus takes too (``gpus: 2``), as the
+    # prepare backends read it (prepare.docker); a bool or a count below 1 is
+    # left for DockerAutowareConfig to refuse.  Made text before the key, so
+    # ``gpus: 2`` and ``gpus: '2'`` share one launcher.
+    gpus = settings.get("gpus")
+    if isinstance(gpus, int) and not isinstance(gpus, bool) and gpus >= 1:
+        settings["gpus"] = str(gpus)
     key = json.dumps({"type": kind, **settings}, sort_keys=True, default=str)
     cached = _AUTOWARE_LAUNCHERS.get(key)
     if cached is not None:
@@ -756,12 +763,6 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
             options["rosdep"] = check_flag(
                 "autoware.launcher.rosdep", options["rosdep"]
             )
-        # A GPU count is what docker run --gpus takes too (``gpus: 2``), as
-        # the prepare backends read it (prepare.docker); a bool or a count
-        # below 1 is left for DockerAutowareConfig to refuse.
-        gpus = options.get("gpus")
-        if isinstance(gpus, int) and not isinstance(gpus, bool) and gpus >= 1:
-            options["gpus"] = str(gpus)
         options["ros_domain_ids"] = _launcher_ros_domain_ids(settings)
         options["stop_timeout_s"] = stop_timeout_s
         if "bridge_parameters" in options:

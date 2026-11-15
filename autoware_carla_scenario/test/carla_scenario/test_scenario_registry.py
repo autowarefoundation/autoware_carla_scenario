@@ -1509,6 +1509,26 @@ class TestBuildAutowareLauncher:
         assert isinstance(launcher, DockerAutowareLauncher)
         assert launcher.config.gpus == wanted
 
+    def test_a_gpu_count_and_its_text_share_one_launcher(self, tmp_path: Path) -> None:
+        """``gpus: 2`` and ``gpus: '2'`` are one configuration, so one launcher."""
+        from autoware_carla_scenario.examples import run
+
+        def cfg(gpus: object) -> DictConfig:
+            return self._cfg(
+                "autoware",
+                type="docker",
+                workspace=str(tmp_path),
+                launch=["autoware_launch", "x.launch.xml"],
+                gpus=gpus,
+            )
+
+        run._AUTOWARE_LAUNCHERS.clear()
+        try:
+            first = run.build_autoware_launcher(cfg(2))
+            assert run.build_autoware_launcher(cfg("2")) is first
+        finally:
+            run._AUTOWARE_LAUNCHERS.clear()
+
     @pytest.mark.parametrize(
         ("key", "value", "wanted"),
         [

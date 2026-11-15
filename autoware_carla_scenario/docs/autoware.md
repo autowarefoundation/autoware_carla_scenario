@@ -327,7 +327,7 @@ such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |
 | `env` | `{}` | Variables set in the container, over the dev container's own. Passed to `docker run` by name (`--env KEY`), so a value (a token) does not show in `ps`; one the Docker CLI reads itself (`PATH`, `HOME`, `DOCKER_*`, `LD_*`, `PYTHON*`, `*_PROXY`, `SSL_*`, ...) stays `KEY=VALUE` on the command line |
 | `ros_domain_ids` | `[]` | `ROS_DOMAIN_ID` per scenario, cycling, each 0 to 232; empty keeps the dev container's |
-| `gpus` | `all` | Docker's `--gpus`; `null` for none |
+| `gpus` | `all` | Docker's `--gpus` (`device=0`, or a count: `2`); `null` for none |
 | `user` | `null` | Docker's `--user`; by default the image maps `aw` to your `HOST_UID`/`HOST_GID` |
 | `docker_args` | `[]` | Further `docker run` arguments |
 | `docker` | `docker` | The Docker CLI; `null` is the default |
