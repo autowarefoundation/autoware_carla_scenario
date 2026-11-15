@@ -93,8 +93,9 @@ uvx --from 'autoware-carla-scenario[hils]' --with 'carla-canvas[client]>=0.2' \
 
 `--host`, `--port`, `--role-name` and `--listen` override the file's CARLA
 address, ego and run link; a `--port` outside 1-65535 is a usage error
-(exit 2), as is an empty `--host`, `--role-name` or `--listen`. In a checkout, `uv sync --dev` installs hilspy and
-`uv run scenario-hils hils.yaml` runs it.
+(exit 2), as is an empty `--host`, `--role-name` or `--listen` (the run link
+is turned off only by `runner.listen: null` in the file). In a checkout,
+`uv sync --dev` installs hilspy and `uv run scenario-hils hils.yaml` runs it.
 
 Then run scenarios with the ego driven by the ECUs, on the same CARLA server:
 
