@@ -147,7 +147,10 @@ without `seed`, and without the settings that say where a run connects
 (hosts, addresses, ports, ROS domains: what a SLURM task moves to its own
 slot). What drives the ego (`driver`, `autoware`, `ros2`) is the system
 under test, not the scenario, and how a run is recorded does not change what
-is simulated: neither is in it. The runner writes the run's seed and its
+is simulated: neither is in it. Every top-level section of the `scenario`
+command's config is listed as hashed or not (`SCENARIO_SECTIONS`,
+`OTHER_SECTIONS`), and a test keeps it so, so a new section cannot be left
+out of the hash unseen. The runner writes the run's seed and its
 hash into the trajectory log (its [`run`](trajectory_log.md#records)
 record), and `export` into the `.wosac.json`, with each agent's pose on the
 current row.

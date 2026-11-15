@@ -36,7 +36,8 @@ from typing import Any, Optional
 from google.protobuf import json_format
 from google.protobuf.message import DecodeError
 
-from ..run_outputs import WOSAC_AGENTS_SUFFIX, WOSAC_SUFFIX
+from ..kinematics.angle import normalize_angle_rad
+from ..run_outputs import WOSAC_SUFFIX, wosac_agents_path
 from ..t4_scene.grid import files_under
 from ._proto import sim_agents_submission_pb2 as pb
 from .ids import checked_count
@@ -104,12 +105,9 @@ def read_run(path: Path | str) -> Optional[dict[str, Any]]:
     Raises:
         ValueError: If the file is there but holds no JSON object.
     """
-    rollout = Path(path)
-    if not rollout.name.endswith(WOSAC_SUFFIX):
+    if not Path(path).name.endswith(WOSAC_SUFFIX):
         return None
-    sidecar = rollout.with_name(
-        rollout.name[: -len(WOSAC_SUFFIX)] + WOSAC_AGENTS_SUFFIX
-    )
+    sidecar = wosac_agents_path(Path(path))
     if not sidecar.is_file():
         return None
     try:
@@ -121,11 +119,6 @@ def read_run(path: Path | str) -> Optional[dict[str, Any]]:
     return run
 
 
-def _heading_difference(a: float, b: float) -> float:
-    """How far apart headings *a* and *b* (radians) are, from 0 to pi."""
-    return abs(math.remainder(a - b, math.tau))
-
-
 def _check_scenario_runs(
     scenario_id: str,
     runs: list[tuple[Mapping[str, Any], str]],
@@ -133,7 +126,7 @@ def _check_scenario_runs(
     heading_tolerance_rad: float,
 ) -> None:
     """The runs of one scenario, checked as rollouts of it (:func:`check_runs`)."""
-    hashes: dict[str, str] = {}
+    first_hash: Optional[tuple[str, str]] = None
     seeds: dict[int, str] = {}
     unknown: list[str] = []
     for run, source in runs:
@@ -142,7 +135,15 @@ def _check_scenario_runs(
         if digest is None or seed is None:
             unknown.append(source)
         if digest is not None:
-            hashes.setdefault(str(digest), source)
+            if first_hash is None:
+                first_hash = (str(digest), source)
+            elif str(digest) != first_hash[0]:
+                raise ValueError(
+                    f"scenario {scenario_id!r}: {first_hash[1]} and {source} ran "
+                    f"different scenarios (scenario_hash {first_hash[0][:12]}... "
+                    f"and {str(digest)[:12]}...), which are not rollouts of one: "
+                    "give them different scenario ids"
+                )
         if seed is not None:
             seed = int(seed)
             if seed in seeds:
@@ -152,13 +153,6 @@ def _check_scenario_runs(
                     "every rollout its own seed"
                 )
             seeds[seed] = source
-    if len(hashes) > 1:
-        (first, a), (second, b) = list(hashes.items())[:2]
-        raise ValueError(
-            f"scenario {scenario_id!r}: {a} and {b} ran different scenarios "
-            f"(scenario_hash {first[:12]}... and {second[:12]}...), which are "
-            "not rollouts of one: give them different scenario ids"
-        )
     if unknown:
         logger.warning(
             "scenario %r: cannot tell that %s ran the scenario with a seed of "
@@ -176,7 +170,7 @@ def _check_scenario_runs(
             if start is None:
                 continue
             distance = math.dist(pose[:3], start[:3])
-            turn = _heading_difference(pose[3], start[3])
+            turn = abs(normalize_angle_rad(pose[3] - start[3]))
             if distance > position_tolerance_m or turn > heading_tolerance_rad:
                 raise ValueError(
                     f"scenario {scenario_id!r}: object {object_id} starts its "

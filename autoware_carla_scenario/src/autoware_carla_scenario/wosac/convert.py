@@ -35,7 +35,7 @@ import orjson
 
 from ..constants import CARLA_BICYCLE_BLUEPRINTS
 from ..entity_role import canonical_role_name
-from ..run_outputs import WOSAC_AGENTS_SUFFIX, WOSAC_SUFFIX
+from ..run_outputs import WOSAC_SUFFIX, wosac_agents_path
 
 # The trajectory log's reader and its frame math are the T4Scene export's.
 from ..t4_scene.convert import _Log, _MapFrame, _read_log, box_poses
@@ -89,7 +89,7 @@ class WosacAgent:
     #: Its box centre and heading on the current row (``x, y, z, heading``,
     #: in the rollout's frame): the initial state every rollout of the
     #: scenario has to share (:func:`.pack.check_runs`).
-    current: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
+    current: tuple[float, float, float, float]
 
     @property
     def object_type(self) -> int:
@@ -417,7 +417,7 @@ def write_rollout(
     directory = path.parent if output_dir is None else Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
     rollouts_path = directory / f"{rollout.stem}{WOSAC_SUFFIX}"
-    agents_path = directory / f"{rollout.stem}{WOSAC_AGENTS_SUFFIX}"
+    agents_path = wosac_agents_path(rollouts_path)
     rollouts_path.write_bytes(rollout.rollouts.SerializeToString(deterministic=True))
     agents_path.write_bytes(
         orjson.dumps(rollout.metadata(), option=orjson.OPT_INDENT_2) + b"\n"

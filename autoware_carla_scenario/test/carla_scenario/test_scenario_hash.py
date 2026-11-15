@@ -10,7 +10,11 @@ import typesafe_carla.carla as carla
 from omegaconf import OmegaConf
 
 from autoware_carla_scenario import BaseScenario, EgoConfig, SpawnTransform
-from autoware_carla_scenario.scenario_hash import SCENARIO_SECTIONS, scenario_hash
+from autoware_carla_scenario.scenario_hash import (
+    OTHER_SECTIONS,
+    SCENARIO_SECTIONS,
+    scenario_hash,
+)
 
 CLASS = "pkg.CutInScenario"
 
@@ -30,6 +34,23 @@ def _config(**changes: Any) -> dict[str, Any]:
     }
     config.update(changes)
     return config
+
+
+def test_every_section_of_the_runs_config_is_hashed_or_not() -> None:
+    # A section added to the config has to be put on one side: left out of
+    # both, runs differing in it would pass as rollouts of one scenario.
+    import autoware_carla_scenario.examples as examples
+
+    config = OmegaConf.load(Path(examples.__file__).parent / "conf" / "config.yaml")
+    sections = {str(key) for key in config if key != "defaults"}
+    for default in config.defaults:
+        if isinstance(default, str):
+            continue  # _self_
+        sections.update(str(key) for key in default if not str(key).startswith("hydra"))
+    assert not set(SCENARIO_SECTIONS) & set(OTHER_SECTIONS)
+    assert sections <= set(SCENARIO_SECTIONS) | set(OTHER_SECTIONS), sorted(
+        sections - set(SCENARIO_SECTIONS) - set(OTHER_SECTIONS)
+    )
 
 
 def test_the_hash_is_a_sha256_hex_digest() -> None:

@@ -85,8 +85,14 @@ def _pack(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
         metadata = (
             None if args.metadata is None else _mapping(args.metadata, "--metadata")
         )
-        runs = [(read_run(path), str(path)) for path in files]
-        missing = [source for run, source in runs if run is None]
+        runs: list[tuple[dict[str, Any], str]] = []
+        missing: list[str] = []
+        for path in files:
+            run = read_run(path)
+            if run is None:
+                missing.append(str(path))
+            else:
+                runs.append((run, str(path)))
         if missing:
             logging.getLogger(__name__).warning(
                 "no .wosac.json beside %s: cannot check they are rollouts of "
@@ -94,7 +100,7 @@ def _pack(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
                 ", ".join(missing),
             )
         check_runs(
-            ((run, source) for run, source in runs if run is not None),
+            runs,
             position_tolerance_m=args.position_tolerance,
             heading_tolerance_rad=args.heading_tolerance,
         )

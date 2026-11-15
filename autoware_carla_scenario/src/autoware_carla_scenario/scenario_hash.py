@@ -34,6 +34,7 @@ from collections.abc import Mapping
 from typing import Any
 
 __all__ = [
+    "OTHER_SECTIONS",
     "SCENARIO_SECTIONS",
     "scenario_hash",
 ]
@@ -53,6 +54,31 @@ SCENARIO_SECTIONS: tuple[str, ...] = (
     "odd_case",
 )
 
+#: The top-level sections of a run's config that do not: the seed, what
+#: drives the ego, where a run connects and how it is checked, recorded and
+#: run.  Every section the ``scenario`` command's config has is one or the
+#: other (``test_scenario_hash.py`` checks), so a new section has to be put
+#: on one side rather than be left out of the hash unseen.
+OTHER_SECTIONS: tuple[str, ...] = (
+    "seed",
+    "server",
+    "traffic_manager",
+    "driver",
+    "autoware",
+    "ros2",
+    "hils",
+    "launcher",
+    "backends",
+    "typecheck",
+    "rerun",
+    "metrics",
+    "canvas",
+    "video",
+    "sweep",
+    "t4",
+    "t4scene",
+)
+
 #: Settings named so say where a run connects, not what it simulates.
 _ENDPOINTS = frozenset(("host", "address", "port"))
 
@@ -69,10 +95,11 @@ def _without_endpoints(value: Any) -> Any:
     """*value* with every mapping's endpoint settings (:func:`_is_endpoint`)
     left out, at any depth."""
     if isinstance(value, Mapping):
+        named = ((str(key), item) for key, item in value.items())
         return {
-            str(key): _without_endpoints(item)
-            for key, item in value.items()
-            if not _is_endpoint(str(key))
+            key: _without_endpoints(item)
+            for key, item in named
+            if not _is_endpoint(key)
         }
     if isinstance(value, (list, tuple)):
         return [_without_endpoints(item) for item in value]
