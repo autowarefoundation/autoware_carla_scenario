@@ -247,7 +247,10 @@ class DockerAutowareConfig:
             ``docker_args`` is a ``str`` (or ``bytes``) rather than a sequence
             of arguments, ``launch`` is empty, ``stop_timeout_s`` is not
             positive and finite, a ``ros_domain_ids`` entry is a boolean or
-            outside 0 to 232, or ``rosdep`` is not a ``bool``.
+            outside 0 to 232, ``rosdep`` is not a ``bool``, ``devcontainer``,
+            ``docker`` or ``container_prefix`` is not non-empty text, or
+            ``image``, ``workspace_mount``, ``gpus`` or ``user`` is neither
+            ``None`` nor non-empty text.
     """
 
     workspace: Path
@@ -305,6 +308,28 @@ class DockerAutowareConfig:
         # strictly (config_flags.check_flag) before it gets here (#1761).
         if not isinstance(self.rosdep, bool):
             raise ValueError(f"rosdep must be true or false, got {self.rosdep!r}")
+        # A None or '' would only fail once the stack is prepared or started:
+        # a dev container path of None, a Docker CLI of None, containers
+        # named "None-..." (#2161).
+        for name, text in (
+            ("devcontainer", self.devcontainer),
+            ("docker", self.docker),
+            ("container_prefix", self.container_prefix),
+        ):
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError(f"{name} must be non-empty text, got {text!r}")
+        for name, optional in (
+            ("image", self.image),
+            ("workspace_mount", self.workspace_mount),
+            ("gpus", self.gpus),
+            ("user", self.user),
+        ):
+            if optional is not None and (
+                not isinstance(optional, str) or not optional.strip()
+            ):
+                raise ValueError(
+                    f"{name} must be null or non-empty text, got {optional!r}"
+                )
 
 
 class DockerAutowareLauncher:

@@ -784,7 +784,9 @@ The other whole-number settings a run reads follow the same rule:
 `background_traffic.source.initial_vehicles` and `.max_vehicles` (not
 negative; `max_vehicles` may be null), `server.cooldown_max_retries` and
 `server.reload_every` (not negative). `2.0` is 2, but `2.5` or `true` is
-refused, naming the key, rather than run as 2 or 1.
+refused, naming the key, rather than run as 2 or 1. A null
+`server.cooldown_max_retries` is no retry, as absent is, and a null
+`server.cooldown_seconds` the default 2 s cooldown (`0` is none).
 
 It is the seed of:
 
@@ -884,7 +886,7 @@ Defines the default config group composition:
 |-----------|------|---------|-------------|
 | `server.host` | str | `localhost` | CARLA server hostname; a non-blank string. CARLA is launched only for a local host ([installation.md](installation.md#carla-simulator)); at any other the server must already be listening |
 | `server.port` | int | `2000` | CARLA server port |
-| `server.cooldown_seconds` | float | `2.0` | Wait time (seconds) between consecutive scenario runs; a finite number, `0` or more (`0`: none) |
+| `server.cooldown_seconds` | float | `2.0` | Wait time (seconds) between consecutive scenario runs; a finite number, `0` or more (`0`: none; `null`: the default) |
 | `server.cooldown_max_retries` | int | `0` | Maximum retries of a run that raised (not of one that ran and failed); a whole number, `0` or more (`2.0` is 2; `1.9` or `true` is refused) |
 | `server.max_tick_rate_hz` | float | `null` | Upper bound (Hz) on how fast the run ticks the world, or `null` for as fast as the server allows; a finite number above `0` (`20` is real time at the 0.05 s step, which `ego.entity=ros2` wants: [ROS 2](ros2.md#timing)) |
 | `server.fog_density_scale` | float | `null` | `carla.Weather.FogDensityScale` for a server the run starts and for the LiDARs' fog, or `null` to keep the server's own `0.001`; a finite number above `0` ([Driver Interface](driver_interface.md)) |
@@ -908,7 +910,8 @@ The speed must be finite and not negative, and the poses (`ego.spawn_s`,
 speed would leave the ego still with no error, an infinite one break its
 physics, and a NaN pose fail far from the key behind it. A run or batch
 refuses such a value before anything starts, naming the key (`Error:
-ego.initial_speed_kmh must be finite and at least 0, got -20`).
+ego.initial_speed_kmh must be finite and at least 0, got -20`). A pose
+left null (`ego.spawn_s=null`) is 0, as one that is absent is.
 
 The same check refuses a lanelet id that is not a whole number --
 `ego.spawn_lanelet_id`, `ego.goal_lanelet_id` or an item of
@@ -1614,11 +1617,14 @@ uv run scenario ego.entity=carla_driver driver.address=localhost:50051
 
 | Value | Behaviour |
 | --- | --- |
-| `autopilot` (default) | CARLA's TrafficManager drives the ego |
+| `autopilot` (default; also when `ego.entity` is null) | CARLA's TrafficManager drives the ego |
 | `autoware` | Autoware drives the ego, over the `AutowareBridge`; with `autoware.launcher` the framework starts a fresh Autoware per scenario ([Autoware as the Ego](autoware.md)) |
 | `carla_driver` | An external policy drives the ego |
 | `ros2` | ROS 2 nodes drive the ego over DDS, with no bridge node ([ROS 2 over DDS](ros2.md)) |
 | `hils` | ECUs under test drive the ego, through the resident HILS bridge `scenario-hils` (`hils.host`, `hils.port`; [HILS Bridge](hils.md)) |
+
+Any other value (`false`, `''`, `Autoware`) is refused before anything
+starts, showing it: `Unknown ego.entity: False. Expected one of: ...`.
 
 Common overrides:
 

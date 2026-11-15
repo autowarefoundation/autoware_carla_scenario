@@ -141,6 +141,38 @@ class TestParsing:
         with pytest.raises(ValueError, match=message):
             parse_route_search(search)
 
+    @pytest.mark.parametrize("key", ["shape", "turn"])
+    @pytest.mark.parametrize("value", [False, 0, "", " ", True, ["left"]])
+    def test_a_shape_or_turn_that_is_no_text_is_refused_showing_it(
+        self, key: str, value: Any
+    ) -> None:
+        """#2161: false, 0 or '' read as any, so a mistyped constraint
+        matched every segment."""
+        segment = _lane(shape=value) if key == "shape" else _junction(turn=value)
+        with pytest.raises(ValueError) as error:
+            parse_route_search({"segments": [segment]})
+        assert str(error.value).startswith(f"segments[0].{key} must be one of [")
+        assert str(error.value).endswith(f"], got {value!r}")
+
+    def test_a_null_shape_or_turn_is_any(self) -> None:
+        spec = parse_route_search(
+            {"segments": [_lane(shape=None), _junction(turn=None)]}
+        )
+        lane, junction = spec.segments
+        assert isinstance(lane, LaneSegmentSpec) and lane.shape == "any"
+        assert isinstance(junction, JunctionSegmentSpec) and junction.turn == "any"
+
+    @pytest.mark.parametrize(("value", "shown"), [(None, "None"), (False, "False")])
+    def test_a_kind_that_names_none_is_refused_showing_it(
+        self, value: Any, shown: str
+    ) -> None:
+        """#2161: null was shown as the text 'None'."""
+        with pytest.raises(ValueError) as error:
+            parse_route_search({"segments": [{"kind": value}]})
+        assert str(error.value) == (
+            f"segments[0].kind must be 'lane' or 'junction', got {shown}"
+        )
+
     @pytest.mark.parametrize("value", [0, False, "", 0.0, 5, "lane", {}])
     def test_segments_that_are_not_a_list_are_refused(self, value: Any) -> None:
         """A falsy ``segments`` is not read as no segments (#2134)."""
@@ -1074,6 +1106,22 @@ class TestPathsOfTheEgosApproach:
     def test_a_malformed_path_is_refused(self, paths: Any, message: str) -> None:
         with pytest.raises(ValueError, match=message):
             parse_route_search(self._straight(paths=paths))
+
+    @pytest.mark.parametrize(
+        ("path", "message"),
+        [
+            ({"approach": None, "turn": "left"}, r"paths\[0\]\.approach .*, got None$"),
+            ({"approach": False, "turn": "left"}, r"\.approach .*, got False$"),
+            ({"approach": "same", "turn": None}, r"paths\[0\]\.turn .*, got None$"),
+            ({"approach": "same", "turn": 0}, r"\.turn .*, got 0$"),
+        ],
+    )
+    def test_a_path_refusal_shows_the_value(
+        self, path: dict[str, Any], message: str
+    ) -> None:
+        """#2161: a null approach or turn was refused without showing it."""
+        with pytest.raises(ValueError, match=message):
+            parse_route_search(self._straight(paths=[path]))
 
 
 class TestPathReach:

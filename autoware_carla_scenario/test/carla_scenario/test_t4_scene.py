@@ -1342,6 +1342,19 @@ def test_the_shipped_config_writes_no_scene_and_enabling_it_does() -> None:
     assert (exporter.step_s, exporter.max_distance_m) == (0.1, None)
 
 
+def test_a_null_step_is_the_default_and_a_null_distance_still_all() -> None:
+    """#2161: a null step_s was handed to the exporter, which refused it."""
+    from autoware_carla_scenario.examples import run
+
+    from .test_video_removed import _shipped
+
+    cfg = _shipped(["t4scene.enabled=true", "t4scene.step_s=null"])
+    run.check_run_config(cfg)
+    exporter = run.build_t4scene_exporter(cfg)
+    assert exporter is not None
+    assert (exporter.step_s, exporter.max_distance_m) == (0.1, 100.0)
+
+
 def test_a_step_that_does_not_fit_the_tick_is_refused_before_anything_runs() -> None:
     from autoware_carla_scenario.examples import run
 

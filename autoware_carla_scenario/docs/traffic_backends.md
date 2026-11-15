@@ -870,6 +870,10 @@ self.register_pre_tick(
   vehicle to any other, a waiting one included) must be finite and not negative; NaN or infinity is
   refused by `TrafficSourceAction` and by `background_traffic.source.*`, naming
   the key, rather than crashing the run or being dropped without a word.
+- `background_traffic.source.speed_kmh`, `.min_gap_m` and
+  `.vehicles_per_minute` left null are their defaults (30 km/h, 15 m and none
+  a minute), as they are when absent; a value that is no number (`fast`) is
+  refused, naming the key.
 - **`initial_vehicles`**, **`max_vehicles`** and `background_traffic.seed` are
   whole numbers, not negative (`20` or `20.0`; `max_vehicles` and `seed` may
   be null), `seed` at most 2147483647 (`2**31 - 1`, what SUMO's `--seed`
