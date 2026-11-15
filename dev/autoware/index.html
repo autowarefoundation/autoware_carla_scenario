@@ -2609,7 +2609,7 @@ before its first scenario starts.</p>
 <p>The values the launcher's type reads are checked there too, naming the key:</p>
 <ul>
 <li><code>stop_timeout_s</code> must be a finite number of seconds above 0 (an int or a
-  float; not a boolean, a string or null), as the bridge's timeouts must. A
+  float; not a boolean or a string), as the bridge's timeouts must. A
   NaN never times out, so a stack that ignores <code>SIGINT</code> would never be sent
   <code>SIGTERM</code> and the batch would hang; 0 or less would skip the grace the stack
   is given to shut down.</li>
@@ -2631,7 +2631,17 @@ before its first scenario starts.</p>
 <li><code>env</code> and <code>mounts</code> must be mappings (or null) of strings or numbers, and
   <code>bridge_parameters</code> a mapping (or null) of ROS parameters. An <code>env</code> value is
   given as text or a number (<code>ROS_LOCALHOST_ONLY: 1</code>, not <code>true</code>).</li>
+<li><code>devcontainer</code>, <code>docker</code> and <code>container_prefix</code> must be non-empty text, and
+  <code>image</code>, <code>workspace_mount</code>, <code>gpus</code> and <code>user</code> null or non-empty text:
+  <code>false</code>, a number or <code>''</code> is refused rather than handed to Docker as
+  <code>"False"</code> or used as a dev container path, a Docker CLI or a container name
+  of <code>None</code>.</li>
 </ul>
+<p>A setting that is null is its default, as one that is absent is: <code>type</code>,
+<code>workspace</code>, <code>devcontainer</code>, <code>build</code>, <code>rosdep</code>, <code>docker</code>, <code>stop_timeout_s</code> and
+<code>container_prefix</code> take the defaults in the table below. A null argument list
+or mapping is none, and a null <code>gpus</code> no GPU. All of this is checked before a
+container is started or the workspace is built.</p>
 <p><code>+autoware.launcher.stop_timeout_s=nan</code>,
 <code>'autoware.launcher.ros_domain_ids=[-3,999]'</code> or
 <code>"autoware.launcher.docker_args='--shm-size=8g'"</code> fails the run the same way.
@@ -2658,7 +2668,7 @@ such a <code>stop_timeout_s</code>, <code>DockerAutowareConfig</code> such a dom
 <tr>
 <td><code>devcontainer</code></td>
 <td><code>universe-devel-cuda</code></td>
-<td>The <code>.devcontainer/</code> variant whose image and mount are used</td>
+<td>The <code>.devcontainer/</code> variant whose image and mount are used; <code>null</code> is the default</td>
 </tr>
 <tr>
 <td><code>image</code></td>
@@ -2673,12 +2683,12 @@ such a <code>stop_timeout_s</code>, <code>DockerAutowareConfig</code> such a dom
 <tr>
 <td><code>build</code></td>
 <td><code>auto</code></td>
-<td><code>auto</code> / <code>always</code> / <code>never</code></td>
+<td><code>auto</code> / <code>always</code> / <code>never</code>; <code>null</code> is the default</td>
 </tr>
 <tr>
 <td><code>rosdep</code></td>
 <td><code>true</code></td>
-<td>Also install the workspace's dependencies into the image the stack runs in. <code>true</code> or <code>false</code>, or one of their spellings as <a href="../usage/#the-switches">the run's switches</a> take (<code>"false"</code>, <code>"off"</code>, <code>"no"</code>, <code>0</code> are false); anything else (<code>ture</code>, <code>2</code>) is refused, naming <code>autoware.launcher.rosdep</code></td>
+<td>Also install the workspace's dependencies into the image the stack runs in. <code>true</code> or <code>false</code>, or one of their spellings as <a href="../usage/#the-switches">the run's switches</a> take (<code>"false"</code>, <code>"off"</code>, <code>"no"</code>, <code>0</code> are false); anything else (<code>ture</code>, <code>2</code>) is refused, naming <code>autoware.launcher.rosdep</code>; <code>null</code> is the default</td>
 </tr>
 <tr>
 <td><code>bridge_parameters</code></td>
@@ -2726,9 +2736,19 @@ such a <code>stop_timeout_s</code>, <code>DockerAutowareConfig</code> such a dom
 <td>Further <code>docker run</code> arguments</td>
 </tr>
 <tr>
+<td><code>docker</code></td>
+<td><code>docker</code></td>
+<td>The Docker CLI; <code>null</code> is the default</td>
+</tr>
+<tr>
 <td><code>stop_timeout_s</code></td>
 <td><code>20.0</code></td>
-<td>How long stopping waits after each signal, in seconds above 0</td>
+<td>How long stopping waits after each signal, in seconds above 0; <code>null</code> is the default</td>
+</tr>
+<tr>
+<td><code>container_prefix</code></td>
+<td><code>acs-autoware</code></td>
+<td>Container names start with this; <code>null</code> is the default</td>
 </tr>
 </tbody>
 </table>
@@ -2928,7 +2948,7 @@ stack (<code>autoware_carla_scenario.autoware_stack.bridge_node</code> builds it
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 14, 2026 20:12:54 UTC"><span class="timeago" datetime="2026-11-14T20:12:54+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 14, 2026 20:12:54 UTC">2026-11-14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 15, 2026 01:16:40 UTC"><span class="timeago" datetime="2026-11-15T01:16:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 15, 2026 01:16:40 UTC">2026-11-15</span>
   </span>
 
     

@@ -2840,6 +2840,12 @@ one to four consecutive lanelets carrying <code>turn_direction</code>:</p>
 <p>Unknown keys are refused (<code>extra="forbid"</code>), so a typo is an error, not a
 silently ignored constraint. A junction segment does not take lane keys and
 vice versa.</p>
+<p>A lane segment's <code>shape</code> and a junction segment's <code>turn</code> left null are <code>any</code>,
+as when absent. Any value not in the table is refused, showing it -- <code>false</code>,
+<code>0</code> or <code>''</code> too, which used to read as <code>any</code> and so let a mistyped constraint
+match every segment (<code>segments[0].shape must be one of [...], got False</code>). A
+path's <code>approach</code> and <code>turn</code> and a segment's <code>kind</code> have no default: null is
+refused the same way.</p>
 <h3 id="route-vertices-path_source-route">Route vertices (<code>path_source: route</code>)<a class="headerlink" href="#route-vertices-path_source-route" title="Permanent link">&para;</a></h3>
 <p>A <em>Set Goal</em> card with <code>path_source: route</code> lists its vertices in
 <code>route_vertices</code>: a list of mappings, each with a <code>kind</code>, or the editor's text
@@ -3319,7 +3325,7 @@ so a hand-written scenario using them passes the <a href="../typecheck/">static 
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 9, 2026 01:38:57 UTC"><span class="timeago" datetime="2026-11-09T01:38:57+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 9, 2026 01:38:57 UTC">2026-11-09</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 15, 2026 01:16:40 UTC"><span class="timeago" datetime="2026-11-15T01:16:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 15, 2026 01:16:40 UTC">2026-11-15</span>
   </span>
 
     

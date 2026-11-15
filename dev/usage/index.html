@@ -4548,7 +4548,9 @@ other checks; being typed fields, they take no string at all, not even
 <code>background_traffic.source.initial_vehicles</code> and <code>.max_vehicles</code> (not
 negative; <code>max_vehicles</code> may be null), <code>server.cooldown_max_retries</code> and
 <code>server.reload_every</code> (not negative). <code>2.0</code> is 2, but <code>2.5</code> or <code>true</code> is
-refused, naming the key, rather than run as 2 or 1.</p>
+refused, naming the key, rather than run as 2 or 1. A null
+<code>server.cooldown_max_retries</code> is no retry, as absent is, and a null
+<code>server.cooldown_seconds</code> the default 2 s cooldown (<code>0</code> is none).</p>
 <p>It is the seed of:</p>
 <table>
 <thead>
@@ -4745,7 +4747,7 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 <td><code>server.cooldown_seconds</code></td>
 <td>float</td>
 <td><code>2.0</code></td>
-<td>Wait time (seconds) between consecutive scenario runs; a finite number, <code>0</code> or more (<code>0</code>: none)</td>
+<td>Wait time (seconds) between consecutive scenario runs; a finite number, <code>0</code> or more (<code>0</code>: none; <code>null</code>: the default)</td>
 </tr>
 <tr>
 <td><code>server.cooldown_max_retries</code></td>
@@ -4839,7 +4841,8 @@ package's own <code>config.yaml</code> written before it existed) leaves the sce
 speed would leave the ego still with no error, an infinite one break its
 physics, and a NaN pose fail far from the key behind it. A run or batch
 refuses such a value before anything starts, naming the key (<code>Error:
-ego.initial_speed_kmh must be finite and at least 0, got -20</code>).</p>
+ego.initial_speed_kmh must be finite and at least 0, got -20</code>). A pose
+left null (<code>ego.spawn_s=null</code>) is 0, as one that is absent is.</p>
 <p>The same check refuses a lanelet id that is not a whole number --
 <code>ego.spawn_lanelet_id</code>, <code>ego.goal_lanelet_id</code> or an item of
 <code>ego.waypoint_lanelet_ids</code> (a list) set to <code>abc</code>, <code>true</code> or <code>242.7</code>, which
@@ -6009,7 +6012,7 @@ the <code>carla_driver</code> entity:</p>
 </thead>
 <tbody>
 <tr>
-<td><code>autopilot</code> (default)</td>
+<td><code>autopilot</code> (default; also when <code>ego.entity</code> is null)</td>
 <td>CARLA's TrafficManager drives the ego</td>
 </tr>
 <tr>
@@ -6030,6 +6033,8 @@ the <code>carla_driver</code> entity:</p>
 </tr>
 </tbody>
 </table>
+<p>Any other value (<code>false</code>, <code>''</code>, <code>Autoware</code>) is refused before anything
+starts, showing it: <code>Unknown ego.entity: False. Expected one of: ...</code>.</p>
 <p>Common overrides:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-29-1" name="__codelineno-29-1" href="#__codelineno-29-1"></a><span class="c1"># Query the policy every simulation tick instead of every other one</span>
 <a id="__codelineno-29-2" name="__codelineno-29-2" href="#__codelineno-29-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>ego.entity<span class="o">=</span>carla_driver<span class="w"> </span>driver.policy_timestep_s<span class="o">=</span><span class="m">0</span>.05
@@ -6893,7 +6898,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 14, 2026 01:03:01 UTC"><span class="timeago" datetime="2026-11-14T01:03:01+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 14, 2026 01:03:01 UTC">2026-11-14</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 15, 2026 01:16:40 UTC"><span class="timeago" datetime="2026-11-15T01:16:40+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 15, 2026 01:16:40 UTC">2026-11-15</span>
   </span>
 
     
