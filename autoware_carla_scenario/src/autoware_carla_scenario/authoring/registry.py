@@ -42,7 +42,7 @@ from ..metrics import BUILT_IN_METRICS
 # seed field is bounded by MAX_SEED, as its constructor's check_seed is.
 from ..seed import MAX_SEED
 from dataclasses import dataclass
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from typing import Any, Literal, Optional
 
 __all__ = [
@@ -72,6 +72,7 @@ __all__ = [
     "TRAFFIC_LIGHT_STATES",
     "TRUTHY_VALUES",
     "FALSY_VALUES",
+    "is_checked",
     "read_bool",
     "action_specs",
     "binding_specs",
@@ -171,6 +172,17 @@ TRUTHY_VALUES = frozenset({"1", "true", "on", "yes"})
 #: nothing else: anything outside both (``"ture"``, ``"enabled"``, ``"2"``) is
 #: a validation error, never a quiet ``False`` (#1459).
 FALSY_VALUES = frozenset({"0", "false", "off", "no"})
+
+
+def is_checked(form: Mapping[str, Any], name: str) -> bool:
+    """Return whether a checkbox named *name* was submitted as checked.
+
+    An unchecked HTML checkbox submits nothing, so a missing field is
+    unchecked; a present one is checked when it spells one of
+    :data:`TRUTHY_VALUES`.  The editor's routes and its service read their
+    checkboxes through this one function.
+    """
+    return str(form.get(name, "")).lower() in TRUTHY_VALUES
 
 
 def read_bool(value: Any) -> Optional[bool]:

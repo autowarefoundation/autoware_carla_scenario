@@ -11,7 +11,7 @@ banner from ever disagreeing with each other.
 from __future__ import annotations
 
 import logging
-from typing import Any, Iterator, Optional
+from typing import Any, Iterator, Mapping, Optional
 from urllib.parse import quote
 
 from fastapi import APIRouter, Depends, Request
@@ -30,7 +30,7 @@ from starlette.types import Receive, Scope, Send
 from ..authoring.models import ScenarioDocument
 from ..authoring.package_export import PackageExportError
 from ..authoring.persistence import Draft, DraftStore, dump_document_yaml
-from ..authoring.registry import TRUTHY_VALUES
+from ..authoring.registry import TRUTHY_VALUES, is_checked
 from ..maps import opendrive
 from ..web_guard import refuse_cross_site
 from . import map_preview, scenario_map
@@ -358,7 +358,7 @@ async def _map_action(request: Request, draft_id: str, act: Any) -> HTMLResponse
 async def fetch_map(request: Request, draft_id: str) -> HTMLResponse:
     """Download the map the scenario names, or refresh what is cached."""
     form = dict(await request.form())
-    refresh = str(form.get("refresh", "")).lower() in TRUTHY_VALUES
+    refresh = is_checked(form, "refresh")
     service = _service(request)
     return await _map_action(
         request, draft_id, lambda doc: service.fetch_map(doc, refresh=refresh)
@@ -381,7 +381,8 @@ async def fetch_opendrive(request: Request, draft_id: str) -> HTMLResponse:
     def _act(document: ScenarioDocument) -> str:
         # Parsed here rather than above, so a bad port is refused the way every
         # other bad field on this panel is -- inline, on the re-rendered body.
-        host = str(form.get("carla_host", "") or opendrive.DEFAULT_HOST).strip()
+        # Blank, whitespace included, is unset: strip before the default.
+        host = str(form.get("carla_host", "") or "").strip() or opendrive.DEFAULT_HOST
         port = as_port(form.get("carla_port", ""), "CARLA port", opendrive.DEFAULT_PORT)
         return service.fetch_opendrive(document, host=host, port=port)
 
@@ -700,10 +701,7 @@ def delete_action(request: Request, draft_id: str, action_id: str) -> HTMLRespon
 async def move_action(request: Request, draft_id: str, action_id: str) -> HTMLResponse:
     """Shift an action along its lane.  Layout only, never semantics."""
     form = await request.form()
-    try:
-        delta = int(str(form.get("delta") or 1))
-    except ValueError:
-        delta = 1
+    delta = _delta(form)
     service = _service(request)
     return _apply(
         request,
@@ -908,10 +906,7 @@ async def move_signal_phase(
 ) -> HTMLResponse:
     """Shift a phase along its cycle.  Order is semantics here, not layout."""
     form = await request.form()
-    try:
-        delta = int(str(form.get("delta") or 1))
-    except ValueError:
-        delta = 1
+    delta = _delta(form)
     service = _service(request)
     return _apply(
         request,
@@ -993,7 +988,7 @@ async def lanelet_preview(request: Request, draft_id: str) -> HTMLResponse:
     """
     form = dict(await request.form())
     slot_key = str(form.get("slot", ""))
-    load_map = _checked(form, "load_map")
+    load_map = is_checked(form, "load_map")
 
     draft = _service(request).require_draft(draft_id)
     slot = draft.document.lanelet_slot(slot_key)
@@ -1136,9 +1131,9 @@ async def export(request: Request, draft_id: str) -> HTMLResponse:
     # Locking is not offered as a choice: a wheelhouse *is* the lockfile
     # resolved into wheels, so an export without one has nothing to hand back.
     options = {
-        "dev_mode": _checked(form, "dev_mode"),
-        "verify": _checked(form, "verify"),
-        "run_tests": _checked(form, "run_tests"),
+        "dev_mode": is_checked(form, "dev_mode"),
+        "verify": is_checked(form, "verify"),
+        "run_tests": is_checked(form, "run_tests"),
     }
 
     def _run() -> tuple[Any, str, str]:
@@ -1234,6 +1229,9 @@ def download_wheelhouse(request: Request, draft_id: str) -> Response:
     return _ArchiveResponse(archive)
 
 
-def _checked(form: dict[str, Any], name: str) -> bool:
-    """Return whether a checkbox named *name* was submitted as checked."""
-    return str(form.get(name, "")).lower() in TRUTHY_VALUES
+def _delta(form: Mapping[str, Any]) -> int:
+    """Return the ``delta`` a move form submitted: a whole number, else 1."""
+    try:
+        return int(str(form.get("delta") or 1))
+    except ValueError:
+        return 1

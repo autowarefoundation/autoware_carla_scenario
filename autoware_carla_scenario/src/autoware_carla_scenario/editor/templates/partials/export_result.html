@@ -19,7 +19,7 @@
         <div><dt>Python</dt><dd>{{ result.wheelhouse.python_tags | join(', ') }}</dd></div>
         <div><dt>uv</dt><dd>{{ result.manifest.runtime.uv or 'not recorded' }}</dd></div>
         <div><dt>uv sync --locked</dt><dd>{{ 'verified' if result.verified else 'not run' }}</dd></div>
-        <div><dt>Package tests</dt><dd>{{ 'passed' if result.tested else 'not run' }}</dd></div>
+        <div><dt>Package tests</dt><dd>{{ ('passed' if result.tested else 'failed') if result.tests_run else 'not run' }}</dd></div>
       </dl>
       <p style="font-size:12px; margin-top:6px">
         These wheels were resolved on this machine's platform, once per interpreter above:

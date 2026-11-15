@@ -2043,7 +2043,10 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
             )
         if action.type == "traffic_signal" and params.get("target") == "route":
             where = f"actions[{index}].route_junction"
-            junction = int(params.get("route_junction") or 0)
+            raw_junction = params.get("route_junction")
+            if not _is_blank(raw_junction) and not _coercible_int(raw_junction):
+                continue  # already reported against the field
+            junction = 0 if _is_blank(raw_junction) else int(str(raw_junction).strip())
             if route is None:
                 out.error(
                     where,

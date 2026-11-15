@@ -18,7 +18,7 @@ import threading
 import zipfile
 from html.parser import HTMLParser
 from pathlib import Path
-from typing import Any, MutableMapping, TypeVar
+from typing import Any, MutableMapping, Optional, TypeVar
 
 import pytest
 import yaml
@@ -1609,6 +1609,20 @@ class TestSpawnConstraints:
         assert "data-map-fallback" not in body
         assert "<svg viewBox" not in body
 
+    @pytest.mark.parametrize("blank", ["", "   "])
+    def test_a_blank_viewer_setting_is_unset(
+        self, monkeypatch: pytest.MonkeyPatch, blank: str
+    ) -> None:
+        """Blank reads as unset, as for the other editor variables (#2166)."""
+        from autoware_carla_scenario.editor.app import (
+            DEFAULT_MAP_VIEWER_URL,
+            MAP_VIEWER_ENV,
+            map_viewer_url,
+        )
+
+        monkeypatch.setenv(MAP_VIEWER_ENV, blank)
+        assert map_viewer_url() == DEFAULT_MAP_VIEWER_URL
+
     def test_a_self_hosted_viewer_can_be_configured(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
     ) -> None:
@@ -1947,6 +1961,43 @@ class TestValidateSaveExport:
         # Provenance travels in the download; the tree holding it is deleted.
         assert "my_cut_in_scenario_wheelhouse/manifest.yaml" in names
 
+    @pytest.mark.parametrize(
+        ("form", "tests_pass", "reported"),
+        [
+            ({"verify": "on", "run_tests": "on"}, True, "passed"),
+            ({"verify": "on", "run_tests": "on"}, False, "failed"),
+            ({"verify": "on"}, True, "not run"),
+            ({}, True, "not run"),
+        ],
+    )
+    def test_the_report_tells_failed_tests_from_tests_not_run(
+        self,
+        client: TestClient,
+        offline_export: None,
+        monkeypatch: pytest.MonkeyPatch,
+        draft_id: str,
+        form: dict[str, str],
+        tests_pass: bool,
+        reported: str,
+    ) -> None:
+        """A failed test run is not "not run" (#2166), and a skipped step says
+        it was skipped."""
+        import autoware_carla_scenario.authoring.package_export as module
+
+        monkeypatch.setattr(
+            module, "_run_tests", lambda root: (tests_pass, "$ pytest -q\n")
+        )
+        response = client.post(
+            f"/draft/{draft_id}/export", data={"dev_mode": "on", **form}
+        )
+        assert response.status_code == 200
+        text = html.unescape(response.text)
+        assert f"<dt>Package tests</dt><dd>{reported}</dd>" in text
+        if "verify" not in form:
+            assert "'uv sync --locked' was skipped" in text
+        elif "run_tests" not in form:
+            assert "own tests were skipped" in text
+
     def test_the_uv_project_is_not_left_on_the_host(
         self, client: TestClient, offline_export: None, tmp_path: Path, draft_id: str
     ) -> None:
@@ -1979,6 +2030,20 @@ class TestValidateSaveExport:
 
 
 class TestServiceGuards:
+    def test_the_export_dir_follows_its_variable(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """The service's default is the app's, variable included (#2166)."""
+        from autoware_carla_scenario.editor.app import EXPORT_DIR_ENV
+
+        monkeypatch.setenv(EXPORT_DIR_ENV, str(tmp_path / "exports"))
+        service = EditorService(DraftStore(tmp_path / "drafts"))
+        assert service.export_dir == (tmp_path / "exports").resolve()
+        monkeypatch.setenv(EXPORT_DIR_ENV, "  ")
+        monkeypatch.chdir(tmp_path)
+        service = EditorService(DraftStore(tmp_path / "drafts"))
+        assert service.export_dir == (tmp_path / "scenario_packages").resolve()
+
     def test_unknown_drafts_raise(self, tmp_path: Path) -> None:
         service = EditorService(DraftStore(tmp_path))
         with pytest.raises(EditorError):
@@ -2049,13 +2114,13 @@ def _refuse_writes(monkeypatch: pytest.MonkeyPatch, code: int = errno.EACCES) ->
     """Make every draft write fail as a drafts directory refusing it would.
 
     A monkeypatch rather than ``chmod``, so it also holds as root.  The store
-    writes a temporary ``.partial`` file first, so refusing that refuses the
-    write, before anything reaches the draft itself.
+    writes a temporary ``.tmp`` file first (``write_text_atomically``), so
+    refusing that refuses the write, before anything reaches the draft itself.
     """
     open_ = Path.open
 
     def _open(self: Path, *args: Any, **kwargs: Any) -> Any:
-        if self.name.endswith(".partial"):
+        if self.name.endswith(".tmp"):
             raise OSError(code, os.strerror(code), str(self))
         return open_(self, *args, **kwargs)
 
@@ -4578,6 +4643,36 @@ class TestTheDownloadOpensTheArchiveUnderItsLock:
         with pytest.raises(ClientDisconnect):
             anyio.run(_serve)
         assert archive.file.closed
+
+
+@pytest.mark.parametrize(
+    ("submitted", "expected"),
+    [("", None), ("   ", None), (" carla.lan ", "carla.lan")],
+)
+def test_a_blank_carla_host_is_the_default(
+    client: TestClient,
+    draft_id: str,
+    monkeypatch: pytest.MonkeyPatch,
+    submitted: str,
+    expected: Optional[str],
+) -> None:
+    """Whitespace is blank too: stripped before the default applies (#2166)."""
+    from autoware_carla_scenario.maps import opendrive
+
+    service = client.app.state.service  # type: ignore[attr-defined]
+    hosts: list[str] = []
+
+    def _fetch(document: ScenarioDocument, *, host: str, port: int) -> str:
+        hosts.append(host)
+        return "fetched"
+
+    monkeypatch.setattr(service, "fetch_opendrive", _fetch)
+    response = client.post(
+        f"/draft/{draft_id}/map/opendrive",
+        data={"carla_host": submitted, "carla_port": "2000"},
+    )
+    assert response.status_code == 200
+    assert hosts == [expected or opendrive.DEFAULT_HOST]
 
 
 class TestMapActionsKeepConcurrentEdits:
