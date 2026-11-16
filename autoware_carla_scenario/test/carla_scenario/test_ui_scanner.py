@@ -299,3 +299,65 @@ def test_sessions_of_the_same_second_list_by_number(tmp_path: Path) -> None:
         "12-00-00-1",
         "12-00-00",
     ]
+
+
+def _unreadable(monkeypatch: pytest.MonkeyPatch, *directories: Path) -> None:
+    """Make listing *directories* raise, as for another user's directory of
+    mode 0700: chmod does nothing for root, which the tests may run as."""
+    real = Path.iterdir
+
+    def iterdir(self: Path) -> Iterator[Path]:
+        if self in directories:
+            raise PermissionError(13, "Permission denied", str(self))
+        return real(self)
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+
+
+@pytest.mark.parametrize("root", ["outputs", "multirun"])
+def test_a_directory_it_cannot_list_is_left_out_of_the_session_list(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+    root: str,
+) -> None:
+    """#2183: an unreadable date directory, or session directory, is skipped
+    with a warning; every other session is still listed."""
+    _with_good_session(tmp_path)
+    other = "2026-01-02"
+    multirun_job = tmp_path / "multirun" / DATE / BAD / "0"
+    multirun_job.mkdir(parents=True)
+    (multirun_job / "Good_result.json").write_text(
+        json.dumps({"passed": True, "scenario": "Good"})
+    )
+    (tmp_path / root / other / GOOD).mkdir(parents=True)
+    _unreadable(monkeypatch, tmp_path / root / other, multirun_job.parent)
+
+    with caplog.at_level("WARNING", logger=scanner.__name__):
+        sessions = scanner.scan_sessions(tmp_path)
+
+    assert [(s.session_type, s.date, s.time) for s in sessions] == [
+        ("single", DATE, GOOD)
+    ]
+    assert sum("Cannot list" in r.getMessage() for r in caplog.records) == 2
+
+
+def test_a_multirun_session_it_cannot_list_has_no_item_and_no_500(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2183: the session page of an unreadable multirun session is served,
+    with no case, and the session is read again once it can be listed."""
+    job = _multirun_job(tmp_path, b"- a=1\n")
+    _unreadable(monkeypatch, job.parent)
+    monkeypatch.setattr(app_module, "BASE_PATH", tmp_path)
+    monkeypatch.setenv("VIEWER_CACHE_DIR", str(tmp_path / "cache"))
+    client = TestClient(app_module.app, base_url="http://127.0.0.1")
+
+    assert scanner.load_session(tmp_path, "multirun", DATE, GOOD) == []
+    assert results.load_results(tmp_path, "multirun", DATE, GOOD, metrics=False) == []
+    page = client.get(f"/session/multirun/{DATE}/{GOOD}")
+    assert page.status_code == 200, page.text
+
+    monkeypatch.undo()
+    (item,) = scanner.load_session(tmp_path, "multirun", DATE, GOOD)
+    assert item.scenario_name == "Good"

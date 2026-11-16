@@ -343,16 +343,29 @@ def _run_submit(command: list[str], base: Path) -> tuple[int | None, str]:
 
 
 def _submit(command: list[str], base: Path, record: Submission) -> None:
-    before = set((base / "outputs").glob("*/*/slurm/manifest.json"))
-    returncode, output = _run_submit(command, base)
-    # The directory the last match names, read at each match: Codon refuses
-    # an Optional variable as a loop's variable, which is a Match.
-    batch_dir: str | None = None
-    for match in _OUTPUTS_IN.finditer(output):
-        batch_dir = match["dir"]
-    if batch_dir is None:
-        found = _new_manifests(base, before)
-        batch_dir = str(found[-1].parent.parent) if found else None
+    """Run the submitting *command* and fill *record* in.
+
+    Whatever raises out of it (a manifest it cannot list, anything
+    unexpected) fails the record, with why, before it is raised: a record
+    left ``submitting`` would refuse every later submission until the viewer
+    restarts (#2183).
+    """
+    try:
+        before = set((base / "outputs").glob("*/*/slurm/manifest.json"))
+        returncode, output = _run_submit(command, base)
+        # The directory the last match names, read at each match: Codon
+        # refuses an Optional variable as a loop's variable, which is a Match.
+        batch_dir: str | None = None
+        for match in _OUTPUTS_IN.finditer(output):
+            batch_dir = match["dir"]
+        if batch_dir is None:
+            found = _new_manifests(base, before)
+            batch_dir = str(found[-1].parent.parent) if found else None
+    except Exception as exc:
+        with _lock:
+            record.output = f"The submission failed: {exc}"
+            record.state = "failed"
+        raise
     with _lock:
         record.output = output
         record.returncode = returncode
@@ -364,7 +377,8 @@ def start_submit(command: list[str], base: Path) -> Submission:
     """Submit in a background thread; the record it fills in.
 
     Raises:
-        RuntimeError: A submission is still being made.
+        RuntimeError: A submission is still being made, or its thread
+            could not start (the record it made is then ``failed``).
     """
     global _submission  # noqa: PLW0603
     with _lock:
@@ -372,7 +386,17 @@ def start_submit(command: list[str], base: Path) -> Submission:
             raise RuntimeError("A batch is still being submitted")
         record = Submission(command=list(command))
         _submission = record
-    threading.Thread(target=_submit, args=(command, base, record), daemon=True).start()
+    thread = threading.Thread(target=_submit, args=(command, base, record), daemon=True)
+    try:
+        thread.start()
+    except RuntimeError as exc:
+        # A thread that does not start (``can't start new thread``) never
+        # runs _submit(): the record must not stay ``submitting``, which
+        # would refuse every later submission (#2183).
+        with _lock:
+            record.output = f"The submission failed: {exc}"
+            record.state = "failed"
+        raise
     return record
 
 

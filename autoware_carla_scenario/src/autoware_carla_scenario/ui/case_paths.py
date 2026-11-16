@@ -301,7 +301,13 @@ def _job_indices(directory: Path, session_type: str) -> list[int]:
     if session_type != "multirun":
         return [0]
     indices: list[int] = []
-    for p in directory.iterdir():
+    try:
+        entries = list(directory.iterdir())
+    except OSError:
+        # A directory it cannot read (another user's, mode 0700) has no case
+        # it can show, as _stems_in() finds none (#2183).
+        return indices
+    for p in entries:
         if p.is_dir() and p.name.isascii() and p.name.isdigit():
             indices.append(int(p.name))
     return sorted(indices)

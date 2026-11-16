@@ -2676,6 +2676,18 @@ def test_non_ascii_digits_are_no_submission_and_no_task(tmp_path: Path) -> None:
     assert squeue_task_states("7", "7_0 RUNNING\n7_² RUNNING\n") == {0: "RUNNING"}
 
 
+def test_another_jobs_ranged_line_is_no_task_of_this_job() -> None:
+    """#2183: the ranged branch checks the job id, as the single-task one."""
+    from autoware_carla_scenario.slurm.scripts import squeue_task_states
+
+    output = "7_[0-1] PENDING\n8_[2-3] PENDING\n8_4 RUNNING\n7_5 RUNNING\n"
+    assert squeue_task_states("7", output) == {
+        0: "PENDING",
+        1: "PENDING",
+        5: "RUNNING",
+    }
+
+
 def test_concurrent_submissions_get_indices_of_their_own(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:

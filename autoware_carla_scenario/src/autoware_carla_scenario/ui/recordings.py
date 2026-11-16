@@ -65,7 +65,6 @@ from .web_viewer_paths import recording_path as recording_path
 from .web_viewer_paths import web_viewer_cache_dir as _web_viewer_cache_dir
 
 __all__ = [
-    "CDN_URL",
     "DEFAULT_WEB_VIEWER_VERSION",
     "INSTALL_HINT",
     "ConverterMissingError",
@@ -83,11 +82,6 @@ __all__ = [
 ]
 
 logger = logging.getLogger(__name__)
-
-#: Where the web viewer is loaded from when there is no copy on this machine:
-#: unpkg, which resolves the package's extension-less `import("./re_viewer")`
-#: (jsDelivr does not).
-CDN_URL = "https://unpkg.com/@rerun-io/web-viewer@{version}"
 
 #: The npm registry's record of a version of the package (its tarball, and the
 #: tarball's integrity hash).

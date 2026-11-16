@@ -537,6 +537,9 @@ def squeue_task_states(job: str, output: str) -> dict[int, str]:
         job_task, state = parts[0], parts[1]
         ranged = _TASK_RANGE.match(job_task)
         if ranged:
+            # Another job's line is not this job's, as below (#2183).
+            if ranged.group(1) != str(job):
+                continue
             for task in _expand_ranges(ranged.group(2)):
                 states[task] = state
             continue

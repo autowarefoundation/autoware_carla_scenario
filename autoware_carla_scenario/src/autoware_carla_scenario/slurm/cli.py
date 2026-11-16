@@ -22,13 +22,7 @@ from pathlib import Path
 from .collect import collect, unfinished_cases
 from .manifest import BatchLayout
 from .settings import SlurmSettings
-from .status import (
-    active_jobs,
-    busy_reason,
-    cancel_batch,
-    named_cases,
-    print_status,
-)
+from .status import busy_reason, cancel_batch, named_cases, print_status
 from .submit import after_submit, submit_cases
 
 __all__ = ["main"]
@@ -43,7 +37,6 @@ def _layout(path: str) -> BatchLayout:
 # this module, so that a batch's records are read as deep in the stack as
 # they were read here (Python 3.10 counts the calls on the stack with the
 # levels of nesting json.loads() reads).
-_active_jobs = active_jobs
 _busy = busy_reason
 _status = print_status
 
@@ -114,11 +107,6 @@ def _wait(args: argparse.Namespace) -> int:
     if args.poll_seconds is not None:
         settings = settings.replace(poll_seconds=args.poll_seconds)
     return follow(layout, index, settings)
-
-
-def _cancel(args: argparse.Namespace) -> int:
-    """``scenario-slurm cancel`` (slurm.status's cancel_batch)."""
-    return cancel_batch(_layout(args.batch_dir))
 
 
 def _parser() -> argparse.ArgumentParser:
@@ -238,7 +226,8 @@ def main(argv: list[str] | None = None) -> int:
             return collect(_layout(args.batch_dir))
         if args.command == "resubmit":
             return _resubmit(args)
-        # Not through _cancel(): the records are read as deep as before.
+        # Called here, not through a function of this module: the records
+        # are read as deep as before.
         return cancel_batch(_layout(args.batch_dir))
     # OSError covers FileNotFoundError, and an unreadable manifest or an
     # unwritable batch directory (shared storage, a read-only mount): one

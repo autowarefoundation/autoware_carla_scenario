@@ -281,7 +281,28 @@ def _run_worker(
         multirun_dir: str | None = None
         if group_as_multirun and total > 0:
             now = datetime.now()  # noqa: DTZ005
-            multirun_dir = _reserve_multirun_dir(Path(cwd) if cwd else Path.cwd(), now)
+            base_dir = Path(cwd) if cwd else Path.cwd()
+            try:
+                multirun_dir = _reserve_multirun_dir(base_dir, now)
+            except OSError as exc:
+                # No job can run without it: the run fails as a whole, and
+                # says why, not "Completed!" with nothing run (#2183).
+                logger.error(
+                    "Could not create the run's multirun directory under %s: %s",
+                    base_dir,
+                    exc,
+                )
+                _set_progress(
+                    RunProgress(
+                        current=0,
+                        total=total,
+                        scenario_name="",
+                        status="done",
+                        message="The run failed: could not create its multirun "
+                        f"directory under {base_dir}: {exc}",
+                    )
+                )
+                return
             logger.info("Grouping %d jobs under %s", total, multirun_dir)
 
         stopped = False
