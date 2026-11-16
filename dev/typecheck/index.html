@@ -4928,9 +4928,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-337 of the package's 466
+339 of the package's 468
 modules (72%; about 104,600 of
-175,200 lines) are <code>CHECKED</code>: the kinematics, the
+175,400 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5033,7 +5033,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 337 CHECKED modules</summary>
+<summary>The 339 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -6331,6 +6331,10 @@ with the first paragraph of its docstring:</p>
 <td>Pure helpers, imported by module path.</td>
 </tr>
 <tr>
+<td><code>utils.card_target</code></td>
+<td>The module an editor card's <code>"..module:Name"</code> target names.</td>
+</tr>
+<tr>
 <td><code>utils.clearance</code></td>
 <td>What stands in a road user's way: walkers ahead of a vehicle, vehicles ahead of a walker (#521).</td>
 </tr>
@@ -6341,6 +6345,10 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>utils.opendrive</code></td>
 <td>CARLA's OpenDRIVE, made acceptable to roadgen.</td>
+</tr>
+<tr>
+<td><code>utils.owner_label</code></td>
+<td>The <code>&lt;host&gt;:&lt;pid&gt;</code> owner label on the containers a run starts.</td>
 </tr>
 <tr>
 <td><code>utils.powertrain</code></td>
