@@ -836,6 +836,20 @@ class TestBackendSettingsInTheBatchCheck:
         with pytest.raises(run.RunConfigError, match=r"backends\.ardy must be"):
             run.check_batch_configs([cfg])
 
+    @pytest.mark.parametrize("value", ["false", "0", "''", "abc"])
+    def test_another_backends_block_that_is_no_mapping_is_refused(
+        self, value: str
+    ) -> None:
+        # Not only ARDY's: the preparer's BackendPool refuses any, but only
+        # once the queue is built (#2182).
+        from autoware_carla_scenario.examples import run
+
+        cfg = run._compose_config(
+            "adversity/nade", ["map=town10hd_opt", f"+backends.other={value}"]
+        )
+        with pytest.raises(run.RunConfigError, match=r"backends\.other must be"):
+            run.check_batch_configs([cfg])
+
     def test_null_settings_pass(self) -> None:
         from autoware_carla_scenario.examples import run
 

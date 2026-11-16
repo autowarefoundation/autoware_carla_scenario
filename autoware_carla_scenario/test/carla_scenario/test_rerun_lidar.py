@@ -413,7 +413,9 @@ def test_a_hung_merge_times_out_with_its_stderr(
 
     from autoware_carla_scenario import rerun_lidar
 
-    fake_cli.write_text("#!/bin/sh\necho 'merging' >&2\nexec sleep 30\n")
+    fake_cli.write_text(
+        "#!/bin/sh\necho 'merging' >&2\necho partial > \"$6\"\nexec sleep 30\n"
+    )
     monkeypatch.setattr(rerun_lidar, "CLI_TIMEOUT_S", 0.5)
     recording = tmp_path / "Run-6.rrd"
     lidar = tmp_path / "Run-6.sensors.rrd"
@@ -427,6 +429,8 @@ def test_a_hung_merge_times_out_with_its_stderr(
     assert "timed out after 0.5 s: merging" in message
     assert recording.read_bytes() == b"RUN"
     assert lidar.read_bytes() == b"+LIDAR"
+    # The killed merge's partial output is not left behind.
+    assert sorted(p.name for p in tmp_path.glob(".*")) == []
 
 
 def test_the_cli_calls_are_capped() -> None:
