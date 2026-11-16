@@ -20,7 +20,7 @@ class RunProgress:
 
     # Codon would build it by its fields, by position, too (docs/typecheck.md,
     # #244): its constructor takes no positional argument to refuse them.
-    def __init__(self, current, total, scenario_name, status, message):
+    def __init__(self, current, total, scenario_name, status, message=""):
         compile_error("RunProgress(): its fields are keyword-only")
 
     def __init__(
