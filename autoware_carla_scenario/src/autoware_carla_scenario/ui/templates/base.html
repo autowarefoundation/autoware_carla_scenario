@@ -437,10 +437,11 @@
         if (TERMINAL_STATUSES.includes(data.status)) {
           evtSource.close();
           activeEvtSource = null;
+          // A failed run's message stays long enough to be read.
           setTimeout(() => {
             progressBar.classList.add('hidden');
             if (onComplete) onComplete();
-          }, 1000);
+          }, data.message ? 5000 : 1000);
         }
       };
       evtSource.onerror = function() {
@@ -561,7 +562,13 @@
       const count = document.getElementById('progress-count');
       const fill = document.getElementById('progress-fill');
 
-      if (data.status === STATUS.DONE) {
+      if (data.status === STATUS.DONE && data.message) {
+        // A run that ended before any job ran says why (#2183).
+        text.textContent = data.message;
+        count.textContent = `${data.current}/${data.total}`;
+        fill.style.width = '100%';
+        fill.className = 'bg-red-500 h-2 rounded-full transition-all duration-300';
+      } else if (data.status === STATUS.DONE) {
         text.textContent = 'Completed!';
         count.textContent = `${data.current}/${data.total}`;
         fill.style.width = '100%';

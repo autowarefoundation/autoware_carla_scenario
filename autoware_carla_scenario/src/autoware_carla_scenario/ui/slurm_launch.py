@@ -343,16 +343,29 @@ def _run_submit(command: list[str], base: Path) -> tuple[int | None, str]:
 
 
 def _submit(command: list[str], base: Path, record: Submission) -> None:
-    before = set((base / "outputs").glob("*/*/slurm/manifest.json"))
-    returncode, output = _run_submit(command, base)
-    # The directory the last match names, read at each match: Codon refuses
-    # an Optional variable as a loop's variable, which is a Match.
-    batch_dir: str | None = None
-    for match in _OUTPUTS_IN.finditer(output):
-        batch_dir = match["dir"]
-    if batch_dir is None:
-        found = _new_manifests(base, before)
-        batch_dir = str(found[-1].parent.parent) if found else None
+    """Run the submitting *command* and fill *record* in.
+
+    Whatever raises out of it (a manifest it cannot list, anything
+    unexpected) fails the record, with why, before it is raised: a record
+    left ``submitting`` would refuse every later submission until the viewer
+    restarts (#2183).
+    """
+    try:
+        before = set((base / "outputs").glob("*/*/slurm/manifest.json"))
+        returncode, output = _run_submit(command, base)
+        # The directory the last match names, read at each match: Codon
+        # refuses an Optional variable as a loop's variable, which is a Match.
+        batch_dir: str | None = None
+        for match in _OUTPUTS_IN.finditer(output):
+            batch_dir = match["dir"]
+        if batch_dir is None:
+            found = _new_manifests(base, before)
+            batch_dir = str(found[-1].parent.parent) if found else None
+    except Exception as exc:
+        with _lock:
+            record.output = f"The submission failed: {exc}"
+            record.state = "failed"
+        raise
     with _lock:
         record.output = output
         record.returncode = returncode

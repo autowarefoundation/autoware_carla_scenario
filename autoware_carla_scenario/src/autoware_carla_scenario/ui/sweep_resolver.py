@@ -12,7 +12,6 @@ from __future__ import annotations
 
 import logging
 import threading
-from pathlib import Path
 from typing import TYPE_CHECKING
 
 from hydra import compose, initialize_config_dir
@@ -20,13 +19,14 @@ from hydra.core.global_hydra import GlobalHydra
 
 from autoware_carla_scenario.registry import load_scenario_plugins
 
+# The built-in configs, the session scanner's: not examples.run's, which
+# pulls in carla.
+from .scanner import BUILTIN_CONF_DIR as _CONF_DIR
+
 if TYPE_CHECKING:
     from autoware_carla_scenario.odd.sampler import OddDraws
 
 logger = logging.getLogger(__name__)
-
-# Resolved locally to avoid importing examples.run (which pulls in carla).
-_CONF_DIR = Path(__file__).resolve().parent.parent / "examples" / "conf"
 
 #: Held while Hydra composes a config.  ``GlobalHydra`` and
 #: ``initialize_config_dir`` are process-global, and the viewer resolves

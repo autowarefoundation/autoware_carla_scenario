@@ -11,6 +11,7 @@ import json
 import os
 import subprocess
 import sys
+import threading
 import time
 from collections.abc import Iterator
 from pathlib import Path
@@ -281,6 +282,33 @@ def test_a_command_that_cannot_be_run_fails_the_submission(tmp_path: Path) -> No
     slurm_launch._submit(record.command, tmp_path, record)
     assert record.state == "failed"
     assert "Could not run" in record.output
+
+
+def test_a_submit_thread_that_raises_fails_its_record_and_frees_the_next(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2183: a submit that raised stayed ``submitting``, and every later
+    submit was refused (409) until the viewer restarted."""
+    monkeypatch.setattr(slurm_launch, "_submission", None)
+
+    def run_submit(command: list[str], base: Path) -> tuple[int | None, str]:
+        raise MemoryError("out of memory")
+
+    monkeypatch.setattr(slurm_launch, "_run_submit", run_submit)
+    record = slurm_launch.Submission(command=["scenario", "x"])
+    with pytest.raises(MemoryError):
+        slurm_launch._submit(record.command, tmp_path, record)
+    assert record.state == "failed"
+    assert record.output == "The submission failed: out of memory"
+
+    # Through start_submit's thread too: the next submission is taken.
+    monkeypatch.setattr(threading, "excepthook", lambda args: None)
+    first = slurm_launch.start_submit(["scenario", "x"], tmp_path)
+    assert _wait_for(lambda: first.state != "submitting", 30.0)
+    assert first.state == "failed"
+    again = slurm_launch.start_submit(["scenario", "y"], tmp_path)
+    assert again is not first
+    assert _wait_for(lambda: again.state != "submitting", 30.0)
 
 
 def test_a_batch_directory_with_spaces_is_read_whole(tmp_path: Path) -> None:
@@ -1155,6 +1183,34 @@ def test_a_resubmit_body_of_the_wrong_type_is_refused(
     )
     assert accepted.status_code == 200 and accepted.json()["ok"]
     assert ran[-1][-3:] == ["--array-parallelism", "2", "--no-wait"]
+
+
+def test_a_resubmit_strips_its_numbers_as_the_run_panel_does(
+    client: TestClient, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2183: ``" 2"`` was refused, while SlurmOptions.from_request strips it;
+    a blank field is unset, as there."""
+    _manifest_batch(tmp_path)
+    ran: list[list[str]] = []
+    monkeypatch.setattr(slurm_launch, "availability", lambda: (True, ""))
+
+    def run_cli(args: list[str], timeout: float = 300.0) -> tuple[int, str]:
+        ran.append(args)
+        return 0, ""
+
+    monkeypatch.setattr(slurm_launch, "run_cli", run_cli)
+    response = client.post(
+        "/api/slurm/2026-10-19/12-00-00/resubmit",
+        json={"array_parallelism": " 2", "cases_per_task": "  "},
+    )
+    assert response.status_code == 200 and response.json()["ok"]
+    assert ran[-1][-3:] == ["--array-parallelism", "2", "--no-wait"]
+    assert "--cases-per-task" not in ran[-1]
+    refused = client.post(
+        "/api/slurm/2026-10-19/12-00-00/resubmit", json={"cases_per_task": " 0 "}
+    )
+    assert refused.status_code == 400
+    assert "cases_per_task must be a positive integer" in refused.json()["output"]
 
 
 def test_new_manifests_are_ordered_by_session_number(tmp_path: Path) -> None:

@@ -34,6 +34,7 @@ import pytest
 
 from autoware_carla_scenario.slurm import cli
 from autoware_carla_scenario.slurm import queue as queue_mod
+from autoware_carla_scenario.slurm import status as slurm_status
 from autoware_carla_scenario.slurm.collect import unfinished_cases
 from autoware_carla_scenario.slurm.manifest import (
     MANIFEST_VERSION,
@@ -73,25 +74,26 @@ _slurm: Any = queue_mod
 _clock: Any = time
 
 
+#: slurm.status's active_jobs and cancel_batch as the readers call them:
+#: bound here, so that old_reading() hands them their oracles (scenario-slurm
+#: had its own names for them, cli._active_jobs and cli._cancel, until #2183).
+_active_jobs = slurm_status.active_jobs
+_cancel_batch = slurm_status.cancel_batch
+
+
 @contextmanager
 def old_reading(monkeypatch: pytest.MonkeyPatch) -> Iterator[None]:
     """scenario-slurm's status, cancel and busy check, and the viewer's batch
     status, read as they were (the oracles), with the fakes a test has set
     on slurm.status for squeue, scancel and the clock: for the tests that
     hand the readers a batch's records as dicts."""
-    from autoware_carla_scenario.slurm import status as slurm_status
-
     with monkeypatch.context() as patch:
         patch.setattr(sys.modules[__name__], "_slurm", slurm_status)
         patch.setattr(sys.modules[__name__], "_clock", slurm_status.time)
-        patch.setattr(cli, "_active_jobs", _old_active_jobs)
+        patch.setattr(sys.modules[__name__], "_active_jobs", _old_active_jobs)
+        patch.setattr(sys.modules[__name__], "_cancel_batch", _old_cancel)
         patch.setattr(cli, "_busy", _old_busy)
         patch.setattr(cli, "_status", _old_status)
-        patch.setattr(
-            cli,
-            "_cancel",
-            lambda args: _old_cancel(BatchLayout(Path(args.batch_dir).resolve())),
-        )
         patch.setattr(slurm_launch, "batch_status", _old_batch_status)
         yield
 
@@ -881,7 +883,7 @@ def _readers(batch_dir: Path) -> dict[str, tuple[Callable[[], Any], Callable[[],
             ),
         ),
         "active-jobs": (
-            lambda: cli._active_jobs(layout),
+            lambda: _active_jobs(layout),
             lambda: _old_active_jobs(layout),
         ),
         "busy": (lambda: cli._busy(layout), lambda: _old_busy(layout)),

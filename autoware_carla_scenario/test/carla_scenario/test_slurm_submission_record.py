@@ -24,7 +24,6 @@ the readers, what ``status``, ``cancel``, a resubmit's ``_busy``, ``wait``
 
 from __future__ import annotations
 
-import argparse
 import json
 import logging
 from collections.abc import Callable, Iterator
@@ -428,7 +427,7 @@ def _old_missing_message(
 
 
 def _old_read_submission(layout: BatchLayout, index: int) -> Any:
-    """What cli._active_jobs read raw of a record: a dict, or None for JSON
+    """What slurm.status.active_jobs read raw of a record: a dict, or None for JSON
     that is no object (which it took as one it cannot read)."""
     data = json.loads(layout.submission(index).read_text(encoding="utf-8"))
     return data if isinstance(data, dict) else None
@@ -799,10 +798,12 @@ def _readers(layout: BatchLayout) -> dict[str, Callable[[], Any]]:
     batch = str(layout.batch_dir)
     return {
         "status": lambda: cli._status(layout),
-        "cancel": lambda: cli._cancel(argparse.Namespace(batch_dir=batch)),
+        "cancel": lambda: test_slurm_batch_readers._cancel_batch(
+            BatchLayout(Path(batch).expanduser().resolve())
+        ),
         "busy": lambda: cli._busy(layout),
         "busy-below-0": lambda: cli._busy(layout, below=0),
-        "active-jobs": lambda: cli._active_jobs(layout),
+        "active-jobs": lambda: test_slurm_batch_readers._active_jobs(layout),
         "follow": lambda: submit.follow(layout, 0, SlurmSettings(poll_seconds=0.0)),
         "after-submit": lambda: submit.after_submit(
             layout, 0, SlurmSettings(wait=False)
@@ -997,7 +998,7 @@ def test_a_resubmit_is_refused_for_a_submission_in_flight_or_timed_out(
     layout = _batch(tmp_path, _record("in-flight").encode())
     layout.submission(1).write_text(_record("timed-out"), encoding="utf-8")
     layout.submission(2).write_text(_record("done"), encoding="utf-8")
-    assert cli._active_jobs(layout) == ([], [], [0], [], [1])
+    assert slurm_status.active_jobs(layout) == ([], [], [0], [], [1])
     assert clock.reads == 2
     reason = cli._busy(layout)
     assert reason == (
@@ -1027,11 +1028,11 @@ def test_an_unreadable_record_refuses_a_resubmit_only_while_young(
     path = layout.submission(0)
     os.utime(path, (_NOW - 10, _NOW - 10))
     with caplog.at_level(logging.DEBUG):
-        assert cli._active_jobs(layout) == ([], [], [], [0], [])
+        assert slurm_status.active_jobs(layout) == ([], [], [], [0], [])
     assert caplog.records == []
     os.utime(path, (_NOW - 700, _NOW - 700))
     with caplog.at_level(logging.DEBUG):
-        assert cli._active_jobs(layout) == ([], [], [], [], [])
+        assert slurm_status.active_jobs(layout) == ([], [], [], [], [])
     assert _logs(caplog) == [
         (
             "autoware_carla_scenario.slurm.cli",

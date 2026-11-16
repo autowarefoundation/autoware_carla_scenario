@@ -8,13 +8,14 @@ import os
 from pathlib import Path
 from typing import Any
 
-import yaml  # type: ignore[import-untyped]
-
 from ..registry import get_conf_dirs, load_scenario_plugins
 from ..run_outputs import RESULT_SUFFIX
 from ..scenario_glob import scenario_names
 from . import cases
 from .case_paths import MAX_INDEX, _stat, result_path, session_order
+from .cases import _hydra_overrides as _read_overrides
+from .cases import _passed as _passed
+from .cases import _seconds as _seconds
 from .cases import batch_entries, case_files
 from .models import ConditionNode, ScenarioResultView, SessionItem, SessionSummary
 from .runner import _RAW_LOG_MAX_BYTES as _RAW_LOG_MAX_BYTES
@@ -168,22 +169,6 @@ def _name(value: Any, fallback: str) -> str:
     return value if isinstance(value, str) and value else fallback
 
 
-def _passed(value: Any) -> bool | None:
-    """A verdict: ``passed`` when it is a boolean, else ``None``."""
-    return value if isinstance(value, bool) else None
-
-
-def _seconds(value: Any) -> float | None:
-    """A duration: *value* when it is a number (not a boolean), else ``None``."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    try:
-        return float(value)
-    except OverflowError:
-        # An integer too long for a float (#1726).
-        return None
-
-
 def _text(value: Any) -> str:
     """A message: *value* as a string, empty for ``None``."""
     if value is None:
@@ -191,20 +176,16 @@ def _text(value: Any) -> str:
     return value if isinstance(value, str) else str(value)
 
 
-def _read_overrides(job_dir: Path) -> list[str]:
-    """Read ``.hydra/overrides.yaml`` from a job directory.
-
-    Empty when the file cannot be read or is no YAML list: a file that is not
-    UTF-8 (a ``UnicodeDecodeError``, a ``ValueError``) must not break the
-    session and case pages (#1631). Each item is a string, as
-    ``results._hydra_overrides`` reads it.
-    """
+def _listing(directory: Path) -> list[Path] | None:
+    """The entries of *directory*, ``None`` (with a warning) when it cannot be
+    read: a session directory of another user's, mode 0700, must not break
+    the session list or the session pages (#2183), as one bad file does not
+    (#1726)."""
     try:
-        raw = (job_dir / ".hydra" / "overrides.yaml").read_text(encoding="utf-8")
-        data = yaml.safe_load(raw)
-    except (yaml.YAMLError, OSError, ValueError):
-        return []
-    return [str(o) for o in data] if isinstance(data, list) else []
+        return list(directory.iterdir())
+    except OSError as exc:
+        logger.warning("Cannot list %s: %s", directory, exc)
+        return None
 
 
 def _extract_scenario_name(result: dict[str, Any] | None, job_dir: Path) -> str:
@@ -225,12 +206,11 @@ def _scan_multirun_session(
 ) -> SessionSummary | None:
     """Scan a single multirun session directory."""
     # Multirun directories contain numbered subdirectories (0, 1, 2, ...)
+    entries = _listing(session_dir)
+    if entries is None:
+        return None
     job_dirs = sorted(
-        (
-            d
-            for d in session_dir.iterdir()
-            if d.is_dir() and d.name.isascii() and d.name.isdigit()
-        ),
+        (d for d in entries if d.is_dir() and d.name.isascii() and d.name.isdigit()),
         key=lambda d: int(d.name),
     )
     if not job_dirs:
@@ -316,10 +296,10 @@ def scan_sessions(base_path: Path) -> list[SessionSummary]:
     # Scan multirun/
     multirun_root = base_path / "multirun"
     if multirun_root.is_dir():
-        for date_dir in sorted(multirun_root.iterdir(), reverse=True):
+        for date_dir in sorted(_listing(multirun_root) or [], reverse=True):
             if not date_dir.is_dir():
                 continue
-            for time_dir in sorted(date_dir.iterdir(), reverse=True):
+            for time_dir in sorted(_listing(date_dir) or [], reverse=True):
                 if not time_dir.is_dir() or (
                     cases.session_dir(
                         base_path, "multirun", date_dir.name, time_dir.name
@@ -334,10 +314,10 @@ def scan_sessions(base_path: Path) -> list[SessionSummary]:
     # Scan outputs/
     outputs_root = base_path / "outputs"
     if outputs_root.is_dir():
-        for date_dir in sorted(outputs_root.iterdir(), reverse=True):
+        for date_dir in sorted(_listing(outputs_root) or [], reverse=True):
             if not date_dir.is_dir():
                 continue
-            for time_dir in sorted(date_dir.iterdir(), reverse=True):
+            for time_dir in sorted(_listing(date_dir) or [], reverse=True):
                 # "single" and "batch" share outputs/: either type checks it.
                 if not time_dir.is_dir() or (
                     cases.session_dir(base_path, "single", date_dir.name, time_dir.name)
@@ -380,9 +360,13 @@ def load_session(
     if session_type == "multirun":
         if not directory.is_dir():
             return items
+        entries = _listing(directory)
+        if entries is None:
+            # Not cached: it is read again once it can be.
+            return items
         indices = sorted(
             int(d.name)
-            for d in directory.iterdir()
+            for d in entries
             if d.is_dir() and d.name.isascii() and d.name.isdigit()
         )
         for index in indices:

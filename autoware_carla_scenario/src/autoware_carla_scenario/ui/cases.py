@@ -70,11 +70,52 @@ __all__ = [
 ]
 
 
-def _read_json(path: Path) -> Any:
+def _read_json(path: Path | None) -> Any:
+    """The JSON document at *path*, ``None`` when there is none (or no path)
+    or it cannot be read: ``ui.results`` and ``ui.scanner`` read with it too."""
+    if path is None:
+        return None
     try:
         return json.loads(path.read_text(encoding="utf-8"))
     except (OSError, ValueError):
         return None
+
+
+def _passed(value: Any) -> bool | None:
+    """A verdict: *value* when it is a boolean, else ``None``."""
+    return value if isinstance(value, bool) else None
+
+
+def _seconds(value: Any) -> float | None:
+    """A duration: *value* when it is a number (not a boolean), else ``None``."""
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        return None
+    try:
+        return float(value)
+    except OverflowError:
+        # An integer too long for a float (#1726).
+        return None
+
+
+def _hydra_overrides(directory: Path) -> list[str]:
+    """The run's ``.hydra/overrides.yaml`` in *directory*, each item as a
+    string.
+
+    Empty when the file cannot be read or is no YAML list: one that is not
+    UTF-8 (a ``UnicodeDecodeError``, a ``ValueError``), not YAML, or anything
+    else that raises reading it must not break the session and case pages
+    (#1631).  ``yaml`` is imported here, not at the top: the viewer reads the
+    rest of this module on every page.
+    """
+    try:
+        import yaml  # type: ignore[import-untyped]  # noqa: PLC0415
+
+        data = yaml.safe_load(
+            (directory / ".hydra" / "overrides.yaml").read_text(encoding="utf-8")
+        )
+    except Exception:  # noqa: BLE001 -- yaml.YAMLError, OSError, ValueError, ...
+        return []
+    return [str(o) for o in data] if isinstance(data, list) else []
 
 
 def _same_result(entry: dict[str, Any], result: Any) -> bool:

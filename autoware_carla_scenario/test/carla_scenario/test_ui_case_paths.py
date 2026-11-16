@@ -255,6 +255,20 @@ def test_job_indices_are_the_numbered_directories_in_number_order(
     assert case_paths._job_indices(tmp_path, "single") == [0]
 
 
+def test_a_session_directory_it_cannot_read_has_no_job(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2183: another user's directory (mode 0700) is no case, not a 500.
+    ``iterdir`` is made to raise, as chmod does nothing for root."""
+    (tmp_path / "0").mkdir()
+
+    def iterdir(self: Path) -> list[Path]:
+        raise PermissionError(13, "Permission denied", str(self))
+
+    monkeypatch.setattr(Path, "iterdir", iterdir)
+    assert case_paths._job_indices(tmp_path, "multirun") == []
+
+
 def test_override_label_is_the_first_scenario_override() -> None:
     label = case_paths._override_label
     assert label(["a=1", "scenario=x=y", "scenario=z"]) == "x=y"
