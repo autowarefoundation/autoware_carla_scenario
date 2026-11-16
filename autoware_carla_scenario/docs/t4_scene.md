@@ -127,7 +127,7 @@ machine any more) has no `map` and no `traffic_lights`.
 | `annotations` | Every other vehicle and walker within `--max-distance` (default 100 m) of the ego, as a box (the `boxes` group): its box's centre, size `(width, length, height)`, heading and quaternion, velocity, `labels` (`vehicle` 1, `pedestrian` 7) and `track_ids` (the CARLA actor id) |
 | `traffic_lights` | One group per traffic light regulatory element of the map, its one element the round lamp of the CARLA light it shows: colour (red 1, yellow 2, green 3, else unknown 0), shape circle, status on (off for CARLA's `Off`, else unknown), confidence 1. A consumer derives each lanelet's state from the map, as for any source |
 | `map` | The `MapResource`'s SHA-256, `scope` full, with elevation, `map_id` `lanelet2-sha256:{the .osm file's SHA-256}` |
-| `routes` | With the map, the lanelets the ego drove along, in order, the same `lane_ids` on every row (no `preferred_lane_ids`): its `base_link` on the rows it is on, a point a metre, walked along the map's lane graph as a live scene's road ahead is (`RouteGraph.match`: straight on, through a junction's branch, across a lane change). None when the ego hardly moved or drove on no lanelet, or with `--no-route` |
+| `routes` | With the map, the lanelets the ego drove along, in order, one route (no `preferred_lane_ids`, no `timestamp_ns`) that every row's `indices` entry points at: its `base_link` on the rows it is on, a point a metre, walked along the map's lane graph as a live scene's road ahead is (`RouteGraph.match`: straight on, through a junction's branch, across a lane change). None when the ego hardly moved or drove on no lanelet, or with `--no-route` |
 
 What the log does not hold is left out, never made up:
 

@@ -979,12 +979,15 @@ def route_log(
 
 def test_the_route_is_the_lanelets_the_ego_drove_along(route_log: Path) -> None:
     scene = trajectory_log_to_t4_scene(route_log).scene
-    rows = scene.routes.rows
-    assert len(rows) == len(_numeric(scene.timestamps_ns))
-    for row in rows:
-        assert row.HasField("value")
-        assert [list(seg.lane_ids) for seg in row.value.segments] == [[4], [98], [102]]
-        assert not any(seg.HasField("preferred_lane_id") for seg in row.value.segments)
+    # One shared route observation that every row indexes.
+    assert len(scene.routes.rows) == 1
+    route = scene.routes.rows[0]
+    np.testing.assert_array_equal(
+        _numeric(scene.routes.indices), [0] * len(_numeric(scene.timestamps_ns))
+    )
+    assert [list(seg.lane_ids) for seg in route.segments] == [[4], [98], [102]]
+    assert not any(seg.HasField("preferred_lane_id") for seg in route.segments)
+    assert not route.HasField("timestamp_ns")
 
 
 def test_the_route_can_be_left_out(route_log: Path, tmp_path: Path) -> None:

@@ -372,22 +372,20 @@ class RouteSegment(_message.Message):
     def __init__(self, lane_ids: _Optional[_Iterable[int]] = ..., preferred_lane_id: _Optional[int] = ...) -> None: ...
 
 class RouteData(_message.Message):
-    __slots__ = ("segments",)
+    __slots__ = ("segments", "timestamp_ns")
     SEGMENTS_FIELD_NUMBER: _ClassVar[int]
+    TIMESTAMP_NS_FIELD_NUMBER: _ClassVar[int]
     segments: _containers.RepeatedCompositeFieldContainer[RouteSegment]
-    def __init__(self, segments: _Optional[_Iterable[_Union[RouteSegment, _Mapping]]] = ...) -> None: ...
-
-class RouteRow(_message.Message):
-    __slots__ = ("value",)
-    VALUE_FIELD_NUMBER: _ClassVar[int]
-    value: RouteData
-    def __init__(self, value: _Optional[_Union[RouteData, _Mapping]] = ...) -> None: ...
+    timestamp_ns: int
+    def __init__(self, segments: _Optional[_Iterable[_Union[RouteSegment, _Mapping]]] = ..., timestamp_ns: _Optional[int] = ...) -> None: ...
 
 class RouteSequence(_message.Message):
-    __slots__ = ("rows",)
+    __slots__ = ("rows", "indices")
     ROWS_FIELD_NUMBER: _ClassVar[int]
-    rows: _containers.RepeatedCompositeFieldContainer[RouteRow]
-    def __init__(self, rows: _Optional[_Iterable[_Union[RouteRow, _Mapping]]] = ...) -> None: ...
+    INDICES_FIELD_NUMBER: _ClassVar[int]
+    rows: _containers.RepeatedCompositeFieldContainer[RouteData]
+    indices: NumericArray
+    def __init__(self, rows: _Optional[_Iterable[_Union[RouteData, _Mapping]]] = ..., indices: _Optional[_Union[NumericArray, _Mapping]] = ...) -> None: ...
 
 class TrafficLights(_message.Message):
     __slots__ = ("group_ids", "element_offsets", "element_colors", "element_shapes", "element_statuses", "element_confidences", "element_timestamps_ns", "timestamp_ns")
