@@ -4928,9 +4928,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-339 of the package's 468
+339 of the package's 469
 modules (72%; about 104,700 of
-175,400 lines) are <code>CHECKED</code>: the kinematics, the
+175,800 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6615,7 +6615,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 129 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 130 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6645,7 +6645,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 129 EXCLUDED modules, and why</summary>
+<summary>The 130 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped</li>
@@ -6730,6 +6730,7 @@ the first:</p>
 <li><code>ros2.cyclone</code>: imports cyclonedds (its domain participant, readers, writers, topics and QoS policies) and ros2.messages, which imports it too; ros2/cyclone.codon models the CycloneRos2Transport that entity.ros2_entity builds</li>
 <li><code>ros2.messages</code>: imports cyclonedds (the IdlStruct base of every message, and the IDL field types <code>array[float64, 36]</code> and <code>sequence[TrajectoryPoint]</code>, which Codon cannot express)</li>
 <li><code>scaffold.generator</code>: imports argparse, ast, functools, importlib.metadata, templating (jinja2) and, inside functions, packaging.requirements (which the packaging model does not declare), typecheck.transform and authoring.package_export (pydantic, yaml, jinja2, through authoring.models, authoring.persistence and templating), which are not checked; its naming rules, and the framework-name rule it shares with authoring.package_names, are the checked scaffold.names'; putting a rendered package in place and the error of a target that exists (<code>_move_into_place()</code>, <code>_occupied()</code>, <code>_RENAME_ONTO_OCCUPIED</code>, <code>PackageExistsError</code>) are the checked scaffold.placement's (#2144), which it re-exports; scaffold/generator.codon declares what the checked scaffold package re-exports of it, <code>PackageExistsError</code> included, which the package still imports from scaffold.generator, so a scenario importing it from either finds the model's <code>compile_error</code>s as before</li>
+<li><code>scenario_hash</code>: walks a run's config of any shape (<code>Mapping[str, Any]</code>, a mapping of mixed value types at any depth), which Codon cannot express; only the excluded examples.run calls it</li>
 <li><code>serve_cli</code>: imports argparse: port() raises <code>argparse.ArgumentTypeError</code> for a bad --port value and add_bind_arguments() adds options to an <code>argparse.ArgumentParser</code>; the default host, the port range, which hosts are loopback ones and the warning are the checked serve_bind's, which it re-exports</li>
 <li><code>slurm.cli</code>: imports argparse, and slurm.submit, which are not checked, and reads the manifest as a <code>dict</code> reads it (the checked slurm.manifest's uncalled Manifest.get() and <code>manifest[key]</code>, values of any type); what it collects, and which unfinished cases it resubmits, are the checked slurm.collect's, and what <code>status</code> prints, whether a batch is busy (the resubmit's check), which cases <code>resubmit --cases</code> names and what <code>cancel</code> cancels the checked slurm.status'</li>
 <li><code>slurm.submit</code>: imports omegaconf (inside functions), which is not checked, and takes the manifest as it builds it (<code>dict[str, Any]</code>) or as it is read back (the checked slurm.manifest's Manifest, through its uncalled get() and <code>manifest[key]</code>, values of any type) and a function as <code>Callable[..., Any]</code>, which Codon cannot express; the job scripts and sbatch command lines it writes and runs are built, and the scripts written (<code>_write_script()</code>, #2124, which it re-exports), by the checked slurm.scripts, and run, as squeue, scancel and scontrol are, by the checked slurm.queue; following a submission until it ends and what a submitter says of it once submitted (follow, after_submit) are the checked slurm.follow's, which it re-exports</li>

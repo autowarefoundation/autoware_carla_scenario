@@ -4604,6 +4604,11 @@ the runner sets it from the scenario's <code>random_seed</code> before <code>set
 <code>scenario</code> sets it from the config before it builds the scenario), and a
 component built with <code>seed=None</code> takes it when it is built. A scenario that
 draws for itself seeds its own generator from <code>self.random_seed</code>.</p>
+<p>The seed is also what tells a scenario's rollouts apart: runs of one
+scenario and different seeds are its rollouts, which <code>scenario-wosac</code> packs
+for the Waymo Open Sim Agents Challenge. The run writes its seed, and the
+digest of the scenario it ran without it, into its trajectory log
+(<a href="../wosac/#are-they-rollouts">WOSAC Rollouts</a>).</p>
 <p>A route search's <code>seed</code> (<code>sweep.route.seed</code>) is not one of them: unset, the
 matches are not shuffled at all. A config with no <code>seed</code> key (a scenario
 package's own <code>config.yaml</code> written before it existed) leaves the scenario the
@@ -6899,7 +6904,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 16, 2026 02:51:46 UTC"><span class="timeago" datetime="2026-11-16T02:51:46+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 16, 2026 02:51:46 UTC">2026-11-16</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 16, 2026 04:53:17 UTC"><span class="timeago" datetime="2026-11-16T04:53:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 16, 2026 04:53:17 UTC">2026-11-16</span>
   </span>
 
     

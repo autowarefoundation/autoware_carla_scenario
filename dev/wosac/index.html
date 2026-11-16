@@ -1796,6 +1796,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Scenarios and rollouts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#are-they-rollouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Are they rollouts?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2286,6 +2303,23 @@
     </span>
   </a>
   
+    <nav class="md-nav" aria-label="Scenarios and rollouts">
+      <ul class="md-nav__list">
+        
+          <li class="md-nav__item">
+  <a href="#are-they-rollouts" class="md-nav__link">
+    <span class="md-ellipsis">
+      
+        Are they rollouts?
+      
+    </span>
+  </a>
+  
+</li>
+        
+      </ul>
+    </nav>
+  
 </li>
       
         <li class="md-nav__item">
@@ -2384,7 +2418,7 @@ and its submission server read.</p>
 <a id="__codelineno-0-5" name="__codelineno-0-5" href="#__codelineno-0-5"></a><span class="w">    </span>--metadata<span class="w"> </span>submission.yaml<span class="w"> </span>--tar
 </code></pre></div>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-1-1" name="__codelineno-1-1" href="#__codelineno-1-1"></a><span class="kn">from</span><span class="w"> </span><span class="nn">autoware_carla_scenario.wosac</span><span class="w"> </span><span class="kn">import</span> <span class="p">(</span>
-<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">build_submission</span><span class="p">,</span> <span class="n">merge_rollouts</span><span class="p">,</span> <span class="n">read_rollouts</span><span class="p">,</span> <span class="n">rollout_files</span><span class="p">,</span>
+<a id="__codelineno-1-2" name="__codelineno-1-2" href="#__codelineno-1-2"></a>    <span class="n">build_submission</span><span class="p">,</span> <span class="n">check_runs</span><span class="p">,</span> <span class="n">merge_rollouts</span><span class="p">,</span> <span class="n">read_rollouts</span><span class="p">,</span> <span class="n">read_run</span><span class="p">,</span> <span class="n">rollout_files</span><span class="p">,</span>
 <a id="__codelineno-1-3" name="__codelineno-1-3" href="#__codelineno-1-3"></a>    <span class="n">trajectory_log_to_rollout</span><span class="p">,</span> <span class="n">write_rollout</span><span class="p">,</span> <span class="n">write_submission</span><span class="p">,</span>
 <a id="__codelineno-1-4" name="__codelineno-1-4" href="#__codelineno-1-4"></a><span class="p">)</span>
 <a id="__codelineno-1-5" name="__codelineno-1-5" href="#__codelineno-1-5"></a>
@@ -2394,8 +2428,9 @@ and its submission server read.</p>
 <a id="__codelineno-1-9" name="__codelineno-1-9" href="#__codelineno-1-9"></a><span class="n">write_rollout</span><span class="p">(</span><span class="s2">"CutInScenario.trajectory.jsonl"</span><span class="p">)</span>  <span class="c1"># -&gt; the .wosac.pb and .wosac.json</span>
 <a id="__codelineno-1-10" name="__codelineno-1-10" href="#__codelineno-1-10"></a>
 <a id="__codelineno-1-11" name="__codelineno-1-11" href="#__codelineno-1-11"></a><span class="n">files</span> <span class="o">=</span> <span class="n">rollout_files</span><span class="p">([</span><span class="n">Path</span><span class="p">(</span><span class="s2">"outputs/2026-11-13"</span><span class="p">)])</span>
-<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">scenarios</span> <span class="o">=</span> <span class="n">merge_rollouts</span><span class="p">(((</span><span class="n">read_rollouts</span><span class="p">(</span><span class="n">f</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="p">))</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">files</span><span class="p">),</span> <span class="n">num_rollouts</span><span class="o">=</span><span class="mi">32</span><span class="p">)</span>
-<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">write_submission</span><span class="p">(</span><span class="n">build_submission</span><span class="p">(</span><span class="n">scenarios</span><span class="p">,</span> <span class="p">{</span><span class="s2">"unique_method_name"</span><span class="p">:</span> <span class="s2">"..."</span><span class="p">}),</span> <span class="s2">"submission/"</span><span class="p">)</span>
+<a id="__codelineno-1-12" name="__codelineno-1-12" href="#__codelineno-1-12"></a><span class="n">check_runs</span><span class="p">((</span><span class="n">read_run</span><span class="p">(</span><span class="n">f</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="p">))</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">files</span><span class="p">)</span>  <span class="c1"># rollouts of their scenarios?</span>
+<a id="__codelineno-1-13" name="__codelineno-1-13" href="#__codelineno-1-13"></a><span class="n">scenarios</span> <span class="o">=</span> <span class="n">merge_rollouts</span><span class="p">(((</span><span class="n">read_rollouts</span><span class="p">(</span><span class="n">f</span><span class="p">),</span> <span class="nb">str</span><span class="p">(</span><span class="n">f</span><span class="p">))</span> <span class="k">for</span> <span class="n">f</span> <span class="ow">in</span> <span class="n">files</span><span class="p">),</span> <span class="n">num_rollouts</span><span class="o">=</span><span class="mi">32</span><span class="p">)</span>
+<a id="__codelineno-1-14" name="__codelineno-1-14" href="#__codelineno-1-14"></a><span class="n">write_submission</span><span class="p">(</span><span class="n">build_submission</span><span class="p">(</span><span class="n">scenarios</span><span class="p">,</span> <span class="p">{</span><span class="s2">"unique_method_name"</span><span class="p">:</span> <span class="s2">"..."</span><span class="p">}),</span> <span class="s2">"submission/"</span><span class="p">)</span>
 </code></pre></div>
 <h3 id="export"><code>export</code><a class="headerlink" href="#export" title="Permanent link">&para;</a></h3>
 <table>
@@ -2489,6 +2524,16 @@ log that fails does not stop the others, and the command exits 1.</p>
 <td>Keep, in every rollout of a scenario, only the agents all of them have (the others are logged), rather than refuse the scenario</td>
 </tr>
 <tr>
+<td><code>--position-tolerance</code></td>
+<td><code>0.5</code></td>
+<td>How far apart, in metres, an agent may start the future of two rollouts of a scenario (<a href="#are-they-rollouts">below</a>)</td>
+</tr>
+<tr>
+<td><code>--heading-tolerance</code></td>
+<td><code>0.1</code></td>
+<td>How differently headed, in radians, it may start it</td>
+</tr>
+<tr>
 <td><code>--metadata</code></td>
 <td></td>
 <td>A YAML or JSON mapping of the submission's other fields, by their names in the proto</td>
@@ -2507,9 +2552,10 @@ log that fails does not stop the others, and the command exits 1.</p>
 </table>
 <p>It takes <code>*.wosac.pb</code> files, or the directories to find them under, and
 prints how many rollouts each scenario got, then the files it wrote. A
-scenario is refused, and nothing is written, when its rollouts simulate
-different agents (without <code>--common-agents</code>), when two of its trajectories
-differ in length, or when it has not <code>--rollouts</code> rollouts.</p>
+scenario is refused, and nothing is written, when its runs are not rollouts
+of it (<a href="#are-they-rollouts">below</a>), when its rollouts simulate different
+agents (without <code>--common-agents</code>), when two of its trajectories differ in
+length, or when it has not <code>--rollouts</code> rollouts.</p>
 <p>The metadata are the submission's fields the challenge asks for:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-2-1" name="__codelineno-2-1" href="#__codelineno-2-1"></a><span class="nt">account_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">you@example.com</span><span class="w">           </span><span class="c1"># the account registered at waymo.com/open</span>
 <a id="__codelineno-2-2" name="__codelineno-2-2" href="#__codelineno-2-2"></a><span class="nt">unique_method_name</span><span class="p">:</span><span class="w"> </span><span class="l l-Scalar l-Scalar-Plain">carla-autoware</span>
@@ -2528,13 +2574,67 @@ A field the message lacks, or a value of the wrong type, is refused.</p>
 <h2 id="scenarios-and-rollouts">Scenarios and rollouts<a class="headerlink" href="#scenarios-and-rollouts" title="Permanent link">&para;</a></h2>
 <p>WOSAC scores a scenario's rollouts as a distribution: 32 simulations from one
 initial state, against what was logged. Here, the runs of one scenario --
-its seeds, or its repetitions -- are the rollouts, and a rollout's
+one per seed -- are the rollouts, and a rollout's
 <code>scenario_id</code> says which scenario it is one of. By default it is the log's
 stem without the run counter the runner adds to a stem taken in its
 directory already, so the runs of <code>CutInScenario</code> -- one per job directory
 of a multirun, or <code>CutInScenario</code>, <code>CutInScenario-1</code>, ... in one -- are
 rollouts of <code>CutInScenario</code>. Runs of one scenario class with different
 parameters are different scenarios: give each its own <code>--scenario-id</code>.</p>
+<p>To run a scenario's rollouts, run it once per seed -- the seed is what
+differs between them, and every other setting is the scenario:</p>
+<div class="highlight"><pre><span></span><code><a id="__codelineno-3-1" name="__codelineno-3-1" href="#__codelineno-3-1"></a><span class="c1"># Hydra's own sweeper: one job per seed, each in its own directory</span>
+<a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario<span class="w"> </span>--multirun<span class="w"> </span><span class="nv">scenario</span><span class="o">=</span>cut_in/right<span class="w"> </span><span class="s1">'seed=range(0,32)'</span>
+<a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a><span class="c1"># Every log under the sweep's directory, then the rollouts packed</span>
+<a id="__codelineno-3-4" name="__codelineno-3-4" href="#__codelineno-3-4"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-wosac<span class="w"> </span><span class="nb">export</span><span class="w"> </span>multirun/
+<a id="__codelineno-3-5" name="__codelineno-3-5" href="#__codelineno-3-5"></a>uv<span class="w"> </span>run<span class="w"> </span>scenario-wosac<span class="w"> </span>pack<span class="w"> </span>multirun/<span class="w"> </span>-o<span class="w"> </span>submission/<span class="w"> </span>--rollouts<span class="w"> </span><span class="m">32</span>
+</code></pre></div>
+<p>What draws at random before the future starts has to draw the same in every
+rollout, so it cannot follow the run's seed. A sweep drawing from the ODD
+draws its cases from the run's seed unless <code>sweep.odd_sample.seed</code> is set,
+and a scenario that places road users at random -- a
+<code>TrafficSourceAction</code>'s <code>initial_vehicles</code>, <code>background_traffic</code>, SUMO's
+ambient traffic -- places them anew with every seed: such a scenario's
+initial state is not one, and its runs are not rollouts of it. Give the
+road users their places, or pin the seed of what places them
+(<code>background_traffic.seed</code>, an action's <code>seed</code>).</p>
+<h3 id="are-they-rollouts">Are they rollouts?<a class="headerlink" href="#are-they-rollouts" title="Permanent link">&para;</a></h3>
+<p>Whether runs are rollouts of one scenario cannot be told from what they did:
+a future that differs may be chance, or a parameter that differs. It is told
+from what they were asked to run. The <code>scenario</code> command gives each scenario
+it builds the digest of its config, <code>scenario_hash</code>
+(<code>autoware_carla_scenario.scenario_hash</code>): the SHA-256 of the scenario's
+class and of the sections of the config that say what is simulated --
+<code>scenario</code>, <code>map</code>, <code>ego</code>, <code>entity</code>, <code>environment</code>, <code>controls</code>,
+<code>scenario_rules</code>, <code>background_traffic</code>, <code>traffic</code>, <code>odd</code> and <code>odd_case</code> --
+without <code>seed</code>, and without the settings that say where a run connects
+(hosts, addresses, ports, ROS domains: what a SLURM task moves to its own
+slot). What drives the ego (<code>driver</code>, <code>autoware</code>, <code>ros2</code>) is the system
+under test, not the scenario, and how a run is recorded does not change what
+is simulated: neither is in it. Every top-level section of the <code>scenario</code>
+command's config is listed as hashed or not (<code>SCENARIO_SECTIONS</code>,
+<code>OTHER_SECTIONS</code>), and a test keeps it so, so a new section cannot be left
+out of the hash unseen. The runner writes the run's seed and its
+hash into the trajectory log (its <a href="../trajectory_log/#records"><code>run</code></a>
+record), and <code>export</code> into the <code>.wosac.json</code>, with each agent's pose on the
+current row.</p>
+<p><code>pack</code> (<code>check_runs()</code>) then checks each scenario's runs from their
+<code>.wosac.json</code>:</p>
+<ul>
+<li><strong>One scenario</strong>: every run of a <code>scenario_id</code> has one <code>scenario_hash</code>.
+  Runs of different parameters under one id are refused: give them their own
+  <code>--scenario-id</code>.</li>
+<li><strong>A seed of its own</strong>: two runs of one seed are one rollout run twice,
+  and are refused.</li>
+<li><strong>One initial state</strong>: each agent starts its future -- the current row --
+  where it does in the first run, within <code>--position-tolerance</code> and
+  <code>--heading-tolerance</code>. The history before it is simulated too, so a stack
+  that is not deterministic drifts a little; a road user placed at random
+  does not start where it did.</li>
+</ul>
+<p>A run whose log has no <code>run</code> record (written before it was recorded), or a
+rollout without its <code>.wosac.json</code> (a merged file), is let through with a
+warning: nothing says what it ran.</p>
 <p>Each agent's <code>object_id</code> has to be the same in every rollout, though CARLA
 gives its actor a new id in every run. It is derived from what does stay the
 same, the agent's role name, which the scenario gives the entity
@@ -2561,7 +2661,7 @@ result.</p>
 </tr>
 <tr>
 <td><code>{stem}.wosac.json</code></td>
-<td>What the message has no field for: the <code>scenario_id</code>, the grid (<code>step_s</code>, <code>current_index</code>, <code>steps</code>, <code>padded_steps</code>, <code>current_frame</code>, <code>current_t</code>), the <code>frame</code> (<code>local</code> or <code>map</code>) and its <code>offset</code>, the run's verdict (<code>result</code>: <code>passed</code>, <code>message</code>, or null), and every agent: <code>object_id</code>, <code>role</code>, <code>actor_id</code>, <code>type_id</code>, <code>object_type</code>, <code>ego</code>, <code>valid_steps</code></td>
+<td>What the message has no field for: the <code>scenario_id</code>, the grid (<code>step_s</code>, <code>current_index</code>, <code>steps</code>, <code>padded_steps</code>, <code>current_frame</code>, <code>current_t</code>), the <code>frame</code> (<code>local</code> or <code>map</code>) and its <code>offset</code>, the run's verdict (<code>result</code>: <code>passed</code>, <code>message</code>, or null), its <code>seed</code> and <code>scenario_hash</code> (null for a log without a <code>run</code> record), and every agent: <code>object_id</code>, <code>role</code>, <code>actor_id</code>, <code>type_id</code>, <code>object_type</code>, <code>ego</code>, <code>valid_steps</code>, and <code>current</code> (its box centre and heading on the current row, <code>[x, y, z, heading]</code>)</td>
 </tr>
 <tr>
 <td><code>submission.binproto-00000-of-00001</code></td>
@@ -2698,7 +2798,7 @@ duplicate file in Protobuf's descriptor pool).</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 16, 2026 02:11:05 UTC"><span class="timeago" datetime="2026-11-16T02:11:05+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 16, 2026 02:11:05 UTC">2026-11-16</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 16, 2026 04:53:17 UTC"><span class="timeago" datetime="2026-11-16T04:53:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 16, 2026 04:53:17 UTC">2026-11-16</span>
   </span>
 
     
