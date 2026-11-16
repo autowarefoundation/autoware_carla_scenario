@@ -605,6 +605,28 @@ points it at its slot's port ([SLURM, Ports](slurm.md#ports)), as the built-in
 register_backend("my_simulator", MySimulatorBackend, tm_port_option="tm_port")
 ```
 
+A run drops every option left null before it hands the options to your
+factory: the shipped groups declare their keys as null placeholders so that
+`traffic.options.x=y` overrides work under Hydra's struct mode, and an
+interpolation such as `${oc.select:traffic_manager.port,null}` resolves to
+null when nothing sets it, so a null means "not set" and your factory sees
+the key absent and applies its own default. A backend that reads a null
+itself -- as a value of its own for some option, as the built-in `sumo`
+backend's `lateral_resolution_m` does -- registers with
+`takes_null_options=True`, as the built-in `sumo`, `hybrid` and
+`traffic_manager` backends do, and is then handed the nulls as they are; it
+must then read a null as the default of every option that does not take one
+(`utils.config.null_as_default` does that for a dataclass):
+
+```python
+register_backend("my_simulator", MySimulatorBackend, takes_null_options=True)
+```
+
+`build_backend()` passes the options it is given on verbatim either way: the
+flag is for the run, which composes them from the config. A package that
+overrides a built-in name without the flag is handed no nulls, as any other
+backend registered without it.
+
 Registering a name that is already taken replaces it, which is how a package
 overrides a built-in backend (`traffic_manager`, `sumo`, ...). It is still
 reported: `load_traffic_backend_plugins()` logs a warning naming the entry point
@@ -1124,6 +1146,14 @@ option is its default**, as an absent one is -- `blueprint: null` is
 options (a null `mesoscopic.enabled` is `true` there) and the
 `traffic_manager` backend's `port` too. So a null `bicycles.blueprints` is
 the default list; `[]` is none, which keeps every SUMO bicycle out of CARLA.
+The exception is an option that takes null as a value of its own, whose
+null is that value and not its default: `lateral_resolution_m: null` is
+SUMO's lane-based model (below), `curve_lateral_acceleration: null` the map
+converted as it is, `bicycles.max_distance_m: null` no limit. A run hands
+these backends' options over nulls included, so
+`traffic.options.lateral_resolution_m=null` on the command line does what it
+says (#2178); a backend an installed package registers is handed none
+([Writing a backend](#writing-a-backend)).
 
 **Its outputs** are the run's own: everything the backend writes -- SUMO's
 log (`sumo.log`), the demand it generates (`ambient.rou.xml`,

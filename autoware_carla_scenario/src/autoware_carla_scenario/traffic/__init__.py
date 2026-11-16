@@ -171,10 +171,23 @@ def register_builtin_backends() -> None:
     way to put it back, and reaching into the module for a private factory is a
     worse way to say that.
     """
-    register_backend("traffic_manager", build_traffic_manager, tm_port_option="port")
+    # Their configs read a null option themselves (utils.config.
+    # null_as_default): the default for one that does not take null, a value
+    # of its own for one that does (#2178).  `none` takes no options, so a
+    # null placeholder is dropped before it can be refused.
+    register_backend(
+        "traffic_manager",
+        build_traffic_manager,
+        tm_port_option="port",
+        takes_null_options=True,
+    )
     register_backend("none", build_none)
-    register_backend("sumo", build_sumo, tm_port_option="tm_port")
-    register_backend("hybrid", build_hybrid, tm_port_option="port")
+    register_backend(
+        "sumo", build_sumo, tm_port_option="tm_port", takes_null_options=True
+    )
+    register_backend(
+        "hybrid", build_hybrid, tm_port_option="port", takes_null_options=True
+    )
 
 
 register_builtin_backends()

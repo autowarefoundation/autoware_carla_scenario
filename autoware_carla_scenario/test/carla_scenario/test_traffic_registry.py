@@ -125,6 +125,11 @@ class TestPluginCollisions:
             dict(traffic_registry._TM_PORT_OPTIONS),
         )
         monkeypatch.setattr(
+            traffic_registry,
+            "_NULL_OPTION_BACKENDS",
+            set(traffic_registry._NULL_OPTION_BACKENDS),
+        )
+        monkeypatch.setattr(
             "importlib.metadata.entry_points", lambda *, group: list(entry_points)
         )
         monkeypatch.setattr(traffic_registry, "_plugins_loaded", False)
@@ -170,6 +175,11 @@ class TestPluginCollisions:
                 "_TM_PORT_OPTIONS",
                 dict(traffic_registry._TM_PORT_OPTIONS),
             )
+            monkeypatch.setattr(
+                traffic_registry,
+                "_NULL_OPTION_BACKENDS",
+                set(traffic_registry._NULL_OPTION_BACKENDS),
+            )
             with caplog.at_level("WARNING", logger="autoware_carla_scenario.registry"):
                 self._load(monkeypatch, order)
                 # Sorted by distribution name: sumo_b loads last, whichever
@@ -205,6 +215,11 @@ class TestConcurrentPluginLoading:
             traffic_registry,
             "_TM_PORT_OPTIONS",
             dict(traffic_registry._TM_PORT_OPTIONS),
+        )
+        monkeypatch.setattr(
+            traffic_registry,
+            "_NULL_OPTION_BACKENDS",
+            set(traffic_registry._NULL_OPTION_BACKENDS),
         )
         monkeypatch.setattr(traffic_registry, "_plugins_loaded", False)
 
@@ -432,3 +447,161 @@ def test_each_backend_says_where_its_traffic_manager_port_is() -> None:
     finally:
         unregister_backend("_tm_plugin")
     assert tm_port_option("_tm_plugin") is None
+
+
+class TestNullOptions:
+    """A null under ``traffic.options`` reaches a built-in backend as it is,
+    and never reaches any other backend (#2178)."""
+
+    @staticmethod
+    def _compose(overrides: list[str]) -> Any:
+        from hydra import compose, initialize_config_dir
+
+        from autoware_carla_scenario.examples import conf as conf_package
+
+        conf_dir = str(Path(conf_package.__file__).parent.resolve())
+        with initialize_config_dir(config_dir=conf_dir, version_base=None):
+            return compose(config_name="config", overrides=overrides)
+
+    def test_the_built_ins_take_null_options_and_a_plugin_does_not(
+        self, registered_fake: str
+    ) -> None:
+        from autoware_carla_scenario.traffic.registry import takes_null_options
+
+        assert takes_null_options("traffic_manager")
+        assert takes_null_options("sumo")
+        assert takes_null_options("hybrid")
+        # `none` takes no options: a null placeholder is dropped, not refused.
+        assert not takes_null_options("none")
+        assert not takes_null_options(registered_fake)
+        assert not takes_null_options("no-such-backend")
+
+    def test_a_plugin_overriding_a_built_in_is_handed_no_null(self) -> None:
+        from autoware_carla_scenario.traffic.registry import takes_null_options
+
+        try:
+            register_backend("sumo", _Fake)
+            assert not takes_null_options("sumo")
+        finally:
+            register_builtin_backends()
+        assert takes_null_options("sumo")
+
+    def test_unregistering_forgets_the_flag(self) -> None:
+        from autoware_carla_scenario.traffic.registry import takes_null_options
+
+        register_backend("_null_plugin", _Fake, takes_null_options=True)
+        try:
+            assert takes_null_options("_null_plugin")
+        finally:
+            unregister_backend("_null_plugin")
+        assert not takes_null_options("_null_plugin")
+
+    @pytest.mark.parametrize("group", ["traffic_manager", "sumo", "hybrid"])
+    @pytest.mark.parametrize(
+        "overrides",
+        [[], ["traffic_manager.port=null"]],
+        ids=["legacy-port", "legacy-port-null"],
+    )
+    def test_a_shipped_groups_nulls_change_nothing(
+        self, group: str, overrides: list[str], monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Every null a shipped group declares -- a placeholder, or an
+        ``${oc.select:traffic_manager.port,null}`` that resolved to nothing --
+        builds the config dropping it built, before the built-ins took nulls:
+        the options :func:`build_traffic_backend` hands the factory with the
+        flag and without it build equal configs."""
+        from autoware_carla_scenario.examples import run as run_module
+        from autoware_carla_scenario.traffic.config import TrafficManagerBackendConfig
+        from autoware_carla_scenario.traffic.sumo.config import SumoBackendConfig
+        from autoware_carla_scenario.traffic.sumo.hybrid import HybridBackendConfig
+
+        config_classes: dict[str, Any] = {
+            "traffic_manager": TrafficManagerBackendConfig,
+            "sumo": SumoBackendConfig,
+            "hybrid": HybridBackendConfig,
+        }
+        cfg = self._compose([f"traffic={group}", *overrides])
+        handed: list[dict[str, Any]] = []
+
+        def capture(name: str, options: Mapping[str, Any], *_: Any) -> Any:
+            handed.append(dict(options))
+            return MagicMock()
+
+        monkeypatch.setattr(run_module, "build_backend", capture)
+        run_module.build_traffic_backend(cfg)
+        monkeypatch.setattr(run_module, "takes_null_options", lambda name: False)
+        run_module.build_traffic_backend(cfg)
+        with_nulls, dropped = handed
+        assert all(value is not None for value in dropped.values())
+        nulls = [key for key, value in with_nulls.items() if value is None]
+        # traffic_manager's only option is the port, set by the legacy key.
+        assert nulls or (group == "traffic_manager" and not overrides)
+        assert set(with_nulls) - set(dropped) == set(nulls)
+        config_cls = config_classes[group]
+        assert config_cls.from_mapping(with_nulls) == config_cls.from_mapping(dropped)
+
+    def test_every_field_null_is_its_default_but_the_optional_ones(self) -> None:
+        """Pins which top-level options a null is not the default of: the
+        ``Optional`` fields whose default is not ``None``.  Every shipped
+        group sets those two to a value, so none of its nulls is one."""
+        from dataclasses import fields
+
+        from autoware_carla_scenario.traffic.config import TrafficManagerBackendConfig
+        from autoware_carla_scenario.traffic.sumo.config import SumoBackendConfig
+        from autoware_carla_scenario.traffic.sumo.hybrid import HybridBackendConfig
+
+        expected: dict[Any, set[str]] = {
+            TrafficManagerBackendConfig: set(),
+            SumoBackendConfig: {"curve_lateral_acceleration", "lateral_resolution_m"},
+            HybridBackendConfig: set(),
+        }
+        for config_cls, differs in expected.items():
+            default = config_cls.from_mapping({})
+            changed = {
+                field.name
+                for field in fields(config_cls)
+                if field.init and config_cls.from_mapping({field.name: None}) != default
+            }
+            assert changed == differs, config_cls.__name__
+
+    def test_a_null_lateral_resolution_reaches_sumo(self) -> None:
+        """``lateral_resolution_m: null`` is SUMO's lane-based model, not 0.4."""
+        from autoware_carla_scenario.examples.run import build_traffic_backend
+
+        backend = build_traffic_backend(
+            self._compose(["traffic=sumo", "traffic.options.lateral_resolution_m=null"])
+        )
+        assert backend._config.lateral_resolution_m is None  # type: ignore[attr-defined]
+        assert backend._config.curve_lateral_acceleration == 3.0  # type: ignore[attr-defined]
+
+    def test_a_lane_change_duration_with_a_null_resolution_is_accepted(self) -> None:
+        from autoware_carla_scenario.examples.run import build_traffic_backend
+
+        backend = build_traffic_backend(
+            self._compose(
+                [
+                    "traffic=sumo",
+                    "traffic.options.lateral_resolution_m=null",
+                    "traffic.options.lane_change_duration_s=2.0",
+                ]
+            )
+        )
+        assert backend._config.lane_change_duration_s == 2.0  # type: ignore[attr-defined]
+
+    def test_a_plugin_backend_receives_no_null_option(
+        self, registered_fake: str
+    ) -> None:
+        from autoware_carla_scenario.examples.run import build_traffic_backend
+
+        backend = build_traffic_backend(
+            OmegaConf.create(
+                {
+                    "traffic": {
+                        "backend": registered_fake,
+                        "options": {"address": "here:1", "port": None, "x": None},
+                    }
+                }
+            )
+        )
+        assert isinstance(backend, _Fake)
+        assert backend.options == {"address": "here:1"}
