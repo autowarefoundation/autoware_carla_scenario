@@ -382,6 +382,59 @@ def test_a_failed_merge_keeps_the_sweeps_and_the_recording(
     assert (tmp_path / "Run-3.sensors.rrd").read_bytes() == b"+LIDAR"
 
 
+def test_a_failed_merge_names_the_command_and_its_stderr(
+    tmp_path: Path, fake_cli: Path
+) -> None:
+    """``str(CalledProcessError)`` drops the captured stderr (#2182)."""
+    import subprocess
+
+    from autoware_carla_scenario.rerun_lidar import RerunCliError, merge_into
+
+    fake_cli.write_text("#!/bin/sh\necho 'bad chunk' >&2\nexit 3\n")
+    recording = tmp_path / "Run-5.rrd"
+    lidar = tmp_path / "Run-5.sensors.rrd"
+    recording.write_bytes(b"RUN")
+    lidar.write_bytes(b"+LIDAR")
+    with pytest.raises(subprocess.CalledProcessError) as raised:
+        merge_into(recording, lidar)
+    assert isinstance(raised.value, RerunCliError)
+    message = str(raised.value)
+    assert f"rrd merge {recording} {lidar}" in message
+    assert "exited with status 3: bad chunk" in message
+    assert recording.read_bytes() == b"RUN"
+    assert lidar.read_bytes() == b"+LIDAR"
+
+
+def test_a_hung_merge_times_out_with_its_stderr(
+    tmp_path: Path, fake_cli: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A hung ``rerun rrd merge`` must not block the converter forever (#2182)."""
+    import subprocess
+
+    from autoware_carla_scenario import rerun_lidar
+
+    fake_cli.write_text("#!/bin/sh\necho 'merging' >&2\nexec sleep 30\n")
+    monkeypatch.setattr(rerun_lidar, "CLI_TIMEOUT_S", 0.5)
+    recording = tmp_path / "Run-6.rrd"
+    lidar = tmp_path / "Run-6.sensors.rrd"
+    recording.write_bytes(b"RUN")
+    lidar.write_bytes(b"+LIDAR")
+    with pytest.raises(subprocess.TimeoutExpired) as raised:
+        rerun_lidar.merge_into(recording, lidar)
+    assert isinstance(raised.value, rerun_lidar.RerunCliTimeoutError)
+    message = str(raised.value)
+    assert "rrd merge" in message
+    assert "timed out after 0.5 s: merging" in message
+    assert recording.read_bytes() == b"RUN"
+    assert lidar.read_bytes() == b"+LIDAR"
+
+
+def test_the_cli_calls_are_capped() -> None:
+    from autoware_carla_scenario import rerun_lidar
+
+    assert rerun_lidar.CLI_TIMEOUT_S == 600.0
+
+
 def test_a_camera_frame_is_drawn_in_its_frustum_on_the_ego(tmp_path: Path) -> None:
     from autoware_carla_scenario.rerun_lidar import CameraMount, SensorRecorder
 

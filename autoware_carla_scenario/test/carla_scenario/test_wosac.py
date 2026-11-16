@@ -599,7 +599,9 @@ def test_the_submission_carries_its_metadata(tmp_path: Path) -> None:
 
 def test_the_submission_is_written_in_shards(tmp_path: Path) -> None:
     scenarios = merge_rollouts([_rollout(tmp_path, f"r{n}", f"S{n}") for n in range(5)])
-    submission = build_submission(scenarios, {"unique_method_name": "m"})
+    submission = build_submission(
+        scenarios, {"unique_method_name": "m", "authors": ["A", "B"]}
+    )
     out = tmp_path / "submission"
     paths = write_submission(submission, out, shards=2, tar=True)
 
@@ -610,7 +612,12 @@ def test_the_submission_is_written_in_shards(tmp_path: Path) -> None:
     ]
     assert [len(s.scenario_rollouts) for s in shards] == [2, 3]
     assert all(s.unique_method_name == "m" for s in shards)
-    assert read_submission(paths[:2]) == submission
+    # Every shard holds the metadata; its repeated fields are read back
+    # once, not once per shard (#2182).
+    assert all(list(s.authors) == ["A", "B"] for s in shards)
+    read = read_submission(paths[:2])
+    assert list(read.authors) == ["A", "B"]
+    assert read == submission
     with tarfile.open(paths[2]) as archive:
         assert archive.getnames() == [shard_name(0, 2), shard_name(1, 2)]
 

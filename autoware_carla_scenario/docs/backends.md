@@ -140,7 +140,10 @@ pulled or container started. A key that is absent or null takes its default.
 The settings every container backend shares:
 
 - `image` is a non-empty image name, and `gpus` `auto`, `all`, `none` or what
-  `docker run --gpus` takes (`device=N`, a count);
+  `docker run --gpus` takes (`device=N`, a count). `auto` is the GPU the
+  preparer placed the backend on, and it places one only when it asks for GPU
+  memory: with `gpu_memory_mb: 0` there is no placement, and `auto` passes
+  `--gpus all`, every GPU, as `all` does (`none` gives it none);
 - `pull` is `missing`, `always` or `never`;
 - `startup_timeout_s` (and ARDY's `timeout_s`) is a finite number of seconds
   above 0;

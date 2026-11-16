@@ -166,6 +166,24 @@ class TestBackendPool:
         assert _Fake.built[0].started == (tmp_path, None)
         assert pool.backend("fake") is _Fake.built[0]
 
+    def test_null_settings_are_the_defaults(self) -> None:
+        @need_prepare(_Fake)
+        class Scenario:
+            pass
+
+        pool = BackendPool({"fake": None}, check_resources=False)  # type: ignore[dict-item]
+        pool.prepare_scenarios([Scenario()])
+        assert _Fake.built[0].settings == {}
+        pool.close()
+
+    @pytest.mark.parametrize("value", [False, 0, "", "abc", 5, [("x", 1)]])
+    def test_settings_that_are_not_a_mapping_are_refused(self, value: object) -> None:
+        # Not read as "all defaults" (false, 0, '') nor refused by dict()
+        # without naming the key ('abc', 5) (#2182).
+        with pytest.raises(ValueError) as error:
+            BackendPool({"fake": value}, check_resources=False)  # type: ignore[dict-item]
+        assert str(error.value) == f"backends.fake must be a mapping, got {value!r}"
+
     def test_close_stops_every_backend(self) -> None:
         @need_prepare(_Fake, _Other)
         class Scenario:

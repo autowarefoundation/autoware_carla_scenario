@@ -32,14 +32,31 @@ __all__ = ["BackendPool", "running_backend"]
 _B = TypeVar("_B")
 
 
+def _backend_settings(name: str, value: object) -> dict[str, Any]:
+    """The settings ``backends.<name>`` holds: null is all defaults, a
+    mapping its own; anything else (``false``, ``0``, ``''``, a string, a
+    number) is refused rather than read as defaults."""
+    if value is None:
+        return {}
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise ValueError(f"backends.{name} must be a mapping, got {value!r}")
+
+
 class BackendPool:
     """Starts the backends a queue's scenarios need, and stops them.
 
     Args:
         settings: Each backend's settings, by backend name (``backends`` of
-            the run's config); a backend with none takes its defaults.
+            the run's config); a backend with none (absent or null) takes its
+            defaults.
         check_resources: Refuse a host without room for the backends before
             starting them (off only for tests).
+
+    Raises:
+        ValueError: If a backend's settings are neither null nor a mapping
+            (``backends.<name>: false``, ``0``, ``''``, a string, a number),
+            naming the key and the value.
     """
 
     _settings: dict[str, Mapping[str, Any]]
@@ -53,7 +70,9 @@ class BackendPool:
         *,
         check_resources: bool = True,
     ) -> None:
-        self._settings = {str(k): dict(v or {}) for k, v in (settings or {}).items()}
+        self._settings = {
+            str(k): _backend_settings(str(k), v) for k, v in (settings or {}).items()
+        }
         self._check_resources = check_resources
         self._running = {}
         self._lock = threading.Lock()

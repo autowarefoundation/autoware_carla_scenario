@@ -12,6 +12,7 @@ from __future__ import annotations
 import importlib
 from typing import Any, Callable, ClassVar, Iterable, Mapping, Protocol, TypeVar
 
+from ..utils.card_target import target_module
 from . import Backend
 
 __all__ = [
@@ -107,9 +108,7 @@ def scenario_backends(scenario: object) -> tuple[type, ...]:
 def _resolve(target: str) -> type:
     """The class an editor card's ``"..module:Name"`` target names."""
     relative, name = target.split(":", 1)
-    module = importlib.import_module(
-        "autoware_carla_scenario" + relative[1:].replace("..", ".")
-    )
+    module = importlib.import_module(target_module(relative))
     resolved = getattr(module, name)
     if not isinstance(resolved, type):
         raise TypeError(f"{target!r} is not a class")

@@ -1087,9 +1087,10 @@ uv run scenario scenario=cut_in/left driver=... rerun.enabled=true \
 ```
 
 Points are most of a recording: about 0.8 MB a sweep at the default 65,536;
-a camera frame is its JPEG (`driver.image_quality`). A merge that fails keeps
-`{ScenarioName}.sensors.rrd` beside the recording (logged; not a failed
-conversion); converting the run again (below) merges it. The two cannot be
+a camera frame is its JPEG (`driver.image_quality`). A merge that fails, or
+takes longer than 10 minutes, keeps `{ScenarioName}.sensors.rrd` beside the
+recording (logged with the `rerun` command and what it wrote on stderr; not a
+failed conversion); converting the run again (below) merges it. The two cannot be
 opened together instead: the viewer registers a file by its recording id, and
 the second replaces the first.
 

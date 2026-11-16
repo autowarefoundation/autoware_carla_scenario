@@ -266,16 +266,24 @@ def _rules_for(type_id: str, role: str) -> Optional[Rules]:
 
 
 def vehicle_range(
-    quantity: str, inputs: dict[str, float], type_id: str, role: str
+    quantity: str,
+    inputs: Mapping[str, Any],
+    type_id: str,
+    role: str,
+    labels: Optional[Mapping[str, str]] = None,
 ) -> tuple[float, float]:
-    """The ``(low, high)`` range of *quantity* in the weather *inputs* for the
-    vehicle of blueprint *type_id* and ``role_name`` *role* (``""``: none):
-    the rules of the first ``vehicles`` entry it matches, else
-    :func:`weather_range`'s."""
+    """The ``(low, high)`` range of *quantity* in the weather *inputs* (and
+    *labels*, as :func:`weather_at` reads them) for the vehicle of blueprint
+    *type_id* and ``role_name`` *role* (``""``: none): by the rules of the
+    first ``vehicles`` entry it matches, else :func:`weather_range`'s.  The
+    range :func:`vehicle_at` draws from."""
+    values = _with_labels(inputs, labels)
     rules = _rules_for(type_id, role)
     if rules is None:
-        return weather_range(quantity, inputs)
-    return rules.range(quantity, rule_values(inputs))
+        return weather_range(quantity, values)
+    # The backend's reading, as vehicle_at's: weather_inputs.rule_values
+    # takes numbers alone, and a rule file may read the time of day's label.
+    return rules.range(quantity, _backend().rule_values(values))
 
 
 def vehicle_at(

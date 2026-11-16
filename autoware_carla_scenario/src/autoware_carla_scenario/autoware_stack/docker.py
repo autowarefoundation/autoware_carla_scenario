@@ -41,7 +41,6 @@ import hashlib
 import logging
 import os
 import shlex
-import socket
 import subprocess
 import sys
 from dataclasses import dataclass, field, replace
@@ -49,6 +48,12 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
 from ..constants import MAX_ROS_DOMAIN_ID
+
+# The ``<host>:<pid>`` value of OWNER_LABEL, and whether the process it names
+# runs, are the checked utils.owner_label's, which the preparer's backend
+# containers carry too (#2182).
+from ..utils.owner_label import owner_alive as _owner_alive
+from ..utils.owner_label import owner_value as _owner_value
 from .bridge_node import (
     BRIDGE_APT_PACKAGES,
     bridge_command,
@@ -161,33 +166,6 @@ def _shapes_the_cli(key: str) -> bool:
 def _label_value() -> str:
     """The value of :data:`STACK_LABEL` on this user's containers."""
     return f"uid-{os.getuid()}"
-
-
-def _owner_value() -> str:
-    """The value of :data:`OWNER_LABEL` on this process's containers."""
-    return f"{socket.gethostname()}:{os.getpid()}"
-
-
-def _process_alive(pid: int) -> bool:
-    """Whether process *pid* exists on this host."""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # someone else's, but alive
-    return True
-
-
-def _owner_alive(owner: str) -> Optional[bool]:
-    """Whether the process an :data:`OWNER_LABEL` value names still runs;
-    None when that cannot be told (no label, a malformed one, another host's)."""
-    host, _, pid = owner.rpartition(":")
-    if not host or not pid.isdigit():
-        return None
-    if host != socket.gethostname():
-        return None
-    return _process_alive(int(pid))
 
 
 @dataclass(frozen=True)
