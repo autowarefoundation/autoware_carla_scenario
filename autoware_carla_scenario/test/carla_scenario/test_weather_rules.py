@@ -733,6 +733,24 @@ def test_a_vehicles_rules_read_causes_and_labels(tmp_path) -> None:
     assert vehicle_at(
         "tire_friction", numbers, 0.5, "vehicle.tesla.model3", "", labels
     ) == pytest.approx(1.0)
+    # vehicle_range reads them as vehicle_at does (#2182): the range the
+    # median above is drawn from.
+    assert vehicle_range(
+        "tire_friction", numbers, "vehicle.lincoln.mkz", "Ego", labels
+    ) == pytest.approx((0.3, 0.4))
+    assert vehicle_range(
+        "tire_friction", numbers, "vehicle.mini.cooper", "", labels
+    ) == pytest.approx((0.5, 0.6))
+    # The time of day among the inputs, as weather_range takes it, reads alike.
+    assert vehicle_range(
+        "tire_friction",
+        {**numbers, "time_of_day": "night"},
+        "vehicle.mini.cooper",
+        "",
+    ) == pytest.approx((0.5, 0.6))
+    assert vehicle_range(
+        "tire_friction", numbers, "vehicle.tesla.model3", "", labels
+    ) == pytest.approx((0.9, 1.1))
 
 
 def test_the_run_config_names_the_rules_and_a_run_without_resets_them(

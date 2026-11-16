@@ -3302,7 +3302,10 @@ def _check_backend_settings(cfg: DictConfig) -> None:
     it (``startup_timeout_s: -1``, ``pull: sometimes``, ``docker_args`` as a
     string, ...): its ``from_settings`` only reads them -- it pulls no image
     and starts no container.  A backend of another package is built, and its
-    settings checked, by the preparer.
+    settings checked, by the preparer; only a block of its that is neither
+    null nor a mapping (``backends.<name>: false``) is refused here, as the
+    preparer's ``BackendPool`` would refuse it once the queue was built
+    (#2182).
 
     Raises:
         ValueError: naming the key (``backends.<name>.<key>``).
@@ -3312,6 +3315,9 @@ def _check_backend_settings(cfg: DictConfig) -> None:
         return
     if not isinstance(backends_cfg, DictConfig):
         raise ValueError(f"backends must be a mapping, got {backends_cfg!r}")
+    for key, block in backends_cfg.items():
+        if block is not None and not isinstance(block, DictConfig):
+            raise ValueError(f"backends.{key!s} must be a mapping, got {block!r}")
     from autoware_carla_scenario.pedestrian.ardy import ArdyBackend  # noqa: PLC0415
 
     for backend in (ArdyBackend,):

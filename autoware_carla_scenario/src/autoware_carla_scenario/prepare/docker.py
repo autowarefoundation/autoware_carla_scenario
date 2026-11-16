@@ -22,6 +22,12 @@ from pathlib import Path
 from typing import IO, Any, ClassVar, Mapping, Optional
 
 from ..seed import check_whole_number
+
+# The ``<host>:<pid>`` owner label, and whether the process it names runs,
+# are the checked utils.owner_label's, which the Autoware stack's containers
+# carry too (#2182).
+from ..utils.owner_label import owner_alive
+from ..utils.owner_label import owner_value as _owner
 from ..value_text import shown
 from . import BackendError, Resources
 
@@ -63,6 +69,11 @@ class DockerSettings:
         container_port: The port the service listens on inside.
         gpus: ``"auto"`` (the GPU the preparer placed it on), ``"all"``,
             ``"none"``, or what ``docker run --gpus`` takes (``device=1``).
+            The preparer places on a GPU only a backend that asks for GPU
+            memory (``resources.gpu_memory_mb`` above 0, and the host
+            checked): ``"auto"`` with none (``gpu_memory_mb: 0``) passes
+            ``--gpus all``, every GPU, as ``"all"`` does; ``"none"`` passes
+            none.
         env: Environment variables set in the container.
         pass_env: Variables passed on from this process when it has them
             (a token, a proxy).
@@ -444,15 +455,10 @@ class DockerBackend:
             ],
             "list backend containers",
         )
-        host = socket.gethostname()
         for line in listing.splitlines():
             container, _, owner = line.partition(" ")
-            owner_host, _, pid = owner.rpartition(":")
-            if (
-                owner_host != host
-                or not (pid.isascii() and pid.isdigit())
-                or _alive(int(pid))
-            ):
+            # Another host's, a malformed label's (None) or a live run's.
+            if owner_alive(owner) is not False:
                 continue
             logger.warning(
                 "Removing backend container %s a stopped run (%s) left",
@@ -655,17 +661,3 @@ def _free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
         probe.bind(("127.0.0.1", 0))
         return int(probe.getsockname()[1])
-
-
-def _owner() -> str:
-    return f"{socket.gethostname()}:{os.getpid()}"
-
-
-def _alive(pid: int) -> bool:
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True
-    return True

@@ -74,6 +74,8 @@ __all__ = [
     "CameraMount",
     "LidarRecorder",
     "LidarRerunUnavailableError",
+    "RerunCliError",
+    "RerunCliTimeoutError",
     "SENSOR_ENTITIES",
     "active_recorder",
     "carries_sensors",
@@ -92,6 +94,11 @@ APPLICATION_ID = "autoware_carla_scenario"
 LIDAR_SUFFIX = SENSORS_SUFFIX
 #: How to install what this module needs.
 INSTALL_HINT = "pip install 'autoware-carla-scenario[rerun-lidar]'"
+#: How long one call of the Rerun SDK's CLI may take: merging or filtering a
+#: long run's recording reads and writes all of it, so this is generous; a
+#: hung call must not block the converter's one worker, and with it
+#: ``RerunConverter.close()``, forever (#2182).
+CLI_TIMEOUT_S = 600.0
 _lock = threading.Lock()
 _active: Optional["SensorRecorder"] = None
 
@@ -118,6 +125,55 @@ def require_sdk() -> Any:
     return rerun
 
 
+def _describe(cmd: Any, what: str, stderr: Any) -> str:
+    """``rerun ...`` *what*, and what it wrote on stderr (decoded)."""
+    argv = cmd if isinstance(cmd, (list, tuple)) else [cmd]
+    message = f"`{' '.join(str(arg) for arg in argv)}` {what}"
+    if isinstance(stderr, bytes):
+        stderr = stderr.decode("utf-8", errors="replace")
+    stderr = (stderr or "").strip()
+    return f"{message}: {stderr}" if stderr else f"{message} (no stderr)"
+
+
+class RerunCliError(subprocess.CalledProcessError):
+    """A call of the Rerun SDK's CLI failed: a ``CalledProcessError`` whose
+    message names the command and holds what it wrote on stderr."""
+
+    def __str__(self) -> str:
+        return _describe(self.cmd, f"exited with status {self.returncode}", self.stderr)
+
+
+class RerunCliTimeoutError(subprocess.TimeoutExpired):
+    """A call of the Rerun SDK's CLI took longer than :data:`CLI_TIMEOUT_S`
+    and was killed: a ``TimeoutExpired`` whose message names the command and
+    holds what it wrote on stderr."""
+
+    def __str__(self) -> str:
+        return _describe(self.cmd, f"timed out after {self.timeout:g} s", self.stderr)
+
+
+def _run_cli(argv: list[str], **kwargs: Any) -> "subprocess.CompletedProcess[Any]":
+    """Run the Rerun SDK's CLI with *argv*, its output captured, for at most
+    :data:`CLI_TIMEOUT_S` (read here, so that it stays patchable).
+
+    Raises:
+        RerunCliError: It exited non-zero.
+        RerunCliTimeoutError: It took too long (and was killed).
+    """
+    try:
+        return subprocess.run(
+            argv, check=True, capture_output=True, timeout=CLI_TIMEOUT_S, **kwargs
+        )
+    except subprocess.CalledProcessError as error:
+        raise RerunCliError(
+            error.returncode, error.cmd, error.output, error.stderr
+        ) from None
+    except subprocess.TimeoutExpired as error:
+        raise RerunCliTimeoutError(
+            error.cmd, error.timeout, error.output, error.stderr
+        ) from None
+
+
 def _cli() -> Path:
     """The Rerun SDK's CLI (``rerun``), or :class:`LidarRerunUnavailableError`."""
     spec = importlib.util.find_spec("rerun_cli")
@@ -134,16 +190,17 @@ def merge_into(recording: Path, lidar: Path) -> Path:
 
     Raises:
         LidarRerunUnavailableError: The SDK's CLI is not installed.
-        subprocess.CalledProcessError: The merge failed; both files are kept.
+        RerunCliError: The merge failed (a ``CalledProcessError``, its
+            message the command and its stderr); both files are kept.
+        RerunCliTimeoutError: The merge took longer than
+            :data:`CLI_TIMEOUT_S` (a ``TimeoutExpired``); both files are kept.
     """
     cli = _cli()
     recording, lidar = Path(recording), Path(lidar)
     merged = recording.with_name(f".{recording.name}.merging")
     try:
-        subprocess.run(
-            [str(cli), "rrd", "merge", str(recording), str(lidar), "-o", str(merged)],
-            check=True,
-            capture_output=True,
+        _run_cli(
+            [str(cli), "rrd", "merge", str(recording), str(lidar), "-o", str(merged)]
         )
         os.replace(merged, recording)
     finally:
@@ -162,17 +219,19 @@ def extract_sensors(recording: Path, sensors: Path) -> bool:
 
     Raises:
         LidarRerunUnavailableError: The SDK's CLI is not installed.
-        subprocess.CalledProcessError: Reading or writing a recording failed;
+        RerunCliError: Reading or writing a recording failed (a
+            ``CalledProcessError``, its message the command and its stderr);
             *sensors* is not written.
+        RerunCliTimeoutError: Reading or writing it took longer than
+            :data:`CLI_TIMEOUT_S` (a ``TimeoutExpired``); *sensors* is not
+            written.
         RuntimeError: ``rerun rrd print`` lists the chunks in a form this
             does not read (or lists none); *sensors* is not written.
     """
     cli = _cli()
     recording, sensors = Path(recording), Path(sensors)
-    printed = subprocess.run(
+    printed = _run_cli(
         [str(cli), "rrd", "print", str(recording)],
-        check=True,
-        capture_output=True,
         encoding="utf-8",
         errors="replace",
     ).stdout
@@ -191,7 +250,7 @@ def extract_sensors(recording: Path, sensors: Path) -> bool:
     dropped = sorted(entity for entity in entities if not _is_sensor_entity(entity))
     partial = sensors.with_name(f".{sensors.name}.extracting")
     try:
-        subprocess.run(
+        _run_cli(
             [
                 str(cli),
                 "rrd",
@@ -200,9 +259,7 @@ def extract_sensors(recording: Path, sensors: Path) -> bool:
                 str(recording),
                 "-o",
                 str(partial),
-            ],
-            check=True,
-            capture_output=True,
+            ]
         )
         os.replace(partial, sensors)
     finally:

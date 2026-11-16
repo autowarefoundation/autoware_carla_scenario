@@ -37,6 +37,7 @@ from typing import Any, Optional
 
 from ..conditions.base import BaseCondition
 from ..templating import code_environment
+from ..utils.card_target import target_module
 from .registry import (
     BuiltPart,
     ActionSpec,
@@ -135,7 +136,7 @@ def _resolve_target(target: str) -> tuple[Any, str, str]:
         raise GenerationError(
             f"target {target!r} must be written '<relative module>:<class name>'"
         ) from exc
-    absolute = "autoware_carla_scenario" + relative[1:].replace("..", ".")
+    absolute = target_module(relative)
     try:
         module = importlib.import_module(absolute)
         return getattr(module, name), relative, name
