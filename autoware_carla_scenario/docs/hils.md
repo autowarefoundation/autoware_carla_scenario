@@ -123,7 +123,7 @@ configuration: it derives the variables of
 [hilspy](https://github.com/hakuturu583/hilspy)'s ansible playbooks (shipped in
 the hilspy wheel, `hilspy/ansible/`, from hilspy 0.17) from the `devices`, and
 runs them on this PC through
-[ansible-runner](https://ansible.readthedocs.io/projects/runner/). They need a
+[ansible-runner](https://docs.ansible.com/projects/runner/en/latest/). They need a
 Debian or Ubuntu host and sudo (its password is asked for once, when needed),
 and are idempotent: run `--setup` again after editing the devices.
 
