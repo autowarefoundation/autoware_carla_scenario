@@ -18,6 +18,7 @@ from ...constants import (
     DEFAULT_TM_PORT,
     FIXED_DELTA_SECONDS,
 )
+from ..config import check_port
 from ..fidelity import MesoscopicConfig, _number
 from ..parameters import BICYCLE_PARAMETER_BACKENDS
 from .signal_states import sumo_step
@@ -28,6 +29,8 @@ __all__ = [
     "DEFAULT_BICYCLE_BLUEPRINTS",
     "PedestrianConfig",
     "SumoBackendConfig",
+    "check_text",
+    "resolve_cache_dir",
 ]
 
 _LIGHT_AUTHORITIES = ("carla", "sumo", "none")
@@ -99,6 +102,48 @@ def _check_not_negative(key: str, value: float) -> float:
     return number
 
 
+def check_text(key: str, value: Optional[str], optional: bool = False) -> None:
+    """Refuse a text option -- a path, a blueprint, an executable -- that is
+    not a non-empty string; null passes when *optional*, as the default.
+
+    A truthiness check read ``''``, ``false`` or ``0`` as the default, and
+    anything else that is no string failed later, naming no key: ``binary:
+    false`` once the network was built, ``blueprint: null`` in CARLA's
+    blueprint library (#2174).
+
+    Args:
+        key: The option's full name, for the error.
+        value: The value to check.
+        optional: Whether null is the option's default.
+
+    Raises:
+        ValueError: naming *key* and the value.
+    """
+    if value is None:
+        if optional:
+            return
+        raise ValueError(f"{key} must be non-empty text (got None)")
+    if not isinstance(value, str) or not value:
+        requirement = "non-empty text or null" if optional else "non-empty text"
+        raise ValueError(f"{key} must be {requirement} (got {value!r})")
+
+
+def resolve_cache_dir(cache_dir: Optional[str]) -> Path:
+    """The directory converted networks are cached in: *cache_dir*, a
+    backend's ``cache_dir`` option, or :func:`default_cache_dir` when null."""
+    if cache_dir is not None:
+        return Path(cache_dir).expanduser()
+    return default_cache_dir()
+
+
+def _demand_period(per_hour: float, period_s: Optional[float]) -> float:
+    """Seconds between two generated trips: *period_s*, or one hour over
+    *per_hour* (a rate of 0 is read as one trip in 1e6 hours)."""
+    if period_s is not None:
+        return float(period_s)
+    return 3600.0 / max(float(per_hour), 1e-6)
+
+
 def _check_demand(
     group: str, rate: str, per_hour: float, period_s: Optional[float], end_s: float
 ) -> tuple[float, Optional[float], float]:
@@ -159,9 +204,7 @@ class AmbientTrafficConfig:
 
     def period(self) -> float:
         """Seconds between two generated trips."""
-        if self.period_s is not None:
-            return float(self.period_s)
-        return 3600.0 / max(float(self.vehicles_per_hour), 1e-6)
+        return _demand_period(self.vehicles_per_hour, self.period_s)
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "AmbientTrafficConfig":
@@ -169,9 +212,10 @@ class AmbientTrafficConfig:
         # Imported here: utils.config reads a dataclass's fields from its class,
         # which Codon cannot express, and the library check compiles no import
         # in a function it does not call (typecheck/library.py, UNCALLED).
-        from ...utils.config import checked_options  # noqa: PLC0415
+        from ...utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        return cls(**checked_options(cls, mapping))
+        # A null setting that does not take null is its default (#2174).
+        return cls(**null_as_default(cls, checked_options(cls, mapping)))
 
 
 @dataclass
@@ -220,19 +264,19 @@ class PedestrianConfig:
         )
         self.radius_m = _check_positive_or_null("pedestrians.radius_m", self.radius_m)
         _check_count("pedestrians.max_persons", self.max_persons)
+        check_text("traffic.options.pedestrians.blueprint", self.blueprint)
 
     def period(self) -> float:
         """Seconds between two generated walks."""
-        if self.period_s is not None:
-            return float(self.period_s)
-        return 3600.0 / max(float(self.persons_per_hour), 1e-6)
+        return _demand_period(self.persons_per_hour, self.period_s)
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "PedestrianConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
-        from ...utils.config import checked_options  # noqa: PLC0415
+        from ...utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        return cls(**checked_options(cls, mapping))
+        # A null setting that does not take null is its default (#2174).
+        return cls(**null_as_default(cls, checked_options(cls, mapping)))
 
 
 def _default_bicycle_blueprints() -> list[str]:
@@ -321,14 +365,16 @@ class BicycleConfig:
 
     def period(self) -> float:
         """Seconds between two generated rides."""
-        if self.period_s is not None:
-            return float(self.period_s)
-        return 3600.0 / max(float(self.bicycles_per_hour), 1e-6)
+        return _demand_period(self.bicycles_per_hour, self.period_s)
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "BicycleConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
-        from ...utils.config import checked_options, checked_str_list  # noqa: PLC0415
+        from ...utils.config import (  # noqa: PLC0415
+            checked_options,
+            checked_str_list,
+            null_as_default,
+        )
 
         moved = sorted(set(mapping) & set(BICYCLE_PARAMETER_BACKENDS))
         if moved:
@@ -337,7 +383,10 @@ class BicycleConfig:
                 "is traffic.bicycles now, with the vehicle and pedestrian "
                 "parameters every backend shares (BicycleParameters)"
             )
-        checked = checked_options(cls, mapping)
+        # A null setting that does not take null is its default (#2174):
+        # a null `blueprints` is the default list, not none at all -- an
+        # explicit `[]` is how bicycles are kept out of CARLA.
+        checked = null_as_default(cls, checked_options(cls, mapping))
         if "blueprints" in checked:
             # A string is refused, not split into characters (#1534).
             checked["blueprints"] = checked_str_list(
@@ -548,14 +597,35 @@ class SumoBackendConfig:
                 "vehicle_control must be one of "
                 f"{', '.join(_VEHICLE_CONTROLS)} (got {self.vehicle_control!r})"
             )
-        if (
-            isinstance(self.tm_port, bool)
-            or not isinstance(self.tm_port, int)
-            or not 1 <= self.tm_port <= 65535
-        ):
+        check_port("tm_port", self.tm_port)
+        # A section handed to the constructor directly is not read by
+        # from_mapping: a null or a mapping there would fail later, in
+        # describe() or prepare(), naming no key (#2174).
+        if not isinstance(self.ambient, AmbientTrafficConfig):
             raise ValueError(
-                f"tm_port must be an integer within 1-65535 (got {self.tm_port!r})"
+                "traffic.options.ambient must be an AmbientTrafficConfig "
+                f"(got {self.ambient!r})"
             )
+        if not isinstance(self.pedestrians, PedestrianConfig):
+            raise ValueError(
+                "traffic.options.pedestrians must be a PedestrianConfig "
+                f"(got {self.pedestrians!r})"
+            )
+        if not isinstance(self.bicycles, BicycleConfig):
+            raise ValueError(
+                "traffic.options.bicycles must be a BicycleConfig "
+                f"(got {self.bicycles!r})"
+            )
+        if not isinstance(self.mesoscopic, MesoscopicConfig):
+            raise ValueError(
+                "traffic.options.mesoscopic must be a MesoscopicConfig "
+                f"(got {self.mesoscopic!r})"
+            )
+        check_text("traffic.options.net_path", self.net_path, optional=True)
+        check_text("traffic.options.route_path", self.route_path, optional=True)
+        check_text("traffic.options.blueprint", self.blueprint)
+        check_text("traffic.options.binary", self.binary)
+        check_text("traffic.options.cache_dir", self.cache_dir, optional=True)
         self.feedback_distance_m = _check_not_negative(
             "feedback_distance_m", self.feedback_distance_m
         )
@@ -607,8 +677,18 @@ class SumoBackendConfig:
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "SumoBackendConfig":
-        """Return a config built from a plain mapping (e.g. a Hydra node)."""
-        from ...utils.config import checked_options, checked_str_list  # noqa: PLC0415
+        """Return a config built from a plain mapping (e.g. a Hydra node).
+
+        ``ambient``, ``pedestrians``, ``bicycles`` and ``mesoscopic`` are
+        mappings; an absent or null one is the default, while ``false``,
+        ``0``, ``""`` or a list is refused, naming the key (#2174).
+        """
+        from ...utils.config import (  # noqa: PLC0415
+            checked_options,
+            checked_section,
+            checked_str_list,
+            null_as_default,
+        )
 
         if "follow_visibility" in mapping:
             raise ValueError(
@@ -616,31 +696,29 @@ class SumoBackendConfig:
                 "traffic.vehicles.follow_visibility, with the other vehicle "
                 "parameters every backend shares (VehicleParameters)"
             )
-        checked = checked_options(cls, mapping)
-        if isinstance(checked.get("ambient"), Mapping):
-            checked["ambient"] = AmbientTrafficConfig.from_mapping(checked["ambient"])
-        if isinstance(checked.get("pedestrians"), Mapping):
-            checked["pedestrians"] = PedestrianConfig.from_mapping(
-                checked["pedestrians"]
-            )
-        if isinstance(checked.get("bicycles"), Mapping):
-            checked["bicycles"] = BicycleConfig.from_mapping(checked["bicycles"])
-        if isinstance(checked.get("mesoscopic"), Mapping):
-            checked["mesoscopic"] = MesoscopicConfig.from_mapping(checked["mesoscopic"])
+        # A null setting that does not take null -- a section, `blueprint`,
+        # `binary`, `tm_port` (`${oc.select:...,null}`) -- is its default.
+        checked = null_as_default(cls, checked_options(cls, mapping))
+        sections: dict[str, Any] = {
+            "ambient": AmbientTrafficConfig.from_mapping,
+            "pedestrians": PedestrianConfig.from_mapping,
+            "bicycles": BicycleConfig.from_mapping,
+            "mesoscopic": MesoscopicConfig.from_mapping,
+        }
+        for key, build in sections.items():
+            section = checked_section(f"traffic.options.{key}", checked.get(key))
+            if section is not None:
+                checked[key] = build(section)
         if "sumo_args" in checked:
             # A string is refused, not split into characters (#1534).
             checked["sumo_args"] = checked_str_list(
                 "traffic.options.sumo_args", checked["sumo_args"]
             )
-        if checked.get("tm_port") is None:
-            checked.pop("tm_port", None)  # `${oc.select:...,null}`: the default
         return cls(**checked)
 
     def resolved_cache_dir(self) -> Path:
         """The directory converted networks are cached in."""
-        if self.cache_dir:
-            return Path(self.cache_dir).expanduser()
-        return default_cache_dir()
+        return resolve_cache_dir(self.cache_dir)
 
 
 def default_cache_dir() -> Path:

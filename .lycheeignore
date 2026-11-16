@@ -39,6 +39,11 @@ file://.*
 # Placeholders in docstrings that describe URL shapes, not links.
 ^https?://(user@)?host/owner/repo
 ^https://huggingface\.co/datasets/OWNER/NAME
+# maps.cache._repository_key's docstring: two spellings of one placeholder
+# repository, with and without a user name.
+^https://(user@)?huggingface\.co/datasets/o/n(\.git)?/?$
+# maps.source's docstring: the shape of a URL that carries credentials.
+^https?://oauth2:TOKEN@host/
 # Placeholders in the tests: repositories and files that exist nowhere.
 ^https://github\.com/owner/repo$
 ^https://github\.com/(OWNER/NAME|o/n|o/r)(/|$)

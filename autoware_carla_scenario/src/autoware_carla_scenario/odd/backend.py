@@ -113,6 +113,16 @@ class _BuiltInProbes(Mapping[str, tuple[Callable[[Any], Any], str]]):
 #: Built-in probe name -> (probe, the unit it returns).
 BUILT_IN_PROBES: Mapping[str, tuple[Callable[[Any], Any], str]] = _BuiltInProbes()
 
+#: The value a weather intensity knob draws for each of
+#: :func:`~.probes.intensity_level`'s levels, so a drawn value reads back as
+#: its bucket.
+_INTENSITY_VALUES: dict[str, Any] = {
+    "none": 0,
+    "light": [1, 30],
+    "moderate": [30, 70],
+    "heavy": [70, 100],
+}
+
 #: Knobs for the built-in probes a run can set, through the ``environment``
 #: config (:class:`~autoware_carla_scenario.EnvironmentAction`).
 #:
@@ -135,17 +145,6 @@ BUILT_IN_PROBES: Mapping[str, tuple[Callable[[Any], Any], str]] = _BuiltInProbes
 #:   whatever the weather; the tire-friction knob names the grip outright,
 #:   whatever the water: the vehicles' wheel friction, which CARLA's physics
 #:   alone reads.
-#:
-#: The value a weather intensity knob draws for each of
-#: :func:`~.probes.intensity_level`'s levels, so a drawn value reads back as
-#: its bucket.
-_INTENSITY_VALUES: dict[str, Any] = {
-    "none": 0,
-    "light": [1, 30],
-    "moderate": [30, 70],
-    "heavy": [70, 100],
-}
-
 DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
     # The conditions, as the taxonomy names them (the default ODD's).
     probes.rainfall_rate_mm_h: OddKnob(

@@ -286,6 +286,47 @@ def test_a_worker_that_raises_ends_its_run(
     assert runner.start_run([["scenario=b"]]) is True
 
 
+def test_a_run_whose_multirun_dir_cannot_be_made_fails(
+    unstarted_threads: list[_UnstartedThread],
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    # The `done` says why, so the viewer shows a failure, not "Completed!"
+    # (#2183); no job is launched, and the next run may start.
+    def reserve(base: Path, now: datetime) -> str:
+        raise PermissionError(13, "Permission denied", str(base / "multirun"))
+
+    def launch(cmd: list[str], cwd: str | None) -> None:
+        raise AssertionError("no job runs")
+
+    monkeypatch.setattr(runner, "_reserve_multirun_dir", reserve)
+    monkeypatch.setattr(runner, "_launch", launch)
+    assert runner.start_run([["scenario=a"], ["scenario=b"]], tmp_path, None, True)
+    with caplog.at_level("ERROR", logger=runner.__name__):
+        unstarted_threads[0].run()
+    running, progress = runner.get_status()
+    assert not running
+    assert progress is not None
+    assert (progress.current, progress.total, progress.status) == (0, 2, "done")
+    assert progress.message.startswith("The run failed: could not create")
+    assert "Permission denied" in progress.message
+    assert any("multirun directory" in r.getMessage() for r in caplog.records)
+    assert runner.start_run([["scenario=b"]]) is True
+
+
+def test_a_completed_run_has_no_message(
+    unstarted_threads: list[_UnstartedThread],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(runner, "_launch", lambda cmd, cwd: None)
+    assert runner.start_run([["scenario=a"]]) is True
+    unstarted_threads[0].run()
+    progress = runner.get_progress()
+    assert progress is not None and progress.status == "done"
+    assert progress.message == ""
+
+
 # ── Output that is not UTF-8 (#1073) ───────────────────────────────────────
 
 

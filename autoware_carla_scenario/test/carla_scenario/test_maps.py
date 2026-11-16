@@ -1184,6 +1184,23 @@ class TestProvisionedMaps:
         cached = cached_map(_uri(origin_repo), cache=cache)
         assert cached is not None and cached.provisioned
 
+    def test_an_unpulled_lfs_pointer_is_reported(
+        self, origin_repo: Path, cache: GitMapCache
+    ) -> None:
+        """Unpacked without ``git lfs pull``: refused as resolve_directory
+        refuses it, not handed to Lanelet2 as a broken map (#2165)."""
+        directory = self._provision(cache, "autoware_maps/TownA", origin_repo)
+        (directory / "lanelet2_map.osm").write_text(
+            "version https://git-lfs.github.com/spec/v1\noid sha256:0000\nsize 1\n"
+        )
+        with pytest.raises(MapResolutionError) as refused:
+            resolve_map(_uri(origin_repo), cache=cache)
+        assert str(refused.value) == (
+            f"{directory / 'lanelet2_map.osm'} is a git-lfs pointer, not a map. "
+            "Run `git lfs pull` in the repository it was copied from."
+        )
+        assert cached_map(_uri(origin_repo), cache=cache) is None
+
     def test_another_repository_never_resolves_to_it(
         self, origin_repo: Path, tmp_path: Path, cache: GitMapCache
     ) -> None:
@@ -1670,6 +1687,69 @@ class TestResolveMapPaths:
         with pytest.raises(ValueError, match=r"^map\.overwrite_xodr must be true or"):
             run.check_batch_map([case("ture"), case(False)])
 
+    @pytest.mark.parametrize(
+        "key",
+        ["directory", "source", "lanelet2_path", "xodr_path", "name", "projector_type"],
+    )
+    @pytest.mark.parametrize(
+        ("value", "shown"),
+        [(False, "False"), (True, "True"), ([], "[]"), ({"a": 1}, "{'a': 1}")],
+    )
+    def test_a_path_setting_refuses_a_bool_or_what_is_not_text(
+        self, key: str, value: Any, shown: str
+    ) -> None:
+        """``map.xodr_path=false`` is not a file named ``False``, nor
+        ``map.source=false`` a repository: refused naming the key (#2165)."""
+        with pytest.raises(ValueError) as refused:
+            resolve_map_paths({key: value})
+        assert str(refused.value) == f"map.{key} must be text, got {shown}"
+
+    def test_a_path_setting_reads_a_number_as_text_and_a_blank_as_unset(
+        self,
+    ) -> None:
+        paths = resolve_map_paths(
+            {"name": 2024, "lanelet2_path": " ", "xodr_path": "", "source": None}
+        )
+        assert paths.name == "2024"
+        assert paths.lanelet2_path is None
+        assert paths.xodr_path is None
+        assert paths.resolved is None
+
+    def test_the_editors_map_ref_still_resolves(self) -> None:
+        """The editor's MapRef holds the settings as Optional[str] fields,
+        cleared to ``""`` (#2165)."""
+        from autoware_carla_scenario.authoring.models import MapRef
+
+        paths = resolve_map_paths(
+            MapRef(name="TownA", lanelet2_path="a.osm", xodr_path="", source="")
+        )
+        assert paths.name == "TownA"
+        assert paths.lanelet2_path == Path("a.osm")
+        assert paths.xodr_path is None
+
+    def test_the_batch_check_refuses_a_bool_path_alike(self) -> None:
+        from omegaconf import OmegaConf
+
+        from autoware_carla_scenario.examples import run
+
+        def case(value: Any) -> Any:
+            return OmegaConf.create({"map": {"name": "A", "xodr_path": value}})
+
+        run.check_batch_map([case(None), case("")])
+        with pytest.raises(
+            ValueError, match=r"^map\.xodr_path must be text, got False"
+        ):
+            run.check_batch_map([case(False), case(None)])
+
+    def test_a_sweep_says_who_refuses_a_bool_path(self) -> None:
+        """load_sweep_map puts its prefix before a refused setting, as before
+        a map it cannot resolve (#2165)."""
+        from autoware_carla_scenario.sweeper.expand import load_sweep_map
+
+        with pytest.raises(ValueError) as refused:
+            load_sweep_map({"name": "A", "xodr_path": False}, prefix="sweep: ")
+        assert str(refused.value) == "sweep: map.xodr_path must be text, got False"
+
 
 def _map_repo(path: Path) -> Path:
     """A repository holding one map at ``map/``, as many single-map repos do."""
@@ -1925,7 +2005,6 @@ class TestResolveDirectory:
         assert paths.name == "TownL"
         assert paths.lanelet2_path == local_map / "lanelet2_map.osm"
         assert paths.resolved is not None and paths.resolved.local
-        assert not paths.from_source
         # No OpenDRIVE shipped, so a run writes one from the loaded world.
         assert paths.install_xodr is None
         assert paths.opendrive_path is not None

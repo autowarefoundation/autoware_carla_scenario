@@ -41,7 +41,6 @@ import hashlib
 import logging
 import os
 import shlex
-import socket
 import subprocess
 import sys
 from dataclasses import dataclass, field, replace
@@ -49,6 +48,12 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Any, Literal, Mapping, Optional, Sequence
 
 from ..constants import MAX_ROS_DOMAIN_ID
+
+# The ``<host>:<pid>`` value of OWNER_LABEL, and whether the process it names
+# runs, are the checked utils.owner_label's, which the preparer's backend
+# containers carry too (#2182).
+from ..utils.owner_label import owner_alive as _owner_alive
+from ..utils.owner_label import owner_value as _owner_value
 from .bridge_node import (
     BRIDGE_APT_PACKAGES,
     bridge_command,
@@ -163,33 +168,6 @@ def _label_value() -> str:
     return f"uid-{os.getuid()}"
 
 
-def _owner_value() -> str:
-    """The value of :data:`OWNER_LABEL` on this process's containers."""
-    return f"{socket.gethostname()}:{os.getpid()}"
-
-
-def _process_alive(pid: int) -> bool:
-    """Whether process *pid* exists on this host."""
-    try:
-        os.kill(pid, 0)
-    except ProcessLookupError:
-        return False
-    except PermissionError:
-        return True  # someone else's, but alive
-    return True
-
-
-def _owner_alive(owner: str) -> Optional[bool]:
-    """Whether the process an :data:`OWNER_LABEL` value names still runs;
-    None when that cannot be told (no label, a malformed one, another host's)."""
-    host, _, pid = owner.rpartition(":")
-    if not host or not pid.isdigit():
-        return None
-    if host != socket.gethostname():
-        return None
-    return _process_alive(int(pid))
-
-
 @dataclass(frozen=True)
 class DockerAutowareConfig:
     """How to build and start an Autoware workspace in its dev container.
@@ -247,7 +225,10 @@ class DockerAutowareConfig:
             ``docker_args`` is a ``str`` (or ``bytes``) rather than a sequence
             of arguments, ``launch`` is empty, ``stop_timeout_s`` is not
             positive and finite, a ``ros_domain_ids`` entry is a boolean or
-            outside 0 to 232, or ``rosdep`` is not a ``bool``.
+            outside 0 to 232, ``rosdep`` is not a ``bool``, ``devcontainer``,
+            ``docker`` or ``container_prefix`` is not non-empty text, or
+            ``image``, ``workspace_mount``, ``gpus`` or ``user`` is neither
+            ``None`` nor non-empty text.
     """
 
     workspace: Path
@@ -305,6 +286,28 @@ class DockerAutowareConfig:
         # strictly (config_flags.check_flag) before it gets here (#1761).
         if not isinstance(self.rosdep, bool):
             raise ValueError(f"rosdep must be true or false, got {self.rosdep!r}")
+        # A None or '' would only fail once the stack is prepared or started:
+        # a dev container path of None, a Docker CLI of None, containers
+        # named "None-..." (#2161).
+        for name, text in (
+            ("devcontainer", self.devcontainer),
+            ("docker", self.docker),
+            ("container_prefix", self.container_prefix),
+        ):
+            if not isinstance(text, str) or not text.strip():
+                raise ValueError(f"{name} must be non-empty text, got {text!r}")
+        for name, optional in (
+            ("image", self.image),
+            ("workspace_mount", self.workspace_mount),
+            ("gpus", self.gpus),
+            ("user", self.user),
+        ):
+            if optional is not None and (
+                not isinstance(optional, str) or not optional.strip()
+            ):
+                raise ValueError(
+                    f"{name} must be null or non-empty text, got {optional!r}"
+                )
 
 
 class DockerAutowareLauncher:

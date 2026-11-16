@@ -209,6 +209,12 @@ def _run(
     if resume_from is not None:
         # What `scenario --resume-from N` passes the sweeper.
         env["SWEEP_RESUME_FROM"] = str(resume_from)
+    if "hydra/sweeper=lanelet_constraint" in args and not any(
+        "server.cooldown_seconds" in arg for arg in args
+    ):
+        # The app's config has no server group: an absent cooldown is the
+        # default 2 s (#2161), which the sweeper would wait between cases.
+        args = (*args, "+server.cooldown_seconds=0")
     return subprocess.run(
         [
             sys.executable,

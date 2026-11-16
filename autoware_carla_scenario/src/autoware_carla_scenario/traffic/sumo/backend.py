@@ -4722,15 +4722,15 @@ class SumoTrafficBackend(TrafficBackend):
             carla.Rotation(yaw=pose.heading_deg),
         )
         from ...entity.pedestrian_entity import (  # noqa: PLC0415
-            _UE5_WALKER_MAX_SPEED_MS,
-            walker_speed_command,
+            walker_control_speed,
         )
 
         # The command CARLA 0.10 walks it at *speed* with, capped at what it
-        # can walk rather than warned about: it is sent every tick.
+        # can walk rather than warned about (it is sent every tick), and never
+        # negative (#2170).
         control = carla.WalkerControl(
             direction=carla.Vector3D(math.cos(yaw), math.sin(yaw), 0.0),
-            speed=walker_speed_command(min(speed, _UE5_WALKER_MAX_SPEED_MS)),
+            speed=walker_control_speed(speed),
         )
         if self._context is not None and self._context.client is not None:
             self._commands += [

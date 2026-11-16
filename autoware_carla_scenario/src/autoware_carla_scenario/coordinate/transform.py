@@ -1182,47 +1182,6 @@ def _find_lane_section_at_s(road: Road, s: float) -> Optional[LaneSection]:
     return active_section
 
 
-def _lane_center_t(road: Road, s: float, lane_id: int) -> float | None:
-    """Return the *t* offset that places a point at the centre of *lane_id*.
-
-    OpenDRIVE measures *t* from the road reference line.  For lane −1 the
-    centre is at ``t = −(width_of_lane_−1 / 2)``; for lane −2 it is
-    ``t = −(width_of_lane_−1 + width_of_lane_−2 / 2)``; and so on for the
-    left side (positive lane IDs, positive *t*).
-
-    Returns ``None`` when the requested lane cannot be found in the active
-    lane section.
-    """
-    if lane_id == 0:
-        return 0.0
-
-    active_section = _find_lane_section_at_s(road, s)
-    if active_section is None:
-        return None
-
-    section_s_start = float(active_section.lane_section_xml.attrib.get("s", "0.0"))
-    ds = s - section_s_start
-
-    lanes_by_id = {lane.id: lane for lane in active_section.lanes}
-
-    sign = 1.0 if lane_id > 0 else -1.0
-    target_abs = abs(lane_id)
-
-    total = 0.0
-    for abs_id in range(1, target_abs + 1):
-        current_id = abs_id if lane_id > 0 else -abs_id
-        lane = lanes_by_id.get(current_id)
-        if lane is None:
-            return None
-        width = _lane_width_at_ds(lane, ds)
-        if abs_id == target_abs:
-            total += width / 2.0
-        else:
-            total += width
-
-    return sign * total
-
-
 def _find_lane_at_t(road: Road, s: float, t: float) -> int:
     """Find the lane ID at lateral offset t for a given s on a road.
 

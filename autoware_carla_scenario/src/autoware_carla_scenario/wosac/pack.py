@@ -261,14 +261,22 @@ def check_runs(
 def read_submission(paths: Iterable[Path | str]) -> pb.SimAgentsChallengeSubmission:
     """The submission whose shards are at *paths*, as one message: its
     ``scenario_rollouts`` every shard's, its metadata the last shard's."""
+    # Every shard holds the whole metadata: merging the shards would append
+    # its repeated fields (``authors``) once per shard, so each shard is
+    # parsed alone and only its scenarios are kept from the ones before.
     submission = pb.SimAgentsChallengeSubmission()
+    rollouts: list[pb.ScenarioRollouts] = []
     for path in paths:
         try:
-            submission.MergeFromString(Path(path).read_bytes())
+            shard = pb.SimAgentsChallengeSubmission.FromString(Path(path).read_bytes())
         except DecodeError as error:
             raise ValueError(
                 f"{path}: not a SimAgentsChallengeSubmission ({error})"
             ) from None
+        rollouts.extend(shard.scenario_rollouts)
+        submission = shard
+    del submission.scenario_rollouts[:]
+    submission.scenario_rollouts.extend(rollouts)
     return submission
 
 

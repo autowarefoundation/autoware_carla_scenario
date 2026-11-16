@@ -138,7 +138,8 @@ class TrafficBackendFactory:
     pass
 
 
-def register_backend(name: str, factory, *_kw, tm_port_option: Optional[str] = None) -> None:
+def register_backend(name: str, factory, *_kw, tm_port_option: Optional[str] = None,
+                     takes_null_options: bool = False) -> None:
     pass
 
 

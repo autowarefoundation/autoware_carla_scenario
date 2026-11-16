@@ -791,14 +791,16 @@ class LaneletConstraintSweeper(Sweeper):
 
         # -- 7. Resolve cooldown and retry count ---
         # (job_timeout and resume_from: read and checked at step 1.)
-        cooldown: float = float(
-            OmegaConf.select(cfg, "server.cooldown_seconds", default=0.0)
-        )
         # Refused at step 0 already (check_run_config); read as the run
-        # reads it, for a caller that reaches here without it.
-        from ..examples.run import cooldown_max_retries  # noqa: PLC0415
+        # reads them, for a caller that reaches here without it (a null
+        # cooldown is the default 2 s, #2161).
+        from ..examples.run import (  # noqa: PLC0415
+            _cooldown_seconds,
+            cooldown_max_retries,
+        )
 
         try:
+            cooldown = _cooldown_seconds(cfg)
             max_retries = cooldown_max_retries(cfg)
         except ValueError as exc:
             raise ValueError(f"LaneletConstraintSweeper: {exc}.") from None

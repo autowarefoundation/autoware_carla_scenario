@@ -26,6 +26,7 @@ The hierarchy::
 from __future__ import annotations
 
 import logging
+import math
 from typing import TYPE_CHECKING, Any, List, Optional, Sequence
 
 if TYPE_CHECKING:
@@ -38,7 +39,7 @@ from .ego import EgoVehicle
 
 logger = logging.getLogger(__name__)
 
-__all__ = ["ExternallyDrivenEgo"]
+__all__ = ["ExternallyDrivenEgo", "tire_steering_angle"]
 
 
 class ExternallyDrivenEgo(EgoVehicle):
@@ -173,3 +174,15 @@ class ExternallyDrivenEgo(EgoVehicle):
             consequence,
             self.stack_name,
         )
+
+
+def tire_steering_angle(actor: "carla.Actor") -> float:
+    """The front tyres' angle, radians, positive to the left (Autoware's): what
+    an externally driven ego reports of *actor*'s steering."""
+    import typesafe_carla.carla as _carla  # noqa: PLC0415
+
+    wheels = _carla.VehicleWheelLocation
+    left = float(actor.get_wheel_steer_angle(wheels.FL_Wheel))
+    right = float(actor.get_wheel_steer_angle(wheels.FR_Wheel))
+    # CARLA reports degrees, positive to the right.
+    return -math.radians(0.5 * (left + right))

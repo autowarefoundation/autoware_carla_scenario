@@ -269,6 +269,13 @@ def test_checked_step_keeps_a_multiple_of_the_tick_as_a_float() -> None:
         checked_step(0.07)
 
 
+def test_checked_max_distance_shows_the_value_as_given() -> None:
+    """The string ``"100"`` is refused showing the quotes: printed bare, the
+    message read as though ``100`` itself were refused (#2165)."""
+    with pytest.raises(ValueError, match=r", not '100'$"):
+        checked_max_distance("100", "t4scene.max_distance_m", "null")  # type: ignore[arg-type]
+
+
 def test_checked_max_distance_keeps_a_positive_distance_and_none() -> None:
     assert checked_max_distance(None) is None
     assert checked_max_distance(5) == 5.0

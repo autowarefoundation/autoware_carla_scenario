@@ -267,7 +267,7 @@ before its first scenario starts.
 The values the launcher's type reads are checked there too, naming the key:
 
 - `stop_timeout_s` must be a finite number of seconds above 0 (an int or a
-  float; not a boolean, a string or null), as the bridge's timeouts must. A
+  float; not a boolean or a string), as the bridge's timeouts must. A
   NaN never times out, so a stack that ignores `SIGINT` would never be sent
   `SIGTERM` and the batch would hang; 0 or less would skip the grace the stack
   is given to shut down.
@@ -289,6 +289,18 @@ The values the launcher's type reads are checked there too, naming the key:
 - `env` and `mounts` must be mappings (or null) of strings or numbers, and
   `bridge_parameters` a mapping (or null) of ROS parameters. An `env` value is
   given as text or a number (`ROS_LOCALHOST_ONLY: 1`, not `true`).
+- `devcontainer`, `docker` and `container_prefix` must be non-empty text, and
+  `image`, `workspace_mount`, `gpus` and `user` null or non-empty text
+  (`gpus` may also be a GPU count, 1 or more, as `docker run --gpus 2` takes):
+  `false`, any other number or `''` is refused rather than handed to Docker as
+  `"False"` or used as a dev container path, a Docker CLI or a container name
+  of `None`.
+
+A setting that is null is its default, as one that is absent is: `type`,
+`workspace`, `devcontainer`, `build`, `rosdep`, `docker`, `stop_timeout_s` and
+`container_prefix` take the defaults in the table below. A null argument list
+or mapping is none, and a null `gpus` no GPU. All of this is checked before a
+container is started or the workspace is built.
 
 `+autoware.launcher.stop_timeout_s=nan`,
 `'autoware.launcher.ros_domain_ids=[-3,999]'` or
@@ -304,21 +316,23 @@ such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
 | Setting | Default | Meaning |
 | --- | --- | --- |
 | `workspace` | `~/autoware` | The `autowarefoundation/autoware` clone; `null` is the default, and anything but a non-empty path (`false`, `''`) is refused, naming `autoware.launcher.workspace` |
-| `devcontainer` | `universe-devel-cuda` | The `.devcontainer/` variant whose image and mount are used |
+| `devcontainer` | `universe-devel-cuda` | The `.devcontainer/` variant whose image and mount are used; `null` is the default |
 | `image` | `null` | An image to use instead of the dev container's |
 | `workspace_mount` | `null` | Where to mount the workspace instead of where the dev container does |
-| `build` | `auto` | `auto` / `always` / `never` |
-| `rosdep` | `true` | Also install the workspace's dependencies into the image the stack runs in. `true` or `false`, or one of their spellings as [the run's switches](usage.md#the-switches) take (`"false"`, `"off"`, `"no"`, `0` are false); anything else (`ture`, `2`) is refused, naming `autoware.launcher.rosdep` |
+| `build` | `auto` | `auto` / `always` / `never`; `null` is the default |
+| `rosdep` | `true` | Also install the workspace's dependencies into the image the stack runs in. `true` or `false`, or one of their spellings as [the run's switches](usage.md#the-switches) take (`"false"`, `"off"`, `"no"`, `0` are false); anything else (`ture`, `2`) is refused, naming `autoware.launcher.rosdep`; `null` is the default |
 | `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, `rpc_timeout_s`, `mission_poll_timeout_s`, ... `route_watch_period_s` and `mission_poll_timeout_s` must suit `autoware.liveness_timeout_s` ([above](#a-local-workspace-in-its-dev-container)) |
 | `colcon_args` | `[--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]` | Arguments to `colcon build` |
 | `launch` | (required) | `ros2 launch` package, file and `name:=value` arguments |
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |
 | `env` | `{}` | Variables set in the container, over the dev container's own. Passed to `docker run` by name (`--env KEY`), so a value (a token) does not show in `ps`; one the Docker CLI reads itself (`PATH`, `HOME`, `DOCKER_*`, `LD_*`, `PYTHON*`, `*_PROXY`, `SSL_*`, ...) stays `KEY=VALUE` on the command line |
 | `ros_domain_ids` | `[]` | `ROS_DOMAIN_ID` per scenario, cycling, each 0 to 232; empty keeps the dev container's |
-| `gpus` | `all` | Docker's `--gpus`; `null` for none |
+| `gpus` | `all` | Docker's `--gpus` (`device=0`, or a count: `2`); `null` for none |
 | `user` | `null` | Docker's `--user`; by default the image maps `aw` to your `HOST_UID`/`HOST_GID` |
 | `docker_args` | `[]` | Further `docker run` arguments |
-| `stop_timeout_s` | `20.0` | How long stopping waits after each signal, in seconds above 0 |
+| `docker` | `docker` | The Docker CLI; `null` is the default |
+| `stop_timeout_s` | `20.0` | How long stopping waits after each signal, in seconds above 0; `null` is the default |
+| `container_prefix` | `acs-autoware` | Container names start with this; `null` is the default |
 
 `ros_domain_ids` moves each scenario's stack to another ROS domain, so it does
 not discover what is left of the last one before those participants time out:

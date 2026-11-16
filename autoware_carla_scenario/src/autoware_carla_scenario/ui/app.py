@@ -558,7 +558,7 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
             # would look like a complete one.
             return _refused("Sweep resolution failed: " + "; ".join(errors))
         # A scenario whose sweep expands to no case is one of the errors
-        # (resolve_sweep refuses it, #1407), so every scenario gave a job.
+        # (_resolve_sweeps refuses it, #1407), so every scenario gave a job.
 
         # The jobs were resolved with the extra overrides, and run with them
         # too, after each job's own (as /api/run/preview shows, and as
@@ -996,7 +996,7 @@ def _submit_slurm(
 @app.get("/api/launchers")
 async def launchers() -> dict[str, Any]:
     """Which launchers a run can use here: ``local`` always, ``slurm`` where
-    sbatch is (with the partitions sinfo lists), else why not."""
+    sbatch and squeue are (with the partitions sinfo lists), else why not."""
     available, reason = slurm_launch.availability()
     return {
         "local": {"available": True},
@@ -1097,9 +1097,7 @@ async def slurm_action(
             args.append("--failed")
         for key in ("array_parallelism", "cases_per_task"):
             value = body.get(key)
-            if value not in (None, "") and not (
-                isinstance(value, str) or _is_number(value)
-            ):
+            if value is not None and not (isinstance(value, str) or _is_number(value)):
                 return JSONResponse(
                     status_code=400,
                     content={
@@ -1107,8 +1105,10 @@ async def slurm_action(
                         "output": f"{key} must be a positive integer",
                     },
                 )
-            if value not in (None, ""):
-                text = str(value)
+            # Stripped, and unset when blank, as the run panel's
+            # SlurmOptions.from_request reads it (#2183).
+            text = "" if value is None else str(value).strip()
+            if text:
                 # is_index() first: int() refuses more than 4300 digits.
                 if not is_index(text) or int(text) < 1:
                     return JSONResponse(

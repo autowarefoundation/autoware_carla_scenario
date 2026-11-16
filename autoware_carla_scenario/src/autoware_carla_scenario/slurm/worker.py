@@ -225,11 +225,7 @@ def _domain_overrides(cfg: "DictConfig", domains: RosDomains) -> dict[str, Any]:
     changes: dict[str, Any] = {}
     ego = cfg.get("ego")
     ros2 = cfg.get("ros2")
-    if (
-        ego is not None
-        and str(ego.get("entity", "autopilot")) == "ros2"
-        and ros2 is not None
-    ):
+    if ego is not None and run._ego_entity_setting(cfg) == "ros2" and ros2 is not None:
         # A ros2 group without domain_id joins Ros2EgoConfig's default, which
         # every task on the node would then share (#1885).
         from ..ros2.config import Ros2EgoConfig  # noqa: PLC0415
@@ -252,13 +248,13 @@ def _domain_overrides(cfg: "DictConfig", domains: RosDomains) -> dict[str, Any]:
         changes[key] = domain
     # The launcher is built (and validated) only for an Autoware ego, as a
     # local run does: any other ego takes no domain for it.
-    if ego is None or str(ego.get("entity", "autopilot")) != "autoware":
+    if ego is None or run._ego_entity_setting(cfg) != "autoware":
         return changes
     autoware = cfg.get("autoware")
     launcher = None if autoware is None else autoware.get("launcher")
     if launcher is None:
         return changes
-    kind = str(launcher.get("type", "none"))
+    kind = run._launcher_kind(launcher.get("type"))
     if kind not in ("docker", "command"):
         return changes
     env = run._launcher_str_mapping("env", plain(launcher.get("env")))

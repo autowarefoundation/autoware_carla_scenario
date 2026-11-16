@@ -33,6 +33,13 @@ def test_the_traffic_manager_options_default_to_a_port() -> None:
     TrafficManagerBackendConfig.from_mapping({})
 
 
+def test_the_traffic_manager_options_read_a_null_port_as_the_default() -> None:
+    """As under sumo and hybrid: the YAML groups set
+    ``${oc.select:traffic_manager.port,null}`` (#2174)."""
+    assert TrafficManagerBackendConfig.from_mapping({"port": None}).port == 8100
+    assert build_traffic_manager({"port": None}).describe()["port"] == 8100
+
+
 @pytest.mark.parametrize("port", _NOT_PORTS)
 def test_the_traffic_manager_options_refuse_what_is_not_a_port(port: Any) -> None:
     match = r"^traffic\.options\.port \(traffic_manager\.port\) must be an integer"

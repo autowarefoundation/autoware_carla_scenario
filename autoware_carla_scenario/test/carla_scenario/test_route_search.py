@@ -141,6 +141,38 @@ class TestParsing:
         with pytest.raises(ValueError, match=message):
             parse_route_search(search)
 
+    @pytest.mark.parametrize("key", ["shape", "turn"])
+    @pytest.mark.parametrize("value", [False, 0, "", " ", True, ["left"]])
+    def test_a_shape_or_turn_that_is_no_text_is_refused_showing_it(
+        self, key: str, value: Any
+    ) -> None:
+        """#2161: false, 0 or '' read as any, so a mistyped constraint
+        matched every segment."""
+        segment = _lane(shape=value) if key == "shape" else _junction(turn=value)
+        with pytest.raises(ValueError) as error:
+            parse_route_search({"segments": [segment]})
+        assert str(error.value).startswith(f"segments[0].{key} must be one of [")
+        assert str(error.value).endswith(f"], got {value!r}")
+
+    def test_a_null_shape_or_turn_is_any(self) -> None:
+        spec = parse_route_search(
+            {"segments": [_lane(shape=None), _junction(turn=None)]}
+        )
+        lane, junction = spec.segments
+        assert isinstance(lane, LaneSegmentSpec) and lane.shape == "any"
+        assert isinstance(junction, JunctionSegmentSpec) and junction.turn == "any"
+
+    @pytest.mark.parametrize(("value", "shown"), [(None, "None"), (False, "False")])
+    def test_a_kind_that_names_none_is_refused_showing_it(
+        self, value: Any, shown: str
+    ) -> None:
+        """#2161: null was shown as the text 'None'."""
+        with pytest.raises(ValueError) as error:
+            parse_route_search({"segments": [{"kind": value}]})
+        assert str(error.value) == (
+            f"segments[0].kind must be 'lane' or 'junction', got {shown}"
+        )
+
     @pytest.mark.parametrize("value", [0, False, "", 0.0, 5, "lane", {}])
     def test_segments_that_are_not_a_list_are_refused(self, value: Any) -> None:
         """A falsy ``segments`` is not read as no segments (#2134)."""
@@ -164,6 +196,10 @@ class TestParsing:
             ("ego_spawn_s", "nan", r"^ego_spawn_s must be finite"),
             ("ego_spawn_s", -1.0, r"^ego_spawn_s must not be negative"),
             ("ego_spawn_s", "far", r"^ego_spawn_s must be a number"),
+            ("ego_spawn_s", True, r"^ego_spawn_s must be a number, got True$"),
+            ("ego_spawn_s", "", r"^ego_spawn_s must be a number, got ''$"),
+            ("ego_goal_margin", False, r"^ego_goal_margin must be a number"),
+            ("ego_goal_margin", " ", r"^ego_goal_margin must be a number"),
             ("ego_goal_margin", float("nan"), r"^ego_goal_margin must be finite"),
             ("ego_goal_margin", float("inf"), r"^ego_goal_margin must be finite"),
             ("ego_goal_margin", -0.5, r"^ego_goal_margin must not be negative"),
@@ -223,6 +259,26 @@ class TestParsing:
             Range.parse(name, 1.5, whole=True)
         with pytest.raises(ValueError, match=r"lanes_left\.min is a count"):
             Range.parse(name, {"min": 1.5, "max": 1.5}, whole=True)
+
+    @pytest.mark.parametrize("bound", ["min", "max"])
+    @pytest.mark.parametrize("raw", [True, False, "", "  "])
+    def test_a_boolean_or_blank_bound_is_refused_with_its_name(
+        self, bound: str, raw: Any
+    ) -> None:
+        """#2143: ``float(True)`` read ``{min: true}`` as 1, and a blank as
+        an open bound; only null leaves a bound open."""
+        for name, whole in (
+            ("segments[0].length", False),
+            ("segments[0].lanes_left", True),
+        ):
+            with pytest.raises(ValueError) as error:
+                Range.parse(name, {bound: raw}, whole=whole)
+            assert str(error.value) == f"{name}.{bound} must be a number, got {raw!r}"
+        assert Range.parse("segments[0].length", {bound: None}) == Range()
+        if not isinstance(raw, str):
+            search = {"segments": [{"kind": "lane", "length": {bound: raw}}]}
+            with pytest.raises(ValueError, match=rf"length\.{bound}"):
+                RouteSearch.model_validate(search)
 
     def test_an_infinite_bare_number_is_refused_with_its_name(self) -> None:
         for whole in (False, True):
@@ -1074,6 +1130,22 @@ class TestPathsOfTheEgosApproach:
     def test_a_malformed_path_is_refused(self, paths: Any, message: str) -> None:
         with pytest.raises(ValueError, match=message):
             parse_route_search(self._straight(paths=paths))
+
+    @pytest.mark.parametrize(
+        ("path", "message"),
+        [
+            ({"approach": None, "turn": "left"}, r"paths\[0\]\.approach .*, got None$"),
+            ({"approach": False, "turn": "left"}, r"\.approach .*, got False$"),
+            ({"approach": "same", "turn": None}, r"paths\[0\]\.turn .*, got None$"),
+            ({"approach": "same", "turn": 0}, r"\.turn .*, got 0$"),
+        ],
+    )
+    def test_a_path_refusal_shows_the_value(
+        self, path: dict[str, Any], message: str
+    ) -> None:
+        """#2161: a null approach or turn was refused without showing it."""
+        with pytest.raises(ValueError, match=message):
+            parse_route_search(self._straight(paths=[path]))
 
 
 class TestPathReach:

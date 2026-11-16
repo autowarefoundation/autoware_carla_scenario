@@ -38,6 +38,7 @@ from ..trajectory.authoring import (
 )
 from ..web_guard import HostAllowlist, RequestGuard
 from .forms import bool_choice, is_nullable_bool
+from .service import EXPORT_DIR_ENV as _EXPORT_DIR_ENV
 from .service import (
     GATE_CONSISTENCY_FIELDS,
     GATE_FIELDS,
@@ -46,6 +47,7 @@ from .service import (
     EditorService,
     EditorStorageError,
     condition_actions,
+    default_export_dir,
     route_yaml,
 )
 
@@ -56,13 +58,14 @@ if TYPE_CHECKING:  # `app` is built on first access -- see __getattr__ below.
 
 __all__ = ["build_service", "create_app", "app"]
 
+#: Environment variable choosing where an exported package's archive is
+#: staged.  It lives with :func:`default_export_dir` in editor.service, which
+#: EditorService reads too; the name stays importable from here.
+EXPORT_DIR_ENV = _EXPORT_DIR_ENV
+
 _EDITOR_DIR = Path(__file__).resolve().parent
 _TEMPLATES_DIR = _EDITOR_DIR / "templates"
 _STATIC_DIR = _EDITOR_DIR / "static"
-
-#: Environment variable choosing where an exported package's archive is
-#: staged for download (kept until the draft is deleted or exported again).
-EXPORT_DIR_ENV = "SCENARIO_EDITOR_EXPORT_DIR"
 
 #: Environment variable pointing at a self-hosted build of the simple_lanelet2
 #: web viewer.  See :data:`DEFAULT_MAP_VIEWER_URL`.
@@ -136,15 +139,9 @@ def picker_matches_id(slot_key: str) -> str:
 
 def map_viewer_url() -> str:
     """Return the URL the spawn preview loads the map viewer from."""
-    return os.environ.get(MAP_VIEWER_ENV, DEFAULT_MAP_VIEWER_URL).strip()
-
-
-def default_export_dir() -> Path:
-    """Return the directory exported scenario packages are written to."""
-    env = os.environ.get(EXPORT_DIR_ENV)
-    if env:
-        return Path(env).expanduser().resolve()
-    return (Path.cwd() / "scenario_packages").resolve()
+    # Blank is unset, as for the other editor variables: an empty URL would
+    # mount no viewer at all.
+    return (os.environ.get(MAP_VIEWER_ENV) or "").strip() or DEFAULT_MAP_VIEWER_URL
 
 
 def build_service(

@@ -7,7 +7,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Optional, Union
 
-from ..entity_role import EntityRole, _role_name
+from ..entity_role import EntityRole
 from ..failure import Failure, FailureCategory
 
 # Re-exported: it lives in entity_role, below this package, so a module that
@@ -65,42 +65,6 @@ def refuse_post_run(condition: "BaseCondition", owner: str) -> None:
             "run is over, not every tick: register it on its own with "
             "register_fail_condition (max_ng_seconds says how long it may hold)"
         )
-
-
-def find_actor_pair(
-    actors: Union[carla.ActorList, list[carla.Actor]],
-    source: Union[EntityRole, str],
-    target: Union[EntityRole, str],
-) -> "tuple[Optional[carla.Actor], Optional[carla.Actor]]":
-    """Find two actors by ``role_name`` in one pass over *actors*.
-
-    Every pairwise condition wants both ends of the same measurement, and two
-    :func:`find_actor_in_list` calls scan the list twice for it.
-
-    Args:
-        actors: Pre-fetched actors (e.g. ``world.get_actors()``, or a list).
-        source: The ``role_name`` of the measurement's first end.
-        target: The ``role_name`` of its second end.
-
-    Returns:
-        ``(source actor, target actor)``, either of which may be ``None``.
-    """
-    source_name, target_name = str(source), str(target)
-    found: "dict[str, carla.Actor]" = {}
-    for actor in actors:
-        role = _role_name(actor)
-        if (
-            role is not None
-            and role in (source_name, target_name)
-            and role not in found
-        ):
-            found[role] = actor
-            if len(found) == 2:
-                break
-    return (
-        found[source_name] if source_name in found else None,
-        found[target_name] if target_name in found else None,
-    )
 
 
 def find_actor_by_role_name(

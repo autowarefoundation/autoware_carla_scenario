@@ -37,6 +37,13 @@ from .case_paths import _job_indices as _job_indices
 from .case_paths import _override_label as _override_label
 from .cases import CaseFiles, batch_entries, case_files, job_dir, session_dir
 
+# A JSON document, a verdict, a duration and a run's overrides, read as
+# ui.scanner reads them; the names stay importable from here.
+from .cases import _hydra_overrides as _hydra_overrides
+from .cases import _passed as _passed
+from .cases import _read_json as _read_json
+from .cases import _seconds as _seconds
+
 # The comparison of sessions, compiled by the library check; the names it
 # had here stay importable from here.
 from .comparison import METRICS as METRICS
@@ -75,31 +82,6 @@ __all__ = [
     "cases_in_cell",
     "skipped_coverage",
 ]
-
-
-def _read_json(path: Path | None) -> Any:
-    if path is None:
-        return None
-    try:
-        return json.loads(path.read_text(encoding="utf-8"))
-    except (OSError, ValueError):
-        return None
-
-
-def _passed(value: Any) -> bool | None:
-    """A verdict: *value* when it is a boolean, else ``None``."""
-    return value if isinstance(value, bool) else None
-
-
-def _seconds(value: Any) -> float | None:
-    """A duration: *value* when it is a number (not a boolean), else ``None``."""
-    if isinstance(value, bool) or not isinstance(value, (int, float)):
-        return None
-    try:
-        return float(value)
-    except OverflowError:
-        # An integer too long for a float (#1726).
-        return None
 
 
 def _strings(value: Any) -> list[str]:
@@ -364,20 +346,6 @@ class _TrajectoryMetrics:
 
 
 # ── A session's cases ───────────────────────────────────────────────────────
-
-
-def _hydra_overrides(directory: Path) -> list[str]:
-    try:
-        import yaml  # type: ignore[import-untyped]  # noqa: PLC0415
-
-        data = yaml.safe_load(
-            (directory / ".hydra" / "overrides.yaml").read_text(encoding="utf-8")
-        )
-    except (OSError, ValueError, ImportError):
-        return []
-    except Exception:  # noqa: BLE001 -- yaml.YAMLError
-        return []
-    return [str(o) for o in data] if isinstance(data, list) else []
 
 
 def _job(

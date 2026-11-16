@@ -2041,9 +2041,17 @@ def _check_route(out: _Collector, document: ScenarioDocument) -> None:
                 params.get("route_vertices"),
                 "Route vertices are",
             )
-        if action.type == "traffic_signal" and params.get("target") == "route":
+        raw_junction = params.get("route_junction")
+        if (
+            action.type == "traffic_signal"
+            and params.get("target") == "route"
+            # One that is no whole number is already reported against the
+            # field; skipping it here, not the rest of the loop body, keeps
+            # every later check on this action running.
+            and (_is_blank(raw_junction) or _coercible_int(raw_junction))
+        ):
             where = f"actions[{index}].route_junction"
-            junction = int(params.get("route_junction") or 0)
+            junction = 0 if _is_blank(raw_junction) else int(str(raw_junction).strip())
             if route is None:
                 out.error(
                     where,

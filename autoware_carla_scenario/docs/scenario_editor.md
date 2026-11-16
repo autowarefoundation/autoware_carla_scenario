@@ -618,6 +618,12 @@ The ego reaches the runner through the framework's own `ego.spawn_lanelet_id` /
 `ego.spawn_heading`. Other entities get a declared
 `scenario.spawn_overrides.<entity>` sub-tree so they are addressable by exactly
 the same plain `key=value` overrides.
+A run checks what such an override sets: only `null` keeps the document's value,
+`lanelet_id` must be a whole number (`2` or `2.0`, not `2.7`, a boolean or a
+blank) and `s` a finite number (not a boolean or a blank), and an entity's or a
+node's override (`scenario.spawn_overrides.<entity>`,
+`scenario.param_overrides.<node id>`) must be a mapping of fields; anything else
+is refused, naming the full key.
 
 An entity's spawn offsets, heading, goal `s`, size and initial speed must be
 finite numbers, and its initial speed 0 or more: the validator refuses another
@@ -1043,8 +1049,9 @@ the only thing that outlives the request is the archive, and re-exporting never
 has to overwrite a half-written one.
 
 The response is still the **report** -- warnings, the tool log, whether the
-package's own tests passed -- with the download link in it. Making the response
-the file itself would throw away the very things an export is checked for.
+package's own tests passed, failed or were not run -- with the download link in
+it. Making the response the file itself would throw away the very things an
+export is checked for.
 
 ### One platform, every supported interpreter
 

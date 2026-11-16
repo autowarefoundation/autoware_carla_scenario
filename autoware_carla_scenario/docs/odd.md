@@ -786,7 +786,10 @@ sweep:
 
 `count` and `seed` are whole numbers (`20` or `20.0`, not `2.7` or a
 boolean), `count` at least 1 and `seed` from 0 to 2147483647 (`2**31 - 1`); any other value is
-refused, naming the key, before the map is read or anything starts.
+refused, naming the key, before the map is read or anything starts. So are
+an `odd` or `strategy` that is not a name (`false`, `0`, `""`) and `knobs`
+that are not a mapping (`false`, a list): a field left out or null takes its
+default, any other value is refused rather than read as none.
 
 Each case is a list of Hydra overrides. A sweep that also has `constraints`
 (or a route search) gives each drawn case one of its lanelet cases -- in turn
@@ -920,7 +923,7 @@ example scenarios' own).
 |---|---|
 | `key` | The config key the value is written to |
 | `quantity` | A node of the rules (the scenario's `scenario_rules`, or the shared network's) whose value is written, drawn with every case: the control is then the scenario's effect, not an ODD attribute's knob, and `range` and `values` are not used |
-| `target` | `setting` (the default): the key is a raw setting, written through `scale` and `offset`. `measure`: the key takes the measure's value at the start itself, written unchanged -- no `scale`, `offset`, `integer` or `values` (see below) |
+| `target` | `setting` (the default, as is `null`): the key is a raw setting, written through `scale` and `offset`. `measure`: the key takes the measure's value at the start itself, written unchanged -- no `scale`, `offset`, `integer` or `values` (see below) |
 | `range` | Numeric: `[low, high]` in the measure's unit, the values the scenario can bring about. A bucket is drawn only where it meets the range (by more than an edge), and only that part of it |
 | `values` | Per bucket label. Categorical: the value to write, or `[low, high)` to draw it from (`[x, x]` is `x`); a bucket without one is not drawn. Numeric: a range to draw from instead of the bucket's interval -- which an unbounded bucket (`-inf`/`inf` edges) needs to be drawn at all |
 | `scale`, `offset` | A numeric value drawn in the unit is written as `value * scale + offset` (`scale` not zero) |

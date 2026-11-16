@@ -40,6 +40,7 @@ from autoware_carla_scenario.authoring.hydra_config import (
     spawn_s_key,
     swept_entity,
 )
+from autoware_carla_scenario.authoring import package_export
 from autoware_carla_scenario.authoring.package_export import (
     ExportResult,
     PackageExportError,
@@ -642,6 +643,58 @@ class TestGeneratedPackage:
     def test_skipping_the_lock_is_recorded_as_a_caveat(self, package: Path) -> None:
         manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
         assert any("not reproducible" in note for note in manifest["notes"])
+
+    def test_an_unlocked_package_names_no_lockfile(self, package: Path) -> None:
+        """Without a lock there is no uv.lock to point at (#2166)."""
+        manifest = yaml.safe_load((package / "scenario/manifest.yaml").read_text())
+        assert not (package / "uv.lock").exists()
+        assert "lockfile" not in manifest["files"]
+
+
+class TestSelfCheckSkips:
+    """Every skipped step says so, and a failed test run is not "not run" (#2166)."""
+
+    @pytest.fixture(autouse=True)
+    def _stub_tools(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        monkeypatch.setattr(package_export, "_lock", lambda root: "lock\n")
+        monkeypatch.setattr(package_export, "_verify_sync", lambda root: "sync\n")
+        monkeypatch.setattr(package_export, "_run_tests", lambda root: (True, "test\n"))
+
+    def _check(self, tmp_path: Path, **steps: bool) -> tuple[Any, list[str]]:
+        warnings: list[str] = []
+        options = {"lock": True, "verify": True, "run_tests": True, **steps}
+        checks, _ = package_export._self_check(tmp_path, warnings=warnings, **options)
+        return checks, warnings
+
+    def test_every_step_run(self, tmp_path: Path) -> None:
+        assert self._check(tmp_path) == ((True, True, True, True), [])
+
+    def test_a_failed_test_run_was_run(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.setattr(package_export, "_run_tests", lambda root: (False, ""))
+        checks, warnings = self._check(tmp_path)
+        assert checks == (True, True, True, False)
+        assert warnings == [
+            "The generated package's own tests failed; see the export log."
+        ]
+
+    def test_skipping_the_tests_warns(self, tmp_path: Path) -> None:
+        checks, warnings = self._check(tmp_path, run_tests=False)
+        assert checks == (True, True, False, False)
+        assert len(warnings) == 1 and "own tests were skipped" in warnings[0]
+
+    def test_skipping_the_sync_warns(self, tmp_path: Path) -> None:
+        checks, warnings = self._check(tmp_path, verify=False)
+        assert checks == (True, False, False, False)
+        assert len(warnings) == 1
+        assert "'uv sync --locked' was skipped" in warnings[0]
+        assert "tests were not run" in warnings[0]
+
+    def test_skipping_the_lock_warns_once(self, tmp_path: Path) -> None:
+        checks, warnings = self._check(tmp_path, lock=False)
+        assert checks == (False, False, False, False)
+        assert len(warnings) == 1 and "locking was skipped" in warnings[0]
 
 
 #: The framework's own Hydra config directory, the primary config of a run.

@@ -59,8 +59,8 @@ def test_recordings_still_offers_every_moved_name(name: str) -> None:
     assert getattr(recordings, name) is getattr(web_viewer_paths, name)
 
 
-def test_the_cdn_url_is_the_one_cdn_url_formats() -> None:
-    assert cdn_url("0.38.1") == recordings.CDN_URL.format(version="0.38.1")
+def test_the_cdn_url_is_unpkgs() -> None:
+    assert cdn_url("0.38.1") == "https://unpkg.com/@rerun-io/web-viewer@0.38.1"
 
 
 def test_a_recording_is_named_after_its_log() -> None:

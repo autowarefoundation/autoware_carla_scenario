@@ -13,10 +13,15 @@ layer.  This module imports nothing but the standard library.
 
 from __future__ import annotations
 
-from dataclasses import fields
+from dataclasses import Field, fields
 from typing import Any, Mapping, Optional, Sequence
 
-__all__ = ["checked_options", "checked_str_list"]
+__all__ = [
+    "checked_options",
+    "checked_section",
+    "checked_str_list",
+    "null_as_default",
+]
 
 
 def checked_options(
@@ -89,3 +94,65 @@ def checked_str_list(key: str, value: Any) -> list[str]:
                 f"{type(item).__name__} {item!r}"
             )
     return [str(item) for item in items]
+
+
+def checked_section(key: str, value: Any) -> Optional[Mapping[str, Any]]:
+    """*value*, a nested options section such as ``traffic.options.ambient``,
+    checked: a mapping is itself, null (an absent section, or
+    ``${oc.select:...,null}``) is ``None`` -- the caller's default.
+
+    ``false``, ``0``, ``""`` or a list is refused rather than read as the
+    default (#2143) or passed on to fail later, naming no key, when the
+    section is read as the options it stands for (#2174).
+
+    Args:
+        key: The section's full name, for the error.
+        value: The value to check.
+
+    Returns:
+        The mapping, or ``None`` for a null section.
+
+    Raises:
+        ValueError: naming *key* and the value, for anything else.
+    """
+    if value is None:
+        return None
+    if not isinstance(value, Mapping):
+        raise ValueError(f"{key} must be a mapping, got {value!r}")
+    return value
+
+
+def _takes_null(field: Field) -> bool:
+    """Whether *field* takes ``None`` as a value of its own: its default is
+    ``None``, or its type says ``Optional`` (``curve_lateral_acceleration:
+    Optional[float] = 3.0``, where null means something else than 3.0)."""
+    if field.default is None:
+        return True
+    text = field.type if isinstance(field.type, str) else repr(field.type)
+    return "Optional[" in text or "None" in text
+
+
+def null_as_default(config_cls: type, checked: Mapping[str, Any]) -> dict:
+    """*checked* -- a mapping :func:`checked_options` has already checked --
+    without the null values of the fields that do not take null: an absent
+    or null setting is its default (#2143), so ``blueprint: null`` is the
+    default blueprint rather than refused.
+
+    A field that takes null -- an ``Optional`` one -- keeps it, as its
+    default or as a value of its own.  The dataclass's constructor still
+    refuses ``None`` for the others: only a mapping, where null stands for
+    "not set" (``${oc.select:...,null}``), reads it as the default.
+
+    Args:
+        config_cls: The dataclass the mapping is meant to build.
+        checked: The values to read.
+
+    Returns:
+        The values as a new dict, without the nulls that mean the default.
+    """
+    defaults = {field.name for field in fields(config_cls) if not _takes_null(field)}
+    return {
+        key: value
+        for key, value in checked.items()
+        if value is not None or key not in defaults
+    }

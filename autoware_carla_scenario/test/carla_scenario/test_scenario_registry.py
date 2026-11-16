@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import math
+import re
 import sys
 import threading
 from pathlib import Path
@@ -1190,6 +1191,28 @@ class TestBuildEgoEntity:
         with pytest.raises(ValueError, match="Unknown ego.entity"):
             build_ego_entity(cfg)
 
+    def test_a_null_entity_selects_autopilot(self) -> None:
+        """#2161: not refused as the unknown entity 'None'."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = OmegaConf.create({"ego": {"entity": None}})
+        assert run.ego_entity_name(cfg) == "autopilot"
+        assert run.build_ego_entity(cfg) is None
+        assert run.build_autoware_launcher(cfg) is None
+        shipped = _shipped(["ego.entity=null"])
+        run.check_run_config(shipped)
+
+    @pytest.mark.parametrize("value", [False, 0, "", "Autoware"])
+    def test_an_entity_that_names_none_is_refused_showing_it(
+        self, value: object
+    ) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = OmegaConf.create({"ego": {"entity": value}})
+        with pytest.raises(ValueError) as refused:
+            run.ego_entity_name(cfg)
+        assert str(refused.value).startswith(f"Unknown ego.entity: {value!r}. ")
+
 
 class TestBuildAutowareLauncher:
     """``autoware.launcher`` selects who starts Autoware for each scenario."""
@@ -1318,7 +1341,7 @@ class TestBuildAutowareLauncher:
         assert isinstance(launcher, DockerAutowareLauncher)
         assert launcher.config.rosdep is True
 
-    @pytest.mark.parametrize("value", ["ture", "", 2, 0.0, None, [True]])
+    @pytest.mark.parametrize("value", ["ture", "", 2, 0.0, [True]])
     def test_a_rosdep_that_is_no_switch_is_refused(
         self, tmp_path: Path, value: object
     ) -> None:
@@ -1401,6 +1424,152 @@ class TestBuildAutowareLauncher:
         ):
             build_autoware_launcher(cfg)
 
+    @pytest.mark.parametrize(
+        ("key", "default"),
+        [
+            ("build", "auto"),
+            ("rosdep", True),
+            ("devcontainer", "universe-devel-cuda"),
+            ("docker", "docker"),
+            ("container_prefix", "acs-autoware"),
+            ("stop_timeout_s", 20.0),
+            ("image", None),
+            ("workspace_mount", None),
+            ("user", None),
+        ],
+    )
+    def test_a_null_docker_setting_is_its_default(
+        self, tmp_path: Path, key: str, default: object
+    ) -> None:
+        """#2161: null build, rosdep and stop_timeout_s were refused, and a
+        null devcontainer, docker or container_prefix handed on as None."""
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        settings: dict[str, object] = {
+            "type": "docker",
+            "workspace": str(tmp_path),
+            "launch": ["autoware_launch", "x.launch.xml"],
+            key: None,
+        }
+        launcher = build_autoware_launcher(self._cfg("autoware", **settings))
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert getattr(launcher.config, key) == default
+
+    def test_a_null_gpus_is_still_no_gpu(self, tmp_path: Path) -> None:
+        """docs/autoware.md: ``gpus: null`` for none, unlike its default."""
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launcher = build_autoware_launcher(
+            self._cfg(
+                type="docker",
+                workspace=str(tmp_path),
+                launch=["autoware_launch", "x.launch.xml"],
+                gpus=None,
+            )
+        )
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.gpus is None
+
+    def test_a_null_command_stop_timeout_is_the_default(self) -> None:
+        """#2161: the command launcher reads null as 20 s too."""
+        from autoware_carla_scenario.autoware_stack import CommandAutowareLauncher
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        launcher = build_autoware_launcher(
+            self._cfg(type="command", command=["true"], stop_timeout_s=None)
+        )
+        assert isinstance(launcher, CommandAutowareLauncher)
+        assert launcher.stop_timeout_s == 20.0
+
+    @pytest.mark.parametrize(
+        ("gpus", "wanted"), [(2, "2"), (1, "1"), ("device=0", "device=0")]
+    )
+    def test_a_gpu_count_is_handed_to_docker_as_text(
+        self, tmp_path: Path, gpus: object, wanted: str
+    ) -> None:
+        """``docker run --gpus 2`` takes a count, as the prepare backends'
+        ``gpus`` does; an int used to reach Docker's argv as an int."""
+        from autoware_carla_scenario.autoware_stack import DockerAutowareLauncher
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._cfg(
+            "autoware",
+            type="docker",
+            workspace=str(tmp_path),
+            launch=["autoware_launch", "x.launch.xml"],
+            gpus=gpus,
+        )
+        run._AUTOWARE_LAUNCHERS.clear()
+        try:
+            launcher = run.build_autoware_launcher(cfg)
+        finally:
+            run._AUTOWARE_LAUNCHERS.clear()
+        assert isinstance(launcher, DockerAutowareLauncher)
+        assert launcher.config.gpus == wanted
+
+    def test_a_gpu_count_and_its_text_share_one_launcher(self, tmp_path: Path) -> None:
+        """``gpus: 2`` and ``gpus: '2'`` are one configuration, so one launcher."""
+        from autoware_carla_scenario.examples import run
+
+        def cfg(gpus: object) -> DictConfig:
+            return self._cfg(
+                "autoware",
+                type="docker",
+                workspace=str(tmp_path),
+                launch=["autoware_launch", "x.launch.xml"],
+                gpus=gpus,
+            )
+
+        run._AUTOWARE_LAUNCHERS.clear()
+        try:
+            first = run.build_autoware_launcher(cfg(2))
+            assert run.build_autoware_launcher(cfg("2")) is first
+        finally:
+            run._AUTOWARE_LAUNCHERS.clear()
+
+    @pytest.mark.parametrize(
+        ("key", "value", "wanted"),
+        [
+            *(
+                (key, value, "non-empty text")
+                for key in ("devcontainer", "docker", "container_prefix")
+                for value in (False, 0, "", " ", ["x"])
+            ),
+            *(
+                (key, value, "null or non-empty text")
+                for key in ("image", "workspace_mount", "user")
+                for value in (False, 3, "", " ", {"a": 1})
+            ),
+            *(
+                ("gpus", value, "null or non-empty text")
+                for value in (False, True, 0, -1, 1.5, "", " ", {"a": 1})
+            ),
+        ],
+    )
+    def test_a_text_setting_that_is_no_text_is_refused_before_anything_starts(
+        self, tmp_path: Path, key: str, value: object, wanted: str
+    ) -> None:
+        """#2161: a false devcontainer failed with a TypeError at prepare
+        time, a '' docker reached subprocess, a false workspace_mount was
+        taken as False."""
+        from autoware_carla_scenario.examples import run
+
+        settings: dict[str, object] = {
+            "type": "docker",
+            "workspace": str(tmp_path),
+            "launch": ["autoware_launch", "x.launch.xml"],
+            key: value,
+        }
+        cfg = self._cfg("autoware", **settings)
+        match = rf"^autoware\.launcher\.{key} must be {wanted}, got {re.escape(repr(value))}$"
+        with pytest.raises(ValueError, match=match):
+            run.build_autoware_launcher(cfg)
+        run._AUTOWARE_LAUNCHERS.clear()
+        with pytest.raises(ValueError, match=match):
+            run._check_batch_queue_settings(cfg)
+
     def test_unknown_type_raises(self) -> None:
         from autoware_carla_scenario.examples.run import build_autoware_launcher
 
@@ -1477,7 +1646,7 @@ class TestBuildAutowareLauncher:
     @pytest.mark.parametrize(
         "value",
         [
-            *(float("nan"), float("inf"), -5, 0, "abc", None, True),
+            *(float("nan"), float("inf"), -5, 0, "abc", True),
             pytest.param(10**400, id="huge"),  # too big for a float (#1652)
         ],
     )
@@ -1860,6 +2029,25 @@ class TestEgoNumbersAreRefusedByTheirKey:
         assert ego.goal_pose is not None and ego.goal_pose.s == 3.0
         route = build_planned_route(cfg)
         assert (route.start.s, route.start.t) == (1.0, -1.0)
+
+    @pytest.mark.parametrize("key", ["spawn_s", "spawn_t", "spawn_heading", "goal_s"])
+    def test_a_null_pose_number_is_zero(self, key: str) -> None:
+        """#2161: a null ego.spawn_s or ego.goal_s was refused as "must be a
+        number, got None", as spawn_t and spawn_heading were before #2143."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._cfg("ego", key, None)
+        ego, spawn, _ = run.build_ego_and_spawn(cfg)
+        route = run.build_planned_route(cfg)
+        assert ego.goal_pose is not None
+        if key == "goal_s":
+            assert ego.goal_pose.s == 0.0
+        else:
+            assert getattr(spawn, key.removeprefix("spawn_")) == 0.0
+            assert getattr(route.start, key.removeprefix("spawn_")) == 0.0
+        shipped = _shipped([])
+        shipped.ego[key] = None
+        run.check_run_config(shipped)
 
 
 #: The ego's and entity's numbers a run refuses unless finite (#1809): the

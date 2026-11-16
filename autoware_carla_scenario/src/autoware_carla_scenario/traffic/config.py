@@ -38,6 +38,7 @@ from .parameters import BicycleParameters, PedestrianParameters, VehicleParamete
 __all__ = [
     "TrafficConfig",
     "TrafficManagerBackendConfig",
+    "check_port",
     "traffic_backend_name",
 ]
 
@@ -64,6 +65,26 @@ def traffic_backend_name(value: Any) -> str:
     return value
 
 
+def check_port(key: str, port: int) -> None:
+    """Refuse a TCP port that is not an integer within 1-65535.
+
+    Refused where a run's config is checked, rather than by
+    ``client.get_trafficmanager()`` once CARLA is up: a bool is an int to
+    Python, and 0 or 70000 is no TCP port.  The one check of the
+    TrafficManager's port, ``traffic_manager``'s ``port`` and the ``sumo``
+    backend's ``tm_port`` alike (``hils.port`` has the same rule).
+
+    Args:
+        key: The setting's name, for the error.
+        port: The value to check.
+
+    Raises:
+        ValueError: naming *key* and *port*.
+    """
+    if isinstance(port, bool) or not isinstance(port, int) or not 1 <= port <= 65535:
+        raise ValueError(f"{key} must be an integer within 1-65535 (got {port!r})")
+
+
 @dataclass
 class TrafficManagerBackendConfig:
     """Options of the CARLA TrafficManager backend."""
@@ -74,30 +95,23 @@ class TrafficManagerBackendConfig:
     port: int = DEFAULT_TM_PORT
 
     def __post_init__(self) -> None:
-        # Refused here, where a run's config is checked, rather than by
-        # client.get_trafficmanager() once CARLA is up: a bool is an int to
-        # Python, and 0 or 70000 is no TCP port (the SUMO backend's tm_port
-        # and hils.port have the same rule).
-        port = self.port
-        if (
-            isinstance(port, bool)
-            or not isinstance(port, int)
-            or not 1 <= port <= 65535
-        ):
-            raise ValueError(
-                "traffic.options.port (traffic_manager.port) must be an integer "
-                f"within 1-65535 (got {port!r})"
-            )
+        check_port("traffic.options.port (traffic_manager.port)", self.port)
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "TrafficManagerBackendConfig":
-        """Return a config built from a plain mapping (e.g. a Hydra node)."""
+        """Return a config built from a plain mapping (e.g. a Hydra node).
+
+        A null ``port`` -- what the YAML groups' ``${oc.select:
+        traffic_manager.port,null}`` gives a run with no ``traffic_manager``
+        group -- is the default, as every null setting of the ``sumo`` and
+        ``hybrid`` backends that does not take null is.
+        """
         # Imported here: utils.config reads a dataclass's fields from its class,
         # which Codon cannot express, and the library check compiles no import
         # in a function it does not call (typecheck/library.py, UNCALLED).
-        from ..utils.config import checked_options  # noqa: PLC0415
+        from ..utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        return cls(**checked_options(cls, mapping))
+        return cls(**null_as_default(cls, checked_options(cls, mapping)))
 
 
 @dataclass
@@ -108,7 +122,9 @@ class TrafficConfig:
         backend: The registered name of the backend.  ``traffic_manager`` is
             the default and is what every scenario written before this config
             existed gets.
-        options: The backend's own options, passed to its factory verbatim.
+        options: The backend's own options, passed to its factory verbatim
+            -- but for the nulls, which a run drops unless the backend is
+            registered with ``takes_null_options`` (#2178).
         vehicles: How the vehicles drive, in the terms every backend shares;
             a field the backend does not support is an error.
         pedestrians: How the pedestrians walk, likewise.
@@ -132,7 +148,7 @@ class TrafficConfig:
         string; an absent or null one is ``traffic_manager``, while any
         other value is refused, naming the key (#2156).
         """
-        from ..utils.config import checked_options  # noqa: PLC0415
+        from ..utils.config import checked_options, checked_section  # noqa: PLC0415
 
         if "parameters" in mapping:
             raise ValueError(
@@ -142,12 +158,8 @@ class TrafficConfig:
         checked = checked_options(cls, mapping)
 
         def section(key: str) -> Mapping[str, Any]:
-            value = checked.get(key)
-            if value is None:
-                return {}
-            if not isinstance(value, Mapping):
-                raise ValueError(f"traffic.{key} must be a mapping, got {value!r}")
-            return value
+            value = checked_section(f"traffic.{key}", checked.get(key))
+            return {} if value is None else value
 
         return cls(
             backend=traffic_backend_name(checked.get("backend")),

@@ -59,7 +59,7 @@ from ..authoring.models import (
 from ..authoring.persistence import Draft, DraftStore, load_yaml
 from ..authoring.registry import (
     default_params,
-    TRUTHY_VALUES,
+    is_checked,
     field_holders,
     get_action_spec,
     get_binding_spec,
@@ -112,11 +112,29 @@ __all__ = [
     "SLOT_FAIL",
     "SLOT_PASS",
     "condition_actions",
+    "default_export_dir",
+    "EXPORT_DIR_ENV",
 ]
+
+#: Environment variable choosing where an exported package's archive is
+#: staged for download (kept until the draft is deleted or exported again).
+EXPORT_DIR_ENV = "SCENARIO_EDITOR_EXPORT_DIR"
 
 #: Condition slots that are not attached to an action.
 SLOT_PASS = "pass"
 SLOT_FAIL = "fail"
+
+
+def default_export_dir() -> Path:
+    """Return the directory exported scenario packages are written to.
+
+    :data:`EXPORT_DIR_ENV` when it is set and not blank, else
+    ``scenario_packages`` under the working directory.
+    """
+    env = (os.environ.get(EXPORT_DIR_ENV) or "").strip()
+    if env:
+        return Path(env).expanduser().resolve()
+    return (Path.cwd() / "scenario_packages").resolve()
 
 
 class EditorError(Exception):
@@ -255,12 +273,12 @@ class EditorService:
                 whoever is using it rather than leaving them on the machine it
                 happens to run on -- over a LAN those are not the same machine
                 -- so this is a holding area, not a destination anyone browses.
+                Defaults to :func:`default_export_dir`, which reads
+                :data:`EXPORT_DIR_ENV`.
         """
         self.store = store
         self.export_dir = (
-            Path(export_dir)
-            if export_dir is not None
-            else Path.cwd() / "scenario_packages"
+            Path(export_dir) if export_dir is not None else default_export_dir()
         )
         # Weak, so a lock lives only while someone holds or waits on it: the
         # keys come from URLs, and a table of every id ever asked for would
@@ -1343,7 +1361,7 @@ class EditorService:
         if "spawn_hidden_shown" in form:
             # A checkbox submits nothing when cleared, so the form says it
             # showed one.
-            spawn.hidden = str(form.get("spawn_hidden", "")).lower() in TRUTHY_VALUES
+            spawn.hidden = is_checked(form, "spawn_hidden")
         if "spawn_heading_deg" in form:
             heading_deg = _as_float(
                 form["spawn_heading_deg"], "Heading", spawn.heading_deg

@@ -162,9 +162,11 @@ assertions:
 | `max_matches` | int 1..1000 | `64` | How many matches the search returns at most. |
 | `seed` | int or null | `null` | `null` keeps matches sorted (by lanelet ids, then start); an int shuffles the full list with `random.Random(seed)` before `max_matches` cuts it -- a deterministic sample spread over the map. |
 
-The distances must be finite (`nan` and `inf` are refused), and the counts
+The distances must be finite numbers (`nan`, `inf`, a boolean and a blank are
+refused; an absent key is the default, as `null` is in a `sweep.route`), and the counts
 (`match_index`, `max_matches`, `seed`) whole numbers: `2` or `2.0`, not `2.5`
-or a boolean. This holds for a hand-written `sweep.route` and a Hydra override
+or a boolean. A range's `min` and `max` are numbers too: `null` leaves a bound
+open, and a boolean or a blank is refused, naming the bound. This holds for a hand-written `sweep.route` and a Hydra override
 (`sweep.route.ego_spawn_s=...`) as for the editor's document.
 
 **Lane segment** (`kind: lane`) -- a stretch of road between junctions (no
@@ -194,6 +196,13 @@ one to four consecutive lanelets carrying `turn_direction`:
 Unknown keys are refused (`extra="forbid"`), so a typo is an error, not a
 silently ignored constraint. A junction segment does not take lane keys and
 vice versa.
+
+A lane segment's `shape` and a junction segment's `turn` left null are `any`,
+as when absent. Any value not in the table is refused, showing it -- `false`,
+`0` or `''` too, which used to read as `any` and so let a mistyped constraint
+match every segment (`segments[0].shape must be one of [...], got False`). A
+path's `approach` and `turn` and a segment's `kind` have no default: null is
+refused the same way.
 
 ### Route vertices (`path_source: route`)
 

@@ -433,7 +433,9 @@ The JSON (`--json`) of one set holds a verdict per scenario (`verdicts`):
 if `passed`) and the records' paths. Of two sets, it holds the `baseline` and `candidate`
 paths and a comparison per scenario (`comparisons`): `passed` (the candidate's gate), `regressed`,
 both verdicts, each criterion's `change` and `delta` (candidate less
-baseline), the `newly_failing` and `fixed` cases, and the `warnings`.
+baseline), the `newly_failing` and `fixed` cases, and the `warnings`: the
+baseline verdict's (each prefixed `baseline: `), then the candidate verdict's
+(`candidate: `), then the comparison's own.
 
 ## In the Scenario Editor
 

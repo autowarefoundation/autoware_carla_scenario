@@ -307,6 +307,47 @@ def test_its_options_are_checked() -> None:
         HybridBackendConfig.from_mapping({"port": 0})
 
 
+@pytest.mark.parametrize(
+    ("value", "shown"),
+    [(False, "False"), (0, "0"), ("", "''"), ([], "[]")],
+)
+def test_a_mesoscopic_section_that_is_no_mapping_is_refused(
+    value: Any, shown: str
+) -> None:
+    from autoware_carla_scenario.traffic.sumo.hybrid import HybridBackendConfig
+
+    with pytest.raises(ValueError) as refused:
+        HybridBackendConfig.from_mapping({"mesoscopic": value})
+    assert str(refused.value) == (
+        f"traffic.options.mesoscopic must be a mapping, got {shown}"
+    )
+    # Null is the default, on; handed to the constructor, it is refused.
+    assert HybridBackendConfig.from_mapping({"mesoscopic": None}).mesoscopic.enabled
+    # A null `enabled` is this backend's default, on, too (#2174).
+    assert HybridBackendConfig.from_mapping(
+        {"mesoscopic": {"enabled": None}}
+    ).mesoscopic.enabled
+    with pytest.raises(ValueError, match="mesoscopic must be a mapping, got None"):
+        HybridBackendConfig(mesoscopic=None)  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize("key", ["net_path", "cache_dir"])
+def test_its_text_options_are_checked(key: str, tmp_path: Path) -> None:
+    """``net_path: ''`` converted the OpenDRIVE, and ``cache_dir: false``
+    was accepted, before #2174."""
+    from autoware_carla_scenario.traffic.sumo.hybrid import HybridBackendConfig
+
+    for bad, shown in (("", "''"), (False, "False"), (0, "0")):
+        with pytest.raises(ValueError) as refused:
+            HybridBackendConfig.from_mapping({key: bad})
+        assert str(refused.value) == (
+            f"traffic.options.{key} must be non-empty text or null (got {shown})"
+        )
+    assert getattr(HybridBackendConfig.from_mapping({key: None}), key) is None
+    config = HybridBackendConfig(cache_dir=str(tmp_path))
+    assert config.resolved_cache_dir() == tmp_path
+
+
 def test_the_hydra_group_builds_it() -> None:
     from hydra import compose, initialize_config_dir
     from omegaconf import OmegaConf

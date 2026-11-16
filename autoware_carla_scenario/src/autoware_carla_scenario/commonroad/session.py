@@ -87,6 +87,18 @@ def _check_timeout(name: str, timeout: Any) -> Optional[float]:
     return float(timeout)
 
 
+def _check_cache_dir(cache_dir: Any) -> Optional[Path]:
+    """*cache_dir*, ``None`` or a path (a ``str`` or ``os.PathLike``, not
+    empty), as a :class:`~pathlib.Path`."""
+    if cache_dir is None:
+        return None
+    if isinstance(cache_dir, (str, os.PathLike)):
+        path = os.fspath(cache_dir)
+        if isinstance(path, str) and path:  # Not bytes: Path() takes str only.
+            return Path(path)
+    raise ValueError(f"cache_dir must be a path or None, got {cache_dir!r}")
+
+
 def _check_workers(workers: Any) -> int:
     """*workers* as an ``int``: an integer (a NumPy one too, not a bool) of at
     least 1."""
@@ -127,7 +139,8 @@ class CommonRoadSettings:
             positive and finite.
         reach_settings: Overrides of CommonRoad-Reach's configuration, by
             section and key.
-        cache_dir: Where the converted maps are kept; ``None`` for
+        cache_dir: Where the converted maps are kept (a ``str`` is taken as
+            a :class:`~pathlib.Path`); ``None`` for
             :func:`~.map.default_cache_dir`.
         command: The command starting a worker; ``None`` finds it
             (:func:`~.worker.worker_command`).
@@ -169,6 +182,7 @@ class CommonRoadSettings:
         _check_period("dt", self.dt)
         _check_period("horizon_s", self.horizon_s)
         _check_period("radius_m", self.radius_m)
+        object.__setattr__(self, "cache_dir", _check_cache_dir(self.cache_dir))
         object.__setattr__(
             self,
             "request_timeout_s",

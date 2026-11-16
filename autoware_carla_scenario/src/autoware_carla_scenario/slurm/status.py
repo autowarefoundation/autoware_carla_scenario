@@ -26,7 +26,7 @@ from .manifest import (
     sbatch_in_flight,
     sbatch_timed_out,
 )
-from .queue import ACTIVE_STATES, cancel_jobs, squeue_states
+from .queue import _any_active, cancel_jobs, squeue_states
 from .records import JsonMembers
 
 __all__ = [
@@ -39,14 +39,6 @@ __all__ = [
 
 # Logged under scenario-slurm's name, as it was before this was split out of it.
 logger = logging.getLogger("autoware_carla_scenario.slurm.cli")
-
-
-def _any_active(states: dict[int, str]) -> bool:
-    """Whether any of *states* is one of ``ACTIVE_STATES``."""
-    for state in states.values():
-        if state in ACTIVE_STATES:
-            return True
-    return False
 
 
 def active_jobs(

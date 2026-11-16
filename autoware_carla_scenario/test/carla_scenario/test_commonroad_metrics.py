@@ -24,6 +24,7 @@ from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, Iterator, Optional
 
+import numpy as np
 import pytest
 
 from autoware_carla_scenario import heavy_metrics, metrics
@@ -480,6 +481,26 @@ def test_a_run_judging_one_needs_the_workers(opendrive: str, tmp_path: Path) -> 
             False,
             "start_timeout_s must be positive and finite, or None, got False",
         ),
+        # A bool is no period, nor is a string (#2171).
+        ("period_s", True, "period_s must be positive and finite, got True"),
+        ("dt", False, "dt must be positive and finite, got False"),
+        pytest.param(
+            "radius_m",
+            np.bool_(True),
+            "radius_m must be positive and finite, got",
+            id="radius_m-numpy-bool",
+        ),
+        ("period_s", "0.1", "period_s must be positive and finite, got '0.1'"),
+        ("horizon_s", None, "horizon_s must be positive and finite, got None"),
+        (
+            "metric_periods_s",
+            {CRIME_TTR_S: True},
+            "metric_periods_s['crime_ttr_s'] must be positive and finite, got True",
+        ),
+        # A path or None (#2171).
+        ("cache_dir", "", "cache_dir must be a path or None, got ''"),
+        ("cache_dir", False, "cache_dir must be a path or None, got False"),
+        ("cache_dir", 5, "cache_dir must be a path or None, got 5"),
         # Too big for a float (#1652).
         pytest.param(
             "dt",
@@ -497,6 +518,20 @@ def test_the_settings_refuse_a_bad_value(field: str, value: Any, message: str) -
     with pytest.raises(ValueError, match=re.escape(message)):
         cr_session.configure_commonroad_metrics(**{field: value})
     assert cr_session.commonroad_settings() is before
+
+
+def test_a_str_cache_dir_is_a_path(tmp_path: Path) -> None:
+    """#2171: a ``str`` cache_dir was kept as it was, and the map conversion
+    failed on ``root / key`` as if roadgen had."""
+    settings = cr_session.CommonRoadSettings(cache_dir=str(tmp_path))  # type: ignore[arg-type]
+    assert settings.cache_dir == tmp_path
+    assert isinstance(settings.cache_dir, Path)
+    assert cr_session.CommonRoadSettings().cache_dir is None
+
+
+def test_a_numpy_period_is_taken() -> None:
+    settings = cr_session.CommonRoadSettings(period_s=np.float32(0.25))  # type: ignore[arg-type]
+    assert settings.period_s == pytest.approx(0.25)
 
 
 def test_the_settings_take_good_values() -> None:
@@ -1208,6 +1243,68 @@ def test_an_answer_out_of_protocol_is_a_worker_error(
     finally:
         worker.close()
     assert not worker.running()
+
+
+@pytest.mark.parametrize(
+    ("answer", "message"),
+    [
+        (
+            {"ok": True, "values": {CRIME_TTC_S: "n/a"}},
+            """values['crime_ttc_s'] must be a number or null, got '"n/a"'""",
+        ),
+        (
+            {"ok": True, "values": {CRIME_TTC_S: True}},
+            "values['crime_ttc_s'] must be a number or null, got 'true'",
+        ),
+        (
+            {"ok": True, "values": {CRIME_TTC_S: [1.0]}},
+            "values['crime_ttc_s'] must be a number or null, got '[1.0]'",
+        ),
+        (
+            {"ok": True, "values": [1.0]},
+            "values must be an object of measure -> number, got '[1.0]'",
+        ),
+        (
+            {"ok": True, "values": {}, "errors": "boom"},
+            """errors must be an object of measure -> error, got '"boom"'""",
+        ),
+    ],
+)
+def test_a_malformed_answer_is_a_worker_error(
+    tmp_path: Path, answer: dict[str, Any], message: str
+) -> None:
+    """#2171: a value that is not a number, or values or errors that are not
+    objects, raised a bare ValueError or TypeError from float() or dict()."""
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    worker = cr_worker.CommonRoadWorker(
+        [sys.executable, str(script), "evaluate", json.dumps(answer)],
+        tmp_path / "map.xml",
+    )
+    try:
+        with pytest.raises(cr_worker.CommonRoadWorkerError) as raised:
+            worker.evaluate([CRIME_TTC_S], {}, [])
+    finally:
+        worker.close()
+    assert "answered 'evaluate' out of protocol: " in str(raised.value)
+    assert message in str(raised.value)
+
+
+@pytest.mark.parametrize("measures", ['"crime_ttc_s"', "[1]", "{}"])
+def test_a_malformed_init_answer_is_a_worker_error(
+    tmp_path: Path, measures: str
+) -> None:
+    """#2171: ``list("crime_ttc_s")`` made one measure of each letter."""
+    script = tmp_path / "worker.py"
+    script.write_text(_ANSWERS_OUT_OF_PROTOCOL)
+    answer = '{"ok": true, "measures": %s}' % measures
+    with pytest.raises(
+        cr_worker.CommonRoadWorkerError,
+        match=re.escape("answered 'init' out of protocol: measures must be"),
+    ):
+        cr_worker.CommonRoadWorker(
+            [sys.executable, str(script), "init", answer], tmp_path / "map.xml"
+        )
 
 
 def test_an_answer_out_of_protocol_is_quoted_cut_short(tmp_path: Path) -> None:

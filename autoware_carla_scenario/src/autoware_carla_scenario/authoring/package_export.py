@@ -111,7 +111,9 @@ class ExportResult:
         pin: How the framework was pinned.
         locked: Whether ``uv.lock`` was generated.
         verified: Whether ``uv sync --locked`` succeeded against it.
-        tested: Whether the package's own tests were run and passed.
+        tests_run: Whether the package's own tests were run at all.
+        tested: Whether the package's own tests were run and passed.  With
+            ``tests_run`` this tells "failed" (run, not passed) from "not run".
         wheelhouse: The pip-installable wheelhouse built from the lock, when
             one was asked for and could be built.
         warnings: Reproducibility caveats worth showing the user.
@@ -123,6 +125,7 @@ class ExportResult:
     pin: Pin
     locked: bool = False
     verified: bool = False
+    tests_run: bool = False
     tested: bool = False
     wheelhouse: Optional[Wheelhouse] = None
     warnings: list[str] = field(default_factory=list)
@@ -504,35 +507,44 @@ def _self_check(
     verify: bool,
     run_tests: bool,
     warnings: list[str],
-) -> tuple[tuple[bool, bool, bool], str]:
+) -> tuple[tuple[bool, bool, bool, bool], str]:
     """Lock, sync and test the staged package.
 
     Each step gates the next: there is nothing to sync without a lockfile, and
     nothing to test without a synced environment.  Returns
-    ``((locked, verified, tested), log)`` and appends to *warnings* whenever a
-    step is skipped or a test run fails -- a package that is not reproducible
-    must not come back looking finished.
+    ``((locked, verified, tests_run, tested), log)`` and appends to *warnings*
+    whenever a step is skipped or a test run fails -- a package that is not
+    reproducible must not come back looking finished.  A skipped lock implies
+    the rest are skipped, and its one warning says so.
     """
     if not lock:
         warnings.append(
             "Dependency locking was skipped: this package has no uv.lock "
             "and is not reproducible."
         )
-        return (False, False, False), ""
+        return (False, False, False, False), ""
 
     log = _lock(staging)
     if not verify:
-        return (True, False, False), log
+        warnings.append(
+            "'uv sync --locked' was skipped: nothing checked that this package's "
+            "uv.lock installs, and its own tests were not run."
+        )
+        return (True, False, False, False), log
 
     log += _verify_sync(staging)
     if not run_tests:
-        return (True, True, False), log
+        warnings.append(
+            "The generated package's own tests were skipped: nothing checked "
+            "that its scenario runs against the locked environment."
+        )
+        return (True, True, False, False), log
 
     passed, test_log = _run_tests(staging)
     log += test_log
     if not passed:
         warnings.append("The generated package's own tests failed; see the export log.")
-    return (True, True, passed), log
+    return (True, True, True, passed), log
 
 
 def _wheelhouse_manifest(
@@ -687,8 +699,12 @@ def export_package(
         checks, check_log = _self_check(
             staging, lock=lock, verify=verify, run_tests=run_tests, warnings=warnings
         )
-        locked, verified, tested = checks
+        locked, verified, tests_run, tested = checks
         log += check_log
+        if not locked:
+            # The manifest records only what was observed: without a lock
+            # there is no uv.lock in the package to point at.
+            files.pop("lockfile", None)
 
         # A wheelhouse *is* the lockfile resolved into wheels, so there is one
         # exactly when there is a lock -- which is the only reason an export
@@ -764,6 +780,7 @@ def export_package(
         pin=pin,
         locked=locked,
         verified=verified,
+        tests_run=tests_run,
         tested=tested,
         wheelhouse=built,
         warnings=warnings,

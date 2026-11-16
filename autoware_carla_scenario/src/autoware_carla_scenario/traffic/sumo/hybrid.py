@@ -40,7 +40,7 @@ from ..mesoscopic import MesoscopicTraffic
 from ..parameters import VEHICLE_PARAMETER_BACKENDS, VehicleParameters
 from ..traffic_manager import TrafficManagerBackend
 from .backend import world_opendrive
-from .config import default_cache_dir
+from .config import check_text, resolve_cache_dir
 from .geometry import Pose2D, carla_to_sumo, sumo_to_carla
 from .mesosim import (
     MesoRoads,
@@ -96,6 +96,8 @@ class HybridBackendConfig:
         )
         self.port = self.traffic_manager.port
         self.mesoscopic = _mesoscopic(self.mesoscopic)
+        check_text("traffic.options.net_path", self.net_path, optional=True)
+        check_text("traffic.options.cache_dir", self.cache_dir, optional=True)
         if self.mesoscopic.scenario_vehicles:
             raise ValueError(
                 "traffic.options.mesoscopic.scenario_vehicles is not supported by "
@@ -105,30 +107,39 @@ class HybridBackendConfig:
     def resolved_cache_dir(self) -> Path:
         """The directory converted networks are cached in (the ``sumo``
         backend's, unless ``cache_dir`` says otherwise)."""
-        if self.cache_dir:
-            return Path(self.cache_dir).expanduser()
-        return default_cache_dir()
+        return resolve_cache_dir(self.cache_dir)
 
     @classmethod
     def from_mapping(cls, mapping: Mapping[str, Any]) -> "HybridBackendConfig":
         """Return a config built from a plain mapping (e.g. a Hydra node)."""
-        from ...utils.config import checked_options  # noqa: PLC0415
+        from ...utils.config import checked_options, null_as_default  # noqa: PLC0415
 
-        checked = checked_options(cls, mapping)
-        if checked.get("mesoscopic") is None:
-            checked.pop("mesoscopic", None)
-        return cls(**checked)
+        # A null `mesoscopic` is the default, on (#2174).
+        return cls(**null_as_default(cls, checked_options(cls, mapping)))
 
 
 def _mesoscopic(mapping: Any) -> MesoscopicConfig:
-    """*mapping* as the mesoscopic options, on unless it says otherwise."""
+    """*mapping* as the mesoscopic options, on unless it says otherwise.
+
+    A :class:`MesoscopicConfig` is itself; a mapping is read with
+    ``enabled: true`` unless it says otherwise (a null ``enabled`` is
+    ``true``); anything else -- null among
+    it, which :meth:`HybridBackendConfig.from_mapping` has already taken as
+    the default -- is refused, naming the key.
+    """
+    from ...utils.config import checked_section  # noqa: PLC0415
+
     if isinstance(mapping, MesoscopicConfig):
         return mapping
-    if not isinstance(mapping, Mapping):
-        raise ValueError(
-            f"traffic.options.mesoscopic must be a mapping (got {mapping!r})"
-        )
-    return MesoscopicConfig.from_mapping({"enabled": True, **dict(mapping)})
+    section = checked_section("traffic.options.mesoscopic", mapping)
+    if section is None:
+        raise ValueError("traffic.options.mesoscopic must be a mapping, got None")
+    options = dict(section)
+    if options.get("enabled") is None:
+        # On here: a null `enabled` is this backend's default, not
+        # MesoscopicConfig's (#2174).
+        options["enabled"] = True
+    return MesoscopicConfig.from_mapping(options)
 
 
 @dataclass
@@ -200,7 +211,7 @@ class HybridTrafficBackend(TrafficManagerBackend):
                 "the 'hybrid' backend's mesoscopic model needs sumolib: install "
                 "the `sumo` extra"
             ) from exc
-        if self._hybrid.net_path:
+        if self._hybrid.net_path is not None:
             net_file = Path(self._hybrid.net_path).expanduser()
             if not net_file.is_file():
                 raise TrafficBackendUnavailable(f"net_path {net_file} does not exist")

@@ -64,6 +64,7 @@ from autoware_carla_scenario import (
     GroundProjectionConfig,
     Lanelet2Pose,
     ScenarioQueue,
+    ServerConfig,
     SpawnTransform,
     TrafficSinkAction,
     TrafficSourceAction,
@@ -88,6 +89,7 @@ from autoware_carla_scenario.gate.errored import (
     write_case_unfinished,
 )
 from autoware_carla_scenario.maps import resolve_map_paths
+from autoware_carla_scenario.maps.config import map_setting
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import (
     ODD_CASE_KEY,
@@ -137,7 +139,7 @@ from autoware_carla_scenario.typecheck.mode import (
 )
 from autoware_carla_scenario.traffic.base import check_background_speed
 from autoware_carla_scenario.traffic.config import traffic_backend_name
-from autoware_carla_scenario.traffic.registry import tm_port_option
+from autoware_carla_scenario.traffic.registry import takes_null_options, tm_port_option
 from autoware_carla_scenario.traffic import (
     TrafficBackend,
     TrafficConfig,
@@ -349,7 +351,8 @@ def _check_ego_numbers(cfg: DictConfig) -> None:
     0 or more (:func:`_spawn_retry_max_count`), as building the ego would
     (:func:`build_ego_and_spawn`), so a batch refuses them before CARLA
     starts (#1809, #1984).  A key that is absent or null is left to the
-    build, which reads its default or refuses it.
+    build, which reads it as its default (:func:`_given`; a pose's 0,
+    #2143, #2161) or, for one with none, refuses it.
 
     Raises:
         ValueError: naming the key of the value refused.
@@ -542,11 +545,13 @@ def build_spawn_pose(cfg: DictConfig) -> Lanelet2Pose:
     lane's direction of travel -- the same pose an NPC's document spawn is
     (``spawn.t`` and ``spawn.heading``).  A config that predates the last two
     keys spawns on the centreline facing along the lane, as it always did.
+    Each of ``ego.spawn_s``, ``ego.spawn_t`` and ``ego.spawn_heading`` that is
+    absent or null is 0 (#2143, #2161).
     """
     ego_cfg = cfg.ego
     return Lanelet2Pose(
         lanelet_id=_lanelet_id("ego.spawn_lanelet_id", ego_cfg.spawn_lanelet_id),
-        s=_ego_number("ego.spawn_s", ego_cfg.spawn_s),
+        s=_ego_number("ego.spawn_s", _given(ego_cfg, "spawn_s", 0.0)),
         t=_ego_number("ego.spawn_t", _given(ego_cfg, "spawn_t", 0.0)),
         heading=_ego_number("ego.spawn_heading", _given(ego_cfg, "spawn_heading", 0.0)),
     )
@@ -556,7 +561,8 @@ def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
     """Extract the ego's goal pose from ``ego.goal_lanelet_id`` / ``ego.goal_s``.
 
     Returns ``None`` when no goal is configured, which does not yet mean the run
-    has none: a scenario may derive its own in ``setup()``.
+    has none: a scenario may derive its own in ``setup()``.  An absent or null
+    ``ego.goal_s`` is 0, the start of the lanelet (#2161).
     """
     ego_cfg = cfg.get("ego") or {}
     goal_lanelet_id = ego_cfg.get("goal_lanelet_id")
@@ -564,7 +570,7 @@ def build_goal_pose(cfg: DictConfig) -> Lanelet2Pose | None:
         return None
     return Lanelet2Pose(
         lanelet_id=_lanelet_id("ego.goal_lanelet_id", goal_lanelet_id),
-        s=_ego_number("ego.goal_s", ego_cfg.get("goal_s", 0.0)),
+        s=_ego_number("ego.goal_s", _given(ego_cfg, "goal_s", 0.0)),
     )
 
 
@@ -607,7 +613,7 @@ def build_planned_route(cfg: DictConfig, name: str = "") -> PlannedRoute:
         raise RouteError("no ego.spawn_lanelet_id: the route has no start")
     start = Lanelet2Pose(
         lanelet_id=_lanelet_id("ego.spawn_lanelet_id", spawn_lanelet_id),
-        s=_ego_number("ego.spawn_s", ego_cfg.get("spawn_s", 0.0)),
+        s=_ego_number("ego.spawn_s", _given(ego_cfg, "spawn_s", 0.0)),
         t=_ego_number("ego.spawn_t", _given(ego_cfg, "spawn_t", 0.0)),
         heading=_ego_number("ego.spawn_heading", _given(ego_cfg, "spawn_heading", 0.0)),
     )
@@ -647,17 +653,25 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
     232).  The argument lists (``launch``, ``colcon_args``, ``docker_args``,
     ``command``) must be lists, not strings, of strings or numbers; ``env``
     and ``mounts`` mappings of strings or numbers; ``bridge_parameters`` a
-    mapping; ``workspace`` a non-empty path.  A null ``type`` or ``workspace``
-    is its default (``none``, ``~/autoware``).  :func:`check_batch_configs` calls this, so a batch or a sweep is
-    refused for any of these before its first scenario starts.
+    mapping; ``workspace`` a non-empty path; ``devcontainer``, ``docker`` and
+    ``container_prefix`` non-empty text, and ``image``, ``workspace_mount``,
+    ``gpus`` and ``user`` null or non-empty text (``gpus`` may also be a GPU
+    count, 1 or more, as ``docker run --gpus 2`` takes).  A null setting is its
+    default (#2158, #2161): ``type`` is ``none``, ``workspace``
+    ``~/autoware``, and ``build``, ``rosdep``, ``stop_timeout_s``,
+    ``devcontainer``, ``docker`` and ``container_prefix`` those of
+    :class:`~autoware_carla_scenario.autoware_stack.DockerAutowareConfig`;
+    a null argument list or mapping is empty, and a null ``gpus`` no GPU, as
+    they always were.  :func:`check_batch_configs` calls this, so a batch or a
+    sweep is refused for any of these before its first scenario starts, and
+    before any container is started or workspace prepared.
 
     Raises:
         ValueError: If ``autoware.launcher.type`` names an unknown launcher,
             the group holds a key no launcher reads, or a setting the type
             reads is refused, naming it.
     """
-    ego_cfg = cfg.get("ego") or {}
-    if str(ego_cfg.get("entity", "autopilot")) != "autoware":
+    if _ego_entity_setting(cfg) != "autoware":
         return None
     autoware_cfg = cfg.get("autoware")
     launcher_cfg = None if autoware_cfg is None else autoware_cfg.get("launcher")
@@ -686,12 +700,17 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
         )
         raise ValueError(msg)
 
-    # Null is the default (#2158), not the unknown type 'None'.
-    kind_value = settings.pop("type", None)
-    kind = "none" if kind_value is None else str(kind_value)
+    kind = _launcher_kind(settings.pop("type", None))
     if kind == "none":
         return None
 
+    # A GPU count is what docker run --gpus takes too (``gpus: 2``), as the
+    # prepare backends read it (prepare.docker); a bool or a count below 1 is
+    # left for DockerAutowareConfig to refuse.  Made text before the key, so
+    # ``gpus: 2`` and ``gpus: '2'`` share one launcher.
+    gpus = settings.get("gpus")
+    if isinstance(gpus, int) and not isinstance(gpus, bool) and gpus >= 1:
+        settings["gpus"] = str(gpus)
     key = json.dumps({"type": kind, **settings}, sort_keys=True, default=str)
     cached = _AUTOWARE_LAUNCHERS.get(key)
     if cached is not None:
@@ -706,7 +725,16 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
         raise ValueError(msg)
     stop_timeout_s = _launcher_stop_timeout_s(settings)
     if kind == "docker":
-        options = {k: v for k, v in settings.items() if k in docker_fields}
+        # Null is the field's default (#2161), as it is the workspace's,
+        # below: a null build or rosdep used to be refused, and a null
+        # devcontainer, docker or container_prefix handed on as None.  A null
+        # argument list or mapping stays none and a null gpus no GPU, as the
+        # docs have them.
+        options = {
+            k: v
+            for k, v in settings.items()
+            if k in docker_fields and (v is not None or k not in _NULL_IS_DEFAULT)
+        }
         # Null is the default; false, a number or '' is refused rather than
         # made Path("False") (#2158).
         workspace = options.get("workspace")
@@ -720,8 +748,10 @@ def build_autoware_launcher(cfg: DictConfig) -> AutowareLauncher | None:
         options["workspace"] = Path(workspace)
         # Absent is empty, refused naming the key.
         options.setdefault("launch", ())
-        # The settings' types are checked here, naming the key (the
-        # _launcher_* helpers do); their values by the config, below.
+        # The argument lists' and mappings' types are checked here, naming
+        # the key (the _launcher_* helpers do); the text settings' types and
+        # every value by DockerAutowareConfig, below, whose refusal is headed
+        # with the group.
         for name in ("launch", "colcon_args", "docker_args"):
             if name in options:
                 options[name] = _launcher_str_list(name, options[name])
@@ -774,10 +804,38 @@ def _finite_number(value: Any) -> bool:
         return False
 
 
+#: The ``autoware.launcher`` keys of :class:`DockerAutowareConfig` fields that
+#: a null leaves at the field's default (:func:`build_autoware_launcher`,
+#: #2161).  ``workspace`` and ``stop_timeout_s`` are read on their own, with
+#: the same rule.
+_NULL_IS_DEFAULT = frozenset(
+    {
+        "build",
+        "rosdep",
+        "devcontainer",
+        "image",
+        "workspace_mount",
+        "user",
+        "docker",
+        "container_prefix",
+    }
+)
+
+
+def _launcher_kind(value: Any) -> str:
+    """The launcher type ``autoware.launcher.type`` *value* names, as a run
+    and a Slurm task read it: ``none`` when it is absent or null (#2158), not
+    the unknown type ``'None'``; any other value as its text, which
+    :func:`build_autoware_launcher` refuses unless ``none``, ``docker`` or
+    ``command``."""
+    return "none" if value is None else str(value)
+
+
 def _launcher_stop_timeout_s(settings: dict[str, Any]) -> float:
     """``autoware.launcher.stop_timeout_s`` of *settings*, checked: a finite
-    number of seconds -- an int or a float, not a bool, a string or null --
-    above 0, as the bridge's timeouts are.  Each launcher type reads it.
+    number of seconds -- an int or a float, not a bool or a string -- above
+    0, as the bridge's timeouts are; absent or null is 20 s, the default
+    (#2161).  Each launcher type reads it.
 
     A NaN never times out (``Popen.wait(timeout=nan)``), so a stack that
     ignores ``SIGINT`` would never be escalated and the batch would hang; 0 or
@@ -786,7 +844,7 @@ def _launcher_stop_timeout_s(settings: dict[str, Any]) -> float:
     Raises:
         ValueError: naming the key.
     """
-    value = settings.get("stop_timeout_s", 20.0)
+    value = _given(settings, "stop_timeout_s", 20.0)
     if not _finite_number(value) or value <= 0:
         raise ValueError(
             "autoware.launcher.stop_timeout_s must be a finite number > 0 "
@@ -931,7 +989,7 @@ def _native_autoware_interface(cfg: DictConfig) -> bool:
         raise ValueError(
             f"ego.native_autoware_interface must be true or false, got {native!r}"
         )
-    entity = str(ego_cfg.get("entity", "autopilot"))
+    entity = _ego_entity_setting(cfg)
     if native and entity != "autoware":
         raise ValueError(
             "ego.native_autoware_interface=true needs ego.entity=autoware "
@@ -1007,9 +1065,22 @@ EGO_ENTITIES: tuple[str, ...] = (
 )
 
 
+def _ego_entity_setting(cfg: Any) -> Any:
+    """``ego.entity`` of *cfg* as written, unchecked: ``autopilot`` when the
+    config has no ``ego`` group or the key is absent or null (#2161), not the
+    unknown entity ``'None'``.  Every reader of the key -- a run's, a batch's
+    check and a Slurm task's -- reads it through this; :func:`ego_entity_name`
+    checks it.
+    """
+    ego_cfg = cfg.get("ego") or {}
+    value = ego_cfg.get("entity")
+    return "autopilot" if value is None else value
+
+
 def ego_entity_name(cfg: DictConfig) -> str:
     """``ego.entity`` of *cfg*, checked: one of :data:`EGO_ENTITIES`;
-    ``autopilot`` when the config has no ``ego`` group or does not set it.
+    ``autopilot`` when the config has no ``ego`` group or does not set it, or
+    sets it to null (:func:`_ego_entity_setting`).
 
     :func:`check_batch_configs` calls this, so a run, a batch or a lanelet
     sweep naming an unknown entity is refused before anything starts rather
@@ -1018,9 +1089,8 @@ def ego_entity_name(cfg: DictConfig) -> str:
     Raises:
         ValueError: naming the key, when it names no entity.
     """
-    ego_cfg = cfg.get("ego") or {}
-    entity = str(ego_cfg.get("entity", "autopilot"))
-    if entity not in EGO_ENTITIES:
+    entity = _ego_entity_setting(cfg)
+    if not isinstance(entity, str) or entity not in EGO_ENTITIES:
         expected = ", ".join(repr(name) for name in EGO_ENTITIES)
         raise ValueError(
             f"Unknown ego.entity: {entity!r}. Expected one of: {expected}."
@@ -1229,11 +1299,17 @@ def build_traffic_backend(cfg: DictConfig) -> TrafficBackend:
         else TrafficConfig(options=_legacy_traffic_manager_options(cfg))
     )
 
-    # A key left at null is a key the config did not set, not an override of
-    # the backend's own default -- the group declares its keys so that plain
-    # `traffic.options.x=y` overrides work under Hydra's struct mode, and an
-    # interpolation that resolved to nothing leaves the backend's default alone.
-    options = {key: value for key, value in config.options.items() if value is not None}
+    # The groups declare their keys, null included, so that plain
+    # `traffic.options.x=y` overrides work under Hydra's struct mode.  A
+    # built-in backend reads a null itself (#2178): the default of an option
+    # that does not take null -- so an interpolation that resolved to nothing
+    # leaves the default alone -- and a value of its own for one that does
+    # (sumo's `lateral_resolution_m: null`, its lane-based model).  Any other
+    # backend, an installed package's, never sees a null: a key left at null
+    # is a key the config did not set, and is dropped.
+    options = dict(config.options)
+    if not takes_null_options(config.backend):
+        options = {key: value for key, value in options.items() if value is not None}
 
     backend = build_backend(
         config.backend, options, config.vehicles, config.pedestrians, config.bicycles
@@ -1418,17 +1494,15 @@ def _server_number(
 
 def _cooldown_seconds(cfg: DictConfig) -> float:
     """``server.cooldown_seconds``, checked: a finite number of seconds, 0 or
-    more.  A NaN or negative cooldown used to be read as none.
+    more; absent or null is the default, 2 s -- ``ServerConfig``'s, the
+    shipped ``server/localhost.yaml``'s and the docs' (#1267, #2161), not
+    none.  A NaN or negative cooldown used to be read as none.
 
     Raises:
         ValueError: naming the key.
     """
-    cooldown = _server_number(cfg, "cooldown_seconds", 0.0, positive=False)
-    if cooldown is None:
-        raise ValueError(
-            "server.cooldown_seconds must be a finite number >= 0 (got None)"
-        )
-    return cooldown
+    cooldown = _server_number(cfg, "cooldown_seconds", None, positive=False)
+    return ServerConfig.cooldown_seconds if cooldown is None else cooldown
 
 
 def _max_tick_rate_hz(cfg: DictConfig) -> float | None:
@@ -1722,7 +1796,9 @@ def build_backend_pool(cfg: DictConfig) -> BackendPool:
 def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
     """What writes each run's trajectory log as a T4Scene as the run ends,
     when the first of *cfgs* that sets ``t4scene.enabled`` does, with its
-    ``step_s`` and ``max_distance_m``; ``None`` otherwise.
+    ``step_s`` and ``max_distance_m``; ``None`` otherwise.  An absent or null
+    ``step_s`` is 0.1 s (#2161) and an absent ``max_distance_m`` 100 m; a null
+    ``max_distance_m`` takes every road user, as it always did.
 
     Raises:
         ValueError: ``t4scene.step_s`` is a bool, not a number or not a
@@ -1736,7 +1812,7 @@ def build_t4scene_exporter(*cfgs: DictConfig) -> T4SceneExporter | None:
         # Handed over as read: the exporter refuses a bool, which float()
         # would turn into a 1 s step or a 1 m distance (#1502, #1231).
         return T4SceneExporter(
-            step_s=t4scene_cfg.get("step_s", 0.1),
+            step_s=_given(t4scene_cfg, "step_s", 0.1),
             max_distance_m=t4scene_cfg.get("max_distance_m", 100.0),
         )
     return None
@@ -2146,7 +2222,7 @@ def _log_batch_plan(
             cfg.ego.vehicle_type,
             cfg.ego.initial_speed_kmh,
             cfg.ego.spawn_lanelet_id,
-            cfg.ego.spawn_s,
+            _given(cfg.ego, "spawn_s", 0.0),
             (
                 f"lanelet:{goal_pose.lanelet_id} s:{goal_pose.s:.1f}"
                 if goal_pose is not None
@@ -2281,14 +2357,15 @@ def _batch_queue(
 
 def cooldown_max_retries(cfg: DictConfig) -> int:
     """``server.cooldown_max_retries``, checked: a whole number (``2`` or
-    ``2.0``; not ``1.9``, a boolean or null), 0 or more.
+    ``2.0``; not ``1.9`` or a boolean), 0 or more; absent or null is 0, no
+    retry (#2161).
 
     Raises:
         ValueError: naming the key, when it is not a whole number, or when it
             is negative: a zero-attempt loop would record every scenario as
             errored without running it.
     """
-    value = (cfg.get("server") or {}).get("cooldown_max_retries", 0)
+    value = _given(cfg.get("server") or {}, "cooldown_max_retries", 0)
     retries = whole_number_setting("server.cooldown_max_retries", value, minimum=0)
     if retries is None:
         raise ValueError(
@@ -2439,17 +2516,20 @@ _BATCH_MAP_KEYS = (
 
 def _map_setting(cfg: DictConfig, key: str) -> str | bool | None:
     """``map.<key>`` of *cfg* as :func:`resolve_map_paths` reads it: a string
-    stripped, ``None`` when unset or empty; ``overwrite_xodr`` a flag, off
-    when unset and otherwise checked (``check_flag``, #2143).
+    stripped, ``None`` when unset or empty, and a boolean or a value that is
+    neither text nor a number refused
+    (:func:`~autoware_carla_scenario.maps.config.map_setting`, #2165);
+    ``overwrite_xodr`` a flag, off when unset and otherwise checked
+    (``check_flag``, #2143).
 
     Raises:
-        ValueError: naming ``map.overwrite_xodr``, when it is not a switch.
+        ValueError: naming ``map.<key>``, when the value is refused.
     """
     map_cfg = cfg.get("map") or {}
-    value = map_cfg.get(key)
     if key == "overwrite_xodr":
+        value = map_cfg.get(key)
         return value is not None and check_flag(f"map.{key}", value)
-    return None if value is None else str(value).strip() or None
+    return map_setting(map_cfg, key)
 
 
 def check_batch_map(configs: list[DictConfig], labels: list[str] | None = None) -> None:
@@ -2468,6 +2548,8 @@ def check_batch_map(configs: list[DictConfig], labels: list[str] | None = None) 
     Raises:
         RunConfigError: naming the first key that differs and the cases
             setting each of its values.
+        ValueError: naming ``map.<key>`` and the value, when a case's is
+            refused (:func:`_map_setting`).
     """
     names = labels if labels is not None else []
     for key in _BATCH_MAP_KEYS:
@@ -2628,9 +2710,7 @@ def check_batch_configs(
                 name: _to_dict(cfg[name]) if cfg.get(name) is not None else None
                 for name in ("server", "traffic", "traffic_manager", "autoware")
             }
-            settings["ego.entity"] = str(
-                (cfg.get("ego") or {}).get("entity", "autopilot")
-            )
+            settings["ego.entity"] = str(_ego_entity_setting(cfg))
             key = json.dumps(
                 settings,
                 sort_keys=True,
@@ -3148,7 +3228,7 @@ def _check_driver_settings(cfg: DictConfig) -> None:
         ValueError: When :class:`~autoware_carla_scenario.driver.DriverClientConfig`
             or the trajectory follower's ``driver.control`` refuses them.
     """
-    if str((cfg.get("ego") or {}).get("entity", "autopilot")) != "carla_driver":
+    if _ego_entity_setting(cfg) != "carla_driver":
         return
     driver_cfg = cfg.get("driver")
     if driver_cfg is None:
@@ -3202,7 +3282,7 @@ def _check_ros2_settings(cfg: DictConfig) -> None:
             :class:`~autoware_carla_scenario.ros2.Ros2EgoConfig` does, headed
             ``ros2:``.
     """
-    if str((cfg.get("ego") or {}).get("entity", "autopilot")) != "ros2":
+    if _ego_entity_setting(cfg) != "ros2":
         return
     ros2_cfg = cfg.get("ros2")
     if ros2_cfg is None:
@@ -3223,7 +3303,10 @@ def _check_backend_settings(cfg: DictConfig) -> None:
     it (``startup_timeout_s: -1``, ``pull: sometimes``, ``docker_args`` as a
     string, ...): its ``from_settings`` only reads them -- it pulls no image
     and starts no container.  A backend of another package is built, and its
-    settings checked, by the preparer.
+    settings checked, by the preparer; only a block of its that is neither
+    null nor a mapping (``backends.<name>: false``) is refused here, as the
+    preparer's ``BackendPool`` would refuse it once the queue was built
+    (#2182).
 
     Raises:
         ValueError: naming the key (``backends.<name>.<key>``).
@@ -3233,6 +3316,9 @@ def _check_backend_settings(cfg: DictConfig) -> None:
         return
     if not isinstance(backends_cfg, DictConfig):
         raise ValueError(f"backends must be a mapping, got {backends_cfg!r}")
+    for key, block in backends_cfg.items():
+        if block is not None and not isinstance(block, DictConfig):
+            raise ValueError(f"backends.{key!s} must be a mapping, got {block!r}")
     from autoware_carla_scenario.pedestrian.ardy import ArdyBackend  # noqa: PLC0415
 
     for backend in (ArdyBackend,):
@@ -3601,8 +3687,9 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     ``source.speed_kmh`` is finite and at least 1 km/h
     (:func:`~autoware_carla_scenario.traffic.base.check_background_speed`),
     and ``source.vehicles_per_minute`` and ``source.min_gap_m`` finite and
-    not negative.  Read by :func:`add_background_traffic` and checked up
-    front by :func:`check_batch_configs`.
+    not negative; each of these three absent or null is its default (30 km/h,
+    15 m, none a minute; #2161).  Read by :func:`add_background_traffic` and
+    checked up front by :func:`check_batch_configs`.
 
     Raises:
         ValueError: naming the key of the first value refused.
@@ -3625,9 +3712,17 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     )
     # Refused here, naming the key, whether or not a source is built from it:
     # 0 would be traffic that never moves (#967).
-    speed_value = source.get("speed_kmh", 30.0)
+    speed_value = _given(source, "speed_kmh", 30.0)
     try:
-        speed_kmh = check_background_speed(_float_of_text(speed_value))
+        speed = _float_of_text(speed_value)
+    except ValueError:
+        # Not float()'s "could not convert string to float: ..." (#2161).
+        raise ValueError(
+            f"background_traffic.source.speed_kmh: {shown(speed_value)} is not a "
+            "number"
+        ) from None
+    try:
+        speed_kmh = check_background_speed(speed)
     except ValueError as exc:
         raise ValueError(
             f"background_traffic.source.speed_kmh: {shown(speed_value)} is not a "
@@ -3637,7 +3732,7 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     def finite_amount(key: str, default: float) -> float:
         # Refused here, naming the key: NaN would fail `rate > 0` and be
         # dropped without a word, infinity would crash the run (#1321).
-        value = source.get(key, default)
+        value = _given(source, key, default)
         try:
             amount = _float_of_text(value)
         except ValueError as exc:

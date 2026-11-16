@@ -100,7 +100,7 @@ def checked_max_distance(
         return None
     error = ValueError(
         f"{key} must be positive and finite ({unlimited} for no limit), "
-        f"not {max_distance_m}"
+        f"not {max_distance_m!r}"
     )
     if isinstance(max_distance_m, bool) or isinstance(max_distance_m, str):
         raise error

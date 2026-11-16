@@ -66,3 +66,7 @@ class RunProgress(BaseModel):
     total: int
     scenario_name: str
     status: Status
+    #: Why the run ended before any job ran (its multirun directory could not
+    #: be created, #2183): set on its ``done``, which the viewer then shows as
+    #: a failure, not as completed.
+    message: str = ""

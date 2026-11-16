@@ -355,6 +355,8 @@ def _with_odd_samples(
         QUANTILE_DRAWS,
         encode_case,
         sample_draws,
+        sample_knobs,
+        sample_odd,
         search_from_config,
     )
 
@@ -370,10 +372,10 @@ def _with_odd_samples(
     buckets: list[dict[str, str]] = []
     map_attributes: list[str] = []
     if lanelet_map is not None:
-        definition = resolve_odd(raw.get("odd") or odd)
+        definition = resolve_odd(sample_odd(raw, odd))
         readings = _case_readings(base_cases, definition, lanelet_map)
         buckets = [{a: b for a, (b, _v) in r.items()} for r in readings]
-        given = dict(raw.get("knobs") or {})
+        given = dict(sample_knobs(raw))
         map_knobs = _map_knobs(definition, buckets, given)
         if map_knobs:
             raw["knobs"] = {**map_knobs, **given}
@@ -485,12 +487,14 @@ def _refuse_overridden(
     from ..odd.sampler import (  # noqa: PLC0415
         case_settings,
         controls_from_mapping,
+        sample_knobs,
+        sample_odd,
         scenario_backend,
     )
 
     settings = case_settings(
-        resolve_odd(raw.get("odd") or odd),
-        controls_from_mapping(raw.get("knobs")),
+        resolve_odd(sample_odd(raw, odd)),
+        controls_from_mapping(sample_knobs(raw), "sweep.odd_sample.knobs"),
         controls_from_mapping(controls),
         scenario_backend(rules, environment_rules),
     )
@@ -955,7 +959,10 @@ def load_sweep_map(map_cfg: Any, *, prefix: str = "") -> Any:
             MapResolutionError, MapCacheError), an ``OSError`` resolving it
             (the map cache's root not a directory, say), a Lanelet2 file that
             is missing (``FileNotFoundError``) or that Lanelet2 cannot read
-            (any ``OSError``, or its parser's ``RuntimeError``).
+            (any ``OSError``, or its parser's ``RuntimeError``); or naming
+            ``map.<key>`` and the value, when a setting is refused
+            (:func:`~autoware_carla_scenario.maps.config.map_setting`, a
+            boolean or a list for a path, #2165).
     """
     from ..maps import (  # noqa: PLC0415 -- clones a map on demand
         MapCacheError,
@@ -969,6 +976,8 @@ def load_sweep_map(map_cfg: Any, *, prefix: str = "") -> Any:
         paths = resolve_map_paths(map_cfg)
     except (MapSourceError, MapResolutionError, MapCacheError) as exc:
         raise ValueError(f"{prefix}{exc}") from exc  # each names the map
+    except ValueError as exc:  # a map.* setting refused, naming it (#2165)
+        raise ValueError(f"{prefix}{exc}") from exc
     except OSError as exc:  # the map cache's own directory, say
         raise ValueError(
             f"{prefix}Could not resolve the map{_map_label(map_cfg)}: {exc}"

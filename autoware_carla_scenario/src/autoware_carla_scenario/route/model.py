@@ -114,6 +114,24 @@ def _tristate(name: str, value: Any) -> str:
     return text
 
 
+def _choice(
+    name: str, value: Any, choices: Sequence[str], default: Optional[str]
+) -> str:
+    """*value* as one of *choices*, refused naming *name* and showing the
+    value; null is *default*, or refused when there is none.
+
+    Only null is the default: ``false``, ``0`` or ``''`` read as ``any``
+    used to let a mistyped constraint match every segment, and ``str()``
+    made null the text ``'None'`` (#2161).
+    """
+    if value is None and default is not None:
+        return default
+    text = value.strip() if isinstance(value, str) else None
+    if text is None or text not in choices:
+        raise ValueError(f"{name} must be one of {list(choices)}, got {value!r}")
+    return text
+
+
 def tristate_holds(wanted: str, actual: bool) -> bool:
     """Whether *actual* satisfies a :data:`TRISTATE` *wanted*."""
     if wanted == "any":
@@ -177,9 +195,13 @@ class Range:
         bounds: list[Optional[float]] = []
         for key in ("min", "max"):
             raw = value.get(key)
-            if raw is None or (isinstance(raw, str) and not raw.strip()):
+            if raw is None:
                 bounds.append(None)
                 continue
+            # Only null is an open bound: a YAML boolean is no number, and a
+            # blank is refused, not read as unset (#2143).
+            if isinstance(raw, bool) or (isinstance(raw, str) and not raw.strip()):
+                raise ValueError(f"{name}.{key} must be a number, got {raw!r}")
             try:
                 number = float(raw)
             except (TypeError, ValueError) as exc:
@@ -194,15 +216,6 @@ class Range:
             return cls(bounds[0], bounds[1])
         except ValueError as exc:
             raise ValueError(f"{name}: {exc}") from exc
-
-    def as_dict(self) -> dict[str, float]:
-        """The range as ``{min, max}``, unset bounds left out."""
-        out: dict[str, float] = {}
-        if self.min is not None:
-            out["min"] = self.min
-        if self.max is not None:
-            out["max"] = self.max
-        return out
 
 
 @dataclass(frozen=True)
@@ -363,12 +376,10 @@ def _parse_paths(where: str, raw: Any) -> tuple[JunctionPathSpec, ...]:
         unknown = sorted(set(item) - {"approach", "turn", "before", "after", "path"})
         if unknown:
             raise ValueError(f"{at}: a path does not take {unknown}")
-        approach = str(item.get("approach", "")).strip()
-        if approach not in PATH_APPROACHES:
-            raise ValueError(f"{at}.approach must be one of {list(PATH_APPROACHES)}")
-        turn = str(item.get("turn", "")).strip()
-        if turn not in PATH_TURNS:
-            raise ValueError(f"{at}.turn must be one of {list(PATH_TURNS)}")
+        approach = _choice(
+            f"{at}.approach", item.get("approach"), PATH_APPROACHES, None
+        )
+        turn = _choice(f"{at}.turn", item.get("turn"), PATH_TURNS, None)
         before = Range.parse(f"{at}.before", item.get("before"))
         after = Range.parse(f"{at}.after", item.get("after"))
         raw_path = item.get("path")
@@ -393,14 +404,13 @@ def _parse_segment(index: int, raw: Any) -> "LaneSegmentSpec | JunctionSegmentSp
     where = f"segments[{index}]"
     if not isinstance(raw, Mapping):
         raise ValueError(f"{where} must be a mapping, got {raw!r}")
-    kind = str(raw.get("kind", "")).strip()
+    kind_value = raw.get("kind")
+    kind = kind_value.strip() if isinstance(kind_value, str) else None
     if kind == "lane":
         unknown = sorted(set(raw) - _LANE_KEYS)
         if unknown:
             raise ValueError(f"{where}: a lane segment does not take {unknown}")
-        shape = str(raw.get("shape") or "any").strip()
-        if shape not in SHAPES:
-            raise ValueError(f"{where}.shape must be one of {list(SHAPES)}")
+        shape = _choice(f"{where}.shape", raw.get("shape"), SHAPES, "any")
         length = Range.parse(f"{where}.length", raw.get("length"))
         if (length.min or 0.0) < 0.0:
             raise ValueError(f"{where}.length.min must not be negative")
@@ -425,9 +435,7 @@ def _parse_segment(index: int, raw: Any) -> "LaneSegmentSpec | JunctionSegmentSp
         unknown = sorted(set(raw) - _JUNCTION_KEYS)
         if unknown:
             raise ValueError(f"{where}: a junction segment does not take {unknown}")
-        turn = str(raw.get("turn") or "any").strip()
-        if turn not in TURNS:
-            raise ValueError(f"{where}.turn must be one of {list(TURNS)}")
+        turn = _choice(f"{where}.turn", raw.get("turn"), TURNS, "any")
         values = {
             key: _tristate(f"{where}.{key}", raw.get(key))
             for key in _JUNCTION_KEYS - {"kind", "turn", "paths", "length"}
@@ -443,7 +451,7 @@ def _parse_segment(index: int, raw: Any) -> "LaneSegmentSpec | JunctionSegmentSp
             length=length,
             **values,
         )
-    raise ValueError(f"{where}.kind must be 'lane' or 'junction', got {kind!r}")
+    raise ValueError(f"{where}.kind must be 'lane' or 'junction', got {kind_value!r}")
 
 
 @dataclass(frozen=True)
@@ -540,14 +548,18 @@ def _blank(value: Any) -> bool:
 
 
 def _distance(name: str, value: Any) -> float:
-    """A finite, non-negative distance (m) the search reads; unset is ``0``.
+    """A finite, non-negative distance (m) the search reads; null is ``0``.
 
     ``float()`` alone lets a NaN through (every comparison with it is false)
     and an infinity, so both are refused here, with the field's name, as the
-    authoring model refuses them.
+    authoring model refuses them. Only null is the default: ``float()`` also
+    reads ``true`` as 1 m, so a YAML boolean is refused, and so is a blank
+    (#2143).
     """
-    if _blank(value):
+    if value is None:
         return 0.0
+    if isinstance(value, bool) or (isinstance(value, str) and not value.strip()):
+        raise ValueError(f"{name} must be a number, got {value!r}")
     try:
         number = float(value)
     except (TypeError, ValueError) as exc:

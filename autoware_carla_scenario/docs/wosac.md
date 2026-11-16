@@ -192,7 +192,7 @@ result.
 |---|---|
 | `{stem}.wosac.pb` | One serialised `ScenarioRollouts`: the run's `scenario_id`, and one `JointScene` |
 | `{stem}.wosac.json` | What the message has no field for: the `scenario_id`, the grid (`step_s`, `current_index`, `steps`, `padded_steps`, `current_frame`, `current_t`), the `frame` (`local` or `map`) and its `offset`, the run's verdict (`result`: `passed`, `message`, or null), its `seed` and `scenario_hash` (null for a log without a `run` record), and every agent: `object_id`, `role`, `actor_id`, `type_id`, `object_type`, `ego`, `valid_steps`, and `current` (its box centre and heading on the current row, `[x, y, z, heading]`) |
-| `submission.binproto-00000-of-00001` | One serialised `SimAgentsChallengeSubmission` per shard: the metadata, and a contiguous share of the scenarios, sorted by `scenario_id` (`read_submission()` reads them back as one) |
+| `submission.binproto-00000-of-00001` | One serialised `SimAgentsChallengeSubmission` per shard: the metadata, and a contiguous share of the scenarios, sorted by `scenario_id` (`read_submission()` reads them back as one: every shard's scenarios, and the metadata once, the last shard's) |
 | `submission.tar.gz` | The shards, with `--tar` |
 
 The run's own files are named after its stem (`run_outputs.WOSAC_SUFFIX`),
