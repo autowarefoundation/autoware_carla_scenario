@@ -65,6 +65,7 @@ __all__ = [
     "WOSAC_SUFFIX",
     "recording_path",
     "run_output_paths",
+    "wosac_agents_path",
     "run_outputs_exist",
     "remove_run_outputs",
     "result_json_line",
@@ -165,6 +166,16 @@ def recording_path(trajectory: Path) -> Path:
     ``X.trajectory.jsonl``, where the converter writes it by default."""
     path = Path(trajectory)
     return path.with_name(trajectory_stem(path) + RECORDING_SUFFIX)
+
+
+def wosac_agents_path(rollouts: Path) -> Path:
+    """What a WOSAC rollout's run says of itself: ``X.wosac.json`` beside
+    the rollout ``X.wosac.pb``."""
+    path = Path(rollouts)
+    name = path.name
+    if name.endswith(WOSAC_SUFFIX):
+        name = name[: len(name) - len(WOSAC_SUFFIX)]
+    return path.with_name(name + WOSAC_AGENTS_SUFFIX)
 
 
 def sensors_recording_path(directory: Path, stem: str) -> Path:

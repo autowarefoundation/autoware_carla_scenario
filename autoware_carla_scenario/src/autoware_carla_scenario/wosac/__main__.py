@@ -16,9 +16,13 @@ from ..authoring.persistence import load_yaml
 from ..t4_scene.grid import stem_collision, trajectory_logs
 from .convert import CURRENT_INDEX, FUTURE_STEPS, write_rollout
 from .pack import (
+    HEADING_TOLERANCE_RAD,
+    POSITION_TOLERANCE_M,
     build_submission,
+    check_runs,
     merge_rollouts,
     read_rollouts,
+    read_run,
     rollout_files,
     write_submission,
 )
@@ -80,6 +84,25 @@ def _pack(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
     try:
         metadata = (
             None if args.metadata is None else _mapping(args.metadata, "--metadata")
+        )
+        runs: list[tuple[dict[str, Any], str]] = []
+        missing: list[str] = []
+        for path in files:
+            run = read_run(path)
+            if run is None:
+                missing.append(str(path))
+            else:
+                runs.append((run, str(path)))
+        if missing:
+            logging.getLogger(__name__).warning(
+                "no .wosac.json beside %s: cannot check they are rollouts of "
+                "their scenario",
+                ", ".join(missing),
+            )
+        check_runs(
+            runs,
+            position_tolerance_m=args.position_tolerance,
+            heading_tolerance_rad=args.heading_tolerance,
         )
         merged = merge_rollouts(
             ((read_rollouts(path), str(path)) for path in files),
@@ -195,6 +218,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         "--common-agents",
         action="store_true",
         help="keep only the agents every rollout of a scenario has, rather than refuse",
+    )
+    pack.add_argument(
+        "--position-tolerance",
+        type=float,
+        default=POSITION_TOLERANCE_M,
+        help="how far apart, in metres, an agent may start the future of two "
+        f"rollouts of a scenario (default {POSITION_TOLERANCE_M:g})",
+    )
+    pack.add_argument(
+        "--heading-tolerance",
+        type=float,
+        default=HEADING_TOLERANCE_RAD,
+        help="how differently headed, in radians, an agent may start it "
+        f"(default {HEADING_TOLERANCE_RAD:g})",
     )
     pack.add_argument(
         "--metadata",

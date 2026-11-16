@@ -24,6 +24,10 @@ One JSON object per line, in CARLA's (left-handed) frame, metres/degrees
   "boxes": [[x, y, z, ex, ey, ez, yaw], ...], "stops": [[x, y, z, yaw], ...]}``
   -- every traffic light, once: its light heads' boxes (world frame, half
   sizes) and the waypoints of its stop lines.
+* ``{"type": "run", "seed", "scenario_hash"}`` -- once, after the traffic
+  lights: the run's seed and the digest of the concrete scenario it runs,
+  its seed aside (:mod:`~autoware_carla_scenario.scenario_hash`; null when
+  nothing set it).
 * ``{"type": "warmup", "ticks", "start_frame", "end_frame"}`` -- once, before
   the first tick: how many frames of the CARLA recording are the warm-up,
   which the file leaves out.
@@ -399,6 +403,17 @@ class TrajectoryRecorder:
             self._record(world, elapsed)
         except Exception:
             self._fail("stopped")
+
+    def record_run(self, seed: int, scenario_hash: Optional[str]) -> None:
+        """Write what the run was asked to run: its *seed*, and the digest of
+        the concrete scenario (``None`` when nothing set it), by which
+        ``scenario-wosac`` tells a scenario's rollouts."""
+        self._guarded(
+            "stopped",
+            lambda: self._emit(
+                {"type": "run", "seed": int(seed), "scenario_hash": scenario_hash}
+            ),
+        )
 
     def record_warmup(self, ticks: int, start_frame: int, end_frame: int) -> None:
         """Write where the warm-up ended: it took *ticks* world ticks from the

@@ -2094,6 +2094,9 @@ class ScenarioRunner:
                 # the world from outside.
                 trajectory.start(world)
                 trajectory_started = trajectory.active
+                # What it was asked to run: rollouts of one scenario share the
+                # hash and differ in seed (scenario-wosac).
+                trajectory.record_run(seed, scenario.scenario_hash)
                 clock_start_frame = int(world.get_snapshot().frame)
                 # The file starts where the clock does; the recording, warmup_ticks
                 # frames earlier.

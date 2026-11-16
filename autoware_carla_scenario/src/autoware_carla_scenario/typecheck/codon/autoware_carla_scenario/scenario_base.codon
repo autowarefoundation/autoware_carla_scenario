@@ -84,13 +84,14 @@ class BaseScenario:
     ego_config: EgoConfig
     ego_entity: Optional[EgoVehicle]
     random_seed: int
+    scenario_hash: Optional[str]
     _spawn_pose: Optional[Lanelet2Pose]
     _ground_projection: GroundProjectionConfig
     DEFAULT_RANDOM_SEED: ClassVar[int] = 0
     STABILIZE_TICKS: ClassVar[int] = 5
 
     # Codon would build it by its fields' names too (docs/typecheck.md, #244).
-    def __init__(self, ego_config, ego_entity, random_seed, _spawn_pose, _ground_projection):
+    def __init__(self, ego_config, ego_entity, random_seed, scenario_hash, _spawn_pose, _ground_projection):
         compile_error("BaseScenario(): no constructor takes these arguments (required: ego_config)")
 
     def __init__(self, ego_config: EgoConfig, *_kw, spawn_pose: Optional[Lanelet2Pose] = None,
@@ -100,6 +101,7 @@ class BaseScenario:
         self.ego_config = ego_config
         self.ego_entity = _expect_optional_ego_vehicle(ego_entity)
         self.random_seed = random_seed
+        self.scenario_hash = None
         self._spawn_pose = spawn_pose
         gp = _expect_optional_ground_projection(ground_projection)
         self._ground_projection = gp if gp is not None else GroundProjectionConfig()

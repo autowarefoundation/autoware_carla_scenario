@@ -35,7 +35,7 @@ import orjson
 
 from ..constants import CARLA_BICYCLE_BLUEPRINTS
 from ..entity_role import canonical_role_name
-from ..run_outputs import WOSAC_AGENTS_SUFFIX, WOSAC_SUFFIX
+from ..run_outputs import WOSAC_SUFFIX, wosac_agents_path
 
 # The trajectory log's reader and its frame math are the T4Scene export's.
 from ..t4_scene.convert import _Log, _MapFrame, _read_log, box_poses
@@ -86,6 +86,10 @@ class WosacAgent:
     type_id: str
     #: The rows of the rollout the log has it on (the others hold its pose).
     valid_steps: int
+    #: Its box centre and heading on the current row (``x, y, z, heading``,
+    #: in the rollout's frame): the initial state every rollout of the
+    #: scenario has to share (:func:`.pack.check_runs`).
+    current: tuple[float, float, float, float]
 
     @property
     def object_type(self) -> int:
@@ -120,6 +124,11 @@ class WosacRollout:
     padded_steps: int
     #: The run's verdict, the log's ``result`` record (``None`` without one).
     result: Optional[Mapping[str, Any]]
+    #: The run's seed, the log's ``run`` record (``None`` without one).
+    seed: Optional[int] = None
+    #: The digest of the concrete scenario the run ran, its seed aside
+    #: (:mod:`~autoware_carla_scenario.scenario_hash`; ``None`` without one).
+    scenario_hash: Optional[str] = None
 
     @property
     def current_t(self) -> float:
@@ -153,6 +162,8 @@ class WosacRollout:
             "frame": self.frame,
             "offset": list(self.offset),
             "result": result,
+            "seed": self.seed,
+            "scenario_hash": self.scenario_hash,
             "agents": [
                 {
                     "object_id": agent.object_id,
@@ -162,6 +173,7 @@ class WosacRollout:
                     "object_type": _TRACK.ObjectType.Name(agent.object_type),
                     "ego": agent.ego,
                     "valid_steps": agent.valid_steps,
+                    "current": list(agent.current),
                 }
                 for agent in self.agents
             ],
@@ -353,8 +365,15 @@ def trajectory_log_to_rollout(
                 actor_id=actor_ids[n],
                 type_id=actor.type_id,
                 valid_steps=int(valid[1:, n].sum()),
+                current=(
+                    float(positions[0, n, 0]),
+                    float(positions[0, n, 1]),
+                    float(positions[0, n, 2]),
+                    float(headings[0, n]),
+                ),
             )
         )
+    run = log.run
     rollouts = sim_agents_submission_pb2.ScenarioRollouts(
         scenario_id=scenario_id_of(stem) if scenario_id is None else scenario_id,
         joint_scenes=[scene],
@@ -374,6 +393,8 @@ def trajectory_log_to_rollout(
         steps=steps,
         padded_steps=padded,
         result=log.result,
+        seed=None if run is None or run.get("seed") is None else int(run["seed"]),
+        scenario_hash=None if run is None else run.get("scenario_hash"),
     )
 
 
@@ -396,7 +417,7 @@ def write_rollout(
     directory = path.parent if output_dir is None else Path(output_dir)
     directory.mkdir(parents=True, exist_ok=True)
     rollouts_path = directory / f"{rollout.stem}{WOSAC_SUFFIX}"
-    agents_path = directory / f"{rollout.stem}{WOSAC_AGENTS_SUFFIX}"
+    agents_path = wosac_agents_path(rollouts_path)
     rollouts_path.write_bytes(rollout.rollouts.SerializeToString(deterministic=True))
     agents_path.write_bytes(
         orjson.dumps(rollout.metadata(), option=orjson.OPT_INDENT_2) + b"\n"

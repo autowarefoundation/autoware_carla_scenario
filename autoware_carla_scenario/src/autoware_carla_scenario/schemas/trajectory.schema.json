@@ -2,7 +2,7 @@
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "$id": "urn:autoware-carla-scenario:schemas:trajectory",
   "title": "TrajectoryRecord",
-  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of twenty-one records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
+  "description": "One line of a run's `{stem}.trajectory.jsonl`, written by `autoware_carla_scenario.trajectory_recorder.TrajectoryRecorder`, format version 2: one of twenty-two records, told apart by `type`. Units, frames and the order of a file: docs/trajectory_log.md.",
   "x-schema-version": 2,
   "oneOf": [
     {
@@ -16,6 +16,9 @@
     },
     {
       "$ref": "#/$defs/WarmupRecord"
+    },
+    {
+      "$ref": "#/$defs/RunRecord"
     },
     {
       "$ref": "#/$defs/ActorRecord"
@@ -76,6 +79,7 @@
       "map": "#/$defs/MapRecord",
       "traffic_light": "#/$defs/TrafficLightRecord",
       "warmup": "#/$defs/WarmupRecord",
+      "run": "#/$defs/RunRecord",
       "actor": "#/$defs/ActorRecord",
       "rear_axle": "#/$defs/RearAxleRecord",
       "actor_gone": "#/$defs/ActorGoneRecord",
@@ -301,6 +305,40 @@
         "ticks",
         "start_frame",
         "end_frame"
+      ],
+      "additionalProperties": false
+    },
+    "RunRecord": {
+      "title": "RunRecord",
+      "description": "What the run was asked to run, written once, after the map and before the warm-up (version 2; a file written before it has none): its seed, and the digest of the concrete scenario its config describes, its seed aside. Runs of one `scenario_hash` and different seeds are rollouts of one scenario (docs/wosac.md).",
+      "type": "object",
+      "properties": {
+        "type": {
+          "const": "run"
+        },
+        "seed": {
+          "description": "The run's seed (`BaseScenario.random_seed`): from 0 to 2^31 - 1.",
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 2147483647
+        },
+        "scenario_hash": {
+          "description": "The SHA-256 (hex) of the concrete scenario (`autoware_carla_scenario.scenario_hash.scenario_hash`), or null when the scenario was not built by the `scenario` command.",
+          "anyOf": [
+            {
+              "type": "string",
+              "pattern": "^[0-9a-f]{64}$"
+            },
+            {
+              "type": "null"
+            }
+          ]
+        }
+      },
+      "required": [
+        "type",
+        "seed",
+        "scenario_hash"
       ],
       "additionalProperties": false
     },

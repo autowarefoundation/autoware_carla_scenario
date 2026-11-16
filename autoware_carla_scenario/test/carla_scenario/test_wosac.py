@@ -16,10 +16,12 @@ import pytest
 from autoware_carla_scenario.wosac import (
     TARBALL_NAME,
     build_submission,
+    check_runs,
     merge_rollouts,
     object_id_of,
     object_type_of,
     read_rollouts,
+    read_run,
     read_submission,
     scenario_id_of,
     scenario_pb2,
@@ -443,6 +445,10 @@ def test_write_rollout_writes_the_rollout_and_its_agents(tmp_path: Path) -> None
     assert agents["scenario_id"] == "S"
     assert agents["result"] == {"passed": True, "message": "ok"}
     assert (agents["step_s"], agents["current_index"], agents["steps"]) == (0.1, 10, 80)
+    # A log written before the run record: neither is known.
+    assert (agents["seed"], agents["scenario_hash"]) == (None, None)
+    current = agents["agents"][0].pop("current")
+    assert len(current) == 4
     assert agents["agents"][0] == {
         "object_id": object_id_of("Ego"),
         "role": "Ego",
@@ -723,3 +729,173 @@ def test_the_command_finds_nothing(
     with pytest.raises(SystemExit):
         main(["pack", str(tmp_path), "-o", str(tmp_path / "s")])
     assert "no rollout (*.wosac.pb) found" in capsys.readouterr().err
+
+
+# -- rollouts of one scenario --------------------------------------------------
+
+HASH = "a" * 64
+
+
+def _run_record(seed: int, digest: Optional[str] = HASH) -> dict:
+    return {"type": "run", "seed": seed, "scenario_hash": digest}
+
+
+def _export(
+    tmp_path: Path,
+    name: str,
+    seed: Optional[int],
+    digest: Optional[str] = HASH,
+    **log: Any,
+) -> dict:
+    """Write a log of *name* with a run record, export it, and return its
+    ``.wosac.json``."""
+    extra = () if seed is None else (_run_record(seed, digest),)
+    path = _write_log(tmp_path / f"{name}.trajectory.jsonl", extra=extra, **log)
+    _, agents = write_rollout(path, scenario_id="S")
+    return json.loads(agents.read_text())
+
+
+def test_the_rollout_says_its_seed_scenario_hash_and_initial_state(
+    tmp_path: Path,
+) -> None:
+    run = _export(tmp_path, "Run", 7)
+    assert (run["seed"], run["scenario_hash"]) == (7, HASH)
+    ego = next(agent for agent in run["agents"] if agent["ego"])
+    rollout = trajectory_log_to_rollout(tmp_path / "Run.trajectory.jsonl")
+    (agent,) = [a for a in rollout.agents if a.ego]
+    assert ego["current"] == list(agent.current)
+    # The current row: x is the row (10), the ego's box centre ahead of it.
+    assert ego["current"][0] == pytest.approx(10.0 + 0.1)
+
+
+def test_read_run_reads_the_json_beside_a_rollout(tmp_path: Path) -> None:
+    _export(tmp_path, "Run", 3)
+    run = read_run(tmp_path / "Run.wosac.pb")
+    assert run is not None and run["seed"] == 3
+    assert read_run(tmp_path / "Merged.wosac.pb") is None
+    (tmp_path / "Bad.wosac.json").write_text("[1]")
+    with pytest.raises(ValueError, match="not a JSON object"):
+        read_run(tmp_path / "Bad.wosac.pb")
+
+
+def test_runs_of_one_scenario_and_their_own_seeds_are_rollouts(tmp_path: Path) -> None:
+    runs = [(_export(tmp_path, f"Run-{n}", n), f"Run-{n}") for n in range(3)]
+    check_runs(runs)
+
+
+def test_two_runs_of_one_seed_are_refused(tmp_path: Path) -> None:
+    runs = [(_export(tmp_path, f"Run-{n}", 4), f"Run-{n}") for n in range(2)]
+    with pytest.raises(ValueError, match="Run-0 and Run-1 both ran seed 4"):
+        check_runs(runs)
+
+
+def test_runs_of_different_scenarios_are_refused(tmp_path: Path) -> None:
+    runs = [
+        (_export(tmp_path, "A", 0, "a" * 64), "A"),
+        (_export(tmp_path, "B", 1, "b" * 64), "B"),
+    ]
+    with pytest.raises(ValueError, match="A and B ran different scenarios"):
+        check_runs(runs)
+
+
+def test_runs_of_different_scenario_ids_are_checked_apart(tmp_path: Path) -> None:
+    a = _export(tmp_path, "A", 0, "a" * 64)
+    b = {**_export(tmp_path, "B", 0, "b" * 64), "scenario_id": "T"}
+    check_runs([(a, "A"), (b, "B")])
+
+
+def _moved(dx: float, dyaw: float = 0.0):
+    def state(actor: dict, row: int) -> Optional[list]:
+        return _state(actor["id"], float(row) + dx, 3.0 * actor["id"], dyaw)
+
+    return state
+
+
+def test_runs_that_start_their_future_apart_are_refused(tmp_path: Path) -> None:
+    first = _export(tmp_path, "Run-0", 0)
+    near = _export(tmp_path, "Run-1", 1, state=_moved(0.3))
+    far = _export(tmp_path, "Run-2", 2, state=_moved(2.0))
+    check_runs([(first, "Run-0"), (near, "Run-1")])
+    with pytest.raises(
+        ValueError, match=r"2\.000 m .* in Run-2 from where it does in Run-0"
+    ):
+        check_runs([(first, "Run-0"), (far, "Run-2")])
+    check_runs([(first, "Run-0"), (far, "Run-2")], position_tolerance_m=2.5)
+
+
+def test_runs_that_start_their_future_headed_apart_are_refused(tmp_path: Path) -> None:
+    first = _export(tmp_path, "Run-0", 0)
+    turned = _export(tmp_path, "Run-1", 1, state=_moved(0.0, 20.0))
+    with pytest.raises(ValueError, match="rad away"):
+        check_runs([(first, "Run-0"), (turned, "Run-1")])
+    check_runs([(first, "Run-0"), (turned, "Run-1")], heading_tolerance_rad=0.5)
+
+
+def test_headings_either_side_of_pi_are_close() -> None:
+    def run(heading: float, seed: int) -> dict:
+        agent = {"object_id": 1, "current": [0.0, 0.0, 0.0, heading]}
+        return {
+            "scenario_id": "S",
+            "seed": seed,
+            "scenario_hash": HASH,
+            "agents": [agent],
+        }
+
+    check_runs([(run(math.pi - 0.01, 0), "a"), (run(-math.pi + 0.01, 1), "b")])
+
+
+def test_the_initial_state_is_compared_without_the_maps_offsets(tmp_path: Path) -> None:
+    local = _export(tmp_path, "Run-0", 0)
+    path = tmp_path / "Run-1.trajectory.jsonl"
+    _write_log(path, extra=(_run_record(1),))
+    _, agents = write_rollout(path, scenario_id="S", map_frame=True)
+    mapped = json.loads(agents.read_text())
+    assert mapped["offset"] != local["offset"]
+    check_runs([(local, "Run-0"), (mapped, "Run-1")])
+
+
+def test_a_run_that_does_not_say_its_seed_is_let_through_with_a_warning(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
+    runs = [(_export(tmp_path, f"Run-{n}", None), f"Run-{n}") for n in range(2)]
+    with caplog.at_level(logging.WARNING):
+        check_runs(runs)
+    assert "cannot tell that Run-0, Run-1 ran the scenario" in caplog.text
+
+
+@pytest.mark.parametrize("tolerance", [-1.0, math.inf, math.nan])
+def test_a_tolerance_out_of_range_is_refused(tolerance: float) -> None:
+    with pytest.raises(ValueError, match="position_tolerance_m"):
+        check_runs([], position_tolerance_m=tolerance)
+
+
+def test_the_command_refuses_to_pack_one_rollout_run_twice(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for n in range(2):
+        _write_log(tmp_path / f"CutIn-{n}.trajectory.jsonl", extra=(_run_record(9),))
+    assert main(["export", str(tmp_path), "--scenario-id", "CutIn"]) == 0
+    capsys.readouterr()
+    assert main(["pack", str(tmp_path), "-o", str(tmp_path / "s")]) == 1
+    assert "both ran seed 9" in capsys.readouterr().err
+    assert not (tmp_path / "s").exists()
+
+
+def test_the_command_packs_rollouts_of_their_own_seeds(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    for n in range(2):
+        _write_log(
+            tmp_path / f"CutIn-{n}.trajectory.jsonl",
+            extra=(_run_record(n),),
+            state=_moved(0.4 * n),
+        )
+    assert main(["export", str(tmp_path), "--scenario-id", "CutIn"]) == 0
+    capsys.readouterr()
+    out = tmp_path / "s"
+    assert (
+        main(["pack", str(tmp_path), "-o", str(out), "--position-tolerance", "0.1"])
+        == 1
+    )
+    assert "do not share an initial state" in capsys.readouterr().err
+    assert main(["pack", str(tmp_path), "-o", str(out)]) == 0

@@ -26,7 +26,7 @@ uv run scenario-wosac pack outputs/2026-11-13/ -o submission/ --rollouts 32 \
 
 ```python
 from autoware_carla_scenario.wosac import (
-    build_submission, merge_rollouts, read_rollouts, rollout_files,
+    build_submission, check_runs, merge_rollouts, read_rollouts, read_run, rollout_files,
     trajectory_log_to_rollout, write_rollout, write_submission,
 )
 
@@ -36,6 +36,7 @@ rollout.agents     # who each object_id is
 write_rollout("CutInScenario.trajectory.jsonl")  # -> the .wosac.pb and .wosac.json
 
 files = rollout_files([Path("outputs/2026-11-13")])
+check_runs((read_run(f), str(f)) for f in files)  # rollouts of their scenarios?
 scenarios = merge_rollouts(((read_rollouts(f), str(f)) for f in files), num_rollouts=32)
 write_submission(build_submission(scenarios, {"unique_method_name": "..."}), "submission/")
 ```
@@ -67,15 +68,18 @@ log that fails does not stop the others, and the command exits 1.
 | `-o`, `--output-dir` | (required) | Where to write the shards; one that holds a submission already is refused |
 | `--rollouts` | any | How many rollouts every scenario must have: the challenge takes exactly 32 |
 | `--common-agents` | | Keep, in every rollout of a scenario, only the agents all of them have (the others are logged), rather than refuse the scenario |
+| `--position-tolerance` | `0.5` | How far apart, in metres, an agent may start the future of two rollouts of a scenario ([below](#are-they-rollouts)) |
+| `--heading-tolerance` | `0.1` | How differently headed, in radians, it may start it |
 | `--metadata` | | A YAML or JSON mapping of the submission's other fields, by their names in the proto |
 | `--shards` | `1` | How many files to split the scenarios into |
 | `--tar` | | Also write `submission.tar.gz` of the shards: what the challenge's server takes |
 
 It takes `*.wosac.pb` files, or the directories to find them under, and
 prints how many rollouts each scenario got, then the files it wrote. A
-scenario is refused, and nothing is written, when its rollouts simulate
-different agents (without `--common-agents`), when two of its trajectories
-differ in length, or when it has not `--rollouts` rollouts.
+scenario is refused, and nothing is written, when its runs are not rollouts
+of it ([below](#are-they-rollouts)), when its rollouts simulate different
+agents (without `--common-agents`), when two of its trajectories differ in
+length, or when it has not `--rollouts` rollouts.
 
 The metadata are the submission's fields the challenge asks for:
 
@@ -100,13 +104,74 @@ A field the message lacks, or a value of the wrong type, is refused.
 
 WOSAC scores a scenario's rollouts as a distribution: 32 simulations from one
 initial state, against what was logged. Here, the runs of one scenario --
-its seeds, or its repetitions -- are the rollouts, and a rollout's
+one per seed -- are the rollouts, and a rollout's
 `scenario_id` says which scenario it is one of. By default it is the log's
 stem without the run counter the runner adds to a stem taken in its
 directory already, so the runs of `CutInScenario` -- one per job directory
 of a multirun, or `CutInScenario`, `CutInScenario-1`, ... in one -- are
 rollouts of `CutInScenario`. Runs of one scenario class with different
 parameters are different scenarios: give each its own `--scenario-id`.
+
+To run a scenario's rollouts, run it once per seed -- the seed is what
+differs between them, and every other setting is the scenario:
+
+```bash
+# Hydra's own sweeper: one job per seed, each in its own directory
+uv run scenario --multirun scenario=cut_in/right 'seed=range(0,32)'
+# Every log under the sweep's directory, then the rollouts packed
+uv run scenario-wosac export multirun/
+uv run scenario-wosac pack multirun/ -o submission/ --rollouts 32
+```
+
+What draws at random before the future starts has to draw the same in every
+rollout, so it cannot follow the run's seed. A sweep drawing from the ODD
+draws its cases from the run's seed unless `sweep.odd_sample.seed` is set,
+and a scenario that places road users at random -- a
+`TrafficSourceAction`'s `initial_vehicles`, `background_traffic`, SUMO's
+ambient traffic -- places them anew with every seed: such a scenario's
+initial state is not one, and its runs are not rollouts of it. Give the
+road users their places, or pin the seed of what places them
+(`background_traffic.seed`, an action's `seed`).
+
+### Are they rollouts?
+
+Whether runs are rollouts of one scenario cannot be told from what they did:
+a future that differs may be chance, or a parameter that differs. It is told
+from what they were asked to run. The `scenario` command gives each scenario
+it builds the digest of its config, `scenario_hash`
+(`autoware_carla_scenario.scenario_hash`): the SHA-256 of the scenario's
+class and of the sections of the config that say what is simulated --
+`scenario`, `map`, `ego`, `entity`, `environment`, `controls`,
+`scenario_rules`, `background_traffic`, `traffic`, `odd` and `odd_case` --
+without `seed`, and without the settings that say where a run connects
+(hosts, addresses, ports, ROS domains: what a SLURM task moves to its own
+slot). What drives the ego (`driver`, `autoware`, `ros2`) is the system
+under test, not the scenario, and how a run is recorded does not change what
+is simulated: neither is in it. Every top-level section of the `scenario`
+command's config is listed as hashed or not (`SCENARIO_SECTIONS`,
+`OTHER_SECTIONS`), and a test keeps it so, so a new section cannot be left
+out of the hash unseen. The runner writes the run's seed and its
+hash into the trajectory log (its [`run`](trajectory_log.md#records)
+record), and `export` into the `.wosac.json`, with each agent's pose on the
+current row.
+
+`pack` (`check_runs()`) then checks each scenario's runs from their
+`.wosac.json`:
+
+- **One scenario**: every run of a `scenario_id` has one `scenario_hash`.
+  Runs of different parameters under one id are refused: give them their own
+  `--scenario-id`.
+- **A seed of its own**: two runs of one seed are one rollout run twice,
+  and are refused.
+- **One initial state**: each agent starts its future -- the current row --
+  where it does in the first run, within `--position-tolerance` and
+  `--heading-tolerance`. The history before it is simulated too, so a stack
+  that is not deterministic drifts a little; a road user placed at random
+  does not start where it did.
+
+A run whose log has no `run` record (written before it was recorded), or a
+rollout without its `.wosac.json` (a merged file), is let through with a
+warning: nothing says what it ran.
 
 Each agent's `object_id` has to be the same in every rollout, though CARLA
 gives its actor a new id in every run. It is derived from what does stay the
@@ -126,7 +191,7 @@ result.
 | File | What it holds |
 |---|---|
 | `{stem}.wosac.pb` | One serialised `ScenarioRollouts`: the run's `scenario_id`, and one `JointScene` |
-| `{stem}.wosac.json` | What the message has no field for: the `scenario_id`, the grid (`step_s`, `current_index`, `steps`, `padded_steps`, `current_frame`, `current_t`), the `frame` (`local` or `map`) and its `offset`, the run's verdict (`result`: `passed`, `message`, or null), and every agent: `object_id`, `role`, `actor_id`, `type_id`, `object_type`, `ego`, `valid_steps` |
+| `{stem}.wosac.json` | What the message has no field for: the `scenario_id`, the grid (`step_s`, `current_index`, `steps`, `padded_steps`, `current_frame`, `current_t`), the `frame` (`local` or `map`) and its `offset`, the run's verdict (`result`: `passed`, `message`, or null), its `seed` and `scenario_hash` (null for a log without a `run` record), and every agent: `object_id`, `role`, `actor_id`, `type_id`, `object_type`, `ego`, `valid_steps`, and `current` (its box centre and heading on the current row, `[x, y, z, heading]`) |
 | `submission.binproto-00000-of-00001` | One serialised `SimAgentsChallengeSubmission` per shard: the metadata, and a contiguous share of the scenarios, sorted by `scenario_id` (`read_submission()` reads them back as one: every shard's scenarios, and the metadata once, the last shard's) |
 | `submission.tar.gz` | The shards, with `--tar` |
 
