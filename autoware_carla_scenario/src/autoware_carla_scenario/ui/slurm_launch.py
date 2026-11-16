@@ -377,7 +377,8 @@ def start_submit(command: list[str], base: Path) -> Submission:
     """Submit in a background thread; the record it fills in.
 
     Raises:
-        RuntimeError: A submission is still being made.
+        RuntimeError: A submission is still being made, or its thread
+            could not start (the record it made is then ``failed``).
     """
     global _submission  # noqa: PLW0603
     with _lock:
@@ -385,7 +386,17 @@ def start_submit(command: list[str], base: Path) -> Submission:
             raise RuntimeError("A batch is still being submitted")
         record = Submission(command=list(command))
         _submission = record
-    threading.Thread(target=_submit, args=(command, base, record), daemon=True).start()
+    thread = threading.Thread(target=_submit, args=(command, base, record), daemon=True)
+    try:
+        thread.start()
+    except RuntimeError as exc:
+        # A thread that does not start (``can't start new thread``) never
+        # runs _submit(): the record must not stay ``submitting``, which
+        # would refuse every later submission (#2183).
+        with _lock:
+            record.output = f"The submission failed: {exc}"
+            record.state = "failed"
+        raise
     return record
 
 

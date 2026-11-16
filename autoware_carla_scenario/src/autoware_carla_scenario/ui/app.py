@@ -996,7 +996,7 @@ def _submit_slurm(
 @app.get("/api/launchers")
 async def launchers() -> dict[str, Any]:
     """Which launchers a run can use here: ``local`` always, ``slurm`` where
-    sbatch is (with the partitions sinfo lists), else why not."""
+    sbatch and squeue are (with the partitions sinfo lists), else why not."""
     available, reason = slurm_launch.availability()
     return {
         "local": {"available": True},

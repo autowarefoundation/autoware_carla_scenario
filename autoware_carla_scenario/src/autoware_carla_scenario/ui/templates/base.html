@@ -274,7 +274,7 @@
       }
     }
 
-    // Which launchers this viewer can use: SLURM only where sbatch is.
+    // Which launchers this viewer can use: SLURM only where sbatch and squeue are.
     let launchersLoaded = false;
     function loadLaunchers() {
       fetch('/api/launchers').then(r => r.json()).then(data => {

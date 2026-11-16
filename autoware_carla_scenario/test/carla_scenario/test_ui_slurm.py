@@ -311,6 +311,30 @@ def test_a_submit_thread_that_raises_fails_its_record_and_frees_the_next(
     assert _wait_for(lambda: again.state != "submitting", 30.0)
 
 
+def test_a_submit_thread_that_does_not_start_fails_its_record(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2183's review: a thread that does not start never runs _submit(),
+    and its record stayed ``submitting``, refusing every later submit."""
+    monkeypatch.setattr(slurm_launch, "_submission", None)
+
+    def start(self: threading.Thread) -> None:
+        raise RuntimeError("can't start new thread")
+
+    with monkeypatch.context() as patch:
+        patch.setattr(threading.Thread, "start", start)
+        with pytest.raises(RuntimeError, match="can't start new thread"):
+            slurm_launch.start_submit(["scenario", "x"], tmp_path)
+    record = slurm_launch._submission
+    assert record is not None
+    assert record.state == "failed"
+    assert record.output == "The submission failed: can't start new thread"
+    monkeypatch.setattr(slurm_launch, "_run_submit", lambda command, base: (1, ""))
+    again = slurm_launch.start_submit(["scenario", "y"], tmp_path)
+    assert again is not record
+    assert _wait_for(lambda: again.state != "submitting", 30.0)
+
+
 def test_a_batch_directory_with_spaces_is_read_whole(tmp_path: Path) -> None:
     batch_dir = tmp_path / "My Runs" / "outputs" / "2026-01-01" / "00-00-00"
     line = f"SLURM job 1: 1 case(s) in 1 task(s) of up to 1 case(s); outputs in {batch_dir}"
