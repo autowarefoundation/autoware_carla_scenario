@@ -377,6 +377,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.ui.slurm_options",
     "autoware_carla_scenario.ui.web_viewer_paths",
     "autoware_carla_scenario.utils",
+    "autoware_carla_scenario.utils.cache_dir",
     "autoware_carla_scenario.utils.card_target",
     "autoware_carla_scenario.utils.clearance",
     "autoware_carla_scenario.utils.light_lanes",

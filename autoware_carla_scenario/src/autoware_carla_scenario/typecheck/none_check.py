@@ -159,6 +159,7 @@ from functools import lru_cache
 from collections.abc import Iterable
 from pathlib import Path
 
+from ..utils.cache_dir import user_cache_dir
 from .carla_stubs import carla_stub_root
 
 __all__ = [
@@ -940,9 +941,9 @@ def _cache_dir() -> str:
     """mypy's cache directory, or ``os.devnull`` (no cache) where it cannot
     be written: mypy fails outright on a cache directory it cannot create."""
     try:
-        base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
+        base = user_cache_dir()
         version = f"py{sys.version_info.major}{sys.version_info.minor}"
-        path = Path(base) / "autoware_carla_scenario" / "mypy" / version
+        path = base / "autoware_carla_scenario" / "mypy" / version
         path.mkdir(parents=True, exist_ok=True)
         with tempfile.TemporaryFile(dir=path):
             pass

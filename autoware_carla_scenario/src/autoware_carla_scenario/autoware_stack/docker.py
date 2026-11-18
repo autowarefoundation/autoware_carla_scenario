@@ -37,6 +37,7 @@ starts, unless the configured launch file declares ``scenario_mode`` itself.
 
 from __future__ import annotations
 
+import errno
 import hashlib
 import logging
 import os
@@ -143,6 +144,45 @@ _BUILD_LOCK_TIMEOUT_S = 4 * 3600.0
 
 #: How often the build lock is tried while another run holds it.
 _BUILD_LOCK_POLL_S = 2.0
+
+
+def _open_lock_file(path: Path) -> int:
+    """Open (or make) the build lock *path* for :func:`fcntl.flock`; its descriptor.
+
+    Read-write: on NFS, Linux emulates flock with fcntl locks, and an
+    exclusive one needs the file open for writing, so a read-only descriptor
+    fails ``LOCK_EX`` with EBADF -- on the shared homes the lock exists for
+    (#1862, #2187).  Read-only only where it cannot be written (EACCES,
+    EROFS): an existing file on a read-only mount, which a local file system
+    locks read-only too.
+
+    Raises:
+        OSError: It can be opened neither way.
+    """
+    # 0o644: Codon has no octal literal.
+    try:
+        return os.open(path, os.O_RDWR | os.O_CREAT, 420)
+    except OSError as exc:
+        if exc.errno not in (errno.EACCES, errno.EROFS):
+            raise
+    return os.open(path, os.O_RDONLY)
+
+
+def _end_process(process: subprocess.Popen[str]) -> None:
+    """Kill *process*, reap it and close its output pipe, ignoring what fails."""
+    try:
+        process.kill()
+    except OSError:  # already gone
+        pass
+    try:
+        process.wait()
+    except OSError:
+        pass
+    if process.stdout is not None:
+        try:
+            process.stdout.close()
+        except OSError:
+            pass
 
 
 def _shapes_the_cli(key: str) -> bool:
@@ -645,10 +685,7 @@ class DockerAutowareLauncher:
 
         path = self._workspace / _BUILD_LOCK_NAME
         try:
-            # Read-only is enough for flock, and lets an existing file
-            # on a read-only mount lock too.
-            # 0o644: Codon has no octal literal.
-            fd = os.open(path, os.O_RDONLY | os.O_CREAT, 420)
+            fd = _open_lock_file(path)
         except OSError as exc:
             logger.warning(
                 "Building %s without a lock (%s): another run may build it "
@@ -844,11 +881,18 @@ class DockerAutowareLauncher:
                 encoding="utf-8",
                 errors="replace",
             )
-            assert process.stdout is not None  # noqa: S101 - stdout=PIPE
-            for line in process.stdout:
-                sys.stdout.write(line)
-                if log is not None:
-                    log.write(line)
+            try:
+                assert process.stdout is not None  # noqa: S101 - stdout=PIPE
+                for line in process.stdout:
+                    sys.stdout.write(line)
+                    if log is not None:
+                        log.write(line)
+            except BaseException:
+                # Writing the output failed (a closed pipe, a full disk) or
+                # the run was interrupted: end the command rather than leave
+                # it running, and its pipe open, behind this process (#2187).
+                _end_process(process)
+                raise
             return process.wait()
         except OSError as exc:
             raise AutowareStackError(

@@ -21,9 +21,12 @@ import shlex
 from pathlib import Path
 from typing import Any, Mapping, Optional
 
+from ..utils.cache_dir import user_cache_dir
+
 __all__ = [
     "BRIDGE_APT_PACKAGES",
     "BRIDGE_MODULE",
+    "DOUBLE_PARAMETERS",
     "MISSION_POLL_TIMEOUT_S",
     "ROUTE_WATCH_PERIOD_S",
     "bridge_command",
@@ -51,6 +54,18 @@ ROUTE_WATCH_PERIOD_S: float = 1.0
 #: ``GetMission`` may take.
 MISSION_POLL_TIMEOUT_S: float = 1.0
 
+#: The node's parameters declared as doubles (``ros_bridge/node.py``,
+#: ``_declare_parameters()``).  rclpy refuses an INTEGER override of a DOUBLE
+#: declaration, so a whole number given for one of these (``2``) is passed as
+#: ``2.0`` (#2187).
+DOUBLE_PARAMETERS: tuple[str, ...] = (
+    "mission_poll_timeout_s",
+    "route_watch_period_s",
+    "rpc_timeout_s",
+    "step_timeout_s",
+    "tick_period_s",
+)
+
 
 def bridge_package_dir() -> Path:
     """The installed :mod:`autoware_carla_scenario.autoware_bridge` directory."""
@@ -60,11 +75,21 @@ def bridge_package_dir() -> Path:
 
 
 def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[str]:
-    """The node's ``--ros-args``: the bridge's address, then *parameters*."""
+    """The node's ``--ros-args``: the bridge's address, then *parameters*.
+
+    A parameter set to ``None`` is left out: it is the node's default, as a
+    null is everywhere in the config.  A whole number for a parameter the node
+    declares as a double (:data:`DOUBLE_PARAMETERS`) is passed as a float,
+    which rclpy takes where it refuses the integer.
+    """
     args = ["--ros-args", "-p", f"bridge_address:={bridge_address}"]
     for name, value in parameters.items():
+        if value is None:
+            continue
         if isinstance(value, bool):
             value = str(value).lower()
+        elif isinstance(value, int) and name in DOUBLE_PARAMETERS:
+            value = float(value)
         args += ["-p", f"{name}:={value}"]
     return args
 
@@ -101,10 +126,7 @@ def host_python_root(cache_dir: Path | None = None) -> Path:
     if cache_dir is not None:
         base = cache_dir
     else:
-        default_cache = Path.home() / ".cache"
-        cache_home = os.environ.get("XDG_CACHE_HOME")
-        cache = Path(cache_home) if cache_home is not None else default_cache
-        base = cache / "autoware_carla_scenario" / "ros_bridge"
+        base = user_cache_dir() / "autoware_carla_scenario" / "ros_bridge"
     root = base / hashlib.sha256(str(package).encode()).hexdigest()[:16]
     link = root / "autoware_carla_scenario" / "autoware_bridge"
     if not link.is_symlink() or link.resolve() != package:
