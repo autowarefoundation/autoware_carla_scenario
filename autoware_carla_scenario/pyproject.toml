@@ -187,6 +187,15 @@ hils-setup = [
     "ansible-runner>=2.4",
     "ansible-core>=2.15",
 ]
+# CARLA maps cooked as content packs (`map.pack`, docs/content_packs.md):
+# carla-pack-registry (autowarefoundation/carla_content_pack_registry, a Rust
+# core in one abi3 wheel) finds the pack in a GitHub repository the user can
+# read, downloads and verifies it, hands back its map data by format
+# (Lanelet2, the Autoware map, OpenDRIVE) and installs it for the server to
+# mount. 0.3 reads a pack's map data by format (`Client.map_data`).
+pack = [
+    "carla-pack-registry>=0.3.2,<0.4",
+]
 # The Rerun viewer the recordings are opened with (`rerun X.rrd`): the
 # converter's own `viewer` extra, which pins the Rerun minor version its
 # recordings are written with.

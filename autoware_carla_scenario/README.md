@@ -17,6 +17,7 @@ It is typically run against OpenDRIVE maps produced by the `convert` CLI of [`au
 - FastAPI + Uvicorn web viewer for browsing results and triggering runs.
 - A trajectory log of every run (actors, lights, map, the ego's plan, conditions, verdict; JSON Schema in the package), which the `rerun` extra turns into a Rerun recording as the run ends (`rerun.enabled=true`), to see the run, beside CARLA's native recording.
 - `scenario-setup` downloads CARLA's nightly build, which the runner then launches by itself.
+- CARLA maps cooked as content packs: `map.pack=OWNER/REPO/PACK@VERSION` downloads the pack through [carla-pack-registry](https://github.com/autowarefoundation/carla_content_pack_registry) (the `pack` extra; access by GitHub repository permissions), reads its Lanelet2 map and OpenDRIVE, and mounts it on the server before the map loads ([docs](docs/content_packs.md)).
 - pytest integration via `CarlaScenarioFixture` (auto-skips when there is no CARLA to launch).
 
 ## Installation

@@ -16,3 +16,7 @@ server:
   # load the map on every N-th reset anyway (0: only when soft cannot).
   world_reset: reload
   reload_every: 0
+  # Where a map's content pack (map.pack) is installed for the server to mount;
+  # null: $AUTOWARE_CARLA_SCENARIO_PACKS_DIR, else ~/.autoware_carla_scenario/packs
+  # (docs/content_packs.md). A remote server must see it at the same path.
+  packs_dir: null

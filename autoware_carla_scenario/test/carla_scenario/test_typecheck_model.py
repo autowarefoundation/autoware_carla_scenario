@@ -77,6 +77,7 @@ from autoware_carla_scenario.entity import carla_driver_entity, hils_entity
 from autoware_carla_scenario.hils import config as hils_config
 from autoware_carla_scenario.maps import cache as maps_cache
 from autoware_carla_scenario.maps import source as maps_source
+from autoware_carla_scenario.maps import pack as maps_pack
 from autoware_carla_scenario.maps import road_network_cache as maps_road_network_cache
 from autoware_carla_scenario.maps import z_offset_cache as maps_z_offset_cache
 from autoware_carla_scenario.odd import model as odd_model
@@ -1039,6 +1040,9 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
         maps_road_network_cache,
         ("load_roads", "open_road_network"),
     ),
+    # What the checked scenario_queue uses of the unchecked maps.pack
+    # (carla-pack-registry, the CARLA client).
+    "maps/pack": (maps_pack, ("MapPack",)),
     # A pydantic model: its fields by keyword only, as Python's signature.
     "ui/models": (ui_models, ("RunProgress", "Status")),
     # The base and config of ros2/cyclone.codon's CycloneRos2Transport, shared

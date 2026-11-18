@@ -17,6 +17,7 @@ class ServerConfig:
     fog_density_scale: Optional[float] = None
     world_reset: str = "reload"
     reload_every: int = 0
+    packs_dir: Optional[str] = None
 
 
 class MapConfig:
@@ -28,6 +29,8 @@ class MapConfig:
     projector_type: Optional[str] = None
     overwrite_xodr: bool = False
     no_3d_model_lanelet_ids: List[int] = List[int]()
+    pack: Optional[str] = None
+    pack_sha256: Optional[str] = None
 
 
 class EntityConfig:

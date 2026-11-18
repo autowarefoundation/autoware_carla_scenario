@@ -1,0 +1,27 @@
+# Model of autoware_carla_scenario.maps.pack (docs/typecheck.md), which hands
+# CARLA content packs to carla-pack-registry (a Rust extension imported at run
+# time and held as `Any`) and reads its releases, dicts of mixed value types:
+# what the checked scenario_queue uses of it, with the signatures of the
+# Python class.
+
+from pathlib import Path
+
+
+class MapPack:
+    reference: str
+    sha256: Optional[str]
+    packs_dir: Optional[Path]
+
+    def __init__(self, reference: str, sha256: Optional[str] = None,
+                 packs_dir: Optional[Path] = None):
+        self.reference = reference
+        self.sha256 = sha256
+        self.packs_dir = packs_dir
+
+    @property
+    def is_repository(self) -> bool:
+        return self.reference.count("/") == 1
+
+    def deploy(self, host: str, port: int, map_name: str,
+               timeout: float = 60.0) -> None:
+        raise NotImplementedError()
