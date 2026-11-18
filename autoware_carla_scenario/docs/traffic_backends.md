@@ -852,6 +852,12 @@ self.register_pre_tick(
   test vehicle routes use, `MapFeatures.is_road`): such a lanelet has no
   vehicle successor, so "no successor" alone would remove a vehicle as it
   drives over a crosswalk, and a source would place vehicles across the road.
+  The constraints are a list, or a single constraint mapping (a list of one),
+  and are parsed when the action is built, so one the sweeper does not know is
+  refused then, not when the first vehicle is due; the run's
+  `background_traffic.source.constraints` and `.sink.constraints` are parsed
+  by its up-front check, where null builds no source or sink and `false` or
+  `''` is refused, naming the key (#2191).
 - **When they act** is the trigger (`condition`) and the end condition
   (`until`), as for every action. With no `until` a source or sink runs until
   the scenario ends, as OpenSCENARIO's do; with one, it stops on the first tick

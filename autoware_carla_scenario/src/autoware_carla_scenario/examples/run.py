@@ -70,6 +70,7 @@ from autoware_carla_scenario import (
     TrafficSourceAction,
 )
 import autoware_carla_scenario.hydra_compat  # noqa: F401  (Python 3.14 argparse)
+from autoware_carla_scenario.actions.background_traffic import parse_constraints
 from autoware_carla_scenario.autoware_stack.launcher import AutowareLauncher
 from autoware_carla_scenario.batch_report import print_summary as _print_summary
 from autoware_carla_scenario.batch_report import write_batch_result_json
@@ -3663,6 +3664,12 @@ class BackgroundTraffic(NamedTuple):
     source_stop_after_seconds: float | None = None
     #: ``sink.stop_after_seconds``; ``None``: the sink keeps removing.
     sink_stop_after_seconds: float | None = None
+    #: ``source.constraints``, as the config gives them (each parsed by
+    #: :func:`~autoware_carla_scenario.actions.background_traffic.parse_constraints`
+    #: to check it); empty: no source.
+    source_constraints: tuple[Any, ...] = ()
+    #: ``sink.constraints``, likewise; empty: no sink.
+    sink_constraints: tuple[Any, ...] = ()
 
 
 def _float_of_text(value: Any) -> float:
@@ -3700,8 +3707,13 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     ``sink.stop_after_seconds`` are null (no stop, the default) or a positive,
     finite number of seconds -- each checked whether or not the source or sink
     it ends is built (``vehicles_per_minute`` 0, no sink constraints), as the
-    other numbers are (#2188).  Read by :func:`add_background_traffic` and
-    checked up front by :func:`check_batch_configs`.
+    other numbers are (#2188).  ``source.constraints`` and
+    ``sink.constraints`` are lists of sweep constraints (or a single
+    constraint mapping), each parsed here, so one the sweeper does not know is
+    refused before anything starts; null or an empty list builds no source
+    or sink, and ``false``, ``''`` or anything else that is no list is
+    refused (#2191).  Read by :func:`add_background_traffic` and checked up
+    front by :func:`check_batch_configs`.
 
     Raises:
         ValueError: naming the key of the first value refused.
@@ -3775,8 +3787,20 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
                 f"is not a duration ({exc})"
             ) from exc
 
+    def constraints(block: Any, key: str) -> tuple[Any, ...]:
+        # null (the default): none.  false or '' is refused rather than
+        # read as none, which turned the source or sink off (#2143, #2191);
+        # a single mapping is a list of one, as constraints_from_text reads it.
+        value = block.get("constraints")
+        if value is None:
+            return ()
+        parse_constraints(value, f"background_traffic.{key}.constraints")
+        return (value,) if isinstance(value, Mapping) else tuple(value)
+
     min_gap_m = finite_amount("min_gap_m", 15.0)
     rate = finite_amount("vehicles_per_minute", 0.0)
+    source_constraints = constraints(source, "source")
+    sink_constraints = constraints(sink, "sink")
     return BackgroundTraffic(
         seed=seed,
         # null places none, as 0 does.
@@ -3787,6 +3811,8 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
         min_gap_m=min_gap_m,
         source_stop_after_seconds=stop_after(source, "source"),
         sink_stop_after_seconds=stop_after(sink, "sink"),
+        source_constraints=source_constraints,
+        sink_constraints=sink_constraints,
     )
 
 
@@ -3819,7 +3845,6 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
         return
     settings = _to_dict(cfg["background_traffic"])
     source = settings.get("source") or {}
-    sink = settings.get("sink") or {}
     # null (the default) follows the run's seed, the scenario's.
     seed = scenario.random_seed if checked.seed is None else checked.seed
 
@@ -3828,7 +3853,8 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
         return None if seconds is None else ElapsedTimeCondition(seconds, label=label)
 
     max_vehicles = checked.max_vehicles
-    constraints = source.get("constraints") or []
+    constraints = checked.source_constraints
+    sink_constraints = checked.sink_constraints
     speed_kmh = checked.speed_kmh
     min_gap_m = checked.min_gap_m
     rate = checked.vehicles_per_minute
@@ -3871,10 +3897,10 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
                 label="background_source",
             )
         )
-    if sink.get("constraints"):
+    if sink_constraints:
         scenario.register_pre_tick(
             TrafficSinkAction(
-                sink["constraints"],
+                sink_constraints,
                 label="background_sink",
                 until=until(checked.sink_stop_after_seconds, "background_sink_ends"),
             )
@@ -3883,7 +3909,7 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
         "Background traffic: %d at start, %.1f/min after, sink %s",
         initial if constraints else 0,
         rate if constraints else 0.0,
-        "on" if sink.get("constraints") else "off",
+        "on" if sink_constraints else "off",
     )
 
 

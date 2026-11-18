@@ -68,7 +68,7 @@ from .drive_metrics import box as _box
 from .drive_metrics import box_distance as _box_distance
 
 # Below this height (m) a road user is parked under the map, out of the scene.
-from ..utils.clearance import _HIDDEN_BELOW_M, _level_gap
+from ..utils.clearance import HIDDEN_BELOW_M, _level_gap
 
 __all__ = [
     "CaseResult",
@@ -309,7 +309,7 @@ class _TrajectoryMetrics:
         gaps: list[float] = []
         for other, state in states.items():
             # A road user parked under the map (hidden) is out of the scene.
-            if other == ego or float(state[3]) < _HIDDEN_BELOW_M:
+            if other == ego or float(state[3]) < HIDDEN_BELOW_M:
                 continue
             # One on another level of road -- on a bridge over the ego, in an
             # underpass beneath it -- may overlap the ego's box on the ground,

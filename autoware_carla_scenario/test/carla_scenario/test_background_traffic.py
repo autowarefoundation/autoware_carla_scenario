@@ -688,6 +688,75 @@ class TestHydraSwitch:
         with pytest.raises(run.RunConfigError, match=message):
             run.check_run_config(cfg)
 
+    @pytest.mark.parametrize("block", ["source", "sink"])
+    def test_a_constraint_the_sweeper_does_not_know_is_refused_up_front(
+        self, block: str
+    ) -> None:
+        """#2191: refused by the up-front check, not on the first execute."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed(
+            [f"background_traffic.{block}.constraints=[{{type: is_junctoin}}]"]
+        )
+        message = (
+            rf"^background_traffic\.{block}\.constraints\[0\]: "
+            r"Unknown constraint type: 'is_junctoin'"
+        )
+        with pytest.raises(ValueError, match=message):
+            run.background_traffic_settings(cfg)
+        with pytest.raises(run.RunConfigError, match=message):
+            run.check_run_config(cfg)
+
+    @pytest.mark.parametrize("block", ["source", "sink"])
+    @pytest.mark.parametrize(("value", "shown"), [("false", "False"), ("''", "''")])
+    def test_constraints_spelled_off_are_refused_naming_the_key(
+        self, block: str, value: str, shown: str
+    ) -> None:
+        """#2143, #2191: false or '' turned the source or sink off silently."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([f"background_traffic.{block}.constraints={value}"])
+        with pytest.raises(
+            ValueError,
+            match=rf"^background_traffic\.{block}\.constraints must be a list of "
+            rf"lanelet constraints, not {shown}$",
+        ):
+            run.background_traffic_settings(cfg)
+
+    def test_a_single_constraint_mapping_is_a_list_of_one(self) -> None:
+        """#2191: a mapping became list(mapping) == ["type"] and crashed mid-run."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([])
+        # Set, not overridden: Hydra will not merge a mapping into the list.
+        cfg.background_traffic.source.constraints = {"type": "is_junction"}
+        cfg.background_traffic.sink.constraints = {"type": "is_junction"}
+        checked = run.background_traffic_settings(cfg)
+        assert checked is not None
+        assert checked.source_constraints == ({"type": "is_junction"},)
+        assert checked.sink_constraints == ({"type": "is_junction"},)
+        scenario = _scenario()
+        run.add_background_traffic(cfg, scenario)
+        sinks = [
+            a for a in scenario._pre_tick_actions if isinstance(a, TrafficSinkAction)
+        ]
+        assert len(sinks) == 1
+        assert len(sinks[0]._region._constraints) == 1
+
+    @pytest.mark.parametrize("block", ["source", "sink"])
+    def test_null_constraints_build_no_source_or_sink(self, block: str) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([f"background_traffic.{block}.constraints=null"])
+        checked = run.background_traffic_settings(cfg)
+        assert checked is not None
+        assert getattr(checked, f"{block}_constraints") == ()
+        scenario = _scenario()
+        run.add_background_traffic(cfg, scenario)
+        actions = [*scenario._init_actions, *scenario._pre_tick_actions]
+        kind = TrafficSourceAction if block == "source" else TrafficSinkAction
+        assert not any(isinstance(a, kind) for a in actions)
+
     def test_a_disabled_block_is_not_read(self) -> None:
         from autoware_carla_scenario.examples import run
 
@@ -718,6 +787,20 @@ class TestConstraintsFromText:
     def test_empty_text_is_refused(self) -> None:
         with pytest.raises(ValueError):
             background_traffic.constraints_from_text("  ")
+
+    @pytest.mark.parametrize(
+        ("text", "shown"), [("- is_junction\n", "'is_junction'"), ("- 5\n", "5")]
+    )
+    def test_an_item_that_is_no_mapping_is_refused_as_no_constraint(
+        self, text: str, shown: str
+    ) -> None:
+        """#2191: dict() refused it first, with a message about sequences or a
+        TypeError that escaped the editor's validator."""
+        with pytest.raises(
+            ValueError,
+            match=rf"^constraints\[0\]: A constraint must be a mapping .*got {shown}$",
+        ):
+            background_traffic.constraints_from_text(text)
 
     @pytest.mark.parametrize("type_id", ["traffic_source", "traffic_sink"])
     def test_the_editor_defaults_are_valid_constraints(self, type_id: str) -> None:
@@ -836,3 +919,36 @@ class TestMinGapLevels:
         source.set_traffic_backend(backend)
         source.tick(world, 0.0)
         assert len(backend.vehicles) == 1
+
+
+class TestLaneletRegionParsesEagerly:
+    """A region parses its constraints when it is built (#2191)."""
+
+    def test_an_unknown_constraint_is_refused_at_construction(self) -> None:
+        with pytest.raises(ValueError, match=r"^constraints\[0\]: Unknown constraint"):
+            background_traffic.LaneletRegion([{"type": "is_junctoin"}])
+        with pytest.raises(ValueError, match="Unknown constraint"):
+            TrafficSinkAction([{"type": "is_junctoin"}])
+
+    def test_a_single_mapping_is_a_list_of_one(self) -> None:
+        region = background_traffic.LaneletRegion({"type": "is_junction"})
+        assert len(region._constraints) == 1
+
+    @pytest.mark.parametrize("value", [False, "", 0, "is_junction"])
+    def test_anything_but_a_list_or_a_mapping_is_refused(self, value: object) -> None:
+        with pytest.raises(
+            ValueError,
+            match=rf"^constraints must be a list of lanelet constraints, not {value!r}$",
+        ):
+            background_traffic.LaneletRegion(value)  # type: ignore[arg-type]
+
+    def test_an_empty_list_is_refused(self) -> None:
+        with pytest.raises(ValueError, match="at least one constraint"):
+            background_traffic.LaneletRegion([])
+
+    def test_a_parsed_constraint_is_kept(self) -> None:
+        from autoware_carla_scenario.sweeper.constraints import parse_constraint
+
+        parsed = parse_constraint({"type": "is_junction"})
+        region = background_traffic.LaneletRegion([parsed])
+        assert region._constraints == [parsed]

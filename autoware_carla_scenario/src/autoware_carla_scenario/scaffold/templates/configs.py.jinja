@@ -32,15 +32,26 @@ class {{ config_class }}:
     timeout_seconds: float = 10.0
 
     def __post_init__(self) -> None:
-        """Refuse a timeout that is not positive and finite, naming its key.
+        """Refuse an empty goal list, and a timeout that is not positive and
+        finite (or is a boolean, which would read as 1 s), naming the key.
 
         A run builds the config before anything starts
-        (``check_batch_configs``), so a bad ``scenario.timeout_seconds=``
-        override is refused there, not by the scenario's ``TimeoutCondition``
-        once CARLA is up.
+        (``check_batch_configs``), so a bad ``scenario.goal_lanelet_ids=`` or
+        ``scenario.timeout_seconds=`` override is refused there, not by the
+        scenario's ``setup()`` or ``TimeoutCondition`` once CARLA is up.
         """
-        if not math.isfinite(self.timeout_seconds) or self.timeout_seconds <= 0.0:
+        # Nothing to reach is nothing to pass.
+        if len(self.goal_lanelet_ids) == 0:
+            raise ValueError(
+                "scenario.goal_lanelet_ids must name at least one lanelet, "
+                f"not {self.goal_lanelet_ids!r}"
+            )
+        if (
+            isinstance(self.timeout_seconds, bool)
+            or not math.isfinite(self.timeout_seconds)
+            or self.timeout_seconds <= 0.0
+        ):
             raise ValueError(
                 "scenario.timeout_seconds must be finite and positive, "
-                f"not {self.timeout_seconds}"
+                f"not {self.timeout_seconds!r}"
             )

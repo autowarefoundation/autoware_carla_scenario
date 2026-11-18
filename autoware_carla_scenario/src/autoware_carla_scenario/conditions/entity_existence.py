@@ -9,14 +9,12 @@ from ..coordinate.poses import CarlaWorldPose
 from ..entity_role import EntityRole
 from .base import BaseCondition, ScenarioResult, find_actor_by_role_name
 from ..failure import FailureCategory
+from ..utils.clearance import HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 logger = logging.getLogger(__name__)
-
-#: An actor this far down (m) is parked under the map, out of the scene.
-HIDDEN_BELOW_M = -100.0
 
 
 def find_present_actor_by_role_name(

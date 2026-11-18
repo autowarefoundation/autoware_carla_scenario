@@ -34,7 +34,7 @@ import numpy as np
 from ..coordinate.map_manager import run_carla_map
 from ..kinematics.walker_motion import WalkerVelocities, is_walker
 from ..perception_fault import PerceivedCategory, perception_fault, renderer_type_id
-from ..utils.clearance import _HIDDEN_BELOW_M
+from ..utils.clearance import HIDDEN_BELOW_M
 from ..utils.traffic_light import traffic_light_state_name
 from carla_driver_interface.protocol import carla_driver_pb2, common_pb2
 
@@ -332,7 +332,7 @@ class RendererDataBuilder:
         scenario places (``static.prop.*``, :data:`_ACTOR_PATTERNS`), each told
         apart by its ``type_id``.  Not the ego, not a walker's AI controller,
         a sensor or the spectator; and not an actor parked under the map
-        (hidden): one whose CARLA ``z`` is below ``_HIDDEN_BELOW_M``
+        (hidden): one whose CARLA ``z`` is below ``HIDDEN_BELOW_M``
         (:mod:`~autoware_carla_scenario.utils.clearance`'s, the threshold the
         other consumers of the world share) is skipped explicitly, whatever
         the horizon (#1248).
@@ -390,7 +390,7 @@ class RendererDataBuilder:
                 )
             # Parked under the map until brought in: not on the road (#1248).
             # Compared in CARLA's world frame, as every other consumer does.
-            if float(transform.location.z) < _HIDDEN_BELOW_M:
+            if float(transform.location.z) < HIDDEN_BELOW_M:
                 continue
             box = actor.bounding_box
             centre = box.location
