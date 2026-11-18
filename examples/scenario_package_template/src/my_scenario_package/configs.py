@@ -10,6 +10,18 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import Union
+
+
+def _is_bool(value: Union[float, bool]) -> bool:
+    """Whether *value*, a field typed ``float``, holds a boolean.
+
+    A dataclass does not coerce its fields, so Hydra's ``=true`` reaches a
+    ``float`` field as ``True``, which would read as 1.  Taking the value as
+    ``Union[float, bool]`` keeps the check visible to the static check, which
+    reads a field typed ``float`` as never holding a bool.
+    """
+    return isinstance(value, bool)
 
 
 @dataclass
@@ -47,7 +59,7 @@ class ReachGoalConfig:
                 f"not {self.goal_lanelet_ids!r}"
             )
         if (
-            isinstance(self.timeout_seconds, bool)
+            _is_bool(self.timeout_seconds)
             or not math.isfinite(self.timeout_seconds)
             or self.timeout_seconds <= 0.0
         ):
