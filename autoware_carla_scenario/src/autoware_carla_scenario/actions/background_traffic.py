@@ -36,9 +36,10 @@ import random
 from typing import TYPE_CHECKING, Any, Mapping, Optional, Sequence, Union
 
 from ..conditions import BaseCondition, ScenarioResult
+from ..kinematics.walker_motion import simulated_seconds
 from ..seed import check_seed, check_whole_number, resolve_seed
 from ..traffic.base import check_background_speed
-from ..utils.clearance import _HIDDEN_BELOW_M
+from ..utils.clearance import HIDDEN_BELOW_M
 from .base import BaseAction, TickTiming
 
 if TYPE_CHECKING:
@@ -53,6 +54,7 @@ __all__ = [
     "TrafficSinkAction",
     "TrafficSourceAction",
     "constraints_from_text",
+    "parse_constraints",
 ]
 
 #: A spawn point is kept this far from either end of its lanelet, metres.
@@ -68,6 +70,9 @@ _SPAWN_ATTEMPTS = 8
 _OTHER_LEVEL_M = 2.0
 
 ConstraintSpec = Union[Mapping[str, Any], Any]
+#: What a source, a sink or a region takes: a list of constraints, or a single
+#: constraint mapping, read as a list of one (:func:`parse_constraints`).
+Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]
 
 
 def constraints_from_text(text: str) -> list[dict[str, Any]]:
@@ -80,17 +85,59 @@ def constraints_from_text(text: str) -> list[dict[str, Any]]:
     """
     import yaml  # noqa: PLC0415
 
-    from ..sweeper.constraints import parse_constraint  # noqa: PLC0415
-
     loaded = yaml.safe_load(text) if text and text.strip() else None
     if isinstance(loaded, Mapping):
         loaded = [loaded]
     if not isinstance(loaded, list) or not loaded:
         raise ValueError(f"expected a list of lanelet constraints, got {text!r}")
-    constraints = [dict(item) for item in loaded]
-    for item in constraints:
-        parse_constraint(item)
-    return constraints
+    # Parsed before dict() is asked to read an item: "- is_junction" or "- 5"
+    # is refused as no constraint (a ValueError), not as a sequence dict()
+    # cannot read (#2191).
+    parse_constraints(loaded)
+    return [dict(item) for item in loaded]
+
+
+def parse_constraints(constraints: Any, key: str = "constraints") -> list[Any]:
+    """*constraints*, sweep constraints, each parsed
+    (:func:`~autoware_carla_scenario.sweeper.constraints.parse_constraint`).
+
+    A list (or another sequence, a Hydra ``ListConfig`` among them) of
+    constraint mappings or constraints already parsed, or a single mapping,
+    read as a list of one.  What a source or sink is given, parsed when it is
+    built -- or when the run's config is checked -- rather than when the first
+    vehicle is due (#2191).  An empty sequence gives an empty list.
+
+    Raises:
+        ValueError: naming *key* (and the item's index, ``constraints[0]``),
+            for anything else -- ``false``, ``''`` or a number among them -- or
+            for an item that is not a constraint.
+    """
+    from ..sweeper.constraints import Constraint, parse_constraint  # noqa: PLC0415
+
+    if isinstance(constraints, Mapping):
+        items: list[Any] = [constraints]
+    elif isinstance(constraints, Sequence) and not isinstance(
+        constraints, (str, bytes)
+    ):
+        items = list(constraints)
+    else:
+        raise ValueError(
+            f"{key} must be a list of lanelet constraints, not {constraints!r}"
+        )
+    parsed: list[Any] = []
+    for index, item in enumerate(items):
+        if isinstance(item, Constraint):
+            parsed.append(item)
+            continue
+        try:
+            # dict() of a mapping only: parse_constraint refuses anything else
+            # as no constraint, where dict() would fail on it first.
+            parsed.append(
+                parse_constraint(dict(item) if isinstance(item, Mapping) else item)
+            )
+        except ValueError as exc:
+            raise ValueError(f"{key}[{index}]: {exc}") from exc
+    return parsed
 
 
 class LaneletRegion:
@@ -104,16 +151,24 @@ class LaneletRegion:
     successor" alone would put every crosswalk in a sink and remove a vehicle
     driving over it; and a source would place vehicles across the road.
 
-    Resolved on first use, against the map the run loaded, so an action can be
-    built before the map is -- from a Hydra config, for instance.
+    The constraints are parsed when the region is built
+    (:func:`parse_constraints`), so one the sweeper does not know is refused
+    then (#2191); the lanelets they match are resolved on first use, against
+    the map the run loaded, so an action can be built before the map is --
+    from a Hydra config, for instance.
+
+    Raises:
+        ValueError: when *constraints* is empty, is neither a list nor a
+            single mapping, or holds an item that is not a constraint.
     """
 
     _ids: Optional[list[int]]
 
-    def __init__(self, constraints: Sequence[ConstraintSpec]) -> None:
-        if not constraints:
+    def __init__(self, constraints: Constraints) -> None:
+        parsed = parse_constraints(constraints)
+        if not parsed:
             raise ValueError("a lanelet region needs at least one constraint")
-        self._constraints = list(constraints)
+        self._constraints = parsed
         self._ids: Optional[list[int]] = None
 
     @property
@@ -125,19 +180,15 @@ class LaneletRegion:
             from ..sweeper.constraints import (  # noqa: PLC0415
                 Constraint,
                 find_matching_lanelets,
-                parse_constraint,
             )
 
             if TYPE_CHECKING:
-                # The constraints are a mix of Hydra nodes and parsed
-                # constraints (ConstraintSpec), which Codon cannot hold; the
-                # check sees the parsed list they become.
+                # The constraints were parsed by __init__ (parse_constraints,
+                # which Codon cannot express: it takes Hydra nodes); the check
+                # sees the parsed list they became.
                 parsed: list[Constraint] = []
             else:
-                parsed = [
-                    parse_constraint(dict(c)) if isinstance(c, Mapping) else c
-                    for c in self._constraints
-                ]
+                parsed = list(self._constraints)
             manager = MapManager.get_instance()
             lanelet_map = manager.lanelet_map
             matched = find_matching_lanelets(parsed, lanelet_map, manager.routing_graph)
@@ -280,7 +331,7 @@ class TrafficSourceAction(_BackendAction):
 
     def __init__(
         self,
-        constraints: Sequence[ConstraintSpec],
+        constraints: Constraints,
         *,
         initial_vehicles: int = 0,
         vehicles_per_minute: float = 0.0,
@@ -362,7 +413,7 @@ class TrafficSourceAction(_BackendAction):
         backend = self._require_backend()
         if backend is None:
             return
-        now = _simulated_seconds(world)
+        now = simulated_seconds(world)
         if not self._started:
             self._started = True
             self._last_time = now
@@ -462,7 +513,7 @@ class TrafficSinkAction(_BackendAction):
 
     def __init__(
         self,
-        constraints: Sequence[ConstraintSpec],
+        constraints: Constraints,
         *,
         label: str = "traffic_sink",
         condition: Optional[BaseCondition] = None,
@@ -513,13 +564,6 @@ def _vehicle_count(key: str, value: int) -> int:
     return count
 
 
-def _simulated_seconds(world: "carla.World") -> Optional[float]:
-    try:
-        return float(world.get_snapshot().timestamp.elapsed_seconds)
-    except Exception:  # noqa: BLE001 - a fake or a closing world
-        return None
-
-
 def _too_near(
     x: float,
     y: float,
@@ -554,7 +598,7 @@ def _vehicle_positions(
         except Exception:  # noqa: BLE001
             continue
         # One parked under the map until its spawn takes no room (#853).
-        if location.z < _HIDDEN_BELOW_M:
+        if location.z < HIDDEN_BELOW_M:
             continue
         z: Optional[float] = location.z  # the list's type, for Codon
         out.append((location.x, location.y, z))

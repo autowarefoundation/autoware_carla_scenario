@@ -7,6 +7,7 @@ and plays a container, and a stack is a plain process group.
 
 from __future__ import annotations
 
+import errno
 import json
 import logging
 import os
@@ -24,7 +25,9 @@ import pytest
 from autoware_carla_scenario.autoware_stack.bridge_node import (
     MISSION_POLL_TIMEOUT_S,
     ROUTE_WATCH_PERIOD_S,
+    DOUBLE_PARAMETERS,
     bridge_package_dir,
+    bridge_ros_args,
     host_python_root,
     launcher_bridge_parameters,
     liveness_timeout_problem,
@@ -187,6 +190,98 @@ def test_missing_devcontainer_variant_lists_the_ones_there(tmp_path: Path) -> No
 
     with pytest.raises(DevContainerError, match="universe-devel-cuda"):
         read_devcontainer(ws, "core-devel", env={})
+
+
+def test_an_unreadable_devcontainer_is_a_devcontainer_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # #2187: not a raw PermissionError (root reads any file, so read_text
+    # refuses it here).
+    ws = _workspace(tmp_path)
+    config = ws / ".devcontainer" / "universe-devel-cuda" / "devcontainer.json"
+    read_text = Path.read_text
+
+    def refusing(self: Path, *args: Any, **kwargs: Any) -> str:
+        if self == config:
+            raise PermissionError(13, "Permission denied", str(self))
+        return read_text(self, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "read_text", refusing)
+    with pytest.raises(DevContainerError, match="Could not read .*Permission denied"):
+        read_devcontainer(ws, "universe-devel-cuda", env={})
+
+
+@pytest.mark.parametrize("document", ["[]", '"image"', "3", "null"])
+def test_a_devcontainer_that_is_not_an_object_is_a_devcontainer_error(
+    tmp_path: Path, document: str
+) -> None:
+    ws = tmp_path / "ws"
+    (ws / ".devcontainer" / "custom").mkdir(parents=True)
+    (ws / ".devcontainer" / "custom" / "devcontainer.json").write_text(document)
+
+    with pytest.raises(DevContainerError, match="not a JSON object"):
+        read_devcontainer(ws, "custom", env={})
+
+
+def test_an_unreadable_devcontainer_falls_back_on_a_configured_image(
+    tmp_path: Path, fake_docker
+) -> None:
+    # The DevContainerError lets _resolve_container take the image named.
+    docker, _calls = fake_docker
+    ws = tmp_path / "ws"
+    (ws / ".devcontainer" / "universe-devel-cuda").mkdir(parents=True)
+    (ws / ".devcontainer" / "universe-devel-cuda" / "devcontainer.json").write_text(
+        "[]"
+    )
+    launcher = _docker_launcher(ws, docker, image="example/autoware:mine")
+
+    assert launcher._resolve_container().image == "example/autoware:mine"
+
+
+def test_a_compose_that_is_not_a_mapping_names_no_service(tmp_path: Path) -> None:
+    ws = _workspace(tmp_path)
+    compose = ws / "docker" / "devcontainer" / "universe-devel-cuda.compose.yaml"
+    compose.write_text("- a\n- b\n")
+
+    with pytest.raises(DevContainerError, match="No service 'autoware-devel'"):
+        read_devcontainer(ws, "universe-devel-cuda", env={})
+
+
+@pytest.mark.parametrize("overridden", [False, True], ids=["one-file", "override"])
+def test_compose_environment_values_are_interpolated_once(
+    tmp_path: Path, overridden: bool
+) -> None:
+    # #2187: Compose interpolates a value once: a host value passed through
+    # (`- KEY`) keeps a `${X}` in it.
+    ws = _workspace(tmp_path)
+    compose = ws / "docker" / "devcontainer" / "universe-devel-cuda.compose.yaml"
+    compose.write_text(
+        compose.read_text().replace(
+            "      - CMAKE_CUDA_ARCHITECTURES=86;89\n",
+            "      - CMAKE_CUDA_ARCHITECTURES=86;89\n" "      - FROM_HOST\n",
+        )
+    )
+    if overridden:
+        devcontainer = (
+            ws / ".devcontainer" / "universe-devel-cuda" / "devcontainer.json"
+        )
+        devcontainer.write_text(
+            devcontainer.read_text().replace(
+                '"dockerComposeFile": "../../docker/devcontainer/universe-devel-cuda.compose.yaml",',
+                '"dockerComposeFile": ["../../docker/devcontainer/universe-devel-cuda.compose.yaml",'
+                ' "../../docker/devcontainer/override.yaml"],',
+            )
+        )
+        (ws / "docker" / "devcontainer" / "override.yaml").write_text(
+            "services:\n  autoware-devel:\n    environment:\n      - EXTRA=1\n"
+        )
+
+    container = read_devcontainer(
+        ws, "universe-devel-cuda", env={"FROM_HOST": "a${X}b", "X": "expanded"}
+    )
+
+    assert container.environment["FROM_HOST"] == "a${X}b"
+    assert container.environment["HOST_UID"] == "1000"
 
 
 # ---------------------------------------------------------------------------
@@ -377,6 +472,17 @@ def test_process_group_reports_an_environment_it_cannot_pass(
         ProcessGroup(["true"], env={**os.environ, **env}, log_path=tmp_path / "out.log")
     assert len(opened) == 1
     assert opened[0].closed
+
+
+def test_process_group_reports_a_log_it_cannot_open(tmp_path: Path) -> None:
+    # #2187: an unwritable log directory, or a name too long, is an
+    # AutowareStackError, not a raw OSError.
+    blocker = tmp_path / "blocker"
+    blocker.write_text("")
+    with pytest.raises(AutowareStackError, match="Could not open the log"):
+        ProcessGroup(["true"], log_path=blocker / "logs" / "out.log")
+    with pytest.raises(AutowareStackError, match="Could not open the log"):
+        ProcessGroup(["true"], log_path=tmp_path / ("x" * 300 + ".log"))
 
 
 def test_process_group_reports_a_missing_command() -> None:
@@ -661,6 +767,69 @@ def test_build_output_that_is_not_utf8_is_streamed_with_replacements(
     assert "warning: \ufffd in a source line" in capsys.readouterr().out
 
 
+class _FailingOutput:
+    """A child's stdout whose iteration raises *error* after one line."""
+
+    def __init__(self, error: BaseException) -> None:
+        self._error = error
+        self.closed = False
+
+    def __iter__(self) -> Any:
+        yield "first\n"
+        raise self._error
+
+    def close(self) -> None:
+        self.closed = True
+
+
+class _FakePopen:
+    """A Popen whose output fails mid-stream; records what was done to it."""
+
+    instances: list[_FakePopen] = []
+
+    def __init__(self, error: BaseException) -> None:
+        self.stdout = _FailingOutput(error)
+        self.killed = False
+        self.waited = False
+        _FakePopen.instances.append(self)
+
+    def kill(self) -> None:
+        self.killed = True
+
+    def wait(self, timeout: Any = None) -> int:
+        self.waited = True
+        return -9
+
+
+@pytest.mark.parametrize(
+    "error",
+    [BrokenPipeError(32, "Broken pipe"), KeyboardInterrupt()],
+    ids=["broken-pipe", "interrupt"],
+)
+def test_a_build_whose_output_fails_mid_stream_is_ended(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, error: BaseException
+) -> None:
+    # #2187: the child is killed, reaped and its pipe closed, not leaked.
+    launcher = _docker_launcher(_workspace(tmp_path), tmp_path / "docker")
+    launcher._log_dir = tmp_path / "out"
+    _FakePopen.instances.clear()
+    monkeypatch.setattr(
+        docker_module.subprocess,
+        "Popen",
+        lambda *args, **kwargs: _FakePopen(error),
+    )
+
+    with pytest.raises((AutowareStackError, KeyboardInterrupt)):
+        launcher._stream(["docker", "build"], "autoware-build.log")
+
+    (process,) = _FakePopen.instances
+    assert process.killed
+    assert process.waited
+    assert process.stdout.closed
+    # The log is closed, with what came before the failure.
+    assert (tmp_path / "out" / "autoware-build.log").read_text() == "first\n"
+
+
 def test_docker_launcher_does_not_build_when_told_not_to(
     tmp_path: Path, fake_docker
 ) -> None:
@@ -855,11 +1024,14 @@ def test_docker_launcher_takes_no_build_lock_with_nothing_to_make(
     assert "Waiting for another run" not in caplog.text
 
 
+@pytest.mark.parametrize("code", [errno.EACCES, errno.EROFS], ids=["eacces", "erofs"])
 def test_docker_launcher_locks_a_read_only_build_lock_file(
-    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch, code: int
 ) -> None:
-    # flock needs no write access: the lock file is opened read-only, so an
-    # existing one on a read-only mount (or of mode 0444) still locks.
+    # Where the lock file cannot be opened for writing -- an existing one of
+    # mode 0444, or on a read-only mount -- it is opened read-only, which a
+    # local file system locks too (#2187).  os.open refuses the write itself:
+    # root ignores the file's mode.
     docker, calls = fake_docker
     ws = _workspace(tmp_path)
     monkeypatch.setenv("FAKE_DOCKER_WS", str(ws))
@@ -874,6 +1046,8 @@ def test_docker_launcher_locks_a_read_only_build_lock_file(
     def recording_open(path, flag, *args, **kwargs):  # type: ignore[no-untyped-def]
         if Path(path) == lock:
             flags.append(flag)
+            if flag & (os.O_WRONLY | os.O_RDWR):
+                raise OSError(code, os.strerror(code), str(path))
         return real_open(path, flag, *args, **kwargs)
 
     monkeypatch.setattr(docker_module.os, "open", recording_open)
@@ -886,8 +1060,10 @@ def test_docker_launcher_locks_a_read_only_build_lock_file(
         holder.kill()
         holder.wait()
     assert waited >= 0.5
+    # Each try: read-write first, then read-only.
     assert flags
-    assert all(f & (os.O_WRONLY | os.O_RDWR) == 0 for f in flags)
+    assert flags[0] == os.O_RDWR | os.O_CREAT
+    assert flags[-1] == os.O_RDONLY
     assert any(c[0] == "run" and "colcon build" in c[-1] for c in calls())
 
 
@@ -996,7 +1172,7 @@ def _flock_raising(
     return operations
 
 
-def test_the_build_lock_is_opened_read_only_created_mode_644(
+def test_the_build_lock_is_opened_read_write_created_mode_644(
     tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     import fcntl
@@ -1021,11 +1197,33 @@ def test_the_build_lock_is_opened_read_only_created_mode_644(
     try:
         assert fd >= 0
         lock = ws / ".autoware_carla_scenario-build.lock"
-        assert opened == [(lock, os.O_RDONLY | os.O_CREAT, 0o644)]
+        # Read-write: on NFS an exclusive flock needs it (#2187).
+        assert opened == [(lock, os.O_RDWR | os.O_CREAT, 0o644)]
         assert lock.stat().st_mode & 0o777 == 0o644
         assert operations == [fcntl.LOCK_EX | fcntl.LOCK_NB]
     finally:
         launcher._unlock_workspace(fd)
+
+
+def test_a_build_lock_open_error_other_than_unwritable_is_not_retried_read_only(
+    tmp_path: Path,
+    fake_docker,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path)
+    launcher = _docker_launcher(ws, docker)
+    flags: list[int] = []
+
+    def _open(path: Any, flag: int, *args: Any) -> int:
+        flags.append(flag)
+        raise OSError(errno.ENOSPC, "no space")
+
+    monkeypatch.setattr(docker_module.os, "open", _open)
+    assert launcher._lock_workspace() == -1
+    assert flags == [os.O_RDWR | os.O_CREAT]
+    assert "no space" in caplog.text
 
 
 def test_a_build_lock_that_cannot_be_opened_builds_unlocked(
@@ -1908,3 +2106,78 @@ def test_the_launchers_parameters_are_found(tmp_path: Path) -> None:
     assert launcher_bridge_parameters(command) == {"a": 1}
     assert launcher_bridge_parameters(docker) == {"b": 2}
     assert launcher_bridge_parameters(object()) is None
+
+
+def test_a_null_bridge_parameter_is_the_nodes_default() -> None:
+    # #2187: not `auto_engage:=None`, which the node's bool refuses.
+    args = bridge_ros_args("h:1", {"auto_engage": None, "use_sim_time": True})
+    assert args == [
+        "--ros-args",
+        "-p",
+        "bridge_address:=h:1",
+        "-p",
+        "use_sim_time:=true",
+    ]
+
+
+def test_a_whole_number_for_a_double_parameter_is_passed_as_a_float() -> None:
+    # #2187: rclpy refuses an INTEGER override of a DOUBLE declaration.
+    args = bridge_ros_args(
+        "h:1",
+        {
+            "route_watch_period_s": 2,
+            "tick_period_s": 0.25,
+            "reroute_max_attempts": 3,  # an integer parameter stays one
+            "map_frame": "map",
+        },
+    )
+    assert args[3:] == [
+        "-p",
+        "route_watch_period_s:=2.0",
+        "-p",
+        "tick_period_s:=0.25",
+        "-p",
+        "reroute_max_attempts:=3",
+        "-p",
+        "map_frame:=map",
+    ]
+
+
+def test_the_double_parameters_are_the_nodes_double_declarations() -> None:
+    # The table follows ros_bridge/node.py: every parameter it declares with a
+    # float default, and no other.
+    import ast
+
+    # Read, not imported: it imports rclpy.
+    node = bridge_package_dir() / "ros_bridge" / "node.py"
+    tree = ast.parse(node.read_text(encoding="utf-8"))
+    doubles = {
+        call.args[0].value
+        for call in ast.walk(tree)
+        if isinstance(call, ast.Call)
+        and isinstance(call.func, ast.Attribute)
+        and call.func.attr == "declare_parameter"
+        and len(call.args) == 2
+        and isinstance(call.args[0], ast.Constant)
+        and isinstance(call.args[1], ast.Constant)
+        and isinstance(call.args[1].value, float)
+    }
+    assert doubles
+    assert set(DOUBLE_PARAMETERS) == doubles
+
+
+@pytest.mark.parametrize("xdg", [None, "", "relative/cache"])
+def test_the_host_python_root_ignores_an_unset_empty_or_relative_xdg_cache_home(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, xdg: str | None
+) -> None:
+    # #2187: not under the current directory.
+    monkeypatch.setenv("HOME", str(tmp_path / "home"))
+    monkeypatch.chdir(tmp_path)
+    if xdg is None:
+        monkeypatch.delenv("XDG_CACHE_HOME", raising=False)
+    else:
+        monkeypatch.setenv("XDG_CACHE_HOME", xdg)
+    root = host_python_root()
+    assert root.is_relative_to(
+        tmp_path / "home" / ".cache" / "autoware_carla_scenario" / "ros_bridge"
+    )

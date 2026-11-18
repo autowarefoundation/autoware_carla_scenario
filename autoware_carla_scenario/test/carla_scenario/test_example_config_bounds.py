@@ -505,3 +505,22 @@ def test_the_template_refuses_a_timeout_not_positive(value: float) -> None:
 @pytest.mark.parametrize("value", [1e-6, 8.0])
 def test_the_template_accepts_a_positive_timeout(value: float) -> None:
     assert _reach_goal_config()(timeout_seconds=value).timeout_seconds == value
+
+
+def test_the_template_refuses_a_boolean_timeout_showing_its_repr() -> None:
+    """True was read as 1 s; the value is shown with repr (#2191)."""
+    with pytest.raises(
+        ValueError, match=_message("timeout_seconds", "finite and positive, not True$")
+    ):
+        _reach_goal_config()(timeout_seconds=True)
+
+
+def test_the_template_refuses_no_goal_when_the_config_is_built() -> None:
+    """Refused by check_batch_configs, which builds the config, rather than by
+    the scenario's setup() once CARLA is up (#2191)."""
+    with pytest.raises(
+        ValueError,
+        match=r"^scenario\.goal_lanelet_ids must name at least one lanelet, not \[\]$",
+    ):
+        _reach_goal_config()(goal_lanelet_ids=[])
+    assert _reach_goal_config()(goal_lanelet_ids=[265]).goal_lanelet_ids == [265]

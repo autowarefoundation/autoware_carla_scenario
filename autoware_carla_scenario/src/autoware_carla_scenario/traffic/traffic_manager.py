@@ -40,6 +40,7 @@ from .base import (
 from .config import TrafficManagerBackendConfig
 from .final_approach import APPROACH_SPEED_MPS, FinalApproach, lane_changes
 from .parameters import VEHICLE_BOUNDS, Spread, VehicleParameters
+from ..utils.clearance import HIDDEN_BELOW_M
 from ..world_reset import episode_of
 from ..visibility import (
     DEFAULT_DECEL,
@@ -76,8 +77,6 @@ TURN_POST_JUNCTION_DISTANCE_M: float = 20.0
 #: Metres between the points of a route :meth:`TrafficManagerBackend.follow_route`
 #: sets as a vehicle's path.
 ROUTE_POINT_STEP_M: float = 5.0
-#: An actor this far down (m) is parked under the map, out of the scene.
-_HIDDEN_BELOW_M: float = 100.0
 #: How near (m) ahead of a junction a vehicle may start for the
 #: TrafficManager to take its route through it (from its route's start, which
 #: may lie a few metres short of where it appears).  It places a vehicle on its
@@ -1518,7 +1517,7 @@ class TrafficManagerBackend(TrafficBackend):
         # points behind it are passed, and a path starting behind it would
         # steer it back (vehicle_129, wedged on the kerb).
         standing = actor.get_location()
-        if standing.z > -_HIDDEN_BELOW_M:
+        if standing.z >= HIDDEN_BELOW_M:
             start = standing
             out = _from_here(out, standing)
         kept = self._kept[actor.id]

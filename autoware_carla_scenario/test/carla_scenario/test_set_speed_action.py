@@ -487,6 +487,27 @@ class TestConstruction:
         with pytest.raises(ValueError, match="rate_kmh_s must be positive and finite"):
             SetSpeedAction(entity_name="npc1", target_speed_kmh=10.0, rate_kmh_s=rate)
 
+    def test_a_boolean_target_or_rate_is_refused(self) -> None:
+        """True was read as 1 km/h (#2191)."""
+        with pytest.raises(
+            ValueError,
+            match=r"^target_speed_kmh must be finite and not negative, not True$",
+        ):
+            SetSpeedAction(entity_name="npc1", target_speed_kmh=True)
+        with pytest.raises(
+            ValueError, match=r"^rate_kmh_s must be positive and finite, not True$"
+        ):
+            SetSpeedAction(entity_name="npc1", target_speed_kmh=10.0, rate_kmh_s=True)
+
+    def test_the_messages_show_the_value(self) -> None:
+        """As every sibling action's do (#2191)."""
+        with pytest.raises(ValueError, match=r", not -1\.0$"):
+            SetSpeedAction(entity_name="npc1", target_speed_kmh=-1.0)
+        with pytest.raises(ValueError, match=r", not nan$"):
+            SetSpeedAction(
+                entity_name="npc1", target_speed_kmh=10.0, rate_kmh_s=math.nan
+            )
+
     def test_a_target_of_zero_without_a_rate_is_accepted(self) -> None:
         SetSpeedAction(entity_name="npc1", target_speed_kmh=0.0)
         SetSpeedAction(entity_name="npc1", target_speed_kmh=0.0, rate_kmh_s=5.0)

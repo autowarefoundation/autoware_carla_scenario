@@ -332,8 +332,14 @@ class ProcessGroup:
                 f"Could not run {argv[0] if argv else ''!r}: no such command"
             )
         if log_path is not None:
-            log_path.parent.mkdir(parents=True, exist_ok=True)
-            self._log = log_path.open("ab")
+            try:
+                log_path.parent.mkdir(parents=True, exist_ok=True)
+                self._log = log_path.open("ab")
+            except OSError as exc:
+                # An unwritable log directory, a name too long (#2187).
+                raise AutowareStackError(
+                    f"Could not open the log of {argv[0]!r}, {log_path}: {exc}"
+                ) from exc
         try:
             if self._log is not None:
                 self._process = _start_session(argv, env, self._log)

@@ -9,8 +9,7 @@ from typing import TYPE_CHECKING, Optional, Union
 from ..conditions.base import BaseCondition
 from ..conditions.comparison import ComparisonRule
 from ..conditions.composition.speed import SpeedCondition
-from ..entity.pedestrian_entity import PedestrianEntity
-from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
+from ..entity.registry import fail_if_pedestrian, find_vehicle_entity
 from ..entity_role import EntityRole
 from ..traffic.driven import BackendDriven
 from ..control_domain import ControlDomain
@@ -94,9 +93,9 @@ class SetSpeedAction(BaseAction):
             stall one step short.
 
     Raises:
-        ValueError: If *target_speed_kmh* is negative or not finite, if
-            *rate_kmh_s* is not positive or not finite (``None`` is the
-            unbounded rate), or if *reissue* is ``False`` while a rate is
+        ValueError: If *target_speed_kmh* is negative, not finite or a
+            boolean, if *rate_kmh_s* is not positive, not finite or a boolean
+            (``None`` is the unbounded rate), or if *reissue* is ``False`` while a rate is
             given.  A
             rate of zero is a change that never arrives, and a rate that is
             never re-sent is a walk that never takes its second step; both are
@@ -126,12 +125,21 @@ class SetSpeedAction(BaseAction):
         # target would never arrive and be sent to the backend every tick.
         # ``inf`` is refused as well: no backend can hold an infinite speed,
         # and an unbounded rate is already said by ``rate_kmh_s=None``.
-        if not (math.isfinite(target_speed_kmh) and target_speed_kmh >= 0):
-            raise ValueError("target_speed_kmh must be finite and not negative")
-        if rate_kmh_s is not None and not (
-            math.isfinite(rate_kmh_s) and rate_kmh_s > 0
+        # A boolean is refused too: True would be read as 1 km/h (#2191).
+        if isinstance(target_speed_kmh, bool) or not (
+            math.isfinite(target_speed_kmh) and target_speed_kmh >= 0
         ):
-            raise ValueError("rate_kmh_s must be positive and finite")
+            raise ValueError(
+                "target_speed_kmh must be finite and not negative, "
+                f"not {target_speed_kmh!r}"
+            )
+        if rate_kmh_s is not None and (
+            isinstance(rate_kmh_s, bool)
+            or not (math.isfinite(rate_kmh_s) and rate_kmh_s > 0)
+        ):
+            raise ValueError(
+                f"rate_kmh_s must be positive and finite, not {rate_kmh_s!r}"
+            )
         if rate_kmh_s is not None and reissue is False:
             raise ValueError(
                 "a rate-limited speed change must reissue: the traffic seam "
@@ -192,7 +200,7 @@ class SetSpeedAction(BaseAction):
         """Command the target, or this tick's step towards it."""
         entity = find_vehicle_entity(self._entity_name)
         if entity is None:
-            _fail_if_pedestrian(self._entity_name)
+            fail_if_pedestrian(self._entity_name, "set_desired_speed")
             logger.warning(
                 "SetSpeedAction: entity '%s' not found", str(self._entity_name)
             )
@@ -264,20 +272,3 @@ def _current_speed_kmh(entity: BackendDriven) -> float:
     velocity = actor.get_velocity()
     speed_ms = (velocity.x**2 + velocity.y**2 + velocity.z**2) ** 0.5
     return speed_ms * _KMH_PER_MS
-
-
-def _fail_if_pedestrian(entity_name: str) -> None:
-    """Raise :class:`AttributeError` when *entity_name* is a pedestrian.
-
-    A pedestrian cannot be given a speed. The vehicle lookup does not find one, but
-    the action used to look up an entity of any kind and call
-    ``set_desired_speed`` on it, which raised; it still raises, rather than reading
-    as an entity that is not there.
-    """
-    found = find_pedestrian_entity(entity_name)
-    if found is None:
-        return
-    walker: PedestrianEntity = found
-    raise AttributeError(
-        f"'{type(walker).__name__}' object has no attribute 'set_desired_speed'"
-    )

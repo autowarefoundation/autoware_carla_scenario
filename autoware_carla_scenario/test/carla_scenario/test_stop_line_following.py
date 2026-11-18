@@ -143,6 +143,15 @@ def _no_graph_built(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(lanelet2.routing, "RoutingGraph", refuse)
 
 
+def test_depth_zero_builds_no_routing_graph(monkeypatch: pytest.MonkeyPatch) -> None:
+    # #2187: the lanelet alone has no successors to find in one.
+    lanelet_map, ids, stop_line = _road_with_stop_line_on(1)
+    _no_graph_built(monkeypatch)
+    assert get_stop_line_linestrings_with_following(lanelet_map, ids[0], depth=0) == []
+    found = get_stop_line_linestrings_with_following(lanelet_map, ids[1], depth=0)
+    assert [(owner, line.id) for owner, line in found] == [(ids[1], stop_line)]
+
+
 def test_a_given_routing_graph_is_used(monkeypatch: pytest.MonkeyPatch) -> None:
     from autoware_carla_scenario.coordinate.map_manager import build_routing_graph
 

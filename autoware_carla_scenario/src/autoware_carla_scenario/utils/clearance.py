@@ -30,6 +30,7 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
 __all__ = [
+    "HIDDEN_BELOW_M",
     "Obstacle",
     "actor_box_centre",
     "box_centre",
@@ -39,8 +40,10 @@ __all__ = [
     "overlaps",
 ]
 
-#: An actor this far (m) or more below the ground is out of the world.
-_HIDDEN_BELOW_M = -100.0
+#: An actor below this height (m) is out of the world: parked under the map,
+#: spawned hidden and not yet brought in.  The one definition (#2191): an actor
+#: is hidden when ``z < HIDDEN_BELOW_M``, and in the world otherwise.
+HIDDEN_BELOW_M: float = -100.0
 
 #: How far (m) one road user's box may be clear of another's in height and
 #: still be on the same level of road (#1580).  The same idea as
@@ -397,7 +400,7 @@ def overlaps(
             if _rectangles_meet(mine, (cx, cy, math.radians(cyaw), cl, cw)):
                 return claimant
     for actor_id, ox, oy, oz, _speed in states:
-        if actor_id == self_id or oz < _HIDDEN_BELOW_M:
+        if actor_id == self_id or oz < HIDDEN_BELOW_M:
             continue
         kind, size = _kind(world, actor_id)
         if not kind:
@@ -490,7 +493,7 @@ def first_box_in_way(
     level, span = _looking(world, self_id, z)
     best: Optional[Obstacle] = None
     for actor_id, ox, oy, oz, speed in _states(world):
-        if actor_id == self_id or oz < _HIDDEN_BELOW_M:
+        if actor_id == self_id or oz < HIDDEN_BELOW_M:
             continue
         dx, dy = ox - x, oy - y
         if dx * dx + dy * dy > (distance + 6.0) ** 2:
@@ -540,7 +543,7 @@ def first_in_way(
     level, span = _looking(world, self_id, z)
     best: Optional[Obstacle] = None
     for actor_id, ox, oy, oz, speed in _states(world):
-        if actor_id == self_id or oz < _HIDDEN_BELOW_M:
+        if actor_id == self_id or oz < HIDDEN_BELOW_M:
             continue
         dx, dy = ox - x, oy - y
         if dx * dx + dy * dy > (distance + 6.0) ** 2:

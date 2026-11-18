@@ -16,7 +16,8 @@ from ..control_domain import ControlDomain, movement_of
 from ..entity.registry import find_pedestrian_entity
 from ..entity_role import EntityRole
 from ..kinematics.vector import Vector3
-from ..kinematics.walker_motion import HIDDEN_BELOW_M, WalkerVelocities
+from ..kinematics.walker_motion import WalkerVelocities
+from ..utils.clearance import HIDDEN_BELOW_M
 from ..pedestrian.poser import WalkerPoser
 from ..pedestrian.soma import SomaMotion, load_soma_motion
 from .base import BaseAction, TickTiming
@@ -273,7 +274,7 @@ class _Standing(BaseCondition):
 
     Read as the other conditions read an entity, present only: a pedestrian
     parked under the map (below
-    :data:`~..kinematics.walker_motion.HIDDEN_BELOW_M`) does not stand, and
+    :data:`~..utils.clearance.HIDDEN_BELOW_M`) does not stand, and
     nor does one whose speed is not known yet -- the first read, or the first
     after it is brought in -- since CARLA reports a walker on its controller
     standing even while it walks.

@@ -116,7 +116,7 @@ from typing import Any, ClassVar, Collection, Optional, Union
 from ...constants import EGO_ROLE_NAME
 from ...entity_role import canonical_role_name
 from ...coordinate.map_manager import run_carla_map
-from ...utils.clearance import actor_box_centre
+from ...utils.clearance import HIDDEN_BELOW_M, actor_box_centre
 from ...utils.traffic_light import traffic_light_state_name
 from ...utils.vehicles import is_emergency_vehicle_type
 from ...visibility import driver_quantile, sight_speed_at, world_visibility
@@ -229,9 +229,6 @@ __all__ = [
 
 #: How many edges ahead a turn looks for a junction offering it.
 TURN_SEARCH_EDGES: int = 8
-#: A vehicle this far (m) below the map is parked out of the world (spawned
-#: hidden): it joins SUMO only once a spawn brings it up.
-_HIDDEN_BELOW_M = -100.0
 #: The spacing (m) of the points a route is matched to SUMO's edges along.
 _ROUTE_STEP_M = 2.0
 #: How far (m) from a route's point a lane of SUMO's may be to carry it.
@@ -423,7 +420,7 @@ def _sumo_class(actor: Any) -> tuple[str, str]:
 
 def _parked(actor: Any) -> bool:
     """Whether *actor* is parked under the map, out of the world."""
-    return float(actor.get_location().z) < _HIDDEN_BELOW_M
+    return float(actor.get_location().z) < HIDDEN_BELOW_M
 
 
 def _runs_along(shape: Any, offset: float, heading: float) -> bool:

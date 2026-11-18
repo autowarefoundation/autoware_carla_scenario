@@ -162,6 +162,25 @@ def find_pedestrian_entity(
     return None
 
 
+def fail_if_pedestrian(role_name: str, method: str) -> None:
+    """Raise :class:`AttributeError` when *role_name* is a pedestrian.
+
+    For a vehicle action that did not find its vehicle: a pedestrian cannot
+    take *method* (``change_lane``, ``set_desired_speed``,
+    ``turn_at_junction``).  The vehicle lookup does not find one, but the
+    actions used to look up an entity of any kind and call *method* on it,
+    which raised; they still raise, rather than reading as an entity that is
+    not there.
+    """
+    found = find_pedestrian_entity(role_name)
+    if found is None:
+        return
+    walker: PedestrianEntity = found
+    raise AttributeError(
+        f"'{type(walker).__name__}' object has no attribute '{method}'"
+    )
+
+
 def clear_entities() -> None:
     """Drop every registration.  Called by the runner before each scenario."""
     _VEHICLES.clear()

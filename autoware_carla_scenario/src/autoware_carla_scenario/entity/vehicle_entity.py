@@ -483,7 +483,7 @@ class EmergencyVehicleEntity(VehicleEntity):
             self._tell_backend()
         return actor
 
-    def set_emergency(self, active: bool) -> None:
+    def set_emergency(self, active: bool) -> bool:
         """Put it on a call (*active*) or off duty, from now on.
 
         Switches its siren lights, keeping its other lights as they are, and
@@ -491,15 +491,20 @@ class EmergencyVehicleEntity(VehicleEntity):
         call or as any other vehicle
         (:meth:`~autoware_carla_scenario.traffic.base.TrafficBackend.set_emergency`).
         Before :meth:`spawn` it only sets the state it spawns in.
+
+        Returns:
+            ``True``: an emergency vehicle always takes the state
+            (:meth:`BackendDriven.set_emergency`).
         """
         self._emergency = active
         actor = self._vehicle
         if actor is None:
-            return
+            return True
         # A typed local: Codon unwraps the Optional here.
         vehicle: "carla.Actor" = actor
         set_siren_lights(vehicle, active)
         self._tell_backend()
+        return True
 
     def _replace_actor(self, actor: Optional["carla.Actor"]) -> bool:
         """Accept the actor a traffic backend brings it back as

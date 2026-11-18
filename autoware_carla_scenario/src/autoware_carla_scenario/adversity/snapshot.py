@@ -25,7 +25,7 @@ from ..entity_role import _role_name
 from ..kinematics.vector import Vector3
 from ..kinematics.walker_motion import WalkerVelocities, is_walker, simulated_seconds
 from ..route.geometry import MapFeatures
-from ..utils.clearance import _HIDDEN_BELOW_M
+from ..utils.clearance import HIDDEN_BELOW_M
 from ..utils.traffic_light import traffic_light_state_name
 from .geometry import AgentFootprint
 from .observation import AgentSnapshot, Scene, SignalState
@@ -206,7 +206,7 @@ def snapshot_world(world: carla.World) -> list[AgentSnapshot]:
     """Every vehicle and walker of *world*, each named by its ``role_name``
     (or, with none, its actor id).
 
-    One parked under the map (``z`` below ``_HIDDEN_BELOW_M``), as an entity
+    One parked under the map (``z`` below ``HIDDEN_BELOW_M``), as an entity
     is until its spawn, is left out: it is not in the scene (#853).  A walker's speed is
     measured from where it stood when last read (:func:`snapshot_actor`);
     one parked is forgotten, so where it is brought in is not read as a
@@ -218,7 +218,7 @@ def snapshot_world(world: carla.World) -> list[AgentSnapshot]:
             # One RPC for the transform, shared with the snapshot itself.
             transform = actor.get_transform()
             location = transform.location
-            if float(location.z) < _HIDDEN_BELOW_M:
+            if float(location.z) < HIDDEN_BELOW_M:
                 if is_walker(actor):
                     _WALKERS.forget(int(actor.id))
                 continue

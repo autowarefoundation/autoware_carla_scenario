@@ -505,8 +505,29 @@ class TestTheEmergencyAction:
     ) -> None:
         npc = VehicleEntity(VehicleEntityConfig("npc1", SpawnPointIndex(0)))
         register_entity("npc1", npc)
-        EmergencyAction("npc1").execute(_World())  # type: ignore[arg-type]
+        with caplog.at_level("INFO"):
+            EmergencyAction("npc1").execute(_World())  # type: ignore[arg-type]
         assert "is not an emergency vehicle" in caplog.text
+        # Not logged as on a call right after the warning (#2191).
+        assert "on a call" not in caplog.text
+
+    def test_set_emergency_says_whether_it_took(
+        self, spawned: List[Tuple[str, str]]
+    ) -> None:
+        npc = VehicleEntity(VehicleEntityConfig("npc1", SpawnPointIndex(0)))
+        assert npc.set_emergency(True) is False
+        assert npc.set_emergency(False) is True
+        ambulance = self._registered(spawned)
+        assert ambulance.set_emergency(True) is True
+        assert ambulance.set_emergency(False) is True
+
+    def test_it_logs_the_vehicle_on_a_call(
+        self, spawned: List[Tuple[str, str]], caplog: pytest.LogCaptureFixture
+    ) -> None:
+        self._registered(spawned)
+        with caplog.at_level("INFO"):
+            EmergencyAction("ambulance").execute(_World())  # type: ignore[arg-type]
+        assert "'ambulance' on a call" in caplog.text
 
     def test_an_unknown_entity_is_reported(
         self, caplog: pytest.LogCaptureFixture

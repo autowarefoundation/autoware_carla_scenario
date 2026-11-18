@@ -19,7 +19,7 @@ Every bound is optional; a filter with none takes every named vehicle and
 pedestrian in the world but the reference.  :meth:`EntityFilter.select`
 answers which match, now, with each one's distance and offsets.  Actors
 parked under the map (spawned out of sight, see
-:data:`~.entity_existence.HIDDEN_BELOW_M`) and actors without a role name are
+:data:`~..utils.clearance.HIDDEN_BELOW_M`) and actors without a role name are
 never taken, and a reference parked under the map counts as absent.
 """
 
@@ -32,7 +32,7 @@ from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..coordinate.poses import CarlaWorldPose
 from ..entity_role import _role_name, canonical_role_name
-from .entity_existence import HIDDEN_BELOW_M
+from ..utils.clearance import HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -100,7 +100,7 @@ class EntityFilter:
 
     A relative bound needs the reference in the world: without it -- not
     spawned, destroyed, or parked under the map
-    (:data:`~.entity_existence.HIDDEN_BELOW_M`) -- a filter with one takes
+    (:data:`~..utils.clearance.HIDDEN_BELOW_M`) -- a filter with one takes
     nothing.  So "a vehicle near the pedestrian" never holds around the spot
     where a hidden pedestrian will later appear.
     """
@@ -181,7 +181,7 @@ class EntityFilter:
 
         The reference is the first actor whose role name is
         :attr:`reference`; one parked under the map (below
-        :data:`~.entity_existence.HIDDEN_BELOW_M`) counts as absent, as
+        :data:`~..utils.clearance.HIDDEN_BELOW_M`) counts as absent, as
         :func:`~.entity_existence.find_present_actor_by_role_name` reads a
         second entity.  Without a reference, a filter with a relative bound
         takes nothing, and one without takes its road users with ``nan``

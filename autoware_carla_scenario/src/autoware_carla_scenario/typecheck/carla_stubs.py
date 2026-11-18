@@ -35,12 +35,13 @@ from __future__ import annotations
 
 import ast
 import hashlib
-import os
 import shutil
 import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 from typing import Any
+
+from ..utils.cache_dir import user_cache_dir
 
 __all__ = ["carla_stub_root", "render_carla_stub"]
 
@@ -315,8 +316,8 @@ def carla_stub_root(scratch: Path | None = None) -> Path | None:
     except Exception:  # an incomplete installation: no stubs
         return None
     try:
-        base = os.environ.get("XDG_CACHE_HOME") or str(Path.home() / ".cache")
-        cached = Path(base) / "autoware_carla_scenario" / "carla-stubs" / key
+        base = user_cache_dir()
+        cached = base / "autoware_carla_scenario" / "carla-stubs" / key
         if (cached / "typesafe_carla" / "carla" / "__init__.pyi").is_file():
             return cached
         cached.parent.mkdir(parents=True, exist_ok=True)

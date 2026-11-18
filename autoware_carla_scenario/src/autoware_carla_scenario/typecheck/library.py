@@ -377,6 +377,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.ui.slurm_options",
     "autoware_carla_scenario.ui.web_viewer_paths",
     "autoware_carla_scenario.utils",
+    "autoware_carla_scenario.utils.cache_dir",
     "autoware_carla_scenario.utils.card_target",
     "autoware_carla_scenario.utils.clearance",
     "autoware_carla_scenario.utils.light_lanes",
@@ -447,11 +448,13 @@ _ROS_PARAMETERS = (
 
 #: The reason of a background-traffic constructor that takes lanelet constraints.
 _CONSTRAINT_SPECS = (
-    "takes lanelet constraints as `Sequence[ConstraintSpec]`, each a Hydra "
-    "node (`Mapping[str, Any]`) or a parsed constraint "
-    "(`ConstraintSpec = Union[Mapping[str, Any], Any]`), which Codon cannot "
-    "express; LaneletRegion.lanelet_ids parses them in the `else` branch of "
-    "`if TYPE_CHECKING:`"
+    "takes lanelet constraints as `Constraints = "
+    "Union[Sequence[ConstraintSpec], Mapping[str, Any]]`: a sequence of Hydra "
+    "nodes (`Mapping[str, Any]`) or parsed constraints "
+    "(`ConstraintSpec = Union[Mapping[str, Any], Any]`), or a single "
+    "mapping, which Codon cannot express; LaneletRegion.__init__ parses them "
+    "(parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids "
+    "reads the parsed list in the `else` branch of `if TYPE_CHECKING:`"
 )
 
 #: The reason of what reads a value of the ``launcher`` config.
@@ -500,6 +503,7 @@ _PACKAGE_RECORDS = (
 UNCALLED: dict[str, str] = {
     "autoware_carla_scenario.actions.background_traffic.constraints_from_text": "reads YAML (yaml, imported inside it) into a list of `dict[str, Any]` constraint mappings of mixed value types, which Codon cannot express",
     "autoware_carla_scenario.actions.background_traffic.LaneletRegion.__init__": _CONSTRAINT_SPECS,
+    "autoware_carla_scenario.actions.background_traffic.parse_constraints": "takes lanelet constraints of any type (`Any`: a list or a Hydra ListConfig of mappings or parsed constraints, a single mapping, or a value it refuses) and returns them parsed as `list[Any]`, which Codon cannot express; only the uncalled LaneletRegion.__init__ and constraints_from_text call it",
     "autoware_carla_scenario.actions.background_traffic.TrafficSinkAction.__init__": _CONSTRAINT_SPECS,
     "autoware_carla_scenario.actions.background_traffic.TrafficSourceAction.__init__": _CONSTRAINT_SPECS,
     "autoware_carla_scenario.authoring.framework_pin.Pin.uv_source": 'builds the `[tool.uv.sources]` entry, a dict[str, Any] of str and bool values (`{"path": ..., "editable": True}`), which Codon cannot express',
