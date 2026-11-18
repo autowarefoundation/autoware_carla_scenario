@@ -94,6 +94,7 @@ from typing import TYPE_CHECKING, Optional
 
 from ..kinematics import Vector3
 from ..kinematics.walker_motion import WalkerVelocities, simulated_seconds
+from ..utils.clearance import HIDDEN_BELOW_M
 from ..utils.traffic_light import traffic_light_state_name
 
 if TYPE_CHECKING:
@@ -133,8 +134,6 @@ RETARGET_S: float = 2.0
 _NAVMESH_PROBES = 20
 #: How near (m) its walk a walker has to stand for its controller to start.
 _START_NEAR_M = 3.0
-#: A walker this far down (m) is out of the world, not yet brought in.
-_HIDDEN_BELOW_M = -100.0
 #: Below this (m/s) a walker is held: kept on its controller at a top speed
 #: of 0 (taken off it, it would snap back onto the navigation mesh).
 _HOLD_MPS = 0.05
@@ -330,7 +329,7 @@ def drive(
         # the map, at its spawn -- and walks it from wherever that is.
         on = path.at_distance(here)
         if (
-            location.z < _HIDDEN_BELOW_M
+            location.z < HIDDEN_BELOW_M
             or math.hypot(location.x - on.x, location.y - on.y) > _START_NEAR_M
         ):
             return True

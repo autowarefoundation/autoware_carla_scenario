@@ -17,7 +17,7 @@ from typing import TYPE_CHECKING, Any, Optional
 
 from ..constants import EGO_ROLE_NAME
 from ..entity_role import find_actor_in_world
-from ..utils.clearance import _HIDDEN_BELOW_M, _vertical_span, on_another_level
+from ..utils.clearance import HIDDEN_BELOW_M, _vertical_span, on_another_level
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -167,7 +167,7 @@ def _road_users_near(
         transform = actor.get_transform()
         location = transform.location
         # A road user parked under the map (hidden) is out of the scene.
-        if location.z < _HIDDEN_BELOW_M:
+        if location.z < HIDDEN_BELOW_M:
             continue
         planar = math.hypot(location.x - centre.x, location.y - centre.y)
         if planar > radius_m:

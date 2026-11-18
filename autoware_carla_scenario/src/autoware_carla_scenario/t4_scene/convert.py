@@ -44,7 +44,7 @@ from ..constants import FIXED_DELTA_SECONDS
 from ..perception_fault import PerceivedCategory, PerceptionFault, t4_label
 from ..rerun import TRAJECTORY_SUFFIX
 from ..run_outputs import T4SCENE_MAP_SUFFIX, T4SCENE_SUFFIX
-from ..utils.clearance import _HIDDEN_BELOW_M
+from ..utils.clearance import HIDDEN_BELOW_M
 from ..utils.light_lanes import LightLanes, elements_ahead, light_lanes
 from ._proto import t4_scene_pb2 as pb
 from .frames import FLIP_Y as _FLIP_Y
@@ -269,7 +269,7 @@ class _Log:
             [
                 int(state[0]) in self.actors
                 and self.on_scene(int(state[0]), frame)
-                and state[3] >= _HIDDEN_BELOW_M
+                and state[3] >= HIDDEN_BELOW_M
                 for state in states
             ],
             dtype=bool,

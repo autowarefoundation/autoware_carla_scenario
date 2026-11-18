@@ -77,7 +77,7 @@ from .t4_settings import (
     dataset_path,
     opencv_of_ftheta,
 )
-from .utils.clearance import _HIDDEN_BELOW_M
+from .utils.clearance import HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -776,7 +776,7 @@ class T4Recording:
         which it turns into boxes in the map frame.
 
         An actor parked out of the world (a hidden spawn, a trajectory entity
-        before its start: ``_HIDDEN_BELOW_M`` or more below the ground) is
+        before its start: ``HIDDEN_BELOW_M`` or more below the ground) is
         not on the scene and gets no box, whatever ``t4.max_distance_m``
         (#908).  It is registered all the same: the writer keys its instance
         by the actor id and writes only instances with boxes, so one revealed
@@ -809,7 +809,7 @@ class T4Recording:
                 v = self._walkers.walker(s, elapsed, loc)
             else:
                 v = s.get_velocity()
-            if loc.z < _HIDDEN_BELOW_M:
+            if loc.z < HIDDEN_BELOW_M:
                 continue
             ids.append(s.id)
             rows.append(

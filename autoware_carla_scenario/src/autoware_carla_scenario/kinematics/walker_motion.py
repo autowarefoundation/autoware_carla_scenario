@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Optional
 
+from ..utils.clearance import HIDDEN_BELOW_M
 from .vector import Vector3
 
 if TYPE_CHECKING:
@@ -46,9 +47,6 @@ def simulated_seconds(world: "carla.World") -> Optional[float]:
         return None
 
 
-#: A walker this far down (m) is out of the world (parked under the map, not
-#: yet brought in): a move from or to there is a teleport, not a walk.
-HIDDEN_BELOW_M: float = -100.0
 #: Faster than this (m/s) no walker walks: a move that fast between two reads
 #: is a teleport (put where its walk starts, brought in), not a walk.
 TELEPORT_MPS: float = 15.0

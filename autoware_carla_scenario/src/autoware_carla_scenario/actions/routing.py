@@ -53,6 +53,7 @@ from ..trajectory.model import (
     TrajectoryTiming,
     TrajectoryVertex,
 )
+from ..utils.clearance import HIDDEN_BELOW_M
 from ..waypoint_arrival import WaypointArrival
 from ._route_pacing import PaceMark, RoutePacer
 from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M
@@ -84,8 +85,6 @@ _OFF_PATH_M = 8.0
 _MATCH_STEP_M = 2.0
 #: A speed command that changes less than this (m/s) is not sent again.
 _SPEED_RESEND_MPS = 0.05
-#: An actor this far down (m) is parked under the map, out of the scene.
-_HIDDEN_BELOW_M: float = 100.0
 #: How far (m) off its path an entity may stand for its run to start where
 #: it stands, the path's nearest point.
 _ON_PATH_M: float = 6.0
@@ -1242,7 +1241,7 @@ class RoutingAction(TrajectoryRun):
         found: "carla.Actor" = actor
         standing = found.get_transform()
         resolved = self._resolved
-        if resolved is not None and standing.location.z > -_HIDDEN_BELOW_M:
+        if resolved is not None and standing.location.z >= HIDDEN_BELOW_M:
             path: ResolvedTrajectory = resolved
             # Where it stands: a spawn may have moved it along its lane.
             here = path.project(standing.location.x, standing.location.y)

@@ -1290,3 +1290,22 @@ def test_a_whole_number_too_large_for_a_float_does_not_break_the_validator() -> 
         trigger={"type": "entity_count", "params": {"count": "9" * 400}}
     )
     validate_document(document)
+
+
+@pytest.mark.parametrize("type_id", ["traffic_source", "traffic_sink"])
+@pytest.mark.parametrize(
+    ("text", "shown"), [("- is_junction", "'is_junction'"), ("- 5", "5")]
+)
+def test_a_constraint_item_that_is_no_mapping_is_shown_as_no_constraint(
+    type_id: str, text: str, shown: str
+) -> None:
+    """#2191: the validator shows the parser's own message, not dict()'s."""
+    messages = [
+        i.message
+        for i in document_errors(_card(type_id, None, constraints=text))
+        if i.path.endswith(".constraints")
+    ]
+    assert messages == [
+        "The constraints do not parse: constraints[0]: A constraint must be a "
+        f"mapping with a 'type' (- type: ...), got {shown}"
+    ]

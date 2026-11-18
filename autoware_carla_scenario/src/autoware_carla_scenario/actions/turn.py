@@ -1,4 +1,4 @@
-"""Turn action: analyse OpenDRIVE junctions ahead and set a turn route via TrafficManager."""
+"""Turn action: have a vehicle take a left, right or straight path through the next junction."""
 
 from __future__ import annotations
 
@@ -7,8 +7,7 @@ import math
 from typing import TYPE_CHECKING, Optional, Union
 
 from ..conditions.base import BaseCondition
-from ..entity.pedestrian_entity import PedestrianEntity
-from ..entity.registry import find_pedestrian_entity, find_vehicle_entity
+from ..entity.registry import fail_if_pedestrian, find_vehicle_entity
 from ..traffic import TurnDirection
 from ..entity_role import EntityRole
 from ..control_domain import ControlDomain
@@ -23,18 +22,20 @@ logger = logging.getLogger(__name__)
 
 
 class TurnAction(BaseAction):
-    """Analyse OpenDRIVE junctions ahead and set a turn route via TrafficManager.
+    """Have a vehicle take a left, right or straight path through the next junction.
 
-    When the associated condition is satisfied, this action:
+    When the associated condition is satisfied, this action locates the
+    vehicle by its ``role_name`` and hands the turn to it
+    (:meth:`~autoware_carla_scenario.traffic.driven.BackendDriven.turn_at_junction`),
+    which carries it to the run's traffic backend.  The TrafficManager backend,
+    for one, walks forward along CARLA waypoints (which reflect the underlying
+    OpenDRIVE road network) to the next junction, picks the path through it
+    whose heading change best matches *direction* (approximately -90 degrees
+    for left, +90 for right and 0 for straight on, in CARLA's yaw convention)
+    and sets it as the vehicle's path.
 
-    1. Locates the target vehicle by its ``role_name``
-    2. Walks forward along CARLA waypoints (which reflect the underlying
-       OpenDRIVE road network) to find the next junction
-    3. Enumerates all possible paths through the junction
-    4. Selects the path whose heading change best matches *direction*
-       (approximately −90° for left, +90° for right and 0° for straight on, in
-       CARLA's yaw convention)
-    5. Calls ``TrafficManager.set_path`` to apply the route
+    The default *label* is ``"turn"`` (#2191): ``"turn_signal"``, its old
+    default, read as :class:`~.turn_indicator.TurnIndicatorAction`'s.
 
     Args:
         entity_name: ``role_name`` of the vehicle actor to control.
@@ -50,9 +51,6 @@ class TurnAction(BaseAction):
             the route for a stable heading measurement.
     """
 
-    _LEFT_TARGET_DEG: float = -90.0
-    _RIGHT_TARGET_DEG: float = 90.0
-
     # Declared for the static check (docs/typecheck.md).
     _entity_name: str
     _direction: TurnDirection
@@ -67,7 +65,7 @@ class TurnAction(BaseAction):
         condition: Optional[BaseCondition] = None,
         timing: TickTiming = TickTiming.PRE_TICK,
         *,
-        label: str = "turn_signal",
+        label: str = "turn",
         once: bool = True,
         overrides: bool = False,
         search_distance: float = 200.0,
@@ -114,7 +112,7 @@ class TurnAction(BaseAction):
         """Ask the named entity to turn at the next junction."""
         entity = find_vehicle_entity(self._entity_name)
         if entity is None:
-            _fail_if_pedestrian(self._entity_name)
+            fail_if_pedestrian(self._entity_name, "turn_at_junction")
             logger.warning("TurnAction: entity '%s' not found", str(self._entity_name))
             return
 
@@ -139,20 +137,3 @@ class TurnAction(BaseAction):
                 waypoint_step=self._waypoint_step,
                 post_junction_distance=self._post_junction_distance,
             )
-
-
-def _fail_if_pedestrian(entity_name: str) -> None:
-    """Raise :class:`AttributeError` when *entity_name* is a pedestrian.
-
-    A pedestrian cannot turn. The vehicle lookup does not find one, but
-    the action used to look up an entity of any kind and call
-    ``turn_at_junction`` on it, which raised; it still raises, rather than reading
-    as an entity that is not there.
-    """
-    found = find_pedestrian_entity(entity_name)
-    if found is None:
-        return
-    walker: PedestrianEntity = found
-    raise AttributeError(
-        f"'{type(walker).__name__}' object has no attribute 'turn_at_junction'"
-    )

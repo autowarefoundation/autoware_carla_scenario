@@ -40,6 +40,7 @@ from typing import TYPE_CHECKING, Optional, Union
 
 from .constants import EGO_ROLE_NAME
 from .entity_role import canonical_role_name
+from .utils.clearance import HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
     import typesafe_carla.carla as carla
@@ -67,9 +68,6 @@ REPEAT_S = 1.0
 FALLEN_DESPAWN_S: Optional[float] = 5.0
 #: A walker tilted further than this (deg) has fallen.
 FALLEN_TILT_DEG = 50.0
-#: A walker this far below where it stood, or deeper, is out of the world
-#: (spawned hidden, parked under the map), not fallen.
-_HIDDEN_BELOW_M = 100.0
 #: Looks a walker has to have been in the world for before a drop counts:
 #: one that has just appeared settles onto the ground first.
 _SETTLE_LOOKS = 8
@@ -553,7 +551,7 @@ class NpcCollisionMonitor:
             transform = seen.get_transform()
             x, y, z = transform.location.x, transform.location.y, transform.location.z
             self._walkers[walker_id] = (x, y, z, half)
-            if z < -_HIDDEN_BELOW_M:
+            if z < HIDDEN_BELOW_M:
                 self._settled[walker_id] = 0
                 self._heights.pop(walker_id, None)
                 continue
@@ -568,7 +566,7 @@ class NpcCollisionMonitor:
                 continue
             tilt = max(abs(transform.rotation.pitch), abs(transform.rotation.roll))
             drop = 0.0
-            if not math.isnan(z0) and z0 > -_HIDDEN_BELOW_M:
+            if not math.isnan(z0) and z0 >= HIDDEN_BELOW_M:
                 if math.hypot(x - x0, y - y0) < _TELEPORT_M:
                     drop = standing - z
             if tilt < FALLEN_TILT_DEG and drop < 0.5 * max(half, 0.4):

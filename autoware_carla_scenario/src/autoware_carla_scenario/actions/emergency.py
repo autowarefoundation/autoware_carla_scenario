@@ -77,7 +77,10 @@ class EmergencyAction(BaseAction):
         if entity is None:
             logger.warning("EmergencyAction: entity '%s' not found", self._entity_name)
             return
-        entity.set_emergency(self._active)
+        # Logged only when it took: a vehicle that is not an emergency vehicle
+        # stays as it was, as set_emergency has warned (#2191).
+        if not entity.set_emergency(self._active):
+            return
         logger.info(
             "EmergencyAction: '%s' %s",
             self._entity_name,

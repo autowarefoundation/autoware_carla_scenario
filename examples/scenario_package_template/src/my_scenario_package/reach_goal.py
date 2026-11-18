@@ -53,10 +53,8 @@ class ReachGoalScenario(BaseScenario):
     def setup(self) -> None:
         """Snap the ego spawn and register the pass/fail conditions."""
         cfg = self._config
-        # Nothing to reach is nothing to pass: refuse it before touching the
-        # world.
-        if len(cfg.goal_lanelet_ids) == 0:
-            raise ValueError("goal_lanelet_ids must name at least one lanelet")
+        # An empty goal list is refused by the config (__post_init__), before
+        # anything starts.
 
         # 1. Every scenario says where its ego is going, and this one already
         #    has: the last road it asserts the ego reaches is the destination.
