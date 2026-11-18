@@ -4928,9 +4928,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-339 of the package's 469
-modules (72%; about 104,700 of
-175,800 lines) are <code>CHECKED</code>: the kinematics, the
+340 of the package's 470
+modules (72%; about 104,800 of
+176,000 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -5033,7 +5033,7 @@ tooling around a run that need nothing Codon lacks. A checked package's
 a checked package only re-exports</em> below). Each checked module is listed here
 with the first paragraph of its docstring:</p>
 <details class="note">
-<summary>The 339 CHECKED modules</summary>
+<summary>The 340 CHECKED modules</summary>
 <table>
 <thead>
 <tr>
@@ -6329,6 +6329,10 @@ with the first paragraph of its docstring:</p>
 <tr>
 <td><code>utils</code></td>
 <td>Pure helpers, imported by module path.</td>
+</tr>
+<tr>
+<td><code>utils.cache_dir</code></td>
+<td>The user's cache directory, by the XDG Base Directory rules.</td>
 </tr>
 <tr>
 <td><code>utils.card_target</code></td>
