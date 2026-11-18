@@ -950,8 +950,14 @@ def _fill_route(scene: pb.T4Scene, lanelet_ids: Sequence[int]) -> None:
     if not lanelet_ids:
         return
     rows = int(scene.timestamps_ns.shape[0])
-    route = _route_data(lanelet_ids)
-    scene.routes.rows.extend(pb.RouteRow(value=route) for _ in range(rows))
+    _route_on_every_row(scene, _route_data(lanelet_ids), rows)
+
+
+def _route_on_every_row(scene: pb.T4Scene, route: pb.RouteData, rows: int) -> None:
+    """*route* as the route of each of *rows* rows: one shared observation that
+    every row indexes (``RouteSequence``, tier4/e2e-devkit#171)."""
+    scene.routes.rows.append(route)
+    scene.routes.indices.CopyFrom(_array(np.zeros(rows, dtype=np.int64), "i8"))
 
 
 def ego_of(log: _Log, source: str = "the log") -> int:

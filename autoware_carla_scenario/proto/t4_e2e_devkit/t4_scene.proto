@@ -177,7 +177,7 @@ message T4Scene {
   NumericArray goal_poses = 9; // float64 [T,4] Scene x/y/cos(yaw)/sin(yaw).
   NumericArray goal_poses_3d = 10; // float64 [T,4,4] goal-to-Scene transforms.
   MapReference map = 11; // One static map for the interval; no map bytes in a Scene.
-  RouteSequence routes = 12; // Optional [T], IDs refer to the static Scene map.
+  RouteSequence routes = 12; // Optional timestamped routes; IDs refer to the static Scene map.
   TrafficLightSequence traffic_lights = 13;
   CameraSequence cameras = 14; // Already-loaded pixels only; no implicit IO.
   LidarSequence lidar = 15; // Already-loaded arrays only; no implicit IO.
@@ -225,9 +225,12 @@ message RouteSegment {
 }
 message RouteData {
   repeated RouteSegment segments = 1; // Route order; empty means an empty route.
+  optional int64 timestamp_ns = 2; // Original message time, when supplied.
 }
-message RouteRow { RouteData value = 1; }
-message RouteSequence { repeated RouteRow rows = 1; } // [T], absent row != empty route.
+message RouteSequence {
+  repeated RouteData rows = 1;
+  NumericArray indices = 2; // int64 [T], -1 or an index into rows.
+}
 
 // Raw dynamic observations. Group IDs identify native traffic-light regulatory
 // elements. Lane-specific interpretations are derived by consumers, not stored.

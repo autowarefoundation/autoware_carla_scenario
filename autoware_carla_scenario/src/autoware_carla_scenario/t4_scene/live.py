@@ -49,6 +49,7 @@ from .convert import (
     _TICK_NS,
     _array,
     _route_data,
+    _route_on_every_row,
     _element_lights,
     _Log,
     _load_map,
@@ -323,8 +324,7 @@ class LiveT4Scene:
                     else np.asarray(road_ahead_origin, dtype=np.float64),
                 )
         if route_lanelet_ids is not None:
-            route = _route_data(route_lanelet_ids)
-            scene.routes.rows.extend(pb.RouteRow(value=route) for _ in range(rows))
+            _route_on_every_row(scene, _route_data(route_lanelet_ids), rows)
         if goal_pose is not None:
             x, y, yaw = (float(v) for v in goal_pose)
             scene.goal_poses.CopyFrom(
