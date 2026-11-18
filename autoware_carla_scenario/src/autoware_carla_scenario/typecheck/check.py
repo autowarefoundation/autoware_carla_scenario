@@ -2506,13 +2506,17 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     return diagnostics
 
 
+#: The verdict kept under each key, its files written as path-free markers
+#: (:func:`_marked`), as on disk: the key leaves the files out, so a hit in
+#: another directory names its own files (:func:`_unmarked`, #2193).
 _CACHE: dict[str, TypeCheckResult] = {}
 #: The case (:attr:`Driver.case`) each verdict of :data:`_CACHE` was made
 #: for, so that another case of the same shape names it when it reuses it.
 _CHECKED_FOR: dict[str, dict[str, str]] = {}
 #: The verdict of each key being made right now, for the checks of the same
 #: key that start meanwhile to wait for (``scenario-check`` runs configs in
-#: threads side by side); ``None`` when the compile timed out or was killed.
+#: threads side by side), its files marked as :data:`_CACHE`'s are; ``None``
+#: when the compile timed out or was killed.
 _IN_FLIGHT: dict[str, Future[TypeCheckResult | None]] = {}
 _IN_FLIGHT_LOCK = threading.Lock()
 
@@ -2557,6 +2561,17 @@ def _module_markers(sources: _Sources) -> dict[str, str]:
     return {str(m.path): f"\0module:{name}\0" for name, m in sources.modules.items()}
 
 
+def _marked(result: TypeCheckResult, sources: _Sources) -> TypeCheckResult:
+    """*result* with each file of *sources* replaced by its marker, to keep."""
+    return _relocated(result, _module_markers(sources))
+
+
+def _unmarked(result: TypeCheckResult, sources: _Sources) -> TypeCheckResult:
+    """*result*, a kept verdict, naming the files of *sources* (#2193)."""
+    markers = _module_markers(sources)
+    return _relocated(result, {marker: path for path, marker in markers.items()})
+
+
 def _cache_dir() -> Path | None:
     """``$CACHE_DIR_ENV``, or the user's cache directory when it is unset.
 
@@ -2591,13 +2606,14 @@ def _cache_file(key: str) -> Path | None:
 def _cached(key: str, sources: _Sources) -> TypeCheckResult | None:
     """The verdict kept under *key*, in this process or in ``$CACHE_DIR_ENV``.
 
-    One read from the directory names the files of *sources*.
+    A hit names the files of *sources*, wherever the check that made it
+    found them, in this process as from the directory (#2193).
 
     An entry that cannot be read is a miss. One that is read has its times
     touched, so that a cache pruned by access time keeps it.
     """
     if key in _CACHE:
-        return _CACHE[key]
+        return _unmarked(_CACHE[key], sources)
     path = _cache_file(key)
     if path is None:
         return None
@@ -2617,10 +2633,8 @@ def _cached(key: str, sources: _Sources) -> TypeCheckResult | None:
         os.utime(path)
     except (OSError, ValueError, TypeError, KeyError):
         return None
-    markers = _module_markers(sources)
-    result = _relocated(result, {marker: path for path, marker in markers.items()})
     _CACHE[key] = result
-    return result
+    return _unmarked(result, sources)
 
 
 def _store(key: str, result: TypeCheckResult, sources: _Sources) -> TypeCheckResult:
@@ -2637,13 +2651,13 @@ def _store(key: str, result: TypeCheckResult, sources: _Sources) -> TypeCheckRes
     """
     if result.killed:
         return result
-    _CACHE[key] = result
+    kept = _marked(result, sources)
+    _CACHE[key] = kept
     path = _cache_file(key)
     if path is None or result.crashed:
         return result
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        kept = _relocated(result, _module_markers(sources))
         write_text_atomically(path, json.dumps(dataclasses.asdict(kept)))
     except OSError:
         pass
@@ -3099,28 +3113,36 @@ def _typecheck(
             pending = _IN_FLIGHT.get(key)
             if pending is None:
                 if key in _CACHE:  # kept since the miss above
-                    return _reused(name, key, rendered.case, _CACHE[key])
+                    kept = _unmarked(_CACHE[key], sources)
+                    return _reused(name, key, rendered.case, kept)
                 owned: Future[TypeCheckResult | None] = Future()
                 _IN_FLIGHT[key] = owned
         if pending is None:
             break
         shared = pending.result()
-        if shared is not None:
-            return _reused(name, key, rendered.case, shared)
+        if shared is not None:  # marked: the check that made it may be elsewhere
+            return _reused(name, key, rendered.case, _unmarked(shared, sources))
     result: TypeCheckResult | None = None
     try:
         _CHECKED_FOR[key] = rendered.case
         none_check = _none_check_started(sources, timeout)
-        result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
-        if result is not None:
-            result = _none_checked(key, result, sources, none_check)
+        try:
+            result = _compile(name, sources, rendered, toolchain, codon_path, timeout)
+            if result is not None:
+                result = _none_checked(key, result, sources, none_check)
+        finally:
+            # Its verdict was read, or is not wanted: a crash or a timeout
+            # leaves mypy running otherwise (#2193).
+            none_check.stop()
     except BaseException as exc:
         owned.set_exception(exc)
         raise
     else:
         # A killed compile is no verdict either: who waited for it compiles
         # under its own timeout, as after a timeout (#694).
-        owned.set_result(None if result is not None and result.killed else result)
+        owned.set_result(
+            None if result is None or result.killed else _marked(result, sources)
+        )
     finally:
         with _IN_FLIGHT_LOCK:
             del _IN_FLIGHT[key]
@@ -3153,29 +3175,72 @@ def _reused(
     return result
 
 
-def _none_check_started(
-    sources: _Sources, timeout: float
-) -> "Future[list[NoneFinding]]":
+class _NoneCheck:
+    """The None check running beside a compile: its findings to come, and
+    its mypy, to kill once they are not wanted (:meth:`stop`)."""
+
+    def __init__(self) -> None:
+        self._lock = threading.Lock()
+        self._process: subprocess.Popen[str] | None = None
+        self._stopped = False
+        self.future: Future[list[NoneFinding]] = Future()
+
+    def started(self, process: subprocess.Popen[str]) -> None:
+        """Keep mypy's *process*; kill it if the check was stopped first."""
+        with self._lock:
+            self._process = process
+            stopped = self._stopped
+        if stopped:
+            _kill(process)
+
+    def stop(self) -> None:
+        """Kill mypy, if it is still running, or keep it from starting.
+
+        ``concurrent.futures`` joins its threads at interpreter exit, so a
+        mypy left running after a Codon crash or timeout would hold the
+        process for up to its own timeout after the result is out (#2193).
+        """
+        with self._lock:
+            self._stopped = True
+            process = self._process
+        self.future.cancel()
+        if process is not None:
+            _kill(process)
+
+
+def _kill(process: subprocess.Popen[str]) -> None:
+    try:
+        process.kill()  # a no-op on one that has exited and been waited for
+    except OSError:  # it exited meanwhile
+        pass
+
+
+def _none_check_started(sources: _Sources, timeout: float) -> _NoneCheck:
     """The None check of *sources*' modules, started on a thread of its own.
 
     mypy reads only the modules, so it runs while Codon compiles them rather
     than after it: an uncached check takes the longer of the two, not their
-    sum. Its findings are read once the compile is done (and not at all when
-    the compile crashed or timed out).
+    sum. Its findings are read once the compile is done; when the compile
+    crashed or timed out, they are not, and :meth:`_NoneCheck.stop` kills
+    mypy.
     """
+    check = _NoneCheck()
     executor = ThreadPoolExecutor(max_workers=1, thread_name_prefix="none-check")
-    future = executor.submit(
-        run_none_check, sorted(m.path for m in sources.modules.values()), timeout
+    check.future = executor.submit(
+        run_none_check,
+        sorted(m.path for m in sources.modules.values()),
+        timeout,
+        started=check.started,
     )
     executor.shutdown(wait=False)
-    return future
+    return check
 
 
 def _none_checked(
     key: str,
     result: TypeCheckResult,
     sources: _Sources,
-    none_check: "Future[list[NoneFinding]]",
+    none_check: _NoneCheck,
 ) -> TypeCheckResult:
     """*result* with the None check's findings (:func:`_with_none_misuses`),
     kept under *key*.
@@ -3191,13 +3256,13 @@ def _none_checked(
     if len(checked.warnings) > len(result.warnings):
         # The None check did not run (mypy missing, out of time): a verdict
         # for this process only, so the next run checks it again.
-        _CACHE[key] = checked
+        _CACHE[key] = _marked(checked, sources)
         return checked
     return _store(key, checked, sources)
 
 
 def _with_none_misuses(
-    result: TypeCheckResult, none_check: "Future[list[NoneFinding]]"
+    result: TypeCheckResult, none_check: _NoneCheck
 ) -> TypeCheckResult:
     """*result*, failed by each ``None`` misused in the modules (#239).
 
@@ -3208,9 +3273,10 @@ def _with_none_misuses(
     result keeps Codon's verdict, with a warning saying so.
     """
     if result.crashed:
+        none_check.stop()
         return result
     try:
-        findings = none_check.result()
+        findings = none_check.future.result()
     except NoneCheckSkipped as exc:
         warning = Diagnostic(
             f"the None check did not run ({exc}), so an Optional used without "
@@ -3398,7 +3464,6 @@ def _compile(
     if sources.problems:
         return TypeCheckResult(name, ok=False, diagnostics=list(sources.problems))
 
-    started = time.monotonic()
     with tempfile.TemporaryDirectory(prefix="acs-typecheck-") as tmp:
         if build is None:
             ws, problems = _build_workspace(
@@ -3416,6 +3481,10 @@ def _compile(
         need = codon_bytes(sum(len(m.text) for m in sources.modules.values()))
         try:
             with admitted(need):
+                # Once admitted: the time waiting in the gate is not Codon's,
+                # neither in the time reported nor in how long it ran before
+                # it was killed (#2193).
+                started = time.monotonic()
                 proc = subprocess.run(  # noqa: S603 - a fixed compiler invocation
                     [
                         str(toolchain.executable),
@@ -4290,19 +4359,22 @@ def typecheck_library(
             cached=True,
         )
     none_check = _none_check_started(sources, timeout)
-    result = _compile(
-        title,
-        sources,
-        driver,
-        toolchain,
-        codon_path,
-        timeout,
-        build=lambda root: _build_library_workspace(
-            root, sources, files, driver, codon_path, toolchain
-        ),
-    )
-    if result is None:
-        return _timed_out(title, timeout)
-    # Codon unwraps an Optional in the framework's modules as it does in a
-    # scenario's, so they get the scenario's None check too (#277).
-    return _none_checked(key, result, sources, none_check)
+    try:
+        result = _compile(
+            title,
+            sources,
+            driver,
+            toolchain,
+            codon_path,
+            timeout,
+            build=lambda root: _build_library_workspace(
+                root, sources, files, driver, codon_path, toolchain
+            ),
+        )
+        if result is None:
+            return _timed_out(title, timeout)
+        # Codon unwraps an Optional in the framework's modules as it does in a
+        # scenario's, so they get the scenario's None check too (#277).
+        return _none_checked(key, result, sources, none_check)
+    finally:
+        none_check.stop()  # read, or not wanted (#2193)

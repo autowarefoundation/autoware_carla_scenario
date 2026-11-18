@@ -5,10 +5,14 @@ No Codon needed: these run mypy alone on a module written for the test.
 
 from __future__ import annotations
 
+import ast
 import os
 import sys
 import textwrap
+import time
 from pathlib import Path
+from types import SimpleNamespace
+from typing import Any
 
 import pytest
 
@@ -1755,3 +1759,114 @@ def test_an_unrecognized_spec_is_kept_where_this_python_refuses_it() -> None:
     assert none_check.is_str_format_failure("str-format", message) is (
         sys.version_info < (3, 11)
     )
+
+
+# ---------------------------------------------------------------------------
+# A mypy no longer wanted is killed (#2193)
+# ---------------------------------------------------------------------------
+
+
+@pytest.fixture
+def slow_mypy(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A "mypy" that sleeps far longer than any test may take."""
+    monkeypatch.setattr(
+        none_check,
+        "_mypy_command",
+        lambda: [sys.executable, "-c", "import time; time.sleep(120)"],
+    )
+    monkeypatch.setattr(none_check, "mypy_available", lambda: True)
+    monkeypatch.setattr(none_check, "carla_stub_root", lambda scratch=None: None)
+
+
+def _running(started: list[Any]) -> Any:
+    deadline = time.monotonic() + 30.0
+    while not started:
+        assert time.monotonic() < deadline, "mypy never started"
+        time.sleep(0.01)
+    return started[0]
+
+
+def _sources(tmp_path: Path) -> Any:
+    from autoware_carla_scenario.typecheck.check import _Module, _Sources
+
+    path = tmp_path / "scenario.py"
+    path.write_text("x = 1\n", encoding="utf-8")
+    return _Sources({"scenario": _Module(path, False, "x = 1\n", ast.parse("x = 1\n"))})
+
+
+def test_a_codon_crash_kills_the_none_checks_mypy(
+    tmp_path: Path, slow_mypy: None
+) -> None:
+    """``concurrent.futures`` joins its threads at interpreter exit: a mypy
+    left running would hold ``scenario-check`` up to its timeout."""
+    from autoware_carla_scenario.typecheck import check
+
+    running = check._none_check_started(_sources(tmp_path), 600.0)
+    deadline = time.monotonic() + 30.0
+    while running._process is None:
+        assert time.monotonic() < deadline, "mypy never started"
+        time.sleep(0.01)
+    process = running._process
+    assert process.poll() is None
+    crashed = check.TypeCheckResult("pkg.S", ok=False, crashed=True)
+    assert check._with_none_misuses(crashed, running) is crashed
+    assert process.wait(timeout=10) != 0
+    with pytest.raises(NoneCheckSkipped, match="mypy failed"):
+        running.future.result(timeout=10)
+
+
+def test_a_stop_before_mypy_starts_kills_it_as_it_starts(
+    tmp_path: Path, slow_mypy: None
+) -> None:
+    from autoware_carla_scenario.typecheck import check
+
+    running = check._NoneCheck()
+    running.stop()
+    started: list[Any] = []
+
+    def record(process: Any) -> None:
+        started.append(process)
+        running.started(process)
+
+    module = tmp_path / "scenario.py"
+    module.write_text("x = 1\n", encoding="utf-8")
+    with pytest.raises(NoneCheckSkipped, match="mypy failed"):
+        run_none_check([module], 600.0, started=record)
+    assert _running(started).poll() is not None
+
+
+def test_a_library_compile_that_timed_out_kills_the_none_checks_mypy(
+    tmp_path: Path, slow_mypy: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from autoware_carla_scenario.typecheck import check, typecheck_library
+
+    monkeypatch.setenv(check.CACHE_DIR_ENV, "")
+    monkeypatch.setattr(check, "_CACHE", {})
+    monkeypatch.setattr(check, "codon_path_dir", lambda: Path("/codon"))
+    monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
+    monkeypatch.setattr(check, "_framework_digest", lambda codon_path: "fw")
+    monkeypatch.setattr(check, "_library_imports", lambda *args: None)
+    processes: list[Any] = []
+    real = check.run_none_check
+
+    def recorded(paths: Any, timeout: float, started: Any) -> Any:
+        def both(process: Any) -> None:
+            processes.append(process)
+            started(process)
+
+        return real(paths, timeout, started=both)
+
+    monkeypatch.setattr(check, "run_none_check", recorded)
+
+    def compile_(*args: object, **kwargs: object) -> None:
+        _running(processes)  # mypy is up while Codon "compiles"
+        return None  # Codon ran out of time
+
+    monkeypatch.setattr(check, "_compile", compile_)
+    result = typecheck_library(
+        ["autoware_carla_scenario.coordinate.frames"],
+        toolchain=SimpleNamespace(),  # type: ignore[arg-type]
+        timeout=5.0,
+    )
+    assert result.crashed and "did not finish" in result.diagnostics[0].message
+    assert _running(processes).wait(timeout=10) != 0

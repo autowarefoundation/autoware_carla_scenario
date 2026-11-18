@@ -2052,8 +2052,30 @@ def test_the_mode_comes_from_the_config_then_defaults_to_auto(
     monkeypatch.setenv(TYPECHECK_ENV, "off")
     assert typecheck_mode({"typecheck": "required"}) == "off"
     monkeypatch.setenv(TYPECHECK_ENV, "sometimes")
-    with pytest.raises(ValueError, match="typecheck must be one of"):
+    with pytest.raises(
+        ValueError, match=r"^\$AUTOWARE_CARLA_SCENARIO_TYPECHECK must be one of"
+    ):
         typecheck_mode({})
+
+
+@pytest.mark.parametrize("value", ["", "sometimes", "requird"])
+def test_a_bad_mode_from_the_environment_names_the_variable(
+    monkeypatch: pytest.MonkeyPatch, value: str
+) -> None:
+    """#2193: an empty or misspelled variable is not reported as the config
+    key, which would send the user to a YAML that may not even set it."""
+    from autoware_carla_scenario.typecheck.mode import TYPECHECK_ENV, typecheck_mode
+
+    monkeypatch.setenv(TYPECHECK_ENV, value)
+    with pytest.raises(
+        ValueError,
+        match=rf"^\${TYPECHECK_ENV} must be one of auto, required, off "
+        rf"\(got {value!r}\)$",
+    ):
+        typecheck_mode({"typecheck": "auto"})
+    monkeypatch.delenv(TYPECHECK_ENV)
+    with pytest.raises(ValueError, match=r"^typecheck must be one of"):
+        typecheck_mode({"typecheck": value})
 
 
 def test_without_codon_auto_warns_and_required_refuses(

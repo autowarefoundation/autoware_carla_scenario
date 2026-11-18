@@ -211,7 +211,8 @@ class IntersectionPassingConfig:
                 # Named by its key, as a run's other refusals are (#1809).
                 raise ValueError(f"scenario.npc_vehicles[{i}].{exc}") from None
             except TypeError as exc:
-                # A key NpcVehicleConfig does not take.
+                # A key NpcVehicleConfig does not take: a value it does take
+                # is checked as a ValueError naming its key (#2193).
                 raise ValueError(f"scenario.npc_vehicles[{i}]: {exc}") from None
         self.npc_vehicles = npc_vehicles
         _require_positive("timeout_seconds", self.timeout_seconds)

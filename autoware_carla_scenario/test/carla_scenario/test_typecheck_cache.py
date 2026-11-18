@@ -6,6 +6,7 @@ No Codon needed: these store and load results directly.
 from __future__ import annotations
 
 import ast
+import dataclasses
 import json
 import os
 import shutil
@@ -79,6 +80,32 @@ def test_a_verdict_names_the_files_of_the_sources_it_is_loaded_for(
     _store("k", _failed("/run1"), _sources("/run1"))
     check._CACHE.clear()
     assert _cached("k", _sources("/run2")) == _failed("/run2")
+
+
+def test_a_hit_in_the_same_process_names_the_files_of_its_sources(
+    cache_dir: Path,
+) -> None:
+    """#2193: the verdict kept in the process is path-free, as the one on disk
+    is, so a second check of the same program at another path does not name
+    the first check's files (possibly in a deleted ``tmp_path``)."""
+    _store("k", _failed("/run1"), _sources("/run1"))
+    assert _cached("k", _sources("/run2")) == _failed("/run2")
+    assert _cached("k", _sources("/run1")) == _failed("/run1")
+
+
+def test_a_process_only_hit_names_the_files_of_its_sources(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2193: without a cache directory, the process's copy is all there is."""
+    monkeypatch.setenv(CACHE_DIR_ENV, "")
+    monkeypatch.setattr(check, "_CACHE", {})
+    _store("k", _failed("/run1"), _sources("/run1"))
+    assert _cached("k", _sources("/run2")) == _failed("/run2")
+    crashed = dataclasses.replace(_failed("/run1"), crashed=True)
+    _store("c", crashed, _sources("/run1"))
+    assert _cached("c", _sources("/run2")) == dataclasses.replace(
+        _failed("/run2"), crashed=True
+    )
 
 
 def test_the_key_of_a_program_does_not_depend_on_where_its_modules_are(
@@ -405,7 +432,7 @@ def test_a_read_entry_has_its_times_touched(cache_dir: Path) -> None:
 def test_a_crash_is_kept_for_the_process_only(cache_dir: Path) -> None:
     crashed = TypeCheckResult("pkg.MyScenario", ok=False, crashed=True)
     _store("k", crashed, _sources("/run1"))
-    assert _cached("k", _sources("/run1")) is crashed
+    assert _cached("k", _sources("/run1")) == crashed
     assert not (cache_dir / "k.json").exists()
 
 
@@ -516,7 +543,7 @@ def test_a_failed_write_leaves_no_scratch_file(
     assert _store("k", result, _sources("/run1")) is result
     assert renamed and renamed[0].parent == cache_dir
     assert list(cache_dir.iterdir()) == []
-    assert _cached("k", _sources("/run1")) is result
+    assert _cached("k", _sources("/run1")) == result
 
 
 def test_an_interrupted_write_leaves_no_scratch_file(
@@ -572,7 +599,9 @@ def test_a_library_cache_hit_reports_this_runs_modules_and_time(
     monkeypatch.setattr(check, "_toolchain_digest", lambda tc: "tc")
     monkeypatch.setattr(check, "_framework_digest", lambda codon_path: "fw")
     monkeypatch.setattr(check, "_library_imports", lambda *args: None)
-    monkeypatch.setattr(check, "run_none_check", lambda paths, timeout: [])
+    monkeypatch.setattr(
+        check, "run_none_check", lambda paths, timeout, started=None: []
+    )
     compiled: list[str] = []
 
     def compile_(name: str, *args: object, **kwargs: object) -> TypeCheckResult:
