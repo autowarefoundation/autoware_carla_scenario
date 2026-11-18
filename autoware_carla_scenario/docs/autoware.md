@@ -411,7 +411,8 @@ itself. It does so only for a vehicle whose role name is `ego` or `hero` and
 that was spawned with the blueprint attribute `ros2_autoware_control=true`,
 which cannot be set afterwards.
 
-`ego.native_autoware_interface=true` (with `ego.entity=autoware`) spawns the
+`ego.native_autoware_interface=true` (with `ego.entity=autoware`; a switch,
+read as [the others](usage.md#the-switches) are, off when absent or null) spawns the
 ego that way: it sets `ros2_autoware_control=true` and spawns the ego as
 `ego`. Everything in the framework that looks the ego up by `Ego`
 (`EGO_ROLE_NAME`: conditions, measures, metrics, actions) still finds it --

@@ -987,22 +987,26 @@ def test_the_check_passes_cases_with_the_same_map_set_alike(
 @pytest.mark.parametrize("launcher", ["local", "slurm"])
 def test_a_batch_on_two_maps_is_refused_before_anything_runs(
     fake_slurm: SimpleNamespace,
-    capsys: pytest.CaptureFixture[str],
     key: str,
     override: str,
     launcher: str,
 ) -> None:
     """#1241: a batch, local or SLURM, whose second case is on another map is
-    refused before its queue is built or anything is submitted."""
+    refused before its queue is built or anything is submitted -- by
+    check_batch_configs, a RunConfigError the CLI prints as an ``Error:``
+    line and exits 1 for (#2188)."""
     fake_slurm.monkeypatch.setenv(
         "FAKE_SCENARIO_OVERRIDES", json.dumps({_SECOND: [override]})
     )
     overrides = [] if launcher == "local" else _slurm(fake_slurm)[len(_SWEEP) :]
-    status, _batch = _two_case_batch(fake_slurm, launcher, overrides)
-    assert status == 1
-    err = capsys.readouterr().err
-    assert f"map.{key} differs" in err
-    assert _SECOND in err
+    output = fake_slurm.batch_dir(launcher)
+    fake_slurm.monkeypatch.setattr(
+        fake_slurm.run, "_make_batch_output_dir", lambda: output
+    )
+    with pytest.raises(fake_slurm.run.RunConfigError) as refused:
+        fake_slurm.run.run_batch([_CONCRETE, _SECOND], overrides)
+    assert f"map.{key} differs" in str(refused.value)
+    assert _SECOND in str(refused.value)
     assert _queues(fake_slurm) == []
     assert not (fake_slurm.state / "sbatch.log").exists()
 

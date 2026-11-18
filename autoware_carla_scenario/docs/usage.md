@@ -939,7 +939,7 @@ Controls ground projection (ray casting) and spawn retry behavior:
 | `entity.spawn_retry_z_step` | float | `0.5` | Vertical shift per retry, tried up and down (meters); finite, `0` or more (`0`: no vertical shift) |
 
 The two ray distances must be finite and non-negative, and their sum (the
-ray's length) positive. A ray that cannot hit anything would leave every pose
+ray's length) positive; a null one is its default. A ray that cannot hit anything would leave every pose
 at its estimate (and a negative range means nothing), so a run or batch refuses such a value before anything starts,
 naming the key (`Error: entity.ground_projection_ray_distance_lower must be
 non-negative and finite, got -1.0`).
@@ -1023,14 +1023,15 @@ the scene tier4/e2e-devkit decodes, scores and draws ([T4 Scene](t4_scene.md));
 #### The switches
 
 `rerun.enabled`, `rerun.strict`, `rerun.lidar`, `rerun.cameras`,
-`t4.enabled`, `t4scene.enabled` and `background_traffic.enabled` are each
+`t4.enabled`, `t4scene.enabled`, `background_traffic.enabled` and
+`ego.native_autoware_interface` ([Autoware](autoware.md)) are each
 `true` or `false`, or one of their spellings as text, in any case and with
 blanks around it (`"false"`, `"no"`, `"off"`, `"0"`, and `"true"`, `"yes"`,
 `"on"`, `"1"`), or the integer `0` or `1`, as the SLURM launcher's flags are
 ([Running a Batch on SLURM](slurm.md)). So `"false"`, what
-`${oc.env:RERUN,false}` or a quoted `rerun.enabled='false'` gives, is false.
-Anything else (`ture`, `2`, `0.5`, null) is refused before anything starts,
-in one line naming the key:
+`${oc.env:RERUN,false}` or a quoted `rerun.enabled='false'` gives, is false,
+and so is a missing or null one, its default. Anything else (`ture`, `2`,
+`0.5`, `''`) is refused before anything starts, in one line naming the key:
 
 ```text
 rerun.enabled must be true or false, got 'ture'
@@ -1668,7 +1669,7 @@ uv run scenario scenario=cut_in/left ego.entity=carla_driver \
 
 | Parameter | Type | Default | Description |
 |-----------|------|---------|-------------|
-| `canvas.config` | str | `null` | A carla_canvas configuration: its sensors are rendered by its renderer; `null` leaves every sensor to CARLA |
+| `canvas.config` | str | `null` | A carla_canvas configuration: its sensors are rendered by its renderer; `null` leaves every sensor to CARLA, and anything but a path (`''`, `false`) is refused before the run |
 
 The run sets `CARLA_CANVAS_CONFIG` and `TYPESAFE_CARLA_SENSOR_PLUGIN` before
 any sensor listens, which is when typesafe_carla loads the plugin, once for

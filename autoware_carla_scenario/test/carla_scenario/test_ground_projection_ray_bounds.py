@@ -232,19 +232,22 @@ def test_a_run_is_refused_before_the_scenario_is_built(
 
 
 def test_a_batch_is_refused_before_any_scenario_is_built(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
+    """By check_batch_configs, naming the case: a RunConfigError, which the
+    CLI prints as an ``Error:`` line and exits 1 for (#2188)."""
     from autoware_carla_scenario.examples import run
 
     monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_TYPECHECK", "off")
     monkeypatch.setattr(
         run, "build_scenario", lambda *_, **__: pytest.fail("built the scenario")
     )
-    with pytest.raises(SystemExit) as exited:
+    with pytest.raises(
+        run.RunConfigError,
+        match=r"^lane_change/left: entity\.ground_projection_ray_distance_upper "
+        "must be non-negative",
+    ):
         run.run_batch(
             ["lane_change/left"],
             ["entity.ground_projection_ray_distance_upper=-2"],
         )
-    assert exited.value.code == 1
-    err = capsys.readouterr().err
-    assert "entity.ground_projection_ray_distance_upper must be non-negative" in err

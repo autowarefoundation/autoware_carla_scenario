@@ -238,8 +238,10 @@ def _composed(overrides: List[str]) -> Any:
 
 
 class TestTheRunConfigCheck:
-    @pytest.mark.parametrize("value", ["yes", "1", "'true'", "null", "[true]"])
-    def test_a_value_that_is_not_a_boolean_is_refused(self, value: str) -> None:
+    # A spelling of true or false and null are read as every other switch's
+    # (check_flag, #2188): "yes", 1, 'true' and null are not refused.
+    @pytest.mark.parametrize("value", ["ture", "2", "0.0", "[true]"])
+    def test_a_value_that_is_not_a_switch_is_refused(self, value: str) -> None:
         from autoware_carla_scenario.examples import run
 
         cfg = _composed(
