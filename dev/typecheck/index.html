@@ -5148,7 +5148,7 @@ with the first paragraph of its docstring:</p>
 </tr>
 <tr>
 <td><code>actions.turn</code></td>
-<td>Turn action: analyse OpenDRIVE junctions ahead and set a turn route via TrafficManager.</td>
+<td>Turn action: have a vehicle take a left, right or straight path through the next junction.</td>
 </tr>
 <tr>
 <td><code>actions.turn_indicator</code></td>
@@ -6405,7 +6405,7 @@ with the first paragraph of its docstring:</p>
 </tbody>
 </table>
 </details>
-<p>197 functions and methods of those modules are <code>UNCALLED</code>
+<p>198 functions and methods of those modules are <code>UNCALLED</code>
 (59 of them protected helpers, see <em>What is
 compiled</em> below). Most of them build or read values of mixed or unknown
 types: a condition's <code>get_details()</code> or a backend's <code>describe()</code> (a
@@ -6418,12 +6418,13 @@ Codon 0.19 cannot call them with (it fails on a <code>Union</code> in a paramete
 annotation, <code>union already sealed</code>, so the checker drops one). Some are
 compiled through their callers all the same. Each is listed with its reason:</p>
 <details class="note">
-<summary>The 197 UNCALLED functions and methods, and why</summary>
+<summary>The 198 UNCALLED functions and methods, and why</summary>
 <ul>
-<li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
-<li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
-<li><code>actions.background_traffic.TrafficSourceAction.__init__</code>: takes lanelet constraints as <code>Sequence[ConstraintSpec]</code>, each a Hydra node (<code>Mapping[str, Any]</code>) or a parsed constraint (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), which Codon cannot express; LaneletRegion.lanelet_ids parses them in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>actions.background_traffic.LaneletRegion.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>actions.background_traffic.TrafficSinkAction.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
+<li><code>actions.background_traffic.TrafficSourceAction.__init__</code>: takes lanelet constraints as <code>Constraints = Union[Sequence[ConstraintSpec], Mapping[str, Any]]</code>: a sequence of Hydra nodes (<code>Mapping[str, Any]</code>) or parsed constraints (<code>ConstraintSpec = Union[Mapping[str, Any], Any]</code>), or a single mapping, which Codon cannot express; LaneletRegion.__init__ parses them (parse_constraints, itself uncalled), and LaneletRegion.lanelet_ids reads the parsed list in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>actions.background_traffic.constraints_from_text</code>: reads YAML (yaml, imported inside it) into a list of <code>dict[str, Any]</code> constraint mappings of mixed value types, which Codon cannot express</li>
+<li><code>actions.background_traffic.parse_constraints</code>: takes lanelet constraints of any type (<code>Any</code>: a list or a Hydra ListConfig of mappings or parsed constraints, a single mapping, or a value it refuses) and returns them parsed as <code>list[Any]</code>, which Codon cannot express; only the uncalled LaneletRegion.__init__ and constraints_from_text call it</li>
 <li><code>authoring.framework_pin.Pin.uv_source</code>: builds the <code>[tool.uv.sources]</code> entry, a dict[str, Any] of str and bool values (<code>{"path": ..., "editable": True}</code>), which Codon cannot express</li>
 <li><code>authoring.framework_pin._project_name</code>: imports tomllib or tomli inside it, which Codon has nothing for, and reads a TOML document of mixed value types; _is_framework_project() calls it in the <code>else</code> branch of <code>if TYPE_CHECKING:</code></li>
 <li><code>autoware_stack.bridge_node._seconds_parameter</code>: takes the scenario_bridge node's ROS parameters as <code>Mapping[str, Any]</code> (bool, int, float or str values), which Codon cannot express: Codon 0.19 fails on a Union in a parameter annotation (<code>union already sealed</code>), so the checker drops it and the check has nothing to call with</li>
