@@ -288,7 +288,7 @@ class TestTheSetting:
         assert isinstance(entity, AutowareEgoEntity)
         assert entity.native_autoware_interface is False
 
-    def test_a_value_that_is_not_a_boolean_is_refused(self) -> None:
+    def test_a_value_that_is_not_a_switch_is_refused(self) -> None:
         from autoware_carla_scenario.examples.run import build_ego_entity
 
         with pytest.raises(ValueError, match="ego.native_autoware_interface"):
@@ -296,7 +296,7 @@ class TestTheSetting:
                 _composed(
                     [
                         "ego.entity=autoware",
-                        "ego.native_autoware_interface=yes",
+                        "ego.native_autoware_interface=ture",
                         "autoware.launcher.type=none",
                     ]
                 )
