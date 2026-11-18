@@ -42,7 +42,9 @@ def test_an_absolute_xdg_cache_home_needs_no_home(
     assert user_cache_dir() == tmp_path / "xdg"
 
 
-@pytest.mark.parametrize("xdg", [None, "", "relative", "./cache", "~/cache"])
+@pytest.mark.parametrize(
+    "xdg", [None, "", "relative", "./cache", "~no-such-user-2187/cache"]
+)
 def test_an_unset_empty_or_relative_xdg_cache_home_is_the_home_cache(
     home: Path, monkeypatch: pytest.MonkeyPatch, xdg: str | None
 ) -> None:
@@ -58,5 +60,17 @@ def test_the_caches_ignore_an_empty_or_relative_xdg_cache_home(
 ) -> None:
     monkeypatch.setenv("XDG_CACHE_HOME", xdg)
     cache = home / ".cache" / "autoware_carla_scenario"
+    assert web_viewer_paths._cache_root() == cache / "viewer"
+    assert default_cache_dir() == cache / "commonroad"
+
+
+def test_a_leading_tilde_in_xdg_cache_home_is_the_home(
+    home: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # As the viewer's and the CommonRoad maps' caches always took it: an
+    # existing cache under a quoted `~/x` stays where it is.
+    monkeypatch.setenv("XDG_CACHE_HOME", "~/x")
+    assert user_cache_dir() == home / "x"
+    cache = home / "x" / "autoware_carla_scenario"
     assert web_viewer_paths._cache_root() == cache / "viewer"
     assert default_cache_dir() == cache / "commonroad"
