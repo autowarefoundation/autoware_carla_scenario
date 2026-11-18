@@ -4899,7 +4899,7 @@ entity (<code>autopilot</code>, <code>autoware</code>, <code>carla_driver</code>
 </tbody>
 </table>
 <p>The two ray distances must be finite and non-negative, and their sum (the
-ray's length) positive. A ray that cannot hit anything would leave every pose
+ray's length) positive; a null one is its default. A ray that cannot hit anything would leave every pose
 at its estimate (and a negative range means nothing), so a run or batch refuses such a value before anything starts,
 naming the key (<code>Error: entity.ground_projection_ray_distance_lower must be
 non-negative and finite, got -1.0</code>).</p>
@@ -5025,14 +5025,15 @@ the scene tier4/e2e-devkit decodes, scores and draws (<a href="../t4_scene/">T4 
 <code>scenario-t4scene &lt;output dir&gt;</code> does the same after a run.</p>
 <h4 id="the-switches">The switches<a class="headerlink" href="#the-switches" title="Permanent link">&para;</a></h4>
 <p><code>rerun.enabled</code>, <code>rerun.strict</code>, <code>rerun.lidar</code>, <code>rerun.cameras</code>,
-<code>t4.enabled</code>, <code>t4scene.enabled</code> and <code>background_traffic.enabled</code> are each
+<code>t4.enabled</code>, <code>t4scene.enabled</code>, <code>background_traffic.enabled</code> and
+<code>ego.native_autoware_interface</code> (<a href="../autoware/">Autoware</a>) are each
 <code>true</code> or <code>false</code>, or one of their spellings as text, in any case and with
 blanks around it (<code>"false"</code>, <code>"no"</code>, <code>"off"</code>, <code>"0"</code>, and <code>"true"</code>, <code>"yes"</code>,
 <code>"on"</code>, <code>"1"</code>), or the integer <code>0</code> or <code>1</code>, as the SLURM launcher's flags are
 (<a href="../slurm/">Running a Batch on SLURM</a>). So <code>"false"</code>, what
-<code>${oc.env:RERUN,false}</code> or a quoted <code>rerun.enabled='false'</code> gives, is false.
-Anything else (<code>ture</code>, <code>2</code>, <code>0.5</code>, null) is refused before anything starts,
-in one line naming the key:</p>
+<code>${oc.env:RERUN,false}</code> or a quoted <code>rerun.enabled='false'</code> gives, is false,
+and so is a missing or null one, its default. Anything else (<code>ture</code>, <code>2</code>,
+<code>0.5</code>, <code>''</code>) is refused before anything starts, in one line naming the key:</p>
 <div class="highlight"><pre><span></span><code><a id="__codelineno-18-1" name="__codelineno-18-1" href="#__codelineno-18-1"></a>rerun.enabled must be true or false, got 'ture'
 </code></pre></div>
 <p>A sweep's <code>sweep.odd_sample.tire_friction</code> and <code>sweep.odd_sample.visibility</code>
@@ -6080,7 +6081,7 @@ measurements they read are the same:</p>
 <td><code>canvas.config</code></td>
 <td>str</td>
 <td><code>null</code></td>
-<td>A carla_canvas configuration: its sensors are rendered by its renderer; <code>null</code> leaves every sensor to CARLA</td>
+<td>A carla_canvas configuration: its sensors are rendered by its renderer; <code>null</code> leaves every sensor to CARLA, and anything but a path (<code>''</code>, <code>false</code>) is refused before the run</td>
 </tr>
 </tbody>
 </table>
@@ -6904,7 +6905,7 @@ setting each value.</p>
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 16, 2026 04:53:17 UTC"><span class="timeago" datetime="2026-11-16T04:53:17+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 16, 2026 04:53:17 UTC">2026-11-16</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 18, 2026 03:42:36 UTC"><span class="timeago" datetime="2026-11-18T03:42:36+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 18, 2026 03:42:36 UTC">2026-11-18</span>
   </span>
 
     
