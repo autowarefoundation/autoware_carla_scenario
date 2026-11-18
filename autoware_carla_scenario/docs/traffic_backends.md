@@ -857,7 +857,8 @@ self.register_pre_tick(
   refused then, not when the first vehicle is due; the run's
   `background_traffic.source.constraints` and `.sink.constraints` are parsed
   by its up-front check, where null builds no source or sink and `false` or
-  `''` is refused, naming the key (#2191).
+  `''` is refused, naming the key (#2191); so is a `source` or `sink` block
+  that is `false`, `''` or `0` rather than a mapping or null.
 - **When they act** is the trigger (`condition`) and the end condition
   (`until`), as for every action. With no `until` a source or sink runs until
   the scenario ends, as OpenSCENARIO's do; with one, it stops on the first tick

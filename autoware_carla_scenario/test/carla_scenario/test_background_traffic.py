@@ -723,6 +723,38 @@ class TestHydraSwitch:
         ):
             run.background_traffic_settings(cfg)
 
+    @pytest.mark.parametrize("block", ["source", "sink"])
+    @pytest.mark.parametrize(
+        ("value", "shown"), [("false", "False"), ("''", "''"), ("0", "0")]
+    )
+    def test_a_block_spelled_off_is_refused_naming_the_key(
+        self, block: str, value: str, shown: str
+    ) -> None:
+        """#2143, #2191: ``source: false`` was read as an empty block, which
+        turned the source off without a word."""
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([f"background_traffic.{block}={value}"])
+        message = rf"background_traffic\.{block} must be a mapping, not {shown}$"
+        with pytest.raises(ValueError, match="^" + message):
+            run.background_traffic_settings(cfg)
+        with pytest.raises(run.RunConfigError, match=message):
+            run.check_run_config(cfg)
+
+    @pytest.mark.parametrize("block", ["source", "sink"])
+    def test_a_null_block_builds_no_source_or_sink(self, block: str) -> None:
+        from autoware_carla_scenario.examples import run
+
+        cfg = self._composed([f"background_traffic.{block}=null"])
+        checked = run.background_traffic_settings(cfg)
+        assert checked is not None
+        assert getattr(checked, f"{block}_constraints") == ()
+        scenario = _scenario()
+        run.add_background_traffic(cfg, scenario)
+        actions = [*scenario._init_actions, *scenario._pre_tick_actions]
+        kind = TrafficSourceAction if block == "source" else TrafficSinkAction
+        assert not any(isinstance(a, kind) for a in actions)
+
     def test_a_single_constraint_mapping_is_a_list_of_one(self) -> None:
         """#2191: a mapping became list(mapping) == ["type"] and crashed mid-run."""
         from autoware_carla_scenario.examples import run

@@ -3712,7 +3712,9 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     constraint mapping), each parsed here, so one the sweeper does not know is
     refused before anything starts; null or an empty list builds no source
     or sink, and ``false``, ``''`` or anything else that is no list is
-    refused (#2191).  Read by :func:`add_background_traffic` and checked up
+    refused (#2191).  ``source`` and ``sink`` themselves are null (none) or a
+    mapping; ``false``, ``''`` or ``0`` is refused rather than read as an
+    empty block.  Read by :func:`add_background_traffic` and checked up
     front by :func:`check_batch_configs`.
 
     Raises:
@@ -3722,8 +3724,22 @@ def background_traffic_settings(cfg: DictConfig) -> BackgroundTraffic | None:
     if background is None or not _switch(cfg, "background_traffic", "enabled"):
         return None
     settings = _to_dict(background)
-    source = settings.get("source") or {}
-    sink = settings.get("sink") or {}
+
+    def block(key: str) -> Mapping[str, Any]:
+        # null or absent (the default): no source or sink.  false, '' or 0 is
+        # refused rather than read as an empty block, which turned the source
+        # or sink off without a word (#2143, #2191).
+        value = settings.get(key)
+        if value is None:
+            return {}
+        if not isinstance(value, Mapping):
+            raise ValueError(
+                f"background_traffic.{key} must be a mapping, not {value!r}"
+            )
+        return value
+
+    source = block("source")
+    sink = block("sink")
     seed = seed_setting("background_traffic.seed", settings.get("seed"))
     initial = whole_number_setting(
         "background_traffic.source.initial_vehicles",
@@ -3844,6 +3860,7 @@ def add_background_traffic(cfg: DictConfig, scenario: BaseScenario) -> None:
     if checked is None:
         return
     settings = _to_dict(cfg["background_traffic"])
+    # A mapping or null: anything else was refused above.
     source = settings.get("source") or {}
     # null (the default) follows the run's seed, the scenario's.
     seed = scenario.random_seed if checked.seed is None else checked.seed
