@@ -43,6 +43,7 @@ __all__ = [
     "PACKS_DIR_ENV",
     "MapPack",
     "MapPackError",
+    "PackAccessError",
     "PackFiles",
     "packs_dir",
 ]
@@ -67,16 +68,46 @@ _INSTALL_HINT = (
     "`pip install 'autoware-carla-scenario[pack]'` "
     "(or `uv add carla-pack-registry`)."
 )
-_ACCESS_HINT = (
-    "carla-pack reads the pack repository with your GitHub token: run "
-    "`gh auth login` (or `carla-pack login`), or set CARLA_PACK_TOKEN to a "
-    "token that can read it; `carla-pack whoami` and `carla-pack ls "
-    "OWNER/REPO` show what it can see."
-)
 
 
 class MapPackError(RuntimeError):
     """A pack could not be found, fetched, read or mounted."""
+
+
+class PackAccessError(MapPackError):
+    """GitHub or the pack's storage refused access to a pack: no token, a
+    token GitHub rejects (expired, revoked), a user without Read access to
+    the pack repository, or storage credentials that expired.
+
+    The message says which, where the token was taken from, and how to fix
+    it; :attr:`code` is carla-pack's error code (``unauthenticated``,
+    ``no_access``, ``credentials_unavailable``, ``storage_error``).
+    """
+
+    def __init__(self, message: str, code: str) -> None:
+        super().__init__(message)
+        self.code = code
+
+
+#: Where carla-pack looks for a GitHub token, in order.
+_TOKEN_SOURCES = (
+    "CARLA_PACK_TOKEN, GH_TOKEN, GITHUB_TOKEN, the token `carla-pack login` "
+    "saved, then `gh auth token` (the GitHub CLI)"
+)
+
+#: How to replace a token GitHub rejects, by where carla-pack took it from
+#: (carla_pack_registry.Client.token_source).
+_REFRESH = {
+    "gh auth token": "run `gh auth login` again (or `gh auth refresh`)",
+    "carla-pack login": "run `carla-pack login` again",
+    "CARLA_PACK_TOKEN": "set CARLA_PACK_TOKEN to a valid token",
+    "GH_TOKEN": "set GH_TOKEN to a valid token (or unset it to use `gh auth login`)",
+    "GITHUB_TOKEN": (
+        "set GITHUB_TOKEN to a valid token (or unset it to use `gh auth login`); "
+        "a GitHub Actions workflow's own GITHUB_TOKEN cannot read another "
+        "repository: pass a token that can in CARLA_PACK_TOKEN"
+    ),
+}
 
 
 def packs_dir(configured: Optional[str] = None) -> Path:
@@ -111,15 +142,100 @@ def _registry() -> Any:
     return carla_pack_registry
 
 
-def _failure(action: str, exc: BaseException) -> MapPackError:
-    """A :class:`MapPackError` for carla-pack's *exc*, with the access hint
-    when it reads as GitHub refusing (or not finding) the repository."""
-    code = exc.args[1] if len(exc.args) > 1 else ""
-    message = exc.args[0] if exc.args else str(exc)
-    hint = ""
-    if code in ("no_access", "unauthenticated", "not_found"):
-        hint = f" {_ACCESS_HINT}"
-    return MapPackError(f"{action}: {message}{hint}")
+def _token_source(client: Any) -> Optional[str]:
+    """Where *client* took its GitHub token from, or ``None`` for none."""
+    source = getattr(client, "token_source", None)
+    return source if isinstance(source, str) and source else None
+
+
+def _login(client: Any) -> Optional[str]:
+    """The GitHub user *client*'s token belongs to, when GitHub says so."""
+    try:
+        user = client.whoami()
+    except Exception:  # noqa: BLE001 -- only to name the user in a message
+        return None
+    login = user.get("login") if isinstance(user, dict) else None
+    return str(login) if login else None
+
+
+def _repository(reference: str) -> str:
+    return "/".join(reference.split("/")[:2])
+
+
+def _failure(
+    action: str, exc: BaseException, client: Any, reference: str
+) -> MapPackError:
+    """A :class:`MapPackError` for carla-pack's *exc* -- a
+    :class:`PackAccessError` saying what to do when access was refused."""
+    code = str(exc.args[1]) if len(exc.args) > 1 else ""
+    message = str(exc.args[0]) if exc.args else str(exc)
+    repository = _repository(reference)
+    source = _token_source(client)
+    if code == "unauthenticated":
+        if "rate limit" in message:
+            fix = (
+                "GitHub's limit on requests without a token was reached. Give "
+                f"carla-pack a GitHub token (it looks in {_TOKEN_SOURCES}): run "
+                "`gh auth login`, or set CARLA_PACK_TOKEN."
+            )
+        elif source is None:
+            fix = (
+                f"No GitHub token was found, and {repository} is not public. "
+                f"carla-pack looks in {_TOKEN_SOURCES}: run `gh auth login`, "
+                "or set CARLA_PACK_TOKEN to a token that can read "
+                f"{repository}."
+            )
+        else:
+            refresh = _REFRESH.get(source, "replace it with a valid token")
+            fix = (
+                f"GitHub rejected the token from {source}: it has expired or "
+                f"been revoked. To fix it, {refresh}; `carla-pack whoami` "
+                "checks it."
+            )
+        return PackAccessError(
+            f"{action}: GitHub authentication failed. {fix} ({message})", code
+        )
+    # GitHub answers a private repository the token may not read with 404,
+    # which carla-pack reports as no_access; not_found is a pack, version or
+    # map missing from a manifest it read -- or, from a search, one missing
+    # from the repositories it could read, which it names as not readable.
+    if code == "no_access" or (code == "not_found" and "not readable" in message):
+        login = _login(client) if source is not None else None
+        who = (
+            f"the GitHub user {login} (token from {source})"
+            if login
+            else f"the token from {source}"
+            if source
+            else "an anonymous request (no GitHub token found)"
+        )
+        fix = (
+            f"{repository} does not exist, or {who} cannot read it (GitHub "
+            "answers a private repository it may not read with 'not found'). "
+            f"Ask the owner of {repository} for Read access"
+            + (
+                ", or use a token of a user who has it (CARLA_PACK_TOKEN)"
+                if source
+                else f"; carla-pack looks for a token in {_TOKEN_SOURCES}: "
+                "run `gh auth login`"
+            )
+            + f". `carla-pack ls {repository}` shows what can be read."
+        )
+        return PackAccessError(f"{action}: access denied. {fix} ({message})", code)
+    if code == "credentials_unavailable":
+        return PackAccessError(
+            f"{action}: the storage credentials of {repository} could not be "
+            "read. Your GitHub access is fine; the pack repository's credential "
+            f"workflow has to run (ask the owner of {repository}). ({message})",
+            code,
+        )
+    if code == "storage_error" and "refused" in message:
+        return PackAccessError(
+            f"{action}: the pack's storage refused the download: its "
+            f"credentials were rotated or revoked. Retry, or ask the owner of "
+            f"{repository}. ({message})",
+            code,
+        )
+    return MapPackError(f"{action}: {message}")
 
 
 @dataclass(frozen=True)
@@ -185,6 +301,9 @@ class MapPack:
         Raises:
             MapPackError: carla-pack is not installed, the repository cannot
                 be read, or nothing in it provides the map.
+            PackAccessError: (a MapPackError) GitHub or the pack's storage
+                refused access: no token, an expired or revoked one, no Read
+                access to the pack repository, expired storage credentials.
         """
         registry = _registry()
         client = client if client is not None else registry.Client()
@@ -201,7 +320,9 @@ class MapPack:
             else:
                 release = client.resolve(self.reference, sha256=self.sha256)
         except registry.CarlaPackError as exc:
-            raise _failure(f"Could not find the pack {self.reference}", exc) from exc
+            raise _failure(
+                f"Could not find the pack {self.reference}", exc, client, self.reference
+            ) from exc
         return release
 
     def files(self, map_name: str = "", client: Any = None) -> PackFiles:
@@ -216,6 +337,9 @@ class MapPack:
         Raises:
             MapPackError: The pack cannot be found or fetched, or does not
                 carry *map_name*.
+            PackAccessError: (a MapPackError) GitHub or the pack's storage
+                refused access: no token, an expired or revoked one, no Read
+                access to the pack repository, expired storage credentials.
         """
         registry = _registry()
         client = client if client is not None else registry.Client()
@@ -224,7 +348,9 @@ class MapPack:
         try:
             formats: dict[str, dict[str, Any]] = client.formats(release)
         except registry.CarlaPackError as exc:
-            raise _failure(f"Could not fetch the pack {reference}", exc) from exc
+            raise _failure(
+                f"Could not fetch the pack {reference}", exc, client, reference
+            ) from exc
         cooked = [str(m) for m in release.get("maps") or []]
         name = self._map_of(map_name, reference, cooked, formats)
         of_map = formats.get(name, {})
@@ -234,7 +360,10 @@ class MapPack:
                 return Path(client.map_data(release, name, fmt))
             except registry.CarlaPackError as exc:
                 raise _failure(
-                    f"Could not read {fmt} data of {name} from {reference}", exc
+                    f"Could not read {fmt} data of {name} from {reference}",
+                    exc,
+                    client,
+                    reference,
                 ) from exc
 
         directory: Optional[Path] = None
@@ -301,6 +430,9 @@ class MapPack:
             MapPackError: carla-pack or the CARLA client is not installed,
                 the pack cannot be fetched or installed, or the server does
                 not mount it.
+            PackAccessError: (a MapPackError) GitHub or the pack's storage
+                refused access: no token, an expired or revoked one, no Read
+                access to the pack repository, expired storage credentials.
         """
         registry = _registry()
         try:
@@ -314,6 +446,7 @@ class MapPack:
         target.mkdir(parents=True, exist_ok=True)
         carla_client = carla.Client(host, port)
         carla_client.set_timeout(timeout)
+        client = registry.Client()
         try:
             if self.is_repository:
                 pack = registry.ensure_map(
@@ -322,6 +455,7 @@ class MapPack:
                     os.fspath(target),
                     repos=[self.reference],
                     sha256=self.sha256,
+                    client=client,
                 )
                 if pack is None:
                     logger.info(
@@ -339,10 +473,14 @@ class MapPack:
                     os.fspath(target),
                     carla_client=carla_client,
                     sha256=self.sha256,
+                    client=client,
                 )
         except registry.CarlaPackError as exc:
             raise _failure(
-                f"Could not deploy the pack {self.reference} to {host}:{port}", exc
+                f"Could not deploy the pack {self.reference} to {host}:{port}",
+                exc,
+                client,
+                self.reference,
             ) from exc
         if not pack.get("mounted"):
             raise MapPackError(

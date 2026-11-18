@@ -147,10 +147,28 @@ with queue:  # starts CARLA, mounts the pack, loads the map
 
 ## Troubleshooting
 
+When GitHub or the pack's storage refuses access, the run stops with a
+`PackAccessError` (a `MapPackError`) that says what was refused, where the
+token was taken from, and what to do. Its `code` is carla-pack's:
+
+| Message | `code` | Cause and fix |
+| --- | --- | --- |
+| `GitHub authentication failed. No GitHub token was found ...` | `unauthenticated` | No token in `CARLA_PACK_TOKEN`, `GH_TOKEN`, `GITHUB_TOKEN`, `carla-pack login` or `gh auth token`, and the repository is private: run `gh auth login`, or set `CARLA_PACK_TOKEN` |
+| `GitHub authentication failed. GitHub rejected the token from <source> ...` | `unauthenticated` | The token has expired or been revoked. The message names where it came from and how to renew it (`gh auth login`, `carla-pack login`, or the variable to set). A GitHub Actions workflow's own `GITHUB_TOKEN` cannot read another repository |
+| `GitHub authentication failed. GitHub's limit on requests without a token ...` | `unauthenticated` | The anonymous rate limit: give carla-pack a token |
+| `access denied. OWNER/REPO does not exist, or the GitHub user <login> ... cannot read it` | `no_access` | The token works but its user has no Read access to the pack repository (GitHub answers a private repository with *not found*): ask its owner for access, or use another user's token in `CARLA_PACK_TOKEN` |
+| `the storage credentials of OWNER/REPO could not be read. Your GitHub access is fine ...` | `credentials_unavailable` | The pack repository's read-only storage key expired: its credential workflow has to run (the owner's to fix) |
+| `the pack's storage refused the download ...` | `storage_error` | The storage key was rotated while downloading: retry |
+
+`carla-pack whoami` shows which user and token carla-pack uses, and
+`carla-pack ls OWNER/REPO` what it can read.
+
+Other errors:
+
 | Message | Cause |
 | --- | --- |
 | `Install carla-pack-registry to use map.pack` | The `pack` extra is not installed |
-| `Could not find the pack ...: ... gh auth login ...` | GitHub does not let the token read the repository (a private repository answers *not found*), or the pack or version does not exist |
+| `Could not find the pack ...: ... not found` | The pack or version does not exist in a repository you can read |
 | `The pack ... does not carry the map ...` | `map.name` is not one of the pack's maps; the message lists them |
 | `... did not mount the pack ...` | The server cannot read `server.packs_dir` at that path |
 | `Could not deploy the pack ...` with *incompatible* | The pack was built for another CARLA release than the server's |

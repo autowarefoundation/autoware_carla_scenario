@@ -267,7 +267,7 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         ),
     },
     f"{_PACKAGE}.maps.pack": _each(
-        "MapPackError PACKS_DIR_ENV PackFiles packs_dir",
+        "MapPackError PACKS_DIR_ENV PackAccessError PackFiles packs_dir",
         "what the runner (examples.run, which is not checked) uses to read a "
         "content pack's map files and choose where it is installed, before "
         "the queue is made; a scenario has no use for it: the queue mounts "

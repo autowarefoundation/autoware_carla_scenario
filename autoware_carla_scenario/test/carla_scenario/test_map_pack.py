@@ -23,6 +23,7 @@ from autoware_carla_scenario.maps.pack import (
     PACKS_DIR_ENV,
     MapPack,
     MapPackError,
+    PackAccessError,
     packs_dir,
 )
 
@@ -42,6 +43,15 @@ class FakeClient:
         self._formats = formats
         self.maps = maps
         self.calls: list[tuple[Any, ...]] = []
+        self.token_source: Optional[str] = "gh auth token"
+        self.login: Optional[str] = "alice"
+        #: (message, code) every request raises, to stand in for a refusal.
+        self.refusal: Optional[tuple[str, str]] = None
+
+    def whoami(self) -> dict[str, Any]:
+        if self.login is None:
+            raise FakeCarlaPackError("GitHub rejected the token", "unauthenticated")
+        return {"login": self.login}
 
     def _release(self) -> dict[str, Any]:
         return {
@@ -55,6 +65,11 @@ class FakeClient:
         self, reference: str, sha256: Optional[str] = None, **_: Any
     ) -> dict[str, Any]:
         self.calls.append(("resolve", reference, sha256))
+        if self.refusal is not None and self.refusal[1] in (
+            "unauthenticated",
+            "no_access",
+        ):
+            raise FakeCarlaPackError(*self.refusal)
         if not reference.startswith(REF):
             raise FakeCarlaPackError(f"{reference}: not found", "not_found")
         return self._release()
@@ -63,10 +78,17 @@ class FakeClient:
         self, map_name: str, repos: list[str], sha256: Optional[str] = None, **_: Any
     ) -> dict[str, Any]:
         self.calls.append(("find_map", map_name, tuple(repos), sha256))
+        if self.refusal is not None and self.refusal[1] == "not_found":
+            raise FakeCarlaPackError(*self.refusal)
         return self._release()
 
     def formats(self, release: dict[str, Any]) -> dict[str, dict[str, Any]]:
         self.calls.append(("formats", release["ref"]))
+        if self.refusal is not None and self.refusal[1] in (
+            "storage_error",
+            "credentials_unavailable",
+        ):
+            raise FakeCarlaPackError(*self.refusal)
         return self._formats
 
     def map_data(self, release: dict[str, Any], map_name: str, fmt: str) -> Path:
@@ -215,9 +237,122 @@ def test_a_repository_needs_the_map_name(town: FakeClient) -> None:
         MapPack("acme/carla-packs").files("")
 
 
-def test_a_pack_not_found_says_how_to_get_access(town: FakeClient) -> None:
-    with pytest.raises(MapPackError, match="gh auth login"):
+def test_a_pack_missing_from_a_readable_repository_is_not_an_access_error(
+    town: FakeClient,
+) -> None:
+    with pytest.raises(MapPackError, match="Other: not found") as raised:
         MapPack("acme/carla-packs/Other").files("Town")
+    assert not isinstance(raised.value, PackAccessError)
+
+
+# ---------------------------------------------------------------------------
+# Access refused: what went wrong and how to fix it
+# ---------------------------------------------------------------------------
+
+
+def _refused(town: FakeClient, message: str, code: str) -> PackAccessError:
+    town.refusal = (message, code)
+    with pytest.raises(PackAccessError) as raised:
+        MapPack(REF).files("Town")
+    assert raised.value.code == code
+    return raised.value
+
+
+def test_no_token_says_where_one_is_looked_for(town: FakeClient) -> None:
+    town.token_source = None
+    error = str(
+        _refused(
+            town,
+            "acme/carla-packs is not public and no GitHub token was found",
+            "unauthenticated",
+        )
+    )
+    assert "GitHub authentication failed" in error
+    assert "No GitHub token was found" in error
+    assert "gh auth login" in error and "CARLA_PACK_TOKEN" in error
+
+
+@pytest.mark.parametrize(
+    ("source", "fix"),
+    [
+        ("gh auth token", "gh auth login"),
+        ("carla-pack login", "carla-pack login` again"),
+        ("CARLA_PACK_TOKEN", "set CARLA_PACK_TOKEN"),
+        ("GITHUB_TOKEN", "cannot read another repository"),
+    ],
+)
+def test_a_rejected_token_names_where_it_came_from_and_how_to_renew_it(
+    town: FakeClient, source: str, fix: str
+) -> None:
+    town.token_source = source
+    error = str(
+        _refused(town, "GitHub rejected the token (Bad credentials)", "unauthenticated")
+    )
+    assert f"GitHub rejected the token from {source}" in error
+    assert "expired or been revoked" in error
+    assert fix in error
+
+
+def test_the_anonymous_rate_limit_asks_for_a_token(town: FakeClient) -> None:
+    town.token_source = None
+    error = str(
+        _refused(town, "anonymous GitHub API rate limit reached", "unauthenticated")
+    )
+    assert "limit on requests without a token" in error
+
+
+def test_no_read_access_names_the_user_and_the_repository(town: FakeClient) -> None:
+    error = str(_refused(town, "acme/carla-packs: not found", "no_access"))
+    assert "access denied" in error
+    assert "the GitHub user alice (token from gh auth token)" in error
+    assert "Ask the owner of acme/carla-packs for Read access" in error
+    assert "carla-pack ls acme/carla-packs" in error
+
+
+def test_a_search_of_unreadable_repositories_is_an_access_error(
+    town: FakeClient,
+) -> None:
+    town.refusal = (
+        "no pack provides map Town; not readable: acme/carla-packs (no_access)",
+        "not_found",
+    )
+    with pytest.raises(PackAccessError, match="cannot read it"):
+        MapPack("acme/carla-packs").files("Town")
+
+
+def test_expired_storage_credentials_are_the_owners_to_fix(town: FakeClient) -> None:
+    town.refusal = (
+        "the storage credentials of acme/carla-packs expired",
+        "credentials_unavailable",
+    )
+    with pytest.raises(PackAccessError, match="Your GitHub access is fine") as raised:
+        MapPack(REF).files("Town")
+    assert raised.value.code == "credentials_unavailable"
+
+
+def test_refused_storage_says_to_retry(town: FakeClient) -> None:
+    town.refusal = (
+        "x.tar.gz: AccessDenied (the storage credentials were refused: ...)",
+        "storage_error",
+    )
+    with pytest.raises(PackAccessError, match="storage refused the download"):
+        MapPack(REF).files("Town")
+
+
+def test_a_rejected_token_while_mounting_is_an_access_error(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    def deploy_pack(*_: Any, **__: Any) -> Any:
+        raise FakeCarlaPackError(
+            "GitHub rejected the token (Bad credentials)", "unauthenticated"
+        )
+
+    _deploying(monkeypatch, deploy_pack=deploy_pack)
+    with pytest.raises(
+        PackAccessError,
+        match="Could not deploy .*GitHub rejected the token from gh auth token",
+    ):
+        MapPack(REF, packs_dir=tmp_path).deploy("localhost", 2000, "Town")
 
 
 # ---------------------------------------------------------------------------
@@ -290,7 +425,10 @@ def _deploying(
 ) -> list[tuple[Any, ...]]:
     calls: list[tuple[Any, ...]] = []
     monkeypatch.setattr("typesafe_carla.carla.Client", _FakeCarlaClient)
-    namespace = SimpleNamespace(CarlaPackError=FakeCarlaPackError, **registry)
+    fake = FakeClient(Path("/nonexistent"), {}, [])
+    namespace = SimpleNamespace(
+        CarlaPackError=FakeCarlaPackError, Client=lambda: fake, **registry
+    )
     monkeypatch.setattr(pack_module, "_registry", lambda: namespace)
     return calls
 
@@ -300,7 +438,9 @@ def test_a_pack_is_installed_and_mounted(
 ) -> None:
     seen: list[Any] = []
 
-    def deploy_pack(ref: str, target: str, *, carla_client: Any, sha256: Any) -> Any:
+    def deploy_pack(
+        ref: str, target: str, *, carla_client: Any, sha256: Any, client: Any
+    ) -> Any:
         seen.append((ref, target, carla_client.address, carla_client.timeout, sha256))
         return {"name": "TownPack", "mounted": True, "maps": ["Town"], "path": target}
 
@@ -329,15 +469,15 @@ def test_a_repository_mounts_nothing_when_the_server_has_the_map(
 ) -> None:
     seen: list[Any] = []
 
-    def ensure_map(client: Any, map_name: str, target: str, **kw: Any) -> None:
+    def ensure_map(carla: Any, map_name: str, target: str, **kw: Any) -> None:
         seen.append((map_name, target, kw))
         return None
 
     _deploying(monkeypatch, ensure_map=ensure_map)
     MapPack("acme/carla-packs", packs_dir=tmp_path).deploy("localhost", 2000, "Town")
-    assert seen == [
-        ("Town", str(tmp_path), {"repos": ["acme/carla-packs"], "sha256": None})
-    ]
+    assert seen[0][:2] == ("Town", str(tmp_path))
+    assert seen[0][2]["repos"] == ["acme/carla-packs"]
+    assert seen[0][2]["sha256"] is None
 
 
 def test_a_failed_deploy_is_a_map_pack_error(
