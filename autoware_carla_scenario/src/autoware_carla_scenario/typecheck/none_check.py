@@ -156,7 +156,7 @@ import sys
 import tempfile
 from dataclasses import dataclass
 from functools import lru_cache
-from collections.abc import Iterable
+from collections.abc import Callable, Iterable
 from pathlib import Path
 
 from .carla_stubs import carla_stub_root
@@ -1067,8 +1067,21 @@ def find_none_misuses(
         return None
 
 
-def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFinding]:
+def _mypy_command() -> list[str]:
+    """How mypy is run, before its options and the modules' paths."""
+    return [sys.executable, "-m", "mypy"]
+
+
+def run_none_check(
+    paths: list[Path],
+    timeout: float = 600.0,
+    started: Callable[[subprocess.Popen[str]], None] | None = None,
+) -> list[NoneFinding]:
     """What mypy reports of a ``None`` misused in the modules *paths*.
+
+    *started* is given mypy's process once it runs, for a caller to kill it
+    when it no longer wants the verdict (the compile crashed or timed out,
+    #2193): killed, mypy fails without a report.
 
     Raises:
         NoneCheckSkipped: There is no verdict: no module, mypy is not
@@ -1080,9 +1093,7 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
     if not mypy_available():
         raise NoneCheckSkipped("mypy is not installed")
     command = [
-        sys.executable,
-        "-m",
-        "mypy",
+        *_mypy_command(),
         "--config-file=",
         "--follow-imports=silent",
         "--ignore-missing-imports",
@@ -1111,15 +1122,26 @@ def run_none_check(paths: list[Path], timeout: float = 600.0) -> list[NoneFindin
             # that check.py keeps beyond the process under a key without it.
             cwd = Path(scratch) / "cwd"
             cwd.mkdir()
-            proc = subprocess.run(
+            # Popen, not run(): *started* may kill it from another thread.
+            with subprocess.Popen(
                 [*command, *given],
-                capture_output=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
                 encoding="utf-8",
                 errors="replace",
-                timeout=timeout,
-                check=False,
                 cwd=cwd,
                 env=_environment(carla_stub_root(Path(scratch))),
+            ) as running:
+                if started is not None:
+                    started(running)
+                try:
+                    stdout, stderr = running.communicate(timeout=timeout)
+                except subprocess.TimeoutExpired:
+                    running.kill()
+                    running.communicate()
+                    raise
+            proc = subprocess.CompletedProcess(
+                running.args, running.returncode, stdout, stderr
             )
     except subprocess.TimeoutExpired:
         raise NoneCheckSkipped(f"mypy did not finish within {timeout:.0f}s") from None

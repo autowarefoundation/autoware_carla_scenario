@@ -2145,7 +2145,7 @@ def test_cases_that_differ_only_in_their_values_compile_once(
     first = typecheck_scenario(scenario, config, {"min_speed_kmh": 5, "name": "a"})
     assert first.ok, first.format()
     second = typecheck_scenario(scenario, config, {"min_speed_kmh": 9, "name": "b"})
-    assert second is first
+    assert second == first
     assert len(compiled) == 1
 
     for value in ("fast", "slow"):

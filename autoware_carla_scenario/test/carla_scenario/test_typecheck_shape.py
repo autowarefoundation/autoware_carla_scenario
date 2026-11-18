@@ -167,7 +167,7 @@ def compiles(monkeypatch: pytest.MonkeyPatch) -> list[str]:
         check, "_collect", lambda roots, tc, codon_path: _Sources({"scenario": module})
     )
 
-    def no_mypy(paths: Any, timeout: float) -> Any:
+    def no_mypy(paths: Any, timeout: float, started: Any = None) -> Any:
         raise NoneCheckSkipped("mypy is not installed")
 
     monkeypatch.setattr(check, "run_none_check", no_mypy)
@@ -211,7 +211,7 @@ def test_a_sweep_compiles_once_per_shape(
     # to disk; the process still keeps it for the sweep's other cases.
     assert first.ok and first.warnings
     for timeout, label in ((7.5, "b"), (10.0, "a"), (12.5, "a")):
-        assert _check(timeout_seconds=timeout, label=label) is first
+        assert _check(timeout_seconds=timeout, label=label) == first
     assert len(compiles) == 1
     assert "config.timeout_seconds = 5.0" in compiles[0]
     reused = [r.getMessage() for r in caplog.records if "reusing" in r.getMessage()]
@@ -261,7 +261,7 @@ def test_a_check_of_a_shape_being_compiled_waits_for_it(
     with ThreadPoolExecutor(max_workers=2) as pool:
         first = pool.submit(_check, timeout_seconds=5.0)
         second = pool.submit(_check, timeout_seconds=7.5)
-        assert first.result(60) is second.result(60)
+        assert first.result(60) == second.result(60)
     assert len(compiles) == 1
     assert check._IN_FLIGHT == {}
 
@@ -326,7 +326,9 @@ def test_the_disk_cache_is_keyed_by_the_shape(
     compiles: list[str], tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
     monkeypatch.setenv(CACHE_DIR_ENV, str(tmp_path))
-    monkeypatch.setattr(check, "run_none_check", lambda paths, timeout: [])
+    monkeypatch.setattr(
+        check, "run_none_check", lambda paths, timeout, started=None: []
+    )
     assert _check(timeout_seconds=5.0).ok
     assert len(list(tmp_path.glob("*.json"))) == 1
     check._CACHE.clear()  # as a fresh process has it

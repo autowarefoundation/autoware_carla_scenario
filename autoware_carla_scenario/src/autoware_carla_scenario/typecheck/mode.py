@@ -34,10 +34,17 @@ TYPECHECK_ENV = "AUTOWARE_CARLA_SCENARIO_TYPECHECK"
 
 
 def typecheck_mode(cfg: Mapping[str, Any] | None = None) -> TypecheckMode:
-    """The mode the environment or *cfg*'s ``typecheck`` key selects."""
+    """The mode the environment or *cfg*'s ``typecheck`` key selects.
+
+    Raises:
+        ValueError: The value is no mode, naming where it came from: the
+            environment variable, or the config key (#2193).
+    """
     value: Any = os.environ.get(TYPECHECK_ENV)
+    source = f"${TYPECHECK_ENV}"
     if value is None and cfg is not None:
         value = cfg.get("typecheck")
+        source = "typecheck"
     if value is None:
         return "auto"
     if value is False:
@@ -47,7 +54,7 @@ def typecheck_mode(cfg: Mapping[str, Any] | None = None) -> TypecheckMode:
     mode = str(value).strip().lower()
     if mode not in TYPECHECK_MODES:
         raise ValueError(
-            f"typecheck must be one of {', '.join(TYPECHECK_MODES)} (got {value!r})"
+            f"{source} must be one of {', '.join(TYPECHECK_MODES)} (got {value!r})"
         )
     return cast(TypecheckMode, mode)
 

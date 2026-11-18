@@ -31,7 +31,7 @@ from enum import Enum
 from typing import TYPE_CHECKING, Optional, Sequence
 
 from ..coordinate.poses import CarlaWorldPose
-from ..entity_role import canonical_role_name
+from ..entity_role import _role_name, canonical_role_name
 from .entity_existence import HIDDEN_BELOW_M
 
 if TYPE_CHECKING:
@@ -83,7 +83,9 @@ class EntityFilter:
         names: Role-name patterns, any of which a name must match (``*``: any
             run of characters, ``?``: any one); empty takes every name.
         kind: Vehicles, pedestrians, or both.
-        reference: The entity the relative bounds are measured from.
+        reference: The entity the relative bounds are measured from; the
+            ego under any of its role names (``ego``, ``hero``:
+            :func:`~autoware_carla_scenario.entity_role.canonical_role_name`).
         min_distance_m / max_distance_m: The distance between the actors'
             origins (``get_transform().location``), in 3D.
         min_ahead_m / max_ahead_m: The offset along the reference's heading
@@ -186,9 +188,10 @@ class EntityFilter:
         distance and offsets.
         """
         actors = list(world.get_actors())
+        wanted = self._reference_name()
         reference: Optional["carla.Actor"] = None
         for actor in actors:
-            if _role_name(actor) == self.reference:
+            if _name_of(actor) == wanted:
                 reference = actor
                 break
         # A reference parked under the map is not in the scene: the same
@@ -228,6 +231,11 @@ class EntityFilter:
                 selected.append(entity)
         return selected
 
+    def _reference_name(self) -> str:
+        # Actors are named as canonical_role_name reads them (the ego's is
+        # "Ego" whatever it was spawned as), so the reference is too (#2193).
+        return canonical_role_name(self.reference)
+
     def _take(
         self,
         actor: "carla.Actor",
@@ -244,10 +252,10 @@ class EntityFilter:
             return None
         if self.kind is RoadUserKind.PEDESTRIAN and not walker:
             return None
-        name = _role_name(actor)
+        name = _name_of(actor)
         if not name:
             return None
-        if name == self.reference and not self.include_reference:
+        if name == self._reference_name() and not self.include_reference:
             return None
         if not self.takes_name(name):
             return None
@@ -361,12 +369,15 @@ def name_matches(pattern: str, name: str) -> bool:
     return p == len(pattern)
 
 
-def _role_name(actor: "carla.Actor") -> str:
-    # The ego's is "Ego" under any of its role names (canonical_role_name).
-    attributes = actor.attributes
-    if "role_name" in attributes:
-        return canonical_role_name(str(attributes["role_name"]))
-    return ""
+def _name_of(actor: "carla.Actor") -> str:
+    # entity_role._role_name (the ego's is "Ego" under any of its role
+    # names), with "" for an actor that has none.
+    name = _role_name(actor)
+    if name is None:
+        return ""
+    # Annotated, so Codon unwraps the Optional (docs/typecheck.md).
+    found: str = name
+    return found
 
 
 def _within(value: float, low: Optional[float], high: Optional[float]) -> bool:

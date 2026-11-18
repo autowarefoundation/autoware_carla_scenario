@@ -2283,6 +2283,46 @@ class TestEntityConfigNumbersMustBeFinite:
         with pytest.raises(ValueError, match=r"^spawn_s must be finite"):
             NpcVehicleConfig(spawn_lanelet_id=1, spawn_s=value)
 
+    @pytest.mark.parametrize("key", ["spawn_s", "initial_speed_kmh"])
+    @pytest.mark.parametrize("value", ["abc", "3", "", True, False, [1.0]])
+    def test_npc_vehicle_config_refuses_a_number_that_is_none(
+        self, key: str, value: object
+    ) -> None:
+        """#2193: not math.isfinite()'s TypeError naming no key, and not a
+        boolean read as 0 or 1."""
+        from autoware_carla_scenario import NpcVehicleConfig
+
+        bad: dict[str, Any] = {key: value}
+        with pytest.raises(
+            ValueError, match=rf"^{key} must be a number, got {re.escape(repr(value))}$"
+        ):
+            NpcVehicleConfig(spawn_lanelet_id=1, **bad)
+
+    def test_a_null_npc_number_is_its_default(self) -> None:
+        """#2193: null is the default (#2143)."""
+        from autoware_carla_scenario import NpcVehicleConfig
+
+        npc = NpcVehicleConfig(
+            spawn_lanelet_id=1,
+            spawn_s=None,  # type: ignore[arg-type]
+            initial_speed_kmh=None,  # type: ignore[arg-type]
+        )
+        assert (npc.spawn_s, npc.initial_speed_kmh) == (0.0, 0.0)
+        whole = NpcVehicleConfig(spawn_lanelet_id=1, spawn_s=3, initial_speed_kmh=20)
+        assert type(whole.spawn_s) is float and type(whole.initial_speed_kmh) is float
+
+    def test_the_scenario_config_names_the_npc_and_its_bad_number(self) -> None:
+        from autoware_carla_scenario.examples.configs import IntersectionPassingConfig
+
+        with pytest.raises(
+            ValueError,
+            match=r"^scenario\.npc_vehicles\[0\]\.spawn_s must be a number, "
+            r"got 'abc'$",
+        ):
+            IntersectionPassingConfig(
+                npc_vehicles=[{"spawn_lanelet_id": 1, "spawn_s": "abc"}]  # type: ignore[list-item]
+            )
+
     def test_npc_vehicle_config_accepts_a_still_npc_and_a_negative_s(self) -> None:
         from autoware_carla_scenario import NpcVehicleConfig
 

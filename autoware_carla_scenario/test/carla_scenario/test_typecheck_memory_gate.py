@@ -1270,3 +1270,45 @@ def test_the_gate_s_own_directory_that_cannot_be_locked_is_given_up(
     crowd.build()
     assert crowd.gated == [True, True]
     assert crowd.most == 1
+
+
+def test_the_time_waiting_in_the_gate_is_not_codons(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """#2193: "Codon was killed after N s" and the compile time reported are
+    counted from when the gate admits the build, not from before it waits."""
+    import subprocess
+    from contextlib import contextmanager
+    from types import SimpleNamespace
+    from typing import Any, Iterator
+
+    from autoware_carla_scenario.typecheck import check
+
+    now = [1000.0]
+
+    @contextmanager
+    def gate(need: int) -> Iterator[None]:
+        now[0] += 300.0  # waited five minutes for room
+        yield
+
+    def codon(args: Any, **kwargs: Any) -> Any:
+        now[0] += 7.0  # compiled for seven seconds, then was killed
+        return subprocess.CompletedProcess(args, -9, "", "")
+
+    monkeypatch.setattr(check, "admitted", gate)
+    monkeypatch.setattr(check, "time", SimpleNamespace(monotonic=lambda: now[0]))
+    monkeypatch.setattr(check.subprocess, "run", codon)
+    monkeypatch.setattr(check, "codon_environment", lambda *args: {})
+    sources = check._Sources()
+    result = check._compile(
+        "pkg.S",
+        sources,
+        None,
+        SimpleNamespace(executable="codon"),  # type: ignore[arg-type]
+        Path("/codon"),
+        60.0,
+        build=lambda root: (check._Workspace(root, None), []),
+    )
+    assert result is not None and result.killed
+    assert result.seconds == 7.0
+    assert "killed (SIGKILL) after 7 s" in result.diagnostics[0].message

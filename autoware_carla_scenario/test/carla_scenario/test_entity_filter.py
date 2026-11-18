@@ -148,6 +148,25 @@ class TestEntityFilter:
             EntityFilter(reference="npc1", max_distance_m=1.0, include_reference=True)
         )
 
+    @pytest.mark.parametrize("alias", ["ego", "hero", "EGO", "Hero"])
+    def test_the_ego_is_the_reference_under_any_of_its_role_names(
+        self, alias: str
+    ) -> None:
+        """#2193: actors are named as canonical_role_name reads them, so a
+        reference given as one of the ego's aliases finds it, and is left out
+        unless asked for."""
+        assert _names(EntityFilter(reference=alias, max_distance_m=16.0)) == [
+            "background4",
+            "background7",
+        ]
+        assert "Ego" not in _names(EntityFilter(reference=alias))
+        assert "Ego" in _names(EntityFilter(reference=alias, include_reference=True))
+        # The ego spawned under an alias is found the same way.
+        hero = _Actor(1, "vehicle.mini.cooper", "hero", 0.0, 0.0)
+        assert _names(
+            EntityFilter(reference=alias, max_distance_m=21.0), _world(hero, AHEAD)
+        ) == ["npc1"]
+
     def test_without_its_reference_a_relative_filter_takes_nothing(self) -> None:
         assert _names(EntityFilter(max_distance_m=100.0), _world(AHEAD)) == []
         # One with no relative bound does not need it.

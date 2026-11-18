@@ -269,6 +269,28 @@ class EgoVehicleConfig:
     native_autoware_interface: bool = False
 
 
+def _npc_number(key: str, value: float, default: float) -> float:
+    """*value*, an NPC's float field as its mapping held it, as a ``float``.
+
+    A config dataclass is not coerced, so ``spawn_s: "abc"`` would reach
+    ``math.isfinite()``, whose ``TypeError`` names no key, and ``true`` would
+    be read as 1.0.  Null is *default* (#2143); a bool, a string or anything
+    ``float()`` refuses (a list) is refused, naming *key* (#2193).
+
+    Raises:
+        ValueError: naming *key* and the value.
+    """
+    if value is None:
+        return default
+    if isinstance(value, bool) or isinstance(value, str):
+        raise ValueError(f"{key} must be a number, got {value!r}")
+    try:
+        number = float(value)
+    except TypeError:
+        raise ValueError(f"{key} must be a number, got {value!r}") from None
+    return number
+
+
 @dataclass
 class NpcVehicleConfig:
     """Configuration for a single NPC vehicle in a scenario."""
@@ -290,7 +312,9 @@ class NpcVehicleConfig:
         plain dataclass does not enforce) or that is not a whole number
         (``abc``, ``1.5``, a bool; #1984), normalising a whole float to an
         int; a NaN or infinite ``spawn_s``; and an ``initial_speed_kmh`` that
-        is not finite or is below zero (#1809): a NaN pose fails far from the
+        is not finite or is below zero (#1809), or either of them a bool, a
+        string or anything else that is no number (#2193; a null one is the
+        default, as elsewhere, #2143): a NaN pose fails far from the
         key behind it, a negative or NaN speed leaves the NPC still with no
         error and an infinite one breaks its physics.  Each would otherwise
         fail the run in ``setup()``, once CARLA, the map and the ego are up.
@@ -304,6 +328,11 @@ class NpcVehicleConfig:
             raise ValueError("spawn_lanelet_id is required: name the NPC's lanelet")
         self.spawn_lanelet_id = check_whole_number(
             "spawn_lanelet_id", self.spawn_lanelet_id
+        )
+        # Null is the default; a bool or a string is no number (#2193).
+        self.spawn_s = _npc_number("spawn_s", self.spawn_s, 0.0)
+        self.initial_speed_kmh = _npc_number(
+            "initial_speed_kmh", self.initial_speed_kmh, 0.0
         )
         if not math.isfinite(self.spawn_s):
             raise ValueError(f"spawn_s must be finite, got {self.spawn_s}")
