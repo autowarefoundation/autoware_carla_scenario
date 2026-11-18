@@ -897,6 +897,12 @@ self.register_pre_tick(
   `.vehicles_per_minute` left null are their defaults (30 km/h, 15 m and none
   a minute), as they are when absent; a value that is no number (`fast`) is
   refused, naming the key.
+- `background_traffic.source.stop_after_seconds` and
+  `background_traffic.sink.stop_after_seconds` end the source's adding and the
+  sink's removing after that many seconds of the run; null (the default) never
+  does. Anything else must be a positive, finite number of seconds (`abc`,
+  `0`, `false` or `''` is refused, naming the key), even when there is no
+  source rate or sink to end.
 - **`initial_vehicles`**, **`max_vehicles`** and `background_traffic.seed` are
   whole numbers, not negative (`20` or `20.0`; `max_vehicles` and `seed` may
   be null), `seed` at most 2147483647 (`2**31 - 1`, what SUMO's `--seed`
