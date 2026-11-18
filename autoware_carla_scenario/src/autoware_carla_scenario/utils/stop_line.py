@@ -272,6 +272,10 @@ def get_stop_line_linestrings_with_following(
     results = _collect_stop_lines_from_reg_elems(lanelet.regulatoryElements, seen_ids)
     if results:
         return [(lanelet_id, ls) for ls in results]
+    if depth == 0:
+        # The lanelet alone: no successors to find, so no routing graph to
+        # build for them, which reads the whole map (#2187).
+        return []
 
     # Second: check following lanelets
     if routing_graph is None:

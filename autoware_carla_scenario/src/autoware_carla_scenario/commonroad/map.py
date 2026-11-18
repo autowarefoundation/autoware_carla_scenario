@@ -21,6 +21,7 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+from ..utils.cache_dir import user_cache_dir
 from ..utils.opendrive import sanitize_opendrive
 
 __all__ = ["MAP_FILE", "commonroad_map", "default_cache_dir"]
@@ -39,10 +40,8 @@ _INSTALL = (
 
 def default_cache_dir() -> Path:
     """``$XDG_CACHE_HOME/autoware_carla_scenario/commonroad``, or under
-    ``~/.cache`` without it."""
-    xdg = os.environ.get("XDG_CACHE_HOME")
-    base = Path(xdg).expanduser() if xdg else Path.home() / ".cache"
-    return base / "autoware_carla_scenario" / "commonroad"
+    ``~/.cache`` without an absolute one (:func:`.user_cache_dir`)."""
+    return user_cache_dir() / "autoware_carla_scenario" / "commonroad"
 
 
 def _version(text: str) -> tuple[int, ...]:

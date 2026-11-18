@@ -57,13 +57,25 @@ class DevContainer:
     environment: Mapping[str, str] = field(default_factory=dict)
 
 
+class _ResolvedEnvironment(dict):  # type: ignore[type-arg]
+    """A service's ``environment`` :func:`_environment` has already resolved.
+
+    Kept apart from a Compose document's own mapping so that it is not
+    resolved again: Compose interpolates a value once, so a ``${X}`` in a
+    host value passed through (``- KEY``) stays (#2187).
+    """
+
+
 def _environment(raw: Any, env: Mapping[str, str]) -> dict[str, str]:
     """A Compose ``environment`` (mapping or ``KEY=value`` list), resolved.
 
     A key with no value -- ``- KEY``, or ``KEY:`` with nothing after it -- takes
     this process's value, as Compose passes the host's through, and is left
-    out when there is none rather than set empty.
+    out when there is none rather than set empty.  One already resolved
+    (:class:`_ResolvedEnvironment`) is taken as it is.
     """
+    if isinstance(raw, _ResolvedEnvironment):
+        return dict(raw)
     pairs: dict[str, str] = {}
     items: list[tuple[str, Optional[str]]] = []
     if isinstance(raw, Mapping):
@@ -99,7 +111,7 @@ def _merge_service(
     """
     for key, value in override.items():
         if key == "environment":
-            merged = _environment(base.get("environment"), env)
+            merged = _ResolvedEnvironment(_environment(base.get("environment"), env))
             merged.update(_environment(value, env))
             base[key] = merged
         elif key == "volumes":
@@ -150,9 +162,10 @@ def read_devcontainer(
     ``docker compose`` would resolve them.
 
     Raises:
-        DevContainerError: If the variant does not exist or names no image --
-            one built by Compose from a Dockerfile, say, which has to be named
-            as ``image`` in the configuration instead.
+        DevContainerError: If the variant does not exist, cannot be read or
+            is not a JSON object, or names no image -- one built by Compose
+            from a Dockerfile, say, which has to be named as ``image`` in the
+            configuration instead.
     """
     env = dict(os.environ if env is None else env)
     config_dir = workspace / ".devcontainer" / variant
@@ -167,9 +180,17 @@ def read_devcontainer(
             f"autowarefoundation/autoware; dev containers it has: {available or 'none'}."
         )
     try:
-        config = json.loads(_strip_jsonc(config_path.read_text()))
+        text = config_path.read_text()
+    except (OSError, UnicodeDecodeError) as exc:
+        raise DevContainerError(f"Could not read {config_path}: {exc}") from exc
+    try:
+        config = json.loads(_strip_jsonc(text))
     except json.JSONDecodeError as exc:
         raise DevContainerError(f"Could not parse {config_path}: {exc}") from exc
+    if not isinstance(config, Mapping):
+        raise DevContainerError(
+            f"{config_path} is not a JSON object (it is a {type(config).__name__})."
+        )
 
     # workspaceFolder may be a directory below the mount, or name variables
     # only VS Code resolves; it is the fallback, not the answer.
@@ -209,10 +230,13 @@ def read_devcontainer(
         compose_path = (config_dir / name).resolve()
         try:
             document = yaml.safe_load(compose_path.read_text()) or {}
-        except (OSError, yaml.YAMLError) as exc:
+        except (OSError, UnicodeDecodeError, yaml.YAMLError) as exc:
             raise DevContainerError(f"Could not read {compose_path}: {exc}") from exc
-        found = (document.get("services") or {}).get(service_name)
-        if found:
+        services = document.get("services") if isinstance(document, Mapping) else None
+        if not isinstance(services, Mapping):
+            services = {}
+        found = services.get(service_name)
+        if found and isinstance(found, Mapping):
             _merge_service(service, found, env)
     if not service:
         raise DevContainerError(

@@ -27,6 +27,7 @@ from typing import Optional
 # (#1678), the one rerun names it with; ui.recordings re-exports both names.
 from ..run_outputs import TRAJECTORY_SUFFIX
 from ..run_outputs import recording_path as recording_path
+from ..utils.cache_dir import user_cache_dir
 
 __all__ = [
     "DEFAULT_WEB_VIEWER_VERSION",
@@ -75,12 +76,7 @@ def _cache_root() -> Path:
     env = os.environ.get(_ENV_CACHE)
     if env is not None and env:
         return Path(env).expanduser()
-    xdg = os.environ.get("XDG_CACHE_HOME")
-    if xdg is not None and xdg:
-        base = Path(xdg).expanduser()
-    else:
-        base = Path.home() / ".cache"
-    return base / "autoware_carla_scenario" / "viewer"
+    return user_cache_dir() / "autoware_carla_scenario" / "viewer"
 
 
 def web_viewer_cache_dir(version: str, root: Optional[Path] = None) -> Path:
