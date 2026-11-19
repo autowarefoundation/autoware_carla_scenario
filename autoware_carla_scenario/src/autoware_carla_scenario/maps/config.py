@@ -189,7 +189,8 @@ def resolve_map_paths(
     Raises:
         ValueError: If a setting is a boolean or neither text nor a number
             (:func:`map_setting`), or ``map.overwrite_xodr`` is not a switch
-            (:func:`_flag`), naming the key and the value.
+            (:func:`_flag`), naming the key and the value; or
+            ``map.pack_sha256`` is set without ``map.pack``.
         MapSourceError, MapCacheError, MapResolutionError: If ``map.source``
             or ``map.directory`` is set and cannot be resolved.
         MapPackError: If ``map.pack`` is set and the pack cannot be fetched
@@ -201,6 +202,12 @@ def resolve_map_paths(
     pack = map_setting(map_config, "pack")
     pack_sha256 = map_setting(map_config, "pack_sha256")
     pack_xodr: Optional[Path] = None
+    if pack is None and pack_sha256 is not None:
+        # Nothing to pin: the run would go ahead unpinned (#2198).
+        raise ValueError(
+            "map.pack_sha256 pins the pack map.pack names, but map.pack is "
+            f"not set: got map.pack_sha256={pack_sha256!r}"
+        )
     if pack is not None:
         # Imported here: the pack module and carla-pack are needed only by a
         # config naming a pack.

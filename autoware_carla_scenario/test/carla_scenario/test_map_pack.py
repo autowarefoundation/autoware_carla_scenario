@@ -174,6 +174,51 @@ def test_the_packs_dir_is_configured_then_the_environment_then_home(
     assert packs_dir(str(tmp_path / "cfg")) == tmp_path / "cfg"
 
 
+def test_a_relative_packs_dir_is_made_absolute(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The server reads the path from its own working directory (#2198).
+    monkeypatch.chdir(tmp_path)
+    assert packs_dir("packs") == tmp_path / "packs"
+    monkeypatch.setenv(PACKS_DIR_ENV, "env-packs")
+    assert packs_dir() == tmp_path / "env-packs"
+    monkeypatch.delenv(PACKS_DIR_ENV)
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_HOME", "home")
+    assert packs_dir() == tmp_path / "home" / "packs"
+
+
+def test_a_symlinked_packs_dir_is_handed_over_as_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The server (or its container) may mount the path as written, not the
+    # directory a symlink on this machine points at.
+    (tmp_path / "real").mkdir()
+    (tmp_path / "home").symlink_to(tmp_path / "real")
+    monkeypatch.delenv(PACKS_DIR_ENV, raising=False)
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_HOME", str(tmp_path / "home"))
+    assert packs_dir() == tmp_path / "home" / "packs"
+    assert packs_dir(str(tmp_path / "home")) == tmp_path / "home"
+
+
+@pytest.mark.parametrize("configured", ["", "  "])
+def test_a_blank_packs_dir_is_refused(configured: str) -> None:
+    # null is the default; a blank string was read as it (#2143, #2198).
+    with pytest.raises(ValueError, match=rf"server\.packs_dir.*{configured!r}"):
+        packs_dir(configured)
+    cfg = OmegaConf.create({"map": {"pack": REF}, "server": {"packs_dir": configured}})
+    with pytest.raises(ValueError, match=r"server\.packs_dir"):
+        run.build_map_pack(cfg, SimpleNamespace(pack=f"{REF}@1.2.0", pack_sha256=SHA))
+
+
+def test_a_pack_sha256_without_a_pack_is_refused() -> None:
+    # Nothing would be pinned, and the run went ahead unpinned (#2198).
+    with pytest.raises(ValueError, match=rf"map\.pack_sha256='{SHA}'"):
+        resolve_map_paths({"name": "Town", "pack_sha256": SHA}, allow_fetch=False)
+    # Blank or null is unset, as for every map setting.
+    for unset in ("", None):
+        assert resolve_map_paths({"name": "Town", "pack_sha256": unset}).pack is None
+
+
 def test_without_carla_pack_the_error_says_how_to_install_it(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
@@ -525,16 +570,55 @@ def test_the_run_builds_the_pack_the_files_came_from(tmp_path: Path) -> None:
     assert run.build_map_pack(cfg, SimpleNamespace(pack=None)) is None
 
 
-def test_the_trajectory_log_names_the_pack_as_the_map_source() -> None:
-    assert (
-        run._map_source(OmegaConf.create({"map": {"pack": REF}})) == f"carla-pack:{REF}"
+def test_the_trajectory_log_names_the_pack_as_resolved() -> None:
+    # map.pack names a repository (searched) or a pack without a version: the
+    # log names the pack and version the run read, as resolved (#2198).
+    resolved = SimpleNamespace(source=None)
+    paths = SimpleNamespace(pack=f"{REF}@1.2.0", resolved=resolved)
+    for configured in ("acme/carla-packs", REF):
+        cfg = OmegaConf.create({"map": {"pack": configured}})
+        assert run._map_source(cfg, paths) == f"carla-pack:{REF}@1.2.0"
+    # The pack's Lanelet2 map wins over map.source (resolve_map_paths).
+    cfg = OmegaConf.create(
+        {"map": {"pack": REF, "source": "git+https://example.com/o/maps@v1#T"}}
     )
+    assert run._map_source(cfg, paths) == f"carla-pack:{REF}@1.2.0"
     assert (
         run._map_source(
-            OmegaConf.create({"map": {"pack": REF, "directory": "/maps/T"}})
+            OmegaConf.create({"map": {"pack": REF, "directory": "/maps/T"}}), paths
         )
         == "/maps/T"
     )
+
+
+def test_a_pack_without_lanelet2_leaves_the_map_source_to_map_source() -> None:
+    # The Lanelet2 map was map.source's, so the log names map.source (#2198).
+    source = "git+https://example.com/o/maps@v1#T"
+    paths = SimpleNamespace(
+        pack=f"{REF}@1.2.0", resolved=SimpleNamespace(source=object())
+    )
+    cfg = OmegaConf.create({"map": {"pack": REF, "source": source}})
+    assert run._map_source(cfg, paths) == source
+    # Without map.source the pack is still where the CARLA map came from.
+    no_lanelet2 = SimpleNamespace(pack=f"{REF}@1.2.0", resolved=None)
+    cfg = OmegaConf.create({"map": {"pack": REF}})
+    assert run._map_source(cfg, no_lanelet2) == f"carla-pack:{REF}@1.2.0"
+
+
+def test_a_blank_directory_or_source_does_not_hide_the_pack() -> None:
+    # Blank is unset, as resolve_map_paths reads it (#2198).
+    paths = SimpleNamespace(pack=f"{REF}@1.2.0", resolved=None)
+    cfg = OmegaConf.create({"map": {"pack": REF, "directory": " ", "source": ""}})
+    assert run._map_source(cfg, paths) == f"carla-pack:{REF}@1.2.0"
+
+
+def test_the_logged_pack_is_the_one_resolve_map_paths_resolved(
+    town: FakeClient,
+) -> None:
+    for configured in ("acme/carla-packs", REF):
+        cfg = OmegaConf.create({"map": {"name": "Town", "pack": configured}})
+        paths = resolve_map_paths(cfg.map)
+        assert run._map_source(cfg, paths) == f"carla-pack:{REF}@1.2.0"
 
 
 def test_a_batch_must_share_its_pack() -> None:
@@ -563,3 +647,29 @@ def test_the_real_carla_pack_takes_the_arguments_the_fakes_do() -> None:
     )
     assert {"repos", "sha256"} <= set(inspect.signature(registry.ensure_map).parameters)
     assert issubclass(registry.CarlaPackError, Exception)
+
+
+# ---------------------------------------------------------------------------
+# The sweeper
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("reference", "refusal", "error"),
+    [
+        (REF, ("Bad credentials", "unauthenticated"), PackAccessError),
+        ("acme/carla-packs", ("Town: not found", "not_found"), MapPackError),
+    ],
+)
+def test_a_pack_the_sweeper_cannot_fetch_is_an_invalid_sweep(
+    town: FakeClient, reference: str, refusal: tuple[str, str], error: type[Exception]
+) -> None:
+    # A RuntimeError escaped scenario-expand, a --multirun batch and the
+    # sweeper raw; it is a ValueError naming the map, as a source is (#2198).
+    from autoware_carla_scenario.sweeper.expand import load_sweep_map
+
+    town.refusal = refusal
+    map_cfg = OmegaConf.create({"name": "Town", "pack": reference})
+    with pytest.raises(ValueError, match=rf"^sweep: .*map\.pack={reference}") as e:
+        load_sweep_map(map_cfg, prefix="sweep: ")
+    assert isinstance(e.value.__cause__, error)

@@ -24,10 +24,10 @@ from pathlib import Path
 import pytest
 
 from autoware_carla_scenario.examples import run as run_module
-from autoware_carla_scenario.server import CarlaServerManager
+from autoware_carla_scenario.server import _WATCHDOG, CarlaServerManager
 from autoware_carla_scenario.sweeper import lanelet_constraint_sweeper as sweeper
 
-from ._stale_pids import signal_process
+from ._stale_pids import signal_group, signal_process, start_time
 
 #: How long a dead run's CARLA may take to go: the watchdog notices within a
 #: second, and the fake's sleep ends on the SIGTERM it then sends.
@@ -144,7 +144,7 @@ _RUN = textwrap.dedent(
     """
     import sys, time
     from pathlib import Path
-    from autoware_carla_scenario.server import CarlaServerManager
+    from autoware_carla_scenario.server import _WATCHDOG, CarlaServerManager
 
     ue5_pid, port, stopped = Path(sys.argv[1]), int(sys.argv[2]), Path(sys.argv[3])
     CarlaServerManager._ping = lambda self: ue5_pid.exists()
@@ -379,6 +379,84 @@ def test_a_carla_started_from_a_thread_outlives_the_thread(
         manager.stop()
     for pid in pids:
         assert _gone(pid, timeout=1.0), f"CARLA (pid {pid}) outlived stop()"
+
+
+#: Starts the watchdog as CarlaServerManager does, with this process as its
+#: parent, prints its pid and waits to be killed: the run that dies.
+_DYING_RUN = (
+    "import subprocess, sys, os, time\n"
+    "watchdog = subprocess.Popen(\n"
+    "    [sys.executable, '-I', '-c', sys.argv[1], str(os.getpid()), sys.argv[2]]\n"
+    "    + sys.argv[3:],\n"
+    "    start_new_session=True,\n"
+    ")\n"
+    "print(watchdog.pid, flush=True)\n"
+    "time.sleep(600)\n"
+)
+
+#: A launcher that, like ``CarlaUnreal.sh``, runs "UE5" as a child; this
+#: one ignores SIGTERM, so it outlives the launcher until the SIGKILL.
+_LAUNCHER = (
+    "import os, signal, subprocess, sys, time\n"
+    "ue5 = subprocess.Popen([sys.executable, '-I', '-c', \n"
+    "    'import signal, time; signal.signal(signal.SIGTERM, signal.SIG_IGN); '\n"
+    "    'time.sleep(600)'])\n"
+    "with open(sys.argv[1] + '.tmp', 'w') as out:\n"
+    "    out.write('%d 0' % ue5.pid)\n"  # _read_pid's "pid start-time"
+    "os.replace(sys.argv[1] + '.tmp', sys.argv[1])\n"
+    "time.sleep(600)\n"
+)
+
+
+def _cpu_ticks(pid: int) -> int:
+    """The user and system time *pid* has used, in clock ticks."""
+    with open(f"/proc/{pid}/stat") as stat:
+        fields = stat.read().rsplit(")", 1)[1].split()
+    return int(fields[11]) + int(fields[12])
+
+
+def test_the_watchdog_does_not_spin_while_it_waits_for_the_group(
+    tmp_path: Path,
+) -> None:
+    """Once the launcher has exited, ``child.wait()`` returns at once: the
+    watchdog sleeps between its looks at the group rather than scanning
+    ``/proc`` for the whole grace period without a pause (#2198)."""
+    ue5_file = tmp_path / "ue5"
+    run = subprocess.Popen(
+        [sys.executable, "-I", "-c", _DYING_RUN, _WATCHDOG, "8"]
+        + [sys.executable, "-I", "-c", _LAUNCHER, str(ue5_file)],
+        stdout=subprocess.PIPE,
+    )
+    members: list[tuple[int, int]] = []
+    watchdog = 0
+    try:
+        assert run.stdout is not None
+        watchdog = int(run.stdout.readline())
+        started = start_time(watchdog)
+        assert started is not None
+        members.append((watchdog, started))
+        ue5 = _wait_for(ue5_file)
+        ue5_started = start_time(ue5)
+        assert ue5_started is not None
+        members.append((ue5, ue5_started))
+        run.kill()
+        run.wait()
+        # The watchdog notices within a second, SIGTERMs the group (the
+        # launcher exits, UE5 does not) and waits up to its 8 s grace.
+        time.sleep(2.0)
+        assert _alive(ue5) and _alive(watchdog)
+        before = _cpu_ticks(watchdog)
+        time.sleep(1.0)
+        used = _cpu_ticks(watchdog) - before
+        assert _alive(ue5), "the grace period ended early"
+        ticks = os.sysconf("SC_CLK_TCK")
+        assert used < ticks * 0.3, f"the watchdog used {used}/{ticks} ticks in 1 s"
+    finally:
+        if run.returncode is None:
+            run.kill()
+            run.wait()
+        if members:
+            signal_group(watchdog, *members)
 
 
 def test_the_sigterm_handler_is_installed_only_over_the_default(

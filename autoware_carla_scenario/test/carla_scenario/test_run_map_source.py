@@ -6,6 +6,10 @@ import pytest
 from omegaconf import OmegaConf
 
 from autoware_carla_scenario.examples import run
+from autoware_carla_scenario.maps import MapPaths
+
+#: What resolve_map_paths gives for a config naming no pack.
+NO_PACK = MapPaths()
 
 
 def test_a_directory_wins_over_a_source_as_the_resolver_lets_it() -> None:
@@ -20,7 +24,7 @@ def test_a_directory_wins_over_a_source_as_the_resolver_lets_it() -> None:
             }
         }
     )
-    assert run._map_source(cfg) == "/maps/T"
+    assert run._map_source(cfg, NO_PACK) == "/maps/T"
 
 
 @pytest.mark.parametrize(
@@ -42,8 +46,8 @@ def test_a_directory_wins_over_a_source_as_the_resolver_lets_it() -> None:
 def test_either_alone_is_named(
     map_cfg: dict[str, object], expected: str | None
 ) -> None:
-    assert run._map_source(OmegaConf.create({"map": map_cfg})) == expected
+    assert run._map_source(OmegaConf.create({"map": map_cfg}), NO_PACK) == expected
 
 
 def test_a_config_without_a_map_names_none() -> None:
-    assert run._map_source(OmegaConf.create({})) is None
+    assert run._map_source(OmegaConf.create({}), NO_PACK) is None

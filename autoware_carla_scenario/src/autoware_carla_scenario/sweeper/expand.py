@@ -959,7 +959,10 @@ def load_sweep_map(map_cfg: Any, *, prefix: str = "") -> Any:
             MapResolutionError, MapCacheError), an ``OSError`` resolving it
             (the map cache's root not a directory, say), a Lanelet2 file that
             is missing (``FileNotFoundError``) or that Lanelet2 cannot read
-            (any ``OSError``, or its parser's ``RuntimeError``); or naming
+            (any ``OSError``, or its parser's ``RuntimeError``), or a
+            content pack (``map.pack``) that cannot be fetched or does not
+            carry the map (MapPackError, PackAccessError: no GitHub token,
+            say, #2198); or naming
             ``map.<key>`` and the value, when a setting is refused
             (:func:`~autoware_carla_scenario.maps.config.map_setting`, a
             boolean or a list for a path, #2165).
@@ -970,12 +973,17 @@ def load_sweep_map(map_cfg: Any, *, prefix: str = "") -> Any:
         MapSourceError,
         resolve_map_paths,
     )
+    from ..maps.pack import MapPackError  # noqa: PLC0415 -- PackAccessError's base
     from .map_loader import load_map  # noqa: PLC0415
 
     try:
         paths = resolve_map_paths(map_cfg)
     except (MapSourceError, MapResolutionError, MapCacheError) as exc:
         raise ValueError(f"{prefix}{exc}") from exc  # each names the map
+    except MapPackError as exc:  # a RuntimeError, PackAccessError too (#2198)
+        raise ValueError(
+            f"{prefix}Could not load the map{_map_label(map_cfg)}: {exc}"
+        ) from exc
     except ValueError as exc:  # a map.* setting refused, naming it (#2165)
         raise ValueError(f"{prefix}{exc}") from exc
     except OSError as exc:  # the map cache's own directory, say
@@ -994,12 +1002,13 @@ def load_sweep_map(map_cfg: Any, *, prefix: str = "") -> Any:
 
 def _map_label(map_cfg: Any) -> str:
     """`` map.<key>=<value>`` for the setting *map_cfg*'s map is resolved
-    from -- ``map.directory`` wins over ``map.source``, as in
+    from -- ``map.directory`` wins over ``map.pack``, and that over
+    ``map.source``, as in
     :func:`~autoware_carla_scenario.maps.resolve_map_paths` -- or its
     ``map.name``; ``""`` when none is set."""
     if not isinstance(map_cfg, DictConfig):
         return ""
-    for key in ("directory", "source", "name"):
+    for key in ("directory", "pack", "source", "name"):
         value = OmegaConf.select(map_cfg, key)
         if value is not None and str(value).strip():
             return f" map.{key}={value}"

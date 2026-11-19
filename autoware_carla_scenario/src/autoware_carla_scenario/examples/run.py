@@ -1604,20 +1604,33 @@ def _with_fog_density_scale(driver: dict[str, Any], cfg: DictConfig) -> dict[str
     }
 
 
-def _map_source(cfg: DictConfig) -> str | None:
+def _map_source(cfg: DictConfig, map_paths: Any) -> str | None:
     """Where the map came from: ``map.directory``, else ``map.pack`` (as
-    ``carla-pack:OWNER/REPO/PACK[@VERSION]``), else ``map.source``.
+    ``carla-pack:OWNER/REPO/PACK@VERSION``), else ``map.source``.
 
     The same order :func:`resolve_map_paths` resolves them in: a directory on
     this machine wins over a pack, and a pack over a source, so the map the
-    run read is the one named.
+    run read is the one named.  The pack is named as *map_paths* resolved it
+    (:attr:`~autoware_carla_scenario.maps.config.MapPaths.pack`), with its
+    version, not as configured -- ``map.pack=OWNER/REPO`` searches a pack
+    repository, and a pack without ``@VERSION`` is its newest -- so the log
+    says which pack the run read (#2198).  A pack that carries no Lanelet2
+    map leaves it to ``map.source``, which is then the source named.
     """
-    map_cfg = cfg.get("map") or {}
-    for key in ("directory", "pack", "source"):
-        value = map_cfg.get(key)
-        if value:
-            return f"carla-pack:{value}" if key == "pack" else str(value)
-    return None
+    # Read as resolve_map_paths reads them: a blank setting is unset (#2198).
+    directory = _map_setting(cfg, "directory")
+    if directory:
+        return str(directory)
+    source = _map_setting(cfg, "source")
+    pack = getattr(map_paths, "pack", None)
+    if isinstance(pack, str) and pack:
+        resolved = getattr(map_paths, "resolved", None)
+        # The pack's Lanelet2 map is read as a directory (no source); a
+        # resolved source means the Lanelet2 map is map.source's.
+        from_pack = resolved is not None and resolved.source is None
+        if from_pack or not source:
+            return f"carla-pack:{pack}"
+    return str(source) if source else None
 
 
 def build_map_pack(cfg: DictConfig, map_paths: Any) -> MapPack | None:
@@ -1631,7 +1644,7 @@ def build_map_pack(cfg: DictConfig, map_paths: Any) -> MapPack | None:
 
     Raises:
         ValueError: ``map.pack`` or ``map.pack_sha256`` is malformed, or
-            ``server.packs_dir`` is not text.
+            ``server.packs_dir`` is not text or is blank (#2198).
     """
     reference = getattr(map_paths, "pack", None)
     if not isinstance(reference, str) or not reference:
@@ -2396,7 +2409,7 @@ def _batch_queue(
         odd=_odd_spec(first_cfg),
         autoware_launcher=build_autoware_launcher(first_cfg),
         server_extra_args=[*server_extra_args(first_cfg), *(extra_server_args or [])],
-        map_source=_map_source(first_cfg),
+        map_source=_map_source(first_cfg, map_paths),
         rerun=rerun,
         t4=build_t4_recorder(first_cfg),
         world_reset=world_reset,
@@ -4069,7 +4082,7 @@ def _run_scenario(
         autoware_launcher=build_autoware_launcher(cfg),
         case=_odd_case(cfg),
         server_extra_args=server_extra_args(cfg),
-        map_source=_map_source(cfg),
+        map_source=_map_source(cfg, map_paths),
         rerun=rerun,
         t4=build_t4_recorder(cfg),
         world_reset=world_reset,

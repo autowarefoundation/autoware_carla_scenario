@@ -99,7 +99,11 @@ mounted, and its OpenDRIVE is still read unless the directory ships one. A
 batch's cases must agree on `map.pack` and `map.pack_sha256`, as they must on
 every other map setting.
 
-The trajectory log records the map's source as `carla-pack:OWNER/REPO/PACK[@VERSION]`.
+The trajectory log records the map's source as the pack the run read,
+`carla-pack:OWNER/REPO/PACK@VERSION` -- the version included, also for
+`map.pack=OWNER/REPO` or a pack named without one. When the pack carries no
+Lanelet2 map and `map.source` gives it, the log names `map.source` instead.
+`map.pack_sha256` without `map.pack` is refused: there is nothing to pin.
 
 ## Where packs are installed
 
@@ -110,6 +114,10 @@ The server reads a pack at the path it is installed at:
 | `server.packs_dir` | `null` |
 | `AUTOWARE_CARLA_SCENARIO_PACKS_DIR` | -- |
 | otherwise | `~/.autoware_carla_scenario/packs` (`AUTOWARE_CARLA_SCENARIO_HOME/packs`) |
+
+A relative path is taken from the working directory of the run and made
+absolute before it is handed to the server. A blank `server.packs_dir` is
+refused; `null` is the default.
 
 A server on another machine (`server.host`) needs a directory it reads at the
 same path as this machine -- a shared mount -- or the mount is refused. Each

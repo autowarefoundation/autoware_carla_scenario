@@ -451,9 +451,11 @@ class CarlaCameraSensor(CameraSensorBase):
         Frames arrive asynchronously into a bounded FIFO, and at the default
         20 Hz capture against a 10 Hz policy two frames land per policy step.
         Taking only the oldest each time would leave the queue permanently full:
-        the ``listen`` callback then blocks on ``put``, frames back up, and the
-        caller is fed steadily staler images.  So the queue is drained to its most
-        recent entry and the older frames are dropped rather than delivered late.
+        the ``listen`` callback (:meth:`_on_sensor_data`, which never blocks)
+        then drops the oldest frame for each new one, and the caller is fed the
+        oldest left, steadily staler images.  So the queue is drained to its
+        most recent entry and the older frames are dropped rather than
+        delivered late.
 
         Blocks for up to :data:`_FRAME_TIMEOUT` seconds for the first frame, then
         takes whatever else is already queued without waiting.  Returns ``None``

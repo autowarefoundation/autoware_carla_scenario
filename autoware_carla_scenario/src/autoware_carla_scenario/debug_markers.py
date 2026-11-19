@@ -18,7 +18,6 @@ if TYPE_CHECKING:
     from .driver.geometry import Pose, Trajectory
 
 __all__ = [
-    "DRIVEN_PATH_COLOR",
     "TRAJECTORY_COLOR",
     "DebugMarkers",
     "DebugPolyline",
@@ -34,9 +33,6 @@ WorldPoint = Tuple[float, float, float]
 
 #: The colour a planned trajectory is drawn in.
 TRAJECTORY_COLOR: RGB = (0, 255, 0)
-
-#: The colour a viewer draws the path the ego drove in.
-DRIVEN_PATH_COLOR: RGB = (255, 128, 0)
 
 #: How far above its points a trajectory is drawn, metres: a plan lies on the
 #: road surface, where a line would sink into the asphalt.

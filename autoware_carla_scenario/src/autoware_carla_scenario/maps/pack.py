@@ -37,6 +37,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Optional
 
+from ..carla_install_paths import home_dir
+
 logger = logging.getLogger(__name__)
 
 __all__ = [
@@ -50,9 +52,6 @@ __all__ = [
 
 PACKS_DIR_ENV = "AUTOWARE_CARLA_SCENARIO_PACKS_DIR"
 """Overrides where packs are installed for the server (:func:`packs_dir`)."""
-
-_HOME_ENV = "AUTOWARE_CARLA_SCENARIO_HOME"
-"""The framework's home directory (``carla_install_paths.HOME_ENV``)."""
 
 _NAME = r"[A-Za-z0-9_.-]+"
 _REFERENCE = re.compile(rf"^{_NAME}/{_NAME}(?:/{_NAME}(?:@[A-Za-z0-9_.+-]+)?)?$")
@@ -115,17 +114,29 @@ def packs_dir(configured: Optional[str] = None) -> Path:
 
     *configured* (``server.packs_dir``) first, then the
     ``AUTOWARE_CARLA_SCENARIO_PACKS_DIR`` environment variable, else
-    ``<home>/packs`` (``~/.autoware_carla_scenario/packs``).  The server reads
-    the pack at the path it is installed at, so a server on another machine
-    needs a directory both see at the same path.
+    ``<home>/packs`` (``~/.autoware_carla_scenario/packs``,
+    :func:`~autoware_carla_scenario.carla_install_paths.home_dir`).  The server
+    reads the pack at the path it is installed at, so a server on another
+    machine needs a directory both see at the same path; a relative one is
+    taken from this process's working directory and made absolute here, as
+    the server, with a working directory of its own, could not read it
+    (#2198).  Symlinks are kept, not resolved (``Path.absolute()``, not
+    ``resolve()``): the server, or a container it runs in, may see the path
+    as written -- a bind mount of ``~/.autoware_carla_scenario`` -- but not
+    the directory a symlink on this machine points at.
+
+    Raises:
+        ValueError: *configured* is blank: ``server.packs_dir`` is a path, or
+            null for the default (#2143, #2198).
     """
-    if configured is not None and configured.strip():
-        return Path(configured.strip()).expanduser()
+    if configured is not None:
+        if not configured.strip():
+            raise ValueError(f"server.packs_dir must be a path, got {configured!r}")
+        return Path(configured.strip()).expanduser().absolute()
     from_env = os.environ.get(PACKS_DIR_ENV, "").strip()
     if from_env:
-        return Path(from_env).expanduser()
-    home = os.environ.get(_HOME_ENV, "").strip() or "~/.autoware_carla_scenario"
-    return Path(home).expanduser() / "packs"
+        return Path(from_env).expanduser().absolute()
+    return (home_dir() / "packs").absolute()
 
 
 def _short(name: str) -> str:

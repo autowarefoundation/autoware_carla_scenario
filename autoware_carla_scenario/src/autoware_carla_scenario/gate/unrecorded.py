@@ -21,6 +21,8 @@ import json
 from pathlib import Path
 from typing import Any, Optional
 
+# The suffix of a run's result, beside its gate record: run_outputs's (#2198).
+from ..run_outputs import RESULT_SUFFIX as _RESULT_SUFFIX
 from .errored import CASE_ERRORED, find_case_errored, read_case_errored
 from .record import GATE_RECORD_SUFFIX
 from .sweep_plan import find_sweep_plans, read_sweep_plan
@@ -31,9 +33,6 @@ __all__ = [
 
 #: The summary a batch writes beside its runs' outputs (``batch_report``).
 BATCH_RESULTS = "batch_results.json"
-
-#: The suffix of a run's result, beside its gate record.
-_RESULT_SUFFIX = "_result.json"
 
 #: How many of a batch's unrecorded cases the refusal names.
 _NAMED = 5
