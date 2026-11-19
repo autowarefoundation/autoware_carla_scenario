@@ -232,6 +232,16 @@ def test_a_repeat_closes_the_run_it_drops() -> None:
     assert made[-1].closed
 
 
+def test_a_reset_closes_the_run_it_drops() -> None:
+    """Reset between runs, the last run's execution is closed, not only
+    forgotten, as AdversarialTrafficAction.reset() does (#1298, #2200)."""
+    action = AdversarialBrakeAction("npc1", ANY)
+    _run(action, [_brake_world(1)])
+    action.reset()
+    assert made[0].closed
+    assert action.finished
+
+
 def test_closing_closes_the_path() -> None:
     action = AdversarialBrakeAction("npc1", ANY)
     _run(action, [_brake_world(1)])

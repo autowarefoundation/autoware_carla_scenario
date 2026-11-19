@@ -217,6 +217,11 @@ class AdversarialAction(BaseAction):
         reset the feasibility check, which draws from its seed afresh."""
         super().reset()
         self._feasible.reset()
+        # Closed, not only dropped, as on a repeat and as
+        # AdversarialTrafficAction.reset() does (#1298, #2200).
+        if self._execution is not None:
+            execution: AdversarialExecution = self._execution
+            execution.close()
         self._execution = None
         self._elapsed = 0.0
 
