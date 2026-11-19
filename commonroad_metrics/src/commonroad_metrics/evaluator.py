@@ -1072,6 +1072,56 @@ def _signed_crime_measures() -> dict[str, type]:
             super().__init__(config)
             self._ttc_object = SignedTTC(config)
 
+        def compute(self, vehicle_id: int, time_step: int = 0, verbose: bool = True) -> Any:
+            # CriMe 0.4's, but reading the lane headings on the ego's lanelet
+            # as _best_lanelet picks it (the one the frame was turned for)
+            # rather than the first one found under the ego, which in a
+            # junction can be a turning connecting lanelet (#2211).
+            if not self.validate_update_states_log(vehicle_id, time_step, verbose):
+                return np.nan
+            if self._except_obstacle_in_same_lanelet(expected_value=0.0, verbose=verbose):
+                return self.value
+            state = self.ego_vehicle.state_at_time(time_step)
+            state_other = self.other_vehicle.state_at_time(time_step)
+            network = self.sce.lanelet_network
+            lanelet = network.find_lanelet_by_id(
+                _best_lanelet(
+                    network,
+                    network.find_lanelet_by_position([state.position])[0],
+                    state.orientation,
+                )
+            )
+            ego_orientation = heading_at(lanelet, state.position)
+            try:
+                other_orientation = heading_at(lanelet, state_other.position)
+            except ValueError:
+                # Out of the projection's domain: the other is far away.
+                self.value = 0.0
+            else:
+                ttc = self._ttc_object.compute(vehicle_id, time_step, verbose=verbose)
+                if ttc == math.inf:
+                    self.value = 0.0
+                    return self.value
+                a_obj_lat = math.sqrt(
+                    state_other.acceleration_y**2 + state_other.acceleration**2
+                ) * math.sin(other_orientation)
+                # CriMe's, ego to ego, kept as it is.
+                d_rel_lat = utils_sol.compute_clcs_distance(
+                    self.clcs, state.position, state.position
+                )[1]
+                v_rel_lat = (
+                    math.sqrt(state_other.velocity**2 + state_other.velocity_y**2)
+                    * math.sin(other_orientation)
+                    - math.sqrt(state.velocity**2 + state.velocity_y**2)
+                ) * math.sin(ego_orientation)
+                self.value = min(
+                    abs(self._compute_a_lat(a_obj_lat, d_rel_lat, v_rel_lat, ttc, "left")),
+                    abs(self._compute_a_lat(a_obj_lat, d_rel_lat, v_rel_lat, ttc, "right")),
+                )
+            if self.value != math.inf:
+                self.value = utils_gen.int_round(self.value, 2)
+            return self.value
+
     class SignedSTN(STN):
         def __init__(self, config: Any) -> None:
             super().__init__(config)
