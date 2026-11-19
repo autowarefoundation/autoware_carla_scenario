@@ -66,6 +66,26 @@ def test_the_metric_records_are_read_in_order(tmp_path: Path) -> None:
     assert metric_records(_log(tmp_path / "n.trajectory.jsonl", metrics=False)) == []
 
 
+def test_a_line_that_is_no_json_object_is_skipped(tmp_path: Path) -> None:
+    # json.loads() of these is a list, a string and a number: no record, so
+    # skipped rather than raising AttributeError into merge_metrics (#2208).
+    trajectory = _log(tmp_path / "s.trajectory.jsonl")
+    with trajectory.open("a") as log:
+        log.write('["metric"]\n"metric"\n')
+        log.write('[{"type": "metric", "frame": 200}]\n')
+    records = metric_records(trajectory)
+    assert [r["frame"] for r in records] == list(range(100, 110))
+
+
+def test_a_log_of_no_json_objects_leaves_the_recording(tmp_path: Path) -> None:
+    trajectory = tmp_path / "s.trajectory.jsonl"
+    trajectory.write_text('["metric"]\n"metric"\n')
+    recording = tmp_path / "s.rrd"
+    recording.write_bytes(b"untouched")
+    assert not merge_metrics(trajectory, recording, "s")
+    assert recording.read_bytes() == b"untouched"
+
+
 def test_a_log_without_metrics_leaves_the_recording(tmp_path: Path) -> None:
     trajectory = _log(tmp_path / "s.trajectory.jsonl", metrics=False)
     recording = tmp_path / "s.rrd"

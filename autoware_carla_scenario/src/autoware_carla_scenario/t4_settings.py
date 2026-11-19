@@ -67,7 +67,7 @@ def _bad_max_distance(value: float) -> str:
     """Why ``t4.max_distance_m`` = *value* is refused: 0, a negative distance
     or NaN would annotate no road user, infinity is what null says, and a
     bool is not a distance (t4_scene.grid.checked_max_distance's rule)."""
-    return f"t4.max_distance_m must be positive and finite (null for no limit), not {value}"
+    return f"t4.max_distance_m must be positive and finite (null for no limit), not {value!r}"
 
 
 @dataclass(frozen=True)

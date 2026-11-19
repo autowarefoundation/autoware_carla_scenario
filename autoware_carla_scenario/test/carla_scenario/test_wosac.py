@@ -6,6 +6,7 @@ from __future__ import annotations
 import json
 import logging
 import math
+import re
 import tarfile
 from pathlib import Path
 from typing import Any, Optional
@@ -899,3 +900,85 @@ def test_the_command_packs_rollouts_of_their_own_seeds(
     )
     assert "do not share an initial state" in capsys.readouterr().err
     assert main(["pack", str(tmp_path), "-o", str(out)]) == 0
+
+
+_MALFORMED_SIDECARS = [
+    ({"agents": "abc"}, "agents must be a list"),
+    ({"agents": [1]}, r"agents\[0\] must be an object"),
+    ({"agents": [{"current": [0, 0, 0, 0]}]}, r"agents\[0\]\.object_id"),
+    ({"agents": [{"object_id": "x"}]}, r"agents\[0\]\.object_id"),
+    ({"agents": [{"object_id": True}]}, r"agents\[0\]\.object_id"),
+    ({"agents": [{"object_id": 1, "current": [0, 0]}]}, r"agents\[0\]\.current"),
+    ({"agents": [{"object_id": 1, "current": 5}]}, r"agents\[0\]\.current"),
+    (
+        {"agents": [{"object_id": 1, "current": [0, 0, 0, "north"]}]},
+        r"agents\[0\]\.current",
+    ),
+    ({"offset": [0, 0]}, "offset must be a list of 3 numbers"),
+    ({"offset": "abc"}, "offset must be a list of 3 numbers"),
+    ({"seed": [1]}, "seed must be a whole number"),
+    ({"seed": "one"}, "seed must be a whole number"),
+]
+
+
+@pytest.mark.parametrize(("change", "message"), _MALFORMED_SIDECARS)
+def test_read_run_refuses_a_sidecar_check_runs_cannot_read(
+    tmp_path: Path, change: dict, message: str
+) -> None:
+    run = {**_export(tmp_path, "Run", 3), **change}
+    sidecar = tmp_path / "Run.wosac.json"
+    sidecar.write_text(json.dumps(run))
+    with pytest.raises(ValueError, match=message) as refused:
+        read_run(tmp_path / "Run.wosac.pb")
+    assert str(refused.value).startswith(f"{sidecar}: ")
+
+
+def test_read_run_lets_null_seed_offset_and_agents_through(tmp_path: Path) -> None:
+    run = {**_export(tmp_path, "Run", 3), "seed": None, "offset": None, "agents": None}
+    (tmp_path / "Run.wosac.json").write_text(json.dumps(run))
+    assert read_run(tmp_path / "Run.wosac.pb") == run
+
+
+@pytest.mark.parametrize(("change", "message"), _MALFORMED_SIDECARS)
+def test_the_command_reports_a_malformed_sidecar(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], change: dict, message: str
+) -> None:
+    # A KeyError, AttributeError or TypeError of check_runs() was a
+    # traceback; it is the file and what is wrong with it (#2208).
+    for n in range(2):
+        _write_log(tmp_path / f"CutIn-{n}.trajectory.jsonl", extra=(_run_record(n),))
+    assert main(["export", str(tmp_path), "--scenario-id", "CutIn"]) == 0
+    capsys.readouterr()
+    sidecar = tmp_path / "CutIn-1.wosac.json"
+    sidecar.write_text(json.dumps({**json.loads(sidecar.read_text()), **change}))
+    assert main(["pack", str(tmp_path), "-o", str(tmp_path / "s")]) == 1
+    err = capsys.readouterr().err
+    assert err.startswith(f"scenario-wosac pack: {sidecar}: ")
+    assert re.search(message, err)
+    assert "Traceback" not in err
+    assert not (tmp_path / "s").exists()
+
+
+@pytest.mark.parametrize(
+    ("flag", "value"),
+    [
+        ("--position-tolerance", "-1"),
+        ("--position-tolerance", "nan"),
+        ("--heading-tolerance", "inf"),
+        ("--heading-tolerance", "-0.5"),
+    ],
+)
+def test_the_command_names_the_tolerance_flag_it_refuses(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str], flag: str, value: str
+) -> None:
+    for n in range(2):
+        _write_log(tmp_path / f"CutIn-{n}.trajectory.jsonl", extra=(_run_record(n),))
+    assert main(["export", str(tmp_path), "--scenario-id", "CutIn"]) == 0
+    capsys.readouterr()
+    with pytest.raises(SystemExit) as exited:
+        main(["pack", str(tmp_path), "-o", str(tmp_path / "s"), flag, value])
+    assert exited.value.code == 2
+    err = capsys.readouterr().err
+    assert f"{flag} must be a finite number >= 0, not {float(value)!r}" in err
+    assert "tolerance_m" not in err and "tolerance_rad" not in err
+    assert not (tmp_path / "s").exists()

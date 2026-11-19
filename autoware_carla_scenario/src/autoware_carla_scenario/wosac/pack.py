@@ -103,7 +103,9 @@ def read_run(path: Path | str) -> Optional[dict[str, Any]]:
     there is none (a file merged from several, or renamed).
 
     Raises:
-        ValueError: If the file is there but holds no JSON object.
+        ValueError: If the file is there but holds no JSON object, or one
+            whose ``seed``, ``offset`` or ``agents`` :func:`check_runs` cannot
+            read (:func:`_check_run`), naming the file.
     """
     if not Path(path).name.endswith(WOSAC_SUFFIX):
         return None
@@ -116,7 +118,72 @@ def read_run(path: Path | str) -> Optional[dict[str, Any]]:
         raise ValueError(f"{sidecar}: not JSON ({error})") from None
     if not isinstance(run, dict):
         raise ValueError(f"{sidecar}: not a JSON object")
+    problem = _check_run(run)
+    if problem is not None:
+        raise ValueError(f"{sidecar}: {problem}")
     return run
+
+
+def _whole(value: Any) -> bool:
+    """Whether ``int(value)`` reads *value* as a whole number: not a bool,
+    which a sidecar never holds for an id or a seed."""
+    if isinstance(value, bool):
+        return False
+    try:
+        int(value)
+    except (TypeError, ValueError, OverflowError):
+        return False
+    return True
+
+
+def _numbers(value: Any, count: int) -> bool:
+    """Whether *value* is a list of *count* values ``float()`` reads."""
+    if not isinstance(value, list) or len(value) != count:
+        return False
+    for item in value:
+        if isinstance(item, bool):
+            return False
+        try:
+            float(item)
+        except (TypeError, ValueError):
+            return False
+    return True
+
+
+def _check_run(run: Mapping[str, Any]) -> Optional[str]:
+    """Why :func:`check_runs` cannot read the sidecar *run*
+    (:func:`_check_scenario_runs`, :func:`_current_poses`), or ``None``: a
+    ``seed`` that is no whole number, an ``offset`` that is not three
+    numbers, ``agents`` that are not a list of objects, each with a whole
+    ``object_id`` and a ``current`` pose of four numbers or null (#2208).
+    Absent or null, ``seed``, ``offset`` and ``agents`` are let through, as
+    :func:`check_runs` reads them."""
+    seed = run.get("seed")
+    if seed is not None and not _whole(seed):
+        return f"seed must be a whole number or null, not {seed!r}"
+    offset = run.get("offset")
+    if offset is not None and not _numbers(offset, 3):
+        return f"offset must be a list of 3 numbers or null, not {offset!r}"
+    agents = run.get("agents")
+    if agents is None:
+        return None
+    if not isinstance(agents, list):
+        return f"agents must be a list or null, not {agents!r}"
+    for index, agent in enumerate(agents):
+        if not isinstance(agent, dict):
+            return f"agents[{index}] must be an object, not {agent!r}"
+        if not _whole(agent.get("object_id")):
+            return (
+                f"agents[{index}].object_id must be a whole number, not "
+                f"{agent.get('object_id')!r}"
+            )
+        current = agent.get("current")
+        if current is not None and not _numbers(current, 4):
+            return (
+                f"agents[{index}].current must be a list of 4 numbers "
+                f"(x, y, z, heading) or null, not {current!r}"
+            )
+    return None
 
 
 def _check_scenario_runs(

@@ -132,6 +132,22 @@ def test_settings_refuse_a_max_distance_that_is_not_positive_and_finite(
         T4Settings.from_driver(_driver(), {"max_distance_m": distance})
 
 
+@pytest.mark.parametrize(
+    ("distance", "shown"),
+    [("", "''"), ("100", "'100'"), (True, "True"), (0.0, "0.0"), (-1, "-1.0")],
+)
+def test_a_refused_max_distance_is_shown_as_written(
+    distance: object, shown: str
+) -> None:
+    # With repr: '' would read "..., not " and '100' "... not 100" (#2208).
+    with pytest.raises(ValueError) as refused:
+        T4Settings.from_driver(_driver(), {"max_distance_m": distance})
+    assert str(refused.value) == (
+        "t4.max_distance_m must be positive and finite (null for no limit), "
+        f"not {shown}"
+    )
+
+
 def test_settings_take_a_positive_max_distance() -> None:
     settings = T4Settings.from_driver(_driver(), {"max_distance_m": 30})
     assert settings.max_distance_m == 30.0

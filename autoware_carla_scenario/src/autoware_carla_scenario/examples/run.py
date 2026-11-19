@@ -3279,9 +3279,18 @@ def _check_driver_settings(cfg: DictConfig) -> None:
     ``noise_seed``, ``driver.control.kp``, ...), building only the configs:
     nothing dials a policy.
 
+    And ``t4.enabled`` with ``driver.lidars`` but not
+    ``driver.send_renderer_data``: the dataset of a driver entity takes its
+    sweeps from the LiDARs the entity attaches for the policy's
+    ``renderer_data``, which it attaches only with it, so the dataset would
+    have no point cloud (no sample at all with no camera) -- refused as
+    ``driver.t4_scene`` is without it (#2208).
+
     Raises:
         ValueError: When :class:`~autoware_carla_scenario.driver.DriverClientConfig`
-            or the trajectory follower's ``driver.control`` refuses them.
+            or the trajectory follower's ``driver.control`` refuses them, or
+            ``t4.enabled`` asks for the driver's LiDARs without
+            ``driver.send_renderer_data``.
     """
     if _ego_entity_setting(cfg) != "carla_driver":
         return
@@ -3292,7 +3301,17 @@ def _check_driver_settings(cfg: DictConfig) -> None:
 
     driver_dict = _with_fog_density_scale(_to_dict(driver_cfg), cfg)
     _control_config(driver_dict, "driver")
-    DriverClientConfig.from_mapping(driver_dict)
+    driver = DriverClientConfig.from_mapping(driver_dict)
+    if (
+        _switch(cfg, "t4", "enabled")
+        and driver.lidars
+        and not driver.send_renderer_data
+    ):
+        raise ValueError(
+            "t4.enabled takes the LiDAR sweeps of an ego.entity=carla_driver "
+            "from its renderer_data: driver.lidars needs "
+            "driver.send_renderer_data"
+        )
 
 
 def _control_config(section: Mapping[str, Any], name: str) -> "ControlConfig":
