@@ -118,6 +118,12 @@ class ServerConfig:
     #: every this many-th reset; 0 only when a soft reset cannot be done.
     reload_every: int = 0
 
+    #: Where a map's content pack (``map.pack``) is installed for the server
+    #: to mount.  *None*: ``AUTOWARE_CARLA_SCENARIO_PACKS_DIR``, else
+    #: ``~/.autoware_carla_scenario/packs``.  The server reads the pack at
+    #: this path, so a server on another machine needs one it sees there too.
+    packs_dir: str | None = None
+
 
 @dataclass
 class MapConfig:
@@ -181,6 +187,22 @@ class MapConfig:
     #: sweep constraints that name it (``${map.no_3d_model_lanelet_ids}``);
     #: ``autoware_carla_scenario.tools.detect_no_3d_model_lanelets`` finds them.
     no_3d_model_lanelet_ids: List[int] = field(default_factory=list)
+
+    #: The CARLA content pack the map is mounted from, shared through
+    #: carla-pack-registry (the ``pack`` extra; docs/content_packs.md)::
+    #:
+    #:     map.pack=OWNER/REPO/PACK@VERSION   # one pack (newest without @)
+    #:     map.pack=OWNER/REPO                # the newest pack providing map.name
+    #:
+    #: The pack is fetched before the run, its Lanelet2 map (the ``autoware``
+    #: or ``lanelet2`` data it carries) read as ``map.directory`` would read
+    #: it -- ``map.directory`` itself still wins -- and its OpenDRIVE read as
+    #: the road network; it is then installed into ``server.packs_dir`` and
+    #: mounted on the server before the map is loaded.
+    pack: str | None = None
+
+    #: Pins ``map.pack`` to one artifact by its SHA-256, as a lock file would.
+    pack_sha256: str | None = None
 
 
 @dataclass

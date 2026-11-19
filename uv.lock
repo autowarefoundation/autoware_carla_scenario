@@ -32,6 +32,7 @@ dev = [
     { name = "autoware-carla-scenario-rerun", specifier = ">=0.3,<0.4" },
     { name = "autoware-carla-scenario-t4", specifier = ">=0.1,<0.2" },
     { name = "black", specifier = ">=25.11.0" },
+    { name = "carla-pack-registry", specifier = ">=0.3.2,<0.4" },
     { name = "colorama", marker = "python_full_version < '3.13'", specifier = ">=0.4.6" },
     { name = "cyclonedds", marker = "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux'", specifier = ">=11.0.1" },
     { name = "eclipse-sumo", specifier = ">=1.23" },
@@ -326,6 +327,9 @@ hils-setup = [
 map = [
     { name = "roadgen" },
 ]
+pack = [
+    { name = "carla-pack-registry" },
+]
 rerun = [
     { name = "autoware-carla-scenario-rerun" },
     { name = "rerun-sdk" },
@@ -361,6 +365,7 @@ requires-dist = [
     { name = "autoware-carla-scenario-rerun", extras = ["viewer"], marker = "extra == 'viewer'", specifier = ">=0.3,<0.4" },
     { name = "autoware-carla-scenario-t4", marker = "extra == 't4'", specifier = ">=0.1,<0.2" },
     { name = "carla-driver-interface", specifier = ">=2.4.2,<3" },
+    { name = "carla-pack-registry", marker = "extra == 'pack'", specifier = ">=0.3.2,<0.4" },
     { name = "cyclonedds", marker = "python_full_version < '3.14' and platform_machine == 'x86_64' and sys_platform == 'linux' and extra == 'ros2'", specifier = ">=11.0.1" },
     { name = "eclipse-sumo", marker = "extra == 'sumo'", specifier = ">=1.23" },
     { name = "fastapi", specifier = ">=0.115.0" },
@@ -396,7 +401,7 @@ requires-dist = [
     { name = "typesafe-carla", marker = "(platform_machine == 'aarch64' or platform_machine == 'x86_64') and sys_platform == 'linux'", specifier = ">=0.8.1,<0.9" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.34.0" },
 ]
-provides-extras = ["sumo", "map", "ros2", "rerun", "rerun-lidar", "t4", "hils", "hils-setup", "viewer"]
+provides-extras = ["sumo", "map", "ros2", "rerun", "rerun-lidar", "t4", "hils", "hils-setup", "pack", "viewer"]
 
 [[package]]
 name = "autoware-carla-scenario-rerun"
@@ -608,6 +613,19 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/79/6f/426cc47131c641bb05af78d8112c92076ee6fe55e1df268f2e04509aa2d5/carla_driver_interface-2.4.2.tar.gz", hash = "sha256:78c7514411743a04e99013475812d028d5f182bd5087258890cfaf5313c289f6", size = 87553, upload-time = "2026-11-03T14:59:18.714Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/15/b8/34135815ce728c7f6af2e62fb08d537449997d97903b0175b599e9a86477/carla_driver_interface-2.4.2-py3-none-any.whl", hash = "sha256:c0e395f126f36aed09e087e4070e3ef8cadc9b96ab2fe3011634ad4d63c09dc5", size = 96000, upload-time = "2026-11-03T14:59:17.288Z" },
+]
+
+[[package]]
+name = "carla-pack-registry"
+version = "0.3.2"
+source = { registry = "https://pypi.org/simple" }
+sdist = { url = "https://files.pythonhosted.org/packages/29/79/0731e320427dff64c2f0467a25a8c30cc928a0e2a86d00cb7bb865ea1355/carla_pack_registry-0.3.2.tar.gz", hash = "sha256:e2eae2ff70b016f99485b2d489453e904f818068c8dec9833dd5106739bfbe02", size = 112710, upload-time = "2026-11-18T06:59:07.183Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/70/15/9d0d4839ff13ed947bd1907c110a8424dec4cdc1daea91f73105ed1ed8e7/carla_pack_registry-0.3.2-cp310-abi3-macosx_10_12_x86_64.whl", hash = "sha256:a837e5c6f2895226d8dda7601f5a2db344bd06464c9847a349c21f40d63dcbc9", size = 3222176, upload-time = "2026-11-18T06:58:58.767Z" },
+    { url = "https://files.pythonhosted.org/packages/4b/2b/2ac08279afaf892086633d94f8703bb9870ae5adf91ae16a6ea25b8b205d/carla_pack_registry-0.3.2-cp310-abi3-macosx_11_0_arm64.whl", hash = "sha256:34417fe96cc0d99918a6a03093d11fc8083787de63c427f60a17f692a887d8cc", size = 3047941, upload-time = "2026-11-18T06:59:00.463Z" },
+    { url = "https://files.pythonhosted.org/packages/e9/2f/e74cd12802b275fa1aa5d05d7427ef96332445407d04e0d3f66288ac4345/carla_pack_registry-0.3.2-cp310-abi3-manylinux_2_28_aarch64.whl", hash = "sha256:693a2417eaf1c38bccc538a36bb192d46ffb4ba949defef32a71731963002d56", size = 3119945, upload-time = "2026-11-18T06:59:02.117Z" },
+    { url = "https://files.pythonhosted.org/packages/8e/59/a3b358629ab6b2923d2a24b7273a3c777c3eb5ace40db55115d7e8efffc9/carla_pack_registry-0.3.2-cp310-abi3-manylinux_2_28_x86_64.whl", hash = "sha256:a914d6b873f57b3ed712048725e01b3f7cfccd47461e6986548f99b547b29d7f", size = 3334336, upload-time = "2026-11-18T06:59:03.953Z" },
+    { url = "https://files.pythonhosted.org/packages/90/fc/96010494fced7d1e6c891faa49bd33fd884d46af139971ad2850697c2f86/carla_pack_registry-0.3.2-cp310-abi3-win_amd64.whl", hash = "sha256:6f80179644e0737e0ba94f05334ac6c5d16ad7461197c0f5540a1f5a46995f1f", size = 3019312, upload-time = "2026-11-18T06:59:05.691Z" },
 ]
 
 [[package]]

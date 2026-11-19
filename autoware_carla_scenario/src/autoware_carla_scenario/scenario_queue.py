@@ -13,6 +13,7 @@ from .failure import Failure, FailureCategory
 from .constants import DEFAULT_TM_PORT
 from .coordinate.map_manager import MapManager
 from .maps import capture_opendrive
+from .maps.pack import MapPack
 from .odd import OddCase, OddDefinition, resolve_odd
 from .rerun import RerunConverter
 from .run_outputs import remove_run_outputs
@@ -84,6 +85,7 @@ class ScenarioQueue:
     _autoware_launcher: Optional["AutowareLauncher"]
     _backends: Optional["BackendPreparer"]
     _map_source: Optional[str]
+    _map_pack: Optional[MapPack]
     _rerun: Optional[RerunConverter]
     _t4: Optional[T4Recorder]
     _t4scene: Optional[T4SceneExporter]
@@ -141,6 +143,7 @@ class ScenarioQueue:
         reload_every: int = 0,
         t4scene: Optional[T4SceneExporter] = None,
         backends: Optional["BackendPreparer"] = None,
+        map_pack: Optional[MapPack] = None,
     ) -> None:
         """Create a scenario queue.
 
@@ -236,6 +239,11 @@ class ScenarioQueue:
                 registers, before its run ticks.  They run until the queue
                 stops.  *None*: none is started here (an action that needs
                 one starts it itself, with its defaults).
+            map_pack: The CARLA content pack *map_name* is mounted from
+                (``map.pack``, :class:`~autoware_carla_scenario.maps.pack.MapPack`):
+                installed and mounted on the server each time it is started
+                (a restarted one included), before the map is loaded.  *None*:
+                the server is to have the map already.
 
         Raises:
             ValueError: *cooldown_max_retries* or *reload_every* is negative,
@@ -282,6 +290,7 @@ class ScenarioQueue:
         self._odd = resolve_odd(odd)
         self._autoware_launcher = autoware_launcher
         self._map_source = map_source
+        self._map_pack = map_pack
         self._rerun = rerun
         self._t4 = t4
         self._t4scene = t4scene
@@ -701,6 +710,16 @@ class ScenarioQueue:
             world_reset=self._world_reset,
             reload_every=self._reload_every,
         )
+        if self._map_pack is not None:
+            # Before the map is loaded: a map that comes in a content pack is
+            # on the server only once the pack is mounted there.
+            pack: MapPack = self._map_pack
+            pack.deploy(
+                self._host,
+                self._port,
+                self._map_name or "",
+                timeout=self._server.timeout,
+            )
         if self._overwrite_xodr:
             if self._xodr_path is None or self._map_name is None:
                 raise ValueError(

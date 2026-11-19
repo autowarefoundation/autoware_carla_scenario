@@ -898,6 +898,7 @@ Defines the default config group composition:
 | `server.fog_density_scale` | float | `null` | `carla.Weather.FogDensityScale` for a server the run starts and for the LiDARs' fog, or `null` to keep the server's own `0.001`; a finite number above `0` ([Driver Interface](driver_interface.md)) |
 | `server.world_reset` | str | `reload` | How the world is reset between a batch's cases: `reload` or `soft` (see [Resetting the world between cases](#resetting-the-world-between-cases)) |
 | `server.reload_every` | int | `0` | With `world_reset: soft`, load the map on every N-th reset anyway; `0` (or `null`): only when a soft reset cannot be done; a whole number, `0` or more |
+| `server.packs_dir` | str | `null` | Where a map's content pack (`map.pack`) is installed for the server to mount; `null`: `$AUTOWARE_CARLA_SCENARIO_PACKS_DIR`, else `~/.autoware_carla_scenario/packs`. A server on another machine must read it at the same path ([content_packs.md](content_packs.md)) |
 
 #### Ego Vehicle Configuration
 
@@ -1153,6 +1154,8 @@ one warns that it is ignored and says the above.
 | `map.projector_type` | str \| null | `null` | Projection the Lanelet2 map is read with (`mgrs`, `utm`, `local_xy`, `local_cartesian` or `transverse_mercator`). If `null`, taken from the map's `map_projector_info.yaml` |
 | `map.overwrite_xodr` | bool | `false` | Install `map.xodr_path` into the CARLA asset named by `<MAP_NAME>_PATH` before loading the map, replacing CARLA's own road network (`map=nishishinjuku` turns it on) |
 | `map.no_3d_model_lanelet_ids` | list[int] | `[]` | Lanelet IDs to exclude from sweeps (no ground geometry) |
+| `map.pack` | str \| null | `null` | CARLA content pack the map is mounted from: `OWNER/REPO/PACK[@VERSION]`, or `OWNER/REPO` to take the newest pack providing `map.name`. Its Lanelet2 map and OpenDRIVE are read, and it is installed and mounted on the server before the map loads ([content_packs.md](content_packs.md)). `map.directory` wins over it; it wins over `map.source` |
+| `map.pack_sha256` | str \| null | `null` | Pins `map.pack` to one artifact by its SHA-256 |
 
 Map paths can use environment variables with Hydra's OmegaConf resolver:
 

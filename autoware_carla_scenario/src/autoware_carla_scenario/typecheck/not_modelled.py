@@ -266,6 +266,13 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             "scenario imports; the model declares no submodules of odd",
         ),
     },
+    f"{_PACKAGE}.maps.pack": _each(
+        "MapPackError PACKS_DIR_ENV PackAccessError PackFiles packs_dir",
+        "what the runner (examples.run, which is not checked) uses to read a "
+        "content pack's map files and choose where it is installed, before "
+        "the queue is made; a scenario has no use for it: the queue mounts "
+        "the pack (MapPack.deploy) itself",
+    ),
     f"{_PACKAGE}.pedestrian.soma": _each(
         "DEFAULT_FPS SOMA_JOINTS",
         "the frame rate a motion file that names none is read at, and the "
@@ -717,6 +724,12 @@ NOT_MODELLED_MEMBERS: dict[str, dict[str, str]] = {
         "from_config": _FROM_MAPPING,
         "to_config": _AS_DICT,
     },
+    "MapPack": _members(
+        "files release",
+        "what the runner (examples.run, which is not checked) reads a "
+        "content pack's map files and release with, before the queue is "
+        "made; the checked scenario_queue only mounts the pack (deploy)",
+    ),
     "RerunConverter": {
         **_members(
             "close strict",

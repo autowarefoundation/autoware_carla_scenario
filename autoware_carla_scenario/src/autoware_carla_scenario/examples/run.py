@@ -90,6 +90,7 @@ from autoware_carla_scenario.gate.errored import (
     write_case_unfinished,
 )
 from autoware_carla_scenario.maps import resolve_map_paths
+from autoware_carla_scenario.maps.pack import MapPack, packs_dir
 from autoware_carla_scenario.maps.config import map_setting
 from autoware_carla_scenario.odd.route import PlannedRoute, RouteError
 from autoware_carla_scenario.odd.sampler import (
@@ -1416,6 +1417,7 @@ def run_scenario_with_queue(
     t4scene: T4SceneExporter | None = None,
     backends: BackendPool | None = None,
     file_stem: str | None = None,
+    map_pack: MapPack | None = None,
 ) -> ScenarioResult:
     """Run a single pre-built scenario using :class:`ScenarioQueue`.
 
@@ -1434,6 +1436,8 @@ def run_scenario_with_queue(
     (``{file_stem}_result.json`` ...); ``None`` names them by the scenario's
     class, numbered past the runs already in *output_dir*
     (:meth:`ScenarioQueue.add`).
+    *map_pack* is the content pack *map_name* is mounted from
+    (:func:`build_map_pack`).
 
     This is the extracted orchestration logic that was previously embedded
     inside :func:`run_scenario`.  Downstream projects can use this to execute
@@ -1471,6 +1475,7 @@ def run_scenario_with_queue(
         reload_every=reload_every,
         t4scene=t4scene,
         backends=backends,
+        map_pack=map_pack,
     )
     queue.add(scenario, case=case, file_stem=file_stem)
     with queue:
@@ -1600,17 +1605,46 @@ def _with_fog_density_scale(driver: dict[str, Any], cfg: DictConfig) -> dict[str
 
 
 def _map_source(cfg: DictConfig) -> str | None:
-    """Where the map came from: ``map.directory``, else ``map.source``.
+    """Where the map came from: ``map.directory``, else ``map.pack`` (as
+    ``carla-pack:OWNER/REPO/PACK[@VERSION]``), else ``map.source``.
 
     The same order :func:`resolve_map_paths` resolves them in: a directory on
-    this machine wins over a source, so the map the run read is the one named.
+    this machine wins over a pack, and a pack over a source, so the map the
+    run read is the one named.
     """
     map_cfg = cfg.get("map") or {}
-    for key in ("directory", "source"):
+    for key in ("directory", "pack", "source"):
         value = map_cfg.get(key)
         if value:
-            return str(value)
+            return f"carla-pack:{value}" if key == "pack" else str(value)
     return None
+
+
+def build_map_pack(cfg: DictConfig, map_paths: Any) -> MapPack | None:
+    """The content pack the run's CARLA map is mounted from (``map.pack``),
+    or ``None`` when the config names none.
+
+    The pack is the one *map_paths* (:func:`resolve_map_paths`) read the map
+    files from -- its resolved reference and SHA-256 -- so the server mounts
+    the very artifact the files came from; it is installed into
+    ``server.packs_dir`` (:func:`~autoware_carla_scenario.maps.pack.packs_dir`).
+
+    Raises:
+        ValueError: ``map.pack`` or ``map.pack_sha256`` is malformed, or
+            ``server.packs_dir`` is not text.
+    """
+    reference = getattr(map_paths, "pack", None)
+    if not isinstance(reference, str) or not reference:
+        return None
+    sha256 = getattr(map_paths, "pack_sha256", None)
+    configured = (cfg.get("server") or {}).get("packs_dir")
+    if configured is not None and not isinstance(configured, str):
+        raise ValueError(f"server.packs_dir must be a path, got {configured!r}")
+    return MapPack(
+        reference,
+        sha256=sha256 if isinstance(sha256, str) and sha256 else None,
+        packs_dir=packs_dir(configured),
+    )
 
 
 def _switch(cfg: DictConfig, block: str, key: str) -> bool:
@@ -2369,6 +2403,7 @@ def _batch_queue(
         reload_every=reload_every,
         t4scene=build_t4scene_exporter(first_cfg),
         backends=build_backend_pool(first_cfg),
+        map_pack=build_map_pack(first_cfg, map_paths),
     )
 
 
@@ -2528,6 +2563,8 @@ _BATCH_MAP_KEYS = (
     "xodr_path",
     "projector_type",
     "overwrite_xodr",
+    "pack",
+    "pack_sha256",
 )
 
 
@@ -4040,6 +4077,7 @@ def _run_scenario(
         t4scene=build_t4scene_exporter(cfg),
         backends=build_backend_pool(cfg),
         file_stem=file_stem,
+        map_pack=build_map_pack(cfg, map_paths),
     )
 
     status = "PASSED" if result.passed else "FAILED"

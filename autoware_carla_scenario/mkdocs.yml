@@ -95,6 +95,7 @@ nav:
       - Cut-in: scenarios/cut_in.md
       - Adversities: scenarios/adversity.md
   - HD Maps: maps.md
+  - CARLA Maps from Content Packs: content_packs.md
   - Autoware as the Ego: autoware.md
   - External Driver Interface: driver_interface.md
   - ROS 2 over DDS: ros2.md

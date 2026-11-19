@@ -103,6 +103,10 @@ class MapPaths:
             rather than named by the config or shipped by the repository.
         overwrite_xodr: Whether :attr:`install_xodr` may replace the road
             network CARLA ships.  Off unless ``map.overwrite_xodr`` asks for it.
+        pack: The content pack the CARLA map is mounted from (``map.pack``),
+            ``OWNER/REPO/PACK@VERSION`` once resolved, or ``None``.
+        pack_sha256: That pack's artifact, so the pack the run mounts is the
+            one its map files were read from.
     """
 
     name: str = ""
@@ -112,6 +116,8 @@ class MapPaths:
     projector_type: Optional[str] = None
     xodr_is_derived: bool = False
     overwrite_xodr: bool = False
+    pack: Optional[str] = None
+    pack_sha256: Optional[str] = None
 
     @property
     def derived_xodr(self) -> Optional[Path]:
@@ -164,6 +170,13 @@ def resolve_map_paths(
     the source its map group selects.  ``lanelet2_path`` and ``xodr_path``
     still win over both.
 
+    ``map.pack`` names the CARLA content pack the map is mounted from
+    (:class:`~...maps.pack.MapPack`).  The pack is fetched, and its Lanelet2
+    map read as ``map.directory`` would read it -- winning over ``map.source``,
+    but not over ``map.directory`` -- and its OpenDRIVE is the road network
+    unless ``xodr_path`` or the map directory names one.  Without
+    *allow_fetch* the pack is not fetched, and only the reference is kept.
+
     Args:
         map_config: The ``map`` config group, in any of the shapes
             :func:`map_setting` reads.
@@ -179,18 +192,52 @@ def resolve_map_paths(
             (:func:`_flag`), naming the key and the value.
         MapSourceError, MapCacheError, MapResolutionError: If ``map.source``
             or ``map.directory`` is set and cannot be resolved.
+        MapPackError: If ``map.pack`` is set and the pack cannot be fetched
+            or does not carry the map (:mod:`~...maps.pack`).
     """
-    return _resolve(
-        directory=map_setting(map_config, "directory"),
-        source=map_setting(map_config, "source"),
+    directory = map_setting(map_config, "directory")
+    source = map_setting(map_config, "source")
+    name = map_setting(map_config, "name") or ""
+    pack = map_setting(map_config, "pack")
+    pack_sha256 = map_setting(map_config, "pack_sha256")
+    pack_xodr: Optional[Path] = None
+    if pack is not None:
+        # Imported here: the pack module and carla-pack are needed only by a
+        # config naming a pack.
+        from .pack import MapPack  # noqa: PLC0415
+
+        map_pack = MapPack(pack, sha256=pack_sha256)
+        if allow_fetch or refresh:
+            files = map_pack.files(name)
+            pack, pack_sha256 = files.reference, files.sha256 or pack_sha256
+            name = name or files.map_name
+            pack_xodr = files.xodr_path
+            if directory is None and files.directory is not None:
+                if source is not None:
+                    logger.info(
+                        "map.pack %s takes precedence over map.source %s",
+                        pack,
+                        redacted_url(source),
+                    )
+                directory, source = str(files.directory), None
+    paths = _resolve(
+        directory=directory,
+        source=source,
         lanelet2=map_setting(map_config, "lanelet2_path"),
         xodr=map_setting(map_config, "xodr_path"),
-        name=map_setting(map_config, "name") or "",
+        name=name,
         projector_type=map_setting(map_config, "projector_type"),
         overwrite_xodr=_flag(map_config, "overwrite_xodr"),
         allow_fetch=allow_fetch,
         refresh=refresh,
     )
+    if pack is None:
+        return paths
+    if pack_xodr is not None and (paths.xodr_path is None or paths.xodr_is_derived):
+        # The OpenDRIVE the pack's map was cooked from: what CARLA runs, so
+        # it is read rather than one read back out of the loaded world.
+        paths = replace(paths, xodr_path=pack_xodr, xodr_is_derived=False)
+    return replace(paths, pack=pack, pack_sha256=pack_sha256)
 
 
 def _resolve(

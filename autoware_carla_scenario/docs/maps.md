@@ -11,6 +11,9 @@ map:
   source: git+https://huggingface.co/datasets/AutowareFoundation/carla-ue5-maps@dea2cfeab0e00238c3bdbefc48621cefb3dc04a2#autoware_maps/Town10HD_Opt
 ```
 
+A CARLA map that comes as a content pack, with its HD map inside, is named by
+the pack instead (`map.pack`): see [CARLA Maps from Content Packs](content_packs.md).
+
 Everything below is available two ways, because a scenario is written two ways:
 in the [Scenario Editor](scenario_editor.md), and in the library that runs one.
 
