@@ -181,6 +181,7 @@ The package's runtime dependencies (declared in `pyproject.toml`):
 - `opencv-python-headless>=4.8` — frame processing for the camera recorder (headless: the package makes no GUI calls)
 - `numpy>=1.21`
 - `pytest>=9.0.1`
+- `mypy>=1.19.0` — the static check's None check (`scenario-check`)
 - `python-dotenv>=1.2.2`
 - `simple-lanelet2>=1.2.3` — the Lanelet2 binding, plus the Autoware
   regulatory-element extensions, as a single wheel
@@ -188,7 +189,15 @@ The package's runtime dependencies (declared in `pyproject.toml`):
 - `hydra-core>=1.3.2`, `omegaconf>=2.3.0`
 - `fastapi>=0.115.0`, `uvicorn[standard]>=0.34.0`, `jinja2>=3.1.0` —
   result viewer
+- `python-multipart>=0.0.9` — reads the Scenario Editor's form posts
 - `pyyaml>=6.0`, `pydantic>=2.0.0`
+- `openodd-py>=0.47.0` — ASAM OpenODD: the ODD model, the sampler and
+  coverage; this package is its CARLA backend
+- `packaging>=23.0`, `tomli>=1.1.0` (Python < 3.11) — read a scenario
+  package's `requires-python` for its wheelhouse
+- `carla-driver-interface>=2.4.2,<3`, `grpcio>=1.60`,
+  `protobuf>=4.25.0,<8` — the gRPC contract to an external driver policy
+- `orjson>=3.13.0` — serialises the trajectory log
 
 ## Troubleshooting
 

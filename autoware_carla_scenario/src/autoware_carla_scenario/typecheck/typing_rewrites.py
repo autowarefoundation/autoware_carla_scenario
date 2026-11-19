@@ -119,7 +119,8 @@ TYPING_HINTS: tuple[tuple[re.Pattern[str], str], ...] = (
     (
         re.compile(r"cannot import name '\w+' from 'typing_extensions'"),
         "the check models only the names of typing_extensions that typing has "
-        'too: docs/typecheck.md ("typing names") lists them',
+        'too: docs/typecheck.md ("The names of `typing` a scenario may '
+        'import") lists them',
     ),
 )
 
@@ -582,7 +583,8 @@ class _Pass(ShadowScopes):
                         f"{what} is not modelled by the check (Codon has no "
                         f"collections.abc): {_ABC_HINT}; annotate with one of "
                         "them, or with a concrete type (list, dict, set), "
-                        'instead (docs/typecheck.md, "typing names")',
+                        'instead (docs/typecheck.md, "The names of `typing` '
+                        'a scenario may import")',
                     )
                 )
                 continue

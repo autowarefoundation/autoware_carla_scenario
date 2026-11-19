@@ -1160,7 +1160,7 @@ _VARIADIC_LIMITS = (
     (
         re.compile(r"cannot import name '\w+' from 'typing'"),
         "the check models only some names of typing: docs/typecheck.md "
-        '("typing names") lists them',
+        '("The names of `typing` a scenario may import") lists them',
     ),
 )
 

@@ -147,7 +147,7 @@ def _is_local_host(host: str) -> bool:
     """Whether *host* names this machine, so that a CARLA server
     :class:`CarlaServerManager` launches here is the one reached at it.
 
-    The rule (docs/installation.md, "CARLA server"):
+    The rule (docs/installation.md, "CARLA Simulator"):
 
     * ``localhost`` (and ``*.localhost``), an IPv4 loopback address
       (``127.0.0.0/8``), ``::1`` (bracketed or not) or an IPv4-mapped

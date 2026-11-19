@@ -1511,7 +1511,7 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
 as far as the run's weather lets a driver see. An
 `EnvironmentAction` that sets the fog, the rain or the sun records how far
 drivers see in the weather it leaves
-([Visibility follows the weather](odd.md#visibility-follows-the-weather)),
+([Visibility follows the conditions](odd.md#visibility-follows-the-conditions)),
 and the backend holds each of SUMO's own vehicles (ambient and background)
 to the speed its driver keeps in that distance: the weather rules'
 `sight_speed` ([Weather rules](odd.md#weather-rules)), which reads the
