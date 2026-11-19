@@ -171,7 +171,10 @@ current row.
 
 A run whose log has no `run` record (written before it was recorded), or a
 rollout without its `.wosac.json` (a merged file), is let through with a
-warning: nothing says what it ran.
+warning: nothing says what it ran. A `.wosac.json` that `pack` cannot read
+-- not a JSON object, a `seed` or an agent's `object_id` that is no whole
+number, an `offset` that is not three numbers, an agent's `current` that is
+not four -- is refused, naming the file, before anything is written.
 
 Each agent's `object_id` has to be the same in every rollout, though CARLA
 gives its actor a new id in every run. It is derived from what does stay the

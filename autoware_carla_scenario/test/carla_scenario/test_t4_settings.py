@@ -319,3 +319,85 @@ def test_a_switch_that_spells_neither_is_refused_in_one_keyed_line(
     message = rf"^{block}\.enabled must be true or false, got {re.escape(shown)}$"
     with pytest.raises(run.RunConfigError, match=message):
         run.check_run_config(cfg)  # type: ignore[arg-type]
+
+
+_LIDAR_TOP = {"logical_id": "lidar_top"}
+
+
+@pytest.mark.parametrize("off", ["false", "'false'", "no"])
+def test_a_driver_ego_without_renderer_data_cannot_feed_the_dataset_its_lidar(
+    off: str,
+) -> None:
+    """A driver entity attaches its LiDARs only for ``renderer_data``, and a
+    T4 dataset of its run takes its sweeps from them: without it the dataset
+    has no point cloud (no sample at all with no camera), refused as
+    ``driver.t4_scene`` is (#2208)."""
+    from omegaconf import OmegaConf  # noqa: PLC0415
+
+    from autoware_carla_scenario.examples import run  # noqa: PLC0415
+
+    from .test_video_removed import _shipped
+
+    cfg = OmegaConf.merge(
+        _shipped(
+            [
+                "ego.entity=carla_driver",
+                "t4.enabled=true",
+                f"driver.send_renderer_data={off}",
+            ]
+        ),
+        {"driver": {"lidars": [_LIDAR_TOP]}},
+    )
+    message = (
+        r"^t4\.enabled takes the LiDAR sweeps of an ego\.entity=carla_driver "
+        r"from its renderer_data: driver\.lidars needs driver\.send_renderer_data$"
+    )
+    with pytest.raises(run.RunConfigError, match=message):
+        run.check_run_config(cfg)  # type: ignore[arg-type]
+    # A batch names the case refused, whichever it is.
+    fine = _shipped(["ego.entity=carla_driver"])
+    with pytest.raises(run.RunConfigError, match=r"^Bad: t4\.enabled takes"):
+        run.check_batch_configs([fine, cfg], ["Fine", "Bad"])  # type: ignore[list-item]
+
+
+@pytest.mark.parametrize(
+    "overrides",
+    [
+        # Renderer data on: the entity attaches the LiDARs and feeds them.
+        ["ego.entity=carla_driver", "t4.enabled=true"],
+        # No dataset.
+        ["ego.entity=carla_driver", "driver.send_renderer_data=false"],
+        # Another ego: the recording attaches the LiDARs itself.
+        ["t4.enabled=true", "driver.send_renderer_data=false"],
+    ],
+)
+def test_the_driver_lidars_feed_the_dataset_otherwise(overrides: list[str]) -> None:
+    from omegaconf import OmegaConf  # noqa: PLC0415
+
+    from autoware_carla_scenario.examples import run  # noqa: PLC0415
+
+    from .test_video_removed import _shipped
+
+    cfg = OmegaConf.merge(_shipped(overrides), {"driver": {"lidars": [_LIDAR_TOP]}})
+    run.check_run_config(cfg)  # type: ignore[arg-type]
+
+
+def test_a_driver_ego_with_cameras_only_needs_no_renderer_data() -> None:
+    from omegaconf import OmegaConf  # noqa: PLC0415
+
+    from autoware_carla_scenario.examples import run  # noqa: PLC0415
+
+    from .test_video_removed import _shipped
+
+    camera = {"logical_id": "cam_front", "image_width": 832, "image_height": 480}
+    cfg = OmegaConf.merge(
+        _shipped(
+            [
+                "ego.entity=carla_driver",
+                "t4.enabled=true",
+                "driver.send_renderer_data=false",
+            ]
+        ),
+        {"driver": {"cameras": [camera]}},
+    )
+    run.check_run_config(cfg)  # type: ignore[arg-type]

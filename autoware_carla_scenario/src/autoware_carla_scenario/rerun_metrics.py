@@ -45,7 +45,9 @@ METRICS_ENTITY = "metrics"
 
 
 def metric_records(trajectory: Path) -> list[dict[str, Any]]:
-    """The ``metric`` records of the log *trajectory*, in its order."""
+    """The ``metric`` records of the log *trajectory*, in its order.  A line
+    that is not a JSON object (a list, a string, a number) is no record and
+    is skipped, as a line that is not JSON is."""
     records: list[dict[str, Any]] = []
     with Path(trajectory).open("rb") as lines:
         for line in lines:
@@ -56,7 +58,7 @@ def metric_records(trajectory: Path) -> list[dict[str, Any]]:
                 record = json.loads(line)
             except ValueError:
                 continue
-            if record.get("type") == "metric":
+            if isinstance(record, dict) and record.get("type") == "metric":
                 records.append(record)
     return records
 

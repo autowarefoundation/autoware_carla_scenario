@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import argparse
 import logging
+import math
 import sys
 from pathlib import Path
 from typing import Any, Optional
@@ -78,6 +79,14 @@ def _export(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
 
 
 def _pack(args: argparse.Namespace, parser: argparse.ArgumentParser) -> int:
+    # check_runs() refuses them too, but naming its parameters: the user
+    # typed the flags (#2208).
+    for flag, value in (
+        ("--position-tolerance", args.position_tolerance),
+        ("--heading-tolerance", args.heading_tolerance),
+    ):
+        if not math.isfinite(value) or value < 0:
+            parser.error(f"{flag} must be a finite number >= 0, not {value!r}")
     files = rollout_files(args.paths)
     if not files:
         parser.error("no rollout (*.wosac.pb) found")

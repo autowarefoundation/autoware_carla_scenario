@@ -31,7 +31,10 @@ Where the data comes from:
   tick than the sweep (a camera faster than the LiDAR, or on the other ticks
   of its interval) still goes on the step's key frame, at most a policy step
   off: the dataset stamps a sample's data with the sample's time, and such a
-  camera's frames would otherwise never be written.
+  camera's frames would otherwise never be written. The entity attaches its
+  LiDARs only for the policy's `renderer_data`, so `driver.lidars` with
+  `driver.send_renderer_data: false` is refused before the run starts: the
+  dataset would have no point cloud (#2208).
 - **Any other ego** (Autoware, the autopilot, ROS 2) gets the same sensors put
   on it by the recorder, at the same rate; the recorder's writer encodes their
   frames.
