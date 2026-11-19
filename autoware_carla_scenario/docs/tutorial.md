@@ -106,6 +106,7 @@ from __future__ import annotations
 from autoware_carla_scenario import (
     EGO_ROLE_NAME,
     AndCondition,
+    BaseCondition,
     BaseScenario,
     EgoConfig,
     EntityLanePositionCondition,
@@ -120,6 +121,10 @@ from .configs import MyScenarioConfig
 
 class MyScenario(BaseScenario):
     """Verify the ego visits every expected road."""
+
+    # Every attribute assigned on self, declared at class level: the static
+    # check (docs/typecheck.md) refuses one it has not seen declared.
+    _config: MyScenarioConfig
 
     def __init__(
         self,
@@ -141,7 +146,7 @@ class MyScenario(BaseScenario):
         cfg = self._config
 
         # 2. Build pass condition — "ego visited all expected roads"
-        stickies = []
+        stickies: list[BaseCondition] = []
         for ll_id in cfg.expected_lanelet_ids:
             stickies.append(
                 StickyCondition(
@@ -152,7 +157,14 @@ class MyScenario(BaseScenario):
                     )
                 )
             )
-        self.register_pass_condition(AndCondition(stickies))
+        # AndCondition needs at least two children: a single lanelet (the
+        # default) is its own pass condition.
+        visited_all: BaseCondition
+        if len(stickies) == 1:
+            visited_all = stickies[0]
+        else:
+            visited_all = AndCondition(stickies)
+        self.register_pass_condition(visited_all)
 
         # 3. Fail-safe timeout
         self.register_fail_condition(

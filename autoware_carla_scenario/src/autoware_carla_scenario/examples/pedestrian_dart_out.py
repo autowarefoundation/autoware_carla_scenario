@@ -84,20 +84,39 @@ def kerb_offset_m(distance_m: float, traffic_rule: str) -> float:
 
 
 def kerb_pose(
-    spawn: Lanelet2Pose, config: PedestrianDartOutConfig, traffic_rule: str
+    on_lanelet: Lanelet2Pose, distance_m: float, traffic_rule: str
 ) -> Lanelet2Pose:
-    """Where the pedestrian waits: ``pedestrian_ahead_m`` along the ego's
-    lanelet from *spawn*, ``pedestrian_offset_m`` off its centre on the kerb
-    side of *traffic_rule*, facing across the lane."""
-    t = kerb_offset_m(config.pedestrian_offset_m, traffic_rule)
+    """Where a pedestrian waits at the kerb: at *on_lanelet*'s ``s`` on its
+    lanelet, *distance_m* off its centre on the kerb side of *traffic_rule*
+    (:func:`kerb_offset_m`, which ignores the sign), facing across the lane.
+
+    The dart-out pedestrian's (``pedestrian_offset_m``) and the adversity
+    example's jaywalker's (``npc_offset_m``)."""
+    t = kerb_offset_m(distance_m, traffic_rule)
     # A quarter turn to the left of the lane's direction from the right-hand
     # kerb, to the right from the left one.
     across = math.pi / 2 if t < 0 else -math.pi / 2
     return Lanelet2Pose(
-        lanelet_id=spawn.lanelet_id,
-        s=spawn.s + config.pedestrian_ahead_m,
+        lanelet_id=on_lanelet.lanelet_id,
+        s=on_lanelet.s,
         t=t,
         heading=across,
+    )
+
+
+def walker_spawn_transform(kerb: Lanelet2Pose) -> carla.Transform:
+    """Where a walker at *kerb* is spawned: its CARLA transform, lifted by
+    :data:`_WALKER_SPAWN_HEIGHT_M`.
+
+    Not snapped to the road: snapping would put it in the carriageway."""
+    at_kerb = to_carla_world(kerb).to_carla_transform()
+    return carla.Transform(
+        carla.Location(
+            at_kerb.location.x,
+            at_kerb.location.y,
+            at_kerb.location.z + _WALKER_SPAWN_HEIGHT_M,
+        ),
+        at_kerb.rotation,
     )
 
 
@@ -144,21 +163,15 @@ class PedestrianDartOutScenario(BaseScenario):
         )
 
         # At the kerb on the side the road's traffic keeps to.
-        kerb = kerb_pose(spawn, cfg, road_traffic_rule(od_spawn.road_id))
-        # Not snapped to the road: snapping would put it in the carriageway.
-        at_kerb = to_carla_world(kerb).to_carla_transform()
-        lifted = carla.Transform(
-            carla.Location(
-                at_kerb.location.x,
-                at_kerb.location.y,
-                at_kerb.location.z + _WALKER_SPAWN_HEIGHT_M,
-            ),
-            at_kerb.rotation,
+        kerb = kerb_pose(
+            Lanelet2Pose(lanelet_id=spawn.lanelet_id, s=crossing_s),
+            cfg.pedestrian_offset_m,
+            road_traffic_rule(od_spawn.road_id),
         )
         pedestrian = PedestrianEntity(
             PedestrianEntityConfig(
                 role_name=str(PEDESTRIAN_ROLE),
-                spawn_location=SpawnTransform(lifted),
+                spawn_location=SpawnTransform(walker_spawn_transform(kerb)),
                 walker_type=cfg.walker_type,
             )
         )

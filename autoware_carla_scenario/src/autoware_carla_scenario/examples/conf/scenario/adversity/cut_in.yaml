@@ -18,7 +18,7 @@ scenario:
   timeout_seconds: 30.0
   # The rest are AdversityConfig's defaults, listed so that a
   # scenario.<key>= override finds them (#1317).
-  npc_offset_m: -3.0
+  npc_offset_m: 3.0
   npc_vehicle_type: vehicle.mini.cooper
   walker_type: walker.pedestrian.0015
   ego_speed_kmh: null

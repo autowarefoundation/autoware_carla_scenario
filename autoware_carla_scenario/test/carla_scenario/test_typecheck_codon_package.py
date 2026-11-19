@@ -166,17 +166,17 @@ def test_a_batch_refuses_a_value_only_the_static_check_finds_before_reading_the_
         raise AssertionError("the map was resolved before the scenarios were checked")
 
     monkeypatch.setattr(run, "resolve_map_paths", must_not_run)
-    # pedestrian_dart_out's pedestrian_offset_m is read by no run-side check, so
-    # the static check is what refuses it, still before the map is resolved.
-    with pytest.raises(
-        ScenarioTypeError, match=re.escape("scenario.pedestrian_offset_m")
-    ):
+    # pedestrian_dart_out's walker_type is read by no run-side check (the
+    # config refuses its numbers since #2202, its blueprint name nothing), so
+    # the static check is what refuses a number for it, still before the map
+    # is resolved.
+    with pytest.raises(ScenarioTypeError, match=re.escape("scenario.walker_type")):
         run.run_batch(
             [
                 "pedestrian_dart_out/pedestrian_dart_out",
                 "pedestrian_dart_out/pedestrian_dart_out",
             ],
-            ["scenario.pedestrian_offset_m=wide"],
+            ["scenario.walker_type=5"],
         )
 
 

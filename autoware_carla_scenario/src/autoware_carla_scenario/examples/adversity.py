@@ -12,8 +12,9 @@ action's default), and one of NADE among background traffic:
   the ego, close behind there (``AdversarialCutInAction``).
 * ``traffic_rule``: with every light red, an NPC ahead of the ego, stopping
   for its light, runs it (``RunTrafficRuleAction``).
-* ``jaywalking``: a pedestrian at the kerb ahead walks across the road, off
-  any crosswalk (``JaywalkAction``).
+* ``jaywalking``: a pedestrian at the kerb ahead -- on the side the road's
+  traffic keeps to, as ``pedestrian_dart_out``'s -- walks across the road,
+  off any crosswalk (``JaywalkAction``).
 * ``nade``: NADE (``AdversarialTrafficAction``) over the five kinds among the
   TrafficManager's background vehicles, sampling far more often than
   TeraSim's numbers would, so that a short run shows several.
@@ -21,7 +22,8 @@ action's default), and one of NADE among background traffic:
 The ego is driven by the traffic manager. A single adversity's run passes
 once it has been carried out and its road user handed back to traffic, and
 fails if that has not happened by ``timeout_seconds``; NADE's passes after
-``nade_seconds``, its weight and the adversities it sampled in the run's log.
+``nade_seconds``, its weight and the adversities it sampled in the run's log,
+and fails only past them (``AdversityConfig.effective_timeout_seconds()``).
 
 Typical usage
 -------------
@@ -33,7 +35,6 @@ The shipped cases are placed on Town10HD_Opt::
 from __future__ import annotations
 
 import logging
-import math
 
 import typesafe_carla.carla as carla
 
@@ -67,11 +68,12 @@ from autoware_carla_scenario import (
     VehicleEntity,
     VehicleEntityConfig,
     snap_to_carla_road,
-    to_carla_world,
     to_opendrive,
 )
+from autoware_carla_scenario.coordinate import road_traffic_rule
 
 from .configs import ADVERSITY_KINDS, ADVERSITY_VEHICLE_KINDS, AdversityConfig
+from .pedestrian_dart_out import kerb_pose, walker_spawn_transform
 
 logger = logging.getLogger(__name__)
 
@@ -85,10 +87,6 @@ PEDESTRIAN_ROLE = EntityRole("pedestrian1")
 #: NADE's (every kind: :data:`~.configs.ADVERSITY_KINDS`, which the config
 #: checks when it is built).
 VEHICLE_KINDS = ADVERSITY_VEHICLE_KINDS
-
-#: How far above the ground a pedestrian's spawn point is (m): CARLA places a
-#: walker by its middle, so one at the road's height has its feet in the kerb.
-_WALKER_SPAWN_HEIGHT_M = 1.0
 
 
 class AdversityScenario(BaseScenario):
@@ -218,33 +216,23 @@ class AdversityScenario(BaseScenario):
         )
 
     def _spawn_pedestrian(self, spawn: Lanelet2Pose) -> None:
-        """The pedestrian at the kerb, ``npc_ahead_m`` on from the ego, facing
-        across the road."""
+        """The pedestrian at the kerb, ``npc_ahead_m`` on from the ego along
+        its lanelet, ``npc_offset_m`` off its centre on the side the road's
+        traffic keeps to, facing across the road."""
         world = self.world
         cfg = self._config
-        across = math.pi / 2
-        if cfg.npc_offset_m > 0.0:
-            across = -math.pi / 2
-        kerb = to_carla_world(
-            Lanelet2Pose(
-                lanelet_id=cfg.npc_lanelet_id,
-                s=spawn.s + cfg.npc_ahead_m,
-                t=cfg.npc_offset_m,
-                heading=across,
-            )
-        ).to_carla_transform()
-        lifted = carla.Transform(
-            carla.Location(
-                kerb.location.x,
-                kerb.location.y,
-                kerb.location.z + _WALKER_SPAWN_HEIGHT_M,
-            ),
-            kerb.rotation,
+        on_lanelet = Lanelet2Pose(
+            lanelet_id=cfg.npc_lanelet_id, s=spawn.s + cfg.npc_ahead_m
+        )
+        kerb = kerb_pose(
+            on_lanelet,
+            cfg.npc_offset_m,
+            road_traffic_rule(to_opendrive(on_lanelet).road_id),
         )
         pedestrian = PedestrianEntity(
             PedestrianEntityConfig(
                 role_name=str(PEDESTRIAN_ROLE),
-                spawn_location=SpawnTransform(lifted),
+                spawn_location=SpawnTransform(walker_spawn_transform(kerb)),
                 walker_type=cfg.walker_type,
             )
         )
@@ -279,6 +267,11 @@ class AdversityScenario(BaseScenario):
         )
         self.register_pass_condition(
             ElapsedTimeCondition(cfg.nade_seconds, label="nade_over")
+        )
+        # Its own, past nade_seconds: the runner's default (the run's
+        # scenario.timeout_seconds) would fail a run shorter than NADE's.
+        self.register_fail_condition(
+            TimeoutCondition(cfg.effective_timeout_seconds(), label="scenario_timeout")
         )
         logger.info(
             "NADE for %.0f s: p=%.3g, q=%.3g, cooldown %.1f s",

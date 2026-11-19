@@ -33,7 +33,7 @@ so that the trigger holds:
 | `ignore_leader` | NPC1 | 25 m behind a slow ego (8 km/h) on lanelet 324, at 25 km/h | `IgnoreLeaderAction`: speeds up at the free-flow rate for 2 s, as if the ego were not there | about 0.7 s in |
 | `cut_in` | NPC1 | 6 m ahead in the lane beside the ego's (324 beside 446), at 30 km/h | `AdversarialCutInAction`: changes in front of the ego in 1 s | at once |
 | `traffic_rule` | NPC1 | 10 m ahead of the ego on lanelet 719, every light red | `RunTrafficRuleAction`: slowing for its red light, drives on through it at the free-flow rate for 2 s | about 24 s in, at the light |
-| `jaywalking` | pedestrian1 | at the kerb 35 m ahead of the ego, off any crosswalk | `JaywalkAction`: walks straight across the road | at once |
+| `jaywalking` | pedestrian1 | at the kerb 35 m ahead of the ego, on the side the road's traffic keeps to, off any crosswalk | `JaywalkAction`: walks straight across the road | at once |
 | `nade` | the background vehicles | 40 of the TrafficManager's, around the ego on lanelet 324 | `AdversarialTrafficAction` (NADE) over the five kinds | several times a run |
 
 **When it passes.** A single adversity's run passes once the adversity has
@@ -50,7 +50,10 @@ happened by `timeout_seconds`.
   - each is drawn with q = 0.5;
   - the cooldown is 2 s;
   - an adversity counts when it challenges another NPC, not only the ego.
-- The run passes after `nade_seconds`.
+- The run passes after `nade_seconds`. It fails on a timeout only past
+  that: at `timeout_seconds`, or `nade_seconds` plus 5 s if that is longer,
+  so `scenario.kind=nade` on a single adversity's case (30 s) runs its full
+  45 s too.
 - The run's log records each sampled adversity as an `adversity` record, and
   the importance-sampling weight as the `importance_sampling_weight` metric
   (see [The weight](../adversity.md#the-weight)).
@@ -62,11 +65,11 @@ happened by `timeout_seconds`.
 | `scenario.kind` | `brake_check` | `brake_check`, `ignore_leader`, `cut_in`, `traffic_rule`, `jaywalking` or `nade` |
 | `scenario.npc_lanelet_id` | 324 | The NPC's lanelet, or the pedestrian's kerb |
 | `scenario.npc_ahead_m` | 15.0 | How far ahead of the ego's spawn `s` it starts (negative: behind) |
-| `scenario.npc_offset_m` | -3.0 | The pedestrian's offset from its lanelet's centreline (negative: right) |
+| `scenario.npc_offset_m` | 3.0 | The pedestrian's distance from its lanelet's centreline, on the kerb side the road's traffic keeps to: the right in right-hand traffic, the left in left-hand traffic (the sign is ignored; not 0) |
 | `scenario.npc_speed_kmh` | 30.0 | The NPC's speed until the adversity takes it over (not negative) |
 | `scenario.ego_speed_kmh` | `null` | The ego's speed, held for the run (not negative); `null`: the TrafficManager's |
 | `scenario.red_light` | `false` | Every light red |
-| `scenario.timeout_seconds` | 30.0 | Fails when not carried out by then (positive) |
+| `scenario.timeout_seconds` | 30.0 | Fails when not carried out by then (positive); NADE: at least `nade_seconds` plus 5 s |
 | `scenario.nade_seconds` | 45.0 | NADE: the run's length (s; positive) |
 | `scenario.nade_probability` | 0.05 | NADE: each kind's naturalistic probability a tick, in [0, 1] |
 | `scenario.nade_is_probability` | 0.5 | NADE: the importance-sampling probability, in [0, 1] |

@@ -25,7 +25,7 @@ scenario:
   # scenario.<key>= override finds them (#1317).
   npc_lanelet_id: 324
   npc_ahead_m: 15.0
-  npc_offset_m: -3.0
+  npc_offset_m: 3.0
   npc_speed_kmh: 30.0
   npc_vehicle_type: vehicle.mini.cooper
   walker_type: walker.pedestrian.0015

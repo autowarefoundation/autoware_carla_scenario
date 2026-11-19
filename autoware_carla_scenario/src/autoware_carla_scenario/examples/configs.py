@@ -53,6 +53,12 @@ ADVERSITY_KINDS = (
 )
 
 
+#: How long past ``AdversityConfig.nade_seconds``, when NADE's run passes, its
+#: timeout fires at the earliest (s): a few ticks of slack, so the pass is
+#: never raced by the timeout.
+NADE_TIMEOUT_MARGIN_SECONDS = 5.0
+
+
 #: Every ``CutInConfig.side``: the side of the ego the NPC comes from.  The
 #: config refuses another side when it is built, and the scenario's setup
 #: again, as a backstop.
@@ -113,6 +119,15 @@ def _require_not_negative(key: str, value: float) -> None:
     number = _require_number(key, value)
     if not math.isfinite(number) or number < 0.0:
         raise ValueError(f"scenario.{key} must be finite and not negative, not {value}")
+
+
+def _require_not_zero(key: str, value: float) -> None:
+    """Refuse *value* of ``scenario.<key>`` unless it is a number, finite and
+    not 0: a distance whose sign is ignored, at 0 on the line it is measured
+    from."""
+    number = _require_number(key, value)
+    if not math.isfinite(number) or number == 0.0:
+        raise ValueError(f"scenario.{key} must be finite and not 0, not {value}")
 
 
 def _require_count(key: str, value: int) -> None:
@@ -215,6 +230,14 @@ class IntersectionPassingConfig:
                 # is checked as a ValueError naming its key (#2193).
                 raise ValueError(f"scenario.npc_vehicles[{i}]: {exc}") from None
         self.npc_vehicles = npc_vehicles
+        if len(self.expected_route_lanelet_ids) == 0:
+            # setup() reads the route's first and last lanelet, and builds the
+            # pass condition from one per lanelet: an empty route fails only
+            # once CARLA is up, naming no key.
+            raise ValueError(
+                "scenario.expected_route_lanelet_ids must name at least one "
+                f"lanelet, not {self.expected_route_lanelet_ids!r}"
+            )
         _require_positive("timeout_seconds", self.timeout_seconds)
         min_speed_kmh = self.min_speed_kmh
         if min_speed_kmh is not None:
@@ -460,6 +483,11 @@ class PedestrianDartOutConfig:
         """Refuse a value the scenario would refuse once CARLA is up, or one
         with which the pedestrian never darts out, naming its key (#1815,
         #1816)."""
+        # Along the lanelet from the ego's spawn; NaN puts it nowhere.
+        _require_finite("pedestrian_ahead_m", self.pedestrian_ahead_m)
+        # The sign is ignored; at 0 the pedestrian stands on the lane's
+        # centre, facing off the road in right-hand traffic.
+        _require_not_zero("pedestrian_offset_m", self.pedestrian_offset_m)
         # A distance (unsigned) never below 0: the trigger would never fire.
         _require_positive("trigger_distance_m", self.trigger_distance_m)
         # At 0 the pedestrian stays at the kerb.
@@ -543,12 +571,23 @@ class CutInConfig:
                 f"scenario.side must be one of {', '.join(CUT_IN_SIDES)}, "
                 f"not {self.side!r}"
             )
+        # Along the NPC's lanelet, negative behind the ego; NaN puts it nowhere.
+        _require_finite("npc_ahead_m", self.npc_ahead_m)
+        npc_gap_m = self.npc_gap_m
+        if npc_gap_m is not None:
+            # Bumper to bumper: at 0 or below the two vehicles overlap.
+            _require_positive("npc_gap_m", npc_gap_m)
         # VehicleEntityConfig's and SetSpeedAction's.
         _require_not_negative("npc_initial_speed_kmh", self.npc_initial_speed_kmh)
         # The cut-in's ElapsedTimeCondition, and the PersistentCondition held.
         _require_positive("cut_in_after_seconds", self.cut_in_after_seconds)
         _require_positive("hold_seconds", self.hold_seconds)
         _require_positive("timeout_seconds", self.timeout_seconds)
+        # At 0 or below the lanes ahead are none, or shrink silently.
+        _require_positive("lanes_ahead_m", self.lanes_ahead_m)
+        # The PersistentCondition the leaving-lane check is held by, which
+        # refuses one only once CARLA is up, naming no key.
+        _require_positive("leaving_lane_seconds", self.leaving_lane_seconds)
 
 
 @dataclass
@@ -613,9 +652,12 @@ class AdversityConfig:
     #: lanelet (m; negative: behind).
     npc_ahead_m: float = 15.0
 
-    #: The pedestrian's offset from its lanelet's centreline (m, negative to
-    #: the right of the direction of travel): at the kerb.
-    npc_offset_m: float = -3.0
+    #: The pedestrian's distance from its lanelet's centreline, on its kerb
+    #: side (m): the right of the direction of travel in right-hand traffic,
+    #: the left in left-hand traffic, by the OpenDRIVE road's ``rule``, as
+    #: ``PedestrianDartOutConfig.pedestrian_offset_m``.  The sign is ignored
+    #: (``-3.0``, the old right-hand value, is 3 m too).
+    npc_offset_m: float = 3.0
 
     #: The NPC's speed, held until the adversity takes it over (km/h).
     npc_speed_kmh: float = 30.0
@@ -635,9 +677,12 @@ class AdversityConfig:
     red_light: bool = False
 
     #: The run fails when the adversity has not been carried out by then (s).
+    #: ``nade``: the run passes at ``nade_seconds``, so its timeout is this or
+    #: ``nade_seconds`` plus :data:`NADE_TIMEOUT_MARGIN_SECONDS`, whichever is
+    #: longer (:meth:`effective_timeout_seconds`).
     timeout_seconds: float = 30.0
 
-    #: ``nade``: how long the run lasts (s).
+    #: ``nade``: how long the run lasts (s): it passes then.
     nade_seconds: float = 45.0
 
     #: ``nade``: each kind's naturalistic probability a tick when its trigger
@@ -689,6 +734,23 @@ class AdversityConfig:
                 raise ValueError(f"scenario.{key} must be in [0, 1], not {value}")
         _require_not_negative("nade_cooldown", self.nade_cooldown)
         _require_positive("nade_seconds", self.nade_seconds)
+        # The sign is ignored; at 0 the pedestrian stands on the lane's centre.
+        _require_not_zero("npc_offset_m", self.npc_offset_m)
+
+    def effective_timeout_seconds(self) -> float:
+        """The fail-safe timeout the scenario registers (s).
+
+        ``timeout_seconds``, but for ``nade`` at least ``nade_seconds`` plus
+        :data:`NADE_TIMEOUT_MARGIN_SECONDS`: NADE's run passes once
+        ``nade_seconds`` have elapsed, so a shorter timeout -- the shipped
+        single-adversity cases' 30 s, under ``scenario.kind=nade`` -- would
+        fail every run before it could pass.
+        """
+        if self.kind != "nade":
+            return self.timeout_seconds
+        return max(
+            self.timeout_seconds, self.nade_seconds + NADE_TIMEOUT_MARGIN_SECONDS
+        )
 
 
 @dataclass
