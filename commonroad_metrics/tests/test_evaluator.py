@@ -708,3 +708,47 @@ def test_a_lane_heading_of_exactly_zero_is_a_heading(
     assert values["crime_ttc_s"] == pytest.approx(2.55, abs=0.05)
     assert values["crime_a_long_req_mps2"] == pytest.approx(-1.96, abs=0.05)
     assert values["crime_btn"] > 0.1
+
+
+def test_crime_reads_the_lanelet_the_frame_was_turned_for(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Where a turning lanelet overlaps the straight one the ego drives along
+    (a junction), CriMe's shared curvilinear frame is built on the straight
+    one, as the frame's turn is, whichever the lanelet assignment lists
+    first."""
+    from types import SimpleNamespace
+
+    import commonroad_clcs.pycrccosy as pycrccosy
+    import commonroad_crime.data_structure.base as base
+    import commonroad_crime.utility.general as general
+    import numpy as np
+
+    from commonroad_metrics.evaluator import _best_lanelet, _shared_frame
+
+    centres = {
+        1: np.array([[0.0, 0.0], [5.0, 5.0], [5.0, 20.0]]),  # turning left
+        2: np.array([[0.0, 0.0], [20.0, 0.0]]),  # straight on, along +x
+    }
+    network = SimpleNamespace(
+        find_lanelet_by_id=lambda i: SimpleNamespace(center_vertices=centres[i])
+    )
+    assert next(iter({1, 2})) == 1  # the turning one comes first
+    assert _best_lanelet(network, {1, 2}, 0.0) == 2
+    assert _best_lanelet(network, [2, 1], math.pi / 2) == 1
+
+    monkeypatch.setattr(general, "generate_reference_path", lambda i, _network: i)
+    monkeypatch.setattr(pycrccosy, "CurvilinearCoordinateSystem", lambda path: path)
+    ego = SimpleNamespace(
+        initial_state=SimpleNamespace(time_step=0, orientation=0.0),
+        prediction=SimpleNamespace(center_lanelet_assignment={0: {1, 2}}),
+    )
+    updates: dict[str, object] = {}
+    measure = SimpleNamespace(
+        ego_vehicle=ego,
+        sce=SimpleNamespace(lanelet_network=network),
+        configuration=SimpleNamespace(update=lambda **kwargs: updates.update(kwargs)),
+    )
+    with _shared_frame():
+        base.CriMeBase._update_clcs(measure)
+    assert updates == {"CLCS": 2}

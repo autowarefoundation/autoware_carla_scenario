@@ -134,8 +134,9 @@ class RuleSet:
         ``And`` combines its children's whole robustness *traces* before the
         first entry is read, so asking the conjoined tree for a value rebuilds
         every trace the rules themselves no longer need. ``self.spec`` is kept
-        because it is the specification -- what ``stl-driver explain`` prints,
-        and what says in one place what "satisfied" means.
+        because it is the specification -- what says in one place what
+        "satisfied" means (``stl-driver explain`` prints each rule's formula,
+        the conjuncts of it).
         """
         worst: torch.Tensor | None = None
         for rule in self.rules:
@@ -231,26 +232,13 @@ class RuleSet:
         """Whether a rule marked ``hard`` is violated anywhere in the horizon."""
         return any(float(per_rule[name]) < 0.0 for name in self.hard_rules if name in per_rule)
 
-    def hard_robustness(self, signal: torch.Tensor, n_steps: int) -> float:
-        """How well the hard rules hold over the opening ``n_steps``.
-
-        The same quantity :meth:`imminent_hard_violation` tests the sign of,
-        kept separately so two plans can be compared on it even when both are
-        violating.
-        """
-        window = signal[: max(2, min(n_steps, signal.shape[0]))]
-        return min(
-            float(next(r for r in self.rules if r.name == name).formula.robustness(window, **EXACT))
-            for name in self.hard_rules
-        )
-
     def imminent_hard_violation(self, signal: torch.Tensor, n_steps: int) -> str | None:
         """The first hard rule violated within the opening ``n_steps``, if any.
 
         This, not :meth:`any_hard_violated`, is what should summon the
         emergency plan.  A hard rule violated at the *end* of a four-second
         horizon means the best plan found this step runs into trouble three
-        seconds out -- against a constant-velocity forecast of traffic that
+        seconds out -- against a forecast of traffic that
         will itself brake, turn and yield in the meantime.  Treating that the
         same as a violation happening now means braking at seven metres per
         second squared for a car crossing an intersection thirty metres away,

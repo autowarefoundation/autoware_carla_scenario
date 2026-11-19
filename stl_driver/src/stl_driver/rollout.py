@@ -8,12 +8,17 @@ to the trajectory that produced it.
 
 Two rules shape the code:
 
-**Nothing that clamps.**  A hard ``clamp`` or ``where`` on a plan-dependent
-quantity has zero gradient on one side, which tells the optimizer a parameter
-does not matter when in fact it matters a great deal.  Parameters are mapped
-into their physical ranges with ``sigmoid``/``tanh``, the speed floor is a
-``softplus``, and the one unavoidable clamp -- the station index -- is applied
-to a *detached* tensor so the live path keeps its exact derivative.
+**Clamp only where a clamp is right.**  A hard ``clamp`` or ``where`` on a
+plan-dependent quantity has zero gradient on one side, which tells the
+optimizer a parameter does not matter when in fact it matters a great deal.
+Parameters are mapped into their physical ranges with ``sigmoid``/``tanh``,
+and the station index is clamped on a *detached* tensor so the live path
+keeps its exact derivative.  The clamps that remain on the live path are
+there on purpose, each where its flat side is a region no good plan lives in
+or a smooth floor would report something false: the speed floor (a softplus
+would report a stopped car as creeping; see :func:`rollout`), the knots'
+final clamp onto the envelope, the lateral progress, and the curvature
+denominator.
 
 **Nothing plan-independent computed here.**  The route table, the actor
 forecast, the stop-line station: all of it is precomputed in numpy and arrives
@@ -64,12 +69,6 @@ def knot_times_s(horizon) -> tuple[float, ...]:
     """
     spacing = horizon.duration_s / (_N_KNOTS - 1)
     return tuple(index * spacing for index in range(_N_KNOTS))
-
-
-#: Sharpness of the softplus speed floor. Higher tracks `max(v, 0)` more
-#: closely but softens the gradient over a narrower band; 4.0 puts the
-#: transition within a few centimetres per second of zero.
-_SPEED_FLOOR_BETA = 4.0
 
 
 @dataclass(frozen=True)
@@ -470,8 +469,7 @@ def rollout(
     # the distance to the line less that. Measured from the vehicle's own
     # speed rather than the plan's, so every candidate is asked for the same
     # thing and none can lower the bar by slowing down.
-    _, brake, ramp = _stopping_terms(config.limits)
-    stopping = inputs.speed0_mps**2 / (2.0 * brake) + inputs.speed0_mps * ramp
+    stopping = config.limits.stopping_distance(inputs.speed0_mps)
     # Floored a little below zero rather than at it, so that a vehicle stopped
     # at the line is asked for slightly less than nothing and reads as
     # satisfied. At exactly zero it reads exactly zero -- neither satisfied nor
@@ -546,9 +544,11 @@ def _clearance(
 ) -> torch.Tensor:
     """Distance from the ego footprint to the nearest predicted actor.
 
-    The ego is two discs placed *ahead* of the plan point, because the rig
-    origin is the rear axle rather than the vehicle centre; centring them on
-    the origin would over-report forward clearance by most of a car length.
+    The ego is a row of discs (`STLDriverConfig.ego_footprint`, five with
+    the default body and inflation tolerance) placed along the heading from
+    the plan point, shifted *ahead* of it because the rig origin is the rear
+    axle rather than the vehicle centre; centring them on the origin would
+    over-report forward clearance by most of a car length.
 
     Aggregation is the exact minimum, and the reasoning is worth recording
     because a soft minimum is the tempting choice here.
@@ -594,23 +594,6 @@ def _clearance(
     return saturate(flattened.min(dim=-1).values, cap)
 
 
-def _stopping_terms(limits) -> tuple[float, float, float]:
-    """``(envelope floor, braking rate, ramp coefficient)`` for a stop.
-
-    Stopping takes ``v^2 / 2b`` plus ``v * b / 2j`` -- the textbook distance
-    and what the jerk-limited ramp to full braking costs. At 5 m/s those are
-    3.2 m and 2.5 m, so the ramp is not a correction but half the answer.
-
-    Shared -- and stated once, in `Limits.stopping_terms` -- so that the rule
-    asking whether there is room to stop, the rule asking how much ground is
-    left to cover, and the stop station perception sets cannot disagree about
-    what stopping costs.
-    """
-    lowest, _ = limits.plan_accel_envelope()
-    brake, ramp = limits.stopping_terms()
-    return lowest, brake, ramp
-
-
 def _stop_slack(
     station: torch.Tensor,
     speed: torch.Tensor,
@@ -646,8 +629,10 @@ def _stop_slack(
     requirement is zero, so stopping anywhere short of the line satisfies it.
     """
     limits = config.limits
-    _, brake, ramp = _stopping_terms(limits)
-    required = speed**2 / (2.0 * brake) + speed * ramp
+    # Stated once, in `Limits.stopping_distance`, so that this rule, the
+    # ground `makes_progress` asks for and the stop station perception sets
+    # cannot disagree about what stopping costs.
+    required = limits.stopping_distance(speed)
     return saturate((inputs.stop_station_m - station) - required, limits.saturation_m)
 
 

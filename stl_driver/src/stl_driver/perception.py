@@ -31,9 +31,10 @@ from carla_driver_interface.protocol import CarlaRendererData, TrafficLightState
 from stl_driver.config import STLDriverConfig
 from stl_driver.frenet import RouteTable, project_to_frenet
 
-#: Where padding discs are put: far enough that `saturate` reads them as the
-#: same "nothing there" the empty case reports, and far enough that no plan
-#: within the route table's reach can approach one.
+#: Where padding discs, and the discs `_drop_traffic_behind` pushes aside, are
+#: put: far enough that `saturate` reads them as the same "nothing there" the
+#: empty case reports, and far enough that no plan within the route table's
+#: reach can approach one -- nor `_drop_traffic_out_of_reach` keep one.
 _PADDING_DISTANCE_M = 1.0e4
 
 __all__ = [
@@ -253,11 +254,16 @@ def forecast_actors(
 ) -> ActorForecast:
     """Predict other actors over the horizon, in the rig frame.
 
-    Prediction is constant velocity.  That is deliberately unambitious: a
-    richer model would be guessing, and the specification already demands
-    clearance from wherever the actors actually turn out to be, re-planned at
-    10 Hz.  What matters more than the model's sophistication is that it is
-    honest about a vehicle continuing to move.
+    By default each vehicle is predicted along the road (its station and
+    offset on our route, the lateral rate decaying,
+    `Limits.frenet_prediction`), mixed with a straight line at constant
+    velocity for one far off the route or behind its start; with
+    ``frenet_prediction`` off, a straight line throughout.  See :func:`_predict_centres`.  That is
+    deliberately unambitious: a richer model would be guessing, and the
+    specification already demands clearance from wherever the actors
+    actually turn out to be, re-planned at 10 Hz.  What matters more than the
+    model's sophistication is that it is honest about a vehicle continuing to
+    move.
 
     Args:
         renderer_data: the CARLA extension payload, or ``None``.
@@ -504,7 +510,7 @@ def _drop_traffic_behind(
         return centres_over_time
 
     moved = centres_over_time.copy()
-    moved[behind] = 1.0e4
+    moved[behind] = _PADDING_DISTANCE_M
     return moved
 
 

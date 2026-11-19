@@ -513,6 +513,40 @@ def test_alternatives_are_reported_for_inspection(optimizer):
     assert all(a.shape == solution.params.shape for a in solution.alternatives)
 
 
+def test_the_driven_sample_is_not_among_the_alternatives(optimizer, monkeypatch):
+    """The alternatives are the runners-up to the sample driven, which need
+    not be the best by smoothed objective (#2211): here, the second best."""
+    import stl_driver.optimizer as optimizer_module
+
+    seen = {}
+    score_batch = optimizer._score_batch
+
+    def recording_score_batch(candidates, inputs):
+        result = score_batch(candidates, inputs)
+        seen["candidates"], seen["scores"] = candidates, result[1]
+        return result
+
+    pick = optimizer_module._lexicographic_pick
+
+    def second_best(merit, robustness):
+        # The sampling stage's pick only; refinement picks among its own.
+        if "picked" in seen:
+            return pick(merit, robustness)
+        seen["picked"] = int(torch.argsort(seen["scores"], descending=True)[1])
+        return seen["picked"]
+
+    monkeypatch.setattr(optimizer, "_score_batch", recording_score_batch)
+    monkeypatch.setattr(optimizer_module, "_lexicographic_pick", second_best)
+    solution = optimizer.solve(make_inputs(CONFIG, speed0_mps=6.0))
+
+    driven = seen["candidates"][seen["picked"]]
+    assert sum(torch.equal(row, driven) for row in seen["candidates"]) == 1
+    assert len(solution.alternatives) == CONFIG.optimizer.n_reported_candidates
+    assert not any(torch.equal(a, driven) for a in solution.alternatives)
+    best = seen["candidates"][int(torch.argmax(seen["scores"]))]
+    assert any(torch.equal(a, best) for a in solution.alternatives)
+
+
 def test_every_rule_is_reported(optimizer):
     inputs = make_inputs(CONFIG, speed0_mps=6.0)
     solution = optimizer.solve(inputs)
