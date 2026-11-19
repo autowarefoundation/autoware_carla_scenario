@@ -1,5 +1,11 @@
 # Migrating
 
+## `debug_markers.DRIVEN_PATH_COLOR` is gone
+
+The colour was exported for a viewer to draw the driven path in, but nothing
+read it: the Rerun converter colours the path itself. Code importing
+`DRIVEN_PATH_COLOR` defines its own colour instead; it was `(255, 128, 0)`.
+
 ## To 23.0.0: metrics are judged once the run is over
 
 `MetricCondition` is now a fail condition judged after the run, on metrics
