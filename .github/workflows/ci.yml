@@ -132,11 +132,6 @@ jobs:
         AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
         AUTOWARE_CARLA_SCENARIO_TEST_SHARD: ${{ matrix.shard }}
         LIBRARY_COMPILE: autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py::test_the_checked_modules_compile
-        # Each of its entity.ego and actions.turn cases is a ~7 GB Codon
-        # process: two side by side, beside the other workers, shut the x86_64
-        # runner down whenever a change to a checked module misses their cached
-        # verdicts. They run alone too, one after the other.
-        MODULE_COMPILES: autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py::test_a_module_importing_a_checked_only_name_compiles_alone
       run: |
         pytest_shard() {
           local status=0
@@ -156,10 +151,10 @@ jobs:
         fi
         touch "${RUNNER_TEMP}/typecheck-started"
         if [ "${CODON}" = "true" ]; then
-          pytest_shard "${LIBRARY_COMPILE}" "${MODULE_COMPILES}"
+          pytest_shard "${LIBRARY_COMPILE}"
         fi
         pytest_shard -n logical --dist worksteal -m "${markers}" \
-          --deselect "${LIBRARY_COMPILE}" --deselect "${MODULE_COMPILES}"
+          --deselect "${LIBRARY_COMPILE}"
 
     # A verdict this run did not read or write is for sources that no longer
     # exist: drop it rather than carry it into every later cache. Only after a
@@ -276,11 +271,6 @@ jobs:
         AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE: ${{ runner.temp }}/typecheck-cache
         AUTOWARE_CARLA_SCENARIO_TEST_SHARD: ${{ matrix.shard }}
         LIBRARY_COMPILE: autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py::test_the_checked_modules_compile
-        # Each of its entity.ego and actions.turn cases is a ~7 GB Codon
-        # process: two side by side, beside the other workers, shut the x86_64
-        # runner down whenever a change to a checked module misses their cached
-        # verdicts. They run alone too, one after the other.
-        MODULE_COMPILES: autoware_carla_scenario/test/carla_scenario/test_typecheck_library.py::test_a_module_importing_a_checked_only_name_compiles_alone
       run: |
         pytest_shard() {
           local status=0
@@ -300,10 +290,10 @@ jobs:
         fi
         touch "${RUNNER_TEMP}/typecheck-started"
         if [ "${CODON}" = "true" ]; then
-          pytest_shard "${LIBRARY_COMPILE}" "${MODULE_COMPILES}"
+          pytest_shard "${LIBRARY_COMPILE}"
         fi
         pytest_shard -n logical --dist worksteal -m "${markers}" \
-          --deselect "${LIBRARY_COMPILE}" --deselect "${MODULE_COMPILES}"
+          --deselect "${LIBRARY_COMPILE}"
 
     # As in the 'test' job.
     - name: Prune the Codon check verdicts this run did not use
