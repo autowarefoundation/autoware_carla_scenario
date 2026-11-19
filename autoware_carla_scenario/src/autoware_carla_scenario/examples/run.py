@@ -1634,14 +1634,15 @@ def build_map_pack(cfg: DictConfig, map_paths: Any) -> MapPack | None:
             ``server.packs_dir`` is not text.
     """
     reference = getattr(map_paths, "pack", None)
-    if not reference:
+    if not isinstance(reference, str) or not reference:
         return None
+    sha256 = getattr(map_paths, "pack_sha256", None)
     configured = (cfg.get("server") or {}).get("packs_dir")
     if configured is not None and not isinstance(configured, str):
         raise ValueError(f"server.packs_dir must be a path, got {configured!r}")
     return MapPack(
-        str(reference),
-        sha256=getattr(map_paths, "pack_sha256", None) or None,
+        reference,
+        sha256=sha256 if isinstance(sha256, str) and sha256 else None,
         packs_dir=packs_dir(configured),
     )
 
