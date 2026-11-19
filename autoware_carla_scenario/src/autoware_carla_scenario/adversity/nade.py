@@ -355,7 +355,10 @@ class ImportanceSampler:
                 p *= settings.avoidance.unavoidable_factor
             q = is_probability(p, settings, can_avoid)
             if q <= 0.0:
-                continue  # never sampled: nothing to decide
+                # Never sampled, yet still decided: not drawn with
+                # probability 1 - q = 1, so its ratio is (1 - p) / 1 (#2200).
+                self.weight *= 1.0 - p
+                continue
             if self._draws.random() >= q:
                 self.weight *= (1.0 - p) / (1.0 - q)
                 continue

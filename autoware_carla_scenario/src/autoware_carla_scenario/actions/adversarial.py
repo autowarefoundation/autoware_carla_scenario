@@ -194,6 +194,12 @@ class AdversarialAction(BaseAction):
     def execute(self, world: "carla.World") -> None:
         """Plan the command when triggered, then drive it a tick at a time."""
         if self.state is ActionState.STANDBY:
+            # A repeating action's earlier run: closed, not only dropped, so
+            # its follow's conditions are too, as AdversarialTrafficAction
+            # does (#1298, #2200).
+            if self._execution is not None:
+                previous: AdversarialExecution = self._execution
+                previous.close()
             self._execution = self._plan(world)
         if self._execution is None:
             return

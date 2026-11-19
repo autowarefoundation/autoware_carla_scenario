@@ -242,11 +242,28 @@ def test_a_driven_vehicle_looks_for_a_walker_from_its_box_s_centre() -> None:
     assert not run._walker_in_way(actor, actor.get_transform(), 0.0)  # type: ignore[arg-type]
 
 
-def test_a_driven_vehicle_looks_for_a_vehicle_from_its_box_s_centre() -> None:
-    """Standing, it looks 4.4 m on from its box's centre (1.3): a car (a
-    circle of radius 2.6 round its origin, its box on it) at 8.0 is in its
-    way, at 8.6 not -- looked for from its origin, it would be at 7.0."""
-    from autoware_carla_scenario.actions import _trajectory_run as run
+def test_first_in_way_looks_for_a_vehicle_from_a_driven_box_s_centre() -> None:
+    """Looking 4.4 m on (its half length and 2 m) from a driven vehicle's
+    box's centre (1.3, :func:`~autoware_carla_scenario.utils.clearance.actor_box_centre`):
+    a car (a circle of radius 2.6 round its origin, its box on it) at 8.0 is
+    in its way, at 8.6 not -- looked for from its origin, it would be at 7.0."""
+
+    def in_way(actor: _Driven) -> bool:
+        transform = actor.get_transform()
+        x, y = clearance.actor_box_centre(actor, transform)  # type: ignore[arg-type]
+        assert (x, y) == pytest.approx((1.3, 0.0))
+        found = clearance.first_in_way(
+            actor.get_world(),  # type: ignore[arg-type]
+            actor.id,
+            x,
+            y,
+            transform.rotation.yaw,
+            "vehicle",
+            2.4 + 2.0,
+            1.0 + 0.3,
+            z=0.0,
+        )
+        return found is not None
 
     def world_with_car_at(x: float) -> _World:
         return _World(
@@ -256,10 +273,8 @@ def test_a_driven_vehicle_looks_for_a_vehicle_from_its_box_s_centre() -> None:
             }
         )
 
-    actor = _Driven(world_with_car_at(8.0))
-    assert run._vehicle_in_way(actor, actor.get_transform(), 0.0)  # type: ignore[arg-type]
-    actor = _Driven(world_with_car_at(8.6))
-    assert not run._vehicle_in_way(actor, actor.get_transform(), 0.0)  # type: ignore[arg-type]
+    assert in_way(_Driven(world_with_car_at(8.0)))
+    assert not in_way(_Driven(world_with_car_at(8.6)))
 
 
 def test_a_vehicle_led_out_looks_on_from_its_box_s_centre(

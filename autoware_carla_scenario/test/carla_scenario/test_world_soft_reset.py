@@ -505,6 +505,34 @@ class TestTheReloadFallback:
         assert len(server.loads) == 1 + expected_loads
         assert len(server.world.actors) == 4
 
+    def test_a_reload_reads_the_baseline_once_on_the_ticked_world(
+        self, server: _Server
+    ) -> None:
+        """The reload of a runner that loaded a map reads its baseline after
+        ticking the fresh world, and only then: not also as the map loads,
+        a full read thrown away (#2200)."""
+        from autoware_carla_scenario import scenario_runner
+
+        runner = _runner(server, world_reset="soft", reload_every=1)
+        read: list[tuple[str, int]] = []
+        real = scenario_runner.capture_baseline
+
+        def counted(world: _World) -> object:
+            read.append((world.map_name, world.ticks))
+            return real(world)  # type: ignore[arg-type]
+
+        with patch.object(scenario_runner, "capture_baseline", counted):
+            runner.load_map_by_name("Town10HD_Opt")
+            # load_map_by_name, called by itself, reads it as it loads.
+            assert read == [("Town10HD_Opt", 0)]
+            read.clear()
+
+            runner.reset_world("Case0")
+
+        assert server.loads == ["Town10HD_Opt", "Town10HD_Opt"]
+        assert read == [("Town10HD_Opt", 1)]
+        assert runner._baseline is not None
+
     def test_a_runner_that_loaded_no_map_reloads_first_then_soft_resets(
         self, server: _Server
     ) -> None:

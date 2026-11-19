@@ -13,6 +13,8 @@ from __future__ import annotations
 import math
 from dataclasses import dataclass
 
+from .avoidance import _check_non_negative, _check_positive
+
 __all__ = [
     "DEFAULT_IDM",
     "IdmParameters",
@@ -36,6 +38,13 @@ class IdmParameters:
         exponent: Free-road exponent ``delta``.
         emergency_deceleration: Hardest braking in m/s²; the model never asks
             for more.
+
+    Each is refused when built outside its bounds (#2200), as
+    :class:`~.triggers.TriggerThresholds` refuses its own (#2024): the
+    accelerations, the decelerations and the exponent must be finite and
+    positive (a zero ``a`` or ``b`` divides mid-tick, a negative emergency
+    deceleration would make a brake check accelerate), the gap and the
+    headway finite and not negative.
     """
 
     max_acceleration: float = 2.6
@@ -44,6 +53,14 @@ class IdmParameters:
     time_headway: float = 1.0
     exponent: float = 4.0
     emergency_deceleration: float = 9.0
+
+    def __post_init__(self) -> None:
+        _check_positive("max_acceleration", self.max_acceleration)
+        _check_positive("comfortable_deceleration", self.comfortable_deceleration)
+        _check_non_negative("minimum_gap", self.minimum_gap)
+        _check_non_negative("time_headway", self.time_headway)
+        _check_positive("exponent", self.exponent)
+        _check_positive("emergency_deceleration", self.emergency_deceleration)
 
 
 #: SUMO's passenger car.

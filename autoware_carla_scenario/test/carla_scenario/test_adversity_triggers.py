@@ -21,6 +21,7 @@ from autoware_carla_scenario.adversity import (
     CommandKind,
     adversity_command,
 )
+from autoware_carla_scenario.adversity.idm import DEFAULT_IDM, IdmParameters
 from autoware_carla_scenario.adversity.location import location_of
 from autoware_carla_scenario.adversity.observation import (
     AgentSnapshot,
@@ -28,6 +29,7 @@ from autoware_carla_scenario.adversity.observation import (
     SignalState,
 )
 from autoware_carla_scenario.adversity.triggers import (
+    DEFAULT_THRESHOLDS,
     TriggerThresholds,
     brake_check,
     cut_in,
@@ -403,6 +405,46 @@ def test_a_threshold_out_of_its_bounds_is_refused(field: str, value: object) -> 
 )
 def test_a_threshold_on_its_bounds_is_accepted(field: str, value: object) -> None:
     TriggerThresholds(**{field: value})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        ("max_acceleration", 0.0),
+        ("max_acceleration", math.nan),
+        ("comfortable_deceleration", 0.0),
+        ("comfortable_deceleration", -4.5),
+        ("exponent", 0.0),
+        ("exponent", math.inf),
+        ("emergency_deceleration", -9.0),
+        ("emergency_deceleration", 0.0),
+        ("minimum_gap", -0.1),
+        ("minimum_gap", math.inf),
+        ("time_headway", -1.0),
+        ("time_headway", math.nan),
+    ],
+)
+def test_an_idm_parameter_out_of_its_bounds_is_refused(
+    field: str, value: float
+) -> None:
+    """Refused when built, as the thresholds' own are (#2024), not as a
+    ZeroDivisionError the first tick a trigger has a leader, nor a brake check
+    that accelerates (#2200)."""
+    with pytest.raises(
+        ValueError, match=rf"^{field} must be finite and (positive|not negative)"
+    ):
+        IdmParameters(**{field: value})  # type: ignore[arg-type]
+
+
+@pytest.mark.parametrize(
+    ("field", "value"), [("minimum_gap", 0.0), ("time_headway", 0.0)]
+)
+def test_an_idm_parameter_on_its_bounds_is_accepted(field: str, value: float) -> None:
+    TriggerThresholds(idm=IdmParameters(**{field: value}))  # type: ignore[arg-type]
+
+
+def test_the_default_idm_parameters_are_accepted() -> None:
+    assert IdmParameters() == DEFAULT_IDM == DEFAULT_THRESHOLDS.idm
 
 
 def test_the_thresholds_can_be_overridden(features: MapFeatures) -> None:

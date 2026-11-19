@@ -40,7 +40,12 @@ middle of a tick: a `duration`, `lane_change_duration`, `abort_resolution`,
 low end is above its high end; a negative or non-finite speed, gain,
 distance, angle, headway or `stop_crossing_wait` deviation; and a
 non-finite `stop_crossing_wait` mean (a negative mean is a pedestrian that
-never waits).
+never waits). Its `idm`, an `IdmParameters`, refuses its own the same way
+(#2200): a `max_acceleration`, `comfortable_deceleration`, `exponent` or
+`emergency_deceleration` that is not finite and positive (a zero
+acceleration or comfortable deceleration divides in the car-following
+model, a negative emergency deceleration would make `BRAKE_CHECK`
+accelerate), and a negative or non-finite `minimum_gap` or `time_headway`.
 
 | Kind | Action | TeraSim | Fires when | Does |
 |---|---|---|---|---|
@@ -218,7 +223,8 @@ Each tick of a run multiplies the run's likelihood ratio by one factor:
 
 - `p / q` when an adversity is sampled;
 - `(1 - p) / (1 - q)` for each candidate whose adversity challenged a victim
-  but was not drawn;
+  but was not drawn -- `1 - p` when its `q` is 0 (a `magnitude` or
+  `max_is_probability` of 0), as it is never drawn (#2200);
 - the response's own factor, when one is drawn.
 
 A statistic weighted by this ratio is the naturalistic one. The action's

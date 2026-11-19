@@ -1037,7 +1037,7 @@
     },
     "WalkerFallenRecord": {
       "title": "WalkerFallenRecord",
-      "description": "A walker seen fallen over -- tipped beyond 50 degrees, or dropped more than half its height between two looks while barely moving sideways -- once per walker. It is left where it is. Added in version 2, which a reader of version 2 that does not know it skips.",
+      "description": "A walker seen fallen over -- tipped beyond 50 degrees, or dropped more than a quarter of its height (at least 0.2 m) below the lowest it stood over its last four looks while barely moving sideways -- once per walker. It is left where it is. Added in version 2, which a reader of version 2 that does not know it skips.",
       "type": "object",
       "properties": {
         "type": {
@@ -1060,7 +1060,7 @@
           "type": "string"
         },
         "drop": {
-          "description": "How far (m) it dropped since the look before (0 when it tipped over without dropping).",
+          "description": "How far (m) it dropped below the lowest it stood over its last four looks (0 when it tipped over without dropping).",
           "type": "number"
         },
         "tilt": {

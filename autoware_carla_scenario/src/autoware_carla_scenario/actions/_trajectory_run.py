@@ -1355,7 +1355,7 @@ def _walker_in_way(
 
     try:
         half_width = float(actor.bounding_box.extent.y) + PASSING_CLEARANCE_M
-        # From its box's centre, as _vehicle_in_way looks (#884).
+        # From its box's centre, not its origin (#884).
         x, y = actor_box_centre(actor, transform)
         found = first_in_way(
             actor.get_world(),
@@ -1496,34 +1496,6 @@ def _vehicle_before_walker(walker: "carla.Actor") -> bool:
     return found is not None
 
 
-def _vehicle_in_way(
-    actor: "carla.Actor", transform: "carla.Transform", speed: float
-) -> bool:
-    """Whether another vehicle stands in *actor*'s way within its stopping
-    distance (braking at 4 m/s²) past its own front and 2 m more, across its
-    width and 0.3 m, looked along from its bounding box's centre."""
-    from ..utils.clearance import actor_box_centre, first_in_way  # noqa: PLC0415
-
-    try:
-        extent = actor.bounding_box.extent
-        # From its box's centre, which its half length is measured from.
-        x, y = actor_box_centre(actor, transform)
-        found = first_in_way(
-            actor.get_world(),
-            int(actor.id),
-            x,
-            y,
-            transform.rotation.yaw,
-            "vehicle",
-            speed * speed / 8.0 + float(extent.x) + 2.0,
-            float(extent.y) + 0.3,
-            z=float(transform.location.z),
-        )
-    except (AttributeError, RuntimeError):
-        return False
-    return found is not None
-
-
 def _gate_at(timeline: DepartureTimeline, k: int) -> BaseCondition:
     """The condition vertex number *k* waits for, which it has."""
     condition = timeline.vertex(k).gate
@@ -1595,16 +1567,6 @@ class _TrajectoryEnd(BaseCondition):
 # ---------------------------------------------------------------------------
 # Actuation
 # ---------------------------------------------------------------------------
-
-
-def _ground_z(world: "carla.World", sample: TrajectorySample) -> float:
-    """The ground's height under *sample*, or the sample's own where none is hit."""
-    from ..coordinate.snap import refine_z_with_ground_projection  # noqa: PLC0415
-
-    try:
-        return refine_z_with_ground_projection(sample.x, sample.y, sample.z, world)
-    except RuntimeError:
-        return sample.z
 
 
 def _is_walker(actor: "carla.Actor") -> bool:

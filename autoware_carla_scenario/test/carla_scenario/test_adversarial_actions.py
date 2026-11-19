@@ -220,6 +220,18 @@ def test_it_repeats_when_not_once() -> None:
     assert all(len(run.ticks) == 3 for run in made[:2])
 
 
+def test_a_repeat_closes_the_run_it_drops() -> None:
+    """Each run's execution is closed as the next replaces it -- its follow's
+    conditions with it -- not only dropped, as AdversarialTrafficAction does
+    (#1298, #2200); the last is closed with the action."""
+    action = AdversarialBrakeAction("npc1", ANY, once=False)
+    _run(action, [_brake_world(frame) for frame in range(1, 8)])
+    assert len(made) == 3
+    assert [run.closed for run in made] == [True, True, False]
+    action.close()
+    assert made[-1].closed
+
+
 def test_closing_closes_the_path() -> None:
     action = AdversarialBrakeAction("npc1", ANY)
     _run(action, [_brake_world(1)])
