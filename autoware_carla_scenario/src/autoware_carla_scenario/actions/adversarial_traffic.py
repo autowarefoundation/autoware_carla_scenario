@@ -281,7 +281,8 @@ class AdversarialTrafficAction(BaseAction):
             sampled.name,
             sampled.adversity.kind.value,
             sampled.is_probability,
-            sampled.adversity.probability,
+            # p as the weight and the event have it: cut when unavoidable.
+            sampled.probability,
             self.weight,
         )
         kind = sampled.adversity.kind.value

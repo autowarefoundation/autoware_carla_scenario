@@ -21,8 +21,16 @@ from autoware_carla_scenario.actions import _adversarial_execution as executions
 from autoware_carla_scenario.actions import adversarial_traffic
 from autoware_carla_scenario.actions.adversarial_traffic import AdversarialTrafficAction
 from autoware_carla_scenario.actions.base import control_holder
-from autoware_carla_scenario.adversity import AdversityKind, AdversityLocation
-from autoware_carla_scenario.adversity.nade import NadeAdversity, NadeSettings
+from autoware_carla_scenario.adversity import (
+    AdversarialCommand,
+    AdversityKind,
+    AdversityLocation,
+)
+from autoware_carla_scenario.adversity.nade import (
+    NadeAdversity,
+    NadeChoice,
+    NadeSettings,
+)
 from autoware_carla_scenario.control_domain import (
     MOVEMENT,
     ControlConflictError,
@@ -162,6 +170,40 @@ def test_a_challenging_adversity_is_sampled_and_driven() -> None:
     assert [c.name for c in action.choices] == ["npc1"]
     # What it carries out, for AdversityActiveCondition: the adversity itself.
     assert (run.kind, run.responding_to) == ("brake_check", "")
+
+
+def test_the_log_line_shows_the_p_the_weight_takes(
+    monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    """An unavoidable adversity's p is cut by unavoidable_factor; the log
+    line shows that p, as the weight and the AdversityEvent have it, not the
+    list's (#2200)."""
+    action = AdversarialTrafficAction([BRAKE], settings=ALWAYS)
+    cut = BRAKE.probability * 3e-4
+
+    def step(*args: Any, **kwargs: Any) -> NadeChoice:
+        return NadeChoice(
+            "npc1",
+            BRAKE,
+            AdversarialCommand.accelerate(-9.0, 2.0),
+            1.0,
+            cut,
+            [],
+            "",
+            False,
+        )
+
+    monkeypatch.setattr(action._sampler, "step", step)
+    with caplog.at_level(logging.INFO):
+        _run(action, 1)
+    assert action.take_adversity_events()[0].probability == pytest.approx(cut)
+    (line,) = [
+        record.getMessage()
+        for record in caplog.records
+        if "carries out" in record.getMessage()
+    ]
+    assert f"p={cut:.3g}" in line
+    assert f"p={BRAKE.probability:.3g}" not in line
 
 
 def test_one_adversity_at_a_time_and_none_in_the_cooldown() -> None:

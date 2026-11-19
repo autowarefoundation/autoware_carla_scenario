@@ -220,6 +220,37 @@ def test_one_not_sampled_weighs_one_minus_p_over_one_minus_q(
     assert sampler.weight == pytest.approx((1 - 0.01) / (1 - 1e-12))
 
 
+@pytest.mark.parametrize(
+    "settings",
+    [NadeSettings(magnitude=0.0), NadeSettings(max_is_probability=0.0)],
+    ids=["magnitude", "max_is_probability"],
+)
+def test_one_never_sampled_still_weighs_one_minus_p(
+    features: MapFeatures, settings: NadeSettings
+) -> None:
+    """A q of 0 never samples, yet the challenger was decided on: not drawn,
+    with probability 1 - 0, so it weighs (1 - p) / 1 -- each of them, here
+    npc1 and npc2 both brake-checking into the ego -- not nothing (#2200)."""
+    scene = _scene(
+        features, _car("ego", -55.0), _car("npc1", -40.0), _car("npc2", -27.0)
+    )
+    sampler = ImportanceSampler(settings=settings)
+    assert _step(sampler, scene, controllable=("npc1", "npc2")) is None
+    assert sampler.weight == pytest.approx((1 - 0.01) * (1 - 0.01))
+
+
+def test_an_unavoidable_one_never_sampled_weighs_one_minus_its_cut_p(
+    features: MapFeatures,
+) -> None:
+    """The p of a q of 0 is the one the weight takes when drawn: cut by
+    unavoidable_factor for an unavoidable adversity (#2200)."""
+    scene = _scene(features, _car("ego", -46.0, OUTER, speed=12.0), _car("npc1", -40.0))
+    abort = NadeAdversity(AdversityKind.LANE_CHANGE_ABORT, AdversityLocation.ANY, 0.02)
+    sampler = ImportanceSampler(settings=NadeSettings(magnitude=0.0))
+    assert _step(sampler, scene, adversities=(abort,)) is None
+    assert sampler.weight == pytest.approx(1 - 0.02 * 3e-4)
+
+
 def test_an_adversity_that_challenges_no_one_weighs_nothing(
     features: MapFeatures,
 ) -> None:

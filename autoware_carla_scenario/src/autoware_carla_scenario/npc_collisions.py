@@ -22,9 +22,10 @@ up (its start) or saw it end; the frame CARLA heard the contact's first event
 on is ``start_frame``.
 
 **A fallen walker** is told from one world snapshot every few ticks: a walker
-tipped over more than :data:`FALLEN_TILT_DEG`, or more than half its height
-below the lowest it stood over the last :data:`_STANDING_LOOKS` looks while
-barely moving sideways (a ragdoll goes down; a walker going downhill or
+tipped over more than :data:`FALLEN_TILT_DEG`, or more than a quarter of its
+height (and at least 0.2 m) below the lowest it stood over the last
+:data:`_STANDING_LOOKS` looks -- one every :data:`FALL_CHECK_EVERY_TICKS`
+ticks, about the last second -- while barely moving sideways (a ragdoll goes down; a walker going downhill or
 teleported does not look like that, nor one pushed off its feet a moment that
 lands where it stood).  It is
 recorded once per walker.
@@ -165,7 +166,8 @@ class WalkerFallen:
         t: Scenario time (s).
         id: The walker's actor id.
         role: Its ``role_name`` (its type id when it has none).
-        drop: How far (m) it dropped since the look before.
+        drop: How far (m) it dropped below the lowest it stood over the
+            last :data:`_STANDING_LOOKS` looks.
         tilt: How far (deg) it is tipped over.
     """
 
@@ -569,6 +571,8 @@ class NpcCollisionMonitor:
             if not math.isnan(z0) and z0 >= HIDDEN_BELOW_M:
                 if math.hypot(x - x0, y - y0) < _TELEPORT_M:
                     drop = standing - z
+            # *half* is the box's half-height (extent.z), so this is a quarter
+            # of the walker's height, never under 0.2 m (#2200).
             if tilt < FALLEN_TILT_DEG and drop < 0.5 * max(half, 0.4):
                 continue
             self._fallen.add(walker_id)

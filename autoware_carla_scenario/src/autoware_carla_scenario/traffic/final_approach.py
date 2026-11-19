@@ -234,8 +234,8 @@ class FinalApproach:
         # Along the path it drives -- a turn out of its junction, say -- not
         # straight ahead, where a walker on the corner it turns away from
         # stood "in its way" (vehicle_56 and pedestrian_66, each waiting on
-        # the other): within its stopping distance, as _walker_in_way and
-        # _vehicle_in_way measure it.
+        # the other): within its stopping distance, as _walker_in_way
+        # measures it.
         walker = self._in_way(
             "walker",
             speed * speed / 8.0 + LEAD_OUT_WALKER_AHEAD_M,
@@ -338,8 +338,8 @@ class FinalApproach:
             centre = _box_centre(self._actor, transform)
             # How far its box's centre is ahead of its origin, whose place
             # along the path _here is: *reach* and its front half are
-            # measured from the centre, as _walker_in_way and _vehicle_in_way
-            # measure them (#884).
+            # measured from the centre, as _walker_in_way measures them
+            # (#884).
             facing = math.radians(float(transform.rotation.yaw))
             forward = (centre[0] - float(transform.location.x)) * math.cos(facing) + (
                 centre[1] - float(transform.location.y)

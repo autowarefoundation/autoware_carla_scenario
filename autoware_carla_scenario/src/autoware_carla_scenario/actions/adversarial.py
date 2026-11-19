@@ -194,6 +194,12 @@ class AdversarialAction(BaseAction):
     def execute(self, world: "carla.World") -> None:
         """Plan the command when triggered, then drive it a tick at a time."""
         if self.state is ActionState.STANDBY:
+            # A repeating action's earlier run: closed, not only dropped, so
+            # its follow's conditions are too, as AdversarialTrafficAction
+            # does (#1298, #2200).
+            if self._execution is not None:
+                previous: AdversarialExecution = self._execution
+                previous.close()
             self._execution = self._plan(world)
         if self._execution is None:
             return
@@ -211,6 +217,11 @@ class AdversarialAction(BaseAction):
         reset the feasibility check, which draws from its seed afresh."""
         super().reset()
         self._feasible.reset()
+        # Closed, not only dropped, as on a repeat and as
+        # AdversarialTrafficAction.reset() does (#1298, #2200).
+        if self._execution is not None:
+            execution: AdversarialExecution = self._execution
+            execution.close()
         self._execution = None
         self._elapsed = 0.0
 
