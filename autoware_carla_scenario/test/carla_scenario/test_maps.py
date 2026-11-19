@@ -2811,6 +2811,63 @@ class TestEditorMapLibrary:
         assert repo in response.text
         assert drafts.list() == []
 
+    def test_the_library_button_opens_a_draft_whose_map_was_used(
+        self, editor: "TestClient", drafts: "DraftStore", origin_repo: Path
+    ) -> None:
+        """The button navigates on a 2xx, htmx's ``event.detail.successful``."""
+        draft_id = _new_draft(editor)
+        response = editor.post(
+            f"/draft/{draft_id}/map/use", data={"uri": _uri(origin_repo)}
+        )
+
+        assert response.status_code == 200
+        assert _stored(drafts, draft_id).map.name == "TownA"
+
+    @pytest.mark.parametrize(
+        "uri",
+        [
+            pytest.param("git+file:///nonexistent/repo@main#maps/T", id="unreachable"),
+            pytest.param(None, id="no-map-there"),
+        ],
+    )
+    def test_a_map_that_cannot_be_used_is_a_422_with_the_reason(
+        self,
+        editor: "TestClient",
+        drafts: "DraftStore",
+        origin_repo: Path,
+        uri: str | None,
+    ) -> None:
+        """A failed switch must not read as a success (#2206).
+
+        The library's button swaps nothing and opens the draft when the request
+        succeeds, so a failure is a 4xx carrying the bare reason, which the
+        page shows beside the button -- not a 200 with the reason inside an
+        editor body nobody swaps in.
+        """
+        if uri is None:
+            uri = _uri(origin_repo, "docs")
+        draft_id = _new_draft(editor)
+        before = _stored(drafts, draft_id).map
+
+        response = editor.post(f"/draft/{draft_id}/map/use", data={"uri": uri})
+
+        assert response.status_code == 422
+        assert response.headers["content-type"].startswith("text/plain")
+        assert response.text.strip()
+        assert "<" not in response.text  # The reason, not a page.
+        assert _stored(drafts, draft_id).map == before
+
+    def test_the_other_map_actions_still_answer_a_failure_inline(
+        self, editor: "TestClient"
+    ) -> None:
+        """Only the library's button wants the 422: the editor's own map
+        buttons swap the re-rendered body in, reason included."""
+        draft_id = _new_draft(editor)
+        response = editor.post(f"/draft/{draft_id}/map/pin")
+
+        assert response.status_code == 200
+        assert "That edit was not applied" in response.text
+
 
 class TestEditorWithoutOpenDrive:
     """A scenario is written against Lanelet2, so nothing here waits on CARLA."""

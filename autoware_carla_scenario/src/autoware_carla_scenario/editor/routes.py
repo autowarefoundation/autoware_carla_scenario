@@ -321,7 +321,9 @@ def document_yaml(request: Request, draft_id: str) -> PlainTextResponse:
     return PlainTextResponse(dump_document_yaml(draft.document))
 
 
-async def _map_action(request: Request, draft_id: str, act: Any) -> HTMLResponse:
+async def _map_action(
+    request: Request, draft_id: str, act: Any, *, bare_error: bool = False
+) -> Response:
     """Run a map operation off the event loop, then re-render the editor body.
 
     Every operation here can clone a repository or load a CARLA town -- tens of
@@ -333,11 +335,16 @@ async def _map_action(request: Request, draft_id: str, act: Any) -> HTMLResponse
 
     *act* returns a sentence about what it did, shown as a notice, because it
     took seconds, reached the network, and can succeed quietly.
+
+    A failure is shown inline on the re-rendered body, with HTTP 200, since the
+    editor swaps that body in.  With *bare_error* it is instead the bare reason,
+    as plain text with HTTP 422: for a caller that swaps nothing and leaves the
+    page on success, so it can tell a failure apart and show the reason (#2206).
     """
     service = _service(request)
     service.require_draft(draft_id)  # An unknown draft is a 404, not a notice.
 
-    def _run() -> HTMLResponse:
+    def _run() -> Response:
         try:
             draft, result = service.run_map_operation(draft_id, act)
         except (EditorError, ValidationError) as exc:
@@ -346,6 +353,8 @@ async def _map_action(request: Request, draft_id: str, act: Any) -> HTMLResponse
                 if isinstance(exc, ValidationError)
                 else str(exc)
             )
+            if bare_error:
+                return PlainTextResponse(message, status_code=422)
             fresh = service.require_draft(draft_id)
             return _body(request, _context(request, fresh, "scenario", error=message))
         message = result if isinstance(result, str) else ""
@@ -355,7 +364,7 @@ async def _map_action(request: Request, draft_id: str, act: Any) -> HTMLResponse
 
 
 @router.post("/draft/{draft_id}/map/fetch", response_class=HTMLResponse)
-async def fetch_map(request: Request, draft_id: str) -> HTMLResponse:
+async def fetch_map(request: Request, draft_id: str) -> Response:
     """Download the map the scenario names, or refresh what is cached."""
     form = dict(await request.form())
     refresh = is_checked(form, "refresh")
@@ -366,14 +375,14 @@ async def fetch_map(request: Request, draft_id: str) -> HTMLResponse:
 
 
 @router.post("/draft/{draft_id}/map/pin", response_class=HTMLResponse)
-async def pin_map(request: Request, draft_id: str) -> HTMLResponse:
+async def pin_map(request: Request, draft_id: str) -> Response:
     """Pin the map source to the exact commit it resolves to."""
     service = _service(request)
     return await _map_action(request, draft_id, service.pin_map)
 
 
 @router.post("/draft/{draft_id}/map/opendrive", response_class=HTMLResponse)
-async def fetch_opendrive(request: Request, draft_id: str) -> HTMLResponse:
+async def fetch_opendrive(request: Request, draft_id: str) -> Response:
     """Read the map's OpenDRIVE from a running CARLA server and cache it."""
     form = dict(await request.form())
     service = _service(request)
@@ -390,8 +399,13 @@ async def fetch_opendrive(request: Request, draft_id: str) -> HTMLResponse:
 
 
 @router.post("/draft/{draft_id}/map/use", response_class=HTMLResponse)
-async def use_map(request: Request, draft_id: str) -> HTMLResponse:
-    """Point the scenario at a map chosen in the library."""
+async def use_map(request: Request, draft_id: str) -> Response:
+    """Point the scenario at a map chosen in the library.
+
+    The library's button posts here and opens the draft once it succeeds, so a
+    failure is answered with HTTP 422 and the bare reason, which the library
+    shows beside the button instead of opening the draft on the old map (#2206).
+    """
     form = dict(await request.form())
     uri = str(form.get("uri", "")).strip()
     service = _service(request)
@@ -400,7 +414,7 @@ async def use_map(request: Request, draft_id: str) -> HTMLResponse:
         service.use_map(document, uri)
         return f"Now editing on {document.map.name}."
 
-    return await _map_action(request, draft_id, _act)
+    return await _map_action(request, draft_id, _act, bare_error=True)
 
 
 # ---------------------------------------------------------------------------
@@ -479,7 +493,8 @@ async def new_draft_on_map(request: Request) -> Response:
     """Start a scenario on a map chosen in the library.
 
     A map that cannot be fetched creates no draft: the library is shown again
-    with the reason, as ``/draft/{id}/map/use`` shows it inline (#1429).
+    with the reason, as ``/draft/{id}/map/use`` shows it beside its button
+    (#1429, #2206).
     """
     form = dict(await request.form())
     uri = str(form.get("uri", "")).strip()

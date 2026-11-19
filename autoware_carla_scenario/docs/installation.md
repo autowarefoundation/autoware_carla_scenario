@@ -7,7 +7,7 @@ This guide will help you install the `autoware-carla-scenario` package.
 ### Operating System
 
 - **Linux x86_64 or aarch64** (Ubuntu 22.04 is the reference; CI runs on
-  `ubuntu-latest` and `ubuntu-24.04-arm`). Every runtime dependency resolves
+  `ubuntu-24.04` and `ubuntu-24.04-arm`). Every runtime dependency resolves
   to a wheel on both, the CARLA client's CPython package included (see
   [CARLA client](#carla-client)), so nothing is compiled on install.
 - On aarch64 the framework, its CARLA client and the static check all run,
