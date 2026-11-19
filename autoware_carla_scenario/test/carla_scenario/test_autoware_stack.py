@@ -1813,6 +1813,33 @@ def test_the_workspaces_dependencies_go_into_an_image_the_stack_runs_in(
     assert "rosdeps installed" in (tmp_path / "out" / "autoware-deps.log").read_text()
 
 
+@pytest.mark.parametrize(
+    ("virtual_env", "as_root"),
+    [("/opt/autoware-venv", " --as-root pip:false"), ("", "")],
+)
+def test_rosdep_keeps_pip_keys_in_the_images_venv(
+    tmp_path: Path, fake_docker, virtual_env: str, as_root: str
+) -> None:
+    # An image with Autoware's venv (VIRTUAL_ENV set, PIP_REQUIRE_VIRTUALENV)
+    # refuses rosdep's `sudo pip3`; one without it keeps rosdep's default.
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    _docker_launcher(ws, docker, rosdep=True).prepare(log_dir=tmp_path / "out")
+
+    script = next(c for c in calls() if c[0] == "run" and "rosdep install" in c[-1])[-1]
+    rosdep = script[script.index("rosdep install") :]
+    expanded = subprocess.run(
+        ["bash", "-c", f'printf %s "{rosdep}"'],
+        env={"VIRTUAL_ENV": virtual_env, "ROS_DISTRO": "jazzy"},
+        capture_output=True,
+        text=True,
+        check=True,
+    ).stdout
+    assert expanded == (
+        "rosdep install -y -r --from-paths src --ignore-src --rosdistro jazzy" + as_root
+    )
+
+
 def test_the_dependency_image_is_made_once_per_set_of_package_xmls(
     tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
 ) -> None:

@@ -798,11 +798,16 @@ class DockerAutowareLauncher:
             f"sudo apt-get install -y --no-install-recommends {shlex.join(BRIDGE_APT_PACKAGES)}"
         )
         if self._config.rosdep:
+            # An image with Autoware's Python venv (VIRTUAL_ENV, on PATH)
+            # refuses pip outside it (PIP_REQUIRE_VIRTUALENV), and rosdep
+            # runs pip keys with sudo, whose reset PATH reaches the system
+            # pip; --as-root pip:false keeps them in the venv.
             script += (
                 ' && rosdep update --rosdistro "${ROS_DISTRO}" && '
                 f"cd {shlex.quote(self._container_mount())} && "
                 "rosdep install -y -r --from-paths src --ignore-src "
                 '--rosdistro "${ROS_DISTRO}"'
+                "${VIRTUAL_ENV:+ --as-root pip:false}"
             )
         argv = [
             *self._run_argv(
