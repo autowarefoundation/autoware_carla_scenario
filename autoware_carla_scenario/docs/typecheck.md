@@ -2565,7 +2565,10 @@ re-exports it), the fields of a control and of `sweep.odd_sample` and the keys
 a sweep sets (`odd.control_fields`, #1733; `odd.controls` and `odd.sampler`
 re-export them), what `scenario-odd route` reads off its command line and the
 metres per bucket it prints (`odd.route_text`, #2135; not `odd.cli`, which
-expands the scenario configs' globs and re-exports it), and the parts of the
+expands the scenario configs' globs and re-exports it), which sections of a
+run's config a scenario's digest reads and which of their settings it leaves
+out as endpoints (`scenario_hash`; not the digest itself, which walks a
+config of any shape and is left uncalled), and the parts of the
 tooling around a run that need nothing Codon lacks. A checked package's
 `__init__` re-exports what is not checked through models of it (see *A class
 a checked package only re-exports* below). Each checked module is listed here
