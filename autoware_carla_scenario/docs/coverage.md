@@ -336,9 +336,11 @@ the page over all of them.
 scenario-coverage outputs/ --cases-html cases.html \
   --cases-x vehicle_ahead_gap --cases-y vehicle_ahead_relative_speed
 
-# What each case drew against what its run staged, and the knob correction
+# What each case drew against what its run staged, and the correction of a
+# raw setting's scale and offset (pedestrian_dart_out's trigger_distance_m,
+# written unscaled: 1.0, 0.0)
 scenario-coverage outputs/ --drift-html drift.html \
-  --knob vehicle_ahead_gap=1.0,0.0
+  --knob crossing_pedestrian_gap=1.0,0.0
 ```
 
 Both pages are openodd's; [A scenario's nodes](odd.md#a-scenarios-nodes) says what a case
