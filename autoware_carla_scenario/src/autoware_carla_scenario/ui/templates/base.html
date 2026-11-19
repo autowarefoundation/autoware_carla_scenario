@@ -424,8 +424,10 @@
 
     // Connect to SSE progress stream, show progress bar, and call onComplete when done.
     let activeEvtSource = null;
+    let progressStreamGeneration = 0;
     function connectProgressStream(onComplete) {
       cancelRunErrorTimer();
+      const generation = ++progressStreamGeneration;
       if (activeEvtSource) { activeEvtSource.close(); }
       const progressBar = document.getElementById('progress-bar');
       progressBar.classList.remove('hidden');
@@ -444,11 +446,39 @@
           }, data.message ? 5000 : 1000);
         }
       };
+      // A dropped stream (a proxy's idle timeout, a network blip) is followed
+      // by polling /api/run/status until the run is over, so the page still
+      // refreshes when it ends (#2206). A newer stream ends the polling.
       evtSource.onerror = function() {
         evtSource.close();
+        if (activeEvtSource !== evtSource) return;
         activeEvtSource = null;
-        progressBar.classList.add('hidden');
+        pollRunUntilOver(onComplete, () => generation === progressStreamGeneration);
       };
+    }
+
+    // Poll /api/run/status every few seconds while *current()* holds; once the
+    // run is no longer running, hide the bar and call onComplete. A failed
+    // request is retried: the server may be restarting.
+    function pollRunUntilOver(onComplete, current) {
+      const progressBar = document.getElementById('progress-bar');
+      const poll = () => {
+        if (!current()) return;
+        fetch('/api/run/status')
+          .then(r => { if (!r.ok) throw new Error(r.status); return r.json(); })
+          .then(data => {
+            if (!current()) return;
+            if (data.running) {
+              if (data.progress) updateProgress(data.progress);
+              setTimeout(poll, 3000);
+              return;
+            }
+            progressBar.classList.add('hidden');
+            if (onComplete) onComplete();
+          })
+          .catch(() => setTimeout(poll, 3000));
+      };
+      setTimeout(poll, 1000);
     }
 
     // Shared helper: POST to /api/run, show progress bar, stream SSE updates,

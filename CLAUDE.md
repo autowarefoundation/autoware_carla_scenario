@@ -83,7 +83,8 @@ change end-to-end:
 
 ### Rationale
 
-- **Reproducibility**: CI runs the same commands on `ubuntu-latest`.
+- **Reproducibility**: CI runs the same commands on `ubuntu-24.04` (and
+  `ubuntu-24.04-arm`).
 - **Fewer moving parts**: no image to rebuild when a dependency changes.
 - **Fast iteration**: the whole environment is one `uv sync` away.
 
@@ -265,7 +266,9 @@ If pre-commit hooks fail:
   `environment.rules`. Tune them there, not in code.
 - Python 3.10 through 3.14. `autoware_carla_scenario` declares
   `requires-python = ">=3.10,<3.15"` -- the comment on that line is the
-  canonical explanation. CI runs the suite on 3.10, 3.11, 3.12, 3.13 and 3.14
+  canonical explanation. A pull request runs the suite on the floor and the
+  ceiling, 3.10 and 3.14 (on x86_64 and on aarch64); the nightly run on
+  master adds 3.11, 3.12 and 3.13 on x86_64 (`.github/workflows/ci.yml`)
 
 ## Static Check (Codon)
 
@@ -551,7 +554,9 @@ This formatting requirement is integrated into the commit workflow described in 
 
 The link checker workflow is configured in `.github/workflows/link-checker.yml` and runs:
 
-1. **On pull requests**: Checks links in all modified files
+1. **On pull requests**: Checks links in every matching file of the repository
+   (not only the modified ones), and reports broken links without failing the
+   job (`fail: false`)
 2. **Weekly schedule**: Runs every Sunday at 00:00 UTC to catch external link rot
 3. **Manual trigger**: Can be triggered manually via workflow_dispatch
 

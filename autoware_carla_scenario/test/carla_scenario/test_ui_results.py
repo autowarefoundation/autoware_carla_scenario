@@ -7,6 +7,8 @@ import gzip
 import json
 import math
 import re
+import shutil
+import subprocess
 from pathlib import Path
 from typing import Any
 
@@ -1116,6 +1118,91 @@ def test_update_swaps_the_session_table_in_on_the_index_page_only(
     reload = text.split("function refreshAndReload()", 1)[1].split("\n    }\n", 1)[0]
     post = reload.index("fetch('/api/refresh', {method: 'POST'})")
     assert post < reload.index(".finally(() => location.reload())")
+
+
+#: Runs the progress-stream script of base.html against stubbed browser APIs:
+#: the stream drops, then ``/api/run/status`` answers each of ``__STATUSES__``
+#: in turn. With ``__REPLACE__``, a newer stream is opened before the polling runs.
+_PROGRESS_HARNESS = """
+const timers = [];
+globalThis.setTimeout = (f) => { timers.push(f); };
+const bar = {hidden: false, classList: {
+  add() { bar.hidden = true; }, remove() { bar.hidden = false; }}};
+globalThis.document = {getElementById: () => bar};
+const sources = [];
+globalThis.EventSource = class { constructor() { sources.push(this); } close() {} };
+const statuses = __STATUSES__;
+let fetches = 0;
+globalThis.fetch = async () => {
+  fetches++;
+  const data = statuses.shift();
+  if (data === 'down') throw new Error('unreachable');
+  return {ok: true, json: async () => data};
+};
+const TERMINAL_STATUSES = ['done', 'idle'];
+const seen = [];
+function updateProgress(p) { seen.push(p.current); }
+function cancelRunErrorTimer() {}
+__SCRIPT__
+(async () => {
+  let completed = 0;
+  connectProgressStream(() => completed++);
+  sources[0].onerror();
+  if (__REPLACE__) connectProgressStream(() => {});
+  for (let i = 0; i < 20 && timers.length; i++) {
+    timers.shift()();
+    await new Promise(r => setImmediate(r));
+  }
+  console.log(JSON.stringify({completed, fetches, seen, hidden: bar.hidden}));
+})();
+"""
+
+
+@pytest.mark.skipif(shutil.which("node") is None, reason="needs node")
+@pytest.mark.parametrize(
+    ("statuses", "replace", "expected"),
+    [
+        pytest.param(
+            [{"running": True, "progress": {"current": 3}}, "down", {"running": False}],
+            False,
+            {"completed": 1, "fetches": 3, "seen": [3], "hidden": True},
+            id="polls-until-the-run-ends",
+        ),
+        pytest.param(
+            [{"running": False}],
+            True,
+            {"completed": 0, "fetches": 0, "seen": [], "hidden": False},
+            id="a-newer-stream-stops-it",
+        ),
+    ],
+)
+def test_a_dropped_progress_stream_falls_back_to_polling(
+    client: TestClient,
+    tmp_path: Path,
+    statuses: list[Any],
+    replace: bool,
+    expected: dict[str, Any],
+) -> None:
+    """A dropped stream still refreshes the page once the run ends (#2206).
+
+    It used to hide the bar and stop there, so a proxy's idle timeout during a
+    long run left the page as it was when the run ended.
+    """
+    page = client.get("/").text
+    start = page.index("    let activeEvtSource = null;")
+    end = page.index("\n    }\n", page.index("function pollRunUntilOver(")) + 7
+    script = (
+        _PROGRESS_HARNESS.replace("__STATUSES__", json.dumps(statuses))
+        .replace("__REPLACE__", json.dumps(replace))
+        .replace("__SCRIPT__", page[start:end])
+    )
+    harness = tmp_path / "progress.js"
+    harness.write_text(script, encoding="utf-8")
+    done = subprocess.run(
+        ["node", str(harness)], capture_output=True, text=True, timeout=60
+    )
+    assert done.returncode == 0, done.stderr
+    assert json.loads(done.stdout) == expected
 
 
 def test_the_session_page_links_its_odd_and_comparison(

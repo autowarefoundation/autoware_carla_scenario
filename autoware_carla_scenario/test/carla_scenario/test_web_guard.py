@@ -525,7 +525,16 @@ def test_a_stored_draft_is_kept_out_of_inline_script(
     page = _maps(editor, draft_id)
     assert "Use in this scenario" in page
     assert f'data-href="/draft/{draft_id}"' in page
-    assert 'hx-on::after-request="window.location = this.dataset.href"' in page
+    # It opens the draft only when the switch succeeded, and shows the reason
+    # otherwise (#2206).
+    handler = re.search(r'hx-on::after-request="([^"]*)"', page)
+    assert handler is not None
+    assert handler.group(1).startswith(
+        "if (event.detail.successful) { window.location = this.dataset.href }"
+    )
+    assert "getElementById('map-use-error')" in handler.group(1)
+    assert "textContent" in handler.group(1) and "innerHTML" not in handler.group(1)
+    assert 'id="map-use-error" hidden' in page
     assert f'<input type="hidden" name="draft" value="{draft_id}">' in page
     # No inline handler carries the id itself.
     for handler in re.findall(r'\s(?:on\w+|hx-on[^=]*)="([^"]*)"', page):

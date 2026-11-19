@@ -183,7 +183,7 @@
     return viewerModule;
   }
 
-  /* The notices that belong to one map: its "could not be loaded", its caption.
+  /* What belongs to one map: its "could not be loaded" notice, its pins.
      Scoped by `data-viewer-scope`, which every template that mounts a viewer
      marks its container with -- there is more than one map on the page now, and
      a document-wide lookup would reveal the picker's notice for the overview's
@@ -191,11 +191,6 @@
      reuse the frame outlives several renders of the fragment around it. */
   function previewOf(frame) {
     return frame.closest('[data-viewer-scope]') || document;
-  }
-
-  function revealHint(frame) {
-    var hint = previewOf(frame).querySelector('[data-viewer-hint]');
-    if (hint) hint.hidden = false;
   }
 
   /* One list, because `setHighlight` is one outline colour. The server decides
@@ -223,8 +218,9 @@
    * node no longer on the page.
    *
    * Only frames the template marks with a `data-viewer-key` take part, and only
-   * for the same map. A picker has no key: it is mounted when someone opens it
-   * and destroyed when they close it, which is already once per deliberate act.
+   * for the same map. Every frame has one (`map_frame` in fields.html): the
+   * scenario map's, and each picker's, which carries the parsed map across the
+   * body swap an edit in the side panel causes while the picker is open.
    *
    * Panning and zooming survive an edit as a consequence, which re-mounting had
    * been silently throwing away. */
@@ -237,10 +233,7 @@
     fresh.replaceWith(live);
     live.dataset.entity = fresh.dataset.entity || '';
     live.dataset.highlight = fresh.dataset.highlight || '';
-    if (live.__loaded) {
-      applyHighlight(live);
-      revealHint(live);
-    }
+    if (live.__loaded) applyHighlight(live);
     return true;
   }
 
@@ -277,7 +270,6 @@
       viewer.addEventListener('load', function () {
         frame.classList.remove('is-mounting');
         frame.__loaded = true;
-        revealHint(frame);
 
         // The fitted overview is the useful view here: highlighting is what
         // shows where the matches are, and zooming to the current spawn would

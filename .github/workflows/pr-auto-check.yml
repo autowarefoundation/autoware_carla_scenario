@@ -48,8 +48,16 @@ jobs:
 
       - name: Install actionlint
         if: steps.changed-workflows.outputs.has_changes == 'true'
+        # The script of a tagged release, and that release's binary. Saved to
+        # a file first: with `-f` an HTTP error fails the step here, rather
+        # than an error page being run as a script (#2206).
+        env:
+          ACTIONLINT_VERSION: "1.7.12"
         run: |
-          bash <(curl -s https://raw.githubusercontent.com/rhysd/actionlint/main/scripts/download-actionlint.bash)
+          curl -fsSL -o download-actionlint.bash \
+            "https://raw.githubusercontent.com/rhysd/actionlint/v${ACTIONLINT_VERSION}/scripts/download-actionlint.bash"
+          bash download-actionlint.bash "${ACTIONLINT_VERSION}"
+          rm download-actionlint.bash
           pwd >> "$GITHUB_PATH"
 
       - name: Run actionlint on changed workflows

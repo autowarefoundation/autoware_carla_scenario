@@ -364,7 +364,12 @@ jobs:
         with:
           ref: ${{ needs.release.outputs.sha }}
 
-      - uses: astral-sh/setup-uv@v5
+      # The release every other job pins (setup-env/action.yml), whose cache
+      # client still works; no cache, as these jobs sync no lockfile (#2206).
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "latest"
+          enable-cache: false
 
       - name: Check the package version matches the release
         env:
@@ -401,7 +406,11 @@ jobs:
         # The whole of `requires-python`, as CI's test matrix.
         python-version: ["3.10", "3.11", "3.12", "3.13", "3.14"]
     steps:
-      - uses: astral-sh/setup-uv@v5
+      # As in pypi-build.
+      - uses: astral-sh/setup-uv@v10.3.3
+        with:
+          version: "latest"
+          enable-cache: false
 
       - uses: actions/download-artifact@v4
         with:
