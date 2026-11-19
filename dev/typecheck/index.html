@@ -397,6 +397,25 @@
   
   
     <li class="md-tabs__item">
+      <a href="../content_packs/" class="md-tabs__link">
+        
+  
+  
+    
+  
+  CARLA Maps from Content Packs
+
+      </a>
+    </li>
+  
+
+      
+        
+  
+  
+  
+  
+    <li class="md-tabs__item">
       <a href="../autoware/" class="md-tabs__link">
         
   
@@ -1373,6 +1392,33 @@
     
   
     HD Maps
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+    
+      
+      
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../content_packs/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    CARLA Maps from Content Packs
   
 
     
@@ -4928,9 +4974,9 @@ typecheck/library.py when the docs are built
 lists here. -->
 
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
-340 of the package's 470
-modules (72%; about 104,800 of
-176,100 lines) are <code>CHECKED</code>: the kinematics, the
+340 of the package's 471
+modules (72%; about 104,900 of
+176,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6620,7 +6666,7 @@ compiled through their callers all the same. Each is listed with its reason:</p>
 <li><code>value_text.shown</code>: takes a config value of any type (<code>Any</code>: the value a validator refuses, an integer too long for repr() among them), which Codon cannot express; validators that take <code>Any</code> themselves, uncalled or in excluded modules, call it, and the checked traffic.fidelity._number (the traffic options), heavy_metrics._check_period (a heavy metric's period) and sweeper.bindings.RouteThroughBinding.__post_init__ (its depth) call it with the float or int the check types the value with; how it describes an integer too long for repr() is the checked huge_integer()'s</li>
 </ul>
 </details>
-<p>The 130 <code>EXCLUDED</code> modules fall in three groups. Many fit
+<p>The 131 <code>EXCLUDED</code> modules fall in three groups. Many fit
 more than one, so each belongs to the first group that fits it; most are in
 the first:</p>
 <ul>
@@ -6650,7 +6696,7 @@ the first:</p>
 </ul>
 <p>Each is listed with its reason:</p>
 <details class="note">
-<summary>The 130 EXCLUDED modules, and why</summary>
+<summary>The 131 EXCLUDED modules, and why</summary>
 <ul>
 <li><code>autoware_carla_scenario</code>: loads its public names lazily with importlib (a PEP 562 <code>__getattr__</code> returning <code>object</code>), and Codon reads its <code>TYPE_CHECKING</code> re-exports as imports of every subpackage, two of which are neither checked nor modelled: pytest_fixtures (pytest) and registry (omegaconf)</li>
 <li><code>actions.smart_pedestrian</code>: imports pedestrian.motion_client (grpc), pedestrian.ardy, prepare.declare (<code>need_prepare()</code>) and prepare.pool (<code>running_backend()</code>), which are neither checked nor modelled; applies <code>@need_prepare(ArdyBackend)</code> to its class, a class decorator the check does not support, and hands a class as a value (<code>running_backend(ArdyBackend)</code>), which Codon cannot hold; reads a keyframes file with json.loads and uses its values untyped</li>
@@ -6707,6 +6753,7 @@ the first:</p>
 <li><code>hils.measurements</code>: imports cv2 inside camera_frame(), and takes a buffer that is bytes, a memoryview or a numpy array, which Codon cannot express, and reads it with <code>np.frombuffer()</code>, which takes only a str in Codon; declares <code>FloatPoints</code> at module level as <code>np.ndarray[tuple[int, int], np.dtype[np.float32]]</code>, which is not Codon's <code>ndarray[dtype, ndim]</code>; returns a LiDAR scan's fields as a <code>Dict[str, np.ndarray]</code> of float32 and uint8 arrays, which Codon cannot express; the gathering of a LiDAR's arcs into revolutions is the checked hils.lidar_revolution's, and the dating of a revolution's rays and its start and the re-observing of its points as a spinning sensor's (<code>ray_times()</code>, <code>steady_revolution_start()</code>, <code>spin_lidar_points()</code>) the checked hils.lidar_spin's (#2116), which it re-exports</li>
 <li><code>hils.protocol</code>: imports selectors, which Codon has nothing for, and more of socket than its shim declares (<code>socket.timeout</code>, and LineReader reads the bridge's socket with <code>recv()</code>), and reads JSON messages of any shape, which LineReader.read() returns as <code>List[Dict[str, Any]]</code> and Codon cannot express; what needs none of these, command_value() included, is hils.wire, which it re-exports</li>
 <li><code>hydra_compat</code>: imports argparse and hydra (<code>hydra._internal.utils</code>), which is neither checked nor modelled; derives <code>argparse.ArgumentParser</code> and <code>types.ModuleType</code>, and replaces a module global of <code>hydra._internal.utils</code> at import</li>
+<li><code>maps.pack</code>: hands CARLA content packs to carla-pack-registry (a Rust extension imported inside functions and held as <code>Any</code>) and the CARLA client, and reads its releases and map formats, <code>dict[str, Any]</code> of mixed value types, which Codon cannot express; maps/pack.codon models what scenario_queue uses of it</li>
 <li><code>maps.road_network_cache</code>: imports io (<code>BytesIO</code>, <code>BufferedIOBase</code>), pickle (<code>Pickler</code>, <code>Unpickler</code>) and weakref (<code>WeakKeyDictionary</code>); pickles pyxodr's objects typed <code>Any</code>, which Codon cannot express; maps/road_network_cache.codon models what MapManager uses of it</li>
 <li><code>metric_batch</code>: replays the frames metric_frames records as a world of duck-typed actors (SimpleNamespace transforms, a list subclass for ActorList) through the checked metrics module, and evaluates the CommonRoad metrics with commonroad.session (worker processes), which is not checked</li>
 <li><code>odd</code>: <code>from . import backend, probes</code> fails first: Codon reads it as an import of <code>odd</code> from the top-level package's <code>__init__</code>, which the model does not declare ("cannot import name 'odd'"); behind that, it re-exports odd.model, odd.sampler, odd.openodd, odd.sources and odd.backend (openodd, a Rust extension), and odd.route and odd.registry, which are excluded (odd.probes is checked)</li>
