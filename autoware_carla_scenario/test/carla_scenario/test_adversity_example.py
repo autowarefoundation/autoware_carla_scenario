@@ -32,6 +32,7 @@ from autoware_carla_scenario.examples.configs import (
     NADE_TIMEOUT_MARGIN_SECONDS,
     AdversityConfig,
 )
+from autoware_carla_scenario.scenario_runner import _register_default_timeout
 
 
 def _scenario(config: AdversityConfig) -> AdversityScenario:
@@ -67,6 +68,11 @@ def test_nade_on_every_shipped_case_times_out_only_after_it_passes(case: str) ->
     assert timeout == config.effective_timeout_seconds()
     assert timeout >= config.nade_seconds + NADE_TIMEOUT_MARGIN_SECONDS
     assert timeout > config.nade_seconds
+    # The runner adds its default -- the run's scenario.timeout_seconds,
+    # shorter than NADE's run on these cases -- only to a scenario with no
+    # timeout of its own, so this one is the run's.
+    assert not _register_default_timeout(scenario, config.timeout_seconds, "adversity")
+    assert _timeouts(scenario) == [timeout]
 
 
 def test_the_default_config_s_nade_times_out_only_after_it_passes() -> None:
