@@ -81,20 +81,6 @@ from .configs import TURN_DIRECTIONS, IntersectionPassingConfig
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Lanelet IDs that define the expected route
-# ---------------------------------------------------------------------------
-
-#: Ordered lanelets the ego is expected to traverse through the intersection.
-EXPECTED_ROUTE_LANELET_IDS: list[int] = [460, 265]
-
-#: Timeout in seconds — if the ego has not completed the route by this time the
-#: scenario fails.
-SCENARIO_TIMEOUT_SECONDS: float = 5.0
-
-#: Minimum speed (km/h) — the scenario fails if the ego drops below this speed.
-MIN_SPEED_KMH: float = 5.0
-
 
 def _is_junction_lanelet(lanelet_id: int) -> bool:
     """Whether the lanelet is in a junction, as the ODD reads it

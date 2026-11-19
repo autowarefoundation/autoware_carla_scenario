@@ -667,8 +667,10 @@ as `ego.entity`:
 | TrafficManager (CARLA autopilot) | `autopilot` | optional — it reads none |
 | Autoware | `autoware` | **required** — it plans its route to the goal and will not move without one |
 
-(The framework's third value, `carla_driver`, needs a `driver` config group the
-editor does not author; a run can still select it from the command line.)
+(The framework's other values -- `carla_driver` ([driver interface](driver_interface.md)),
+`ros2` ([ROS 2](ros2.md)) and `hils` ([HILS](hils.md)) -- are configured by the
+`driver`, `ros2` and `hils` config groups, which the editor does not author; a
+run can still select them from the command line.)
 
 The **Goal** section sits beside the spawn, because the two are the ends of the
 same thing: where the run starts, and where the ego is meant to get to. A goal is

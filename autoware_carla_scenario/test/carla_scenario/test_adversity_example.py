@@ -7,11 +7,21 @@ the scenario knows and that it refuses one it does not.
 
 from __future__ import annotations
 
+import math
+from typing import Any
+from unittest.mock import MagicMock
+
 import pytest
 import typesafe_carla.carla as carla
+from omegaconf import OmegaConf
 
-from autoware_carla_scenario import EgoConfig, Lanelet2Pose, SpawnTransform
-from autoware_carla_scenario.examples import run
+from autoware_carla_scenario import (
+    EgoConfig,
+    Lanelet2Pose,
+    SpawnTransform,
+    TimeoutCondition,
+)
+from autoware_carla_scenario.examples import adversity, run
 from autoware_carla_scenario.examples.adversity import (
     VEHICLE_KINDS,
     AdversityScenario,
@@ -19,8 +29,98 @@ from autoware_carla_scenario.examples.adversity import (
 from autoware_carla_scenario.examples.configs import (
     ADVERSITY_KINDS,
     ADVERSITY_VEHICLE_KINDS,
+    NADE_TIMEOUT_MARGIN_SECONDS,
     AdversityConfig,
 )
+
+
+def _scenario(config: AdversityConfig) -> AdversityScenario:
+    return AdversityScenario(
+        EgoConfig(spawn_location=SpawnTransform(carla.Transform())),
+        Lanelet2Pose(lanelet_id=324, s=5.0),
+        config,
+    )
+
+
+def _shipped_config(case: str, *overrides: str) -> AdversityConfig:
+    cfg = run._compose_config(case, ["map=town10hd_opt", *overrides])
+    settings: Any = OmegaConf.to_container(cfg.scenario, resolve=True)
+    return AdversityConfig(**settings)
+
+
+def _timeouts(scenario: AdversityScenario) -> list[float]:
+    return [
+        c.timeout_seconds
+        for c in scenario._fail_conditions
+        if isinstance(c, TimeoutCondition)
+    ]
+
+
+@pytest.mark.parametrize("case", run._resolve_scenario_glob("adversity/*"))
+def test_nade_on_every_shipped_case_times_out_only_after_it_passes(case: str) -> None:
+    """#2202: NADE registered no timeout, so the run's 30 s fail-safe failed a
+    45 s NADE run before it could pass, on every case but nade.yaml."""
+    config = _shipped_config(case, "scenario.kind=nade")
+    scenario = _scenario(config)
+    scenario._setup_nade()
+    (timeout,) = _timeouts(scenario)
+    assert timeout == config.effective_timeout_seconds()
+    assert timeout >= config.nade_seconds + NADE_TIMEOUT_MARGIN_SECONDS
+    assert timeout > config.nade_seconds
+
+
+def test_the_default_config_s_nade_times_out_only_after_it_passes() -> None:
+    config = AdversityConfig(kind="nade")
+    assert config.timeout_seconds < config.nade_seconds
+    assert config.effective_timeout_seconds() == (
+        config.nade_seconds + NADE_TIMEOUT_MARGIN_SECONDS
+    )
+
+
+def test_a_longer_nade_timeout_is_kept() -> None:
+    config = AdversityConfig(kind="nade", nade_seconds=10.0, timeout_seconds=90.0)
+    assert config.effective_timeout_seconds() == 90.0
+
+
+@pytest.mark.parametrize("kind", [k for k in ADVERSITY_KINDS if k != "nade"])
+def test_a_single_adversity_keeps_its_own_timeout(kind: str) -> None:
+    config = AdversityConfig(kind=kind, timeout_seconds=12.0, nade_seconds=45.0)
+    assert config.effective_timeout_seconds() == 12.0
+
+
+@pytest.mark.parametrize(
+    ("rule", "offset", "t", "heading"),
+    [
+        ("RHT", 3.0, -3.0, 1),
+        ("RHT", -3.0, -3.0, 1),
+        ("LHT", 3.0, 3.0, -1),
+        ("LHT", -3.0, 3.0, -1),
+    ],
+)
+def test_the_jaywalker_waits_at_the_kerb_the_road_s_traffic_keeps_to(
+    monkeypatch: pytest.MonkeyPatch, rule: str, offset: float, t: float, heading: int
+) -> None:
+    """As the dart-out pedestrian does: the sign of npc_offset_m used to pick
+    the side, whatever the road's traffic rule."""
+    kerbs: list[Lanelet2Pose] = []
+
+    def spawn_transform(kerb: Lanelet2Pose) -> carla.Transform:
+        kerbs.append(kerb)
+        return carla.Transform()
+
+    monkeypatch.setattr(adversity, "road_traffic_rule", lambda road_id: rule)
+    monkeypatch.setattr(adversity, "to_opendrive", lambda pose: MagicMock(road_id="1"))
+    monkeypatch.setattr(adversity, "walker_spawn_transform", spawn_transform)
+    monkeypatch.setattr(adversity, "PedestrianEntity", MagicMock())
+    scenario = _scenario(
+        AdversityConfig(kind="jaywalking", npc_ahead_m=35.0, npc_offset_m=offset)
+    )
+    scenario.set_client(MagicMock())
+    monkeypatch.setattr(scenario, "register_pedestrian", MagicMock())
+    scenario._spawn_pedestrian(Lanelet2Pose(lanelet_id=324, s=5.0))
+    (kerb,) = kerbs
+    assert (kerb.lanelet_id, kerb.s, kerb.t) == (324, 40.0, t)
+    assert kerb.heading == pytest.approx(heading * math.pi / 2)
 
 
 def test_there_is_a_case_for_each_phase_1_kind_and_for_nade() -> None:
@@ -111,10 +211,6 @@ def test_an_unknown_kind_is_refused_before_anything_is_spawned() -> None:
     """The setup's backstop, for a config changed after it was built."""
     config = AdversityConfig()
     config.kind = "drift"
-    scenario = AdversityScenario(
-        EgoConfig(spawn_location=SpawnTransform(carla.Transform())),
-        Lanelet2Pose(lanelet_id=324, s=5.0),
-        config,
-    )
+    scenario = _scenario(config)
     with pytest.raises(ValueError, match=r"^scenario\.kind must be one of"):
         scenario.setup()

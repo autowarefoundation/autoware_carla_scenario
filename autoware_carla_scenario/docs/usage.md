@@ -1273,8 +1273,8 @@ Tests ego vehicle lane change maneuvers. Can test both successful lane changes a
 - Sets all traffic lights to GREEN
 - Immediately registers a LaneChangeAction
 - Derives the target lane from the current spawn position and direction
-- Pass condition: `expect=success` requires both `road_id` and `lane_id` to change; `expect=fail` passes when timeout is reached without a lane change
-- Checks via EntityLanePositionCondition
+- Pass condition: `expect=success` passes once the ego's centre is on the target lane, in the Lanelet2 frame: the lanelet beside the spawn lanelet on the requested side (the routing graph's `left` / `right`), or one of the lanelets ahead of it before the next junction; `expect=fail` passes when the timeout is reached without the ego getting there
+- Checks via an EntityLanePositionCondition per target lanelet, any of them, latched (not by OpenDRIVE road and lane IDs)
 
 #### Traffic Light Compliance
 
@@ -1328,8 +1328,9 @@ Tests that the ego vehicle stops at a stop line for a minimum duration, then res
 
 **Behavior:**
 - Sets all traffic lights to GREEN
-- Registers a TemporaryStopCondition at the configured stop position
-- Pass condition: ego stays within `s_margin` of stop line at speed below `speed_threshold` for at least `stop_duration` seconds, then accelerates above `restart_speed_kmh`
+- Reads the stop lines off the map (none is configured): the spawn lanelet's own, or else those of the first step of its successors, up to three steps on, that has any; setup fails if there is none
+- Registers a latched TemporaryStopCondition over those stop lines
+- Pass condition: ego stays within `s_margin` of a stop line at speed below `speed_threshold` for at least `stop_duration` seconds, then accelerates above `restart_speed_kmh`
 
 ### Scenario Evaluation
 

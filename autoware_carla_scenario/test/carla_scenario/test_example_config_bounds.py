@@ -57,6 +57,9 @@ POSITIVE_FIELDS: list[tuple[type, str]] = [
     (CutInConfig, "cut_in_after_seconds"),
     (CutInConfig, "hold_seconds"),
     (CutInConfig, "timeout_seconds"),
+    (CutInConfig, "npc_gap_m"),
+    (CutInConfig, "lanes_ahead_m"),
+    (CutInConfig, "leaving_lane_seconds"),
     (TemporaryStopConfig, "s_margin"),
     (TemporaryStopConfig, "stop_duration"),
     (TemporaryStopConfig, "restart_speed_kmh"),
@@ -137,6 +140,7 @@ def test_zero_is_accepted_where_not_negative(cls: type, key: str, value: float) 
         (TrafficLightComplianceConfig, "timeout_after_green_seconds"),
         (PedestrianDartOutConfig, "turn_back_ttc_s"),
         (PedestrianDartOutConfig, "turn_back_distance_m"),
+        (CutInConfig, "npc_gap_m"),
         (AdversityConfig, "ego_speed_kmh"),
     ],
 )
@@ -151,13 +155,29 @@ OPTIONAL_FIELDS: list[tuple[type, str]] = [
     (TrafficLightComplianceConfig, "timeout_after_green_seconds"),
     (PedestrianDartOutConfig, "turn_back_ttc_s"),
     (PedestrianDartOutConfig, "turn_back_distance_m"),
+    (CutInConfig, "npc_gap_m"),
     (AdversityConfig, "ego_speed_kmh"),
+]
+
+#: Finite, of either sign: a position along a lanelet, before or after a point.
+FINITE_FIELDS: list[tuple[type, str]] = [
+    (PedestrianDartOutConfig, "pedestrian_ahead_m"),
+    (CutInConfig, "npc_ahead_m"),
+]
+
+#: Finite and not 0, of either sign: a distance to the kerb whose sign is
+#: ignored, at 0 on the lane's centre.
+NOT_ZERO_FIELDS: list[tuple[type, str]] = [
+    (PedestrianDartOutConfig, "pedestrian_offset_m"),
+    (AdversityConfig, "npc_offset_m"),
 ]
 
 #: Every number field above, and the others compared without a bound.
 NUMBER_FIELDS: list[tuple[type, str]] = [
     *POSITIVE_FIELDS,
     *NOT_NEGATIVE_FIELDS,
+    *FINITE_FIELDS,
+    *NOT_ZERO_FIELDS,
     (TrafficLightComplianceConfig, "stop_zone_min_m"),
     (TrafficLightComplianceConfig, "stop_zone_max_m"),
     (AdversityConfig, "nade_probability"),
@@ -263,6 +283,68 @@ def test_the_cut_in_sides_are_the_setups() -> None:
     assert set(CUT_IN_SIDES) == set(cut_in._CHANGE_TOWARDS_EGO)
 
 
+@pytest.mark.parametrize("value", [math.nan, math.inf, -math.inf])
+@pytest.mark.parametrize(
+    ("cls", "key"),
+    [*FINITE_FIELDS, *NOT_ZERO_FIELDS],
+    ids=[f"{c.__name__}.{k}" for c, k in [*FINITE_FIELDS, *NOT_ZERO_FIELDS]],
+)
+def test_a_value_not_finite_is_refused(cls: type, key: str, value: float) -> None:
+    with pytest.raises(ValueError, match=_message(key, "finite")):
+        cls(**{key: value})
+
+
+@pytest.mark.parametrize("value", [-5.0, 0.0, 12.5])
+@pytest.mark.parametrize(
+    ("cls", "key"), FINITE_FIELDS, ids=[f"{c.__name__}.{k}" for c, k in FINITE_FIELDS]
+)
+def test_a_finite_value_of_either_sign_is_accepted(
+    cls: type, key: str, value: float
+) -> None:
+    assert getattr(cls(**{key: value}), key) == value
+
+
+@pytest.mark.parametrize(
+    ("cls", "key"),
+    NOT_ZERO_FIELDS,
+    ids=[f"{c.__name__}.{k}" for c, k in NOT_ZERO_FIELDS],
+)
+def test_a_kerb_distance_of_0_is_refused(cls: type, key: str) -> None:
+    """At 0 the pedestrian stands on the lane's centre: facing off the road in
+    right-hand traffic, it never darts out."""
+    with pytest.raises(ValueError, match=_message(key, r"finite and not 0, not 0\.0$")):
+        cls(**{key: 0.0})
+
+
+@pytest.mark.parametrize("value", [-3.0, 0.5, 3.0])
+@pytest.mark.parametrize(
+    ("cls", "key"),
+    NOT_ZERO_FIELDS,
+    ids=[f"{c.__name__}.{k}" for c, k in NOT_ZERO_FIELDS],
+)
+def test_a_kerb_distance_of_either_sign_is_accepted(
+    cls: type, key: str, value: float
+) -> None:
+    assert getattr(cls(**{key: value}), key) == value
+
+
+@pytest.mark.parametrize("ids", [[], [460], [460, 265]], ids=str)
+def test_an_empty_route_is_refused_when_the_config_is_built(ids: list[int]) -> None:
+    """setup() reads the route's first and last lanelet: an empty one failed
+    only once CARLA was up, naming no key."""
+    if ids:
+        assert IntersectionPassingConfig(expected_route_lanelet_ids=ids)
+        return
+    with pytest.raises(
+        ValueError,
+        match=(
+            r"^scenario\.expected_route_lanelet_ids must name at least one "
+            r"lanelet, not \[\]$"
+        ),
+    ):
+        IntersectionPassingConfig(expected_route_lanelet_ids=ids)
+
+
 def test_every_default_is_accepted() -> None:
     for cls in (
         IntersectionPassingConfig,
@@ -339,6 +421,13 @@ _CASES = {
         ("pedestrian_dart_out", "scenario.turn_back_within_m=nan"),
         ("cut_in", "scenario.npc_initial_speed_kmh=-5"),
         ("cut_in", "scenario.hold_seconds=0"),
+        ("cut_in", "scenario.lanes_ahead_m=-1"),
+        ("cut_in", "scenario.leaving_lane_seconds=nan"),
+        ("cut_in", "scenario.npc_gap_m=0"),
+        ("cut_in", "scenario.npc_ahead_m=nan"),
+        ("pedestrian_dart_out", "scenario.pedestrian_offset_m=0"),
+        ("pedestrian_dart_out", "scenario.pedestrian_ahead_m=nan"),
+        ("intersection_passing", "scenario.expected_route_lanelet_ids=[]"),
         ("temporary_stop", "scenario.restart_speed_kmh=0"),
         ("temporary_stop", "scenario.s_margin=0"),
         ("temporary_stop", "scenario.speed_threshold=-0.1"),

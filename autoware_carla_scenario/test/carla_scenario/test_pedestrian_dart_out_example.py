@@ -46,7 +46,9 @@ def test_the_pedestrian_faces_the_road(rule: str, t: float, heading: int) -> Non
     from autoware_carla_scenario.coordinate import Lanelet2Pose
 
     pose = kerb_pose(
-        Lanelet2Pose(lanelet_id=20, s=5.0), PedestrianDartOutConfig(), rule
+        Lanelet2Pose(lanelet_id=20, s=40.0),
+        PedestrianDartOutConfig().pedestrian_offset_m,
+        rule,
     )
     assert (pose.lanelet_id, pose.s, pose.t) == (20, 40.0, t)
     # A quarter turn towards the lane's centre.
@@ -117,7 +119,13 @@ def test_the_fixed_case_puts_the_pedestrian_off_the_road(nishishinjuku: None) ->
     rule = road_traffic_rule(to_opendrive(spawn).road_id)
     assert rule == "LHT"
 
-    kerb = kerb_pose(spawn, config, rule)
+    kerb = kerb_pose(
+        Lanelet2Pose(
+            lanelet_id=spawn.lanelet_id, s=spawn.s + config.pedestrian_ahead_m
+        ),
+        config.pedestrian_offset_m,
+        rule,
+    )
     assert kerb.t > 0.0
     assert _road_lanelets_at(kerb) == []
     # The other side is the road: the lane beside, by the centre line.
