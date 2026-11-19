@@ -1617,11 +1617,11 @@ def _map_source(cfg: DictConfig, map_paths: Any) -> str | None:
     says which pack the run read (#2198).  A pack that carries no Lanelet2
     map leaves it to ``map.source``, which is then the source named.
     """
-    map_cfg = cfg.get("map") or {}
-    directory = map_cfg.get("directory")
+    # Read as resolve_map_paths reads them: a blank setting is unset (#2198).
+    directory = _map_setting(cfg, "directory")
     if directory:
         return str(directory)
-    source = map_cfg.get("source")
+    source = _map_setting(cfg, "source")
     pack = getattr(map_paths, "pack", None)
     if isinstance(pack, str) and pack:
         resolved = getattr(map_paths, "resolved", None)

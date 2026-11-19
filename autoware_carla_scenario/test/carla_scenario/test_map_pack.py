@@ -187,6 +187,19 @@ def test_a_relative_packs_dir_is_made_absolute(
     assert packs_dir() == tmp_path / "home" / "packs"
 
 
+def test_a_symlinked_packs_dir_is_handed_over_as_written(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The server (or its container) may mount the path as written, not the
+    # directory a symlink on this machine points at.
+    (tmp_path / "real").mkdir()
+    (tmp_path / "home").symlink_to(tmp_path / "real")
+    monkeypatch.delenv(PACKS_DIR_ENV, raising=False)
+    monkeypatch.setenv("AUTOWARE_CARLA_SCENARIO_HOME", str(tmp_path / "home"))
+    assert packs_dir() == tmp_path / "home" / "packs"
+    assert packs_dir(str(tmp_path / "home")) == tmp_path / "home"
+
+
 @pytest.mark.parametrize("configured", ["", "  "])
 def test_a_blank_packs_dir_is_refused(configured: str) -> None:
     # null is the default; a blank string was read as it (#2143, #2198).
@@ -590,6 +603,13 @@ def test_a_pack_without_lanelet2_leaves_the_map_source_to_map_source() -> None:
     no_lanelet2 = SimpleNamespace(pack=f"{REF}@1.2.0", resolved=None)
     cfg = OmegaConf.create({"map": {"pack": REF}})
     assert run._map_source(cfg, no_lanelet2) == f"carla-pack:{REF}@1.2.0"
+
+
+def test_a_blank_directory_or_source_does_not_hide_the_pack() -> None:
+    # Blank is unset, as resolve_map_paths reads it (#2198).
+    paths = SimpleNamespace(pack=f"{REF}@1.2.0", resolved=None)
+    cfg = OmegaConf.create({"map": {"pack": REF, "directory": " ", "source": ""}})
+    assert run._map_source(cfg, paths) == f"carla-pack:{REF}@1.2.0"
 
 
 def test_the_logged_pack_is_the_one_resolve_map_paths_resolved(

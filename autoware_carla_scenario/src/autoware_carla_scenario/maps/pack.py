@@ -120,7 +120,10 @@ def packs_dir(configured: Optional[str] = None) -> Path:
     machine needs a directory both see at the same path; a relative one is
     taken from this process's working directory and made absolute here, as
     the server, with a working directory of its own, could not read it
-    (#2198).
+    (#2198).  Symlinks are kept, not resolved (``Path.absolute()``, not
+    ``resolve()``): the server, or a container it runs in, may see the path
+    as written -- a bind mount of ``~/.autoware_carla_scenario`` -- but not
+    the directory a symlink on this machine points at.
 
     Raises:
         ValueError: *configured* is blank: ``server.packs_dir`` is a path, or
@@ -129,11 +132,11 @@ def packs_dir(configured: Optional[str] = None) -> Path:
     if configured is not None:
         if not configured.strip():
             raise ValueError(f"server.packs_dir must be a path, got {configured!r}")
-        return Path(configured.strip()).expanduser().resolve()
+        return Path(configured.strip()).expanduser().absolute()
     from_env = os.environ.get(PACKS_DIR_ENV, "").strip()
     if from_env:
-        return Path(from_env).expanduser().resolve()
-    return (home_dir() / "packs").resolve()
+        return Path(from_env).expanduser().absolute()
+    return (home_dir() / "packs").absolute()
 
 
 def _short(name: str) -> str:

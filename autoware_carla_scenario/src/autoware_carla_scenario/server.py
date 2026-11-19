@@ -40,8 +40,9 @@ def fog_density_scale_args(scale: float) -> List[str]:
 #: still there, and once it is gone it sends the group SIGTERM, gives CARLA
 #: *argv[2]* seconds and then sends SIGKILL.  While it waits it looks for
 #: the rest of the group every 0.2 s -- sleeping once the launcher has
-#: exited, as ``child.wait()`` then returns at once (#2198).  ``CarlaUnreal.sh`` runs UE5 as a
-#: child rather than ``exec``-ing it, which is why the whole group is signalled.
+#: exited, as ``child.wait()`` then returns at once (#2198).
+#: ``CarlaUnreal.sh`` runs UE5 as a child rather than ``exec``-ing it, which is
+#: why the whole group is signalled.
 #:
 #: The parent is polled rather than ``prctl(PR_SET_PDEATHSIG)`` asked for (the
 #: Autoware launcher's ``_DIE_WITH_PARENT``): that one fires when the *thread*
