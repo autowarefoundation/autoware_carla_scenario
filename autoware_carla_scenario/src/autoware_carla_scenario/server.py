@@ -38,7 +38,9 @@ def fog_density_scale_args(scale: float) -> List[str]:
 #: timeout reaches it, and ``atexit`` runs on neither.  This watchdog leads
 #: CARLA's process group: every second it checks its parent (*argv[1]*) is
 #: still there, and once it is gone it sends the group SIGTERM, gives CARLA
-#: *argv[2]* seconds and then sends SIGKILL.  ``CarlaUnreal.sh`` runs UE5 as a
+#: *argv[2]* seconds and then sends SIGKILL.  While it waits it looks for
+#: the rest of the group every 0.2 s -- sleeping once the launcher has
+#: exited, as ``child.wait()`` then returns at once (#2198).  ``CarlaUnreal.sh`` runs UE5 as a
 #: child rather than ``exec``-ing it, which is why the whole group is signalled.
 #:
 #: The parent is polled rather than ``prctl(PR_SET_PDEATHSIG)`` asked for (the
@@ -77,6 +79,8 @@ _WATCHDOG = (
     "            child.wait(timeout=0.2)\n"
     "        except subprocess.TimeoutExpired:\n"
     "            pass\n"
+    "        else:\n"
+    "            time.sleep(0.2)\n"
     "    os.killpg(0, signal.SIGKILL)\n"
     "if os.getppid() != parent:\n"
     "    sys.exit(143)\n"

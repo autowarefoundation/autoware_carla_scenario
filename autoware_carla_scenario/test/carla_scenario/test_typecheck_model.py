@@ -959,7 +959,7 @@ _MODULE_MODELS: dict[str, tuple[Any, tuple[str, ...]]] = {
     # What an ego entity a scenario defines returns from debug_markers().
     "debug_markers": (
         debug_markers,
-        ("DRIVEN_PATH_COLOR", "DebugMarkers", "DebugPolyline", "TRAJECTORY_COLOR"),
+        ("DebugMarkers", "DebugPolyline", "TRAJECTORY_COLOR"),
     ),
     "trajectory_recorder": (
         trajectory_recorder,

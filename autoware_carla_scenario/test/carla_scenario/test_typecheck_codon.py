@@ -3767,7 +3767,7 @@ from autoware_carla_scenario.conditions import (
     find_actor_in_list,
 )
 from autoware_carla_scenario.coordinate import AnyPose
-from autoware_carla_scenario.debug_markers import DRIVEN_PATH_COLOR, TRAJECTORY_COLOR
+from autoware_carla_scenario.debug_markers import TRAJECTORY_COLOR
 from autoware_carla_scenario.entity_role import find_actor_in_list as find_actor
 from autoware_carla_scenario.entity_role import find_actor_in_world
 from autoware_carla_scenario.environment import ENVIRONMENT_SUFFIX, LOCK_SUFFIX
@@ -3825,7 +3825,7 @@ logger.info("%d", len(get_stop_line_linestrings(460)))
 logger.info("%s %s %s", ENVIRONMENT_SUFFIX, LOCK_SUFFIX, TIP_SUFFIX)
 logger.info("%s %s", CACHE_ROOT_ENV, AUTOWARE_DATA_DIR_ENV)
 logger.info("%s %s", EGO_ROLES[0], RECORDED_KINDS[1])
-logger.info("%d %d", TRAJECTORY_COLOR[1], DRIVEN_PATH_COLOR[0])
+logger.info("%d %d", TRAJECTORY_COLOR[1], TRAJECTORY_COLOR[0])
 """
 
 

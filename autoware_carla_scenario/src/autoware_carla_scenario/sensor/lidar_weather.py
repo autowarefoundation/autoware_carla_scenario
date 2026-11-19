@@ -48,7 +48,8 @@ CARLA_FOG_DENSITY_SCALE: float = 0.001
 #: The ``carla.Weather.FogDensityScale`` the fog effects below are tuned at.
 FOG_REFERENCE_SCALE: float = 0.01
 
-#: Two-way extinction coefficients, per metre, at intensity 100.  Heavy rain
+#: One-way extinction coefficients (alpha), per metre, at intensity 100,
+#: applied over the beam's round trip as ``exp(-2 * alpha * range)``.  Heavy rain
 #: keeps about a seventh of the power of a return from 100 m; thick fog (at
 #: :data:`FOG_REFERENCE_SCALE`), a few percent from 30 m beyond where it starts.
 _RAIN_EXTINCTION_PER_M: float = 0.01

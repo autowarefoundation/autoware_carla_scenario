@@ -23,7 +23,10 @@ from pathlib import Path
 from typing import IO, Optional
 
 HOME_ENV = "AUTOWARE_CARLA_SCENARIO_HOME"
-"""Overrides the framework's home directory, ``~/.autoware_carla_scenario``."""
+"""Overrides the framework's home directory, :data:`DEFAULT_HOME`."""
+
+DEFAULT_HOME = "~/.autoware_carla_scenario"
+"""The framework's home directory unless :data:`HOME_ENV` names another."""
 
 _LAUNCHER = "Linux/CarlaUnreal.sh"
 """The server's launcher, relative to the unpacked package (``carla_install``'s
@@ -40,10 +43,16 @@ _SCHEME = re.compile(r"^(?:[A-Za-z][A-Za-z0-9+.-]*://|file:)", re.IGNORECASE)
 a URL from a local path."""
 
 
+def home_dir() -> Path:
+    """The framework's home directory: :data:`HOME_ENV`, else
+    :data:`DEFAULT_HOME`, with ``~`` expanded."""
+    home = os.environ.get(HOME_ENV, "").strip() or DEFAULT_HOME
+    return Path(home).expanduser()
+
+
 def install_dir() -> Path:
     """Where ``scenario-setup`` puts CARLA: ``<home>/bin/carla``."""
-    home = os.environ.get(HOME_ENV, "").strip() or "~/.autoware_carla_scenario"
-    return Path(home).expanduser() / "bin" / "carla"
+    return home_dir() / "bin" / "carla"
 
 
 def installed_executable() -> Optional[Path]:
