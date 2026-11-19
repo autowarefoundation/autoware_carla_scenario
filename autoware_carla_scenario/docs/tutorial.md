@@ -400,7 +400,7 @@ Instead of copying the template by hand, generate a fresh package (the files
 below are rendered from Jinja2 templates):
 
 ```bash
-# scenario-new <package-name> [--scenario NAME] [--output-dir DIR] [--force]
+# scenario-new <package-name> [--scenario NAME] [--output-dir DIR] [--description TEXT] [--force]
 uv run scenario-new reach_goal_pkg --scenario reach_goal
 ```
 
@@ -409,6 +409,8 @@ This writes a ready-to-install package:
 ```
 reach_goal_pkg/
 ├── pyproject.toml                     # name + entry point filled in
+├── README.md                          # how to install, run and check it
+├── tests/test_typecheck.py            # the static check of its scenarios
 └── src/reach_goal_pkg/
     ├── __init__.py                    # register() wired up
     ├── reach_goal.py                  # ReachGoalScenario

@@ -1217,6 +1217,7 @@ Tests ego vehicle traversal through an intersection. Verifies that the ego passe
 | Parameter | Type | Default | Shipped | Description |
 |-----------|------|---------|---------|-------------|
 | `scenario.expected_route_lanelet_ids` | list[int] | `[460, 265]` | per config | Lanelet IDs the ego must traverse; a junction's lanelets are judged by the roads before and after it |
+| `scenario.pass_on_last_lanelet` | bool | `false` | `false` | Pass only once the ego is on the route's last lanelet itself (its lane, and so its direction), not anywhere on that lanelet's road; `false` lets a turn onto the oncoming lane of the right road pass |
 | `scenario.timeout_seconds` | float | `5.0` | per config (above) | Maximum scenario duration |
 | `scenario.min_speed_kmh` | float \| null | null | per config (above) | Minimum ego speed (fail if below; positive). `null` disables check |
 | `scenario.speed_check_delay_seconds` | float | `0.3` | — | Grace period before speed check starts |
@@ -1913,7 +1914,7 @@ The page's *Download .rrd* link is the recording itself, for the native
 viewer (`rerun X.rrd`).
 
 The web viewer is the `@rerun-io/web-viewer` package of the version the
-converter writes recordings with (`RERUN_VERSION`, 0.38.1 for converter 0.2;
+converter writes recordings with (`RERUN_VERSION`, 0.38.1 for converter 0.3;
 a recording opens only in a viewer of its minor version). By default the page
 loads it from the unpkg CDN, pinned to that version. For a machine without
 the network, keep a copy that the viewer serves itself:

@@ -329,6 +329,38 @@ cases](odd.md#finding-flaky-cases)) is what fills the yellow cells in: run the
 rounds one after another, each reading the earlier ones' outputs, and render
 the page over all of them.
 
+## The case plot and the drift view
+
+```bash
+# The drawn cases, by outcome, placed by two of their attributes
+scenario-coverage outputs/ --cases-html cases.html \
+  --cases-x vehicle_ahead_gap --cases-y vehicle_ahead_relative_speed
+
+# What each case drew against what its run staged, and the knob correction
+scenario-coverage outputs/ --drift-html drift.html \
+  --knob vehicle_ahead_gap=1.0,0.0
+```
+
+Both pages are openodd's; [A scenario's nodes](odd.md#a-scenarios-nodes) says what a case
+records and what the drift view compares. The flags, all from openodd's CLI:
+
+| Flag | What it does |
+|---|---|
+| `--cases-html FILE` | Write the case plot: each run's recorded case, by outcome, with a table of the cases run more than once |
+| `--cases-x`, `--cases-y ATTRIBUTE` | The plot's axes (default: the first two numeric attributes) |
+| `--cases-no-prediction` | Leave out the background, what the flaky model fitted to the runs predicts |
+| `--cases-rings` | Outline the cases chosen for instability ([Finding flaky cases](odd.md#finding-flaky-cases)) |
+| `--cases-basis {drawn,measured}` | Place the cases by what the sampler drew (default) or by what the run measured at its start |
+| `--measured-at SECONDS` | The measurement window: an attribute's measured value is its first sample this soon after the start (default: 1) |
+| `--drift-html FILE` | Write the drift view: each attribute's drawn values against the measured ones, and the knob calibration they suggest |
+| `--knob ATTRIBUTE=SCALE,OFFSET` | The knob writing ATTRIBUTE, with its current scale and offset; the drift view then gives the corrected ones. Repeat for more |
+| `--drift-rules FILE` | Also write the corrections for knobs that take their value from the rules, as a rule file extending `--rules` |
+| `--rules FILE` | The rule file those knobs' quantities are in (for `--drift-rules`) |
+| `--knob-quantity ATTRIBUTE=QUANTITY` | The quantity of `--rules` the knob writing ATTRIBUTE takes its value from (for `--drift-rules`). Repeat for more |
+| `--max-holes N` | Holes listed per item in the report (default: 20) |
+
+`scenario-coverage --help` has the full list.
+
 ## Exporting the observed conditions as an OpenODD COD
 
 Besides the aggregates, the coverage file keeps every tick's ODD values

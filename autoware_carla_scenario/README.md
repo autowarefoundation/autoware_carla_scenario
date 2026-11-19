@@ -33,7 +33,7 @@ The CARLA client is [typesafe_carla](https://github.com/hakuturu583/typesafe_car
 
 ## Quick usage
 
-The package provides these CLI entry points:
+The main CLI entry points (every command the package installs is in [CLI Commands Overview](docs/usage.md#cli-commands-overview)):
 
 | Command | Framework | Purpose |
 |---------|-----------|---------|

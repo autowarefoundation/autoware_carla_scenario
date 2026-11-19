@@ -238,7 +238,7 @@ These live in `autoware_carla_scenario.odd`:
 | `rain`, `fog`, `wind`, `cloudiness` | `INTENSITY_LEVELS` | CARLA weather (0-100): `precipitation`, `fog_density`, `wind_intensity`, `cloudiness` |
 | `road_wetness` | `INTENSITY_LEVELS` | CARLA's `wetness` (0-100) alone: the standing water the rain brings is the rain's |
 | `tire_friction` | float, share of the dry road's grip (1.0) | The wheel friction the run's weather left the vehicles; nothing when nothing set it |
-| `visibility` | float, m | How far drivers see, as the run's weather left it ([Visibility follows the weather](#visibility-follows-the-weather)); nothing when the run set none |
+| `visibility` | float, m | How far drivers see, as the run's weather left it ([Visibility follows the conditions](#visibility-follows-the-conditions)); nothing when the run set none |
 | `traffic_density` | `TRAFFIC_DENSITY_LEVELS` | Other vehicles within `NEARBY_RADIUS_M` |
 | `nearby_vehicle_count` | int | Other vehicles within `NEARBY_RADIUS_M` |
 | `pedestrian_nearby` | bool | A walker within `NEARBY_RADIUS_M` |
