@@ -918,6 +918,8 @@ _MALFORMED_SIDECARS = [
     ({"offset": "abc"}, "offset must be a list of 3 numbers"),
     ({"seed": [1]}, "seed must be a whole number"),
     ({"seed": "one"}, "seed must be a whole number"),
+    ({"seed": 1.5}, "seed must be a whole number"),
+    ({"agents": [{"object_id": 2.5}]}, r"agents\[0\]\.object_id"),
 ]
 
 

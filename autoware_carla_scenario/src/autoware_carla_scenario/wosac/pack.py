@@ -126,8 +126,11 @@ def read_run(path: Path | str) -> Optional[dict[str, Any]]:
 
 def _whole(value: Any) -> bool:
     """Whether ``int(value)`` reads *value* as a whole number: not a bool,
-    which a sidecar never holds for an id or a seed."""
+    which a sidecar never holds for an id or a seed, nor a fraction, which
+    ``int()`` would truncate (seeds 1.2 and 1.7 would both read as 1)."""
     if isinstance(value, bool):
+        return False
+    if isinstance(value, float) and not value.is_integer():
         return False
     try:
         int(value)
