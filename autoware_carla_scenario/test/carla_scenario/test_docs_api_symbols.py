@@ -12,10 +12,14 @@ dotted span (``route.frame`` of ``route.frame.RouteFrame``), or a
 which alone is then searched.  A top-level re-export does not count: the
 header claims the symbol for its module.
 
-Where the first cell spells a signature (``export_cod(doc, out_dir, stem)``),
-each parameter it names must be one of the callable's, unless the callable
-takes ``**kwargs``.  The check is conservative: a span that is not a plain
-name (an expression, a CLI flag, prose) is skipped.
+Where a span spells a signature (``export_cod(doc, out_dir, stem)``), each
+parameter it names must be one of the callable's, unless the callable takes
+``**kwargs``: in the first cell, and in the description too
+(``NotCondition(condition, holds_when_pending=True)``) when the name resolves
+in the row's modules or the top-level package -- there an unresolved name is
+prose, not a symbol.  The
+check is conservative: a span that is not a plain name (an expression, a CLI
+flag, prose) is skipped, and so is an argument that is not a plain name.
 """
 
 from __future__ import annotations
@@ -35,15 +39,24 @@ _SPAN = re.compile(r"`([^`]+)`")
 _SYMBOL = re.compile(r"^([A-Za-z_]\w*(?:\.[A-Za-z_]\w*)*)(?:\((.*)\))?$")
 _FULL_MODULE = re.compile(rf"\b({_PACKAGE}(?:\.\w+)*)")
 _DOTTED = re.compile(r"^\w+(?:\.\w+)*$")
+_MISSING = object()  # a name that is absent (a constant may be None)
 
 
 @functools.lru_cache(maxsize=None)
 def _module(name: str) -> Optional[ModuleType]:
-    """The module ``name``, or None when there is none."""
+    """The module ``name``, or None when there is none.
+
+    Only a missing ``name`` (or a missing parent package of it) means "no
+    module": a module that exists but fails to import, say for want of a
+    third-party dependency, raises, rather than reading as a symbol the doc
+    misplaced.
+    """
     try:
         return importlib.import_module(name)
-    except ImportError:
-        return None
+    except ModuleNotFoundError as error:
+        if error.name and (name == error.name or name.startswith(f"{error.name}.")):
+            return None
+        raise
 
 
 def _as_module(name: str) -> Optional[ModuleType]:
@@ -54,7 +67,7 @@ def _as_module(name: str) -> Optional[ModuleType]:
 
 
 def _resolve(base: ModuleType, dotted: str) -> Any:
-    """``dotted`` looked up on ``base``, through submodules; None if absent."""
+    """``dotted`` looked up on ``base``, through submodules; _MISSING if absent."""
     obj: Any = base
     for part in dotted.split("."):
         if hasattr(obj, part):
@@ -62,7 +75,7 @@ def _resolve(base: ModuleType, dotted: str) -> Any:
         elif inspect.ismodule(obj) and _module(f"{obj.__name__}.{part}"):
             obj = _module(f"{obj.__name__}.{part}")
         else:
-            return None
+            return _MISSING
     return obj
 
 
@@ -91,10 +104,33 @@ def _rows() -> list[tuple[int, str, str]]:
     return rows
 
 
+def _parameter_problems(
+    number: int, span: str, name: str, found: Any, arguments: str
+) -> list[str]:
+    """The parameters the signature span ``span`` names that ``found`` lacks."""
+    if not callable(found) or inspect.ismodule(found):
+        return []
+    try:
+        parameters = inspect.signature(found).parameters
+    except (TypeError, ValueError):
+        return []
+    if any(p.kind is p.VAR_KEYWORD for p in parameters.values()):
+        return []
+    problems = []
+    for argument in arguments.split(","):
+        parameter = argument.split("=", 1)[0].strip().lstrip("*")
+        if re.fullmatch(r"[A-Za-z_]\w*", parameter) and parameter not in parameters:
+            problems.append(
+                f"line {number}: `{span}` names `{parameter}`, which"
+                f" {name} does not take ({list(parameters)})"
+            )
+    return problems
+
+
 def _problems() -> list[str]:
     problems = []
     for number, section, row in _rows():
-        first = row.split(" | ", 1)[0][2:]
+        first, _, description = row[2:].partition(" | ")
         spans = _SPAN.findall(first)
         modules = [section, *_FULL_MODULE.findall(row)]
         modules += [span for span in _SPAN.findall(row) if _DOTTED.match(span)]
@@ -112,34 +148,36 @@ def _problems() -> list[str]:
             match = _SYMBOL.match(span)
             if not match or _as_module(match[1]) is not None:
                 continue
-            found = None
+            found: Any = _MISSING
             for base in prefixed or candidates:
                 found = _resolve(base, match[1])
-                if found is not None:
+                if found is not _MISSING:
                     break
-            if found is None and "." in match[1] and prefixed is None:
+            if found is _MISSING and "." in match[1] and prefixed is None:
                 found = _resolve(_module(_PACKAGE), match[1])  # type: ignore[arg-type]
-                if found is not None and inspect.ismodule(found):
-                    found = None
-            if found is None:
+                if inspect.ismodule(found):
+                    found = _MISSING
+            if found is _MISSING:
                 where = [m.__name__ for m in prefixed or candidates]
-                problems.append(f"line {number}: `{span}` is not in {where}")
+                problems.append(
+                    f"line {number}: `{span}` is not in {where}; name the module"
+                    " it lives in on the row (a full path, or a `module:`"
+                    " prefix), or move it out of the first cell"
+                )
                 continue
-            if match[2] is None or not callable(found):
+            if match[2] is not None:
+                problems += _parameter_problems(number, span, match[1], found, match[2])
+        for span in _SPAN.findall(description):
+            match = _SYMBOL.match(span)
+            if not match or match[2] is None:
                 continue
-            try:
-                parameters = inspect.signature(found).parameters
-            except (TypeError, ValueError):
-                continue
-            if any(p.kind is p.VAR_KEYWORD for p in parameters.values()):
-                continue
-            for argument in match[2].split(","):
-                name = argument.split("=", 1)[0].strip().lstrip("*")
-                if re.fullmatch(r"[A-Za-z_]\w*", name) and name not in parameters:
-                    problems.append(
-                        f"line {number}: `{span}` names `{name}`, which"
-                        f" {match[1]} does not take ({list(parameters)})"
+            for base in [*candidates, importlib.import_module(_PACKAGE)]:
+                found = _resolve(base, match[1])
+                if found is not _MISSING:
+                    problems += _parameter_problems(
+                        number, span, match[1], found, match[2]
                     )
+                    break
     return problems
 
 
