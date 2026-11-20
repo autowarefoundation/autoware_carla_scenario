@@ -374,8 +374,10 @@ class TestTrafficManagerBackgroundVehicles:
         live.is_alive, gone.is_alive = True, False  # type: ignore[attr-defined]
         backend = TrafficManagerBackend(client=_Client())
         backend._background = {"background1": live, "background2": gone}  # type: ignore[dict-item]
-        # The dead one is no agent of the scene, so never chosen.
-        assert backend.background_actors(_World()) == backend._background
+        # The dead one is no agent of the scene, so never chosen, and is
+        # forgotten (#2245).
+        assert backend.background_actors(_World()) == {"background1": live}
+        assert backend._background == {"background1": live}
         assert NullTrafficBackend().background_actors(_World()) == {}
 
     def test_a_background_vehicle_comes_off_and_back_on_autopilot(self) -> None:
@@ -791,6 +793,7 @@ class _BackgroundActor:
     def __init__(self) -> None:
         self.id = 100
         self.destroyed = 0
+        self.is_alive = True
 
     def set_target_velocity(self, velocity: Any) -> None:
         pass
@@ -855,6 +858,42 @@ class TestTrafficManagerBackground:
         backend.remove_background(world, handle)
         assert world.spawned[0].destroyed == 1
         assert backend.background_vehicles(world) == {}
+
+    def test_a_vehicle_destroyed_elsewhere_is_no_ghost_at_the_origin(self) -> None:
+        """Another handle to a vehicle the TrafficManager or the server
+        destroyed raises nothing and reads (0, 0, 0); only ``is_alive`` says
+        it is gone.  It is forgotten, not counted at the origin (#2245)."""
+        world: Any = _BackgroundWorld([_Blueprint()])
+        backend = TrafficManagerBackend()
+        handle = backend.spawn_background(world, _road_transform(), speed_kmh=30.0)
+        assert handle is not None
+        actor = world.spawned[0]
+        backend._exact_kmh[actor.id] = 30.0
+        backend._held[actor.id] = 20.0
+        actor.is_alive = False
+        actor.get_location = lambda: SimpleNamespace(x=0.0, y=0.0, z=0.0)
+        assert backend.background_vehicles(world) == {}
+        assert backend._background == {}
+        assert actor.id not in backend._exact_kmh
+        assert actor.id not in backend._held
+        assert backend.background_actors(world) == {}
+        assert actor.destroyed == 0  # gone already: not destroyed again
+
+    def test_a_vehicle_that_raises_is_forgotten_as_well(self) -> None:
+        world: Any = _BackgroundWorld([_Blueprint()])
+        backend = TrafficManagerBackend()
+        handle = backend.spawn_background(world, _road_transform(), speed_kmh=30.0)
+        assert handle is not None
+        actor = world.spawned[0]
+        backend._exact_kmh[actor.id] = 30.0
+
+        def raises() -> Any:
+            raise RuntimeError("trying to operate on a destroyed actor")
+
+        actor.get_location = raises
+        assert backend.background_vehicles(world) == {}
+        assert backend._background == {}
+        assert actor.id not in backend._exact_kmh
 
 
 # ---------------------------------------------------------------------------
@@ -1033,6 +1072,19 @@ class TestTheTrafficManagerKeepsScenarioVehicles:
         backend, _ = _on_autopilot(npc)
         npc.is_alive = False
         _stand(backend, 1.0)
+        assert backend._kept == {}
+
+    def test_a_destroyed_vehicle_is_forgotten_between_its_checks(
+        self, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        """Held, or not due a check, it is forgotten all the same: read at the
+        origin, its path would be followed from there (#2245)."""
+        _road(monkeypatch, 1000.0, dead=False)
+        npc = _Actor(2)
+        backend, _ = _on_autopilot(npc)
+        backend._kept[2].held = True
+        npc.is_alive = False
+        backend.tick(_World(), 0.0)
         assert backend._kept == {}
 
     def test_a_vehicle_standing_where_the_road_went_on_is_not_walked_again(

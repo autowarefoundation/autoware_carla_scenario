@@ -131,6 +131,7 @@ from ..base import (
     TrafficContext,
     BACKGROUND_MAX_OFFSET_M,
     TurnDirection,
+    actor_destroyed,
     check_background_speed,
 )
 from ..config import TrafficManagerBackendConfig
@@ -209,6 +210,7 @@ from .signal_states import (
     green_together,
     link_states,
     permissive_links,
+    program_state,
     sumo_step,
 )
 
@@ -649,6 +651,11 @@ class SumoTrafficBackend(TrafficBackend):
         #: tls id -> each pedestrian crossing link it controls, with the
         #: vehicle links into or out of a road the crossing crosses.
         self._crossing_links: dict[str, list[tuple[int, list[int]]]] = {}
+        #: tls id -> SUMO's own program of a junction where CARLA's lights
+        #: switch some links and leave others (each phase's state and
+        #: duration, the phase it was in and when that ends), read before
+        #: anything set its state: the links left run on it (program_state).
+        self._own_programs: dict[str, tuple[list[tuple[str, float]], int, float]] = {}
         self._ego_actor: Any = None
         self._running = False
         #: SUMO was started and its connection is still open.  Unlike
@@ -1204,6 +1211,7 @@ class SumoTrafficBackend(TrafficBackend):
                 if self._config.cycle_on_sidewalks or self._config.net_path:
                     # Only such a network has edges for bicycles alone.
                     self._bicycle_rides = self._match_bicycle_rides()
+                self._own_programs = self._match_own_programs()
             if self._config.traffic_light_authority == "sumo":
                 for light in {id(tl): tl for tl in self._signals.values()}.values():
                     light.freeze(True)
@@ -1281,6 +1289,11 @@ class SumoTrafficBackend(TrafficBackend):
         stands and at its speed; driven by SUMO from there, with the route and
         speed it was given while parked, or published (:meth:`_join`)."""
         for actor_id, (actor, entity) in list(self._parked.items()):
+            # Destroyed while parked -- by whatever destroyed it: read at the
+            # origin, it would come up there (actor_destroyed, #2245).
+            if actor_destroyed(actor):
+                del self._parked[actor_id]
+                continue
             try:
                 up = not _parked(actor)
             except RuntimeError:  # destroyed while parked
@@ -1623,6 +1636,7 @@ class SumoTrafficBackend(TrafficBackend):
         self._permissive_links = {}
         self._crossing_links = {}
         self._bicycle_rides = {}
+        self._own_programs = {}
         self._ego_actor = None
         self._failures = 0
         self._gave_up_at = None
@@ -3169,10 +3183,14 @@ class SumoTrafficBackend(TrafficBackend):
 
     def _push_external(self) -> None:
         for sumo_id, actor in list(self._external.items()):
-            try:
-                gone = _parked(actor)
-            except RuntimeError:  # destroyed: a despawn
-                gone = True
+            # Destroyed by whatever destroyed it (actor_destroyed): read at
+            # the origin, it would be moved there in SUMO every step (#2245).
+            gone = actor_destroyed(actor)
+            if not gone:
+                try:
+                    gone = _parked(actor)
+                except RuntimeError:  # destroyed: a despawn
+                    gone = True
             if gone:
                 # Out of the world (despawned, or parked again): out of SUMO,
                 # where it would stand in the way.
@@ -4318,6 +4336,8 @@ class SumoTrafficBackend(TrafficBackend):
         points: list[tuple[float, float]] = []
         moving: list[tuple[float, float]] = []
         for actor in self._focus_actors():
+            if actor_destroyed(actor):
+                continue  # read at the origin, it would be a focus there
             try:
                 pose = self._carla_pose_to_sumo(actor)
                 velocity = actor.get_velocity() if velocities else None
@@ -5110,15 +5130,85 @@ class SumoTrafficBackend(TrafficBackend):
             by_tls.setdefault(tls, {})[index] = traffic_light_state_name(
                 light.get_state()
             )
+        now = float(tc.simulation.getTime()) if self._own_programs else 0.0
         for tls, carla in by_tls.items():
+            own = ""
+            program = self._own_programs.get(tls)
+            if program is not None:
+                own = program_state(*program, now)
             state = link_states(
                 tc.trafficlight.getRedYellowGreenState(tls),
                 carla,
                 self._permissive_links.get(tls, set()),
                 self._bicycle_rides.get(tls, []),
                 self._crossing_links.get(tls, []),
+                own,
             )
             tc.trafficlight.setRedYellowGreenState(tls, state)
+
+    def _match_own_programs(
+        self,
+    ) -> dict[str, tuple[list[tuple[str, float]], int, float]]:
+        """SUMO's own program of each junction where CARLA's lights switch
+        some links but leave others no ride or crossing follows, as
+        :func:`.signal_states.program_state` steps through it.
+
+        Read before anything sets a light's state: once
+        :meth:`_signals_to_sumo` has, SUMO runs a fixed program there, which
+        would hold those links in the state they had for the whole run.  A
+        junction whose program cannot be read keeps that state, said once.
+        """
+        tc = self._traci
+        switched: dict[str, set[int]] = {}
+        for tls, index in self._signals:
+            switched.setdefault(tls, set()).add(index)
+        out: dict[str, tuple[list[tuple[str, float]], int, float]] = {}
+        running: list[str] = []
+        for tls, indices in sorted(switched.items()):
+            followed = set(indices)
+            followed.update(index for index, _f, _l in self._bicycle_rides.get(tls, []))
+            followed.update(index for index, _l in self._crossing_links.get(tls, []))
+            try:
+                width = len(tc.trafficlight.getRedYellowGreenState(tls))
+            except Exception as exc:  # noqa: BLE001
+                logger.debug("SUMO: reading %s's state: %s", tls, exc)
+                continue
+            left = [index for index in range(width) if index not in followed]
+            if not left:
+                continue
+            shown = ", ".join(str(index) for index in left)
+            try:
+                program = tc.trafficlight.getProgram(tls)
+                logics = list(tc.trafficlight.getAllProgramLogics(tls))
+                logic = next(
+                    (lg for lg in logics if lg.programID == program), logics[0]
+                )
+                phases = [
+                    (str(phase.state), float(phase.duration)) for phase in logic.phases
+                ]
+                phase = int(tc.trafficlight.getPhase(tls))
+                ends_at = float(tc.trafficlight.getNextSwitch(tls))
+                if not 0 <= phase < len(phases):
+                    raise ValueError(f"phase {phase} of {len(phases)}")
+            except Exception as exc:  # noqa: BLE001 - the links keep their state
+                logger.warning(
+                    "SUMO: link(s) %s of junction %s, which no CARLA light "
+                    "switches, keep the state they have now: its own program "
+                    "cannot be read (%s)",
+                    shown,
+                    tls,
+                    exc,
+                )
+                continue
+            out[tls] = (phases, phase, ends_at)
+            running.append(f"{tls} ({shown})")
+        if running:
+            logger.info(
+                "SUMO: the links no CARLA light switches run on SUMO's own "
+                "program at %s",
+                "; ".join(running),
+            )
+        return out
 
     def _match_permissive(self) -> dict[str, set[int]]:
         """The links CARLA's lights switch that some phase of SUMO's own

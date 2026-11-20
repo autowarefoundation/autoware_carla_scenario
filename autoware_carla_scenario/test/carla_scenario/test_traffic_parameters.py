@@ -124,6 +124,105 @@ def test_a_non_finite_std_is_refused(std: float) -> None:
         Spread(1.0, std)
 
 
+# ---------------------------------------------------------------------------
+# An error names the full key, and the value as written (#2245)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "group, mapping, message",
+    [
+        (
+            "vehicles",
+            {"min_gap_m": -1},
+            "traffic.vehicles.min_gap_m must be within [0, inf] (got -1)",
+        ),
+        (
+            "pedestrians",
+            {"min_gap_m": "-1"},
+            "traffic.pedestrians.min_gap_m must be within [0, inf] (got '-1')",
+        ),
+        (
+            "bicycles",
+            {"min_gap_m": {"mean": "-1", "std": 0.2}},
+            "traffic.bicycles.min_gap_m.mean must be within [0, inf] (got '-1')",
+        ),
+        (
+            "bicycles",
+            {"min_gap_m": {"mean": 1.0, "std": "-1"}},
+            "traffic.bicycles.min_gap_m.std must be finite and not negative "
+            "(got '-1')",
+        ),
+        (
+            "vehicles",
+            {"speed_factor": {"mean": 1.0, "std": "inf"}},
+            "traffic.vehicles.speed_factor.std must be finite and not negative "
+            "(got 'inf')",
+        ),
+        (
+            "vehicles",
+            {"speed_factor": "inf"},
+            "traffic.vehicles.speed_factor must be finite (got 'inf')",
+        ),
+        (
+            "vehicles",
+            {"ignore_lights": {"mean": 3}},
+            "traffic.vehicles.ignore_lights.mean must be within [0, 1] (got 3)",
+        ),
+    ],
+)
+def test_a_config_error_names_the_full_key_and_the_value_as_written(
+    group: str, mapping: dict, message: str
+) -> None:
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    cls = {
+        "vehicles": VehicleParameters,
+        "pedestrians": PedestrianParameters,
+        "bicycles": BicycleParameters,
+    }[group]
+    with pytest.raises(ValueError) as caught:
+        cls.from_mapping(mapping)  # type: ignore[attr-defined]
+    assert str(caught.value) == message
+
+
+def test_a_constructor_error_names_the_node_of_its_field() -> None:
+    """Built in Python, the same field is told apart by its node: a
+    ``min_gap_m`` is a vehicle's, a pedestrian's or a bicycle's."""
+    from autoware_carla_scenario.traffic.parameters import BicycleParameters
+
+    for cls, node in (
+        (VehicleParameters, "traffic.vehicles"),
+        (PedestrianParameters, "traffic.pedestrians"),
+        (BicycleParameters, "traffic.bicycles"),
+    ):
+        with pytest.raises(ValueError) as caught:
+            cls(min_gap_m=Spread(-1.0, 0.5))  # type: ignore[operator]
+        assert str(caught.value) == (
+            f"{node}.min_gap_m must be within [0, inf] (got a mean of -1.0)"
+        )
+    with pytest.raises(ValueError) as caught:
+        VehicleParameters(speed_factor=math.inf)
+    assert str(caught.value) == (
+        "traffic.vehicles.speed_factor must be finite (got a mean of inf)"
+    )
+
+
+def test_a_trafficparametersaction_field_names_its_std() -> None:
+    from autoware_carla_scenario.traffic.authoring import (
+        authored_bicycle_parameters,
+        authored_vehicle_parameters,
+    )
+
+    with pytest.raises(ValueError) as caught:
+        authored_vehicle_parameters(speed_factor_mean=1.0, speed_factor_std=-0.5)
+    assert str(caught.value) == (
+        "speed_factor: a std must be finite and not negative (got -0.5)"
+    )
+    with pytest.raises(ValueError, match=r"^traffic\.bicycles\.decel must be within"):
+        authored_bicycle_parameters(bicycle_decel_mean=-1.0)
+
+
 def test_a_mapping_with_an_unknown_key_is_refused() -> None:
     with pytest.raises(ValueError, match="reaction_time"):
         VehicleParameters.from_mapping({"reaction_time": 1.0})

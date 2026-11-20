@@ -3376,6 +3376,7 @@ def test_carla_light_states_reach_sumo_as_typesafe_carla_reports_them() -> None:
     backend._crossing_links = {}
     backend._bicycle_rides = {}
     backend._permissive_links = {}
+    backend._own_programs = {}
     backend._signals = {
         ("tls", 0): light(carla.TrafficLightState.Green),
         ("tls", 1): light(carla.TrafficLightState.Yellow),
@@ -3407,6 +3408,7 @@ def test_a_crossing_walks_only_while_the_roads_it_crosses_are_red() -> None:
     backend._crossing_links = {"tls": [(4, [0, 1]), (5, [2, 3])]}
     backend._bicycle_rides = {}
     backend._permissive_links = {}
+    backend._own_programs = {}
     backend._signals = {
         ("tls", 0): green,
         ("tls", 1): red,
@@ -3415,6 +3417,193 @@ def test_a_crossing_walks_only_while_the_roads_it_crosses_are_red() -> None:
     }
     backend._signals_to_sumo()
     assert states["tls"] == "GrrrrG"
+
+
+class _GhostActor:
+    """Another handle to a vehicle destroyed elsewhere: it raises nothing,
+    reads the origin, and only ``is_alive`` says it is gone (#2245)."""
+
+    def __init__(self, actor_id: int) -> None:
+        self.id = actor_id
+        self.is_alive = False
+        self.moved = 0
+
+    def get_location(self) -> Any:
+        return SimpleNamespace(x=0.0, y=0.0, z=0.0)
+
+    def get_transform(self) -> Any:
+        self.moved += 1
+        return _carla_transform(0.0, 0.0, 0.0)
+
+    def get_velocity(self) -> Any:
+        return SimpleNamespace(x=0.0, y=0.0, z=0.0)
+
+
+class _GhostVehicles:
+    def __init__(self) -> None:
+        self.removed: list[str] = []
+        self.moved: list[str] = []
+
+    def remove(self, sumo_id: str) -> None:
+        self.removed.append(sumo_id)
+
+    def moveToXY(self, sumo_id: str, *args: Any) -> None:
+        self.moved.append(sumo_id)
+
+
+def test_a_published_vehicle_destroyed_elsewhere_leaves_sumo() -> None:
+    """Not moved to the map's origin every step: it leaves SUMO, and is not
+    parked to come back up (#2245)."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    vehicles = _GhostVehicles()
+    backend._traci = SimpleNamespace(vehicle=vehicles)
+    ghost = _GhostActor(7)
+    backend._external = {"vehicle_7": ghost}
+    backend._push_external()
+    assert vehicles.removed == ["vehicle_7"]
+    assert vehicles.moved == [] and ghost.moved == 0
+    assert backend._external == {} and backend._parked == {}
+
+
+def test_a_parked_vehicle_destroyed_elsewhere_does_not_come_up() -> None:
+    """Read at the origin, it is above the hiding depth: without is_alive it
+    would join SUMO there (#2245)."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    vehicles = _GhostVehicles()
+    backend._traci = SimpleNamespace(vehicle=vehicles)
+    ghost = _GhostActor(8)
+    backend._parked = {8: (ghost, None)}
+    backend._bring_in()
+    assert backend._parked == {} and backend._arriving == {}
+    assert vehicles.moved == []
+
+
+def test_a_destroyed_focus_actor_is_no_focus_at_the_origin() -> None:
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    backend = SumoTrafficBackend(SumoBackendConfig())
+    backend._external = {"vehicle_9": _GhostActor(9)}
+    assert backend._focus(True) == ([], [])
+
+
+def _program_backend(
+    program: list[tuple[str, float]],
+    phase: int,
+    next_switch: float,
+    lights: dict[int, Any],
+    *,
+    rides: Any = None,
+    crossings: Any = None,
+    readable: bool = True,
+) -> tuple[Any, dict[str, str], list[float]]:
+    """A backend whose tls ``tls`` runs the fixed-time *program*, in *phase*
+    until *next_switch*, with *lights* switching some of its links; and the
+    states set, and its clock."""
+    from autoware_carla_scenario.traffic.sumo.backend import SumoTrafficBackend
+
+    states = {"tls": program[phase][0]}
+    clock = [0.0]
+    logic = SimpleNamespace(
+        programID="0",
+        phases=[SimpleNamespace(state=s, duration=d) for s, d in program],
+    )
+
+    def next_switch_of(tls: str) -> float:
+        if not readable:
+            raise RuntimeError("no next switch")
+        return next_switch
+
+    trafficlight = SimpleNamespace(
+        getRedYellowGreenState=lambda tls: states[tls],
+        setRedYellowGreenState=lambda tls, state: states.__setitem__(tls, state),
+        getAllProgramLogics=lambda tls: [
+            SimpleNamespace(programID="off", phases=[]),
+            logic,
+        ],
+        getProgram=lambda tls: "0",
+        getPhase=lambda tls: phase,
+        getNextSwitch=next_switch_of,
+    )
+    backend = SumoTrafficBackend.__new__(SumoTrafficBackend)
+    backend._traci = SimpleNamespace(
+        trafficlight=trafficlight,
+        simulation=SimpleNamespace(getTime=lambda: clock[0]),
+    )
+    backend._crossing_links = crossings or {}
+    backend._bicycle_rides = rides or {}
+    backend._signals = {("tls", index): light for index, light in lights.items()}
+    backend._permissive_links = backend._match_permissive()
+    backend._own_programs = backend._match_own_programs()
+    return backend, states, clock
+
+
+def test_unmatched_links_of_a_partly_matched_junction_run_sumos_own_program(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Once a junction's state is set SUMO runs a fixed program there: the
+    links no CARLA light switches go on with the program it had, phase by
+    phase, instead of holding their first state for the run (#2245)."""
+    import typesafe_carla.carla as carla
+
+    red = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Red))
+    program = [("GGrr", 10.0), ("yyrr", 3.0), ("rrGG", 10.0), ("rryy", 3.0)]
+    with caplog.at_level(logging.INFO):
+        backend, states, clock = _program_backend(
+            program, phase=0, next_switch=4.0, lights={0: red}
+        )
+    assert "tls (1, 2, 3)" in caplog.text
+    seen = []
+    for now in (0.0, 4.5, 7.5, 17.5, 21.0, 30.5):
+        clock[0] = now
+        backend._signals_to_sumo()
+        seen.append(states["tls"])
+    # Link 0 is CARLA's red throughout; 1-3 follow SUMO's own program.
+    assert seen == ["rGrr", "ryrr", "rrGG", "rryy", "rGrr", "ryrr"]
+
+
+def test_a_junction_whose_program_cannot_be_read_says_its_links_hold(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    import typesafe_carla.carla as carla
+
+    red = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Red))
+    with caplog.at_level(logging.WARNING):
+        backend, states, clock = _program_backend(
+            [("GGrr", 10.0), ("rrGG", 10.0)],
+            phase=0,
+            next_switch=10.0,
+            lights={0: red},
+            readable=False,
+        )
+    assert backend._own_programs == {}
+    assert "link(s) 1, 2, 3 of junction tls" in caplog.text
+    assert "keep the state they have now" in caplog.text
+    clock[0] = 15.0
+    backend._signals_to_sumo()
+    assert states["tls"] == "rGrr"
+
+
+def test_a_junction_whose_links_are_all_followed_reads_no_program() -> None:
+    """Every link set by a CARLA light, a ride or a crossing: nothing runs on
+    SUMO's own program."""
+    import typesafe_carla.carla as carla
+
+    green = SimpleNamespace(get_state=lambda: int(carla.TrafficLightState.Green))
+    backend, states, _clock = _program_backend(
+        [("rrrG", 10.0)],
+        phase=0,
+        next_switch=10.0,
+        lights={0: green, 1: green},
+        rides={"tls": [(2, "with", [0])]},
+        crossings={"tls": [(3, [0, 1])]},
+    )
+    assert backend._own_programs == {}
+    backend._signals_to_sumo()
+    assert states["tls"] == "GGgr"
 
 
 def _permissive_backend(
@@ -3437,6 +3626,7 @@ def _permissive_backend(
     backend._bicycle_rides = {}
     backend._signals = {("tls", index): light for index, light in lights.items()}
     backend._permissive_links = backend._match_permissive()
+    backend._own_programs = {}
     return backend, states
 
 

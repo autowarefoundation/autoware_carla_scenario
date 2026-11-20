@@ -24,6 +24,7 @@ from autoware_carla_scenario.traffic.sumo.signal_states import (
     clear_state,
     link_states,
     permissive_links,
+    program_state,
     ride_state,
 )
 
@@ -299,3 +300,54 @@ def test_a_bicycle_riding_with_dark_traffic_gives_way(
     states: list[str], shown: str
 ) -> None:
     assert ride_state("with", states) == shown
+
+
+# ---------------------------------------------------------------------------
+# SUMO's own program, for the links no CARLA light switches (#2245)
+# ---------------------------------------------------------------------------
+
+_PROGRAM = [("GGrr", 10.0), ("yyrr", 3.0), ("rrGG", 10.0), ("rryy", 3.0)]
+
+
+@pytest.mark.parametrize(
+    ("now", "shown"),
+    [
+        (0.0, "GGrr"),  # the phase it was read in, until it ends at 4 s
+        (3.999, "GGrr"),
+        (4.0, "yyrr"),
+        (6.9, "yyrr"),
+        (7.0, "rrGG"),
+        (16.9, "rrGG"),
+        (17.0, "rryy"),
+        (20.0, "GGrr"),  # round again, now at its full duration
+        (29.9, "GGrr"),
+        (30.0, "yyrr"),
+        (4.0 + 26.0 * 100 + 3.5, "rrGG"),  # many cycles on
+    ],
+)
+def test_the_program_steps_through_its_phases(now: float, shown: str) -> None:
+    assert program_state(_PROGRAM, 0, 4.0, now) == shown
+
+
+def test_the_program_starts_from_the_phase_it_was_read_in() -> None:
+    assert program_state(_PROGRAM, 2, 5.0, 4.0) == "rrGG"
+    assert program_state(_PROGRAM, 2, 5.0, 5.0) == "rryy"
+    assert program_state(_PROGRAM, 3, 1.0, 1.0) == "GGrr"
+
+
+def test_a_program_of_no_duration_stays_in_its_phase() -> None:
+    assert program_state([("Gr", 0.0), ("rG", 0.0)], 1, 0.0, 50.0) == "rG"
+    assert program_state([("Gr", 0.0), ("rG", 5.0)], 0, 0.0, 2.0) == "rG"
+
+
+def test_own_states_reach_only_the_links_carla_leaves() -> None:
+    """A CARLA light's link takes its state (``Unknown`` keeps the current
+    one); a ride and a crossing are set from the vehicle links as before;
+    every other link takes the program's."""
+    carla = {0: "Red", 1: "Unknown"}
+    rides = [(2, "with", [0])]
+    crossings = [(5, [0])]
+    shown = link_states("GyGGGG", carla, set(), rides, crossings, own="GGGyrr")
+    assert shown == "ryryrG"
+    # No program: the links keep the state SUMO shows, as before.
+    assert link_states("GyGGGG", carla, set(), rides, crossings) == "ryrGGG"

@@ -131,7 +131,9 @@ parameter's bounds (drawn again until it is inside them -- a truncated
 normal). The traffic is a population of drivers, not one driver copied. Every
 numeric parameter also takes a plain value instead, in a config and in Python
 alike: a number (or a `std` of 0) gives every road user exactly that value. The
-draws come from the run's seed: the same seed, the same drivers.
+draws come from the run's seed: the same seed, the same drivers. A value out of
+its bounds, or a negative `std`, is refused by its full key and shown as
+written: `traffic.bicycles.min_gap_m.mean must be within [0, inf] (got '-1')`.
 
 ```yaml
 traffic:
@@ -1575,7 +1577,14 @@ of its `get_opendrive_id()`, roadgen records which map element that signal
 became when it reads the OpenDRIVE (`map.xodr.trace.json`), and which SUMO links
 of the junction's program that element became when it writes the network
 (`network.sumo.trace.json`). A light whose signal reached no link is named in a
-warning, and SUMO keeps its own program there. A network given as `net_path`
+warning, and SUMO keeps its own program there. That holds link by link: setting
+a junction's state switches SUMO to a fixed program of its own, so the links of
+a junction where CARLA's lights switch others -- and that no bicycle ride or
+pedestrian crossing follows -- are given the state SUMO's original program
+shows each step, read before the first state is set and stepped through phase
+by phase at each phase's duration (an actuated program at its phases' default
+ones). The start log names them; a junction whose program cannot be read is
+named in a warning, and those links then hold the state they had. A network given as `net_path`
 has no traces, and its links are matched geometrically instead: a light's stop
 waypoints to the SUMO lane there.
 

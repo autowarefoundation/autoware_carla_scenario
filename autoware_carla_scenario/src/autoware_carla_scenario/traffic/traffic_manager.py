@@ -35,6 +35,7 @@ from .base import (
     TrafficContext,
     TurnDirection,
     _entity_name,
+    actor_destroyed,
     check_background_speed,
 )
 from .config import TrafficManagerBackendConfig
@@ -871,10 +872,16 @@ class TrafficManagerBackend(TrafficBackend):
         """Every background vehicle still in the world, at its ``(x, y, z)``."""
         out: dict[str, tuple[float, float, Optional[float]]] = {}
         for handle, actor in list(self._background.items()):
+            # Not by a RuntimeError alone: only the handle whose destroy() was
+            # called raises one, and a vehicle the TrafficManager or the server
+            # destroyed would stay counted, standing at the origin (#2245).
+            if actor_destroyed(actor):
+                self._drop_background(handle)
+                continue
             try:
                 location = actor.get_location()
             except RuntimeError:
-                self._background.pop(handle)  # Destroyed by something else.
+                self._drop_background(handle)  # Destroyed under us.
                 continue
             z: Optional[float] = location.z  # the dict's type, for Codon
             out[handle] = (location.x, location.y, z)
@@ -883,7 +890,20 @@ class TrafficManagerBackend(TrafficBackend):
     def background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
         """Every background vehicle, by its handle, which is its ``role_name``;
         a destroyed one is no agent of the scene, so never chosen."""
-        return dict(self._background)
+        out: dict[str, "carla.Actor"] = {}
+        for handle, actor in list(self._background.items()):
+            if actor_destroyed(actor):
+                self._drop_background(handle)
+                continue
+            out[handle] = actor
+        return out
+
+    def _drop_background(self, handle: str) -> None:
+        """Forget background vehicle *handle*, destroyed by something else
+        (the TrafficManager, after it stood too long, or the server): its
+        id may be another vehicle's next."""
+        actor = self._background.pop(handle)
+        self._forget_actor(int(actor.id))
 
     def remove_background(self, world: "carla.World", handle: str) -> None:
         """Destroy the background vehicle *handle*."""
@@ -1826,6 +1846,10 @@ class TrafficManagerBackend(TrafficBackend):
                 continue
             self._follow_progress(paused)
         for actor_id, kept in list(self._kept.items()):
+            if actor_destroyed(kept.actor):
+                # Before its progress: a destroyed one reads at the origin.
+                del self._kept[actor_id]  # Destroyed by something else.
+                continue
             self._follow_progress(kept)
             approach = kept.approach
             if approach is not None:

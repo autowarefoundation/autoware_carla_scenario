@@ -9,6 +9,7 @@ arguments (:mod:`autoware_carla_scenario.authoring.registry`).
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 from .parameters import (
@@ -29,8 +30,9 @@ def _spread(mean: Optional[float], std: Optional[float], name: str) -> Optional[
     """``mean`` and ``std`` as a spread; ``None`` when no mean is given.
 
     Raises:
-        ValueError: If a std is given without a mean, or either is a bool
-            (which ``float()`` would read as 0 or 1).
+        ValueError: If a std is given without a mean, either is a bool
+            (which ``float()`` would read as 0 or 1), or the std is negative
+            or not finite, naming the parameter.
     """
     if isinstance(mean, bool) or isinstance(std, bool):
         raise ValueError(f"{name}: a mean or std must be a number, not a bool")
@@ -38,7 +40,10 @@ def _spread(mean: Optional[float], std: Optional[float], name: str) -> Optional[
         if std is not None:
             raise ValueError(f"{name}: a std needs a mean")
         return None
-    return Spread(float(mean), 0.0 if std is None else float(std))
+    width = 0.0 if std is None else float(std)
+    if not (math.isfinite(width) and width >= 0.0):
+        raise ValueError(f"{name}: a std must be finite and not negative (got {std!r})")
+    return Spread(float(mean), width)
 
 
 def authored_vehicle_parameters(

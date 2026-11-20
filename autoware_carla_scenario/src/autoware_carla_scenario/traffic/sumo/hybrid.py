@@ -33,7 +33,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Optional, Union
 
 from ...utils.clearance import _offset_of, actor_box_centre
-from ..base import SimulationFidelity, TrafficBackendUnavailable, TrafficContext
+from ..base import (
+    SimulationFidelity,
+    TrafficBackendUnavailable,
+    TrafficContext,
+    actor_destroyed,
+)
 from ..config import TrafficManagerBackendConfig
 from ..fidelity import FidelityCandidate, MesoscopicConfig, plan_fidelity
 from ..mesoscopic import MesoscopicTraffic
@@ -377,7 +382,7 @@ class HybridTrafficBackend(TrafficManagerBackend):
         focus: list[tuple[float, float]] = []
         focus_velocities: list[tuple[float, float]] = []
         for actor in world.get_actors().filter("vehicle.*"):
-            if int(actor.id) in background:
+            if int(actor.id) in background or actor_destroyed(actor):
                 continue
             try:
                 location = actor.get_location()
@@ -391,10 +396,17 @@ class HybridTrafficBackend(TrafficManagerBackend):
             return
         candidates = []
         for handle, actor in list(self._background.items()):
+            # Destroyed by the TrafficManager or the server: read at the
+            # origin, it would be moved into the mesoscopic model, and brought
+            # back later as a live vehicle (#2245).
+            if actor_destroyed(actor):
+                self._drop_background(handle)
+                continue
             try:
                 location = actor.get_location()
                 velocity = actor.get_velocity() if ahead else None
             except RuntimeError:
+                self._drop_background(handle)  # Destroyed under us.
                 continue
             vx, vy = (
                 (float(velocity.x), float(velocity.y))
