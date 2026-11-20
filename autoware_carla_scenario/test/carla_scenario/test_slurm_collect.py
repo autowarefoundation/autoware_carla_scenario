@@ -926,3 +926,92 @@ _MIXED_RESULTS: list[dict[str, Any]] = [
         "No result: the case did not finish under SLURM (it was never submitted). Run it again with: scenario-slurm resubmit <B>",
     ),
 ]
+
+
+def _passed(submission: int) -> dict[str, Any]:
+    return {
+        "result": {
+            "passed": True,
+            "message": "ok",
+            "elapsed_seconds": 1.0,
+            "condition_statuses": [],
+        },
+        "submission": submission,
+    }
+
+
+@pytest.mark.parametrize(
+    ("state", "record_from", "stale"),
+    [
+        # The task resubmitting it stopped before reaching it: stale.
+        ("failed", 0, True),
+        ("cancelled", 0, True),
+        # Its outcome is the last submission's own: current.
+        ("failed", 1, False),
+        # Queued, running or done: the latest there is.
+        (None, 0, False),
+        ("running", 0, False),
+        ("done", 0, False),
+    ],
+)
+def test_an_outcome_a_resubmission_did_not_replace_is_stale(
+    tmp_path: Path,
+    clock: _Clock,
+    capsys: pytest.CaptureFixture[str],
+    monkeypatch: pytest.MonkeyPatch,
+    state: str | None,
+    record_from: int,
+    stale: bool,
+) -> None:
+    """#2247: the worker removes a case's outcome only right before it runs
+    the case, so a resubmission whose task stopped first left the earlier
+    submission's verdict there, silently: it is reported as stale, ERROR,
+    and resubmitted."""
+    from autoware_carla_scenario.slurm import collect as collect_module
+    from autoware_carla_scenario.slurm import status as status_module
+    from autoware_carla_scenario.slurm.collect import stale_reason
+
+    monkeypatch.setattr(collect_module, "resubmit_target", lambda *_a: _TARGET)
+    monkeypatch.setattr(status_module, "squeue_states", lambda _job: {})
+    layout = _layout(tmp_path, cases=2)
+    write_json(layout.submission(0), {"index": 0, "job_id": "70", "chunks": [[0, 1]]})
+    write_json(layout.task(0, 0), {"state": "done"})
+    write_json(layout.submission(1), {"index": 1, "job_id": "71", "chunks": [[1]]})
+    if state is not None:
+        write_json(layout.task(1, 0), {"state": state, "error": "boom"})
+    write_json(layout.result(0), _passed(0))
+    write_json(layout.result(1), _passed(record_from))
+
+    record = layout.read_result(1)
+    assert record is not None
+    reason = stale_reason(layout, 1, record)
+    # Case 0 was given only by submission 0, which ran it.
+    first = layout.read_result(0)
+    assert first is not None
+    assert stale_reason(layout, 0, first) is None
+    assert unfinished_cases(layout) == ([1] if stale else [])
+    assert collect(layout) == (1 if stale else 0)
+    out = capsys.readouterr().out
+    if not stale:
+        assert reason is None
+        assert "stale" not in out
+        return
+    assert reason == (
+        f"submission 1 was to run the case again, but task 0 of job 71 {state} "
+        "before it reached the case (boom): this outcome is an earlier "
+        "submission's"
+    )
+    assert f"Stale result: {reason}." in out
+    assert (
+        "1 case(s) have a stale result (the submission that was to run them "
+        "again stopped before it reached them): s#2\n"
+        "Run them again with: scenario-slurm resubmit /b\n"
+    ) in out
+    collected = json.loads((layout.root / "collected.json").read_text())
+    assert collected["passed"] == 1
+    assert collected["errored"] == ["s#2"]
+    status_module.print_status(layout)
+    status = capsys.readouterr().out
+    assert "  1 with a result (1 passed, 0 errored), 1 without\n" in status
+    assert "1 of those without have a stale result" in status
+    assert status.split("\n")[2].endswith(": s#2")

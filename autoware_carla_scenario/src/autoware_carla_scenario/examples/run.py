@@ -2461,6 +2461,9 @@ def _batch_queue(
         t4scene=build_t4scene_exporter(first_cfg),
         backends=build_backend_pool(first_cfg),
         map_pack=build_map_pack(first_cfg, map_paths),
+        # The tasks of a SLURM batch write into one directory, each counting
+        # its stacks from 0: a case's stem tells their logs apart (#2247).
+        stack_logs_by_stem=True,
     )
 
 

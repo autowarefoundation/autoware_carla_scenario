@@ -527,6 +527,29 @@ def test_command_launcher_fills_in_the_episode(tmp_path: Path) -> None:
     assert (tmp_path / "autoware-001-left_turn.log").exists()
 
 
+def test_command_launcher_names_its_log_after_the_stem_it_is_given(
+    tmp_path: Path,
+) -> None:
+    """#2247: the tasks of a SLURM batch each count their stacks from 0 and
+    run cases of one scenario name: a case's stem tells their logs apart."""
+    launcher = CommandAutowareLauncher([sys.executable, "-c", "print('up')"])
+    launcher.prepare(log_dir=tmp_path)
+    for stem in ("CutIn-3", None):
+        launcher.use_log_stem(stem)
+        launcher.start(name="cut in", bridge_address="localhost:1")
+        _wait_for(lambda: launcher.poll() is not None)
+        launcher.stop()
+    assert (tmp_path / "autoware-CutIn-3.log").read_text() == "up\n"
+    # Without a stem, as before: the second stack, counted from 0.
+    assert (tmp_path / "autoware-001-cut_in.log").exists()
+    episode = AutowareEpisode(7, "x", "localhost:1")
+    assert (
+        episode_log_path(tmp_path, episode, "a b/c") == tmp_path / "autoware-a_b_c.log"
+    )
+    assert episode_log_path(tmp_path, episode, "") == tmp_path / "autoware-007-x.log"
+    assert episode_log_path(None, episode, "s") is None
+
+
 def test_command_launcher_runs_one_stack_at_a_time() -> None:
     launcher = CommandAutowareLauncher(["sleep", "30"])
     launcher.start(name="a", bridge_address="localhost:1")
@@ -1376,6 +1399,14 @@ def test_docker_launcher_starts_and_removes_a_container_per_scenario(
 
     assert len(set(names)) == 3
     assert launcher.poll() is None
+
+    # Named after the case's stem while one is given (#2247).
+    launcher.use_log_stem("CutIn-2")
+    launcher.start(name="cut_in", bridge_address="localhost:50052")
+    _wait_for(lambda: len(_stack_runs(calls())) == 4)
+    launcher.stop()
+    assert (tmp_path / "out" / "autoware-CutIn-2.log").exists()
+    assert not (tmp_path / "out" / "autoware-003-cut_in.log").exists()
 
 
 def test_launcher_env_values_reach_the_container_but_not_the_command_line(

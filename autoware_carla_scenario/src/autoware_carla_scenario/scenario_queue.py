@@ -83,6 +83,8 @@ class ScenarioQueue:
     _traffic_backend: Optional[TrafficBackend]
     _odd: OddDefinition
     _autoware_launcher: Optional["AutowareLauncher"]
+    #: Whether each Autoware stack's log is named after its case's file stem.
+    _stack_logs_by_stem: bool
     _backends: Optional["BackendPreparer"]
     _map_source: Optional[str]
     _map_pack: Optional[MapPack]
@@ -144,6 +146,7 @@ class ScenarioQueue:
         t4scene: Optional[T4SceneExporter] = None,
         backends: Optional["BackendPreparer"] = None,
         map_pack: Optional[MapPack] = None,
+        stack_logs_by_stem: bool = False,
     ) -> None:
         """Create a scenario queue.
 
@@ -244,6 +247,12 @@ class ScenarioQueue:
                 installed and mounted on the server each time it is started
                 (a restarted one included), before the map is loaded.  *None*:
                 the server is to have the map already.
+            stack_logs_by_stem: Name each Autoware stack's log after the file
+                stem its case was added with (``autoware-<stem>.log``, through
+                the launcher's ``use_log_stem()``, which the built-in launchers
+                have) rather than after the launcher's count and the
+                scenario's name.  A batch's queue and a SLURM task's, whose
+                processes write into one output directory, set it (#2247).
 
         Raises:
             ValueError: *cooldown_max_retries* or *reload_every* is negative,
@@ -289,6 +298,7 @@ class ScenarioQueue:
         # Resolved now, so a misspelt ODD fails before CARLA starts.
         self._odd = resolve_odd(odd)
         self._autoware_launcher = autoware_launcher
+        self._stack_logs_by_stem = stack_logs_by_stem
         self._map_source = map_source
         self._map_pack = map_pack
         self._rerun = rerun
@@ -456,6 +466,8 @@ class ScenarioQueue:
             run_stem = ""
             if file_stem is not None:
                 run_stem = file_stem
+            if self._stack_logs_by_stem and self._autoware_launcher is not None:
+                _use_log_stem(self._autoware_launcher, file_stem)
             last_error: Optional[Exception] = None
             last_message = ""
             for attempt in range(max_attempts):
@@ -993,6 +1005,23 @@ class ScenarioQueue:
 # ------------------------------------------------------------------
 # Module-level helpers
 # ------------------------------------------------------------------
+
+
+def _use_log_stem(launcher: "AutowareLauncher", stem: Optional[str]) -> None:
+    """Have *launcher* name the next stack's log after *stem*, when it can.
+
+    ``use_log_stem()`` is not part of the
+    :class:`~autoware_carla_scenario.autoware_stack.AutowareLauncher` protocol:
+    a launcher of one's own without it names its logs as it does.
+    """
+    if TYPE_CHECKING:
+        # Codon cannot look a method up by name on a protocol; the built-in
+        # launchers' use_log_stem() is compiled with them.
+        pass
+    else:
+        use = getattr(launcher, "use_log_stem", None)
+        if use is not None:
+            use(stem)
 
 
 def _wait_with_progress(seconds: float, *, desc: str = "Waiting") -> None:

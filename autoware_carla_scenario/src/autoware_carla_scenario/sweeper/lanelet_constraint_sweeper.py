@@ -150,6 +150,8 @@ def _job_timeout_seconds(value: Any) -> int:
     NaN or infinite value is refused too, rather than silently disabling the
     timeout, and so is one above :data:`_MAX_JOB_TIMEOUT`, which
     ``signal.alarm`` cannot take, rather than failing after the first fork.
+    Only a number is one: a bool, or text (``'900'``, quoted in the YAML),
+    is refused rather than cast, as ``sweep.resume_from`` is (#2247).
 
     Raises:
         ValueError: *value* is not a whole number of seconds from 0 to
@@ -161,7 +163,7 @@ def _job_timeout_seconds(value: Any) -> int:
         "sweep.job_timeout_seconds must be a whole number of seconds from 0 "
         f"(no timeout) to {_MAX_JOB_TIMEOUT}, got {shown(value)}"
     )
-    if isinstance(value, bool):
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
         raise ValueError(message)
     try:
         seconds = float(value)
@@ -1096,8 +1098,9 @@ def _owned_dirs(
 #: The logs that services a run starts write into its directory under names
 #: of their own, which :func:`..run_outputs.run_output_stems` reads as the
 #: CARLA recorder log of a run (``X.log``): a containerised backend's
-#: (``backend_<name>.log``, appended to), Autoware's (``autoware-<n>-<name>.log``,
-#: ``autoware-build.log``, ``autoware-deps.log``) and the viewer runner's.
+#: (``backend_<name>.log``, appended to), Autoware's (``autoware-<n>-<name>.log``
+#: or, in a batch, ``autoware-<stem>.log``, ``autoware-build.log``,
+#: ``autoware-deps.log``) and the viewer runner's.
 #: An earlier sweep's are not a run of the job, and stay.
 _SERVICE_LOGS: tuple[str, ...] = (
     "backend_*.log",

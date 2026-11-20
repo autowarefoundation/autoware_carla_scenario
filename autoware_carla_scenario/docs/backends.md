@@ -115,7 +115,8 @@ what others are about to take:
 - runs the container on its GPU, with its port published on `127.0.0.1` at a
   free port;
 - follows the container's log into the run's output directory
-  (`backend_<name>.log`);
+  (`backend_<name>.log`; `backend_<name>-<array job id>_<task>.log` in a
+  SLURM array task, each task starting its own);
 - waits until the service answers, for up to `startup_timeout_s`.
 
 A container that exits while starting is kept until its logs are read into the

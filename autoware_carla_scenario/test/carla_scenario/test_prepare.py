@@ -995,6 +995,47 @@ def _silent_backend(docker: str, startup_timeout_s: float) -> _Silent:
     return backend
 
 
+@pytest.mark.parametrize(
+    ("job", "task", "expected"),
+    [
+        (None, None, "backend_silent.log"),
+        ("4242", None, "backend_silent.log"),
+        ("4242", "7", "backend_silent-4242_7.log"),
+    ],
+)
+def test_a_backend_log_is_named_after_its_slurm_task(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    job: Optional[str],
+    task: Optional[str],
+    expected: str,
+) -> None:
+    """#2247: every task of a SLURM batch starts its own container and
+    follows its log into the batch's directory: an array task's is its own,
+    named as its ``<array job id>_<task id>.out`` is."""
+    for name, value in (("SLURM_ARRAY_JOB_ID", job), ("SLURM_ARRAY_TASK_ID", task)):
+        if value is None:
+            monkeypatch.delenv(name, raising=False)
+        else:
+            monkeypatch.setenv(name, value)
+    assert docker_module.backend_log_name("silent") == expected
+    followed: list[list[str]] = []
+
+    def popen(argv: list[str], **kwargs: Any) -> Any:
+        followed.append(argv)
+        return SimpleNamespace(poll=lambda: None)
+
+    monkeypatch.setattr(docker_module.subprocess, "Popen", popen)
+    backend = _silent_backend("docker", 0.0)
+    backend._follow(tmp_path)
+    try:
+        assert followed == [["docker", "logs", "--follow", "c0ffee"]]
+        assert [p.name for p in tmp_path.iterdir()] == [expected]
+    finally:
+        assert backend._log is not None
+        backend._log.close()
+
+
 class TestDockerBackendOutput:
     """The backend's output is any bytes: it is read, not refused (#1346)."""
 

@@ -3559,8 +3559,71 @@ def test_sbatch_that_prints_no_job_id_is_a_runtime_error(
     for stdout in ("", "\n \n", ";cluster\n"):
         with pytest.raises(RuntimeError, match="sbatch printed no job id"):
             queue._run_sbatch(["sbatch", "--parsable", "job.sh"])
-    stdout = "warning: something\n4242;cluster\n"
+    stdout = "warning: something\n4242\n"
     assert queue._run_sbatch(["sbatch", "--parsable", "job.sh"]) == "4242"
+    stdout = "warning: something\n4242;\n"
+    assert queue._run_sbatch(["sbatch", "--parsable", "job.sh"]) == "4242"
+
+
+@pytest.mark.parametrize("stdout", ["4242;other\n", "warning\n 4242 ; other \n"])
+def test_sbatch_that_names_another_cluster_is_refused(
+    monkeypatch: pytest.MonkeyPatch, stdout: str
+) -> None:
+    """#2247: a job submitted to another cluster (SBATCH_CLUSTERS) is one
+    squeue, scancel and the collect job's dependency would not find: an
+    error naming the job to cancel, not a job id followed on the default
+    cluster."""
+    from autoware_carla_scenario.slurm import queue
+
+    monkeypatch.setattr(queue, "require_sbatch", lambda: "sbatch")
+
+    def run(command: list[str], **_: Any) -> subprocess.CompletedProcess[str]:
+        return subprocess.CompletedProcess(command, 0, stdout, "")
+
+    monkeypatch.setattr(queue.subprocess, "run", run)
+    with pytest.raises(RuntimeError) as caught:
+        queue._run_sbatch(["sbatch", "--parsable", "job.sh"])
+    message = str(caught.value)
+    assert "job 4242 to cluster 'other'" in message
+    assert "scancel -M other 4242" in message
+
+
+def test_active_states_classify_every_squeue_state() -> None:
+    """#2247: every state of squeue's JOB STATE CODES (man squeue) is either
+    one SLURM is not done with or a final one; SPECIAL_EXIT and RESV_DEL_HOLD
+    are held tasks that run again, so active."""
+    from autoware_carla_scenario.slurm.queue import ACTIVE_STATES
+
+    final = {
+        "BOOT_FAIL",
+        "CANCELLED",
+        "COMPLETED",
+        "DEADLINE",
+        "FAILED",
+        "NODE_FAIL",
+        "OUT_OF_MEMORY",
+        "PREEMPTED",
+        "REVOKED",
+        "TIMEOUT",
+    }
+    active = {
+        "CONFIGURING",
+        "COMPLETING",
+        "PENDING",
+        "RUNNING",
+        "RESV_DEL_HOLD",
+        "REQUEUE_FED",
+        "REQUEUE_HOLD",
+        "REQUEUED",
+        "RESIZING",
+        "SIGNALING",
+        "SPECIAL_EXIT",
+        "STAGE_OUT",
+        "STOPPED",
+        "SUSPENDED",
+    }
+    assert set(ACTIVE_STATES) == active
+    assert not active & final
 
 
 def _hanging_tool(bin_dir: Path, name: str) -> Path:

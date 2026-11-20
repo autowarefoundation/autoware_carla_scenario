@@ -236,6 +236,26 @@ def _str_list(value: Any, name: str) -> tuple[str, ...]:
     return tuple(texts)
 
 
+def _check_no_clusters(args: tuple[str, ...]) -> None:
+    """Refuse ``--clusters``/``--cluster``/``-M`` in ``extra_sbatch_args``.
+
+    The batch would be submitted to another cluster, while ``squeue``,
+    ``scancel`` and the collect job's dependency ask the default one: follow
+    would collect at once, ``resubmit`` submit duplicates while the array runs
+    and ``cancel`` miss it (#2247).
+    """
+    for arg in args:
+        name = arg.split("=", 1)[0]
+        if name in ("--clusters", "--cluster") or arg.startswith("-M"):
+            raise ValueError(
+                f"launcher.extra_sbatch_args: {arg!r} submits to another "
+                "cluster (sbatch --clusters/-M), which launcher=slurm does not "
+                "support: squeue, scancel and the collect job would look for "
+                "the batch on the default cluster. Submit from a host of the "
+                "cluster the batch is to run on"
+            )
+
+
 def _check_remote_path(value: str, name: str) -> None:
     """Refuse a path the job script cannot expand on the node: ``~user/``."""
     if "\n" in value or "\0" in value:
@@ -416,6 +436,7 @@ class SlurmSettings:
                     options[key] = None  # the mode's default, below
                     continue
                 options[key] = _str_list(value, key)
+        _check_no_clusters(options.get("extra_sbatch_args", ()))
         for line in options.get("setup", ()):
             # The job script holds each line as written: one ending in an
             # unescaped backslash would run on into the script's next line

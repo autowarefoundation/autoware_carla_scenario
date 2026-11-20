@@ -774,8 +774,28 @@ def write_batch(batch_dir: Path, rng: random.Random, now: float = _NOW) -> dict:
     return squeue
 
 
+#: The active states the corpus draws from: those ACTIVE_STATES held when it
+#: was laid out, so that a state added there (SPECIAL_EXIT and RESV_DEL_HOLD,
+#: #2247) does not change what every seed draws, and so what the corpus
+#: covers.
+_CORPUS_ACTIVE_STATES = (
+    "COMPLETING",
+    "CONFIGURING",
+    "PENDING",
+    "REQUEUED",
+    "REQUEUE_FED",
+    "REQUEUE_HOLD",
+    "RESIZING",
+    "RUNNING",
+    "SIGNALING",
+    "STAGE_OUT",
+    "STOPPED",
+    "SUSPENDED",
+)
+
+
 def _squeue_answer(rng: random.Random, job: str, tasks: int) -> str:
-    states = [*sorted(ACTIVE_STATES), "COMPLETED", "FAILED", "TIMEOUT", "running"]
+    states = [*_CORPUS_ACTIVE_STATES, "COMPLETED", "FAILED", "TIMEOUT", "running"]
     lines = [
         f"{job}_{task} {rng.choice(states)}"
         for task in range(tasks)

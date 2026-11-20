@@ -37,6 +37,7 @@ __all__ = [
     "PULL_POLICIES",
     "DockerBackend",
     "DockerSettings",
+    "backend_log_name",
     "positive_seconds",
     "read_docker_settings",
     "setting_key",
@@ -277,6 +278,21 @@ def read_docker_settings(
         startup_timeout_s=startup,
         resources=Resources(gpu_memory_mb=gpu_memory, memory_mb=host_memory),
     )
+
+
+def backend_log_name(name: str) -> str:
+    """The file backend *name*'s container log is followed into.
+
+    ``backend_<name>.log``; in a SLURM array task,
+    ``backend_<name>-<array job id>_<task id>.log``, the task's own as its
+    ``<array job id>_<task id>.out`` is: every task of a batch starts its own
+    container and writes into the batch's directory (#2247).
+    """
+    job = os.environ.get("SLURM_ARRAY_JOB_ID", "")
+    task = os.environ.get("SLURM_ARRAY_TASK_ID", "")
+    if job and task:
+        return f"backend_{name}-{job}_{task}.log"
+    return f"backend_{name}.log"
 
 
 class DockerBackend:
@@ -532,7 +548,7 @@ class DockerBackend:
         # container and closes the log.
         try:
             log_dir.mkdir(parents=True, exist_ok=True)
-            self._log = (log_dir / f"backend_{self.name}.log").open("ab")
+            self._log = (log_dir / backend_log_name(self.name)).open("ab")
             self._follower = subprocess.Popen(
                 [self._settings.docker, "logs", "--follow", self._container],
                 stdout=self._log,
