@@ -1,5 +1,18 @@
 # Migrating
 
+## An adversity trigger's draws have a stream of their own
+
+`AdversityFeasibleCondition`, the default trigger of every adversarial action,
+now seeds its draws (a jaywalker's speed, a stopped crosser's wait) from its
+seed and a key of its entity, kind and label
+([Adversity](adversity.md), `adversity.nade.trigger_stream_seed`), instead of
+`random.Random(seed)`. Two actions following the run's seed no longer draw the
+same numbers, nor NADE's (#2226). A run still repeats from its seed, but the
+draws for any given seed, whether the run's or an explicit `seed=`, differ
+from those of earlier releases: a scenario that pinned a jaywalker's path or a
+crosser's wait to a seed needs its expectation updated. Renaming an action's
+label or entity also changes its draws.
+
 ## `debug_markers.DRIVEN_PATH_COLOR` is gone
 
 The colour was exported for a viewer to draw the driven path in, but nothing

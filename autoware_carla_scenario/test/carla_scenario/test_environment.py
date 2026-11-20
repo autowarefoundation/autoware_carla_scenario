@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -1007,3 +1008,54 @@ def test_a_deeply_nested_source_value_is_kept(
     assert json.dumps(env.packages[0]["source"]["commit"]) == deep.replace("][", "], [")
     assert env.pins == ["d @ git+u@" + deep.replace("][", "], [")]
     assert write(tmp_path, "Demo") is not None
+
+
+def test_an_editable_scenario_package_is_found_by_its_directory(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path
+) -> None:
+    # #2226: packages_distributions() lists no editable install, so the
+    # usual dev setup's scenario package went unnamed.
+    outer = tmp_path / "repo"
+    inner = outer / "packages" / "my_scenarios"
+    module_file = inner / "src" / "my_scenarios" / "scenario.py"
+    module_file.parent.mkdir(parents=True)
+    module_file.write_text("")
+    packages: list[dict[str, Any]] = [
+        {
+            "name": "outer",
+            "version": "1",
+            "source": {"kind": "editable", "path": str(outer)},
+        },
+        {
+            "name": "my-scenarios",
+            "version": "0.1",
+            "source": {
+                "kind": "editable",
+                "path": str(inner),
+                "commit": "c",
+                "dirty": False,
+            },
+        },
+        {"name": "remote", "version": "2", "source": {"kind": "index"}},
+        {"name": "odd", "version": "3", "source": {"kind": "local", "path": None}},
+    ]
+    env = RunEnvironment(packages)
+    monkeypatch.setattr(environment.metadata, "packages_distributions", lambda: {})
+    monkeypatch.setitem(
+        sys.modules,
+        "my_scenarios.scenario",
+        SimpleNamespace(__file__=str(module_file)),
+    )
+    monkeypatch.setattr(_Elsewhere, "__module__", "my_scenarios.scenario")
+    assert env.scenario_package(_Elsewhere()) is packages[1]
+    assert env.summary(_Elsewhere())["scenario"]["name"] == "my-scenarios"
+    assert "# scenario: my-scenarios==0.1" in env.lock(_Elsewhere())
+    # A module outside every checkout, or with no file, is no package's.
+    monkeypatch.setitem(
+        sys.modules,
+        "my_scenarios.scenario",
+        SimpleNamespace(__file__=str(tmp_path / "elsewhere.py")),
+    )
+    assert env.scenario_package(_Elsewhere()) is None
+    monkeypatch.setitem(sys.modules, "my_scenarios.scenario", SimpleNamespace())
+    assert env.scenario_package(_Elsewhere()) is None

@@ -949,7 +949,15 @@ or a mapping, an unknown field, a missing or unknown `key` (it must be a key
 of the composed config), a `target` that is neither `setting` nor `measure`,
 `scale`/`offset`/`integer`/`values` under `target: measure`, a `range` or
 `limits` that is not `[low, high]` with `low <= high`, a `quantity` that is
-not a name.
+not a name, an `integer` that is not `true` or `false` (`"false"` and `0`
+are refused, not read as true and false), `values` that are not a mapping,
+a `scale` or `offset` that is not a number. A field given `null` is one not
+given: its default.
+
+The knobs of `sweep.odd_sample.knobs` are checked the same way, before the
+ODD is resolved, each problem naming its full path
+(`sweep.odd_sample.knobs.<attribute>.<field>: ...`) in a `ValueError`; so
+are the shares of an inline `weights` (#2226).
 
 A measure name that is not a built-in one is only a **warning**
 (`controls.vehicle_ahead_gap: not a built-in measure (did you mean

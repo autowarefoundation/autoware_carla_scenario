@@ -1608,12 +1608,15 @@ def test_a_control_is_a_raw_setting_unless_it_says_otherwise() -> None:
     "mapping", [{"scale": 2.0}, {"offset": 1.0}, {"integer": True}, {"values": {}}]
 )
 def test_a_measure_targeted_control_maps_nothing(mapping: dict[str, Any]) -> None:
-    with pytest.raises(ValueError, match="target: measure writes the measure"):
+    field = next(iter(mapping))
+    with pytest.raises(
+        ValueError, match=rf"controls\.m\.{field}: not allowed with target: measure"
+    ):
         controls_from_mapping({"m": {"key": "k", "target": "measure", **mapping}})
 
 
 def test_a_control_target_is_setting_or_measure() -> None:
-    with pytest.raises(ValueError, match="target must be one of"):
+    with pytest.raises(ValueError, match=r"controls\.m\.target: expected one of"):
         controls_from_mapping({"m": {"key": "k", "target": "placement"}})
 
 
@@ -2642,3 +2645,146 @@ def test_an_odd_whose_knob_sets_what_another_attribute_reads_is_refused() -> Non
         OddSampler(odd, seed=3)
     with pytest.raises(ValueError, match="environment.sun_altitude_angle"):
         sampler_from_config({"count": 1, "seed": 3}, odd=odd)
+
+
+def test_a_replaced_built_in_probe_keeps_its_knob_and_read_back_check(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The built-in lookup returns a probe replaced in .probes, so an ODD
+    bound afterwards measures with it; its knob and its read-back fields
+    were keyed by the original function and dropped (#2226)."""
+    from autoware_carla_scenario.odd import probes
+    from autoware_carla_scenario.odd.backend import (
+        BUILT_IN_PROBES,
+        CARLA_BACKEND,
+        DEFAULT_KNOBS,
+        _READ_BACK_FIELDS,
+    )
+
+    original = probes.illumination
+    monkeypatch.setattr(probes, "illumination", lambda world: "day")
+    monkeypatch.setattr(probes, "time_of_day", lambda world: "noon")
+    fake_sun = BUILT_IN_PROBES["illumination"][0]
+    fake_time = BUILT_IN_PROBES["time_of_day"][0]
+    assert fake_sun is not original
+    assert DEFAULT_KNOBS[fake_sun].key == "environment.sun_altitude_angle"
+    assert DEFAULT_KNOBS[original] is DEFAULT_KNOBS["illumination"]
+    assert _READ_BACK_FIELDS[fake_time] == ("sun_altitude_angle", "sun_azimuth_angle")
+    assert DEFAULT_KNOBS.get(lambda world: 0) is None
+    assert DEFAULT_KNOBS.get("no_such_probe") is None
+    assert DEFAULT_KNOBS.get([]) is None  # unhashable: no knob
+    sun = OddAttribute(
+        "environment.illumination",
+        fake_sun,
+        values=["day", "low_sun", "twilight", "night"],
+    )
+    assert CARLA_BACKEND.knob(sun, {}) is DEFAULT_KNOBS["illumination"]
+    time = OddAttribute(_TIME, fake_time, values=list(probes.TIMES_OF_DAY))
+    with pytest.raises(ValueError, match="time_of_day is read back from"):
+        OddSampler(OddDefinition("sun", [time, sun]), seed=3)
+
+
+def test_the_knobs_name_every_built_in_probe_they_set() -> None:
+    from autoware_carla_scenario.odd.backend import BUILT_IN_PROBES, DEFAULT_KNOBS
+
+    assert set(DEFAULT_KNOBS) <= set(BUILT_IN_PROBES)
+    for name in DEFAULT_KNOBS:
+        assert DEFAULT_KNOBS[BUILT_IN_PROBES[name][0]] is DEFAULT_KNOBS[name]
+
+
+_KNOBS = "sweep.odd_sample.knobs"
+
+
+@pytest.mark.parametrize(
+    ("field", "value", "message"),
+    [
+        ("integer", "false", "integer: expected true or false"),
+        ("integer", 0, "integer: expected true or false"),
+        ("values", False, "values: expected a mapping"),
+        ("values", [1, 2], "values: expected a mapping"),
+        ("quantity", "", "quantity: expected the name of a quantity"),
+        ("quantity", 5, "quantity: expected the name of a quantity"),
+        ("range", False, "range: expected [low, high]"),
+        ("limits", "x", "limits: expected [low, high]"),
+        ("scale", "2", "scale: expected a number"),
+        ("offset", True, "offset: expected a number"),
+    ],
+)
+def test_a_sweep_knob_is_checked_with_its_full_path(
+    field: str, value: Any, message: str
+) -> None:
+    # #2226: openodd took `integer: "false"` as true and `values: false` as
+    # none, and kept `quantity: ""`; the sweep's knobs were never checked.
+    spec = {"key": "scenario.npc_initial_speed_kmh", field: value}
+    expected = re.escape(f"{_KNOBS}.a.{message}")
+    with pytest.raises(ValueError, match=expected):
+        controls_from_mapping({"a": spec}, _KNOBS)
+    with pytest.raises(ValueError, match=expected):
+        check_sample_settings({"knobs": {"a": spec}})
+    with pytest.raises(ValueError, match=re.escape(f"controls.a.{message}")):
+        controls_from_mapping({"a": spec})
+
+
+@pytest.mark.parametrize(
+    "field", ["scale", "offset", "integer", "range", "limits", "quantity", "values"]
+)
+def test_a_null_knob_field_is_its_default(field: str) -> None:
+    # #2226: `scale: null` raised a bare TypeError, and validate_controls
+    # refused `integer: null` and `quantity: null`.
+    key = "scenario.npc_initial_speed_kmh"
+    spec = {"key": key, "range": [0, 10], field: None}
+    plain = {"key": key, "range": [0, 10]} if field != "range" else {"key": key}
+    assert controls_from_mapping({"a": spec}, _KNOBS) == knobs_from_mapping(
+        {"a": plain}
+    )
+    from autoware_carla_scenario.odd.controls import validate_controls
+
+    found = validate_controls({"vehicle_ahead_gap_m": spec})
+    assert [d for d in found if d.severity == "error"] == []
+
+
+def test_a_knob_error_is_a_value_error_naming_each_field() -> None:
+    with pytest.raises(ValueError) as caught:
+        controls_from_mapping(
+            {"a": {"key": "k", "integer": "no", "scale": []}, "b": {"rnge": 1}},
+            _KNOBS,
+        )
+    lines = str(caught.value).splitlines()
+    assert f"{_KNOBS}.a.integer: expected true or false, got 'no'" in lines
+    assert f"{_KNOBS}.a.scale: expected a number, got []" in lines
+    assert any(line.startswith(f"{_KNOBS}.b.rnge: unknown field") for line in lines)
+    assert f"{_KNOBS}.b.key: required" in lines
+
+
+@pytest.mark.parametrize(
+    ("weights", "message"),
+    [
+        (5, "expected module -> share"),
+        ([1], "expected module -> share"),
+        ({"m": "x"}, "the share of m must be a number"),
+        ({"m": True}, "the share of m must be a number"),
+        ("", "expected module -> share, or a YAML file of them, got ''"),
+    ],
+)
+def test_the_weights_are_checked_with_the_other_sample_settings(
+    weights: Any, message: str
+) -> None:
+    # #2226: refused only once the ODD was resolved and the coverage loaded.
+    with pytest.raises(
+        ValueError, match=re.escape(f"sweep.odd_sample.weights: {message}")
+    ):
+        check_sample_settings({"weights": weights})
+
+
+def test_a_weights_file_is_read_when_the_sampler_is_built() -> None:
+    # Against the sampler's base directory, which the up-front check has not.
+    check_sample_settings({"weights": "shares.yaml"})
+    check_sample_settings({"weights": {"m": 1, "n": 2.5}})
+    check_sample_settings({"weights": None})
+
+
+def test_a_negative_sample_seed_is_refused_once() -> None:
+    from autoware_carla_scenario.odd.sampler import seed_setting
+
+    with pytest.raises(ValueError, match="^sweep.odd_sample.seed must not be negative"):
+        seed_setting("sweep.odd_sample.seed", -1)

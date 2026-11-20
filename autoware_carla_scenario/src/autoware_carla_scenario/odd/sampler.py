@@ -264,17 +264,36 @@ def controls_from_mapping(
     written unchanged: such a control may not have ``scale``, ``offset``,
     ``integer`` or ``values``.  ``range`` and ``limits`` it keeps.
 
+    A field given ``null`` is one not given: its default.
+
     Raises:
-        ValueError: On a *raw* that is no mapping (``false``, a list), an
-            unknown ``target``, a ``target: measure`` control that maps the
-            value, or what :func:`knobs_from_mapping` refuses.
+        ValueError: On a *raw* that is no mapping (``false``, a list); a
+            :class:`~.controls.ControlsError` (a ``ValueError``) naming each
+            field's full path (``<key>.<name>.<field>``) on what
+            :func:`~.controls.control_errors` finds: an unknown field or
+            ``target``, a missing or empty ``key``, a ``target: measure``
+            control that maps the value, an ``integer`` that is no boolean, an
+            empty ``quantity``, ``values`` that are no mapping, a ``scale`` or
+            ``offset`` that is no number, a ``range`` or ``limits`` that is no
+            pair; or what :func:`knobs_from_mapping` refuses.
     """
     if raw is None:
         return {}
     if not isinstance(raw, Mapping):
         raise ValueError(f"{key}: expected a mapping of name -> knob, got {raw!r}")
+    # Checked here, with each field's path, before openodd reads them: it
+    # takes `integer: "false"` as true and `values: false` as none, and
+    # raises a bare TypeError on `scale: null` (#2226).
+    from .controls import ControlsError, control_errors  # noqa: PLC0415
+
+    errors = control_errors(raw, key)
+    if errors:
+        raise ControlsError(errors)
     plain: dict[str, Any] = {}
     for name, spec in raw.items():
+        if isinstance(spec, Mapping):
+            # A field given null is one not given: its default (#2226).
+            spec = {k: v for k, v in spec.items() if v is not None}
         if not isinstance(spec, Mapping) or spec.get("target") is None:
             # No target, or null: a raw setting (#2171).
             plain[name] = (
@@ -406,8 +425,7 @@ def seed_setting(key: str, value: Any) -> Optional[int]:
     number = whole_number_setting(key, value)
     if number is None:
         return None
-    if number < 0:
-        raise ValueError(f"{key} must not be negative, got {value!r}")
+    # check_seed() refuses a negative one, naming the key.
     return check_seed(key, number)
 
 
@@ -590,12 +608,15 @@ def sample_strategy(raw: Mapping[str, Any]) -> Optional[str]:
 
 def check_sample_settings(raw: Mapping[str, Any]) -> None:
     """Refuse a ``sweep.odd_sample`` mapping's ``seed``, ``count``,
-    ``tire_friction``, ``visibility``, ``coverage_from``, ``odd``, ``knobs``
-    and ``strategy`` when drawing from it would (:func:`sample_seed`,
-    :func:`sample_count`, :func:`sample_draws`,
-    :func:`sample_coverage_paths`, :func:`sample_odd`, :func:`sample_knobs`,
-    :func:`sample_strategy`): read before anything is drawn, built or
-    resolved.
+    ``tire_friction``, ``visibility``, ``coverage_from``, ``odd``, ``knobs``,
+    ``strategy`` and ``weights`` when drawing from it would
+    (:func:`sample_seed`, :func:`sample_count`, :func:`sample_draws`,
+    :func:`sample_coverage_paths`, :func:`sample_odd`, :func:`sample_knobs`
+    and :func:`controls_from_mapping`, :func:`sample_strategy`,
+    :func:`weights_from_config`): read before anything is drawn, built or
+    resolved.  ``weights`` given as the path of a file is read when the
+    sampler is built, against its base directory; here only a path that is
+    empty is refused.
 
     Raises:
         ValueError: naming the key of the value refused.
@@ -606,8 +627,19 @@ def check_sample_settings(raw: Mapping[str, Any]) -> None:
         sample_draws(raw, name)
     sample_coverage_paths(raw)
     sample_odd(raw)
-    sample_knobs(raw)
+    controls_from_mapping(sample_knobs(raw), "sweep.odd_sample.knobs")
     sample_strategy(raw)
+    weights = raw.get("weights")
+    if isinstance(weights, (str, Path)):
+        if not str(weights).strip():
+            raise ValueError(
+                "sweep.odd_sample.weights: expected module -> share, or a YAML "
+                f"file of them, got {weights!r}"
+            )
+    else:
+        # Inline (or of no type it takes): checked now, as it will be read
+        # (#2226), not once the ODD is resolved and the coverage loaded.
+        weights_from_config(weights)
 
 
 def search_from_config(
