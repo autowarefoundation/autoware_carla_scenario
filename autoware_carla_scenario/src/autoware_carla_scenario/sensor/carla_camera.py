@@ -185,6 +185,117 @@ def override_blueprint_attribute(
     blueprint.set_attribute(name, str(value))
 
 
+def configure_camera_blueprint(
+    blueprint: "carla.ActorBlueprint",
+    cfg: CarlaCameraSensorConfig,
+    sensor_tick: Optional[float],
+) -> None:
+    """Set a camera *blueprint* up from *cfg*: its resolution and ``fov``, its
+    ``sensor_tick`` (left at the blueprint's, every tick, when ``None``), and
+    the :data:`BLUEPRINT_ATTRIBUTES` *cfg* overrides
+    (:func:`override_blueprint_attribute`).
+
+    What every camera built from a :class:`CarlaCameraSensorConfig` is spawned
+    with: :class:`CarlaCameraSensor` and the T4 recorder's cameras.
+    """
+    # -- Resolution & optics
+    blueprint.set_attribute("image_size_x", str(cfg.image_width))
+    blueprint.set_attribute("image_size_y", str(cfg.image_height))
+    blueprint.set_attribute("fov", str(cfg.fov))
+    if sensor_tick is not None:
+        blueprint.set_attribute("sensor_tick", str(sensor_tick))
+
+    # -- Post-processing, exposure, lens: only what the config overrides, and
+    # only what this server's camera has (CARLA versions add and drop them)
+    if TYPE_CHECKING:
+        # Codon has no getattr() of a name known only at run time: the
+        # BLUEPRINT_ATTRIBUTES, in their order, spelled out.
+        override_blueprint_attribute(
+            blueprint, "bloom_intensity", cfg.bloom_intensity, cfg.sensor_type
+        )
+        override_blueprint_attribute(blueprint, "fstop", cfg.fstop, cfg.sensor_type)
+        override_blueprint_attribute(blueprint, "iso", cfg.iso, cfg.sensor_type)
+        override_blueprint_attribute(blueprint, "gamma", cfg.gamma, cfg.sensor_type)
+        override_blueprint_attribute(
+            blueprint, "lens_flare_intensity", cfg.lens_flare_intensity, cfg.sensor_type
+        )
+        override_blueprint_attribute(
+            blueprint,
+            "motion_blur_intensity",
+            cfg.motion_blur_intensity,
+            cfg.sensor_type,
+        )
+        override_blueprint_attribute(
+            blueprint,
+            "motion_blur_max_distortion",
+            cfg.motion_blur_max_distortion,
+            cfg.sensor_type,
+        )
+        override_blueprint_attribute(
+            blueprint,
+            "motion_blur_min_object_screen_size",
+            cfg.motion_blur_min_object_screen_size,
+            cfg.sensor_type,
+        )
+        override_blueprint_attribute(
+            blueprint, "exposure_mode", cfg.exposure_mode, cfg.sensor_type
+        )
+        override_blueprint_attribute(
+            blueprint,
+            "exposure_compensation",
+            cfg.exposure_compensation,
+            cfg.sensor_type,
+        )
+        override_blueprint_attribute(
+            blueprint, "exposure_min_bright", cfg.exposure_min_bright, cfg.sensor_type
+        )
+        override_blueprint_attribute(
+            blueprint, "exposure_max_bright", cfg.exposure_max_bright, cfg.sensor_type
+        )
+        override_blueprint_attribute(
+            blueprint, "exposure_speed_up", cfg.exposure_speed_up, cfg.sensor_type
+        )
+        override_blueprint_attribute(
+            blueprint, "exposure_speed_down", cfg.exposure_speed_down, cfg.sensor_type
+        )
+        override_blueprint_attribute(
+            blueprint,
+            "chromatic_aberration_intensity",
+            cfg.chromatic_aberration_intensity,
+            cfg.sensor_type,
+        )
+        override_blueprint_attribute(
+            blueprint,
+            "chromatic_aberration_offset",
+            cfg.chromatic_aberration_offset,
+            cfg.sensor_type,
+        )
+        override_blueprint_attribute(
+            blueprint, "lens_circle_falloff", cfg.lens_circle_falloff, cfg.sensor_type
+        )
+        override_blueprint_attribute(
+            blueprint,
+            "lens_circle_multiplier",
+            cfg.lens_circle_multiplier,
+            cfg.sensor_type,
+        )
+        override_blueprint_attribute(blueprint, "lens_k", cfg.lens_k, cfg.sensor_type)
+        override_blueprint_attribute(
+            blueprint, "lens_kcube", cfg.lens_kcube, cfg.sensor_type
+        )
+        override_blueprint_attribute(
+            blueprint, "lens_x_size", cfg.lens_x_size, cfg.sensor_type
+        )
+        override_blueprint_attribute(
+            blueprint, "lens_y_size", cfg.lens_y_size, cfg.sensor_type
+        )
+    else:
+        for name in BLUEPRINT_ATTRIBUTES:
+            override_blueprint_attribute(
+                blueprint, name, getattr(cfg, name), cfg.sensor_type
+            )
+
+
 class CarlaCameraSensor(CameraSensorBase):
     """CARLA ``sensor.camera.rgb`` sensor implementation.
 
@@ -224,7 +335,8 @@ class CarlaCameraSensor(CameraSensorBase):
         #: The newest frame :meth:`latest_image` has taken from the queue.
         self._newest = None
         #: The simulator frame the next frame is counted from: the newest one's,
-        #: or the frame a frame due did not come by; -1 before the first call.
+        #: the frame a frame due did not come by, or the tick before the first
+        #: call, taken as the attach; -1 before the first call.
         self._anchor = -1
 
     # ------------------------------------------------------------------
@@ -250,62 +362,7 @@ class CarlaCameraSensor(CameraSensorBase):
         bp_lib = world.get_blueprint_library()
         camera_bp = bp_lib.find(cfg.sensor_type)
 
-        # -- Resolution & optics
-        camera_bp.set_attribute("image_size_x", str(cfg.image_width))
-        camera_bp.set_attribute("image_size_y", str(cfg.image_height))
-        camera_bp.set_attribute("fov", str(cfg.fov))
-        camera_bp.set_attribute("sensor_tick", str(sensor_tick_s(1.0 / cfg.fps)))
-
-        # -- Post-processing, exposure, lens: only what the config overrides, and
-        # only what this server's camera has (CARLA versions add and drop them)
-        if TYPE_CHECKING:
-            # Codon has no getattr() of a name known only at run time: the
-            # BLUEPRINT_ATTRIBUTES, in their order, spelled out.
-            self._override(camera_bp, "bloom_intensity", cfg.bloom_intensity)
-            self._override(camera_bp, "fstop", cfg.fstop)
-            self._override(camera_bp, "iso", cfg.iso)
-            self._override(camera_bp, "gamma", cfg.gamma)
-            self._override(camera_bp, "lens_flare_intensity", cfg.lens_flare_intensity)
-            self._override(
-                camera_bp, "motion_blur_intensity", cfg.motion_blur_intensity
-            )
-            self._override(
-                camera_bp, "motion_blur_max_distortion", cfg.motion_blur_max_distortion
-            )
-            self._override(
-                camera_bp,
-                "motion_blur_min_object_screen_size",
-                cfg.motion_blur_min_object_screen_size,
-            )
-            self._override(camera_bp, "exposure_mode", cfg.exposure_mode)
-            self._override(
-                camera_bp, "exposure_compensation", cfg.exposure_compensation
-            )
-            self._override(camera_bp, "exposure_min_bright", cfg.exposure_min_bright)
-            self._override(camera_bp, "exposure_max_bright", cfg.exposure_max_bright)
-            self._override(camera_bp, "exposure_speed_up", cfg.exposure_speed_up)
-            self._override(camera_bp, "exposure_speed_down", cfg.exposure_speed_down)
-            self._override(
-                camera_bp,
-                "chromatic_aberration_intensity",
-                cfg.chromatic_aberration_intensity,
-            )
-            self._override(
-                camera_bp,
-                "chromatic_aberration_offset",
-                cfg.chromatic_aberration_offset,
-            )
-            self._override(camera_bp, "lens_circle_falloff", cfg.lens_circle_falloff)
-            self._override(
-                camera_bp, "lens_circle_multiplier", cfg.lens_circle_multiplier
-            )
-            self._override(camera_bp, "lens_k", cfg.lens_k)
-            self._override(camera_bp, "lens_kcube", cfg.lens_kcube)
-            self._override(camera_bp, "lens_x_size", cfg.lens_x_size)
-            self._override(camera_bp, "lens_y_size", cfg.lens_y_size)
-        else:
-            for name in BLUEPRINT_ATTRIBUTES:
-                self._override(camera_bp, name, getattr(cfg, name))
+        configure_camera_blueprint(camera_bp, cfg, sensor_tick_s(1.0 / cfg.fps))
 
         # -- Transform (CARLA actor origin -> camera, CARLA convention)
         transform = _carla.Transform(
@@ -324,15 +381,6 @@ class CarlaCameraSensor(CameraSensorBase):
             cfg.fov,
             cfg.fps,
             actor.type_id,
-        )
-
-    def _override(
-        self, camera_bp: "carla.ActorBlueprint", name: str, value: Optional[float | str]
-    ) -> None:
-        """Set the blueprint attribute *name* to *value*, unless it is ``None``
-        (:func:`override_blueprint_attribute`)."""
-        override_blueprint_attribute(
-            camera_bp, name, value, self._carla_config.sensor_type
         )
 
     def _on_sensor_data(self, data: Union["carla.Image", "carla.SensorData"]) -> None:
@@ -396,11 +444,14 @@ class CarlaCameraSensor(CameraSensorBase):
         Otherwise it answers at once with the newest frame queued, which may
         be from an earlier tick: its own frame says which.  ``None`` when
         nothing rendered within the last interval arrived -- an older frame
-        would be a stale one.  The first call does not wait: where in its
-        interval the camera is, nothing yet says.
+        would be a stale one.  The first call is taken as on the tick after
+        the attach, which the first frame is counted from: CARLA first renders
+        an interval after the attach (``sensor_tick`` counts from the spawn),
+        so a camera rendering every tick waits for that tick's frame, and one
+        rendering less often waits for none (#2228).
         """
         if self._anchor < 0:
-            self._anchor = frame
+            self._anchor = frame - 1
         deadline = time.monotonic() + _FRAME_TIMEOUT
         self._take_queued()
         while self._anchor + self._interval_ticks <= frame:

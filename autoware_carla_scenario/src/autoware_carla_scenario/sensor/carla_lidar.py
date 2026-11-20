@@ -204,6 +204,11 @@ class CarlaLidarSensor:
     #: otherwise.  While set, no sweep is waited for: a sensor that stopped
     #: delivering costs one wait, not one a read (#2018).
     _missed: int
+    #: The frame of the first :meth:`latest_sweep` since attaching; -1 before
+    #: it.  Taken as the tick after the attach, the first sweep is due an
+    #: interval after the attach, one tick less than an interval after it
+    #: (:meth:`_due`, #2228).
+    _first_read: int
 
     def __init__(
         self,
@@ -226,6 +231,7 @@ class CarlaLidarSensor:
             else _stream_of(sensor_id if sensor_id else _mount_key(config))
         )
         self._missed = -1
+        self._first_read = -1
 
     @property
     def sweep_interval_ticks(self) -> int:
@@ -330,6 +336,13 @@ class CarlaLidarSensor:
             self._sensor.destroy()
             self._sensor = None
         self._world = None
+        # Attached again, the sensor starts over: its first read counts from
+        # the new attach, as on the first one, and no sweep of the old actor
+        # is taken for one of the new.
+        self._newest = None
+        self._weathered_frame = -1
+        self._missed = -1
+        self._first_read = -1
 
     def latest_sweep(
         self, frame: int
@@ -344,8 +357,16 @@ class CarlaLidarSensor:
         sweeps the newest one is the answer, taken on an earlier tick of the
         interval.  ``None`` when nothing within the last interval arrived -- an
         older sweep would be a stale one, and the policy is better told nothing
-        than told the past.
+        than told the past.  The first call after attaching is taken as on
+        the tick after the attach: CARLA first sweeps an interval after the
+        attach (``sensor_tick`` counts from the spawn), so a LiDAR sweeping
+        every tick waits for that tick's sweep, and one sweeping less often
+        waits for none -- as :meth:`CarlaCameraSensor.latest_image
+        <autoware_carla_scenario.sensor.carla_camera.CarlaCameraSensor.latest_image>`
+        counts its first frame (#2228).
         """
+        if self._first_read < 0:
+            self._first_read = frame
         deadline = time.monotonic() + _SWEEP_TIMEOUT
         self._take_queued()
         while self._due(frame):
@@ -424,13 +445,15 @@ class CarlaLidarSensor:
 
     def _due(self, frame: int) -> bool:
         """Whether a sweep newer than the newest one is due by *frame*: an
-        interval after the newest, or at once before any -- unless one due
-        has not come since (:attr:`_missed`), which is not waited for again."""
+        interval after the newest, or, before any, an interval after the
+        attach, the tick before the first read (:attr:`_first_read`) -- unless
+        one due has not come since (:attr:`_missed`), which is not waited for
+        again."""
         if self._missed >= 0:
             return False
         newest = self._newest
         if newest is None:
-            return True
+            return self._first_read - 1 + self._interval_ticks <= frame
         return newest[0] + self._interval_ticks <= frame
 
     def _keep(

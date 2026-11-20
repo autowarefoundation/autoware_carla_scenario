@@ -41,6 +41,18 @@ def sensor_tick_s(interval_s: float) -> float:
     return interval_s
 
 
+def focal_length_px(width: float, fov_deg: float) -> float:
+    """The focal length, in pixels, of a pinhole camera *width* pixels wide
+    whose horizontal field of view is *fov_deg* degrees: CARLA's camera, whose
+    pixels are square, so it is the vertical one too.
+
+    The one formula behind :attr:`CameraSensorConfig.fx` (and so the T4
+    dataset's camera intrinsics) and the Rerun recording's
+    :meth:`~autoware_carla_scenario.rerun_sensor_mount.CameraMount.focal_length_px`.
+    """
+    return width / (2.0 * math.tan(math.radians(fov_deg / 2.0)))
+
+
 def sensor_interval_ticks(interval_s: float) -> int:
     """The ticks a sensor set to fire every *interval_s* seconds waits at most
     from one firing to the next (at least 1): its :func:`sensor_tick_s`, rounded
@@ -109,8 +121,9 @@ class CameraSensorConfig:
 
     @property
     def fx(self) -> float:
-        """Horizontal focal length in pixels derived from FOV and width."""
-        return self.image_width / (2.0 * math.tan(math.radians(self.fov / 2.0)))
+        """Horizontal focal length in pixels derived from FOV and width
+        (:func:`focal_length_px`)."""
+        return focal_length_px(self.image_width, self.fov)
 
     @property
     def fy(self) -> float:

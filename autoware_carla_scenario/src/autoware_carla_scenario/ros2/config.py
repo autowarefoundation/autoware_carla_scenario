@@ -551,22 +551,19 @@ class Ros2EgoConfig:
         Raises:
             ValueError: If *mapping* holds a key this config does not define.
         """
-        from collections.abc import Sequence  # noqa: PLC0415
-
-        from ..utils.config import checked_options, null_as_default  # noqa: PLC0415
+        from ..utils.config import (  # noqa: PLC0415
+            checked_mapping_list,
+            checked_options,
+            null_as_default,
+        )
 
         values = null_as_default(cls, checked_options(cls, mapping, ignore={"control"}))
         # A list of mappings, or null for the default: false or a string
         # would fail iterating, naming no key (#2217).
         for key in ("sources", "cameras"):
             items = values.get(key)
-            if items is None:
-                continue
-            if isinstance(items, (str, bytes)) or not isinstance(items, Sequence):
-                raise ValueError(f"{key} must be a list of mappings, got {items!r}")
-            for index, item in enumerate(items):
-                if not isinstance(item, Mapping):
-                    raise ValueError(f"{key}[{index}] must be a mapping, got {item!r}")
+            if items is not None:
+                values[key] = checked_mapping_list(key, items)
         sources = values.pop("sources", None)
         if sources is not None:
             values["sources"] = tuple(

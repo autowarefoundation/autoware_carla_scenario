@@ -152,15 +152,16 @@ def test_an_attribute_the_server_lacks_is_skipped(
 
 
 def test_the_attributes_spelled_out_for_codon_are_the_blueprint_attributes() -> None:
-    """attach() names each attribute in its `if TYPE_CHECKING:` branch, which
-    Codon compiles: the same ones, in the same order, as the loop Python runs."""
-    tree = ast.parse(inspect.getsource(CarlaCameraSensor.attach).strip())
+    """configure_camera_blueprint() names each attribute in its
+    `if TYPE_CHECKING:` branch, which Codon compiles: the same ones, in the
+    same order, as the loop Python runs."""
+    tree = ast.parse(inspect.getsource(carla_camera.configure_camera_blueprint))
     spelled = [
         (call.args[1].value, ast.unparse(call.args[2]))
         for call in ast.walk(tree)
         if isinstance(call, ast.Call)
-        and isinstance(call.func, ast.Attribute)
-        and call.func.attr == "_override"
+        and isinstance(call.func, ast.Name)
+        and call.func.id == "override_blueprint_attribute"
         and isinstance(call.args[1], ast.Constant)
     ]
     # Each with the config's value of the attribute it names.
@@ -334,3 +335,79 @@ def test_latest_image_keeps_the_newest_frame_however_they_arrive() -> None:
     assert latest[0] == 7
     assert int(latest[1][0, 0, 0]) == 7
     assert latest[1].shape == (1, 1, 3)
+
+
+def _calls(
+    config: CarlaCameraSensorConfig, sensor_tick: object
+) -> list[tuple[str, str]]:
+    """The ``set_attribute`` calls :func:`configure_camera_blueprint` makes, in order."""
+    calls: list[tuple[str, str]] = []
+    blueprint = SimpleNamespace(
+        has_attribute=lambda name: True,
+        set_attribute=lambda name, value: calls.append((name, value)),
+    )
+    carla_camera.configure_camera_blueprint(blueprint, config, sensor_tick)  # type: ignore[arg-type]
+    return calls
+
+
+def test_the_shared_blueprint_setup_is_what_attach_set() -> None:
+    """Extracted from CarlaCameraSensor.attach and shared with the T4 recorder's
+    cameras (#2228): the same attributes, values and order as before."""
+    config = CarlaCameraSensorConfig(
+        image_width=1280, image_height=720, fov=70.0, fps=10.0, iso=100.0, lens_k=-0.2
+    )
+    assert _calls(config, 0.099999) == [
+        ("image_size_x", "1280"),
+        ("image_size_y", "720"),
+        ("fov", "70.0"),
+        ("sensor_tick", "0.099999"),
+        ("iso", "100.0"),
+        ("lens_k", "-0.2"),
+    ]
+    # No sensor_tick: the blueprint's own, a frame every tick.
+    assert ("sensor_tick", "0.099999") not in _calls(config, None)
+    assert _calls(config, None) == [
+        call for call in _calls(config, 0.099999) if call[0] != "sensor_tick"
+    ]
+    # attach() hands it the camera's own fps.
+    assert _attach(config) == dict(_calls(config, 0.099999))
+
+
+@pytest.mark.parametrize(("fps", "interval_ticks"), [(20.0, 1), (10.0, 2)])
+def test_the_first_read_waits_only_for_a_frame_carla_can_have_rendered(
+    monkeypatch: pytest.MonkeyPatch, fps: float, interval_ticks: int
+) -> None:
+    """Attached on frame 100, CARLA first renders an interval later (#2228):
+    on 101, the first read's tick, with a frame every tick -- waited for -- and
+    on 102 with a frame every other tick, which the first read does not wait
+    for."""
+    monkeypatch.setattr(carla_camera, "_FRAME_TIMEOUT", 5.0)
+    sensor = CarlaCameraSensor(
+        CarlaCameraSensorConfig(image_width=1, image_height=1, fps=fps)
+    )
+    assert sensor.frame_interval_ticks == interval_ticks
+    first = 100 + interval_ticks
+    if interval_ticks > 1:
+        started = time.monotonic()
+        assert sensor.latest_image(101) is None
+        assert time.monotonic() - started < 0.5
+    timer = threading.Timer(0.05, sensor._on_sensor_data, (_rendered(first, 1),))
+    timer.start()
+    try:
+        latest = sensor.latest_image(first)
+    finally:
+        timer.join()
+    assert latest is not None
+    assert latest[0] == first
+
+
+def test_a_first_frame_due_that_never_comes_costs_one_wait(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(carla_camera, "_FRAME_TIMEOUT", 0.05)
+    sensor = CarlaCameraSensor(
+        CarlaCameraSensorConfig(image_width=1, image_height=1, fps=20.0)
+    )
+    started = time.monotonic()
+    assert sensor.latest_image(101) is None
+    assert time.monotonic() - started >= 0.04

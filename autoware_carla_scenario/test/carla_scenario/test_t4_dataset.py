@@ -1221,3 +1221,69 @@ def test_a_t4_camera_skips_an_attribute_the_server_lacks_with_a_warning(
     assert "bloom_intensity" not in blueprint.attributes
     assert blueprint.attributes["iso"] == "100.0"
     assert "has no attribute 'bloom_intensity'" in caplog.text
+
+
+def _frame_camera_attributes(config: Any, interval_ticks: int) -> list[tuple[str, str]]:
+    calls: list[tuple[str, str]] = []
+
+    class _Recorded(_Blueprint):
+        def set_attribute(self, name: str, value: str) -> None:
+            calls.append((name, value))
+
+    blueprint = _Recorded("sensor.camera.rgb")
+    world = _World()
+    world.get_blueprint_library = lambda: SimpleNamespace(find=lambda name: blueprint)  # type: ignore[method-assign]
+    t4._FrameCamera(config, interval_ticks).attach(world, world.ego)
+    return calls
+
+
+def test_a_t4_camera_is_set_up_as_it_was_before_sharing_the_setup() -> None:
+    """_FrameCamera.attach shares CarlaCameraSensor's blueprint setup (#2228):
+    the attributes it sets, and their order, are what it set itself before."""
+    from autoware_carla_scenario.sensor.carla_camera import (  # noqa: PLC0415
+        CarlaCameraSensorConfig,
+    )
+
+    config = CarlaCameraSensorConfig(
+        image_width=960, image_height=604, fov=120.0, gamma=2.2, exposure_mode="manual"
+    )
+    every_tick = [
+        ("image_size_x", "960"),
+        ("image_size_y", "604"),
+        ("fov", "120.0"),
+        ("gamma", "2.2"),
+        ("exposure_mode", "manual"),
+    ]
+    # A frame every tick: the blueprint's own sensor_tick, which is not set.
+    assert _frame_camera_attributes(config, 1) == every_tick
+    # Every other tick: just under 0.1 s, set before the overrides.
+    assert _frame_camera_attributes(config, 2) == [
+        *every_tick[:3],
+        ("sensor_tick", "0.099999"),
+        *every_tick[3:],
+    ]
+
+
+@pytest.mark.parametrize(
+    ("width", "height", "fov"),
+    [(960, 604, 120.0), (1920, 1080, 90.0), (832, 480, 70.3), (1, 1, 0.5)],
+)
+def test_a_t4_camera_intrinsic_is_its_pinhole_as_before(
+    width: int, height: int, fov: float
+) -> None:
+    """The T4 intrinsics are CameraSensorConfig.intrinsic_matrix now, no longer
+    rebuilt by hand (#2228): the same numbers, to the bit."""
+    camera = DriverCameraConfig(
+        logical_id="cam", image_width=width, image_height=height, fov=fov
+    ).to_sensor_config()
+    recording = object.__new__(t4.T4Recording)
+    recording._settings = SimpleNamespace(cameras=[("cam", camera)], lenses=())  # type: ignore[assignment]
+    [(intrinsic, distortion)] = recording._camera_models()
+    fx = width / (2.0 * math.tan(math.radians(fov / 2.0)))
+    assert intrinsic == [
+        [fx, 0.0, width / 2.0],
+        [0.0, fx, height / 2.0],
+        [0.0, 0.0, 1.0],
+    ]
+    assert all(type(value) is float for row in intrinsic for value in row)
+    assert distortion == [0.0, 0.0, 0.0, 0.0, 0.0]

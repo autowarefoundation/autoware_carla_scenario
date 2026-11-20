@@ -189,6 +189,9 @@ other switches are ([The switches](usage.md#the-switches)). So a quoted
 `driver.t4_scene='false'` is false, not true; anything else (`ture`, `2`,
 null) is refused as the config is read, naming the key
 (`driver.send_ground_truth must be true or false, got 'ture'`).
+`driver.address` must be a non-empty string (`host:port`, or
+`unix:///path/policy.sock`): `null` is refused too, naming the key, rather
+than dialled as `None`; leave it out for the default `localhost:50051`.
 
 The same holds for `driver.control` (and `ros2.control`): each gain and limit
 is a finite int or float (an int is read as a float), each `enable_*` switch a
@@ -200,12 +203,21 @@ must be a number too. What the controller divides by -- `wheelbase_m`,
 starts, naming its key (`driver.control.steer_exponent must be positive, got
 0.0`), not once the ego first steers.
 
-Each `driver.cameras` entry needs its own `logical_id`; two cameras under one id
-are refused. Its `image_width` and `image_height` must be positive whole
+Each `driver.cameras` entry needs its own `logical_id`, a non-empty string;
+two cameras under one id are refused. Its `image_width` and `image_height` must be positive whole
 numbers, its `fps` positive and finite, its `fov` in (0, 180) degrees -- CARLA
 renders the pinhole of the horizontal `fov` -- and its mount (`position_x/y/z`,
 `roll`, `pitch`, `yaw`) finite. A camera out of these bounds is refused as the
 config is read, not when it attaches after the ego spawned.
+
+A `null` setting of a `driver.cameras` or `driver.lidars` entry is its default,
+as an absent one, the way a ROS 2 camera's is: `logical_id: null` is
+`camera_front_wide_120fov` (a LiDAR's `lidar_top`), `fov: null` 120 degrees,
+`range_m: null` 100 m; `lens: null` is CARLA's pinhole and a LiDAR's
+`noise_seed: null` the run's seed, as by default. An entry refused names
+itself by its place in the list and its logical id
+(`driver.lidars[1] ('lidar_rear'): LiDAR channels must be positive`), and
+`driver.cameras` and `driver.lidars` must each be a list of mappings.
 
 A whole number is an integral value: `960`, or `960.0` (or `9.6e2`), which is
 kept as the int `960`, so the policy's `CameraSpec` resolution (an integer
@@ -493,7 +505,12 @@ a camera) that sweeps once per policy step (`policy_timestep_s`), and each polic
 sends that sweep, already converted into the rig frame. The sweep may come from an
 earlier simulation tick of the step than the one the step is sent on; it is stamped
 with the tick it was taken on, not the tick it is sent on. A sweep that does not arrive
-within a second is left out rather than replaced by an older one.
+within a second is left out rather than replaced by an older one. CARLA first sweeps
+a whole interval after the LiDAR is attached (its `sensor_tick` counts from the spawn),
+so the first read waits only for a sweep that can have been taken by then, as a
+camera's first read does: with a sweep every tick, that tick's; with a longer
+`policy_timestep_s`, none (the first step may then send no sweep, and no warning is
+logged for it) (#2228).
 
 A policy does not see that transport: the servicer records each sweep before `drive` as
 a `LidarFrame` in `session.frame_history`, beside the camera frames, and announces it
@@ -507,7 +524,7 @@ driver:
     - {logical_id: lidar_top, channels: 64, range_m: 100.0, position_z: 2.0}
 ```
 
-LiDAR logical ids must be unique, and every number a LiDAR takes must be finite:
+LiDAR logical ids must be unique non-empty strings, and every number a LiDAR takes must be finite:
 `channels` and `points_per_second` positive whole numbers (`64`, or `64.0`
 and `1.2e6`, which YAML reads as floats, kept as the ints `64` and `1200000`
 for CARLA; not `64.5`), `range_m` positive, `lower_fov_deg` below
