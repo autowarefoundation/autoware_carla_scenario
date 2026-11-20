@@ -43,7 +43,7 @@ from ..config import TrafficManagerBackendConfig
 from ..fidelity import FidelityCandidate, MesoscopicConfig, plan_fidelity
 from ..mesoscopic import MesoscopicTraffic
 from ..parameters import VEHICLE_PARAMETER_BACKENDS, VehicleParameters
-from ..traffic_manager import TrafficManagerBackend
+from ..traffic_manager import TrafficManagerBackend, _frame_of
 from .backend import world_opendrive
 from .config import check_text, resolve_cache_dir
 from .geometry import Pose2D, box_centre_to_origin, carla_to_sumo, sumo_to_carla
@@ -395,7 +395,10 @@ class HybridTrafficBackend(TrafficManagerBackend):
         if not focus:
             return
         candidates = []
+        frame = _frame_of(world)
         for handle, actor in list(self._background.items()):
+            if self._spawned_at(handle, frame) is not None:
+                continue  # not in the world's snapshot yet: decided next time
             # Destroyed by the TrafficManager or the server: read at the
             # origin, it would be moved into the mesoscopic model, and brought
             # back later as a live vehicle (#2245).

@@ -879,6 +879,32 @@ class TestTrafficManagerBackground:
         assert backend.background_actors(world) == {}
         assert actor.destroyed == 0  # gone already: not destroyed again
 
+    def test_a_vehicle_spawned_on_this_frame_is_no_ghost_either(self) -> None:
+        """Until the world ticks a client reads a new actor as not alive and
+        at the origin: a second source, a sink or an adversity on the same
+        phase sees it where it was put, and does not forget it."""
+        world: Any = _BackgroundWorld([_Blueprint()])
+        world.frame = 7
+        world.get_snapshot = lambda: SimpleNamespace(frame=world.frame)
+        backend = TrafficManagerBackend()
+        handle = backend.spawn_background(world, _road_transform(), speed_kmh=30.0)
+        assert handle is not None
+        actor = world.spawned[0]
+        actor.is_alive = False
+        actor.get_location = lambda: SimpleNamespace(x=0.0, y=0.0, z=0.0)
+        assert backend.background_vehicles(world) == {handle: (1.0, 2.0, 0.5)}
+        assert backend.background_actors(world) == {handle: actor}
+        # The world ticked: alive, it is read where it is ...
+        world.frame = 8
+        actor.is_alive = True
+        actor.get_location = lambda: SimpleNamespace(x=3.0, y=4.0, z=0.0)
+        assert backend.background_vehicles(world) == {handle: (3.0, 4.0, 0.0)}
+        # ... and not alive after a tick, it is gone.
+        actor.is_alive = False
+        assert backend.background_vehicles(world) == {}
+        assert backend._background == {}
+        assert backend._unticked == {}
+
     def test_a_vehicle_that_raises_is_forgotten_as_well(self) -> None:
         world: Any = _BackgroundWorld([_Blueprint()])
         backend = TrafficManagerBackend()
