@@ -160,7 +160,8 @@ Python version, and the viewer's Run form reads it the same way.
   (`server.world_reset`): the world is reset right before every attempt that
   follows a run -- the next case's, or a retry's -- so the weather or frozen
   traffic lights the failed attempt set do not carry into it
-- A reset that raises is the failure of the attempt it comes before: that
+- A reset that fails -- the map load timing out, say -- raises (#2243), and
+  is the failure of the attempt it comes before: that
   attempt is retried, or the case is reported as `[ERROR]`, and the batch
   goes on. The case that ran before the reset keeps its verdict, and is not
   run again (#1941). Between cases the world is reset first, and
@@ -1407,8 +1408,9 @@ messages with ` AND ` -- or `Scenario completed successfully` when
 `is_done()` ended the run. When a fail condition ends the run, it is that
 condition's message.
 
-`condition_statuses` has one entry per registered condition, pass conditions
-first, each labelled `pass[i](label)` or `fail[i](label)`: whether it was
+`condition_statuses` has one entry per registered condition (none when the
+ego gave up before the tick loop began, as no condition was checked), pass
+conditions first, each labelled `pass[i](label)` or `fail[i](label)`: whether it was
 satisfied when the run ended, its message (`not triggered` for a fail
 condition that was not, `not yet satisfied` for a pass condition), its class,
 its role, and its `details` (an `AndCondition`'s are its children's statuses,

@@ -544,6 +544,113 @@ class TestTheReloadFallback:
         assert server.loads == ["Town10HD_Opt"]
 
 
+class TestAFailedReset:
+    """A reset whose load fails (#2243): logged and swallowed by default, and
+    raised with ``strict`` -- which the queue uses, so that the next case does
+    not run on the world the last one left."""
+
+    def test_the_default_reset_logs_and_swallows_the_failure(
+        self, server: _Server
+    ) -> None:
+        runner = _runner(server, world_reset="soft")
+        runner.load_map_by_name("Town10HD_Opt")
+        server.foreign_load("Town01")
+        server.load_world = MagicMock(side_effect=RuntimeError("std::exception"))  # type: ignore[method-assign]
+
+        runner.reset_world("Case0")
+
+        assert runner._baseline is None
+
+    @pytest.mark.parametrize("world_reset", ["reload", "soft"])
+    def test_a_strict_reset_raises_once_it_has_dropped_the_baseline(
+        self, server: _Server, world_reset: str, caplog: pytest.LogCaptureFixture
+    ) -> None:
+        runner = _runner(server, world_reset=world_reset)
+        runner.load_map_by_name("Town10HD_Opt")
+        # The soft reset cannot run on another episode: the load is the
+        # fallback, and it fails.
+        server.foreign_load("Town01")
+        server.load_world = MagicMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("time-out of 10000ms")
+        )
+
+        with (
+            caplog.at_level("WARNING", logger="autoware_carla_scenario"),
+            pytest.raises(RuntimeError, match="time-out"),
+        ):
+            runner.reset_world("Case0", strict=True)
+
+        assert runner._baseline is None
+        assert any("Reloading the map failed" in r.getMessage() for r in caplog.records)
+
+    def _queue(
+        self, server: _Server, tmp_path: Path, *, retries: int
+    ) -> tuple[ScenarioQueue, list[float]]:
+        """A queue on a real runner (its own _reload_world) on *server*,
+        whose runs record the cloudiness of the world they start on and then
+        leave it cloudy, as a case's weather does."""
+        runner = _runner(server)
+        runner.load_map_by_name("Town10HD_Opt")
+        cloudiness: list[float] = []
+
+        def run_scenario(scenario: object, **_: object) -> object:
+            from autoware_carla_scenario import ScenarioResult
+
+            cloudiness.append(server.world.weather.cloudiness)
+            _play_a_case(server.world)
+            return ScenarioResult(passed=True, message="ok", elapsed_seconds=1.0)
+
+        runner.run_scenario = run_scenario  # type: ignore[method-assign,assignment]
+        queue = ScenarioQueue(
+            server=MagicMock(),
+            output_dir=tmp_path,
+            cooldown_max_retries=retries,
+        )
+        queue._runner = runner
+        for _ in range(2):
+            queue.add(MagicMock())
+        return queue, cloudiness
+
+    def test_a_failed_load_before_a_case_is_retried_on_a_reloaded_world(
+        self, server: _Server, tmp_path: Path
+    ) -> None:
+        queue, cloudiness = self._queue(server, tmp_path, retries=1)
+        real_load = server.load_world
+        outcomes = [RuntimeError("time-out of 10000ms")]
+
+        def load_world(name: str) -> _World:
+            if outcomes:
+                raise outcomes.pop(0)
+            return real_load(name)
+
+        server.load_world = load_world  # type: ignore[method-assign]
+
+        results = queue.run_all(continue_on_error=True)
+
+        assert [r.passed for r in results] == [True, True]
+        assert queue.errored_indices() == []
+        # The second case ran once, on the world its retry reloaded.
+        assert cloudiness == [0.0, 0.0]
+        assert server.loads == ["Town10HD_Opt", "Town10HD_Opt"]
+
+    def test_a_case_whose_world_never_reloads_errors_rather_than_runs(
+        self, server: _Server, tmp_path: Path
+    ) -> None:
+        queue, cloudiness = self._queue(server, tmp_path, retries=1)
+        server.load_world = MagicMock(  # type: ignore[method-assign]
+            side_effect=RuntimeError("time-out of 10000ms")
+        )
+
+        results = queue.run_all(continue_on_error=True)
+
+        assert [r.passed for r in results] == [True, False]
+        assert queue.errored_indices() == [1]
+        assert "time-out" in results[1].message
+        # Never run on the cloudy world the first case left.
+        assert cloudiness == [0.0]
+        assert server.load_world.call_count == 2
+
+
 # ---------------------------------------------------------------------------
 # The soft reset itself
 # ---------------------------------------------------------------------------

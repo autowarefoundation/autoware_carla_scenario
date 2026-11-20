@@ -129,6 +129,7 @@ sequenceDiagram
     participant CSM as CarlaServerManager
     participant SR as ScenarioRunner
     participant BS as BaseScenario
+    participant EGO as Ego entity
     participant W as carla.World
     participant TB as TrafficBackend
     participant TM as TrafficManager
@@ -142,11 +143,18 @@ sequenceDiagram
     SQ->>SR: Initialize MapManager<br/>(Lanelet2 + OpenDRIVE)
 
     CLI->>SQ: run_all()
-    loop For each scenario
-        SQ->>SR: run_scenario(scenario)
+    loop For each scenario (each attempt, up to 1 + cooldown_max_retries)
+        Note over SQ: A dead server the queue owns is restarted first
+        opt The world is dirty (a run, or a failed attempt, left it)
+            SQ->>SR: reset_world(strict=True) (map reload, or soft reset)
+            Note over SQ: A reset that fails is this attempt's failure:<br/>retried (reset again), or the case errors
+        end
+        SQ->>SR: run_scenario(scenario, reset_world=False)
 
         rect rgb(240, 248, 255)
             Note over SR: Phase 1: Setup
+            SR->>W: Reload the runs' map if another client loaded a world
+            SR->>W: Destroy leftover dynamic actors
             SR->>W: apply_settings(sync=True, dt=0.05)
             SR->>TB: prepare(TrafficContext)
             TB->>TM: set_synchronous_mode(True)
@@ -157,82 +165,112 @@ sequenceDiagram
             Note over BS: Spawn NPCs, register<br/>conditions & actions
             SR->>W: Spawn ego vehicle
             SR->>BS: register_fail_condition(EntityExistence)
+            SR->>W: start_recorder(path)
         end
 
         rect rgb(255, 248, 240)
-            Note over SR: Phase 2: Warm-up (5 ticks)
-            loop 5 times
-                SR->>W: tick()
+            Note over SR: Phase 2: Warm-up and start-up
+            loop STABILIZE_TICKS times (5 by default)
+                SR->>W: hold the vehicles still, tick()
             end
+            SR->>BS: run_init (each init action once, at elapsed=0)
+            SR->>EGO: set_initial_speeds(...)
+            SR->>EGO: on_scenario_start(world)
+            SR->>EGO: _wait_for_ego (until the ego is ready)
+            Note over SR: An ego that asks to terminate here<br/>ends the run (no tick loop)
+            SR->>W: Release the vehicles' brakes
             SR->>TB: start(world, skip_actor_ids)
             TB->>W: set_autopilot(True) on the vehicles it owns
-            SR->>BS: set_initial_speed(ego)
+            SR->>BS: set_initial_speed(ego actor)
+            SR->>BS: register_fail_condition(Timeout) (unless registered)
         end
 
         rect rgb(240, 255, 240)
-            Note over SR: Phase 3: Recording & Tick Loop
-            SR->>W: start_recorder(path)
-            SR->>BS: register_fail_condition(Timeout)
-            loop Until done or condition met
+            Note over SR: Phase 3: Tick Loop
+            loop While not is_done(), until a result
                 SR->>BS: pre_tick_actions.tick(world, elapsed)
                 SR->>BS: pre_tick_callbacks(world)
                 SR->>W: tick()
+                SR->>EGO: on_tick(world, elapsed)
+                SR->>TB: tick(world, elapsed)
                 SR->>BS: post_tick_actions.tick(world, elapsed)
                 SR->>BS: post_tick_callbacks(world)
                 SR->>BS: Check pass_conditions
                 Note over SR: If any pass condition<br/>returns ScenarioResult → PASS
-                SR->>BS: Check fail_conditions
+                SR->>BS: Check fail_conditions (not MetricConditions)
                 Note over SR: If any fail condition<br/>returns ScenarioResult → FAIL
-                SR->>BS: is_done()?
-                Note over SR: If True → PASS (default)
+                SR->>EGO: termination_requested?
+                Note over SR: If True → not a pass (termination)
             end
+            Note over SR: is_done() with no result → PASS
+            SR->>BS: Judge MetricConditions on the recorded frames
         end
 
         rect rgb(255, 240, 240)
             Note over SR: Phase 4: Cleanup
+            SR->>EGO: on_scenario_end(world)
+            SR->>BS: close_conditions()
             SR->>W: Destroy ego
             SR->>W: stop_recorder()
             SR->>TB: close()
             TB->>TM: shut_down()
+            SR->>SR: Write coverage, gate record and result JSON
         end
 
         SR-->>SQ: ScenarioResult
-        Note over SQ: Before the next attempt (then its cooldown)
-        SQ->>SR: reset_world() (map reload, or soft reset)
+        Note over SQ: The world stays dirty until the next attempt
     end
 
     CLI->>SQ: __exit__() / stop()
+    opt Server not stopped by the queue (given, or reused) and world dirty
+        SQ->>SR: restore_world() (best-effort reset, settings restored)
+    end
     SQ->>CSM: stop() (if owned)
 ```
+
+`run_scenario` called on its own (`reset_world=True`, the default) resets
+the world at its end, best effort: a reset that fails is logged, not raised.
+The queue instead passes `reset_world=False` and resets strictly before the
+attempt that follows (`reset_world(strict=True)`), so that a world it could
+not reset fails that attempt -- retried, or erroring the case -- rather than
+being the world the next case runs on.
 
 ### Tick Loop Detail
 
 The tick loop runs at a fixed 20 Hz (0.05 s per tick) in CARLA synchronous mode. Each tick follows a strict evaluation order:
 
 ```
-┌───────────────────────────────────────────────────────────┐
-│                     Single Tick Cycle                     │
-├───────────────────────────────────────────────────────────┤
-│  1. Pre-tick actions      → action.tick(world, elapsed)   │
-│  2. Pre-tick callbacks    → callback(world)               │
-│  3. world.tick()          → advance simulation by 0.05 s  │
-│  4. Ego entity            → ego.on_tick(world, elapsed)   │
-│  5. Traffic backend       → backend.tick(world, elapsed)  │
-│  6. Post-tick actions     → action.tick(world, elapsed)   │
-│  7. Post-tick callbacks   → callback(world)               │
-│  8. Coverage              → sample TICK / condition items │
-│  9. Periodic logging      → ego OpenDRIVE position (1/s)  │
-│  10. Pass conditions      → first satisfied → PASS & exit │
-│  11. Fail conditions      → first triggered → FAIL & exit │
-│  12. is_done() check      → True → PASS & exit            │
-└───────────────────────────────────────────────────────────┘
+┌─────────────────────────────────────────────────────────────────┐
+│                        Single Tick Cycle                        │
+├─────────────────────────────────────────────────────────────────┤
+│  0. is_done() check       → True → exit (PASS if no result)     │
+│  1. Pre-tick actions      → action.tick(world, elapsed)         │
+│  2. Pre-tick callbacks    → callback(world)                     │
+│  3. world.tick()          → advance simulation by 0.05 s        │
+│  4. Trajectory log        → record the new frame                │
+│  5. Ego entity            → ego.on_tick(world, elapsed)         │
+│  6. Traffic backend       → backend.tick(world, elapsed)        │
+│  7. Post-tick actions     → action.tick(world, elapsed)         │
+│  8. Post-tick callbacks   → callback(world)                     │
+│  9. Action states, NPC    → logged (collisions, falls)          │
+│     contacts                                                    │
+│ 10. Ego progress, metric  → frames kept for MetricConditions    │
+│     frames                                                      │
+│ 11. Coverage              → sample TICK / condition items       │
+│ 12. Periodic logging      → ego OpenDRIVE position (1/s)        │
+│ 13. Pass conditions       → first satisfied → PASS & exit       │
+│ 14. Fail conditions       → first triggered → FAIL & exit       │
+│ 15. Ego termination       → requested → not a pass, & exit      │
+└─────────────────────────────────────────────────────────────────┘
+After the loop: MetricConditions are judged on the recorded frames.
 ```
 
 **Evaluation semantics:**
 
 - **Pass conditions** are checked first. The **first** condition to return a non-`None` `ScenarioResult` terminates the loop with a pass.
-- **Fail conditions** are checked only if no pass condition was satisfied. The **first** triggered fail condition terminates the loop with a failure.
-- If the loop exits via `is_done()` returning `True` with no condition triggered, the scenario is treated as **passed**.
+- **Fail conditions** are checked only if no pass condition was satisfied. The **first** triggered fail condition terminates the loop with a failure. A `MetricCondition` is not checked in the loop: it is judged on the recorded frames once the run is over, and can still fail a run the loop passed.
+- An **ego termination** request (e.g. the driver policy signalled one) is checked after the conditions, so a pass or fail on the same tick still decides the outcome; on its own it is not a pass.
+- If the loop exits via `is_done()` returning `True` with no result, the scenario is treated as **passed**. Every path that reaches the tick loop records one `condition_statuses` entry per registered condition; an ego that asks to terminate before it (its stack never became ready) records none, since no condition was ever checked.
 
 ### The initialization phase
 
@@ -371,7 +409,7 @@ Key features:
 - **Cooldown**: Configurable wait time (`cooldown_seconds`) between consecutive scenarios to allow CARLA server cleanup.
 - **Retry**: A scenario whose run raises is retried up to `cooldown_max_retries` times before raising an error; one that runs and fails is not. The lanelet sweeper follows the same rule for its forked cases.
   A retry runs the same scenario object again, and so does a second `run_all()`: before each `setup()` the runner resets what an earlier attempt registered (`BaseScenario._reset_registrations()`) -- its conditions, actions, callbacks, entities, coverage and measures -- back to what the scenario's `__init__` registered, and resets each of those (`BaseCondition.reset()`, `BaseAction.reset()`) to the state it was built in, so a condition that latched in a failed attempt cannot decide the retry, a `once` action that fired there fires again, and a closed `CollisionCondition` attaches a sensor of its own.
-- **World reset**: The queue owns every reset between runs (#1941). It runs each scenario with `run_scenario(reset_world=False)` and keeps a flag of whether the world holds what a run left; right before the next attempt -- the next scenario's first, a retry, or the first of a later `run_all()` (the SLURM worker calls `run_all()` once per case) -- it resets the world (`ScenarioRunner.reset_world()`), so the weather, frozen traffic lights and light states one run set do not carry into the next. Between scenarios the reset comes first and the cooldown after it, so the server settles after the reload before the next scenario connects; a retry waits first (its recovery wait), then resets. The reset is part of that attempt: one that raises fails that attempt, which is retried (and resets again) or, with `continue_on_error`, errors that scenario, and never changes the verdict of the scenario that ran before it, nor ends the batch. An attempt that failed before its reset (in a retry's wait, or a server restart) leaves the flag as it was. After the last scenario the world is left as it is, for the next `run_all()` to reset, unless the server is restarted (a new world) in between.
+- **World reset**: The queue owns every reset between runs (#1941). It runs each scenario with `run_scenario(reset_world=False)` and keeps a flag of whether the world holds what a run left; right before the next attempt -- the next scenario's first, a retry, or the first of a later `run_all()` (the SLURM worker calls `run_all()` once per case) -- it resets the world (`ScenarioRunner.reset_world(strict=True)`), so the weather, frozen traffic lights and light states one run set do not carry into the next. Between scenarios the reset comes first and the cooldown after it, so the server settles after the reload before the next scenario connects; a retry waits first (its recovery wait), then resets. The reset is part of that attempt, and strict: a map load that fails (a timed-out `load_world`, a server that died in it) is logged and raised rather than leaving the world as the last run left it (#2243), and the next reset loads the map. One that raises fails that attempt, which is retried (and resets again) or, with `continue_on_error`, errors that scenario, and never changes the verdict of the scenario that ran before it, nor ends the batch. An attempt that failed before its reset (in a retry's wait, or a server restart) leaves the flag as it was. After the last scenario the world is left as it is, for the next `run_all()` to reset, unless the server is restarted (a new world) in between.
   When the queue stops (`stop()`, `__exit__`, the end of an `as_fixture()` session) with the world dirty, a server it does not stop -- one it was given, or one its own manager found already running and reused -- would be left synchronous at 20 Hz with nothing ticking it, and with the last run's actors in it, frozen for every other client (#2067). So `stop()` first restores it (`ScenarioRunner.restore_world()`): it resets the world once more (`reset_world()`, which destroys the runs' actors) and applies the world settings the runner's first run found (asynchronous, no fixed time step, for a freshly loaded map; a queue that loads no map puts back whatever its first run found, synchronous settings included). It leaves the TrafficManager alone: each run's traffic backend already shut its own down at the end of the run, and asking the client for one would start a new one, or take over another client's on that port. A server that does not answer a quick ping (`CarlaServerManager.is_alive()`, a few seconds) is not restored, with a warning: each call would wait for the client's 60 s timeout, or abort the process on arm64, before the launcher is stopped. Each step is best effort: a failure is logged, the next step still runs, and `stop()` goes on to close the Autoware launcher and the backends without raising. A server the queue stops gets none of this. The single-scenario run (`run_scenario_with_queue()`), batch mode, the SLURM worker and the sweeper's jobs (which run batch mode) all stop their queue with `with queue:`, so each restores the world this way.
   A `run_all()` that raises (a scenario failing every attempt without `continue_on_error`, or Ctrl-C) leaves the world as it was too: the next `run_all()` resets it before its first scenario.
   With `run_all(continue_on_error=True)`, which batch mode uses, a scenario that fails every attempt is recorded instead as a failed result naming the error (`errored_indices()` tells it from a scenario that ran and failed), and the queue goes on with the next one, whose first attempt resets the world.

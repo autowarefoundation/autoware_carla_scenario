@@ -1775,7 +1775,7 @@ def test_queue_names_a_case_by_the_stem_it_is_given(tmp_path: Path) -> None:
             seen.append(kwargs.get("file_stem"))
             return ScenarioResult(passed=True, message="ok", elapsed_seconds=0.0)
 
-        def reset_world(self, scenario_name: str = "") -> None:
+        def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
             pass
 
     queue = ScenarioQueue(server=MagicMock())

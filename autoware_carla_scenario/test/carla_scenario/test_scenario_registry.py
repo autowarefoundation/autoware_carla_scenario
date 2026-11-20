@@ -2590,7 +2590,7 @@ def test_a_batch_lets_go_of_each_scenario_once_it_has_run(
         def load_map_by_name(self, _name: str) -> None:
             pass
 
-        def reset_world(self, scenario_name: str = "") -> None:
+        def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
             pass
 
         def run_scenario(self, scenario: object, **_: object) -> ScenarioResult:
@@ -2666,7 +2666,7 @@ def test_a_batch_goes_on_past_a_case_that_cannot_run(
         def load_map_by_name(self, _name: str) -> None:
             pass
 
-        def reset_world(self, scenario_name: str = "") -> None:
+        def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
             pass
 
         def run_scenario(self, scenario: object, **_: object) -> ScenarioResult:
@@ -2743,7 +2743,7 @@ def test_a_batch_goes_on_past_a_reset_that_fails_after_an_errored_case(
         def load_map_by_name(self, _name: str) -> None:
             pass
 
-        def reset_world(self, scenario_name: str = "") -> None:
+        def reset_world(self, scenario_name: str = "", *, strict: bool = False) -> None:
             resets.append(scenario_name)
             if len(resets) == 2:
                 raise RuntimeError("load_world timed out")

@@ -753,6 +753,29 @@ def test_a_run_that_ends_normally_is_reset_once(tmp_path: Path) -> None:
     runner.reset_world.assert_called_once_with("MagicMock")  # type: ignore[attr-defined]
 
 
+def test_a_run_ended_by_is_done_records_each_conditions_status(
+    tmp_path: Path,
+) -> None:
+    # One entry per registered condition, as the pass, fail and termination
+    # paths record (docs/usage.md), not an empty list (#2243).
+    from autoware_carla_scenario.conditions import AlwaysTrueCondition
+
+    class _Never(AlwaysTrueCondition):
+        def check(self, world: Any, elapsed: float) -> Any:
+            return None
+
+    never = _Never(label="never")
+    _runner, _world, _write, result = _stand_in_run(
+        tmp_path, pass_conditions=[never], reset_world=False
+    )
+    assert result.passed
+    assert result.message == "Scenario completed successfully"
+    assert [
+        (s.role, s.condition_type, s.satisfied) for s in result.condition_statuses
+    ] == [("pass", "_Never", False)]
+    assert result.condition_statuses[0].message == "not yet satisfied"
+
+
 def _driven_walker(walker_id: int) -> MagicMock:
     """Put a walker on a stand-in controller in the walker AI's state, as a
     run before left it; the controller."""

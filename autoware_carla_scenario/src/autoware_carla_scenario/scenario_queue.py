@@ -506,7 +506,7 @@ class ScenarioQueue:
                         # later run_all() resets it, a new queue loads it, or
                         # stop() restores it on a server the queue does not
                         # stop (#2067).
-                        self._runner.reset_world(type(scenario).__name__)
+                        self._runner.reset_world(type(scenario).__name__, strict=True)
                         self._world_dirty = False
                     # Cooldown between consecutive scenarios, after the reset
                     # of the world the one before left: the server finishes
