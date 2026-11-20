@@ -245,6 +245,8 @@ and joined the domain:
   `carla.VehicleAckermannControl` takes by default.
 * A source's `steering_sign` is not zero, which would pin the steering straight. Its
   magnitude scales the steering and a negative value flips it, so both are kept.
+* `sources` and `cameras` are lists of mappings (null is the default); `false` or a
+  string is refused.
 * A `steer_accel` source's `steering_topic` and `acceleration_topic` differ: one
   topic for both would pair each message with itself.
 

@@ -1829,7 +1829,11 @@ def test_rosdep_keeps_pip_keys_in_the_images_venv(
     _docker_launcher(ws, docker, rosdep=True).prepare(log_dir=tmp_path / "out")
 
     script = next(c for c in calls() if c[0] == "run" and "rosdep install" in c[-1])[-1]
-    rosdep = script[script.index("rosdep install") :]
+    rosdep = script[
+        script.index("rosdep install") : script.index(
+            docker_module._protobuf_upgrade_script()
+        )
+    ]
     expanded = subprocess.run(
         ["bash", "-c", f'printf %s "{rosdep}"'],
         env={"VIRTUAL_ENV": virtual_env, "ROS_DISTRO": "jazzy"},
@@ -1902,6 +1906,16 @@ def test_the_image_gets_a_protobuf_the_generated_code_imports(
     deps = next(c for c in calls() if c[0] == "run" and "apt-get install" in c[-1])
     assert docker_module._protobuf_upgrade_script() in deps[-1]
     assert "pip install 'protobuf>=4.25.0,<8'" in deps[-1]
+
+
+def test_the_protobuf_step_comes_after_rosdep(tmp_path: Path, fake_docker) -> None:
+    """It checks the protobuf the image ends up with, whatever rosdep installed."""
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    _docker_launcher(ws, docker, rosdep=True).prepare()
+
+    deps = next(c for c in calls() if c[0] == "run" and "rosdep install" in c[-1])
+    assert deps[-1].endswith(docker_module._protobuf_upgrade_script())
 
 
 def _fake_tools(bin_dir: Path, log: Path, *, has_builder: bool) -> None:
@@ -2247,6 +2261,17 @@ def test_a_fraction_for_an_integer_parameter_is_refused_naming_it(
 ) -> None:
     with pytest.raises(ValueError, match=r"^reroute_max_attempts must be a whole"):
         bridge_ros_args("h:1", {"reroute_max_attempts": value})
+
+
+@pytest.mark.parametrize("name", ["reroute_max_attempts", "rpc_timeout_s"])
+@pytest.mark.parametrize("value", [True, False])
+def test_a_boolean_for_a_number_parameter_is_refused_naming_it(
+    name: str, value: bool
+) -> None:
+    """Not passed as ``:=true``, which rclpy refuses as the node starts."""
+    assert name in INTEGER_PARAMETERS + DOUBLE_PARAMETERS
+    with pytest.raises(ValueError, match=rf"^{name} must be a number, .* got {value}"):
+        bridge_ros_args("h:1", {name: value})
 
 
 def test_a_null_bridge_parameter_is_the_nodes_default() -> None:

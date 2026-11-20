@@ -1215,9 +1215,16 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
             null_as_default,
         )
 
-        bridge_options = checked_options(
-            AutowareBridgeConfig, checked_section("driver.bridge", bridge_dict) or {}
-        )
+        try:
+            bridge_options = checked_options(
+                AutowareBridgeConfig,
+                checked_section("driver.bridge", bridge_dict) or {},
+            )
+        except ValueError as exc:
+            # Headed as the autoware group's (_autoware_bridge_config).
+            if str(exc).startswith("driver.bridge "):
+                raise
+            raise ValueError(f"driver.bridge: {exc}") from None
         try:
             bridge_cfg = AutowareBridgeConfig(
                 **null_as_default(AutowareBridgeConfig, bridge_options)

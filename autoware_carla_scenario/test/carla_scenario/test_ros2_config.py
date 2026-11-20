@@ -713,3 +713,19 @@ def test_steer_accel_needs_two_distinct_topics() -> None:
         CommandSourceConfig(
             name="vp", kind="steer_accel", steering_topic="/x", acceleration_topic="/x"
         )
+
+
+@pytest.mark.parametrize("key", ["sources", "cameras"])
+@pytest.mark.parametrize("value", [False, 0, "planner", {"name": "vp"}])
+def test_a_source_or_camera_list_that_is_no_list_is_refused_naming_it(
+    key: str, value: Any
+) -> None:
+    """#2217: ``sources: false`` failed iterating, naming no key."""
+    with pytest.raises(ValueError, match=rf"^{key} must be a list of mappings, got "):
+        Ros2EgoConfig.from_mapping({key: value})
+
+
+@pytest.mark.parametrize("key", ["sources", "cameras"])
+def test_a_source_or_camera_that_is_no_mapping_is_refused_naming_it(key: str) -> None:
+    with pytest.raises(ValueError, match=rf"^{key}\[0\] must be a mapping, got 'x'"):
+        Ros2EgoConfig.from_mapping({key: ["x"]})

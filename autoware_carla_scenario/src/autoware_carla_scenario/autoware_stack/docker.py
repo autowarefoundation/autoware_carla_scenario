@@ -214,7 +214,7 @@ def _protobuf_upgrade_script() -> str:
     ``scenario_bridge`` node's generated code needs
     (:data:`~.bridge_node.BRIDGE_PROTOBUF_REQUIREMENT`), when the
     ``python3-protobuf`` just installed is older (Ubuntu 22.04's 3.12):
-    ``&& ...``, to append to the apt step.
+    ``&& ...``, to append to the install script, after rosdep's.
 
     ``python3`` is the one the node runs on.  In an image with Autoware's
     Python venv (``VIRTUAL_ENV``, on ``PATH``) pip installs into it, as
@@ -838,7 +838,6 @@ class DockerAutowareLauncher:
         script = (
             "sudo apt-get update && "
             f"sudo apt-get install -y --no-install-recommends {shlex.join(BRIDGE_APT_PACKAGES)}"
-            + _protobuf_upgrade_script()
         )
         if self._config.rosdep:
             # An image with Autoware's Python venv (VIRTUAL_ENV, on PATH)
@@ -852,6 +851,9 @@ class DockerAutowareLauncher:
                 '--rosdistro "${ROS_DISTRO}"'
                 "${VIRTUAL_ENV:+ --as-root pip:false}"
             )
+        # Last, so it checks the protobuf the image ends up with: one of
+        # rosdep's keys may have installed another (#2217).
+        script += _protobuf_upgrade_script()
         argv = [
             *self._run_argv(
                 name=name,

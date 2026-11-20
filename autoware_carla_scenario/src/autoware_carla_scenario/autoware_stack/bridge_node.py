@@ -103,14 +103,20 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
 
     Raises:
         ValueError: naming the parameter, for a float that is not a whole
-            number given for an integer parameter, which the node would refuse
-            as it starts, after the scenario has.
+            number given for an integer parameter, or a boolean for a number,
+            which the node would refuse as it starts, after the scenario has.
     """
     args = ["--ros-args", "-p", f"bridge_address:={bridge_address}"]
     for name, value in parameters.items():
         if value is None:
             continue
         if isinstance(value, bool):
+            if name in DOUBLE_PARAMETERS or name in INTEGER_PARAMETERS:
+                # Passed as ``:=true``, which rclpy refuses for a number.
+                raise ValueError(
+                    f"{name} must be a number, as the scenario_bridge node "
+                    f"declares it, got {value!r}"
+                )
             value = str(value).lower()
         elif isinstance(value, int) and name in DOUBLE_PARAMETERS:
             value = float(value)
