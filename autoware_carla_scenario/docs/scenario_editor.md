@@ -626,7 +626,12 @@ and `scenario.timeout_seconds` are written as `null`, and the `ego.*` keys,
 which the runner reads before the scenario is built, as
 `${scenario_document:<scenario id>,<path>}`: the value at that path of the
 document the package registered (`ego.spawn.lanelet_id`, say), read when the
-key is.
+key is. The resolver exists in every process that has loaded the scenario
+packages -- the `scenario` CLI, a SLURM task, the viewer, `scenario-check` --
+since a package's `register()` registers it with its document. Hydra saves a
+run's `.hydra/config.yaml` unresolved, so that file keeps the interpolation,
+not the value the run read: reading it elsewhere needs the package installed,
+and resolves against its document as it is then.
 A run checks what such an override sets: only `null` keeps the document's value,
 `lanelet_id` must be a whole number (`2` or `2.0`, not `2.7`, a boolean or a
 blank) and `s` a finite number (not a boolean or a blank), and an entity's or a

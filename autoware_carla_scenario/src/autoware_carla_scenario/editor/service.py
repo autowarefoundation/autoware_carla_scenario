@@ -1971,8 +1971,8 @@ def as_port(raw: Any, label: str, fallback: int) -> int:
 
 
 def _as_int_list(raw: Any, label: str) -> Any:
-    """Return *raw* as a list of ints (or an interpolation), or raise a
-    user-facing error naming *label*.
+    """Return *raw* as a list of ints, or raise a user-facing error naming
+    *label* (an interpolation too: no field read through here takes one).
 
     The form parser (:func:`_parse`) turns the same ``ValueError`` into an
     :class:`EditorError`; a handler that reads an id list itself goes through

@@ -220,14 +220,21 @@ def _resolve_scenario_document(name: Any, path: Any) -> Any:
     return value
 
 
+#: Held while the resolver is registered: two threads registering documents at
+#: once must not both find it missing, and the second one's
+#: ``register_new_resolver`` then raise that it exists.
+_RESOLVER_LOCK = threading.Lock()
+
+
 def _register_scenario_document_resolver() -> None:
     """Register :data:`SCENARIO_DOCUMENT_RESOLVER` with OmegaConf, once."""
     from omegaconf import OmegaConf  # noqa: PLC0415 - only a document needs it
 
-    if not OmegaConf.has_resolver(SCENARIO_DOCUMENT_RESOLVER):
-        OmegaConf.register_new_resolver(
-            SCENARIO_DOCUMENT_RESOLVER, _resolve_scenario_document, use_cache=True
-        )
+    with _RESOLVER_LOCK:
+        if not OmegaConf.has_resolver(SCENARIO_DOCUMENT_RESOLVER):
+            OmegaConf.register_new_resolver(
+                SCENARIO_DOCUMENT_RESOLVER, _resolve_scenario_document, use_cache=True
+            )
 
 
 def get_scenario_document(name: str) -> ScenarioDocument | None:

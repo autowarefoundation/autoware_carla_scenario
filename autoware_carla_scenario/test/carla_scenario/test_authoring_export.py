@@ -1017,6 +1017,74 @@ class TestTheDocumentDecides:
         ):
             _ = cfg.ego.spawn_lanelet_id
 
+    def test_a_fresh_process_resolves_it_as_a_slurm_task_does(
+        self, installed: tuple[Path, Path], tmp_path: Path
+    ) -> None:
+        """A SLURM task is a process of its own: it loads the scenario
+        plugins (entry points) before it composes a case, so the ego keys
+        resolve there, to the values the submitting process resolved, and the
+        task's cross-check of the two configs passes."""
+        import json
+        import subprocess  # noqa: PLC0415
+
+        from omegaconf import OmegaConf
+
+        package, _ = installed
+        submitted = OmegaConf.to_container(
+            _compose_exported(package, "map=nishishinjuku"), resolve=True
+        )
+        assert isinstance(submitted, dict)
+        assert submitted["ego"]["spawn_lanelet_id"] == 184
+
+        # The package as an installed distribution advertises it: an entry
+        # point in autoware_carla_scenario.scenarios, which the task's
+        # load_scenario_plugins() walks.
+        dist = tmp_path / "site" / "my_cut_in_scenario-0.0.0.dist-info"
+        dist.mkdir(parents=True)
+        (dist / "METADATA").write_text(
+            "Metadata-Version: 2.1\nName: my-cut-in-scenario\nVersion: 0.0.0\n"
+        )
+        (dist / "entry_points.txt").write_text(
+            "[autoware_carla_scenario.scenarios]\n"
+            "my_cut_in_scenario = my_cut_in_scenario:register\n"
+        )
+        case = tmp_path / "case.json"
+        case.write_text(json.dumps({"label": "a", "config": submitted}))
+        script = (
+            "import json, sys\n"
+            "from omegaconf import OmegaConf\n"
+            "from autoware_carla_scenario.examples import run\n"
+            "from autoware_carla_scenario.slurm.worker import _check_same_config\n"
+            "run.load_scenario_plugins()\n"
+            "cfg = run._compose_config('my_cut_in', ['map=nishishinjuku'])\n"
+            "case = json.loads(open(sys.argv[1]).read())\n"
+            "_check_same_config(case, cfg)\n"
+            "print(json.dumps(OmegaConf.to_container(cfg.ego, resolve=True)))\n"
+        )
+        env = {
+            **os.environ,
+            "PYTHONPATH": os.pathsep.join(
+                [
+                    str(package / "src"),
+                    str(dist.parent),
+                    os.environ.get("PYTHONPATH", ""),
+                ]
+            ),
+        }
+        done = subprocess.run(  # noqa: S603
+            [sys.executable, "-c", script, str(case)],
+            env=env,
+            capture_output=True,
+            text=True,
+            check=False,
+            timeout=600,
+        )
+        assert done.returncode == 0, done.stderr
+        ego = json.loads(done.stdout.strip().splitlines()[-1])
+        assert ego == submitted["ego"]
+        assert (ego["spawn_lanelet_id"], ego["spawn_s"]) == (184, 7.5)
+        assert (ego["goal_lanelet_id"], ego["goal_s"]) == (265, 12.5)
+
 
 def _group_exclusions(group: str) -> list[int]:
     """The ``no_3d_model_lanelet_ids`` the framework's *group* file lists."""
