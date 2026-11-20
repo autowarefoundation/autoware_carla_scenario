@@ -7,6 +7,10 @@ no offset, so CARLA's frame is the map's with y flipped; the actors are fakes.
 from __future__ import annotations
 
 import math
+import os
+import random
+import subprocess
+import sys
 from collections.abc import Iterator
 from types import SimpleNamespace
 from typing import Any
@@ -23,7 +27,12 @@ from autoware_carla_scenario.conditions.adversity_feasible import (
     AdversityFeasibleCondition,
 )
 from autoware_carla_scenario.coordinate.map_manager import MapManager
-from autoware_carla_scenario.seed import run_seed
+from autoware_carla_scenario.adversity.nade import (
+    stream_seed,
+    trigger_key,
+    trigger_stream_seed,
+)
+from autoware_carla_scenario.seed import MAX_SEED, run_seed
 
 from . import _route_maps as rm
 
@@ -166,11 +175,79 @@ def test_a_whole_float_seed_is_read_as_an_int_and_none_is_the_runs() -> None:
     condition = AdversityFeasibleCondition(
         "p1", AdversityKind.JAYWALKING, AdversityLocation.ANY, label="j", seed=two
     )
-    assert condition._seed == 2 and type(condition._seed) is int  # noqa: SLF001
+    key = trigger_key("p1\x1fjaywalking\x1fj")
+    assert condition._seed == trigger_stream_seed(2, key)  # noqa: SLF001
+    assert type(condition._seed) is int  # noqa: SLF001
     default = AdversityFeasibleCondition(
         "p1", AdversityKind.JAYWALKING, AdversityLocation.ANY, label="j"
     )
-    assert default._seed == run_seed()  # noqa: SLF001
+    assert default._seed == trigger_stream_seed(run_seed(), key)  # noqa: SLF001
+
+
+def _first_draws(condition: AdversityFeasibleCondition) -> list[float]:
+    return [condition._rng.random() for _ in range(4)]  # noqa: SLF001
+
+
+def test_two_jaywalkers_following_the_runs_seed_draw_apart() -> None:
+    # #2226: both were seeded random.Random(run seed), so their speeds and
+    # waits were the same numbers.
+    def jaywalker(name: str, label: str = "jay") -> AdversityFeasibleCondition:
+        return AdversityFeasibleCondition(
+            name, AdversityKind.JAYWALKING, AdversityLocation.ANY, label=label
+        )
+
+    first, second = jaywalker("p1"), jaywalker("p2")
+    assert first._seed != second._seed  # noqa: SLF001
+    assert _first_draws(first) != _first_draws(second)
+    # Two actions on one pedestrian, told apart by their labels.
+    assert _first_draws(jaywalker("p1", "a")) != _first_draws(jaywalker("p1", "b"))
+    # The same condition again draws the same numbers.
+    assert _first_draws(jaywalker("p1")) == _first_draws(jaywalker("p1"))
+
+
+def test_a_conditions_stream_is_none_of_nades_nor_the_raw_seeds() -> None:
+    # #2226: at seed s the condition drew from Random(s), which is NADE's
+    # sampling stream at seed s / 3.
+    keys = [trigger_key(text) for text in ("a", "b", "p1\x1fjaywalking\x1fjay")]
+    conditions = {trigger_stream_seed(s, k) for s in range(200) for k in keys}
+    assert len(conditions) == 600
+    nade = {stream_seed(s, i) for s in range(200) for i in range(3)}
+    assert not conditions & nade
+    assert min(conditions) > stream_seed(MAX_SEED, 2) > MAX_SEED
+    assert trigger_stream_seed(MAX_SEED, (1 << 30) - 1) < 2**62
+    for seed in range(10):
+        condition = AdversityFeasibleCondition(
+            "p1", AdversityKind.JAYWALKING, AdversityLocation.ANY, label="j", seed=seed
+        )
+        nade_draws = [random.Random(stream_seed(seed, 0)).random() for _ in range(1)]
+        assert _first_draws(condition)[:1] != nade_draws
+    with pytest.raises(ValueError, match="key"):
+        trigger_stream_seed(0, 1 << 30)
+    with pytest.raises(ValueError, match="seed"):
+        trigger_stream_seed(MAX_SEED + 1, 0)
+
+
+def test_a_trigger_key_is_the_same_in_every_process() -> None:
+    # Not hash(), which CPython salts per process.
+    code = (
+        "from autoware_carla_scenario.adversity.nade import trigger_key;"
+        "print(trigger_key('p1\\x1fjaywalking\\x1fjay'))"
+    )
+    keys = {
+        subprocess.run(
+            [sys.executable, "-c", code],
+            check=True,
+            capture_output=True,
+            text=True,
+            env={**os.environ, "PYTHONHASHSEED": str(salt)},
+        ).stdout.strip()
+        for salt in (1, 2)
+    }
+    assert keys == {str(trigger_key("p1\x1fjaywalking\x1fjay"))}
+    # Pinned, so a change of the scheme is a deliberate one.
+    # The FNV-1a offset basis, folded to 30 bits.
+    assert trigger_key("") == (2166136261 ^ (2166136261 >> 30)) & ((1 << 30) - 1)
+    assert 0 <= trigger_key("\u6b69\u884c\u8005") < 1 << 30
 
 
 def test_one_scene_a_frame_for_everyone_who_asks() -> None:

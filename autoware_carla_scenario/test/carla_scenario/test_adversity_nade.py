@@ -180,6 +180,20 @@ def test_a_setting_on_its_bounds_is_accepted(field: str, value: Any) -> None:
     assert getattr(NadeSettings(**{field: value}), field) == value
 
 
+@pytest.mark.parametrize("value", [2.5, math.nan, math.inf, True, False, "2", None])
+def test_max_controlled_must_be_a_whole_number(value: Any) -> None:
+    # #2226: 2.5, NaN and True passed the sign check, then failed as slice
+    # indices on the first tick with a vehicle in range.
+    with pytest.raises(ValueError, match="max_controlled"):
+        NadeSettings(max_controlled=value)
+
+
+def test_a_whole_float_max_controlled_is_read_as_an_int() -> None:
+    two: Any = 2.0
+    settings = NadeSettings(max_controlled=two)
+    assert settings.max_controlled == 2 and type(settings.max_controlled) is int
+
+
 @pytest.mark.parametrize(
     "settings",
     [

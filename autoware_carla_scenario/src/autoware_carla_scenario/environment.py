@@ -367,6 +367,35 @@ def _distribution_names(top: str) -> list[str]:
     return names
 
 
+def _deepest_directory(file: str, directories: list[str]) -> int:
+    """The index in *directories* of the deepest one that holds *file*, or
+    -1 when none does: of an editable checkout nested in another (a
+    scenario package inside the framework's repository), the inner one.
+    Each is compared resolved, so a symlink or ``..`` does not hide it."""
+    target = Path(file).resolve()
+    found = -1
+    depth = -1
+    for index, directory in enumerate(directories):
+        root = Path(directory).resolve()
+        if root == target or root in target.parents:
+            parts = len(root.parts)
+            if parts > depth:
+                found = index
+                depth = parts
+    return found
+
+
+def _module_file(module: str) -> Optional[str]:
+    """The file the imported module *module* was loaded from, if any."""
+    loaded = sys.modules.get(module)
+    if loaded is None:
+        return None
+    file = getattr(loaded, "__file__", None)
+    if not isinstance(file, str) or not file:
+        return None
+    return file
+
+
 class RunEnvironment:
     """The environment of this process: Python, the platform, the distributions."""
 
@@ -392,7 +421,13 @@ class RunEnvironment:
         return _environment_id(self.implementation, self.python, self.pins)
 
     def scenario_package(self, scenario: Any) -> Optional[dict[str, Any]]:
-        """The distribution the scenario's class comes from, if any."""
+        """The distribution the scenario's class comes from, if any.
+
+        The distribution that provides the class's top-level package, as
+        installed metadata says; else (an editable install, which that
+        metadata does not list, #2226) the editable or local distribution
+        whose directory holds the file the class's module was loaded from.
+        """
         module = (
             getattr(type(scenario), "__module__", "") if scenario is not None else ""
         )
@@ -403,7 +438,21 @@ class RunEnvironment:
             found = self.by_name.get(_normalize(name))
             if found is not None:
                 return found
-        return None
+        file = _module_file(module)
+        if file is None:
+            return None
+        local: list[dict[str, Any]] = []
+        for package in self.packages:
+            source = package.get("source")
+            if (
+                isinstance(source, dict)
+                and source.get("kind") in ("editable", "local")
+                and isinstance(source.get("path"), str)
+                and source["path"]
+            ):
+                local.append(package)
+        index = _deepest_directory(file, [p["source"]["path"] for p in local])
+        return None if index < 0 else local[index]
 
     def summary(self, scenario: Any = None) -> dict[str, Any]:
         """What a result says of its environment."""

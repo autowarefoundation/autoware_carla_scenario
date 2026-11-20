@@ -145,33 +145,31 @@ _INTENSITY_VALUES: dict[str, Any] = {
 #:   whatever the weather; the tire-friction knob names the grip outright,
 #:   whatever the water: the vehicles' wheel friction, which CARLA's physics
 #:   alone reads.
-DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
+_KNOBS_BY_NAME: dict[str, OddKnob] = {
     # The conditions, as the taxonomy names them (the default ODD's).
-    probes.rainfall_rate_mm_h: OddKnob(
-        "environment.rainfall_rate_mm_h", range=(0.0, 30.0)
-    ),
-    probes.fog_visibility_range_m: OddKnob(
+    "rainfall_rate_mm_h": OddKnob("environment.rainfall_rate_mm_h", range=(0.0, 30.0)),
+    "fog_visibility_range_m": OddKnob(
         "environment.fog_visibility_range_m", range=(15.0, 5000.0)
     ),
-    probes.time_of_day: OddKnob(
+    "time_of_day": OddKnob(
         "environment.time_of_day",
         values={label: label for label in probes.TIMES_OF_DAY},
     ),
-    probes.wind_speed_kmh: OddKnob("environment.wind_speed_kmh", range=(0.0, 100.0)),
-    probes.cloud_cover: OddKnob(
+    "wind_speed_kmh": OddKnob("environment.wind_speed_kmh", range=(0.0, 100.0)),
+    "cloud_cover": OddKnob(
         "environment.cloud_cover",
         values={label: label for label in probes.CLOUD_COVERS},
     ),
     # CARLA's own fields.
-    probes.rain: OddKnob(
+    "rain": OddKnob(
         "environment.precipitation",
         values=_INTENSITY_VALUES,
     ),
-    probes.fog: OddKnob(
+    "fog": OddKnob(
         "environment.fog_density",
         values=_INTENSITY_VALUES,
     ),
-    probes.illumination: OddKnob(
+    "illumination": OddKnob(
         "environment.sun_altitude_angle",
         values={
             "day": [15, 90],
@@ -180,31 +178,90 @@ DEFAULT_KNOBS: dict[Callable[..., Any], OddKnob] = {
             "night": [-90, -6],
         },
     ),
-    probes.visibility: OddKnob(
+    "visibility": OddKnob(
         "environment.visibility_m",
         range=(15.0, 400.0),
     ),
     # The wetness, which the grip follows (with the standing water, the
     # wetter of the two).
-    probes.road_wetness: OddKnob(
+    "road_wetness": OddKnob(
         "environment.wetness",
         values=_INTENSITY_VALUES,
     ),
-    probes.tire_friction: OddKnob(
+    "tire_friction": OddKnob(
         "environment.tire_friction",
         range=(0.3, 1.1),
     ),
-    probes.wind: OddKnob(
+    "wind": OddKnob(
         "environment.wind_intensity",
         values=_INTENSITY_VALUES,
     ),
-    probes.cloudiness: OddKnob(
+    "cloudiness": OddKnob(
         "environment.cloudiness",
         values=_INTENSITY_VALUES,
     ),
     # The mean and spread of every traffic parameter (.traffic_probes).
-    **TRAFFIC_KNOBS,
+    **{
+        name: TRAFFIC_KNOBS[probe]
+        for name, (probe, _unit) in TRAFFIC_PROBES.items()
+        if probe in TRAFFIC_KNOBS
+    },
 }
+
+#: Each built-in probe as this module was imported with it -> its name: the
+#: name of a probe an ODD bound before a probe was replaced.
+_ORIGINAL_NAMES: dict[Any, str] = {
+    probe: name for name, (probe, _unit) in _BuiltInProbes().items()
+}
+
+
+def _probe_name(probe: Any) -> Optional[str]:
+    """The built-in probe name *probe* is: a name itself, the probe the
+    built-in lookup (:data:`BUILT_IN_PROBES`) gives for a name now -- one
+    replaced in :mod:`.probes` included -- or the one it gave when this
+    module was imported; ``None`` for any other probe."""
+    if isinstance(probe, str):
+        return probe if probe in _ORIGINAL_NAMES.values() else None
+    for name in BUILT_IN_PROBES:
+        if BUILT_IN_PROBES[name][0] is probe:
+            return name
+    try:
+        return _ORIGINAL_NAMES.get(probe)
+    except TypeError:  # an unhashable probe is none of them
+        return None
+
+
+class _ByProbeName(Mapping[Any, Any]):
+    """A table keyed by built-in probe name, looked up by name or by probe
+    (:func:`_probe_name`): a probe replaced in :mod:`.probes` (a test's
+    monkeypatch, a plugin), which the built-in lookup returns, keeps its
+    entry, as keying by the original function object did not (#2226).
+
+    It iterates the probes the built-in lookup gives now, as the table keyed
+    by probe it replaces did, not their names: a copy (``dict(...)``,
+    ``{**DEFAULT_KNOBS, probe: knob}``) is keyed by probe, so openodd's
+    :meth:`Backend.knob`, which looks a knob up by ``attribute.probe``, still
+    finds the built-in ones in it."""
+
+    def __init__(self, by_name: Mapping[str, Any]) -> None:
+        self._by_name = by_name
+
+    def __getitem__(self, key: Any) -> Any:
+        name = _probe_name(key)
+        if name is None or name not in self._by_name:
+            raise KeyError(key)
+        return self._by_name[name]
+
+    def __iter__(self) -> Iterator[Any]:
+        for name in self._by_name:
+            yield BUILT_IN_PROBES[name][0]
+
+    def __len__(self) -> int:
+        return len(self._by_name)
+
+
+#: The knobs of :data:`_KNOBS_BY_NAME`, looked up by probe or probe name.
+DEFAULT_KNOBS: Mapping[Any, OddKnob] = _ByProbeName(_KNOBS_BY_NAME)
 
 
 #: Rule input (a cause) -> the knob (of :data:`DEFAULT_KNOBS`) that writes it.
@@ -241,16 +298,18 @@ UNSUPPORTED_CONCEPTS: dict[str, str] = {
 #: fields -> those fields.  The conditions read the setting the run recorded
 #: (the rainfall rate, the cloud cover, ...), not CARLA's fields -- but for the
 #: time of day, which the sun renders.
-_READ_BACK_FIELDS: dict[Callable[..., Any], tuple[str, ...]] = {
-    probes.time_of_day: ("sun_altitude_angle", "sun_azimuth_angle"),
-    probes.illumination: ("sun_altitude_angle",),
-    probes.rain: ("precipitation",),
-    probes.fog: ("fog_density",),
-    probes.road_wetness: ("wetness",),
-    probes.wind: ("wind_intensity",),
-    probes.cloudiness: ("cloudiness",),
-    probes.road_surface_condition: ("wetness", "precipitation_deposits"),
-}
+_READ_BACK_FIELDS: Mapping[Any, tuple[str, ...]] = _ByProbeName(
+    {
+        "time_of_day": ("sun_altitude_angle", "sun_azimuth_angle"),
+        "illumination": ("sun_altitude_angle",),
+        "rain": ("precipitation",),
+        "fog": ("fog_density",),
+        "road_wetness": ("wetness",),
+        "wind": ("wind_intensity",),
+        "cloudiness": ("cloudiness",),
+        "road_surface_condition": ("wetness", "precipitation_deposits"),
+    }
+)
 
 
 def _attribute_knobs(
@@ -410,7 +469,8 @@ class CarlaBackend(Backend):
     readers: Mapping[str, Callable[[str], tuple[Any, str]]] = field(
         default_factory=lambda: {"measure": _measure}
     )
-    knobs: Mapping[Any, OddKnob] = field(default_factory=lambda: dict(DEFAULT_KNOBS))
+    # By probe name, so a built-in probe replaced in .probes keeps its knob.
+    knobs: Mapping[Any, OddKnob] = field(default_factory=lambda: DEFAULT_KNOBS)
     knob_for: Optional[Callable[[Any, Mapping[str, OddKnob]], Optional[OddKnob]]] = (
         _knob_for
     )

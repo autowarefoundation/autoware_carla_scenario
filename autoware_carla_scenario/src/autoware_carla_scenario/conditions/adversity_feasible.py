@@ -24,6 +24,7 @@ from typing import TYPE_CHECKING, Any, Optional, Union
 
 from ..adversity.command import AdversarialCommand
 from ..adversity.location import AdversityLocation
+from ..adversity.nade import trigger_key, trigger_stream_seed
 from ..adversity.observation import Scene
 from ..adversity.snapshot import scene_at
 from ..adversity.triggers import (
@@ -53,7 +54,11 @@ class AdversityFeasibleCondition(BaseCondition):
         label: Human-readable identifier.
         seed: Seeds the random draws a trigger makes (a jaywalker's speed,
             a stopped crosser's wait); ``None`` (default) takes the run's
-            seed (:mod:`~autoware_carla_scenario.seed`).
+            seed (:mod:`~autoware_carla_scenario.seed`).  The draws come
+            from a stream of their own, keyed by *entity_name*, *kind* and
+            *label* (:func:`~..adversity.nade.trigger_stream_seed`), so two
+            conditions given the same seed -- two jaywalkers following the
+            run's -- do not draw the same numbers, nor NADE's (#2226).
         thresholds: The triggers' numbers; TeraSim's by default.
 
     Raises:
@@ -65,7 +70,7 @@ class AdversityFeasibleCondition(BaseCondition):
     _entity_name: str
     _kind: AdversityKind
     _location: AdversityLocation
-    _seed: int
+    _seed: int  # the stream's seed (trigger_stream_seed), not the one given
     _rng: random.Random
     _thresholds: TriggerThresholds
     _command: Optional[AdversarialCommand]
@@ -90,7 +95,10 @@ class AdversityFeasibleCondition(BaseCondition):
         self._entity_name = str(entity_name)
         self._kind = kind
         self._location = location
-        self._seed = resolve_seed(seed)
+        self._seed = trigger_stream_seed(
+            resolve_seed(seed),
+            trigger_key(f"{self._entity_name}\x1f{kind.value}\x1f{label}"),
+        )
         self._rng = random.Random(self._seed)
         self._thresholds = thresholds
         self._command = None

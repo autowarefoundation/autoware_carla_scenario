@@ -197,6 +197,20 @@ A run still repeats from its seed. Before #2024 the streams were seeded
 `s`, `s + 1` and `s + 2`, so run `k`'s triggers drew what run `k + 1`
 sampled with; the draws for a given seed other than 0 changed with the fix.
 
+An `AdversityFeasibleCondition` -- the default trigger of every adversarial
+action -- draws from a stream of its own as well. Its seed is
+`3 * 2**31 + s * 2**30 + k` (`adversity.nade.trigger_stream_seed`), where `s`
+is its seed (the run's, by default) and `k` is a 30-bit key of its entity,
+kind and label: FNV-1a over `"<entity>\x1f<kind>\x1f<label>"`
+(`adversity.nade.trigger_key`), not `hash()`, which Python salts per process.
+These seeds are above every seed NADE's streams or a component seeded with
+the run's seed itself use, and one-to-one over seeds and keys, so two
+jaywalkers following the run's seed draw different speeds and waits, and no
+condition draws another run's numbers (#2226). Before #2226 a condition drew
+from `random.Random(s)`, the same stream for every condition of a run and, at
+seed `3 k`, NADE's sampling stream of seed `k`; the triggers' draws of every
+seed changed with the fix.
+
 It drives the NPCs and pedestrians a scenario registers, and with
 `drive_background` (the default) the traffic backend's background vehicles in
 the world too (#417): the TrafficManager's background traffic

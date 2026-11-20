@@ -26,6 +26,7 @@ __all__ = [
     "ControlDiagnostic",
     "ControlsError",
     "config_keys",
+    "control_errors",
     "format_diagnostics",
     "validate_controls",
 ]
@@ -108,9 +109,14 @@ def _pair(
 
 
 def _check_control(
-    measure: str, spec: Any, keys: Optional[Sequence[str]], cfg: Any
+    measure: str,
+    spec: Any,
+    keys: Optional[Sequence[str]],
+    cfg: Any,
+    base: Optional[str] = None,
 ) -> list[ControlDiagnostic]:
-    base = f"controls.{measure}"
+    if base is None:
+        base = f"controls.{measure}"
     if isinstance(spec, str):
         spec = {"key": spec}
     if not isinstance(spec, Mapping):
@@ -123,6 +129,9 @@ def _check_control(
                     f"{base}.{name}", f"unknown field{_hint(str(name), _FIELDS)}"
                 )
             )
+    # A field given null is one not given: its default (#2226), as a null
+    # target already was (#2171).
+    spec = {name: value for name, value in spec.items() if value is not None}
     if "key" not in spec:
         out.append(ControlDiagnostic(f"{base}.key", "required"))
     else:
@@ -158,11 +167,11 @@ def _check_control(
                     "not allowed with target: measure (the value is written unchanged)",
                 )
             )
-    if "range" in spec and spec["range"] is not None:
+    if "range" in spec:
         bad = _pair(spec["range"], f"{base}.range", "range", open_ends=False)
         if bad:
             out.append(bad)
-    if "limits" in spec and spec["limits"] is not None:
+    if "limits" in spec:
         bad = _pair(spec["limits"], f"{base}.limits", "limits", open_ends=True)
         if bad:
             out.append(bad)
@@ -190,7 +199,7 @@ def _check_control(
                 f"{base}.integer", f"expected true or false, got {spec['integer']!r}"
             )
         )
-    if "values" in spec and spec["values"] is not None:
+    if "values" in spec:
         if not isinstance(spec["values"], Mapping):
             out.append(
                 ControlDiagnostic(
@@ -198,6 +207,24 @@ def _check_control(
                     f"expected a mapping of bucket label -> value, got {spec['values']!r}",
                 )
             )
+    return out
+
+
+def control_errors(raw: Mapping[Any, Any], key: str) -> list[ControlDiagnostic]:
+    """The errors of each control of *raw*, the config's *key* (``controls``,
+    ``sweep.odd_sample.knobs``), each with its full path
+    (``sweep.odd_sample.knobs.<attribute>.<field>``): what
+    :func:`validate_controls` checks of one control, but not its ``key``
+    against a config, nor its name against the built-in measures.
+
+    :func:`~.sampler.controls_from_mapping` refuses what this finds before
+    openodd reads the knobs, which would take ``integer: "false"`` as true
+    and raise a bare ``TypeError`` on ``scale: null`` (#2226).
+    """
+    out: list[ControlDiagnostic] = []
+    for name, spec in raw.items():
+        found = _check_control(str(name), spec, None, None, f"{key}.{name}")
+        out.extend(d for d in found if d.severity == "error")
     return out
 
 
