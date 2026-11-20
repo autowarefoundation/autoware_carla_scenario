@@ -650,9 +650,9 @@ through the OpenSCENARIO storyboard element states held in `ActionState`
    kind of object the trigger is written in, so the two ends of a run read
    together. No `until` means there was nothing to wait for, and the run is
    over on the tick after the one it was commanded on. `until` is reset
-   (`BaseCondition.reset()`) as each run begins, before `execute`, so a run of
-   a repeating action never ends on a latch or a hold timed in an earlier
-   run.
+   (`BaseCondition.reset()`) as each run of a repeating action after its
+   first begins, before `execute`, so a run never ends on a latch or a hold
+   timed in an earlier run. (The runner resets it before the first run.)
 
    Keeping the two apart is what lets both shapes exist. `LaneChangeAction`
    hands work to the simulator and watches for it to land — the traffic

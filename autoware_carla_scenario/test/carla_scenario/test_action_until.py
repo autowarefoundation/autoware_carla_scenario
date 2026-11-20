@@ -388,3 +388,34 @@ def test_a_once_action_does_not_check_its_trigger_while_it_runs() -> None:
     for tick in range(6):
         action.tick(None, tick * 0.1)  # type: ignore[arg-type]
     assert trigger.checks == 1
+
+
+class _CountingResets(_AfterNChecks):
+    """:class:`_AfterNChecks` that counts its resets."""
+
+    def __init__(self, n: int) -> None:
+        super().__init__(n)
+        self.resets = 0
+
+    def reset(self) -> None:
+        super().reset()
+        self.resets += 1
+
+
+def test_until_is_reset_only_as_a_later_run_begins() -> None:
+    # The runner resets it before the first run; resetting it again as the
+    # first run begins would only clear what a condition shared with the
+    # scenario had seen.  A once action is never reset by its own runs.
+    once_until = _CountingResets(1)
+    once = _CountingAction(until=once_until)
+    for tick in range(4):
+        _tick(once, tick * 0.1)
+    assert once.executed == 1
+    assert once_until.resets == 0
+
+    until = _CountingResets(1)
+    repeating = _CountingAction(until=until, once=False)
+    for tick in range(8):
+        _tick(repeating, tick * 0.1)
+    assert repeating.executed >= 2
+    assert until.resets == repeating.executed - 1

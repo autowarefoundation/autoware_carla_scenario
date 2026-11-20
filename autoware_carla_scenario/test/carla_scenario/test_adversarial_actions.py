@@ -220,6 +220,27 @@ def test_it_repeats_when_not_once() -> None:
     assert all(len(run.ticks) == 3 for run in made[:2])
 
 
+def test_a_repeat_does_not_watch_its_own_feasibility_while_running(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Its own feasibility check keeps no state but its draws from the seed:
+    checked only from standby, as before #2219, so a run's ticks spend no
+    draws and build no scene for it."""
+    checks: list[float] = []
+    original = AdversityFeasibleCondition.check
+
+    def counting(self: Any, world: Any, elapsed: float) -> Any:
+        checks.append(elapsed)
+        return original(self, world, elapsed)
+
+    monkeypatch.setattr(AdversityFeasibleCondition, "check", counting)
+    action = AdversarialBrakeAction("npc1", ANY, once=False)
+    _run(action, [_brake_world(frame) for frame in range(1, 8)])
+    assert len(made) == 3
+    # One check from standby per run fired, none from the runs' ticks.
+    assert len(checks) == 3
+
+
 def test_a_repeat_closes_the_run_it_drops() -> None:
     """Each run's execution is closed as the next replaces it -- its follow's
     conditions with it -- not only dropped, as AdversarialTrafficAction does

@@ -56,8 +56,8 @@ class BaseAction(ABC):
             it returns a non-``None`` result -- the same "a result means it
             fired" convention the trigger uses, so a failing result ends the
             run too.  It is reset (:meth:`BaseCondition.reset`) as each run
-            begins, so a repeating action's run never ends on what an earlier
-            run left in it.  ``None`` (default) makes the action
+            of a repeating action after its first begins, so a run never ends
+            on what an earlier run left in it.  ``None`` (default) makes the action
             instantaneous: it is over on the tick after the one it was
             commanded on.
         reissue: Whether :meth:`execute` is called again on every tick of the
@@ -475,10 +475,14 @@ class BaseAction(ABC):
         # Before it commands anything: a conflict raises with the entity
         # untouched.
         self._take_control(world, elapsed)
-        if self._until is not None:
+        if self._done and self._until is not None:
             # Each run waits on its own `until`: a latch, or a hold timed, in
             # an earlier run of a repeating action is not this run's (#2219).
-            # Before `execute`, so what that sets up for it is kept.
+            # Only from the second run on: the runner reset it before the
+            # first, and resetting it again there would only clear what a
+            # condition shared with the scenario (a success condition, a
+            # collision sensor) had seen.  Before `execute`, so what that
+            # sets up for it is kept.
             run_until: BaseCondition = self._until
             run_until.reset()
         self.execute(world)
