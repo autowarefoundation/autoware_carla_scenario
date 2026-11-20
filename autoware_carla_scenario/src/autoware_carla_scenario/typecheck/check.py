@@ -60,6 +60,7 @@ from urllib.parse import urlparse
 from urllib.request import url2pathname
 
 from ..atomic_file import write_text_atomically
+from ..utils.cache_dir import user_cache_dir
 from .driver import (
     DRIVER_MODULE,
     render_driver,
@@ -2343,6 +2344,36 @@ def _plain_lambda_names(message: str) -> str:
     return _LAMBDA_TYPE.sub("a lambda", message)
 
 
+def _checked_file(
+    file: str, ws: _Workspace, by_basename: dict[str, list[str]]
+) -> str | None:
+    """The checked file of *ws* (workspace-relative) Codon's *file* names, if any.
+
+    Codon runs in the workspace and names a file by its path, relative to the
+    workspace or absolute: that path, normalised, is looked up among the
+    checked files, so a frame in the model (``autoware_carla_scenario/
+    __init__.codon``), typesafe_carla's library or Codon's standard library
+    is in none of them, whatever its basename (#2249).  Only a bare basename,
+    as a frame of a trace has, falls back to the one checked file of that
+    basename.
+    """
+    if os.sep not in file and "/" not in file:
+        candidates = by_basename.get(file, [])
+        return candidates[0] if len(candidates) == 1 else None
+    path = Path(os.path.normpath(file))
+    if path.is_absolute():
+        for root in (ws.root, ws.root.resolve()):
+            try:
+                rel = path.relative_to(root).as_posix()
+            except ValueError:
+                continue
+            if rel in ws.files:
+                return rel
+        return None
+    rel = path.as_posix()
+    return rel if rel in ws.files else None
+
+
 def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
     """Codon's errors, each located at its innermost frame in the scenario's files."""
     by_basename: dict[str, list[str]] = {}
@@ -2380,10 +2411,10 @@ def _parse_output(output: str, ws: _Workspace) -> list[Diagnostic]:
         if file == DRIVER_MODULE:
             key = ws.driver.config_lines.get(line)
             return (key if key else ws.driver_label, 0 if key else line, False, None)
-        candidates = by_basename.get(Path(file).name, [])
-        if len(candidates) != 1:
+        found_rel = _checked_file(file, ws, by_basename)
+        if found_rel is None:
             return None
-        rel = candidates[0]
+        rel = found_rel
         if line > _PRELUDE_LINES + 1 and not message.startswith("syntax error"):
             checked = checked_tree(rel)
             field = (
@@ -2576,26 +2607,40 @@ def _cache_dir() -> Path | None:
     """``$CACHE_DIR_ENV``, or the user's cache directory when it is unset.
 
     ``None`` (verdicts kept for the process only) when it is set but empty,
-    or when there is no home directory to put the default in. A relative
+    or when there is no home directory to put the default in. The default is
+    :func:`.utils.cache_dir.user_cache_dir`'s (#2187): a relative
     ``XDG_CACHE_HOME`` is ignored, as the XDG spec says, and so is a home
     that is not absolute (``HOME=""``): either would put the cache in
-    whatever directory the check runs from.
+    whatever directory the check runs from. A leading ``~`` of
+    ``$CACHE_DIR_ENV`` is expanded; a relative one is ignored, with a
+    warning, for the same reason, and the default is used (#2249).
     """
     configured = os.environ.get(CACHE_DIR_ENV)
     if configured is not None:
-        return Path(configured) if configured else None
-    xdg = os.environ.get("XDG_CACHE_HOME", "")
-    if os.path.isabs(xdg):
-        base = Path(xdg)
-    else:
-        try:
-            home = Path.home()
-        except RuntimeError:  # no home directory
+        if not configured:
             return None
-        if not home.is_absolute():
-            return None
-        base = home / ".cache"
+        expanded = os.path.expanduser(configured)
+        if os.path.isabs(expanded):
+            return Path(expanded)
+        _warn_relative_cache_dir(configured)
+    try:
+        base = user_cache_dir()
+    except RuntimeError:  # no home directory
+        return None
+    if not base.is_absolute():
+        return None
     return base / "autoware_carla_scenario" / "typecheck"
+
+
+@lru_cache(maxsize=8)
+def _warn_relative_cache_dir(configured: str) -> None:
+    """Say, once per value, that a relative ``$CACHE_DIR_ENV`` is ignored."""
+    logger.warning(
+        "%s=%r is not an absolute path, so it is ignored: verdicts are kept "
+        "in the default directory instead",
+        CACHE_DIR_ENV,
+        configured,
+    )
 
 
 def _cache_file(key: str) -> Path | None:
@@ -2610,7 +2655,8 @@ def _cached(key: str, sources: _Sources) -> TypeCheckResult | None:
     found them, in this process as from the directory (#2193).
 
     An entry that cannot be read is a miss. One that is read has its times
-    touched, so that a cache pruned by access time keeps it.
+    touched, so that a cache pruned by access time keeps it; one whose times
+    cannot be touched (a read-only cache) is still a hit.
     """
     if key in _CACHE:
         return _unmarked(_CACHE[key], sources)
@@ -2630,9 +2676,12 @@ def _cached(key: str, sources: _Sources) -> TypeCheckResult | None:
                 "warnings": [diagnostic(d) for d in data["warnings"]],
             }
         )
-        os.utime(path)
     except (OSError, ValueError, TypeError, KeyError):
         return None
+    try:
+        os.utime(path)
+    except OSError:  # a read-only cache (restored by CI) is still a hit (#2249)
+        pass
     _CACHE[key] = result
     return _unmarked(result, sources)
 
@@ -2664,9 +2713,13 @@ def _store(key: str, result: TypeCheckResult, sources: _Sources) -> TypeCheckRes
     return result
 
 
-def _tree_digest(digest: Any, paths: list[Path]) -> None:
+def _tree_digest(digest: Any, paths: list[Path], root: Path) -> None:
+    """Add each of *paths*, by its path relative to *root* and its bytes, to
+    *digest*, as :func:`_package_digest` does: moving or renaming a file, or
+    adding an empty one, is another digest (#2249)."""
     for path in sorted(paths):
-        digest.update(path.read_bytes())
+        digest.update(path.relative_to(root).as_posix().encode() + b"\0")
+        digest.update(path.read_bytes() + b"\0")
 
 
 @lru_cache(maxsize=4)
@@ -2675,8 +2728,9 @@ def _framework_digest(codon_path: Path) -> str:
     library and the model."""
     library = (codon_path / _LIBRARY).resolve()
     digest = hashlib.sha256(str(library).encode())
-    _tree_digest(digest, list(library.rglob("*.codon")))
-    _tree_digest(digest, list(model_dir().rglob("*.codon")))
+    _tree_digest(digest, list(library.rglob("*.codon")), library)
+    digest.update(b"\0model\0")
+    _tree_digest(digest, list(model_dir().rglob("*.codon")), model_dir())
     return digest.hexdigest()
 
 
@@ -2868,7 +2922,8 @@ def _toolchain_digest(tc: Toolchain) -> str:
     digest = hashlib.sha256(str(tc.executable).encode())
     digest.update(tc.version().encode())
     for directory in tc.library_dirs():
-        _tree_digest(digest, list(directory.rglob("*.codon")))
+        digest.update(f"\0{directory}\0".encode())
+        _tree_digest(digest, list(directory.rglob("*.codon")), directory)
     return digest.hexdigest()
 
 
@@ -3095,12 +3150,15 @@ def _typecheck(
     # Keyed by the driver's shape, each config value replaced by its type
     # (Driver.shape): Codon types the program statically, so a sweep's cases
     # that differ only in their values are one program, compiled once.
-    key = _cache_key(
-        toolchain,
-        codon_path,
-        sources,
-        (rendered.shape or rendered.source) + rendered.trailer,
-    )
+    try:
+        key = _cache_key(
+            toolchain,
+            codon_path,
+            sources,
+            (rendered.shape or rendered.source) + rendered.trailer,
+        )
+    except ToolchainError as exc:  # its version no longer answers (#2249)
+        return TypeCheckResult(name, ok=True, skipped=f"no Codon compiler: {exc}")
     cached = _cached(key, sources)
     if cached is not None:
         return _reused(name, key, rendered.case, cached)
@@ -4341,12 +4399,15 @@ def typecheck_library(
     sources.problems += _class_problems(sources, library=True)
     files = _library_files(names, sources, every)
     driver = render_library_driver(names)
-    key = _cache_key(
-        toolchain,
-        codon_path,
-        sources,
-        driver.source + "".join(f.text for f in files),
-    )
+    try:
+        key = _cache_key(
+            toolchain,
+            codon_path,
+            sources,
+            driver.source + "".join(f.text for f in files),
+        )
+    except ToolchainError as exc:  # its version no longer answers (#2249)
+        return TypeCheckResult(title, ok=True, skipped=f"no Codon compiler: {exc}")
     cached = _cached(key, sources)
     if cached is not None:
         # The key is the compiled program, every module of the closure: other

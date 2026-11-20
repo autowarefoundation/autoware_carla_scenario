@@ -1074,6 +1074,64 @@ class TestCli:
         assert odd_main(["check", str(path)]) == 1
         assert "[FAILED]" in capsys.readouterr().out
 
+    def test_a_checker_error_fails_that_odd_only(
+        self, monkeypatch: pytest.MonkeyPatch, capsys: Any
+    ) -> None:
+        # Like scenario-check's (#2091): reported, and the next ODD is checked
+        # (#2249).
+        from autoware_carla_scenario import typecheck  # noqa: PLC0415
+
+        def boom(builder: Any) -> Any:
+            raise RuntimeError("boom")
+
+        monkeypatch.setattr(typecheck, "typecheck_odd", boom)
+        assert odd_main(["check", f"{__name__}:small_odd", "default"]) == 1
+        captured = capsys.readouterr()
+        assert (
+            f"[FAILED] {__name__}:small_odd: checker error: RuntimeError: boom"
+            in captured.out
+        )
+        assert "[ok] default" in captured.out
+        assert "Traceback" not in captured.out
+        assert "Traceback" in captured.err
+
+    @pytest.mark.parametrize(
+        "reason",
+        [
+            "no Codon compiler: not found",
+            "no CARLA API to check: typesafe-carla is not installed",
+            "only a module-level function can be compiled",
+            "the ODD has no source file to compile",
+        ],
+    )
+    def test_a_skip_is_never_a_pass(
+        self, reason: str, monkeypatch: pytest.MonkeyPatch, capsys: Any
+    ) -> None:
+        # Whatever the reason, a skipped check made no verdict (#2249).
+        from autoware_carla_scenario import typecheck  # noqa: PLC0415
+        from autoware_carla_scenario.typecheck import TypeCheckResult  # noqa: PLC0415
+
+        def skip(builder: Any) -> TypeCheckResult:
+            return TypeCheckResult("small", ok=True, skipped=reason)
+
+        monkeypatch.setattr(typecheck, "typecheck_odd", skip)
+        assert odd_main(["check", f"{__name__}:small_odd", "default"]) == 2
+        assert "[SKIPPED]" in capsys.readouterr().out
+
+    def test_a_failure_outranks_a_skip(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: Any
+    ) -> None:
+        from autoware_carla_scenario import typecheck  # noqa: PLC0415
+        from autoware_carla_scenario.typecheck import TypeCheckResult  # noqa: PLC0415
+
+        def skip(builder: Any) -> TypeCheckResult:
+            return TypeCheckResult("small", ok=True, skipped="no Codon compiler: x")
+
+        monkeypatch.setattr(typecheck, "typecheck_odd", skip)
+        bad = tmp_path / "x.yaml"
+        bad.write_text("TAXONOMY:\n  a: complex number\n")
+        assert odd_main(["check", f"{__name__}:small_odd", str(bad)]) == 1
+
     def test_show(self, capsys: Any) -> None:
         assert odd_main(["show", "default"]) == 0
         shown = json.loads(capsys.readouterr().out)

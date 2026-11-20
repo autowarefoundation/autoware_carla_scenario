@@ -13,9 +13,11 @@ status is 0 when every scenario passed, 1 when one failed (or its ``controls:`` 
 invalid, or the checker itself raised on it: ``[FAILED] <config>: checker
 error: ...``, with the traceback on stderr, and the other configs are still
 checked and reported), and 2 when there is
-no Codon compiler to check with or the command line does not compose: no config
+no Codon compiler to check with, a config could not be checked (``[SKIPPED]``
+says why) and none failed, or the command line does not compose: no config
 matches ``scenario=``, or an override names a key the config does not have
-(the message suggests the closest key; ``+key=value`` adds a new one).  ``HYDRA_FULL_ERROR=1``
+(the message suggests the closest key; ``+key=value`` adds a new one; each
+config of a glob that does not compose is reported, named).  ``HYDRA_FULL_ERROR=1``
 shows the traceback of such an error.
 ``scenario='*'`` is every config, like ``scenario='*/*'`` or no ``scenario=``.
 A package author checks only theirs: ``scenario='my_package/*'``.
@@ -91,6 +93,7 @@ def main(argv: list[str] | None = None) -> int:
         get_scenario_registry,
         load_scenario_plugins,
     )
+    from ..scenario_glob import is_scenario_glob  # noqa: PLC0415
 
     load_scenario_plugins()
     pattern, overrides = run._extract_scenario_override(["scenario-check", *args])
@@ -99,12 +102,19 @@ def main(argv: list[str] | None = None) -> int:
     names = resolve_scenarios(pattern)
     if names is None:
         return 2
+    # Each config of a glob is composed and may fail on its own: every
+    # failure is reported, each headed by its config's name, as
+    # scenario-expand reports them (#2249), before the command gives up.
+    globbed = is_scenario_glob(pattern)
     cfgs = []
+    composed = True
     for name in names:
-        cfg = compose_or_report(name, overrides)
+        cfg = compose_or_report(name, overrides, named=globbed)
         if cfg is None:
-            return 2
+            composed = False
         cfgs.append(cfg)
+    if not composed:
+        return 2
 
     # The sweep reads `controls:` only when it expands; a wrong one is an
     # authoring error, reported here with its config path (#546).
@@ -144,6 +154,7 @@ def main(argv: list[str] | None = None) -> int:
     results: list[Any] = [None if n in control_errors else next(checked) for n in names]
 
     failed = len(control_errors)
+    skipped = 0
     for config_name, cfg, result in zip(names, cfgs, results):
         scenario_name = str(cfg.scenario.name)
         if config_name in control_errors:
@@ -164,12 +175,19 @@ def main(argv: list[str] | None = None) -> int:
         if result is None:
             print(f"{config_name}: {scenario_name!r} has a custom builder: not checked")  # noqa: T201
             continue
+        if result.skipped is not None:
+            # No verdict either way: never a pass (#2249).
+            print(f"[SKIPPED] {config_name}: {result.format()}")  # noqa: T201
+            skipped += 1
+            continue
         status = "ok" if result.ok else "FAILED"
         print(f"[{status}] {config_name}: {result.format()}")  # noqa: T201
         failed += not result.ok
     if failed:
         print(f"{failed} of {len(names)} scenario config(s) failed the static check")  # noqa: T201
-    return 1 if failed else 0
+    if skipped:
+        print(f"{skipped} of {len(names)} scenario config(s) could not be checked")  # noqa: T201
+    return 1 if failed else 2 if skipped else 0
 
 
 if __name__ == "__main__":

@@ -43,7 +43,10 @@ Codon compiler, no config matches `scenario=` (the message lists the
 configs), or an override names a key the config does not have
 (`scenario.timout_seconds=3` is reported with the closest key,
 `scenario.timeout_seconds`; `+key=value` adds a new one; `HYDRA_FULL_ERROR=1`
-shows the traceback). A check that raises (an error of the checker itself,
+shows the traceback). Every config of a glob that does not compose is
+reported, each headed by its name, before it exits with 2. A config the check
+could not compile at all (`[SKIPPED] <config>: ...`, such as a scenario with
+no source file) is no pass either: with none failed, the exit status is 2. A check that raises (an error of the checker itself,
 not a verdict on the scenario) fails that config only: it is reported as
 `[FAILED] <config>: checker error: <exception>`, its traceback goes to
 stderr, the other configs are still checked and reported, and the exit
@@ -97,7 +100,9 @@ Verdicts are kept beyond the process, one file per program, in
 `$XDG_CACHE_HOME/autoware_carla_scenario/typecheck` (`~/.cache/...` without
 an absolute `XDG_CACHE_HOME`): a later process with the same inputs reads the
 verdict instead of compiling. Set `AUTOWARE_CARLA_SCENARIO_TYPECHECK_CACHE`
-to use another directory, or to an empty string to keep each verdict for its
+to use another directory (an absolute path, `~` expanded; a relative one is
+ignored with a warning, as it would put the cache wherever the check runs
+from), or to an empty string to keep each verdict for its
 process only (as happens anyway without a home directory, or with one that
 cannot be written). A verdict read back is the program's, and is reported
 for the check that read it (#652): a scenario check's line names that
@@ -241,7 +246,8 @@ It runs it with the launcher's environment (`CODON_DIR`, and `LD_LIBRARY_PATH`
 for the bundled runtime).
 The check is written for Codon 0.19: a Codon of another release series counts
 as no Codon at all, so `auto` warns and `required` refuses. So does a missing
-typesafe-carla.
+typesafe-carla, and a `codon` that cannot be run (not executable, gone) or
+whose `codon --version` does not answer within 60 seconds.
 
 ## What is checked
 
@@ -690,7 +696,11 @@ probe is then called with a world, and every condition must come from an
 attribute. The ODD's own modules have every function compiled as a
 scenario's do, with the same warning for one the check cannot call (compiled
 where the builder reaches it). The runner checks the ODD named by the `odd` key under the same
-`typecheck` mode, and `scenario-odd check` does it without running anything.
+`typecheck` mode, and `scenario-odd check` does it without running anything:
+it exits with 0 when every ODD passed, 1 when one failed (a checker error is
+reported as `[FAILED] <odd>: checker error: ...`, its traceback on stderr, and
+the other ODDs are still checked), and 2 when one could not be compiled, for
+want of Codon or because the check cannot compile it (`[SKIPPED] ...`).
 
 ### The model
 
