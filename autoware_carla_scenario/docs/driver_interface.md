@@ -211,9 +211,8 @@ must be a number too. A `null` setting is its default, as an absent one.
 Each angle is set in degrees (`max_steer_angle_deg`,
 `yaw_rate_trim_limit_deg`) or in radians (`max_steer_angle_rad`,
 `yaw_rate_trim_limit_rad`), not both: setting both is refused, naming the two
-keys (`driver.control.max_steer_angle_deg and
-driver.control.max_steer_angle_rad set the same angle, ...; set one of them to
-null`), since neither may silently win. `conf/driver/default.yaml` leaves both
+keys (`driver.control.max_steer_angle_deg and max_steer_angle_rad set the same
+angle, ...; set one of them to null`), since neither may silently win. `conf/driver/default.yaml` leaves both
 of the full lock's null, so `driver.control.max_steer_angle_rad=0.6` and
 `driver.control.max_steer_angle_deg=35` each work as an override.
 What the controller divides by -- `wheelbase_m`,

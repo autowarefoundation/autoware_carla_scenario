@@ -256,13 +256,15 @@ def test_a_steer_angle_override_is_read_with_the_shipped_config(
 
 
 @pytest.mark.parametrize("section", ["driver", "ros2"])
-def test_the_run_names_both_angle_keys_in_full(section: str) -> None:
+def test_the_run_heads_the_angle_conflict_with_its_section(section: str) -> None:
+    """from_mapping alone refuses the conflict; the run heads it with the
+    section, as every other control error (#2241)."""
     from autoware_carla_scenario.examples import run
 
     with pytest.raises(
         ValueError,
         match=rf"^{section}\.control\.max_steer_angle_deg and "
-        rf"{section}\.control\.max_steer_angle_rad set the same angle, .*"
+        r"max_steer_angle_rad set the same angle, .*"
         r"set one of them to null, got 30\.0 and 0\.6$",
     ):
         run._control_config(
