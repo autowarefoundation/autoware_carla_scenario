@@ -394,3 +394,11 @@ def reset_ego_motion() -> None:
 
 def track_ego_motion(world: carla.World, elapsed: float) -> None:
     raise NotImplementedError()
+
+
+def reset_ego_progress() -> None:
+    raise NotImplementedError()
+
+
+def track_ego_progress(world: carla.World, elapsed: float) -> None:
+    raise NotImplementedError()

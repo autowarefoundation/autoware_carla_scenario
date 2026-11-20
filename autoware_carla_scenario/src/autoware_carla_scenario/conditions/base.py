@@ -153,6 +153,10 @@ class ScenarioResult:
     def to_json(self, **kwargs: Any) -> str:
         """Serialise to a JSON string.
 
+        Strict JSON: ``allow_nan`` defaults to ``False``, so a value that is
+        not finite raises :class:`ValueError` rather than be written as
+        ``NaN`` or ``Infinity``, which strict parsers refuse.
+
         Args:
             **kwargs: Forwarded to :func:`json.dumps`
                 (e.g. ``indent=2``, ``ensure_ascii=False``).
@@ -163,6 +167,9 @@ class ScenarioResult:
         import json  # noqa: PLC0415
 
         kwargs.setdefault("ensure_ascii", False)
+        # Strict JSON (jq, JSON.parse): a NaN or an infinity among the
+        # details raises here rather than be written as NaN or Infinity.
+        kwargs.setdefault("allow_nan", False)
         return json.dumps(self.to_dict(), **kwargs)
 
 

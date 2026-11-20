@@ -50,9 +50,8 @@ from .metric_frames import FrameRecorder
 from .metrics import (
     BUILT_IN_METRICS,
     ego_progress,
-    reset_ego_motion,
-    set_importance_sampling_weight,
-    track_ego_motion,
+    reset_ego_progress,
+    track_ego_progress,
 )
 from .odd import OddCase, OddDefinition, reset_probes, resolve_odd
 from .coordinate.transform import to_opendrive
@@ -487,6 +486,9 @@ def _judge_metrics(
             it, one of them fails (exits, answers out of protocol, or does not
             answer in time), or the metric fails in every frame evaluated: a
             metric that read nothing does not pass the run.
+        ~autoware_carla_scenario.metric_batch.MetricEvaluationError: Any
+            other metric judged raised in every frame evaluated, for the same
+            reason.
     """
     if recorder is None:
         return result
@@ -2159,8 +2161,7 @@ class ScenarioRunner:
                     pass
                 else:
                     set_measured_scenario(scenario)
-                set_importance_sampling_weight(scenario.importance_sampling_weight)
-                reset_ego_motion()
+                reset_ego_progress()
                 metric_recorder = _metric_recorder(scenario)
                 # Walkers measured outside a run (or by a run that never reached
                 # its cleanup) are not this run's.
@@ -2272,13 +2273,12 @@ class ScenarioRunner:
                                 "fallen walker", entity, actor_id, "fallen"
                             )
 
-                    # The weight the actions above leave the run with, for the
-                    # metric that reads it.
-                    set_importance_sampling_weight(scenario.importance_sampling_weight)
-                    # The ego's motion, which the weaving metrics read.
-                    track_ego_motion(world, elapsed)
+                    # How far the ego has got, which tells a run out of time
+                    # apart (ego_progress).
+                    track_ego_progress(world, elapsed)
                     # The frames the MetricConditions are judged on once the run
-                    # is over.
+                    # is over, with the weight the actions above leave the run
+                    # with: the weaving metrics and the weight are read off them.
                     if metric_recorder is not None:
                         metric_recorder.record(
                             world, elapsed, scenario.importance_sampling_weight
@@ -2420,8 +2420,7 @@ class ScenarioRunner:
         finally:
             set_run_seed(previous_seed)
             set_measured_scenario(None)
-            set_importance_sampling_weight(None)
-            reset_ego_motion()
+            reset_ego_progress()
             # The walkers the trajectory runs and the vehicles led out of their
             # junctions measured were this run's.
             forget_walkers()

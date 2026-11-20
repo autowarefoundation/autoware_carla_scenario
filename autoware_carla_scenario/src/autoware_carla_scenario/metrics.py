@@ -35,7 +35,8 @@ Four are not AlpaSim's and read the run so far rather than a frame: how the
 ego weaves from side to side (:data:`LATERAL_REVERSALS`,
 :data:`LATERAL_WOBBLE_M`, :data:`STEERING_REVERSALS`) and how often its turn
 indicators changed (:data:`TURN_INDICATOR_CHANGES`), from the ego's motion the
-runner hands this module every tick (:func:`track_ego_motion`).
+replay of a run's frames hands this module every frame
+(:func:`track_ego_motion`).
 
 Fourteen read the criticality of the frame with TU Munich's CommonRoad tools:
 eleven CriMe measures (:data:`CRIME_TTC_S`, :data:`CRIME_HW_M`,
@@ -107,8 +108,10 @@ __all__ = [
     "read_metric",
     "ego_progress",
     "reset_ego_motion",
+    "reset_ego_progress",
     "set_importance_sampling_weight",
     "track_ego_motion",
+    "track_ego_progress",
 ]
 
 #: The ego's box overlaps another road user's, whichever side it is on.
@@ -136,14 +139,14 @@ MIN_DISTANCE_TO_LANE_BOUNDARY_M = "min_distance_to_lane_boundary_m"
 #: The run's importance-sampling weight so far (NADE's), not AlpaSim's: the
 #: likelihood ratio a batch of runs is weighted by.
 IMPORTANCE_SAMPLING_WEIGHT = "importance_sampling_weight"
-#: How many times so far the ego's drift across its lane turned back, by more
-#: than :data:`_LATERAL_REVERSAL_GAP_M`: its weaving, not AlpaSim's.
+#: How many times so far the ego's drift across its lane turned back, by
+#: :data:`_LATERAL_REVERSAL_GAP_M` or more: its weaving, not AlpaSim's.
 LATERAL_REVERSALS = "lateral_reversals"
 #: Metres: how far the ego strays across its lane about its course over the
 #: last :data:`_WOBBLE_WINDOW_S` seconds (RMS), not AlpaSim's.
 LATERAL_WOBBLE_M = "lateral_wobble_m"
-#: How many times so far the steering applied to the ego turned back, by more
-#: than :data:`_STEERING_REVERSAL_GAP`, not AlpaSim's.
+#: How many times so far the steering applied to the ego turned back, by
+#: :data:`_STEERING_REVERSAL_GAP` or more, not AlpaSim's.
 STEERING_REVERSALS = "steering_reversals"
 #: How many times so far the ego's turn indicators changed (off, left, right,
 #: hazard), not AlpaSim's.
@@ -669,6 +672,20 @@ def _map(world: "carla.World") -> "carla.Map":
     return found
 
 
+def _use_map(world: "carla.World", carla_map: "carla.Map") -> None:
+    """Read *world*'s map-based metrics on *carla_map* rather than the run's
+    (:func:`_map`): the replay of recorded frames reads them on the map it is
+    given (:func:`~autoware_carla_scenario.metric_batch.evaluate_metrics`),
+    whichever map :class:`MapManager` holds."""
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    # Afresh: nothing read on another map (its junctions) is kept.
+    _CACHE.world = None
+    _hold(world)
+    _CACHE.carla_map = carla_map
+    _CACHE.driving = int(carla.LaneType.Driving)
+
+
 def _along(waypoint: "carla.Waypoint", point: Point) -> float:
     """How far *point* is ahead of *waypoint* along its lane, in metres."""
     transform = waypoint.transform
@@ -841,22 +858,22 @@ def _collision_at_fault(world: "carla.World") -> Optional[float]:
     return _event(world, _AT_FAULT)
 
 
-#: The running scenario's importance-sampling weight, which the runner
-#: publishes every tick (:func:`set_importance_sampling_weight`); None
-#: outside a run.  Published rather than read off the scenario, which this
+#: The importance-sampling weight of the frame read, which the replay of a
+#: run's frames publishes every frame (:func:`set_importance_sampling_weight`);
+#: None outside one.  Published rather than read off the scenario, which this
 #: module, imported by everything that reads a metric, cannot import.
 _RUN: dict[str, Optional[float]] = {"weight": None}
 
 
 def set_importance_sampling_weight(weight: Optional[float]) -> None:
-    """Publish the running scenario's weight
-    (:attr:`BaseScenario.importance_sampling_weight`), or None when the run
-    ends."""
+    """Publish the weight of the frame read (the run's
+    :attr:`BaseScenario.importance_sampling_weight` when it was recorded), or
+    None when the replay ends."""
     _RUN["weight"] = weight
 
 
 def _importance_sampling_weight(world: "carla.World") -> Optional[float]:
-    """The running scenario's weight, or None outside a run."""
+    """The weight of the frame read, or None outside a replay."""
     return _RUN["weight"]
 
 
@@ -921,12 +938,6 @@ class _Motion:
     #: before the first frame, and how many times they changed since.
     indicator: int
     indicator_changes: int
-    #: How far the ego has driven (m); whether that is :data:`_MOVED_M`, and
-    #: since when it has stood still (:data:`_STILL_MPS`), ``None`` while it
-    #: moves.
-    travelled_m: float
-    moved: bool
-    still_since: Optional[float]
 
     def __init__(self) -> None:
         self.ego_id = -1
@@ -937,9 +948,6 @@ class _Motion:
         self.steering_reversals = _Reversals(_STEERING_REVERSAL_GAP)
         self.indicator = -1
         self.indicator_changes = 0
-        self.travelled_m = 0.0
-        self.moved = False
-        self.still_since = None
 
     def wobble(self) -> Optional[float]:
         """The RMS of :attr:`lateral` over the window about the straight line
@@ -960,8 +968,9 @@ _MOTION: list[_Motion] = [_Motion()]
 
 
 def reset_ego_motion() -> None:
-    """Forget the ego's motion: the runner calls it as a run begins and
-    ends."""
+    """Forget the ego's motion: the replay of a run's frames
+    (:func:`~autoware_carla_scenario.metric_batch.evaluate_metrics`) starts
+    from none."""
     _MOTION[0] = _Motion()
 
 
@@ -970,8 +979,9 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
     motion, which :data:`LATERAL_REVERSALS`, :data:`LATERAL_WOBBLE_M`,
     :data:`STEERING_REVERSALS` and :data:`TURN_INDICATOR_CHANGES` read.
 
-    The runner calls it every tick; a frame at the time of the last one adds
-    nothing.  Off the driving lanes, and in a junction, the ego has no lane
+    The replay of a run's frames calls it every frame, in order (the live run
+    tracks only the ego's progress, :func:`track_ego_progress`); a frame at
+    the time of the last one adds nothing.  Off the driving lanes, and in a junction, the ego has no lane
     to drift across, and its drift holds until it is back on one.  Another ego starts the motion
     anew.
     """
@@ -999,12 +1009,6 @@ def track_ego_motion(world: "carla.World", elapsed: float) -> None:
         velocity = ego.get_velocity()
     except Exception:
         return
-    _track_progress(
-        motion,
-        math.hypot(velocity.x, velocity.y),
-        elapsed,
-        0.0 if last is None else elapsed - last,
-    )
     if last is not None:
         # The ego's centre alone, not the frame :func:`_frame` reads: that
         # reads every actor, and this runs every tick whether or not anything
@@ -1040,30 +1044,99 @@ _MOVED_M = 1.0
 _STILL_MPS = 0.3
 
 
-def _track_progress(motion: _Motion, speed: float, elapsed: float, dt: float) -> None:
+class _Progress:
+    """How far the ego has got through the live run so far
+    (:func:`track_ego_progress`), apart from its motion: the replay of the
+    run's frames rebuilds that, and leaves this as the run left it."""
+
+    ego_id: int
+    at: Optional[float]
+    #: How far the ego has driven (m); whether that is :data:`_MOVED_M`, and
+    #: since when it has stood still (:data:`_STILL_MPS`), ``None`` while it
+    #: moves.
+    travelled_m: float
+    moved: bool
+    still_since: Optional[float]
+
+    def __init__(self) -> None:
+        self.ego_id = -1
+        self.at = None
+        self.travelled_m = 0.0
+        self.moved = False
+        self.still_since = None
+
+
+_PROGRESS: list[_Progress] = [_Progress()]
+
+
+def reset_ego_progress() -> None:
+    """Forget the ego's progress: the runner calls it as a run begins and
+    ends."""
+    _PROGRESS[0] = _Progress()
+
+
+def track_ego_progress(world: "carla.World", elapsed: float) -> None:
+    """Add the frame of *world* at *elapsed* simulated seconds to the ego's
+    progress, which :func:`ego_progress` reads.
+
+    The runner calls it every tick; a frame at the time of the last one adds
+    nothing, and another ego starts the progress anew.
+    """
+    try:
+        ego = find_actor_in_world(world, EGO_ROLE_NAME)
+    except Exception:
+        ego = None
+    if ego is None:
+        return
+    progress = _PROGRESS[0]
+    if progress.ego_id != ego.id:
+        progress = _Progress()
+        progress.ego_id = ego.id
+        _PROGRESS[0] = progress
+    last = progress.at
+    if last is not None and elapsed <= last:
+        return
+    progress.at = elapsed
+    try:
+        velocity = ego.get_velocity()
+    except Exception:
+        return
+    _track_progress(
+        progress,
+        math.hypot(velocity.x, velocity.y),
+        elapsed,
+        0.0 if last is None else elapsed - last,
+    )
+
+
+def _track_progress(
+    progress: _Progress, speed: float, elapsed: float, dt: float
+) -> None:
     """Note how far the ego, going at *speed* (m/s) for the *dt* s up to
     *elapsed*, has driven, and since when it has stood still."""
-    motion.travelled_m += speed * dt
-    if motion.travelled_m >= _MOVED_M:
-        motion.moved = True
+    progress.travelled_m += speed * dt
+    if progress.travelled_m >= _MOVED_M:
+        progress.moved = True
     if speed >= _STILL_MPS:
-        motion.still_since = None
-    elif motion.still_since is None:
-        motion.still_since = elapsed
+        progress.still_since = None
+    elif progress.still_since is None:
+        progress.still_since = elapsed
 
 
 def ego_progress() -> Optional[tuple[bool, float]]:
     """Whether the ego has moved this run, and how long it had stood still
-    at its last frame, in seconds; ``None`` before its first frame.
+    at its last frame, in seconds; ``None`` before its first frame
+    (:func:`track_ego_progress`).
 
     What tells a timeout apart (:func:`~autoware_carla_scenario.failure.progress_detail`).
+    The replay of the run's frames once it is over leaves it as it is.
     """
-    motion = _MOTION[0]
-    at = motion.at
+    progress = _PROGRESS[0]
+    at = progress.at
     if at is None:
         return None
-    since = motion.still_since
-    return motion.moved, 0.0 if since is None else at - since
+    since = progress.still_since
+    return progress.moved, 0.0 if since is None else at - since
 
 
 def _track_indicator(motion: _Motion, ego: "carla.Actor") -> None:
@@ -1496,7 +1569,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             title="Weaving (reversals)",
             unit="count",
             text="How many times so far the ego's drift across its lane turned "
-            "back by more than 0.1 m; a lane change is a drift, not a reversal",
+            "back by 0.1 m or more; a lane change is a drift, not a reversal",
             aggregation="last",
         ),
         Metric(
@@ -1514,7 +1587,7 @@ BUILT_IN_METRICS: dict[str, Metric] = {
             title="Steering reversals",
             unit="count",
             text="How many times so far the steering applied to the ego "
-            "turned back by more than 0.05 of full lock",
+            "turned back by 0.05 of full lock or more",
             aggregation="last",
         ),
         Metric(

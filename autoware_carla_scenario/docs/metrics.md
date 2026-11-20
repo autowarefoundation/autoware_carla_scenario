@@ -43,9 +43,9 @@ value with the aggregation in the last column (`Metric.aggregation`).
 | `min_distance_to_obstacle_m` | m | Box to box, to the nearest other vehicle or pedestrian; `0` touching, nothing when the ego is alone | min |
 | `min_distance_to_lane_boundary_m` | m | From the ego's box to the edge of the driving lanes around it (lanes beside its own count while their near edge is within 6 m of its centre); `0` off the road | min |
 | `importance_sampling_weight` | ratio | Not AlpaSim's: the run's importance-sampling weight so far, the product of NADE's `p/q` and `(1-p)/(1-q)` (`AdversarialTrafficAction`); `1` without NADE. Weight a batch of runs by its last value to estimate the naturalistic rate of what they count | last |
-| `lateral_reversals` | count | Not AlpaSim's: how many times so far the ego's drift across its lane turned back by more than 0.1 m ([Weaving](#weaving)) | last |
+| `lateral_reversals` | count | Not AlpaSim's: how many times so far the ego's drift across its lane turned back by 0.1 m or more ([Weaving](#weaving)) | last |
 | `lateral_wobble_m` | m | Not AlpaSim's: how far the ego strayed across its lane about its course over the last 4 s, RMS ([Weaving](#weaving)) | max |
-| `steering_reversals` | count | Not AlpaSim's: how many times so far the steering applied to the ego turned back by more than 0.05 of full lock ([Weaving](#weaving)) | last |
+| `steering_reversals` | count | Not AlpaSim's: how many times so far the steering applied to the ego turned back by 0.05 of full lock or more ([Weaving](#weaving)) | last |
 | `turn_indicator_changes` | count | Not AlpaSim's: how many times so far the ego's turn indicators changed, between off, left, right and hazard ([Weaving](#weaving)) | last |
 
 Where AlpaSim's geometry is not CARLA's, the reading follows CARLA: AlpaSim
@@ -119,9 +119,12 @@ the ego drives on, not the road under or over it.
 
 Three metrics read how the ego weaves from side to side, and a fourth how
 often its turn indicators changed. Unlike the others they read the run so far,
-not one frame: the runner hands the ego's motion to
-`autoware_carla_scenario.metrics` every tick (`track_ego_motion`), and they read
-what it has gathered.
+not one frame: the replay of the run's recorded frames
+([How metrics are computed](#how-metrics-are-computed)) hands the ego's motion
+to `autoware_carla_scenario.metrics` every frame, in order
+(`track_ego_motion`), and they read what it has gathered. The live run does
+none of this work: it tracks only how far the ego has got (`ego_progress()`,
+which tells a run out of time apart), which the replay leaves as it is.
 
 The ego's drift is how far it has moved across its lanes since the run began:
 its velocity across the lane under its centre, summed over time. The lane's
@@ -129,8 +132,8 @@ heading is taken anew every frame, so following a bend is not a drift, and
 moving to the next lane is a drift of a lane's width with no jump at the lane
 line. Off the driving lanes the drift holds until the ego is back on one.
 
-- `lateral_reversals` counts the times the drift turned back by more than
-  0.1 m: it went right, then came back left by 0.1 m or more. This is the
+- `lateral_reversals` counts the times the drift turned back by 0.1 m or
+  more: it went right, then came back left by 0.1 m or more. This is the
   reversal count of driver-workload studies (Markkula and Engström, 2006). A
   lane change is one drift, however long, and adds nothing; a weave adds two a
   cycle. Under 0.1 m it is the noise of holding a lane.
@@ -143,8 +146,8 @@ line. Off the driving lanes the drift holds until the ego is back on one.
 - In a junction, whose lanes overlap, the drift holds, as it does off the
   driving lanes; a lane the other way is crossed the ego's way.
 - `steering_reversals` counts the times the steering applied to the ego
-  (`get_control().steer`, `1` the vehicle's full lock) turned back by more
-  than 0.05, about 3.5 degrees at the wheels of a car that locks at 70. It sees
+  (`get_control().steer`, `1` the vehicle's full lock) turned back by 0.05
+  or more, about 3.5 degrees at the wheels of a car that locks at 70. It sees
   the controller's weaving before the vehicle shows it. Closed loop, a driver
   policy's controller moves its steer by a few hundredths while it holds a
   lane or a bend, which the gap leaves out; sawing through a turn is a tenth
@@ -346,6 +349,10 @@ alike) decides in this order:
    `false`, `off` or `no`;
 3. otherwise on.
 
+A `metrics` block that is absent or `null` sets nothing; one that is not a
+mapping (`metrics: false`, `0`, `''`, a list) is refused, naming `metrics`
+and the value, rather than read as unset.
+
 The shipped `config.yaml` leaves `metrics.heavy` `null`, so the environment
 variable decides unless the command line or a scenario's config says
 otherwise. The command leaves your variable as it is and writes what it
@@ -482,7 +489,9 @@ it must hold), and so does `register_pass_condition`. A run that passed, or
 failed later than the metric did, fails on the metric: the earliest wins, its
 failure records the condition, when and what it found. Every metric
 condition's status in the result says what it found: `ng_seconds`, when it
-first went NG (`first_ng_at`) and its most critical value (`worst`). In the
+first went NG (`first_ng_at`) and its most critical value (`worst`; `null`
+when it is not finite, a CriMe BTN of infinity say: the result files are
+strict JSON, and writing one fails rather than write `NaN` or `Infinity`). In the
 [Scenario Editor](scenario_editor.md) it is the **Metric** card, under World,
 with its **Max NG seconds**.
 
@@ -505,7 +514,13 @@ the simulation never waits on a metric. When the run is over, while its CARLA
 map is still loaded, the frames are replayed: AlpaSim's metrics and the run's
 own every tick, in order, by the code that reads them off a live world, on a
 stand-in world answering with the recorded actors and the run's map; the
-CommonRoad metrics every 0.1 s, by the workers at once. Then each metric
+CommonRoad metrics every 0.1 s, by the workers at once. A metric that raises
+in a frame reads nothing there, the first exception logged with a warning;
+one that raises in every frame evaluated (a map whose `get_waypoint` raises,
+say) fails the run with `MetricEvaluationError`
+(`autoware_carla_scenario.metric_batch`), as a CommonRoad metric failing in
+every frame does with `CommonRoadWorkerError` (below): a fail condition on it
+would otherwise pass without having judged anything. Then each metric
 condition judges its metric's series. The metrics, and each metric condition's NG frames,
 go into the run's trajectory log (`metric` and `condition` records) and so
 into its Rerun recording ([Metrics in the recording](usage.md#metrics-in-the-recording)).
@@ -513,7 +528,8 @@ into its Rerun recording ([Metrics in the recording](usage.md#metrics-in-the-rec
 To read an AlpaSim metric off a live world yourself -- in a probe, a test --
 `read_metric(key, world)` returns its value in the frame, or `None`; a
 CommonRoad metric reads nothing there. `evaluate_metrics(frames, carla_map,
-keys)` computes any of them over recorded frames.
+keys)` computes any of them over recorded frames, on `carla_map`, whichever
+map the run's `MapManager` holds.
 
 ### Off the road as a fail condition
 
