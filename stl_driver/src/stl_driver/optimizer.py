@@ -273,10 +273,6 @@ class RobustnessOptimizer:
         signals, scores, merit, robustness, used_vmap = self._score_batch(candidates, inputs)
 
         order = torch.argsort(scores, descending=True)
-        alternatives = [
-            candidates[int(index)].clone()
-            for index in order[1 : 1 + optimizer.n_reported_candidates]
-        ]
 
         # Refinement starts from the highest smoothed objective -- the
         # gradients it is about to follow are the smoothed ones, so that is the
@@ -321,6 +317,14 @@ class RobustnessOptimizer:
                 # Descend from the carried plan as well, so continuity is a
                 # starting point rather than merely a tie-break at the end.
                 seeds = torch.cat([best_params.unsqueeze(0), seeds[:-1]], dim=0)
+
+        # The runners-up by smoothed objective, for inspection only: never the
+        # sample chosen to drive, which need not be the smoothed objective's
+        # best and would otherwise be drawn twice.
+        runners_up = [index for index in order.tolist() if index != best_sample]
+        alternatives = [
+            candidates[index].clone() for index in runners_up[: optimizer.n_reported_candidates]
+        ]
 
         refined_params, refined_signal, refined_merit, refined_ok, n_steps = self._refine(
             seeds, inputs, started, optimizer.time_budget_s if honour_budget else None

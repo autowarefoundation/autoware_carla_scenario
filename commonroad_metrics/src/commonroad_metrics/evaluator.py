@@ -739,8 +739,13 @@ def _shared_frame() -> Iterator[None]:
 
     def update_clcs(self: Any) -> None:
         ego = self.ego_vehicle
-        lanelet_id = next(
-            iter(ego.prediction.center_lanelet_assignment[ego.initial_state.time_step])
+        # The lanelet the frame was turned for (Evaluator._alignment), not
+        # any of the ones under the ego: in a junction a turning connecting
+        # lanelet overlaps the straight one.
+        lanelet_id = _best_lanelet(
+            self.sce.lanelet_network,
+            ego.prediction.center_lanelet_assignment[ego.initial_state.time_step],
+            ego.initial_state.orientation,
         )
         key = (id(self.sce), lanelet_id)
         if key not in frames:
@@ -885,6 +890,11 @@ def _required_deceleration(
     if not math.isfinite(gap):
         return 0.0
     if mode != 1:
+        # Never reached from the worker, which leaves CriMe's
+        # acceleration_mode at 1.  ``v_other**2 / 2 * a_other`` is
+        # ``(v_other**2 / 2) * a_other``, not ``v_other**2 / (2 * a_other)``:
+        # CriMe's precedence, copied on purpose so that mode 2 reads what
+        # CriMe's ALongReq reads.  Do not "fix" it here alone.
         return -(v_ego**2) / (2 * (gap - v_other**2 / 2 * a_other))
 
     def avoids(a_ego: float) -> bool:
@@ -972,7 +982,9 @@ def _signed_crime_measures() -> dict[str, type]:
             if delta_d == math.inf:
                 self.value = math.inf
                 return self.value
-            lanelet = network.find_lanelet_by_id(lanelet_ids[0])
+            lanelet = network.find_lanelet_by_id(
+                _best_lanelet(network, lanelet_ids, state.orientation)
+            )
             try:
                 ego_heading = heading_at(lanelet, state.position)
             except ValueError:
@@ -1009,7 +1021,11 @@ def _signed_crime_measures() -> dict[str, type]:
             state_other = self.other_vehicle.state_at_time(time_step)
             network = self.sce.lanelet_network
             lanelet = network.find_lanelet_by_id(
-                network.find_lanelet_by_position([state.position])[0][0]
+                _best_lanelet(
+                    network,
+                    network.find_lanelet_by_position([state.position])[0],
+                    state.orientation,
+                )
             )
             ego_heading = heading_at(lanelet, state.position)
             other_heading = heading_at(lanelet, state_other.position)
@@ -1055,6 +1071,56 @@ def _signed_crime_measures() -> dict[str, type]:
         def __init__(self, config: Any) -> None:
             super().__init__(config)
             self._ttc_object = SignedTTC(config)
+
+        def compute(self, vehicle_id: int, time_step: int = 0, verbose: bool = True) -> Any:
+            # CriMe 0.4's, but reading the lane headings on the ego's lanelet
+            # as _best_lanelet picks it (the one the frame was turned for)
+            # rather than the first one found under the ego, which in a
+            # junction can be a turning connecting lanelet (#2211).
+            if not self.validate_update_states_log(vehicle_id, time_step, verbose):
+                return np.nan
+            if self._except_obstacle_in_same_lanelet(expected_value=0.0, verbose=verbose):
+                return self.value
+            state = self.ego_vehicle.state_at_time(time_step)
+            state_other = self.other_vehicle.state_at_time(time_step)
+            network = self.sce.lanelet_network
+            lanelet = network.find_lanelet_by_id(
+                _best_lanelet(
+                    network,
+                    network.find_lanelet_by_position([state.position])[0],
+                    state.orientation,
+                )
+            )
+            ego_orientation = heading_at(lanelet, state.position)
+            try:
+                other_orientation = heading_at(lanelet, state_other.position)
+            except ValueError:
+                # Out of the projection's domain: the other is far away.
+                self.value = 0.0
+            else:
+                ttc = self._ttc_object.compute(vehicle_id, time_step, verbose=verbose)
+                if ttc == math.inf:
+                    self.value = 0.0
+                    return self.value
+                a_obj_lat = math.sqrt(
+                    state_other.acceleration_y**2 + state_other.acceleration**2
+                ) * math.sin(other_orientation)
+                # CriMe's, ego to ego, kept as it is.
+                d_rel_lat = utils_sol.compute_clcs_distance(
+                    self.clcs, state.position, state.position
+                )[1]
+                v_rel_lat = (
+                    math.sqrt(state_other.velocity**2 + state_other.velocity_y**2)
+                    * math.sin(other_orientation)
+                    - math.sqrt(state.velocity**2 + state.velocity_y**2)
+                ) * math.sin(ego_orientation)
+                self.value = min(
+                    abs(self._compute_a_lat(a_obj_lat, d_rel_lat, v_rel_lat, ttc, "left")),
+                    abs(self._compute_a_lat(a_obj_lat, d_rel_lat, v_rel_lat, ttc, "right")),
+                )
+            if self.value != math.inf:
+                self.value = utils_gen.int_round(self.value, 2)
+            return self.value
 
     class SignedSTN(STN):
         def __init__(self, config: Any) -> None:
@@ -1112,8 +1178,14 @@ def _moved(actor: Actor, x: float, y: float, angle: float) -> Actor:
     return replace(actor, x=px, y=py, yaw=actor.yaw + angle, vx=vx, vy=vy, ax=ax, ay=ay)
 
 
-def _best_lanelet(network: Any, lanelet_ids: list[int], yaw: float) -> int:
-    """Of the lanelets under the ego, the one heading most its way."""
+def _best_lanelet(network: Any, lanelet_ids: Iterable[int], yaw: float) -> int:
+    """Of the lanelets under the ego, the one heading most its way.
+
+    The frame's turn (:meth:`Evaluator._alignment`), Reach's curvilinear
+    frame (:class:`_ReachFrame`) and CriMe's measures (:func:`_shared_frame`,
+    :func:`_signed_crime_measures`) all read the ego's lane through this, so
+    in a junction they all read the same one of the overlapping lanelets.
+    """
 
     def misalignment(lanelet_id: int) -> float:
         centre = network.find_lanelet_by_id(lanelet_id).center_vertices

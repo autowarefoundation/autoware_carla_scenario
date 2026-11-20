@@ -902,3 +902,24 @@ def test_steering_across_the_road_shows_up_as_lateral_acceleration(config):
     swerve[5] = -2.0
     moved = rollout(swerve, straight, config)
     assert moved[:, Col.LATERAL_ACCEL].abs().max() > 0.1
+
+
+def test_the_stopping_distance_is_one_formula_for_floats_and_tensors(config):
+    """`Limits.stopping_distance` is what `stopping_distance_m` reads and what
+    the rollout reads on its tensors, gradient and all."""
+    limits = config.limits
+    brake, ramp = limits.stopping_terms()
+    speed = torch.tensor([0.0, 5.0, 12.5], dtype=torch.float64, requires_grad=True)
+    distance = limits.stopping_distance(speed)
+    distance.sum().backward()
+    for value, got in zip(speed.tolist(), distance.tolist(), strict=True):
+        assert got == limits.stopping_distance_m(value)
+        assert got == value**2 / (2.0 * brake) + value * ramp
+    # As the rollout wrote it before, value and gradient alike.
+    before = speed.detach().clone().requires_grad_(True)
+    written = before**2 / (2.0 * brake) + before * ramp
+    written.sum().backward()
+    assert torch.equal(distance, written)
+    assert torch.equal(speed.grad, before.grad)
+    assert torch.allclose(speed.grad, speed.detach() / brake + ramp)
+    assert limits.stopping_distance_m(-3.0) == 0.0

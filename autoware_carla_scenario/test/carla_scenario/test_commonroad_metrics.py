@@ -501,6 +501,53 @@ def test_a_run_judging_one_needs_the_workers(opendrive: str, tmp_path: Path) -> 
         ("cache_dir", "", "cache_dir must be a path or None, got ''"),
         ("cache_dir", False, "cache_dir must be a path or None, got False"),
         ("cache_dir", 5, "cache_dir must be a path or None, got 5"),
+        # A str would be split into its characters, an empty command meant
+        # "find it", and a mapping that is none failed later in a run (#2211).
+        (
+            "command",
+            "commonroad-metrics-worker",
+            "command must be a non-empty tuple or list of non-empty strings, "
+            "or None, got 'commonroad-metrics-worker'",
+        ),
+        (
+            "command",
+            (),
+            "command must be a non-empty tuple or list of non-empty strings, "
+            "or None, got ()",
+        ),
+        (
+            "command",
+            [],
+            "command must be a non-empty tuple or list of non-empty strings, "
+            "or None, got []",
+        ),
+        (
+            "command",
+            ("uv", ""),
+            "command must be a non-empty tuple or list of non-empty strings, "
+            "or None, got ('uv', '')",
+        ),
+        (
+            "command",
+            ("uv", 3),
+            "command must be a non-empty tuple or list of non-empty strings, "
+            "or None, got ('uv', 3)",
+        ),
+        (
+            "reach_settings",
+            [("planning", {})],
+            "reach_settings must be a mapping or None, got [('planning', {})]",
+        ),
+        (
+            "reach_settings",
+            {"planning": 1},
+            "reach_settings['planning'] must be a mapping or None, got 1",
+        ),
+        (
+            "metric_periods_s",
+            0.5,
+            "metric_periods_s must be a mapping or None, got 0.5",
+        ),
         # Too big for a float (#1652).
         pytest.param(
             "dt",
@@ -518,6 +565,30 @@ def test_the_settings_refuse_a_bad_value(field: str, value: Any, message: str) -
     with pytest.raises(ValueError, match=re.escape(message)):
         cr_session.configure_commonroad_metrics(**{field: value})
     assert cr_session.commonroad_settings() is before
+
+
+def test_none_settings_are_their_defaults() -> None:
+    """#2211: ``None`` for a mapping is its default, and a command is a
+    tuple, a list taken as one."""
+    settings = cr_session.CommonRoadSettings(
+        metric_periods_s=None,  # type: ignore[arg-type]
+        reach_settings=None,  # type: ignore[arg-type]
+        command=None,
+    )
+    assert settings.metric_periods_s == dict(cr_session.DEFAULT_METRIC_PERIODS_S)
+    assert settings.reach_settings == {}
+    assert settings.worker_settings()["reach_settings"] == {}
+    assert settings.command is None
+    listed = cr_session.CommonRoadSettings(command=["uv", "run", "worker"])  # type: ignore[arg-type]
+    assert listed.command == ("uv", "run", "worker")
+    assert listed == cr_session.CommonRoadSettings(command=("uv", "run", "worker"))
+    reach = cr_session.CommonRoadSettings(
+        reach_settings={"planning": {"steps_computation": 5}, "reachable_set": None}  # type: ignore[dict-item]
+    )
+    assert reach.reach_settings == {
+        "planning": {"steps_computation": 5},
+        "reachable_set": {},
+    }
 
 
 def test_a_str_cache_dir_is_a_path(tmp_path: Path) -> None:

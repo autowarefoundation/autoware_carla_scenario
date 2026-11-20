@@ -401,9 +401,13 @@ least 1), the time step (`dt`), the horizon (`horizon_s`), the radius
 (`radius_m`), CommonRoad-Reach's settings, the command and the timeouts
 (`request_timeout_s`, `start_timeout_s`). The periods, `dt`, `horizon_s`,
 `radius_m` and the timeouts (unless `None`) must be positive, finite
-numbers -- a bool or a string is refused -- and `cache_dir` is `None` or a
-path (a `str` is taken as one): a bad value raises `ValueError`, naming the
-field, when the settings are built, not later in a run. A timeout far past what `poll()` waits at once
+numbers -- a bool or a string is refused --, `cache_dir` is `None` or a
+path (a `str` is taken as one), `metric_periods_s` is `None` (the default
+periods) or a mapping, `reach_settings` is `None` (no overrides) or a mapping
+of sections to mappings, and `command` is `None` (find the worker) or a
+non-empty tuple or list of non-empty strings (not a `str`): a bad value
+raises `ValueError`, naming the field, when the settings are built, not later
+in a run. A timeout far past what `poll()` waits at once
 (about 25 days) is waited in pieces.
 
 AlpaSim's other metrics need more than the world, and are not metrics here:

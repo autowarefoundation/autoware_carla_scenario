@@ -31,8 +31,8 @@ __all__ = ["Col", "N_COLUMNS", "column", "saturate", "signal_from_columns"]
 class Col(IntEnum):
     """Column index of each quantity in the signal tensor."""
 
-    #: Speed along the plan, m/s. Never meaningfully negative -- the rollout
-    #: floors it smoothly -- but `no_reverse` asserts that rather than assuming.
+    #: Speed along the plan, m/s. Never negative -- the rollout floors it at
+    #: zero -- but `no_reverse` asserts that rather than assuming.
     SPEED = 0
     #: Longitudinal acceleration, m/s^2.
     ACCEL = 1
@@ -46,9 +46,11 @@ class Col(IntEnum):
     #: Clearance to the nearest predicted actor, less the collision margin, m.
     #: Saturates at the configured cap when nothing is near.
     CLEARANCE = 5
-    #: Lead-vehicle gap less the required time headway, m. Cap when no lead.
+    #: Bumper-to-bumper gap to the lead vehicle less the RSS safe longitudinal
+    #: distance (floored at the standstill gap), m. Cap when no lead.
     HEADWAY_SLACK = 6
-    #: Distance from the plan to the stop line, m. Cap when no light applies.
+    #: Room left to stop at the stop line: the distance to it less what
+    #: stopping from the planned speed takes, m. Cap when no light applies.
     STOP_SLACK = 7
     #: Gate: +gate_magnitude when a red or amber light governs us, -gate
     #: otherwise. See `Limits.gate_magnitude_m` for why the magnitude matters.

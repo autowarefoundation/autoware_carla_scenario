@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
+from typing import TypeVar
 
 __all__ = [
     "Horizon",
@@ -17,6 +18,10 @@ __all__ = [
     "OptimizerConfig",
     "STLDriverConfig",
 ]
+
+
+#: A speed: a float, or a ``torch.Tensor`` of them (the rollout's).
+_Speed = TypeVar("_Speed")
 
 
 @dataclass(frozen=True)
@@ -346,11 +351,25 @@ class Limits:
         brake = -lowest
         return brake, brake / (2.0 * self.plan_jerk_limit())
 
+    def stopping_distance(self, speed: _Speed) -> _Speed:
+        """``v^2 / 2b + v * b / 2j`` (`stopping_terms`) at *speed*, unfloored.
+
+        Plain arithmetic, so it takes a float or a ``torch.Tensor`` alike and
+        keeps the tensor's gradient: the one place the formula is written,
+        for `stopping_distance_m`, `stop_on_red`'s slack and `makes_progress`'s
+        demand in the rollout.
+        """
+        brake, ramp = self.stopping_terms()
+        # Squared as each caller always squared it, to the last bit: a
+        # float's ``**`` goes through libm's pow, which is not always the
+        # rounded ``v * v``, and a tensor's ``v * v`` accumulates its gradient
+        # in another order than ``v**2`` does.
+        square = speed * speed if isinstance(speed, float) else speed**2  # type: ignore[operator]
+        return square / (2.0 * brake) + speed * ramp  # type: ignore[operator,no-any-return]
+
     def stopping_distance_m(self, speed_mps: float) -> float:
         """Room a plan needs to stop from ``speed_mps``, as `stop_on_red` counts it."""
-        brake, ramp = self.stopping_terms()
-        speed = max(0.0, float(speed_mps))
-        return speed * speed / (2.0 * brake) + speed * ramp
+        return float(self.stopping_distance(max(0.0, float(speed_mps))))
 
     def stop_room_m(self, speed_mps: float, accel_mps2: float = 0.0) -> float:
         """The most room `stop_on_red` will ask for while a plan stops.

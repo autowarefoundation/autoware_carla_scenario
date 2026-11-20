@@ -30,6 +30,7 @@ import logging
 import operator
 import os
 import threading
+from collections.abc import Mapping
 from concurrent.futures import FIRST_EXCEPTION, Future, ThreadPoolExecutor, wait
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -116,6 +117,44 @@ def _check_workers(workers: Any) -> int:
     return count
 
 
+def _check_command(command: Any) -> Optional[tuple[str, ...]]:
+    """*command*, ``None`` (find the worker) or the command line starting a
+    worker -- a tuple or list of strings, none of them empty, not empty
+    itself -- as a ``tuple``.  Not a ``str``: one would be split into its
+    characters."""
+    if command is None:
+        return None
+    if (
+        isinstance(command, (tuple, list))
+        and command
+        and all(isinstance(part, str) and part for part in command)
+    ):
+        return tuple(command)
+    raise ValueError(
+        "command must be a non-empty tuple or list of non-empty strings, "
+        f"or None, got {command!r}"
+    )
+
+
+def _check_mapping(name: str, value: Any, default: dict[str, Any]) -> dict[str, Any]:
+    """*value*, ``None`` (*default*) or a mapping, as a ``dict``."""
+    if value is None:
+        return default
+    if isinstance(value, Mapping):
+        return dict(value)
+    raise ValueError(f"{name} must be a mapping or None, got {value!r}")
+
+
+def _check_reach_settings(reach_settings: Any) -> dict[str, dict[str, Any]]:
+    """*reach_settings*, ``None`` (no overrides) or a mapping of
+    CommonRoad-Reach configuration sections to mappings of their keys, as
+    dicts."""
+    checked = _check_mapping("reach_settings", reach_settings, {})
+    for section, overrides in checked.items():
+        checked[section] = _check_mapping(f"reach_settings[{section!r}]", overrides, {})
+    return checked
+
+
 @dataclass(frozen=True)
 class CommonRoadSettings:
     """How the CommonRoad metrics are evaluated.
@@ -124,7 +163,8 @@ class CommonRoadSettings:
         period_s: Simulated seconds between two frames evaluated.
         metric_periods_s: The same, for each metric evaluated at a period of
             its own (a slow one less often); the others, every
-            :attr:`period_s`.  By default :data:`DEFAULT_METRIC_PERIODS_S`.
+            :attr:`period_s`.  By default (or ``None``)
+            :data:`DEFAULT_METRIC_PERIODS_S`.
         heavy_metrics: Whether the heavy metrics (:data:`HEAVY_METRICS`) are
             evaluated at all; off, a metric condition on one is not judged.
             On unless ``$AUTOWARE_CARLA_SCENARIO_HEAVY_METRICS`` is ``0``
@@ -138,11 +178,12 @@ class CommonRoadSettings:
         radius_m: How far from the ego road users and lanelets are taken in;
             positive and finite.
         reach_settings: Overrides of CommonRoad-Reach's configuration, by
-            section and key.
+            section and key: a mapping of mappings; ``None`` for none.
         cache_dir: Where the converted maps are kept (a ``str`` is taken as
             a :class:`~pathlib.Path`); ``None`` for
             :func:`~.map.default_cache_dir`.
-        command: The command starting a worker; ``None`` finds it
+        command: The command starting a worker, a tuple (or list) of
+            non-empty strings, not empty; ``None`` finds it
             (:func:`~.worker.worker_command`).
         request_timeout_s: How long a worker may take to answer a frame (all
             the metrics due on it), in wall-clock seconds; one that has not
@@ -171,6 +212,15 @@ class CommonRoadSettings:
 
     def __post_init__(self) -> None:
         _check_period("period_s", self.period_s)
+        object.__setattr__(
+            self,
+            "metric_periods_s",
+            _check_mapping(
+                "metric_periods_s",
+                self.metric_periods_s,
+                dict(DEFAULT_METRIC_PERIODS_S),
+            ),
+        )
         for key, period in self.metric_periods_s.items():
             if key not in COMMONROAD_METRICS:
                 raise ValueError(
@@ -182,7 +232,11 @@ class CommonRoadSettings:
         _check_period("dt", self.dt)
         _check_period("horizon_s", self.horizon_s)
         _check_period("radius_m", self.radius_m)
+        object.__setattr__(
+            self, "reach_settings", _check_reach_settings(self.reach_settings)
+        )
         object.__setattr__(self, "cache_dir", _check_cache_dir(self.cache_dir))
+        object.__setattr__(self, "command", _check_command(self.command))
         object.__setattr__(
             self,
             "request_timeout_s",
@@ -307,7 +361,9 @@ def _start_workers(carla_map: Any, name: str) -> list[CommonRoadWorker]:
         raise CommonRoadWorkerError(
             f"roadgen could not convert {name} to CommonRoad: {exc}"
         ) from exc
-    command = list(settings.command) if settings.command else worker_command()
+    command = (
+        list(settings.command) if settings.command is not None else worker_command()
+    )
     logger.info(
         "starting %d CommonRoad workers: %s", settings.workers, " ".join(command)
     )
