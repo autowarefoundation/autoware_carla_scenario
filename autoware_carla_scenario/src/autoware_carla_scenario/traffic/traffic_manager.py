@@ -35,6 +35,7 @@ from .base import (
     TrafficContext,
     TurnDirection,
     _entity_name,
+    actor_destroyed,
     check_background_speed,
 )
 from .config import TrafficManagerBackendConfig
@@ -380,6 +381,7 @@ class TrafficManagerBackend(TrafficBackend):
     _random_seed: Optional[int]
     _closed: bool
     _background: dict[str, "carla.Actor"]
+    _unticked: dict[str, tuple[int, float, float, float]]
     _background_count: int
     _started: bool
     _released: set[int]
@@ -435,6 +437,10 @@ class TrafficManagerBackend(TrafficBackend):
         self._closed = False
         #: Handle -> actor of every background vehicle spawned this run.
         self._background = {}
+        #: Handle -> the frame a background vehicle was spawned on and where
+        #: (x, y, z): until the world ticks, a client reads a new actor as
+        #: not alive and at the origin (actor_destroyed).
+        self._unticked = {}
         self._background_count = 0
         self._started = False
         #: Actors taken back with :meth:`release`, never handed to autopilot.
@@ -726,6 +732,7 @@ class TrafficManagerBackend(TrafficBackend):
             except RuntimeError:
                 pass
         self._background = {}
+        self._unticked = {}
         self._background_count = 0
         self._started = False
         self._released = set()
@@ -852,6 +859,14 @@ class TrafficManagerBackend(TrafficBackend):
         if actor is None:
             return None  # The spot is taken; the caller tries elsewhere.
         self._background[handle] = actor
+        frame = _frame_of(world)
+        if frame >= 0:
+            self._unticked[handle] = (
+                frame,
+                float(lifted.location.x),
+                float(lifted.location.y),
+                float(lifted.location.z),
+            )
         forward = lifted.get_forward_vector()
         actor.set_target_velocity(
             carla.Vector3D(forward.x * start_mps, forward.y * start_mps, 0.0)
@@ -870,11 +885,25 @@ class TrafficManagerBackend(TrafficBackend):
     ) -> dict[str, tuple[float, float, Optional[float]]]:
         """Every background vehicle still in the world, at its ``(x, y, z)``."""
         out: dict[str, tuple[float, float, Optional[float]]] = {}
+        frame = _frame_of(world)
         for handle, actor in list(self._background.items()):
+            spawned = self._spawned_at(handle, frame)
+            if spawned is not None:
+                # Spawned on this frame: where it was put, not the origin a
+                # client reads it at until the world ticks.
+                z_spawned: Optional[float] = spawned[2]  # for Codon
+                out[handle] = (spawned[0], spawned[1], z_spawned)
+                continue
+            # Not by a RuntimeError alone: only the handle whose destroy() was
+            # called raises one, and a vehicle the TrafficManager or the server
+            # destroyed would stay counted, standing at the origin (#2245).
+            if actor_destroyed(actor):
+                self._drop_background(handle)
+                continue
             try:
                 location = actor.get_location()
             except RuntimeError:
-                self._background.pop(handle)  # Destroyed by something else.
+                self._drop_background(handle)  # Destroyed under us.
                 continue
             z: Optional[float] = location.z  # the dict's type, for Codon
             out[handle] = (location.x, location.y, z)
@@ -883,13 +912,50 @@ class TrafficManagerBackend(TrafficBackend):
     def background_actors(self, world: "carla.World") -> dict[str, "carla.Actor"]:
         """Every background vehicle, by its handle, which is its ``role_name``;
         a destroyed one is no agent of the scene, so never chosen."""
-        return dict(self._background)
+        out: dict[str, "carla.Actor"] = {}
+        frame = _frame_of(world)
+        for handle, actor in list(self._background.items()):
+            if self._spawned_at(handle, frame) is None and actor_destroyed(actor):
+                self._drop_background(handle)
+                continue
+            out[handle] = actor
+        return out
+
+    def _spawned_at(
+        self, handle: str, frame: int
+    ) -> Optional[tuple[float, float, float]]:
+        """Where background vehicle *handle* was spawned, if that was on
+        *frame*, the world's frame now; ``None`` once the world has ticked
+        since (the record is dropped then), or where no frame was read.
+
+        Until the world ticks a client has no snapshot of a new actor: it
+        reads it as not alive, at the origin, so it is not taken for one
+        destroyed elsewhere (:func:`.base.actor_destroyed`) -- a second
+        source, a sink or an adversity on the same phase as the spawn."""
+        if handle not in self._unticked:
+            return None
+        record = self._unticked[handle]
+        if frame >= 0 and record[0] == frame:
+            return (record[1], record[2], record[3])
+        del self._unticked[handle]
+        return None
+
+    def _drop_background(self, handle: str) -> None:
+        """Forget background vehicle *handle*, destroyed by something else
+        (the TrafficManager, after it stood too long, or the server): its
+        id may be another vehicle's next."""
+        actor = self._background.pop(handle)
+        if handle in self._unticked:
+            del self._unticked[handle]
+        self._forget_actor(int(actor.id))
 
     def remove_background(self, world: "carla.World", handle: str) -> None:
         """Destroy the background vehicle *handle*."""
         if handle not in self._background:
             return
         actor = self._background.pop(handle)
+        if handle in self._unticked:
+            del self._unticked[handle]
         self._forget_actor(int(actor.id))
         try:
             actor.destroy()
@@ -1826,6 +1892,10 @@ class TrafficManagerBackend(TrafficBackend):
                 continue
             self._follow_progress(paused)
         for actor_id, kept in list(self._kept.items()):
+            if actor_destroyed(kept.actor):
+                # Before its progress: a destroyed one reads at the origin.
+                del self._kept[actor_id]  # Destroyed by something else.
+                continue
             self._follow_progress(kept)
             approach = kept.approach
             if approach is not None:
@@ -2330,6 +2400,14 @@ def _tick_seconds(world: "carla.World") -> float:
         return float(world.get_snapshot().timestamp.delta_seconds)
     except (AttributeError, RuntimeError):
         return FIXED_DELTA_SECONDS
+
+
+def _frame_of(world: "carla.World") -> int:
+    """The world's frame now, or ``-1`` where it cannot be read."""
+    try:
+        return int(world.get_snapshot().frame)
+    except (AttributeError, RuntimeError, TypeError):
+        return -1
 
 
 def _from_here(

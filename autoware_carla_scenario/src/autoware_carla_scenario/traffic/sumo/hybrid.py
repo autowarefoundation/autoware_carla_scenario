@@ -33,12 +33,17 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, ClassVar, Mapping, Optional, Union
 
 from ...utils.clearance import _offset_of, actor_box_centre
-from ..base import SimulationFidelity, TrafficBackendUnavailable, TrafficContext
+from ..base import (
+    SimulationFidelity,
+    TrafficBackendUnavailable,
+    TrafficContext,
+    actor_destroyed,
+)
 from ..config import TrafficManagerBackendConfig
 from ..fidelity import FidelityCandidate, MesoscopicConfig, plan_fidelity
 from ..mesoscopic import MesoscopicTraffic
 from ..parameters import VEHICLE_PARAMETER_BACKENDS, VehicleParameters
-from ..traffic_manager import TrafficManagerBackend
+from ..traffic_manager import TrafficManagerBackend, _frame_of
 from .backend import world_opendrive
 from .config import check_text, resolve_cache_dir
 from .geometry import Pose2D, box_centre_to_origin, carla_to_sumo, sumo_to_carla
@@ -377,7 +382,7 @@ class HybridTrafficBackend(TrafficManagerBackend):
         focus: list[tuple[float, float]] = []
         focus_velocities: list[tuple[float, float]] = []
         for actor in world.get_actors().filter("vehicle.*"):
-            if int(actor.id) in background:
+            if int(actor.id) in background or actor_destroyed(actor):
                 continue
             try:
                 location = actor.get_location()
@@ -390,11 +395,21 @@ class HybridTrafficBackend(TrafficManagerBackend):
         if not focus:
             return
         candidates = []
+        frame = _frame_of(world)
         for handle, actor in list(self._background.items()):
+            if self._spawned_at(handle, frame) is not None:
+                continue  # not in the world's snapshot yet: decided next time
+            # Destroyed by the TrafficManager or the server: read at the
+            # origin, it would be moved into the mesoscopic model, and brought
+            # back later as a live vehicle (#2245).
+            if actor_destroyed(actor):
+                self._drop_background(handle)
+                continue
             try:
                 location = actor.get_location()
                 velocity = actor.get_velocity() if ahead else None
             except RuntimeError:
+                self._drop_background(handle)  # Destroyed under us.
                 continue
             vx, vy = (
                 (float(velocity.x), float(velocity.y))

@@ -310,7 +310,9 @@ class Spread:
         # Finite: an infinite std draws infinite values, which an
         # unbounded parameter's bounds would let through.
         if not (math.isfinite(self.std) and self.std >= 0.0):
-            raise ValueError(f"std must be finite and not negative (got {self.std!r})")
+            raise ValueError(
+                f"a spread's std must be finite and not negative (got {self.std!r})"
+            )
 
     def draw(self, rng: random.Random, bounds: tuple[float, float]) -> float:
         """One road user's value: from the normal distribution, cut to
@@ -376,20 +378,37 @@ def _checked_bool(name: str, value: Optional[bool]) -> Optional[bool]:
     return check_flag(name, value)
 
 
-def _check(
-    name: str, value: Optional[Spread], bounds: dict[str, tuple[float, float]]
-) -> None:
-    if value is None:
-        return
-    low, high = bounds[name]
+def _bounds_error(
+    key: str, mean: float, bounds: tuple[float, float], written: str
+) -> Optional[str]:
+    """Why a spread of *mean* cannot be the parameter *key* (its full key,
+    ``traffic.vehicles.min_gap_m``), showing it as *written*; ``None`` when
+    it can."""
+    low, high = bounds
     # Finite as well: an INF high bound means "no upper limit", not that an
     # infinite value is one a backend can use.
-    if not math.isfinite(value.mean):
-        raise ValueError(f"{name} must be finite (got a mean of {value.mean!r})")
-    if not low <= value.mean <= high:
-        raise ValueError(
-            f"{name} must be within [{low:g}, {high:g}] (got a mean of {value.mean!r})"
-        )
+    if not math.isfinite(mean):
+        return f"{key} must be finite (got {written})"
+    if not low <= mean <= high:
+        return f"{key} must be within [{low:g}, {high:g}] (got {written})"
+    return None
+
+
+def _check(
+    node: str,
+    name: str,
+    value: Optional[Spread],
+    bounds: dict[str, tuple[float, float]],
+) -> None:
+    """Refuse *value* for the field *name* under *node* (``traffic.vehicles``)
+    outside its *bounds*, naming the full key."""
+    if value is None:
+        return
+    problem = _bounds_error(
+        f"{node}.{name}", value.mean, bounds[name], f"a mean of {value.mean!r}"
+    )
+    if problem is not None:
+        raise ValueError(problem)
 
 
 def _number_of(name: str, value: Any) -> float:
@@ -406,10 +425,16 @@ def _number_of(name: str, value: Any) -> float:
         raise ValueError(f"{name} must be a number (got {shown(value)})") from None
 
 
-def _spread_of(name: str, value: Any) -> Optional[Spread]:
+def _spread_of(
+    name: str, value: Any, bounds: Optional[tuple[float, float]] = None
+) -> Optional[Spread]:
     """A config value as a :class:`Spread`: a number is a spread of no width;
     ``{mean, std}`` is one; ``{mean: null}`` (what the Hydra groups declare)
-    or ``null`` is none.  A bool is no number, alone or as the mean or std."""
+    or ``null`` is none.  A bool is no number, alone or as the mean or std.
+
+    An error names the full key -- *name*, or its ``.mean`` or ``.std`` --
+    and shows the value as it was written (``'-1'``, not ``-1.0``), checked
+    against *bounds* when given."""
     if value is None or isinstance(value, Spread):
         return value
     if isinstance(value, Mapping):
@@ -422,11 +447,26 @@ def _spread_of(name: str, value: Any) -> Optional[Spread]:
             if std is not None:
                 raise ValueError(f"{name}: a std needs a mean")
             return None
-        return Spread(
-            _number_of(f"{name}.mean", mean),
-            0.0 if std is None else _number_of(f"{name}.std", std),
-        )
-    return Spread(_number_of(name, value))
+        mean_key = f"{name}.mean"
+        number = _number_of(mean_key, mean)
+        width = 0.0
+        if std is not None:
+            width = _number_of(f"{name}.std", std)
+            if not (math.isfinite(width) and width >= 0.0):
+                raise ValueError(
+                    f"{name}.std must be finite and not negative (got {shown(std)})"
+                )
+        if bounds is not None:
+            problem = _bounds_error(mean_key, number, bounds, shown(mean))
+            if problem is not None:
+                raise ValueError(problem)
+        return Spread(number, width)
+    number = _number_of(name, value)
+    if bounds is not None:
+        problem = _bounds_error(name, number, bounds, shown(value))
+        if problem is not None:
+            raise ValueError(problem)
+    return Spread(number)
 
 
 def _spreads_from(
@@ -442,7 +482,9 @@ def _spreads_from(
 
     checked = checked_options(cls, mapping)
     return {
-        key: _spread_of(f"{node}.{key}", value) if key in numeric else value
+        key: _spread_of(f"{node}.{key}", value, numeric[key])
+        if key in numeric
+        else value
         for key, value in checked.items()
     }
 
@@ -573,19 +615,40 @@ class VehicleParameters:
         self.__post_init__()
 
     def __post_init__(self) -> None:
-        _check("speed_factor", self.speed_factor, VEHICLE_BOUNDS)
-        _check("min_gap_m", self.min_gap_m, VEHICLE_BOUNDS)
-        _check("ignore_lights", self.ignore_lights, VEHICLE_BOUNDS)
-        _check("ignore_signs", self.ignore_signs, VEHICLE_BOUNDS)
-        _check("ignore_vehicles", self.ignore_vehicles, VEHICLE_BOUNDS)
-        _check("ignore_walkers", self.ignore_walkers, VEHICLE_BOUNDS)
-        _check("random_lane_changes", self.random_lane_changes, VEHICLE_BOUNDS)
-        _check("accel", self.accel, VEHICLE_BOUNDS)
-        _check("decel", self.decel, VEHICLE_BOUNDS)
-        _check("reaction_time_s", self.reaction_time_s, VEHICLE_BOUNDS)
-        _check("imperfection", self.imperfection, VEHICLE_BOUNDS)
-        _check("max_lateral_speed_mps", self.max_lateral_speed_mps, VEHICLE_BOUNDS)
-        _check("max_lateral_accel", self.max_lateral_accel, VEHICLE_BOUNDS)
+        _check("traffic.vehicles", "speed_factor", self.speed_factor, VEHICLE_BOUNDS)
+        _check("traffic.vehicles", "min_gap_m", self.min_gap_m, VEHICLE_BOUNDS)
+        _check("traffic.vehicles", "ignore_lights", self.ignore_lights, VEHICLE_BOUNDS)
+        _check("traffic.vehicles", "ignore_signs", self.ignore_signs, VEHICLE_BOUNDS)
+        _check(
+            "traffic.vehicles", "ignore_vehicles", self.ignore_vehicles, VEHICLE_BOUNDS
+        )
+        _check(
+            "traffic.vehicles", "ignore_walkers", self.ignore_walkers, VEHICLE_BOUNDS
+        )
+        _check(
+            "traffic.vehicles",
+            "random_lane_changes",
+            self.random_lane_changes,
+            VEHICLE_BOUNDS,
+        )
+        _check("traffic.vehicles", "accel", self.accel, VEHICLE_BOUNDS)
+        _check("traffic.vehicles", "decel", self.decel, VEHICLE_BOUNDS)
+        _check(
+            "traffic.vehicles", "reaction_time_s", self.reaction_time_s, VEHICLE_BOUNDS
+        )
+        _check("traffic.vehicles", "imperfection", self.imperfection, VEHICLE_BOUNDS)
+        _check(
+            "traffic.vehicles",
+            "max_lateral_speed_mps",
+            self.max_lateral_speed_mps,
+            VEHICLE_BOUNDS,
+        )
+        _check(
+            "traffic.vehicles",
+            "max_lateral_accel",
+            self.max_lateral_accel,
+            VEHICLE_BOUNDS,
+        )
 
     def set_fields(self) -> list[str]:
         """The names of the fields that are not ``None``, in declared order."""
@@ -815,9 +878,19 @@ class PedestrianParameters:
         self.__post_init__()
 
     def __post_init__(self) -> None:
-        _check("walking_speed_mps", self.walking_speed_mps, PEDESTRIAN_BOUNDS)
-        _check("min_gap_m", self.min_gap_m, PEDESTRIAN_BOUNDS)
-        _check("red_light_violation_s", self.red_light_violation_s, PEDESTRIAN_BOUNDS)
+        _check(
+            "traffic.pedestrians",
+            "walking_speed_mps",
+            self.walking_speed_mps,
+            PEDESTRIAN_BOUNDS,
+        )
+        _check("traffic.pedestrians", "min_gap_m", self.min_gap_m, PEDESTRIAN_BOUNDS)
+        _check(
+            "traffic.pedestrians",
+            "red_light_violation_s",
+            self.red_light_violation_s,
+            PEDESTRIAN_BOUNDS,
+        )
 
     def set_fields(self) -> list[str]:
         """The names of the fields that are not ``None``, in declared order."""
@@ -952,7 +1025,7 @@ class BicycleParameters:
 
     def __post_init__(self) -> None:
         for name, value in self._fields():
-            _check(name, value, BICYCLE_BOUNDS)
+            _check("traffic.bicycles", name, value, BICYCLE_BOUNDS)
 
     def _fields(self) -> list[tuple[str, Optional[Spread]]]:
         """Every field and its value, in declared order (Codon has no field

@@ -2,7 +2,8 @@
 
 With ``traffic_light_authority=carla``, CARLA's lights switch the SUMO links
 they are matched to, and the links no CARLA light switches -- a bicycle ride's,
-a pedestrian crossing's -- follow the vehicle links they go with or cross.
+a pedestrian crossing's -- follow the vehicle links they go with or cross; any
+other link of the junction runs on SUMO's own program (:func:`program_state`).
 :mod:`.backend` reads the states off TraCI and writes them back; what it
 writes is decided here, from strings and indices alone, as are SUMO's step
 per CARLA tick and the links a program lets go together.
@@ -12,6 +13,7 @@ Pure functions of plain values, so they are tested without either simulator.
 
 from __future__ import annotations
 
+import math
 from typing import Optional
 
 __all__ = [
@@ -24,6 +26,7 @@ __all__ = [
     "green_together",
     "link_states",
     "permissive_links",
+    "program_state",
     "ride_state",
     "sumo_step",
 ]
@@ -182,12 +185,46 @@ def ride_state(follows: str, states: list[str]) -> str:
     return "r"
 
 
+def program_state(
+    phases: list[tuple[str, float]], phase: int, ends_at: float, now: float
+) -> str:
+    """The state SUMO's own program of a junction shows at *now*, seconds:
+    it was in phase *phase* of *phases* (each phase's state and duration),
+    which ends at *ends_at*, when it was read.
+
+    Once a junction's state is set (``setRedYellowGreenState``), SUMO runs a
+    fixed "online" program there instead, which never switches a link
+    nothing sets; this goes on with the program the junction had, a phase
+    after another and round again, at each phase's duration (an actuated
+    program's phases at their default ones).  The phase it was read in when
+    the durations add up to nothing.
+    """
+    state = phases[phase][0]
+    if now < ends_at:
+        return state
+    cycle = 0.0
+    for _state, duration in phases:
+        cycle += max(duration, 0.0)
+    if cycle <= 0.0:
+        return state
+    over = math.fmod(now - ends_at, cycle)
+    index = phase
+    for _ in range(len(phases)):
+        index = (index + 1) % len(phases)
+        state, duration = phases[index]
+        if over < duration:
+            return state
+        over -= max(duration, 0.0)
+    return state  # rounding at the cycle's end: its last phase
+
+
 def link_states(
     current: str,
     carla: dict[int, str],
     permissive: set[int],
     rides: list[tuple[int, str, list[int]]],
     crossings: list[tuple[int, list[int]]],
+    own: str = "",
 ) -> str:
     """The state to set a traffic light's links to.
 
@@ -205,8 +242,15 @@ def link_states(
             the road it crosses: it walks while every one of them is red, and
             gives way while they are red or switched off
             (:func:`clear_state`).
+        own: The state SUMO's own program shows now (:func:`program_state`),
+            which every link no CARLA light switches takes (a ride's and a
+            crossing's are then set from the vehicle links); empty to keep
+            *current* there.
     """
     state = list(current)
+    for index in range(min(len(own), len(state))):
+        if index not in carla:
+            state[index] = own[index]
     for index, name in carla.items():
         if name not in CARLA_TO_SUMO_SIGNAL:
             continue

@@ -87,9 +87,14 @@ def test_a_number_or_a_mean_and_std_is_read_as_a_spread() -> None:
         ({"speed_factor": {"mean": 1.0, "sd": 0.1}}, "unknown key"),
         (
             {"speed_factor": {"mean": 1.0, "std": -0.1}},
-            "std must be finite and not negative",
+            r"^traffic\.vehicles\.speed_factor\.std must be finite and not "
+            r"negative \(got -0\.1\)$",
         ),
-        ({"ignore_lights": {"mean": 1.5}}, "ignore_lights must be within"),
+        (
+            {"ignore_lights": {"mean": 1.5}},
+            r"^traffic\.vehicles\.ignore_lights\.mean must be within \[0, 1\] "
+            r"\(got 1\.5\)$",
+        ),
     ],
 )
 def test_an_impossible_spread_is_refused(mapping: dict, match: str) -> None:

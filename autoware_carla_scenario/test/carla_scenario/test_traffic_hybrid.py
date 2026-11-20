@@ -395,6 +395,32 @@ def test_the_roads_locate_a_vehicle_and_place_it_back(grid: Path) -> None:
 
 
 @needs_sumo
+def test_a_vehicle_destroyed_elsewhere_neither_leaves_carla_nor_comes_back(
+    make: Any, engine: str
+) -> None:
+    """A far vehicle the TrafficManager destroyed (another handle raises
+    nothing and reads the origin; only ``is_alive`` says so) is forgotten:
+    not moved into the mesoscopic model, to come back later as a live
+    vehicle, nor counted where it was (#2245)."""
+    run = make(engine=engine, micro_radius_m=60.0, meso_radius_m=80.0)
+    backend, world = run.backend, run.world
+    ego = world.place(0.0, 1.6, _EAST)
+    backend.start(world, skip_actor_ids={ego.id})
+    far = run.spawn(150.0, 1.6, _EAST)
+    actor = backend.background_actors(world)[far]
+    # Destroyed by the TrafficManager: out of the world, at the origin.
+    world.actors.pop(actor.id)
+    actor.is_alive = False
+    actor.transform = carla.Transform(carla.Location(0.0, 0.0, 0.0), carla.Rotation())
+    run.run(1.0)
+    assert far not in backend.background_vehicles(world)
+    assert far not in backend.background_actors(world)
+    assert backend._meso is None or far not in backend._meso
+    assert far not in backend._parked
+    assert backend._level_changes == [0, 0]
+
+
+@needs_sumo
 def test_a_far_vehicle_leaves_carla_and_comes_back_near(make: Any, engine: str) -> None:
     run = make(engine=engine, micro_radius_m=60.0, meso_radius_m=80.0)
     backend, world = run.backend, run.world
