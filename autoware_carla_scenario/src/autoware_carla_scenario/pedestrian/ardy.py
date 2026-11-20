@@ -17,7 +17,8 @@ Settings (``backends.ardy`` of the run's config), each optional:
 ``image``            The image (:data:`DEFAULT_IMAGE`).
 ``model``            The ARDY checkpoint (``soma``: ARDY-SOMA-RP-30FPS-Horizon60).
 ``acceleration``     ``none``, ``compile`` (torch.compile) or ``trt``.
-``gpus``             ``auto`` (the GPU the preparer chose), ``all``, ``device=N``.
+``gpus``             ``auto`` (the GPU the preparer chose), ``all``, ``none``,
+                     ``device=N``, or a count *N* (``docker run --gpus N``).
 ``hf_home``          The host's Hugging Face cache (``~/.cache/huggingface``).
 ``gpu_memory_mb``    GPU memory it takes (24000: the text encoder alone ~14 GB).
 ``memory_mb``        Host memory it takes (16000).

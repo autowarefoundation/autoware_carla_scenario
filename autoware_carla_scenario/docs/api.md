@@ -279,7 +279,7 @@ Frame-aware velocity / acceleration types with affine-space arithmetic
 
 | Symbol | Description |
 |--------|-------------|
-| `Vector3` | Frame-tagged 3-vector. |
+| `Vector3` | Immutable 3-vector (x, y, z); it carries no frame: the velocity and acceleration types hold one beside it. |
 | `CoordinateFrame`, `FrameMismatchError`, `frame_of` | Re-exported from `coordinate.frames`. |
 | `AbsoluteVelocity`, `RelativeVelocity`, `FrenetVelocity` | Velocity types. |
 | `AbsoluteAcceleration`, `RelativeAcceleration`, `FrenetAcceleration` | Acceleration types. |
