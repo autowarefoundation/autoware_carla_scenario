@@ -286,7 +286,8 @@ class CarlaServerManager:
            there; with it ``True``, one that keeps refusing to answer as CARLA
            for :attr:`REUSE_PING_S` (a busy CARLA can miss one ping's 2 s
            deadline, so it is pinged again until then, and reused once it
-           answers).
+           answers; a port that stops accepting connections meanwhile, as
+           one a server shutting down held, is launched on).
         4. Otherwise, find the launcher (:meth:`executable`), launch the
            process, and poll until the server accepts connections.  Its own
            process is checked before each ping: once it has exited,
@@ -331,13 +332,16 @@ class CarlaServerManager:
             if self._ping_for(self.REUSE_PING_S):
                 self._reuse()
                 return
-            raise RuntimeError(
-                f"Port {self.port} on {self.host} is in use by a process that did "
-                f"not answer as a CARLA server within {self.REUSE_PING_S:g}s; a "
-                "CARLA server launched there could not listen on it. Stop that "
-                "process, wait until the CARLA server there answers, or choose "
-                "another server.port."
-            )
+            # A port freed while it was pinged (a server still shutting
+            # down, as a queue's restart stops one) is launched on.
+            if self._tcp_connects():
+                raise RuntimeError(
+                    f"Port {self.port} on {self.host} is in use by a process that "
+                    f"did not answer as a CARLA server within {self.REUSE_PING_S:g}s; "
+                    "a CARLA server launched there could not listen on it. Stop "
+                    "that process, wait until the CARLA server there answers, or "
+                    "choose another server.port."
+                )
 
         exe_path = self.executable()
         if exe_path is None:

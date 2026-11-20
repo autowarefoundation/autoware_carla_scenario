@@ -483,13 +483,14 @@ class _StripTop:
     """A tar extraction filter: drop each member's top directory, then the
     data filter.
 
-    A CARLA package holds a single top directory (``CARLA_UE5_.../``) with the
-    package in it, and that directory is what is dropped.  An archive with
-    two top directories, or without the wrapper directory (a file at its top,
-    or ``Linux/`` as its top directory), is refused with :class:`_ArchiveLayoutError` rather than merged or stripped of
-    the wrong directory (#2233).  A filter sees the members one at a time, so
-    an instance remembers the top directory of the first; use one per
-    archive.
+    A CARLA package holds a single top directory
+    (``Carla-<version>-Linux-Shipping/``, say) with the package in it, and
+    that directory is what is dropped.  An archive with two top directories,
+    or without the wrapper directory (a file at its top, or ``Linux/`` as its
+    top directory), is refused with :class:`_ArchiveLayoutError` rather than
+    merged or stripped of the wrong directory (#2233).  A filter sees the
+    members one at a time, so an instance remembers the top directory of the
+    first; use one per archive.
 
     A hard link names its target by the target's archive path, so that path
     loses the top directory too; otherwise extraction looks for the target

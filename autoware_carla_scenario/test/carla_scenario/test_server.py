@@ -365,3 +365,22 @@ def test_a_port_that_never_answers_as_carla_is_refused(
     assert "did not answer as a CARLA server within 0.2s" in message
     assert not mark.exists()
     assert not manager.reused
+
+
+def test_a_port_freed_while_it_is_pinged_is_launched_on(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, free_port: int
+) -> None:
+    """A port that stops accepting connections during the reuse wait (a
+    server still shutting down, as a queue's restart stops one) is launched
+    on, not refused."""
+    mark = _marking_launcher(monkeypatch, tmp_path)
+    manager = CarlaServerManager(host="127.0.0.1", port=free_port, timeout=30.0)
+    connects = iter([True, False, False])
+    monkeypatch.setattr(manager, "_tcp_connects", lambda: next(connects, False))
+    monkeypatch.setattr(manager, "_ping", lambda: False)
+    monkeypatch.setattr(server_module.time, "sleep", lambda _: None)
+    with pytest.raises(RuntimeError) as raised:
+        manager.start()
+    # The marking launcher exits 3: it was launched, then failed as itself.
+    assert "exited with code 3" in str(raised.value)
+    assert mark.exists()
