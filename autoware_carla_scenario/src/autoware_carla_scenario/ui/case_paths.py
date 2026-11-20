@@ -8,7 +8,10 @@ of the cases in a directory, in the order a runner hands them out
 (:func:`stem_order`), and the one case of a directory that holds one run
 (whose result :func:`result_path` finds); what a batch's caches are kept by
 (:func:`batch_stamp`) and whether its summary is current; and the job indices
-of a session and the ``scenario=`` override among a case's overrides.
+of a session (a job directory's name read by :func:`job_index`, the one rule
+every reader of a multirun session uses), whether a case's file is its own
+(:func:`own_file`: not a symbolic link, which could name a file outside the
+viewer's base) and the ``scenario=`` override among a case's overrides.
 
 Split out of ``ui.cases`` and ``ui.results``, which re-export every name
 moved here and keep what reads the JSON documents of any type (``Any``) a
@@ -45,6 +48,8 @@ __all__ = [
     "batch_stamp",
     "contained",
     "job_dir",
+    "job_index",
+    "own_file",
     "last_result_path",
     "result_path",
     "session_dir",
@@ -150,6 +155,27 @@ def is_index(text: str) -> bool:
     return text.isascii() and text.isdigit() and len(text) <= INDEX_DIGITS
 
 
+def job_index(name: str) -> Optional[int]:
+    """The case index a multirun job directory named *name* holds, or
+    ``None`` when it is no job's: ASCII digits (:func:`is_index`), with no
+    leading zero (``0`` itself aside). A job's directory is named by its
+    index as :func:`job_dir` makes it (``str(index)``), so ``01`` is no job:
+    it is neither counted nor opened, where it used to be counted as job 1
+    and then not found."""
+    if not is_index(name) or (len(name) > 1 and name.startswith("0")):
+        return None
+    return int(name)
+
+
+def own_file(path: Path) -> bool:
+    """Whether *path* is a file of its case's own: a file, and not a symbolic
+    link. The case's directory was found under the viewer's base
+    (:func:`contained`); a link in it may name any file on the machine (one
+    in an unpacked results archive, say), so the viewer neither reads nor
+    serves one."""
+    return not path.is_symlink() and path.is_file()
+
+
 def job_dir(base: Path, date: str, time: str, index: int) -> Optional[Path]:
     """The directory of job *index* of multirun session *date*/*time*, or
     ``None`` when the names do not make one under *base* (also for an index
@@ -183,15 +209,21 @@ def session_order(time: str) -> tuple[str, int]:
 
 def _stems_in(directory: Path) -> list[str]:
     """Every stem with a result or a trajectory log in *directory*, in
-    :func:`stem_order`."""
+    :func:`stem_order`; a symbolic link of either name is left out."""
     stems: set[str] = set()
     try:
-        names = [p.name for p in directory.iterdir()]
+        paths = list(directory.iterdir())
     except OSError:
         return []
-    for name in names:
+    for path in paths:
+        name = path.name
         for suffix in (_RESULT, _TRAJECTORY):
-            if name.endswith(suffix) and len(name) > len(suffix):
+            # A symbolic link is no case's file (own_file()).
+            if (
+                name.endswith(suffix)
+                and len(name) > len(suffix)
+                and not path.is_symlink()
+            ):
                 stems.add(name[: -len(suffix)])
     return sorted(stems, key=stem_order)
 
@@ -203,7 +235,7 @@ def result_path(directory: Path) -> Optional[Path]:
     before ``_``). ``None`` when it has none."""
     for stem in _stems_in(directory):
         path = directory / f"{stem}{_RESULT}"
-        if path.is_file():
+        if own_file(path):
             return path
     return None
 
@@ -219,7 +251,7 @@ def last_result_path(directory: Path) -> Optional[Path]:
     if not stems:
         return None
     path = directory / f"{stems[-1]}{_RESULT}"
-    return path if path.is_file() else None
+    return path if own_file(path) else None
 
 
 def _only_case(directory: Path) -> CaseFiles | None:
@@ -308,8 +340,9 @@ def _job_indices(directory: Path, session_type: str) -> list[int]:
         # it can show, as _stems_in() finds none (#2183).
         return indices
     for p in entries:
-        if p.is_dir() and p.name.isascii() and p.name.isdigit():
-            indices.append(int(p.name))
+        index = job_index(p.name)
+        if index is not None and p.is_dir():
+            indices.append(index)
     return sorted(indices)
 
 

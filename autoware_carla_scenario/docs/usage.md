@@ -1967,9 +1967,14 @@ session's page) compares two or more sessions of the same scenarios
 (`?s=batch/2026-10-18/16-09-52&s=...`), the oldest the baseline:
 
 - **Cases** are matched by what they ran -- their sweep overrides (less
-  `++odd_case`, which names a case's position), else the ODD values they
-  were drawn at -- not by their index, so a case keeps its match when a
-  sweep's order or size changes. Cases of one session that share a key (a
+  `++odd_case`, which names a case's position, and less the overrides of
+  the session's command line: those Hydra recorded in a CLI multirun's
+  `multirun.yaml`, else those every job of a multirun session shares, such
+  as the Run panel's extra overrides, and all of a single run's), else the
+  ODD values they were drawn at -- not by their index, so two sessions that
+  differ only in an override given to all of their cases
+  (`autoware.planner=new`) are compared case by case, and a case keeps its
+  match when a sweep's order or size changes. Cases of one session that share a key (a
   sweep that draws the same ODD values twice, as one over categorical
   buckets can) are all kept: each run is listed, and a session with more
   than one run of a case shows how many of them passed (`1/2 passed`).
@@ -2091,7 +2096,7 @@ The viewer also provides API endpoints for programmatic use and the web UI's int
 | `POST` | `/api/refresh` | Clear result cache and return updated session table HTML |
 | `GET` | `/api/scenarios` | List all available scenario config names |
 | `POST` | `/api/run/preview` | Preview the CLI command that would be executed (400 for an invalid SLURM option value) |
-| `POST` | `/api/run` | Start a scenario execution in the background (400 `{"status": "error"}` for a refused or unmatched pattern, a sweep that cannot be resolved or an invalid SLURM option value; 409 while a local run or a SLURM submission is still in progress; 503 when SLURM is not available) |
+| `POST` | `/api/run` | Start a scenario execution in the background (400 `{"status": "error"}` for a body that is not a JSON object or names no `scenario`, a refused or unmatched pattern, a sweep that cannot be resolved or an invalid SLURM option value; 409 while a local run or a SLURM submission is still in progress; 503 when SLURM is not available) |
 | `GET` | `/api/run/status` | Get current run status (non-streaming) |
 | `GET` | `/api/run/progress` | SSE (Server-Sent Events) stream for real-time progress |
 | `GET` | `/api/launchers` | The launchers a run can use here (`slurm` only where `sbatch` and `squeue` are, with the partitions) |
@@ -2100,7 +2105,8 @@ The viewer also provides API endpoints for programmatic use and the web UI's int
 | `POST` | `/api/slurm/{date}/{time}/{resubmit,collect,cancel}` | `scenario-slurm` on the batch (`resubmit` takes `failed`, `array_parallelism`, `cases_per_task`) |
 | `POST` | `/api/recording/{type}/{date}/{time}/{index}` | Make the case's Rerun recording if there is none; its URL and path (503 with the install hint without the converter) |
 
-**Run request body format:**
+**Run request body format** (`scenario` is required by `/api/run`: `*/*`
+runs every scenario only when asked for):
 
 ```json
 {
@@ -2129,11 +2135,23 @@ lines, or a mapping, each value exported as written, so without `${...}` either
   "current": 2,
   "total": 5,
   "scenario_name": "intersection_passing/straight",
-  "status": "running"
+  "status": "running",
+  "message": ""
 }
 ```
 
-Where `status` is one of: `"running"`, `"idle"`, or `"done"`.
+Each event is a `data:` line holding one such object. `status` is one of:
+
+- `"running"` -- job `current` of `total` (`scenario_name`) has started;
+- `"passed"` or `"failed"` -- that job has ended, by its exit code (a job
+  that could not be launched, or was stopped, is `"failed"`);
+- `"done"` -- the run is over (also when it was stopped); the stream ends
+  here;
+- `"idle"` -- no run has been started since the viewer started; the stream
+  ends here.
+
+`message` is empty but on a `"done"` of a run that failed as a whole before
+any job ran (its multirun directory could not be created), where it says why.
 
 ---
 

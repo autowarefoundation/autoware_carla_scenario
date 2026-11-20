@@ -6,6 +6,12 @@ directly into the viewer process, providing SIGSEGV isolation.
 Sweep parameter expansion is handled by :mod:`.sweep_resolver` before
 this module is called, so each entry in *overrides_list* is a concrete
 single-scenario run.
+
+A job's stdout and stderr are written to a file as the job runs, never held
+in memory: ``raw_output.log`` in its job directory when the run is grouped as
+a multirun, a temporary file (removed once the job has ended) otherwise, since
+the directory Hydra gives an ungrouped job is not known here.  The last few
+KB of it are what a failed job's warning logs.
 """
 
 from __future__ import annotations
@@ -14,13 +20,16 @@ import logging
 import os
 import signal
 import subprocess
+import tempfile
 import threading
 import time
 from datetime import datetime
 from pathlib import Path
+from typing import IO
 
 from ..run_dirs import multirun_dir as _multirun_dir  # noqa: F401  (its old name)
 from ..run_dirs import reserve_timestamped_dir
+from .case_paths import _override_label
 from .models import RunProgress, Status
 
 logger = logging.getLogger(__name__)
@@ -33,6 +42,31 @@ STOP_TIMEOUT_SECONDS = 10.0
 
 _RAW_LOG_MAX_BYTES = 256 * 1024  # 256 KB cap per log
 
+_WARNING_TAIL_BYTES = 4 * 1024
+"""How much of a failed job's output (its end) its warning logs."""
+
+
+def _tail(log_path: Path, max_bytes: int) -> str:
+    """The text of *log_path*, or its last *max_bytes* bytes (less the
+    partial line they start in, when a newline follows it) after a note that
+    it was truncated; bytes that are not UTF-8 are replaced.
+
+    Raises:
+        OSError: The file cannot be read.
+    """
+    size = log_path.stat().st_size
+    if size <= max_bytes:
+        return log_path.read_text(encoding="utf-8", errors="replace")
+    with log_path.open(encoding="utf-8", errors="replace") as f:
+        f.seek(size - max_bytes)
+        tail = f.read()
+    # Less the partial line it starts in, unless that is all of it: the end
+    # of one line longer than max_bytes is shown rather than nothing.
+    newline = tail.find("\n")
+    if 0 <= newline < len(tail) - 1:
+        tail = tail[newline + 1 :]
+    return f"... (truncated, showing last {len(tail)} chars) ...\n{tail}"
+
 
 def _read_raw_log(job_dir: Path) -> str:
     """Read raw terminal log from a job directory.
@@ -40,19 +74,16 @@ def _read_raw_log(job_dir: Path) -> str:
     Tries ``raw_output.log`` first (subprocess stdout/stderr captured by
     the runner), then falls back to ``run.log`` (Python logging output).
     Returns an empty string when neither file exists.  Large files are
-    truncated to the last ``_RAW_LOG_MAX_BYTES`` bytes.
+    truncated to the last ``_RAW_LOG_MAX_BYTES`` bytes.  A symbolic link is
+    not read: it may name any file on the machine (one in an unpacked results
+    archive), which the viewer must not show.
     """
     for name in (RAW_OUTPUT_LOG, "run.log"):
+        log_path = job_dir / name
         try:
-            log_path = job_dir / name
-            size = log_path.stat().st_size
-            if size <= _RAW_LOG_MAX_BYTES:
-                return log_path.read_text(encoding="utf-8", errors="replace")
-            with log_path.open(encoding="utf-8", errors="replace") as f:
-                f.seek(size - _RAW_LOG_MAX_BYTES)
-                f.readline()  # discard partial first line
-                tail = f.read()
-            return f"... (truncated, showing last {len(tail)} chars) ...\n{tail}"
+            if log_path.is_symlink():
+                continue
+            return _tail(log_path, _RAW_LOG_MAX_BYTES)
         except OSError:
             continue
     return ""
@@ -66,7 +97,7 @@ _running = False
 _stopping = False
 # The job running now, started in a process group of its own, which
 # stop_run() terminates.
-_job: subprocess.Popen[str] | None = None
+_job: subprocess.Popen[bytes] | None = None
 # The thread running the current run's jobs, once it has started.
 _worker: threading.Thread | None = None
 
@@ -332,30 +363,41 @@ def _run_worker(
 
             status: Status = "failed"
             launched = True
+            # Where the job's output goes: its job directory's
+            # raw_output.log when grouped, else a temporary file.
+            log: Path | None = None
+            temporary = False
             try:
-                result = _run_job(cmd, cwd)
-                if result is None:
+                if multirun_dir:
+                    base = Path(cwd) if cwd else Path.cwd()
+                    job_dir = base / multirun_dir / str(i)
+                    job_dir.mkdir(parents=True, exist_ok=True)
+                    log = job_dir / RAW_OUTPUT_LOG
+                else:
+                    log = _temporary_log()
+                    temporary = True
+                returncode = _run_job(cmd, cwd, log)
+                if returncode is None:
                     launched = False
                 else:
-                    status = "passed" if result.returncode == 0 else "failed"
-                    if result.returncode != 0:
+                    status = "passed" if returncode == 0 else "failed"
+                    if returncode != 0:
                         logger.warning(
                             "Scenario %s %s (exit code %d): %s",
                             scenario_name,
                             "was stopped" if _stop_requested() else "failed",
-                            result.returncode,
-                            result.stderr[-500:] if result.stderr else "",
+                            returncode,
+                            _output_tail(log),
                         )
-                    # Save raw terminal output to the job directory.
-                    if multirun_dir:
-                        base = Path(cwd) if cwd else Path.cwd()
-                        _save_raw_output(result, base / multirun_dir / str(i))
             except Exception as exc:
                 # Whatever stops one job from being launched or collected (an
                 # OSError, or anything unexpected) fails that job, not the
                 # run: the next jobs still run (#1073).
                 status = "failed"
                 logger.error("Failed to run scenario %s: %s", scenario_name, exc)
+            finally:
+                if log is not None:
+                    _settle_log(log, temporary)
             if not launched:
                 # Stopped before this job started: it is not run.
                 stopped = True
@@ -388,35 +430,39 @@ def _run_worker(
         _end_run()
 
 
-def _run_job(
-    cmd: list[str], cwd: str | None
-) -> subprocess.CompletedProcess[str] | None:
-    """Run *cmd* as ``subprocess.run(cmd, cwd=cwd, capture_output=True)`` does.
+def _run_job(cmd: list[str], cwd: str | None, log: Path) -> int | None:
+    """Run *cmd* in *cwd*, its stdout and stderr written to *log* as it runs
+    (truncated first), and return its exit code.
 
-    The job is started in a session, so a process group, of its own, which
-    :func:`stop_run` can terminate as a whole (#1351); it is ``None``, and
-    nothing is started, once the run is being stopped.
+    The output goes to the file, not through a pipe, so a job that prints a
+    great deal is never held in memory.  The job is started in a session, so
+    a process group, of its own, which :func:`stop_run` can terminate as a
+    whole (#1351); it is ``None``, and nothing is started, once the run is
+    being stopped.
     """
-    job = _launch(cmd, cwd)
-    if job is None:
-        return None
-    collected = False
-    try:
-        stdout, stderr = job.communicate()
-        returncode = job.wait()
-        collected = True
-    finally:
-        with _lock:
-            global _job  # noqa: PLW0603
-            _job = None
-        if not collected:
-            # As subprocess.run() kills the job it fails to collect.
-            _signal_group(job.pid, int(signal.SIGKILL))
-    return subprocess.CompletedProcess(cmd, returncode, stdout, stderr)
+    with log.open("wb") as output:
+        job = _launch(cmd, cwd, output)
+        if job is None:
+            return None
+        collected = False
+        try:
+            returncode = job.wait()
+            collected = True
+        finally:
+            with _lock:
+                global _job  # noqa: PLW0603
+                _job = None
+            if not collected:
+                # As subprocess.run() kills the job it fails to collect.
+                _signal_group(job.pid, int(signal.SIGKILL))
+    return returncode
 
 
-def _launch(cmd: list[str], cwd: str | None) -> subprocess.Popen[str] | None:
-    """Start *cmd*, unless the run is being stopped, as the run's job.
+def _launch(
+    cmd: list[str], cwd: str | None, output: IO[bytes]
+) -> subprocess.Popen[bytes] | None:
+    """Start *cmd*, unless the run is being stopped, as the run's job, its
+    stdout and stderr written to *output* (one file, in the order written).
 
     Under the lock that :func:`stop_run` takes, so a job is either never
     started or one that stop_run() sees.
@@ -425,19 +471,54 @@ def _launch(cmd: list[str], cwd: str | None) -> subprocess.Popen[str] | None:
         global _job  # noqa: PLW0603
         if _stopping:
             return None
-        job: subprocess.Popen[str] = subprocess.Popen(  # noqa: S603
+        job: subprocess.Popen[bytes] = subprocess.Popen(  # noqa: S603
             cmd,
             cwd=cwd,
-            stdout=subprocess.PIPE,
-            stderr=subprocess.PIPE,
-            # A job may print bytes that are not UTF-8: replace them
-            # rather than fail to read the output (#1073).
-            encoding="utf-8",
-            errors="replace",
+            stdout=output,
+            stderr=subprocess.STDOUT,
             start_new_session=True,
         )
         _job = job
     return job
+
+
+def _temporary_log() -> Path:
+    """A new, empty temporary file for an ungrouped job's output."""
+    fd, name = tempfile.mkstemp(prefix="scenario-job-", suffix=".log")
+    os.close(fd)
+    return Path(name)
+
+
+def _output_tail(log: Path) -> str:
+    """The end of a job's output in *log* (what its warning logs), its bytes
+    that are not UTF-8 replaced (#1073); empty when it cannot be read."""
+    try:
+        return _tail(log, _WARNING_TAIL_BYTES)
+    except OSError:
+        return ""
+
+
+def _settle_log(log: Path, temporary: bool) -> None:
+    """Remove a job's output file once the job is over: a temporary one
+    always, a job directory's ``raw_output.log`` when the job wrote nothing
+    to it (so the scenario page shows ``run.log`` instead).
+
+    The job directory, made for the log before the job started, is removed
+    too when nothing else is in it -- a job that was never launched (the run
+    was stopped first, or ``uv`` could not be started) and wrote nothing --
+    so that the viewer does not list it as a case that left no result.  One
+    that Hydra wrote to (``.hydra/``) is not empty, and is kept."""
+    try:
+        if temporary or log.stat().st_size == 0:
+            log.unlink(missing_ok=True)
+    except OSError:
+        logger.warning("Failed to tidy the job output file %s", log)
+        return
+    if not temporary:
+        try:
+            log.parent.rmdir()  # only while empty
+        except OSError:
+            pass
 
 
 def _reserve_multirun_dir(base: Path, now: datetime) -> str:
@@ -456,30 +537,11 @@ def _reserve_multirun_dir(base: Path, now: datetime) -> str:
     return reserve_timestamped_dir(base, "multirun", now, dangling_links_taken=False)
 
 
-def _save_raw_output(
-    result: subprocess.CompletedProcess[str],
-    job_dir: Path,
-) -> None:
-    """Save subprocess stdout/stderr to ``raw_output.log`` in *job_dir*."""
-    parts: list[str] = []
-    for stream in (result.stdout, result.stderr):
-        if stream:
-            parts.append(stream)
-    if not parts:
-        return
-    try:
-        job_dir.mkdir(parents=True, exist_ok=True)
-        (job_dir / RAW_OUTPUT_LOG).write_text("\n\n".join(parts), encoding="utf-8")
-    except OSError:
-        logger.warning("Failed to save raw output to %s", job_dir)
-
-
 def _extract_scenario_name(overrides: list[str]) -> str:
-    """Extract a human-readable scenario name from override arguments."""
-    for ov in overrides:
-        if ov.startswith("scenario="):
-            return ov[len("scenario=") :]
-    return "scenario"
+    """The job's scenario, as the result views name it: its ``scenario=``
+    override (``case_paths._override_label``), else ``scenario``."""
+    label = _override_label(overrides)
+    return label if label is not None else "scenario"
 
 
 def build_command(

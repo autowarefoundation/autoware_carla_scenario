@@ -66,6 +66,7 @@ __all__ = [
     "job_dir",
     "match_batch_stems",
     "session_dir",
+    "session_overrides",
     "stem_order",
 ]
 
@@ -116,6 +117,75 @@ def _hydra_overrides(directory: Path) -> list[str]:
     except Exception:  # noqa: BLE001 -- yaml.YAMLError, OSError, ValueError, ...
         return []
     return [str(o) for o in data] if isinstance(data, list) else []
+
+
+def _multirun_task(directory: Path) -> list[str] | None:
+    """The command line of the Hydra multirun in *directory*: the
+    ``hydra.overrides.task`` its ``multirun.yaml`` records, each item as a
+    string (a sweep as given, ``ego.speed=10,20``; the others as each job
+    received them).  ``None`` when there is no such file or it records no
+    list there -- a session the viewer's Run panel grouped writes none -- and
+    for one that cannot be read, as :func:`_hydra_overrides` reads its
+    file."""
+    try:
+        import yaml  # noqa: PLC0415
+
+        data = yaml.safe_load((directory / "multirun.yaml").read_text(encoding="utf-8"))
+    except Exception:  # noqa: BLE001 -- yaml.YAMLError, OSError, ValueError, ...
+        return None
+    hydra = data.get("hydra") if isinstance(data, dict) else None
+    overrides = hydra.get("overrides") if isinstance(hydra, dict) else None
+    task = overrides.get("task") if isinstance(overrides, dict) else None
+    return [str(o) for o in task] if isinstance(task, list) else None
+
+
+def _as_jobs_receive(overrides: list[str]) -> set[str]:
+    """Each of *overrides*, as the command line gave it, and as a job of the
+    multirun received it: Hydra's basic sweeper hands each job a fixed
+    override re-written from its parsed value (``x=[1, 2]`` as ``x=[1,2]``,
+    ``w= 3`` as ``w=3``), where this package's sweeper passes it on as given.
+    A sweep (``ego.speed=10,20``, ``range(...)``, ``choice(...)``,
+    ``glob(...)``) is only kept as given, which no job's value equals; so is
+    an override Hydra's parser cannot read."""
+    forms = set(overrides)
+    try:
+        from hydra.core.override_parser.overrides_parser import (  # noqa: PLC0415
+            OverridesParser,
+        )
+
+        parser = OverridesParser.create()
+    except Exception:  # noqa: BLE001 -- Hydra cannot be imported
+        return forms
+    for override in overrides:
+        try:
+            parsed = parser.parse_override(override)
+            if not parsed.is_sweep_override():
+                value = parsed.get_value_element_as_str()
+                forms.add(f"{parsed.get_key_element()}={value}")
+        except Exception:  # noqa: BLE001, S112 -- OverrideParseException, ...
+            continue
+    return forms
+
+
+def session_overrides(directory: Path, jobs: list[list[str]]) -> set[str]:
+    """The overrides of a multirun or single session's command line, which
+    every case of it ran with and so are not what tells its cases apart:
+    those its ``multirun.yaml`` records (:func:`_multirun_task`, each also
+    as its jobs received it, :func:`_as_jobs_receive`), else those every one
+    of its jobs' overrides (*jobs*) holds -- for a session of one job (a
+    single run), all of them.  A job whose overrides could not be read (an
+    empty list: no ``.hydra/overrides.yaml``) is left out of that, rather
+    than leave no override shared."""
+    recorded = _multirun_task(directory)
+    if recorded is not None:
+        return _as_jobs_receive(recorded)
+    read = [overrides for overrides in jobs if overrides]
+    if not read:
+        return set()
+    shared = set(read[0])
+    for overrides in read[1:]:
+        shared &= set(overrides)
+    return shared
 
 
 def _same_result(entry: dict[str, Any], result: Any) -> bool:

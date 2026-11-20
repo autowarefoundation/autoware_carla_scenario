@@ -255,7 +255,7 @@ _TIMES = [
 
 
 @pytest.mark.parametrize(("recording_ns", "trajectory_ns"), _TIMES)
-@pytest.mark.parametrize("kind", ["file", "dir", "symlink", "dangling"])
+@pytest.mark.parametrize("kind", ["file", "dir", "dangling"])
 def test_freshness_is_judged_as_it_was(
     tmp_path: Path,
     calls: _Calls,
@@ -286,6 +286,23 @@ def test_freshness_is_judged_as_it_was(
         lambda base: _old_fresh(base / "x.rrd", base / "x.jsonl"),
         lambda base: recordings._fresh(base / "x.rrd", base / "x.jsonl"),
     )
+
+
+@pytest.mark.parametrize(("recording_ns", "trajectory_ns"), _TIMES)
+def test_a_symlinked_recording_is_never_fresh(
+    tmp_path: Path, recording_ns: int | None, trajectory_ns: int | None
+) -> None:
+    # A link may name a file outside the viewer's base (#2239): it is not
+    # served, whatever its target's time.
+    target = tmp_path / "target.rrd"
+    target.write_bytes(b"r")
+    if recording_ns is not None:
+        os.utime(target, ns=(recording_ns, recording_ns))
+    (tmp_path / "x.rrd").symlink_to(target)
+    if trajectory_ns is not None:
+        (tmp_path / "x.jsonl").write_bytes(b"x")
+        os.utime(tmp_path / "x.jsonl", ns=(trajectory_ns, trajectory_ns))
+    assert recordings._fresh(tmp_path / "x.rrd", tmp_path / "x.jsonl") is False
 
 
 @pytest.mark.parametrize(

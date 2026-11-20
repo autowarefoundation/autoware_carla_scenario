@@ -4,7 +4,6 @@ starts (#664), and how it stops (#1351)."""
 from __future__ import annotations
 
 import os
-import subprocess
 import time
 from datetime import datetime
 from pathlib import Path
@@ -35,26 +34,13 @@ def test_the_multirun_dir_is_what_strftime_makes(now: datetime) -> None:
     assert runner._multirun_dir(now) == f"multirun/{now:%Y-%m-%d}/{now:%H-%M-%S}"
 
 
-@pytest.mark.parametrize(
-    ("stdout", "stderr", "written"),
-    [
-        ("out", "err", "out\n\nerr"),
-        ("out", "", "out"),
-        (None, "err", "err"),
-        ("", None, None),
-    ],
-)
-def test_the_raw_output_joins_the_streams_written(
-    stdout: str | None, stderr: str | None, written: str | None, tmp_path: Path
-) -> None:
-    result = subprocess.CompletedProcess(["true"], 0, stdout, stderr)
-    job_dir = tmp_path / "multirun" / "0"
-    runner._save_raw_output(result, job_dir)
-    log = job_dir / runner.RAW_OUTPUT_LOG
-    if written is None:
-        assert not log.exists()
-    else:
-        assert log.read_text(encoding="utf-8") == written
+def test_a_job_writes_both_streams_to_its_log_in_order(tmp_path: Path) -> None:
+    log = tmp_path / "job.log"
+    code = runner._run_job(
+        ["sh", "-c", "echo out; echo err >&2; echo more; exit 3"], None, log
+    )
+    assert code == 3
+    assert log.read_text(encoding="utf-8") == "out\nerr\nmore\n"
 
 
 def test_a_run_appends_the_extra_overrides(
@@ -62,9 +48,9 @@ def test_a_run_appends_the_extra_overrides(
 ) -> None:
     commands: list[list[str]] = []
 
-    def run(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
+    def run(cmd: list[str], cwd: str | None, log: Path) -> int:
         commands.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+        return 0
 
     monkeypatch.setattr(runner, "_run_job", run)
     runner._run_worker([["scenario=a"], ["scenario=b", "x=1"]], None, ["y=2"], False)
@@ -109,9 +95,10 @@ def test_grouped_runs_in_one_second_get_their_own_directories(
 
     commands: list[list[str]] = []
 
-    def run(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
+    def run(cmd: list[str], cwd: str | None, log: Path) -> int:
         commands.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, "out", "")
+        log.write_text("out", encoding="utf-8")
+        return 0
 
     monkeypatch.setattr(runner, "datetime", _Frozen)
     monkeypatch.setattr(runner, "_run_job", run)
@@ -189,8 +176,8 @@ def unstarted_threads(monkeypatch: pytest.MonkeyPatch) -> list[_UnstartedThread]
         RunProgress(current=1, total=1, scenario_name="", status="done"),
     )
 
-    def run(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+    def run(cmd: list[str], cwd: str | None, log: Path) -> int:
+        return 0
 
     monkeypatch.setattr(runner, "_run_job", run)
     return _UnstartedThread.made
@@ -297,7 +284,7 @@ def test_a_run_whose_multirun_dir_cannot_be_made_fails(
     def reserve(base: Path, now: datetime) -> str:
         raise PermissionError(13, "Permission denied", str(base / "multirun"))
 
-    def launch(cmd: list[str], cwd: str | None) -> None:
+    def launch(cmd: list[str], cwd: str | None, output: Any) -> None:
         raise AssertionError("no job runs")
 
     monkeypatch.setattr(runner, "_reserve_multirun_dir", reserve)
@@ -319,7 +306,7 @@ def test_a_completed_run_has_no_message(
     unstarted_threads: list[_UnstartedThread],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(runner, "_launch", lambda cmd, cwd: None)
+    monkeypatch.setattr(runner, "_launch", lambda cmd, cwd, output: None)
     assert runner.start_run([["scenario=a"]]) is True
     unstarted_threads[0].run()
     progress = runner.get_progress()
@@ -378,12 +365,12 @@ def test_output_that_is_not_utf8_runs_every_job(
         ("", "done"),
     ]
     assert not runner.is_running()
-    # The undecodable bytes are replaced in the raw output kept for each job.
+    # The raw output is kept for each job as it was written (both streams,
+    # in order), its undecodable bytes replaced as the viewer reads it.
     logs = sorted((base / "multirun").glob(f"*/*/*/{runner.RAW_OUTPUT_LOG}"))
     assert len(logs) == 3
-    assert logs[0].read_text(encoding="utf-8") == (
-        "out \ufffd\ufffd end\n\n\nerr \ufffd\n"
-    )
+    assert logs[0].read_bytes() == b"out \xff\xfe end\nerr \xff\n"
+    assert runner._read_raw_log(logs[0].parent) == "out \ufffd\ufffd end\nerr \ufffd\n"
 
 
 def test_a_job_that_cannot_be_collected_fails_alone(
@@ -392,11 +379,11 @@ def test_a_job_that_cannot_be_collected_fails_alone(
     published = _record_progress(monkeypatch)
     commands: list[list[str]] = []
 
-    def run(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
+    def run(cmd: list[str], cwd: str | None, log: Path) -> int:
         commands.append(cmd)
         if "scenario=a" in cmd:
-            raise UnicodeDecodeError("utf-8", b"\xff", 0, 1, "invalid start byte")
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+            raise OSError("the job cannot be launched")
+        return 0
 
     monkeypatch.setattr(runner, "_run_job", run)
     runner._run_worker([["scenario=a"], ["scenario=b"]], None, [], False)
@@ -415,11 +402,11 @@ def test_a_stop_between_jobs_starts_no_further_job(
     published = _record_progress(monkeypatch)
     commands: list[list[str]] = []
 
-    def run(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
+    def run(cmd: list[str], cwd: str | None, log: Path) -> int:
         commands.append(cmd)
         # The server shuts down while the first job runs.
         runner.stop_run()
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+        return 0
 
     monkeypatch.setattr(runner, "_run_job", run)
     assert runner.start_run([["scenario=a"], ["scenario=b"], ["scenario=c"]])
@@ -434,9 +421,9 @@ def test_a_stop_between_jobs_starts_no_further_job(
     # The next run is not stopped by the last one's stop.
     commands.clear()
 
-    def run_all(cmd: list[str], cwd: str | None) -> subprocess.CompletedProcess[str]:
+    def run_all(cmd: list[str], cwd: str | None, log: Path) -> int:
         commands.append(cmd)
-        return subprocess.CompletedProcess(cmd, 0, "", "")
+        return 0
 
     monkeypatch.setattr(runner, "_run_job", run_all)
     assert runner.start_run([["scenario=d"], ["scenario=e"]])
@@ -605,3 +592,162 @@ def test_the_viewer_bounds_its_shutdown_and_stops_the_run(
         ui.main([])
     assert served[0]["timeout_graceful_shutdown"] == ui.SHUTDOWN_TIMEOUT_SECONDS
     assert stopped == [True]
+
+
+# ── A job's output goes to a file, not memory (#2239) ──────────────────────
+
+
+@pytest.fixture
+def chatty_uv(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
+    """A ``uv`` on PATH that prints 4 MB to stdout and a last line to
+    stderr, and fails; and a ``subprocess.Popen`` that records its streams."""
+    bin_dir = tmp_path / "bin"
+    bin_dir.mkdir()
+    script = bin_dir / "uv"
+    script.write_text(
+        "#!/bin/sh\n"
+        "head -c 4194304 /dev/zero | tr '\\0' 'x'\n"
+        "echo\n"
+        "echo 'the last words' >&2\n"
+        "exit 2\n"
+    )
+    script.chmod(0o755)
+    monkeypatch.setenv("PATH", f"{bin_dir}{os.pathsep}{os.environ['PATH']}")
+    return bin_dir
+
+
+def _record_streams(monkeypatch: pytest.MonkeyPatch) -> list[dict[str, Any]]:
+    streams: list[dict[str, Any]] = []
+    popen = runner.subprocess.Popen
+
+    def record(cmd: list[str], **kwargs: Any) -> Any:
+        streams.append({k: kwargs.get(k) for k in ("stdout", "stderr")})
+        return popen(cmd, **kwargs)
+
+    monkeypatch.setattr(runner.subprocess, "Popen", record)
+    return streams
+
+
+def test_a_grouped_jobs_whole_output_is_streamed_to_its_log(
+    chatty_uv: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    streams = _record_streams(monkeypatch)
+    base = tmp_path / "base"
+    base.mkdir()
+    with caplog.at_level("WARNING", logger=runner.__name__):
+        runner._run_worker([["scenario=a"]], base, [], True)
+    # Written to a file as the job runs: no pipe is read into memory.
+    assert len(streams) == 1
+    assert streams[0]["stdout"] is not runner.subprocess.PIPE
+    assert hasattr(streams[0]["stdout"], "fileno")
+    assert streams[0]["stderr"] is runner.subprocess.STDOUT
+    [log] = (base / "multirun").glob(f"*/*/0/{runner.RAW_OUTPUT_LOG}")
+    assert log.stat().st_size == 4 * 1024 * 1024 + len("\nthe last words\n")
+    # The page shows its end; the warning logs a few KB of it.
+    shown = runner._read_raw_log(log.parent)
+    assert shown.startswith("... (truncated")
+    assert shown.endswith("the last words\n")
+    [warning] = [r.getMessage() for r in caplog.records if "failed" in r.getMessage()]
+    assert "the last words" in warning
+    assert len(warning) < 8 * 1024
+
+
+def test_an_ungrouped_jobs_output_leaves_no_file(
+    chatty_uv: Path,
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    temporary = tmp_path / "tmp"
+    temporary.mkdir()
+    monkeypatch.setattr(runner.tempfile, "tempdir", str(temporary))
+    base = tmp_path / "base"
+    base.mkdir()
+    with caplog.at_level("WARNING", logger=runner.__name__):
+        runner._run_worker([["scenario=a"]], base, [], False)
+    assert list(temporary.iterdir()) == []
+    assert list(base.iterdir()) == []
+    assert any("the last words" in r.getMessage() for r in caplog.records)
+
+
+def test_a_job_that_prints_nothing_leaves_no_raw_log(tmp_path: Path) -> None:
+    # The scenario page then shows the job's run.log instead.
+    job = tmp_path / "0"
+    (job / ".hydra").mkdir(parents=True)  # what Hydra wrote
+    log = job / runner.RAW_OUTPUT_LOG
+    assert runner._run_job(["true"], None, log) == 0
+    runner._settle_log(log, temporary=False)
+    assert not log.exists()
+    assert job.is_dir()  # Hydra's, kept
+    (job / "run.log").write_text("logged\n", encoding="utf-8")
+    assert runner._read_raw_log(job) == "logged\n"
+
+
+def test_a_job_that_never_ran_leaves_no_job_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # The run is stopped before its first job starts: the directory made for
+    # its log is not left behind, to be listed as a case with no result.
+    monkeypatch.setattr(runner, "_stopping", True)
+    monkeypatch.setattr(runner, "_stop_requested", lambda: False)
+    base = tmp_path / "base"
+    base.mkdir()
+    runner._run_worker([["scenario=a"], ["scenario=b"]], base, [], True)
+    [session] = (base / "multirun").glob("*/*")
+    assert list(session.iterdir()) == []
+
+
+def test_a_job_that_could_not_be_launched_leaves_no_job_directory(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv("PATH", str(tmp_path / "nowhere"))  # no uv
+    base = tmp_path / "base"
+    base.mkdir()
+    runner._run_worker([["scenario=a"]], base, [], True)
+    [session] = (base / "multirun").glob("*/*")
+    assert list(session.iterdir()) == []
+
+
+@pytest.mark.parametrize(
+    ("text", "shown"),
+    [
+        ("a" * 100 + "\nlast line\n", "last line\n"),
+        # One line longer than the tail: its end, rather than nothing.
+        ("b" * 100, "b" * 16),
+        # Cut mid-character: the partial character is replaced, then dropped
+        # with the partial line it starts.
+        ("é" * 60 + "\nend\n", "end\n"),
+    ],
+)
+def test_the_tail_of_a_long_log(tmp_path: Path, text: str, shown: str) -> None:
+    log = tmp_path / "log"
+    log.write_text(text, encoding="utf-8")
+    assert runner._tail(log, 16).endswith("...\n" + shown)
+
+
+def test_a_raw_log_that_is_a_symlink_is_not_read(tmp_path: Path) -> None:
+    outside = tmp_path / "secret.txt"
+    outside.write_text("secret\n", encoding="utf-8")
+    job = tmp_path / "job"
+    job.mkdir()
+    (job / runner.RAW_OUTPUT_LOG).symlink_to(outside)
+    assert runner._read_raw_log(job) == ""
+    (job / "run.log").write_text("logged\n", encoding="utf-8")
+    assert runner._read_raw_log(job) == "logged\n"
+
+
+@pytest.mark.parametrize(
+    ("overrides", "name"),
+    [
+        (["x=1", "scenario=a/b"], "a/b"),
+        (["x=1"], "scenario"),
+        (["scenario="], ""),
+    ],
+)
+def test_the_progress_names_a_job_by_its_scenario_override(
+    overrides: list[str], name: str
+) -> None:
+    assert runner._extract_scenario_name(overrides) == name

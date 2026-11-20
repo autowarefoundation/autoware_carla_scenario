@@ -26,7 +26,7 @@ from starlette.convertors import Convertor, register_url_convertor
 from ..scenario_glob import is_scenario_glob, resolve_scenario_glob
 from ..web_guard import HostAllowlist, RequestGuard, refuse_cross_site
 from . import cases, recordings, results, runner, scanner, slurm_launch
-from .case_paths import INDEX_DIGITS, is_index, session_order
+from .case_paths import INDEX_DIGITS, is_index, own_file, session_order
 from .models import RunProgress, SessionSummary
 
 # Whether a body is sent as JSON, a session's reference and the ODD attribute a
@@ -112,9 +112,11 @@ def _base_path() -> Path:
 def _session_dir_or_404(session_type: str, date: str, time: str) -> Path:
     """The session's directory, or 404 when the URL's names do not make one
     under the base (:func:`cases.session_dir`: an unknown type, ``..``, a
-    separator, or a path that resolves outside ``multirun/`` / ``outputs/``)."""
+    separator, or a path that resolves outside ``multirun/`` / ``outputs/``)
+    or there is no such directory: a session that does not exist has no page,
+    rather than an empty one."""
     directory = cases.session_dir(_base_path(), session_type, date, time)
-    if directory is None:
+    if directory is None or not directory.is_dir():
         raise HTTPException(status_code=404)
     return directory
 
@@ -165,17 +167,21 @@ async def _json_object(request: Request) -> dict[str, Any]:
     The body must be sent as ``application/json``: any other type -- the
     ``text/plain`` a page on another site can send without a CORS preflight
     above all (#1844) -- is refused with 415, as is a body sent with no type.
-    An empty body with no type is no body, and keeps the defaults.  A JSON
-    body that does not parse keeps the defaults, as before; one that is JSON
-    but not an object (``[1]``, ``"x"``, ``null``) is refused.
+    An empty body (with no type, or as ``application/json``) is no body, and
+    keeps the defaults; ``/api/run`` refuses it, since it names no scenario
+    (:func:`run_scenarios`).  A body that is not JSON -- cut off, garbled, not
+    UTF-8 -- is refused, as is one that is JSON but not an object (``[1]``,
+    ``"x"``, ``null``): read as no body, a truncated run request would run
+    every scenario, and a resubmission drop its flags.
 
     Raises:
         HTTPException: 415, the body is not sent as ``application/json``.
-        BodyError: The body is JSON but not an object.
+        BodyError: The body is not JSON, or is JSON but not an object.
     """
     content_type = request.headers.get("content-type")
+    raw = await request.body()
     if content_type is None:
-        if await request.body():
+        if raw:
             raise HTTPException(
                 status_code=415, detail="the request body must be application/json"
             )
@@ -184,10 +190,14 @@ async def _json_object(request: Request) -> dict[str, Any]:
         raise HTTPException(
             status_code=415, detail="the request body must be application/json"
         )
-    try:
-        body = await request.json()
-    except Exception:  # noqa: BLE001 -- no body (or not JSON): the defaults
+    if not raw.strip():
         return {}
+    try:
+        body = json.loads(raw)
+    except ValueError as exc:  # json.JSONDecodeError, UnicodeDecodeError
+        raise BodyError("the request body is not valid JSON") from exc
+    except RecursionError as exc:  # nested deeper than the parser goes
+        raise BodyError("the request body is not valid JSON") from exc
     if not isinstance(body, dict):
         raise BodyError("the request body must be a JSON object")
     return body
@@ -392,14 +402,14 @@ def _recording_context(
     """What the scenario page shows of the case's Rerun recording, or
     ``None`` when the case has no trajectory log."""
     files = cases.case_files(_base_path(), session_type, date, time, index)
-    if files is None or not files.trajectory.is_file():
+    if files is None or not own_file(files.trajectory):
         return None
     made = recordings.recording_path(files.trajectory)
     case = _case_path(session_type, date, time, index)
     converter = recordings.converter_available()
     return {
         "trajectory": str(files.trajectory.resolve()),
-        "rrd": str(made.resolve()) if made.is_file() else None,
+        "rrd": str(made.resolve()) if own_file(made) else None,
         "converter": converter,
         # Whether ``rrd_url`` and ``make_url`` can answer with a file: one is
         # made already (and no older than the log, beside it or in the cache),
@@ -525,9 +535,19 @@ async def run_scenarios(request: Request) -> dict[str, str] | JSONResponse:
     is a request that cannot run: a pattern refused or matching nothing, a
     sweep that fails to expand, a SLURM option value that is not valid
     (#1964).
+
+    The body must name the scenarios (``scenario``): an empty body, or one
+    without the field, is refused rather than run as ``*/*`` -- every
+    scenario is run only when asked for by name.  The Run panel always sends
+    it.
     """
     try:
-        body = await _run_body(request)
+        raw = await _json_object(request)
+        if "scenario" not in raw:
+            raise BodyError(
+                "scenario is required: name the scenarios to run ('*/*' for all)"
+            )
+        body = parse_run_body(raw)
     except BodyError as exc:
         return _run_body_error(exc)
 
@@ -643,7 +663,8 @@ async def run_progress(request: Request) -> StreamingResponse:
 
 def _trajectory_of(session_type: str, date: str, time: str, index: int) -> Path:
     files = cases.case_files(_base_path(), session_type, date, time, index)
-    if files is None or not files.trajectory.is_file():
+    # A symbolic link may name a log outside the viewer's base (own_file()).
+    if files is None or not own_file(files.trajectory):
         raise HTTPException(status_code=404, detail="This case has no trajectory log.")
     return files.trajectory
 
