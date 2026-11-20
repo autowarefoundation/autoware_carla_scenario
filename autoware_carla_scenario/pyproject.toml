@@ -75,8 +75,10 @@ dependencies = [
     # run's effects beside the ODD (`CoverageCollector(effects=...)`) for the
     # drift view; 0.46.1 draws a knob's values table as a rule, writing a
     # whole number it gives as an integer. 0.47 measures the default ODD's
-    # junction by tier4/taxonomy's junction_type (probe junction_type).
-    "openodd-py>=0.47.0",
+    # junction by tier4/taxonomy's junction_type (probe junction_type);
+    # 0.47.1's default ODD follows tier4/taxonomy's devel after v0.3.0
+    # (road_surface_condition's `gravel` is `gravel_covered`).
+    "openodd-py>=0.47.1",
     # `authoring/wheelhouse.py` reads a scenario package's `requires-python`
     # to choose the interpreters its wheelhouse is built for.
     "packaging>=23.0",
