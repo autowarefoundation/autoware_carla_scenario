@@ -1234,6 +1234,60 @@ def test_a_retry_over_a_given_stem_starts_from_a_clean_slate(
     assert neighbour[0].read_text() == "other case\n"
 
 
+class _StemLauncher:
+    """An Autoware launcher recording the stems use_log_stem() is given."""
+
+    def __init__(self) -> None:
+        self.stems: list[str | None] = []
+
+    def use_log_stem(self, stem: str | None) -> None:
+        self.stems.append(stem)
+
+
+@pytest.mark.parametrize("by_stem", [True, False])
+def test_a_batch_queue_names_each_stack_log_after_its_case_stem(
+    tmp_path: Path, by_stem: bool
+) -> None:
+    """#2247: with stack_logs_by_stem (a batch's queue, a SLURM task's) the
+    launcher is told each case's stem before it runs -- once per case, its
+    retries included -- and None for a case without one; without it, never
+    (a single run names its log as before)."""
+    launcher = _StemLauncher()
+    queue = ScenarioQueue(
+        server=MagicMock(),
+        output_dir=tmp_path,
+        cooldown_max_retries=1,
+        autoware_launcher=launcher,  # type: ignore[arg-type]
+        stack_logs_by_stem=by_stem,
+    )
+    queue._runner = _FirstAttemptFailsMidRun(tmp_path)  # type: ignore[assignment]
+    queue.add(_NullScenario(_make_ego_config()), file_stem="_NullScenario-3")
+    queue.add(_NullScenario(_make_ego_config()))
+
+    results = queue.run_all(release=True, continue_on_error=True)
+
+    assert [r.passed for r in results] == [True, True]
+    assert launcher.stems == (["_NullScenario-3", None] if by_stem else [])
+
+
+def test_a_launcher_without_use_log_stem_runs_in_a_batch_queue(
+    tmp_path: Path,
+) -> None:
+    """use_log_stem() is not part of the AutowareLauncher protocol: a
+    launcher of one's own without it names its logs as it does."""
+    queue = ScenarioQueue(
+        server=MagicMock(),
+        output_dir=tmp_path,
+        cooldown_max_retries=1,
+        autoware_launcher=_RecordingLauncher([]),  # type: ignore[arg-type]
+        stack_logs_by_stem=True,
+    )
+    queue._runner = _FirstAttemptFailsMidRun(tmp_path)  # type: ignore[assignment]
+    queue.add(_NullScenario(_make_ego_config()), file_stem="_NullScenario-3")
+    (result,) = queue.run_all(release=True, continue_on_error=True)
+    assert result.passed
+
+
 def test_a_retry_waits_for_the_failed_attempts_recording_first(
     tmp_path: Path,
 ) -> None:

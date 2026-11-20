@@ -15,9 +15,11 @@ import logging
 import sys
 import time
 
+from .collect import stale_reason
 from .manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
+    CaseOutcome,
     Manifest,
     SubmissionRecord,
     TaskStatus,
@@ -168,21 +170,34 @@ def print_status(layout: BatchLayout) -> int:
     manifest = layout.read_manifest()
     cases = manifest.cases()
     done = passed = errored = 0
+    stale: list[str] = []
     for case in cases:
         record = layout.read_result(case.index())
         if record is None:
             continue
+        # Typed through a local: Codon 0.19 keeps the Optional otherwise.
+        outcome: CaseOutcome = record
+        if stale_reason(layout, case.index(), outcome) is not None:
+            # Not the case's current outcome (#2247): counted as without one.
+            stale.append(case.label())
+            continue
         done += 1
-        verdict = recorded_verdict(record)
+        verdict = recorded_verdict(outcome)
         if verdict is not None and verdict:
             passed += 1
-        if record.errored:
+        if outcome.errored:
             errored += 1
     print(f"Batch {layout.batch_dir}: {len(cases)} case(s)")  # noqa: T201
     print(  # noqa: T201
         f"  {done} with a result ({passed} passed, {errored} errored), "
         f"{len(cases) - done} without"
     )
+    if stale:
+        print(  # noqa: T201
+            f"  {len(stale)} of those without have a stale result, an earlier "
+            "submission's (the one that was to run them again stopped before "
+            f"it reached them; resubmit runs them): {', '.join(stale)}"
+        )
     for index in layout.submissions():
         submission = layout.submission_record(index)
         if submission is None:

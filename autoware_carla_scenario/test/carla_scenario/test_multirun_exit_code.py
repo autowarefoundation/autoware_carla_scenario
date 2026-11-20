@@ -900,7 +900,7 @@ def test_lanelet_sweeper_runs_with_a_valid_or_null_job_timeout(
 
 @pytest.mark.parametrize(
     ("value", "expected"),
-    [(None, 120), (0, 0), (30, 30), (30.0, 30), ("45", 45), (2**31 - 1, 2**31 - 1)],
+    [(None, 120), (0, 0), (30, 30), (30.0, 30), (2**31 - 1, 2**31 - 1)],
 )
 def test_job_timeout_seconds_reads_a_whole_number_or_the_default(
     value: Any, expected: int
@@ -919,6 +919,8 @@ def test_job_timeout_seconds_reads_a_whole_number_or_the_default(
     [
         *(0.5, 90.5, -1, -0.5, float("nan"), float("inf"), True, "abc", [1], 2**31),
         1e10,
+        # Text is refused, not cast, as sweep.resume_from's is (#2247).
+        *("45", "900", " 90 ", "1e2", ""),
         pytest.param(10**400, id="huge"),  # too big for a float (#1652)
     ],
 )
@@ -929,8 +931,10 @@ def test_job_timeout_seconds_refuses_what_is_not_a_whole_number_of_seconds(
         _job_timeout_seconds,
     )
 
-    with pytest.raises(ValueError, match="job_timeout_seconds must be a whole"):
+    with pytest.raises(ValueError, match="job_timeout_seconds must be a whole") as err:
         _job_timeout_seconds(value)
+    if isinstance(value, str):
+        assert repr(value) in str(err.value)
 
 
 def test_lanelet_sweeper_runs_a_sweep_whose_config_values_are_valid(

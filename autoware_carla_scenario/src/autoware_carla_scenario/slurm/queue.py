@@ -53,8 +53,16 @@ ACTIVE_STATES = frozenset(
         "SIGNALING",
         "STAGE_OUT",
         "STOPPED",
+        # Held, to run again (#2247): requeued with an exit code in
+        # RequeueExit/RequeueExitHold, and held when its reservation went.
+        "SPECIAL_EXIT",
+        "RESV_DEL_HOLD",
     }
 )
+# squeue's other states (man squeue, JOB STATE CODES) are a task SLURM is
+# done with: BOOT_FAIL, CANCELLED, COMPLETED, DEADLINE, FAILED, NODE_FAIL,
+# OUT_OF_MEMORY, PREEMPTED (requeued, a preempted task is REQUEUED), REVOKED
+# (a federated sibling the job ran elsewhere than) and TIMEOUT.
 
 #: After a Ctrl-C's ``scancel``, how long ``submit.follow`` waits for the tasks
 #: to leave the queue (stopping their CARLAs, recording their state) before it
@@ -123,12 +131,38 @@ def _run_sbatch(command: list[str]) -> str:
             f"sbatch failed ({completed.returncode}): "
             f"{(completed.stderr or completed.stdout).strip()}"
         )
+    return _parsable_job_id(completed.stdout)
+
+
+def _parsable_job_id(output: str) -> str:
+    """The job id ``sbatch --parsable`` printed in *output*.
+
+    Raises:
+        RuntimeError: It printed no job id, or one on another cluster
+            (``<job id>;<cluster>``).
+    """
     # --parsable: "<job id>" or "<job id>;<cluster>".  Nothing printed is no
     # job id, not an IndexError past callers catching RuntimeError (#1630).
-    lines = completed.stdout.strip().splitlines()
-    job = lines[-1].split(";")[0].strip() if lines else ""
+    lines = output.strip().splitlines()
+    last = lines[-1] if lines else ""
+    job, _, cluster = last.partition(";")
+    job = job.strip()
+    cluster = cluster.strip()
     if not job:
-        raise RuntimeError(f"sbatch printed no job id: {completed.stdout!r}")
+        raise RuntimeError(f"sbatch printed no job id: {output!r}")
+    if cluster:
+        # extra_sbatch_args refuses --clusters/-M, but SBATCH_CLUSTERS in the
+        # environment (or a site's defaults) can still send the job to
+        # another cluster, which squeue, scancel and the collect job's
+        # dependency do not ask: following it would collect at once and
+        # resubmitting it would run its cases twice (#2247).
+        raise RuntimeError(
+            f"sbatch submitted job {job} to cluster {cluster!r} (--clusters, "
+            "SBATCH_CLUSTERS), which launcher=slurm does not support: it asks "
+            "the default cluster about its jobs. Cancel it "
+            f"(scancel -M {cluster} {job}) and submit from a host of the "
+            "cluster the batch is to run on, without SBATCH_CLUSTERS"
+        )
     return job
 
 

@@ -145,7 +145,9 @@ What happens:
     it, with the bridge's address and `autoware.launcher.bridge_parameters` --
     and `exec ros2 launch <autoware.launcher.launch>`. The stack's output,
     the node's included, goes to `autoware-<n>-<scenario>.log` in the run's
-    output directory.
+    output directory (`<n>` counting the stacks the run started from 0); in a
+    batch and a SLURM task, to `autoware-<stem>.log`, after the file stem of
+    the case it ran for, kept (and appended to) when the case is run again.
 3. **While the stack starts** (until `scenario_bridge` first reaches the
     bridge), the world ticks at about real time and the wait is measured in
     wall-clock seconds, `autoware.boot_timeout_s`. Reaching the bridge means
@@ -368,8 +370,9 @@ uv run scenario --multirun hydra/sweeper=lanelet_constraint \
 
 `sweep.job_timeout_seconds` (120 s by default, and when `null`; `+` adds it
 to a sweep YAML that does not set it; 0 for no timeout) is a whole job's
-budget, in whole seconds -- a fraction, a negative value, NaN, infinity or a
-value above 2147483647 (what `signal.alarm` takes) is refused, with exit
+budget, in whole seconds -- a fraction, a negative value, NaN, infinity, a
+value above 2147483647 (what `signal.alarm` takes) or text (`'900'`) is
+refused, with exit
 status 2, before any job starts --
 starting Autoware, localizing, routing, engaging and the scenario itself --
 so raise it: launching Autoware alone can take most of two minutes. A job the

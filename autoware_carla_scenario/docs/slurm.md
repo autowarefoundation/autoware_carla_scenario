@@ -82,7 +82,11 @@ Each task, on its node:
 3. builds them (not checked again: the submitting process did), starts a
    CARLA on its ports and runs its cases one after another through the same
    queue a local batch uses, writing their files into the batch's directory
-   under the names a local batch gives them. What a local batch decides once
+   under the names a local batch gives them -- each Autoware stack's log
+   named after its case's stem (`autoware-<stem>.log`), as a local batch
+   names it, and a containerised backend's log after the task
+   (`backend_<name>-<array job id>_<task>.log`), so tasks never append to
+   one file (#2247). What a local batch decides once
    for all its cases, every task decides the same, however the cases are
    split into tasks (`cases_per_task`): the queue's settings (server, traffic,
    `t4`, `t4scene`, world reset, backends) are the batch's first case's,
@@ -162,8 +166,13 @@ always is readable; `rerun_recording` and `failure` may be missing. It did not
 pass, and `collect` reports it as `ERROR` naming its file; a `rerun_error` the
 task recorded for it is kept in `batch_results.json`. `status`, `wait` and the
 viewer count it as not passed: the results pages show it as an error.
-`resubmit` submits again the cases with no outcome or no verdict and those
-that raised on every attempt (`ERROR`); `--failed` adds the ones that ran and
+An outcome is stale when the last submission that gave the case was to run
+it again and its task stopped (`failed` or `cancelled`) before it reached the
+case: the task removes a case's outcome only right before it runs the case,
+so the one there names an earlier submission. `collect` reports it as `ERROR`
+saying so, and `status` and the viewer count it as without a result (#2247).
+`resubmit` submits again the cases with no outcome, no verdict or a stale
+one and those that raised on every attempt (`ERROR`); `--failed` adds the ones that ran and
 failed, `--cases a,b` names them (labels or indices; a case named twice runs
 once), and `--array-parallelism`/`--cases-per-task` change how they are
 spread. A case run again replaces its earlier files: before it runs, the task
@@ -234,7 +243,7 @@ command line (`launcher.mem=12G`), or in a config.
 | `array_parallelism` | `null` | at most this many tasks at once (`--array=...%K`); `null`: no cap |
 | `cases_per_task` | `null` | cases a task runs on its CARLA; `null`: the cases spread evenly over `array_parallelism` tasks (one case a task without a cap), in no more tasks than the cluster's `MaxArraySize` ([Array size](#array-size)) |
 | `job_name` | `null` | `acs-<date>-<time>` of the output directory |
-| `extra_sbatch_args` | `[]` | further `sbatch` arguments |
+| `extra_sbatch_args` | `[]` | further `sbatch` arguments; `--clusters`/`--cluster`/`-M` is refused (see below) |
 | `export` | `null` | `sbatch --export`; `null`: `ALL`, or `NONE` with `remote_cwd` |
 | `env_passthrough` | `null` | variables recorded at submission and set again in the job (a matched name no shell takes, such as an exported bash function, is left out); `null`: see below, or none with `remote_cwd` |
 | `setup` | `[]` | shell lines the job runs before the worker (`module load`, `source .venv/bin/activate`); each is one command, and one ending in an unescaped backslash is refused |
@@ -270,6 +279,13 @@ as something else:
   string) of non-blank text, without a null or blank item; `env` is a mapping
   (or null, no variables) whose values are text or a number, not null or a
   boolean (quote one: `FLAG: "true"`).
+- `extra_sbatch_args` may not send the batch to another cluster
+  (`--clusters`, `--cluster`, `-M`, in any spelling: `--clusters=x`, `-Mx`):
+  `squeue`, `scancel` and the collect job's dependency ask the default
+  cluster, so following, `resubmit`'s check that the batch is not running,
+  and `cancel` would miss it. Should `sbatch` report a cluster all the same
+  (`SBATCH_CLUSTERS` in the environment), the submission fails, naming the
+  job to `scancel -M` (#2247).
 - `0`, `false` or `[]` is a value, checked as any other, never read as
   unset; `launcher.type` is `local` only when it is missing or null (`""`,
   `false` or `0` is refused).

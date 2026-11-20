@@ -28,7 +28,9 @@ from ..failure import Failure, FailureCategory
 from .manifest import (
     SBATCH_IN_FLIGHT_SECONDS,
     BatchLayout,
+    CaseOutcome,
     SubmissionRecord,
+    _value_json,
     no_job_note,
     recorded_verdict,
     resubmit_target,
@@ -43,6 +45,7 @@ __all__ = [
     "collect",
     "missing_cases",
     "recorded_verdict",
+    "stale_reason",
     "unfinished_cases",
 ]
 
@@ -52,12 +55,6 @@ class _Status:
     label: str
     satisfied: bool
     message: str
-
-
-def _value_json(members: JsonMembers, key: str) -> str:
-    """The JSON text of the value of the member *key* of *members*, ``null``
-    when there is none: what ``dict.get(key)`` gave of the object."""
-    return members.value_text(key) if members.has(key) else "null"
 
 
 class RecordedResult(_Result):
@@ -150,6 +147,84 @@ def _last_submission_of(
 #: cases (``slurm/worker.py``): it may still be running them -- or have been
 #: killed (out of time, out of memory) before it could say otherwise.
 _UNFINISHED_TASK_STATES = frozenset({"starting", "waiting", "building", "running"})
+
+#: The states a task's status records when it stopped before finishing its
+#: cases (``slurm/worker.py``): the cases it had not reached never ran.
+_STOPPED_TASK_STATES = frozenset({"failed", "cancelled"})
+
+
+def stale_reason(layout: BatchLayout, case: int, record: CaseOutcome) -> str | None:
+    """Why *record*, the outcome *case* has, is not its current one, if it
+    is not (#2247).
+
+    The last submission that gave the case runs it again, and its task
+    removes the outcome only right before it runs the case: a task that
+    failed or was cancelled before reaching it leaves an earlier
+    submission's outcome there, which is then stale -- the case was asked to
+    run again and did not.  Only a record naming an earlier submission of
+    the batch (as the worker's ``submission``) is: one naming the last is its
+    outcome, and one naming none (a hand's, another version's) is not known
+    to predate it; while the task is queued or running, or has no status,
+    the record is the latest there is."""
+    # What the record names first, from the listing alone: a record naming
+    # no submission, or the batch's latest, reads no submission record.
+    submissions = layout.submissions()
+    named = -1
+    for other in submissions:
+        if record.names_submission(other):
+            named = other
+            break
+    if named < 0 or named == submissions[-1]:
+        return None
+    # The last submission after the one named that gave the case, if any:
+    # only the records of those later submissions are read, not every
+    # earlier one's (a large batch's first holds all its cases), as
+    # _last_submission_of would for every case a resubmission left alone.
+    for index in reversed(submissions):
+        if index <= named:
+            break
+        read = layout.submission_record(index)
+        if read is None:
+            continue
+        # Typed through a local: Codon 0.19 keeps the Optional otherwise.
+        submission: SubmissionRecord = read
+        gave = submission.task_of(case)
+        if gave is not None:
+            task: int = gave
+            return _stopped_before(layout, index, task, submission)
+    return None
+
+
+def _stopped_before(
+    layout: BatchLayout, index: int, task: int, submission: SubmissionRecord
+) -> str | None:
+    """Why a case's earlier outcome is stale, given task *task* of
+    submission *index* was to run the case again: if that task stopped
+    (:data:`_STOPPED_TASK_STATES`) before it reached the case."""
+    status = layout.read_task(index, task)
+    if status is None or not status.state_in(_STOPPED_TASK_STATES):
+        return None
+    who = (
+        f"task {task} of job {submission.job_text()}"
+        if submission.has_job
+        else f"task {task} of submission {index}"
+    )
+    detail = f"{who} {status.state_text('?')} before it reached the case"
+    error = status.error
+    if error is not None:
+        detail += f" ({error})"
+    return (
+        f"submission {index} was to run the case again, but {detail}: this "
+        "outcome is an earlier submission's"
+    )
+
+
+def _stale_message(reason: str, target: str) -> str:
+    return (
+        f"Stale result: {reason}. "
+        f"Run the case again with: scenario-slurm resubmit {target}"
+    )
+
 
 #: What a missing case's message advises (#1803), in the order of
 #: ``cli._busy``'s reasons a resubmit is refused: its task may still be queued
@@ -401,19 +476,24 @@ def missing_cases(layout: BatchLayout) -> list[int]:
 
 def unfinished_cases(layout: BatchLayout, *, failed: bool = False) -> list[int]:
     """The cases to run again: without an outcome, with one that holds no
-    verdict, or one that raised on every attempt (``ERROR``); with *failed*,
-    also those that ran and failed."""
+    verdict, one that raised on every attempt (``ERROR``) or a stale one
+    (:func:`stale_reason`); with *failed*, also those that ran and failed."""
     manifest = layout.read_manifest()
     chosen: list[int] = []
     for case in manifest.cases():
         index = case.index()
         record = layout.read_result(index)
-        verdict = recorded_verdict(record)
+        if record is None:
+            chosen.append(index)
+            continue
+        # Typed through a local: Codon 0.19 keeps the Optional otherwise.
+        outcome: CaseOutcome = record
+        verdict = recorded_verdict(outcome)
         if (
-            record is None
-            or verdict is None
-            or record.errored
+            verdict is None
+            or outcome.errored
             or (failed and not verdict)
+            or stale_reason(layout, index, outcome) is not None
         ):
             chosen.append(index)
     return chosen
@@ -440,6 +520,9 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
     # The cases whose outcome holds no verdict or cannot be reported (#1718,
     # #1726): ERROR, as if missing.
     unreadable: list[int] = []
+    # The cases whose outcome an earlier submission recorded, which the last
+    # one to give them did not reach (#2247): ERROR, as if missing.
+    stale: list[int] = []
     # The cases whose Rerun recording the task failed to make (rerun.enabled).
     rerun_errors: dict[int, str] = {}
     for position, case in enumerate(manifest.cases()):
@@ -453,6 +536,12 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
             if about is not None:
                 about_kind.add(about)
             results.append(_error_result(message))
+            continue
+        outcome: CaseOutcome = record
+        reason = stale_reason(layout, index, outcome)
+        if reason is not None:
+            stale.append(position)
+            results.append(_error_result(_stale_message(reason, target)))
             continue
         # Reported whatever the result holds: the task recorded why (#1726).
         rerun_error = record.rerun_error
@@ -480,7 +569,7 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         results,
         output_dir=Path(layout.batch_dir),
         overrides=overrides,
-        errored=sorted(set(errored) | set(missing) | set(unreadable)),
+        errored=sorted(set(errored) | set(missing) | set(unreadable) | set(stale)),
         rerun_errors=rerun_errors,
         stems=stems,
     )
@@ -488,6 +577,13 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
         print(  # noqa: T201
             f"{len(unreadable)} case(s) have a result with no verdict: "
             + ", ".join(labels[i] for i in unreadable)
+            + f"\nRun them again with: scenario-slurm resubmit {target}"
+        )
+    if stale and not quiet_hint:
+        print(  # noqa: T201
+            f"{len(stale)} case(s) have a stale result (the submission that "
+            "was to run them again stopped before it reached them): "
+            + ", ".join(labels[i] for i in stale)
             + f"\nRun them again with: scenario-slurm resubmit {target}"
         )
     if missing and not quiet_hint:
@@ -506,7 +602,7 @@ def collect(layout: BatchLayout, *, quiet_hint: bool = False) -> int:
     collected.set_text(
         "errored",
         json.dumps(
-            [labels[i] for i in sorted(set(errored) | set(unreadable))],
+            [labels[i] for i in sorted(set(errored) | set(unreadable) | set(stale))],
             ensure_ascii=False,
         ),
     )
