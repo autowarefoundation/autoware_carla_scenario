@@ -153,9 +153,12 @@ class ScenarioResult:
     def to_json(self, **kwargs: Any) -> str:
         """Serialise to a JSON string.
 
-        Strict JSON: ``allow_nan`` defaults to ``False``, so a value that is
-        not finite raises :class:`ValueError` rather than be written as
-        ``NaN`` or ``Infinity``, which strict parsers refuse.
+        Strict JSON: ``allow_nan`` defaults to ``False``, and a float that is
+        not finite anywhere in the result (a condition's details, the
+        failure) is written as ``null`` rather than as ``NaN`` or
+        ``Infinity``, which strict parsers (jq, ``JSON.parse``) refuse.  The
+        result of a run is never lost to one: writing it does not raise.
+        ``allow_nan=True`` writes them as they are.
 
         Args:
             **kwargs: Forwarded to :func:`json.dumps`
@@ -166,11 +169,26 @@ class ScenarioResult:
         # Codon cannot express (json itself has a Codon shim).
         import json  # noqa: PLC0415
 
+        import math  # noqa: PLC0415
+
+        def finite(value: Any) -> Any:
+            # Any float that is not finite, at any depth, as null: a TTC or a
+            # headway of inf in a condition's details would otherwise make
+            # strict JSON raise at the end of a run and lose its result.
+            if isinstance(value, float):
+                return value if math.isfinite(value) else None
+            if isinstance(value, dict):
+                return {key: finite(item) for key, item in value.items()}
+            if isinstance(value, (list, tuple)):
+                return [finite(item) for item in value]
+            return value
+
         kwargs.setdefault("ensure_ascii", False)
-        # Strict JSON (jq, JSON.parse): a NaN or an infinity among the
-        # details raises here rather than be written as NaN or Infinity.
         kwargs.setdefault("allow_nan", False)
-        return json.dumps(self.to_dict(), **kwargs)
+        data = self.to_dict()
+        if not kwargs["allow_nan"]:
+            data = finite(data)
+        return json.dumps(data, **kwargs)
 
 
 class BaseCondition(ABC):

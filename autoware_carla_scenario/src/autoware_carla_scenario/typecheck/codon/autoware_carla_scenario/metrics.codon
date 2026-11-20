@@ -204,7 +204,7 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         title="Weaving (reversals)",
         unit="count",
         text="How many times so far the ego's drift across its lane turned "
-        "back by more than 0.1 m; a lane change is a drift, not a reversal",
+        "back by 0.1 m or more; a lane change is a drift, not a reversal",
         aggregation="last",
     ),
     LATERAL_WOBBLE_M: Metric(
@@ -222,7 +222,7 @@ BUILT_IN_METRICS: Dict[str, Metric] = {
         title="Steering reversals",
         unit="count",
         text="How many times so far the steering applied to the ego "
-        "turned back by more than 0.05 of full lock",
+        "turned back by 0.05 of full lock or more",
         aggregation="last",
     ),
     TURN_INDICATOR_CHANGES: Metric(

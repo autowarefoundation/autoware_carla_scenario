@@ -1770,19 +1770,57 @@ def test_a_worst_value_that_is_not_finite_is_written_as_null(
     assert parsed["condition_statuses"][0]["details"]["worst"] is None
 
 
-def test_a_result_that_is_not_strict_json_is_refused() -> None:
+def test_a_result_with_non_finite_values_is_written_as_strict_json() -> None:
+    """Writing a run's result never raises on an inf or a NaN, at any depth:
+    each is null, as strict JSON has none."""
+    import json
+
     from autoware_carla_scenario.conditions.base import ConditionStatus
+    from autoware_carla_scenario.failure import Failure, FailureCategory
 
     result = ScenarioResult(
         passed=False,
         message="",
         elapsed_seconds=0.1,
         condition_statuses=[
-            ConditionStatus("fail[0](x)", True, "", details={"gap": math.nan})
+            ConditionStatus(
+                "fail[0](x)",
+                True,
+                "",
+                details={
+                    "gap": math.nan,
+                    "ttc": math.inf,
+                    "nested": {
+                        "low": -math.inf,
+                        "series": [1.0, math.inf, (math.nan,)],
+                    },
+                    "ok": 2.5,
+                    "count": 3,
+                    "flag": True,
+                },
+            )
         ],
+        failure=Failure("fail[0](x)", FailureCategory.SAFETY_MARGIN, math.nan, ""),
     )
-    with pytest.raises(ValueError, match="JSON compliant"):
-        result.to_json()
+
+    def refuse(constant: str) -> Any:
+        raise ValueError(constant)
+
+    parsed = json.loads(result.to_json(), parse_constant=refuse)
+    details = parsed["condition_statuses"][0]["details"]
+    assert details == {
+        "gap": None,
+        "ttc": None,
+        "nested": {"low": None, "series": [1.0, None, [None]]},
+        "ok": 2.5,
+        "count": 3,
+        "flag": True,
+    }
+    assert parsed["failure"]["at"] is None
+    # The result itself is left as it is.
+    assert math.isinf(result.condition_statuses[0].details["ttc"])
+    # Asked for, the non-finite values are written as they are.
+    assert "Infinity" in result.to_json(allow_nan=True)
 
 
 class _BrokenRoad(_Road):
@@ -1933,3 +1971,22 @@ def test_the_world_metrics_are_read_on_the_map_given(another_map_held: Any) -> N
         on_two[MIN_DISTANCE_TO_LANE_BOUNDARY_M].values
         != on_one[MIN_DISTANCE_TO_LANE_BOUNDARY_M].values
     )
+
+
+def test_a_replay_that_fails_leaves_the_module_as_it_found_it() -> None:
+    """The ego's motion and the weight are put back, and the replay's world
+    and map let go, however the replay ends."""
+    from autoware_carla_scenario.metric_batch import MetricEvaluationError
+
+    motion = metrics._MOTION[0]
+    metrics.set_importance_sampling_weight(0.25)
+    try:
+        broken = _BrokenRoad(_TWO_WAY.lanes, from_x=-math.inf)
+        with pytest.raises(MetricEvaluationError):
+            evaluate_metrics(_frames_along([0.0, 1.0]), broken, [OFFROAD])
+        assert metrics._MOTION[0] is motion
+        assert metrics._RUN["weight"] == 0.25
+        assert metrics._CACHE.world is None
+        assert metrics._CACHE.carla_map is None
+    finally:
+        metrics.set_importance_sampling_weight(None)

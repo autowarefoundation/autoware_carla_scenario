@@ -196,9 +196,9 @@ def _replay(
     first_error: dict[str, str] = {}
     held_motion = _metrics._MOTION[0]  # noqa: SLF001
     held_weight = _metrics._RUN["weight"]  # noqa: SLF001
-    _metrics._MOTION[0] = _metrics._Motion()  # noqa: SLF001
-    _metrics._use_map(world, carla_map)  # type: ignore[arg-type]  # noqa: SLF001
     try:
+        _metrics._MOTION[0] = _metrics._Motion()  # noqa: SLF001
+        _metrics._use_map(world, carla_map)  # type: ignore[arg-type]  # noqa: SLF001
         for frame in frames:
             world.show(frame)
             set_importance_sampling_weight(frame.weight)
@@ -222,6 +222,9 @@ def _replay(
     finally:
         _metrics._MOTION[0] = held_motion  # noqa: SLF001
         _metrics._RUN["weight"] = held_weight  # noqa: SLF001
+        # Nor is the replay's world and map kept: a live world read next
+        # reads its own (and the recorded frames are let go).
+        _metrics._hold(None)  # type: ignore[arg-type]  # noqa: SLF001
     # A metric that raised in every frame read nothing at all: a fail
     # condition on it would pass the run without having judged it.
     always = [key for key in keys if frames and failed.get(key, 0) == len(frames)]

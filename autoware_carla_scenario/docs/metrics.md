@@ -491,7 +491,8 @@ failure records the condition, when and what it found. Every metric
 condition's status in the result says what it found: `ng_seconds`, when it
 first went NG (`first_ng_at`) and its most critical value (`worst`; `null`
 when it is not finite, a CriMe BTN of infinity say: the result files are
-strict JSON, and writing one fails rather than write `NaN` or `Infinity`). In the
+strict JSON, which has no `NaN` or `Infinity`, and any value of a result that
+is not finite is written as `null`). In the
 [Scenario Editor](scenario_editor.md) it is the **Metric** card, under World,
 with its **Max NG seconds**.
 
@@ -527,7 +528,9 @@ into its Rerun recording ([Metrics in the recording](usage.md#metrics-in-the-rec
 
 To read an AlpaSim metric off a live world yourself -- in a probe, a test --
 `read_metric(key, world)` returns its value in the frame, or `None`; a
-CommonRoad metric reads nothing there. `evaluate_metrics(frames, carla_map,
+CommonRoad metric reads nothing there, nor do the ones that read the run so
+far ([Weaving](#weaving), and `importance_sampling_weight`), which only the
+replay of the recorded frames gathers. `evaluate_metrics(frames, carla_map,
 keys)` computes any of them over recorded frames, on `carla_map`, whichever
 map the run's `MapManager` holds.
 
