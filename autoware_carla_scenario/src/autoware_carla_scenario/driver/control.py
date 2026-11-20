@@ -450,7 +450,9 @@ class ControlConfig:
         """Return gains built from a plain mapping (e.g. a Hydra node).
 
         Every ``*_rad`` field is also accepted as ``*_deg`` (``max_steer_angle_deg``,
-        ``yaw_rate_trim_limit_deg``), since degrees read better in YAML.  A
+        ``yaw_rate_trim_limit_deg``), since degrees read better in YAML; one
+        angle given both ways is refused, as neither may silently win.  A
+        null value is the field's default, as an absent key is.  A
         ``time_indexed`` field set away from its default for the ``pid`` controller,
         which does not read it, is warned about.
 
@@ -487,14 +489,25 @@ class ControlConfig:
             for name in known
             if name.endswith("_rad")
         }
-        values = dict(mapping)
+        # A null setting is its default, as an absent one: Hydra cannot
+        # leave a key out of a config group's node, only set it to null
+        # (#2241).
+        values = {key: value for key, value in mapping.items() if value is not None}
         # The key each value was given under, and the degrees an alias gave,
         # for the errors: they show what the mapping held.
         keys = {name: name for name in known}
         given: dict[str, Any] = {}
-        for alias, name in aliases.items():
+        for alias, name in sorted(aliases.items()):
             degrees = values.pop(alias, None)
             if degrees is not None:
+                if name in values:
+                    # Either would win silently over the other, and Hydra
+                    # cannot tell a config group's default from an override.
+                    raise ValueError(
+                        f"{alias} and {name} set the same angle, in degrees "
+                        f"and in radians; set one of them to null, got "
+                        f"{shown(degrees)} and {shown(values[name])}"
+                    )
                 values[name] = math.radians(_config_number(alias, degrees))
                 keys[name] = alias
                 given[name] = degrees

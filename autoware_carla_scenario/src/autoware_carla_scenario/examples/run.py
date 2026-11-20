@@ -3368,7 +3368,9 @@ def _control_config(section: Mapping[str, Any], name: str) -> "ControlConfig":
     the key it refuses, not the section it is read from, as
     :class:`~autoware_carla_scenario.AutowareBridgeConfig` does: its error is
     headed with ``<name>.control.`` here (``driver.control.kp must be a
-    number, got '0.5'``).
+    number, got '0.5'``). An angle set both in degrees and in radians
+    (``max_steer_angle_deg`` and ``max_steer_angle_rad``) is refused naming
+    both keys in full.
 
     Raises:
         ValueError: naming ``<name>.control.<key>``.
@@ -3382,6 +3384,21 @@ def _control_config(section: Mapping[str, Any], name: str) -> "ControlConfig":
     if not isinstance(control, Mapping):
         # from_mapping's errors start with a key; this one is the section's.
         raise ValueError(f"{name}.control must be a mapping, got {shown(control)}")
+    # One angle set both in degrees and in radians: from_mapping refuses it
+    # naming the keys within the section; the run names both in full.
+    # conf/driver/default.yaml leaves both null, so either can be overridden.
+    angles = {f.name for f in dataclasses.fields(ControlConfig)}
+    for key in sorted(str(key) for key in control):
+        radians = key[: -len("_deg")] + "_rad"
+        if not key.endswith("_deg") or radians not in angles:
+            continue
+        if control.get(key) is not None and control.get(radians) is not None:
+            raise ValueError(
+                f"{name}.control.{key} and {name}.control.{radians} set the "
+                f"same angle, in degrees and in radians; set one of them to "
+                f"null, got {shown(control.get(key))} and "
+                f"{shown(control.get(radians))}"
+            )
     try:
         return ControlConfig.from_mapping(control)
     except ValueError as exc:

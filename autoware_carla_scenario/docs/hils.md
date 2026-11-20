@@ -257,7 +257,12 @@ its `intensity_scale` are finite.
 
 A device is one hilspy channel: `url` (the transport), `codec` (`raw` when
 omitted) and `options` (codec options), exactly what `hilspy.open(url, codec,
-**options)` takes. It has `messages` (periodic messages filled from the ego's
+**options)` takes. The `url` is non-blank text, and the `codec` a name
+(`raw`, `nmea`, ...) or a name and its argument (`dbc:vehicle.dbc`,
+`lidar:vlp16`): an empty or blank `url`, an empty `codec` and a `dbc:` with
+nothing after the colon are refused when the file loads, naming the key and
+the value (`devices.vehicle_can.codec: expected an argument after the colon
+..., got 'dbc:'`), not passed on to hilspy. It has `messages` (periodic messages filled from the ego's
 signals, sent while a scenario runs) and `inputs` (messages the ECU sends that
 carry its command), **or** a `sensor` (a CARLA sensor on the ego whose
 measurements it is sent). A device with neither still serves the lifecycle
