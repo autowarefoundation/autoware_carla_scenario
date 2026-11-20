@@ -44,6 +44,7 @@ from autoware_lanelet2_extension_python.projection import MGRSProjector as _  # 
 import lanelet2.core
 import lanelet2.geometry
 
+from ..kinematics.angle import normalize_angle_rad
 from ..lanelet_junction import TURN_DIRECTION_TAG, is_junction_lanelet
 from ..trajectory.relative_lane import (
     _arc,
@@ -130,9 +131,7 @@ def approach_of(entry_heading: float, other_heading: float) -> str:
     :data:`APPROACH_OPPOSITE_MIN_DEG` the opposite one.  Traffic from the
     ego's left drives towards its right, a heading clockwise of the ego's.
     """
-    delta = math.degrees(
-        (other_heading - entry_heading + math.pi) % (2.0 * math.pi) - math.pi
-    )
+    delta = math.degrees(normalize_angle_rad(other_heading - entry_heading))
     if abs(delta) <= APPROACH_SAME_MAX_DEG:
         return "same"
     if abs(delta) >= APPROACH_OPPOSITE_MIN_DEG:

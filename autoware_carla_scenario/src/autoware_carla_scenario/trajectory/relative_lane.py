@@ -28,6 +28,8 @@ import lanelet2.core
 import lanelet2.geometry
 
 from ..coordinate.poses import CarlaWorldPose, Lanelet2Pose
+from ..coordinate.stacked import choose_lanelet, height_at
+from ..kinematics.angle import normalize_angle_rad
 from .model import RelativeLanePose
 
 if TYPE_CHECKING:
@@ -104,7 +106,7 @@ def _end_heading(lanelet: Union[ConstLanelet, Lanelet]) -> float:
 
 def _turn(a: float, b: float) -> float:
     """The absolute angle (rad) between headings *a* and *b*."""
-    return abs((b - a + math.pi) % (2.0 * math.pi) - math.pi)
+    return abs(normalize_angle_rad(b - a))
 
 
 def _arc(
@@ -140,9 +142,12 @@ def reference_lane_pose(
             ``None`` ignores elevation.
 
     Of the lanelets it is on -- several where lanelets overlap in a junction,
-    or meet at a seam -- the one whose direction is nearest its heading wins,
-    then the one nearest its elevation, then the lowest id.  ``s`` is exact
-    along the centreline (not snapped to a vertex).
+    meet at a seam, or are stacked over one another -- the elevation picks
+    the level, then the one whose direction is nearest its heading wins, then
+    the one nearest its elevation, then the lowest id: the rule
+    :func:`~autoware_carla_scenario.coordinate.to_lanelet2` follows too
+    (:func:`~autoware_carla_scenario.coordinate.stacked.choose_lanelet`).
+    ``s`` is exact along the centreline (not snapped to a vertex).
 
     Raises:
         ValueError: If the map has no lanelets.
@@ -153,7 +158,9 @@ def reference_lane_pose(
     if not found:
         raise ValueError("the map has no lanelets to place a relative pose on")
     nearest = float(found[0][0])
-    best: Optional[tuple[tuple[float, float, int], Lanelet, float, float]] = None
+    lanelets: list[Lanelet] = []
+    arcs: list[tuple[float, float]] = []
+    ranks: list[tuple[float, float, int]] = []
     for distance, lanelet in found:
         if float(distance) > nearest + _ON_TOLERANCE_M:
             continue
@@ -161,20 +168,21 @@ def reference_lane_pose(
         turn = _turn(heading, _heading_at(_centreline(lanelet), s))
         dz = 0.0
         if z is not None:
-            heights = [float(p.z) for p in lanelet.centerline]
-            dz = abs(sum(heights) / len(heights) - z)
-        key = (turn, dz, int(lanelet.id))
-        if best is None or key < best[0]:
-            best = (key, lanelet, s, t)
-    assert best is not None
-    _key, lanelet, s, t = best
-    points = _centreline(lanelet)
+            # The surface where the entity is, not the lanelet's mean height:
+            # a lanelet on a ramp is metres off its mean at either end.
+            points = [(float(p.x), float(p.y), float(p.z)) for p in lanelet.centerline]
+            dz = abs(height_at(points, s) - z)
+        lanelets.append(lanelet)
+        arcs.append((s, t))
+        ranks.append((dz, turn, int(lanelet.id)))
+    chosen = choose_lanelet(ranks)
+    lanelet = lanelets[chosen]
+    s, t = arcs[chosen]
     return Lanelet2Pose(
         lanelet_id=int(lanelet.id),
         s=s,
         t=t,
-        heading=(heading - _heading_at(points, s) + math.pi) % (2.0 * math.pi)
-        - math.pi,
+        heading=normalize_angle_rad(heading - _heading_at(_centreline(lanelet), s)),
     )
 
 

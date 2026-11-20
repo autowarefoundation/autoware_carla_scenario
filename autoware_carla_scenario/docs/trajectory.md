@@ -192,9 +192,12 @@ the road user is brought in where it was declared, and a prop is not added.
 How a vertex is placed, on the Lanelet2 map and its routing graph:
 
 1. **The reference's lane.** The lanelet the reference entity is on, and the
-   exact distance along its centreline. Where lanelets overlap (a junction) or
-   meet (a seam), the one whose direction is nearest the entity's heading
-   wins, then the one nearest its elevation, then the lowest id.
+   exact distance along its centreline. Where lanelets overlap (a junction),
+   meet (a seam) or are stacked (an overpass and the road beneath it), the
+   entity's elevation picks the level -- the lanelets whose surface where it
+   stands is within 1 m of the nearest one -- then, of those, the one whose
+   direction is nearest the entity's heading wins, then the one nearest its
+   elevation, then the lowest id. `to_lanelet2` chooses by the same rule.
 2. **`ds` along the lane.** Past a lanelet's end the distance carries on into
    the lanelet that follows it in the routing graph; a negative `ds` past its
    start into the one before it. Where several follow (a fork) or precede (a

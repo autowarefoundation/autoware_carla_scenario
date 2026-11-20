@@ -145,14 +145,16 @@ def snap_to_carla_road(
     height is taken from CARLA.  Where the Lanelet2 and CARLA road geometries
     disagree the returned position follows the Lanelet2 map, which is the map
     the pose was written against and the one Autoware plans on; a caller that
-    needs a position validated against the XODR network wants an
-    :class:`OpenDrivePose`, below.
+    needs a position on the XODR network wants an :class:`OpenDrivePose`,
+    below.
 
-    When given an :class:`OpenDrivePose`, the function uses
-    ``carla.Map.get_waypoint_xodr(road_id, lane_id, s)`` to obtain the exact
-    position on the CARLA road surface.  This is the most accurate path
-    because it uses CARLA's own OpenDRIVE projection—no spawn-point z
-    approximation is needed.
+    When given an :class:`OpenDrivePose`, x, y and yaw come from the pose
+    itself -- ``s`` along the road's reference line, ``t`` across it, and
+    ``heading`` from the road's direction (:func:`.transform.to_carla_world`)
+    -- and ``lane_id`` is context only, as :class:`OpenDrivePose` says.  The
+    height comes from CARLA: ``carla.Map.get_waypoint_xodr(road_id, lane_id,
+    s)`` names the road surface at ``s``, whose height starts the ray cast
+    onto the ground, so no spawn-point z approximation is needed.
 
     When given a :class:`CarlaWorldPose`, the function uses the CARLA waypoint
     API to project x/y onto the nearest road.
@@ -293,17 +295,25 @@ def _snap_opendrive_via_waypoint_xodr(
     *,
     ground_projection: GroundProjectionConfig,
 ) -> CarlaWorldPose:
-    """Snap an OpenDRIVE pose using ``carla.Map.get_waypoint_xodr``.
+    """Place an OpenDRIVE pose at its own ``(s, t)`` and heading, at CARLA's height.
 
-    This is the most accurate snap path because CARLA resolves
-    ``(road_id, lane_id, s)`` directly against its internal OpenDRIVE
-    geometry, producing exact x/y/z and yaw on the road surface.
+    x, y and yaw are the pose's own (:func:`.transform.to_carla_world`): ``t``
+    and ``heading`` say where across the road the pose is and which way it
+    faces, and ``lane_id`` is context only (:class:`OpenDrivePose`).  This
+    used to take x, y and yaw from the waypoint ``get_waypoint_xodr(road_id,
+    lane_id, s)`` returns -- the centre of lane ``lane_id``, facing along it --
+    so ``t`` and ``heading`` were dropped (#2221).  The waypoint still gives
+    the height: CARLA resolves the road surface at ``s`` against its own
+    OpenDRIVE geometry, and the ray cast onto the ground starts from it.
     """
     # Here rather than at the top, as below: map_manager imports pyxodr, whose
     # Codon model imports this package's coordinate back (scenario-check --library).
     from .map_manager import run_carla_map  # noqa: PLC0415
 
+    from .transform import to_carla_world  # noqa: PLC0415
+
     carla_map = run_carla_map(world)
+    placed = to_carla_world(pose)
 
     waypoint = carla_map.get_waypoint_xodr(
         int(pose.road_id),
@@ -318,32 +328,30 @@ def _snap_opendrive_via_waypoint_xodr(
             pose.lane_id,
             pose.s,
         )
-        from .transform import to_carla_world  # noqa: PLC0415
+        return placed
 
-        return to_carla_world(pose)
-
-    tf = waypoint.transform
     refined_z = refine_z_with_ground_projection(
-        tf.location.x,
-        tf.location.y,
-        tf.location.z,
+        placed.x,
+        placed.y,
+        waypoint.transform.location.z,
         world,
         ground_projection=ground_projection,
     )
 
     result = CarlaWorldPose(
-        x=tf.location.x,
-        y=tf.location.y,
+        x=placed.x,
+        y=placed.y,
         z=refined_z,
-        yaw=tf.rotation.yaw,
+        yaw=placed.yaw,
     )
 
     logger.info(
-        "snap (OpenDRIVE): road='%s' lane=%d s=%.2f -> "
+        "snap (OpenDRIVE): road='%s' lane=%d s=%.2f t=%.2f -> "
         "CARLA (%.2f, %.2f, %.3f) yaw=%.1f",
         pose.road_id,
         pose.lane_id,
         pose.s,
+        pose.t,
         result.x,
         result.y,
         result.z,

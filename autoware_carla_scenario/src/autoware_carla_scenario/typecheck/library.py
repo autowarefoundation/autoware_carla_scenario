@@ -174,6 +174,7 @@ CHECKED: tuple[str, ...] = (
     "autoware_carla_scenario.coordinate.poses",
     "autoware_carla_scenario.coordinate.projection",
     "autoware_carla_scenario.coordinate.snap",
+    "autoware_carla_scenario.coordinate.stacked",
     "autoware_carla_scenario.coordinate.stop_line",
     "autoware_carla_scenario.coordinate.traffic_light",
     "autoware_carla_scenario.coordinate.transform",

@@ -98,12 +98,20 @@ class TestWithAHeldMap:
             _snap_opendrive_via_waypoint_xodr,
         )
 
+        from autoware_carla_scenario.coordinate.poses import CarlaWorldPose
+
         tf = held_map.get_waypoint_xodr.return_value.transform
         tf.location = SimpleNamespace(x=5.0, y=6.0, z=0.5)
         tf.rotation = SimpleNamespace(yaw=90.0)
-        with patch(
-            "autoware_carla_scenario.coordinate.snap.refine_z_with_ground_projection",
-            side_effect=lambda x, y, z, world, **kw: z,
+        with (
+            patch(
+                "autoware_carla_scenario.coordinate.snap.refine_z_with_ground_projection",
+                side_effect=lambda x, y, z, world, **kw: z,
+            ),
+            patch(
+                "autoware_carla_scenario.coordinate.transform.to_carla_world",
+                return_value=CarlaWorldPose(x=5.5, y=6.0, z=0.0, yaw=80.0),
+            ),
         ):
             snapped = _snap_opendrive_via_waypoint_xodr(
                 OpenDrivePose(road_id="7", lane_id=-1, s=3.0),
@@ -111,8 +119,56 @@ class TestWithAHeldMap:
                 ground_projection=GroundProjectionConfig(),
             )
 
-        assert (snapped.x, snapped.y, snapped.yaw) == (5.0, 6.0, 90.0)
+        # x, y and yaw are the pose's own; the waypoint gives the height.
+        assert (snapped.x, snapped.y, snapped.z, snapped.yaw) == (5.5, 6.0, 0.5, 80.0)
         held_map.get_waypoint_xodr.assert_called_once_with(7, -1, 3.0)
+
+    def test_an_opendrive_pose_keeps_its_t_and_heading(
+        self, held_map: MagicMock
+    ) -> None:
+        # A straight road due east along x, rising 1 m per 10 m: the waypoint
+        # (the centre of lane -1, facing along the road) gives only the height.
+        import math
+
+        import numpy as np
+
+        from autoware_carla_scenario.coordinate import transform
+        from autoware_carla_scenario.coordinate.poses import OpenDrivePose
+        from autoware_carla_scenario.coordinate.snap import (
+            GroundProjectionConfig,
+            _snap_opendrive_via_waypoint_xodr,
+        )
+
+        road = SimpleNamespace(
+            reference_line=np.array([[0.0, 0.0], [100.0, 0.0]]),
+            z_coordinates=np.array([0.0, 10.0]),
+        )
+        network = SimpleNamespace(road_ids_to_object={"7": road})
+        MapManager.get_instance()._road_network = network
+        tf = held_map.get_waypoint_xodr.return_value.transform
+        tf.location = SimpleNamespace(x=30.0, y=1.75, z=3.0)
+        tf.rotation = SimpleNamespace(yaw=0.0)
+        try:
+            with patch(
+                "autoware_carla_scenario.coordinate.snap.refine_z_with_ground_projection",
+                side_effect=lambda x, y, z, world, **kw: z,
+            ):
+                snapped = _snap_opendrive_via_waypoint_xodr(
+                    OpenDrivePose(
+                        road_id="7", lane_id=-1, s=30.0, t=2.0, heading=math.pi / 2
+                    ),
+                    _world(),
+                    ground_projection=GroundProjectionConfig(),
+                )
+        finally:
+            transform._REF_LINES = None
+
+        # t = 2 m left of the reference line is CARLA -y; facing north is
+        # CARLA yaw -90 degrees.
+        assert snapped.x == pytest.approx(30.0)
+        assert snapped.y == pytest.approx(-2.0)
+        assert snapped.yaw == pytest.approx(-90.0)
+        assert snapped.z == pytest.approx(3.0)
 
     def test_the_runner_names_the_map_off_the_held_one(
         self, held_map: MagicMock

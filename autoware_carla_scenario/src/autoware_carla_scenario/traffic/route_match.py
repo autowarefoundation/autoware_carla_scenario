@@ -17,6 +17,8 @@ from __future__ import annotations
 import math
 from typing import TYPE_CHECKING, Optional, Sequence
 
+from ..kinematics.angle import normalize_angle_rad
+
 if TYPE_CHECKING:
     import lanelet2.core
     import lanelet2.routing
@@ -164,7 +166,7 @@ def _candidates(
         arc = lanelet2.geometry.toArcCoordinates(centre, point)
         length = lanelet2.geometry.length(centre)
         s = min(max(float(arc.length), 0.0), float(length))
-        error = _angle(_heading_at(centre, s) - heading)
+        error = normalize_angle_rad(_heading_at(centre, s) - heading)
         if abs(error) > math.radians(MATCH_HEADING_DEG):
             continue
         cost = (float(arc.distance) / _LATERAL_SCALE_M) ** 2 + (
@@ -237,8 +239,3 @@ def _heading_at(centre: "lanelet2.core.ConstLineString2d", s: float) -> float:
             return math.atan2(y1 - y0, x1 - x0)
         travelled += step
     return 0.0
-
-
-def _angle(angle: float) -> float:
-    wrapped = (angle + math.pi) % (2.0 * math.pi) - math.pi
-    return -math.pi if wrapped >= math.pi else wrapped
