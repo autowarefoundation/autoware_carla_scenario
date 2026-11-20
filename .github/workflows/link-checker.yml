@@ -34,15 +34,14 @@ jobs:
         id: lychee
         uses: lycheeverse/lychee-action@v2
         with:
-          # Check all markdown, Python, YAML, TOML, and HTML files
+          # Check all markdown, Python, YAML, TOML, and HTML files. The
+          # excluded paths and URLs live in lychee.toml (read from the working
+          # directory), not here, so they are in one place.
           args: >
             --cache
             --max-cache-age 1d
             --verbose
             --no-progress
-            --exclude-path '.git'
-            --exclude-path '.github/workflows'
-            --exclude 'file://'
             --
             '**/*.md'
             '**/*.py'
@@ -68,7 +67,28 @@ jobs:
             cat lychee-report.md
           fi
 
-      - name: Create issue for broken links (scheduled runs only)
+      # A weekly run updates the report issue that is still open rather than
+      # opening another one every week.
+      - name: Find an open broken-links issue (scheduled runs only)
+        id: open-issue
+        if: |
+          github.event_name == 'schedule' &&
+          steps.lychee.outputs.exit_code != 0
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TITLE: 'Link Checker Report: Broken Links Found'
+        run: |
+          set -euo pipefail
+          number=$(gh issue list --repo "${GITHUB_REPOSITORY}" --state open \
+            --search "\"${TITLE}\" in:title" --json number,title --limit 100 \
+            | jq -r --arg title "${TITLE}" \
+                '[.[] | select(.title == $title) | .number] | sort | first // empty')
+          echo "number=${number}" >> "$GITHUB_OUTPUT"
+          if [ -n "${number}" ]; then
+            echo "Updating the open issue #${number}"
+          fi
+
+      - name: Create or update issue for broken links (scheduled runs only)
         if: |
           github.event_name == 'schedule' &&
           steps.lychee.outputs.exit_code != 0
@@ -77,6 +97,8 @@ jobs:
           title: 'Link Checker Report: Broken Links Found'
           content-filepath: lychee-report.md
           labels: bug, documentation, automated issue
+          # Empty: a new issue is created.
+          issue-number: ${{ steps.open-issue.outputs.number }}
 
       - name: Upload link checker report
         if: always()
@@ -88,9 +110,13 @@ jobs:
 
       - name: Summary
         if: always()
+        env:
+          EXIT_CODE: ${{ steps.lychee.outputs.exit_code }}
         run: |
-          EXIT_CODE="${{ steps.lychee.outputs.exit_code }}"
-          if [ "$EXIT_CODE" -eq 0 ]; then
+          # Empty when the lychee step did not get as far as reporting one.
+          if [ -z "$EXIT_CODE" ]; then
+            echo "⚠️ The link checker did not report an exit code; see its step above."
+          elif [ "$EXIT_CODE" -eq 0 ]; then
             echo "✅ All links are valid!"
           else
             echo "⚠️ Some links may be broken. Please check the report above."

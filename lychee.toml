@@ -37,9 +37,12 @@ scheme = [
 # Which files are checked is given by the inputs (link-checker.yml); `include`
 # would be a list of URL regexes, not file globs.
 
-# Exclude these paths from checking
+# Exclude these paths from checking. This is the only place the link-checker
+# workflow's excludes are given: it passes none on the command line.
 exclude_path = [
     ".git",
+    # Their `${{ }}` expressions and action references are no links.
+    ".github/workflows",
     "node_modules",
     "__pycache__",
     ".venv",

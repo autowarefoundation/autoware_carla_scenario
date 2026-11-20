@@ -8,11 +8,14 @@
 #                      While no release has published `latest`, `dev` is also
 #                      made the default, so the site is never a 404.
 #   workflow_dispatch  With a `version`, publish the selected ref's docs as that
-#                      version and move `latest` to it -- for a version whose
-#                      release never deployed its docs (3.1.2, the last release
-#                      before the move to autowarefoundation, is one). The ref's
-#                      package version must match. Without a `version`, the
-#                      same as a push.
+#                      version -- for a version whose release never deployed
+#                      its docs (3.1.2, the last release before the move to
+#                      autowarefoundation, is one). The ref's package version
+#                      must match. As in the release workflow, `latest` (and
+#                      the site root) moves to it only when it is the version
+#                      master is at; an older version is published beside the
+#                      others and `latest` stays. Without a `version`, the same
+#                      as a push.
 #
 # Pages must be set, once, to deploy from the `gh-pages` branch (Settings ->
 # Pages -> Build and deployment -> Deploy from a branch). This workflow creates
@@ -38,8 +41,9 @@ on:
     inputs:
       version:
         description: >
-          Publish the selected ref's docs as this version (e.g. 3.1.2) and move
-          `latest` to it. Leave empty to deploy master's docs as `dev`.
+          Publish the selected ref's docs as this version (e.g. 3.1.2); it
+          becomes `latest` only if it is the version master is at. Leave empty
+          to deploy master's docs as `dev`.
         required: false
         type: string
         default: ""
@@ -72,7 +76,7 @@ jobs:
           pkg=$(sed -n 's/^version = "\(.*\)"/\1/p' autoware_carla_scenario/pyproject.toml)
           if [ -z "${REQUESTED}" ]; then
             echo "version=dev" >> "$GITHUB_OUTPUT"
-            echo "release=false" >> "$GITHUB_OUTPUT"
+            echo "mode=dev" >> "$GITHUB_OUTPUT"
             echo "Deploying ${GITHUB_REF_NAME} (package ${pkg}) as dev"
             exit 0
           fi
@@ -85,17 +89,27 @@ jobs:
             echo "::error::${GITHUB_REF_NAME} carries version ${pkg}, not ${version}; run this from the v${version} tag or its release commit"
             exit 1
           fi
+          # Only the version master is at becomes "latest", as in the release
+          # workflow: backfilling an older release's docs must not move
+          # `latest` and the site root back to it.
+          git fetch --quiet origin "+refs/heads/master:refs/remotes/origin/master"
+          master=$(git show origin/master:autoware_carla_scenario/pyproject.toml \
+            | sed -n 's/^version = "\(.*\)"/\1/p')
+          if [ "${master}" = "${version}" ]; then
+            mode=latest
+          else
+            mode=older
+          fi
           echo "version=${version}" >> "$GITHUB_OUTPUT"
-          echo "release=true" >> "$GITHUB_OUTPUT"
-          echo "Deploying ${GITHUB_REF_NAME} as ${version} (latest)"
+          echo "mode=${mode}" >> "$GITHUB_OUTPUT"
+          echo "Deploying ${GITHUB_REF_NAME} as ${version} (${mode}; master is at ${master})"
 
       - name: Setup environment
         uses: ./.github/actions/setup-env
         with:
           install-dev-deps: "true"
 
-      # Builds once to fail early, and injects the version string into mkdocs.yml,
-      # which mike's own build below then picks up -- as the release workflow does.
+      # Builds once to fail early, before mike's own build below.
       - name: Build carla-scenario documentation
         uses: ./.github/actions/build-docs
         with:
@@ -104,7 +118,7 @@ jobs:
       - name: Deploy to GitHub Pages with mike
         env:
           VERSION: ${{ steps.v.outputs.version }}
-          RELEASE: ${{ steps.v.outputs.release }}
+          MODE: ${{ steps.v.outputs.mode }}
         run: |
           set -euo pipefail
           git config user.name "github-actions[bot]"
@@ -112,8 +126,8 @@ jobs:
 
           # Retries a push the Release workflow raced, and prunes the release
           # docs that no longer fit on Pages (see the script).
-          if [ "${RELEASE}" = "true" ]; then
-            .github/scripts/publish-docs.sh latest "${VERSION}"
-          else
+          if [ "${MODE}" = "dev" ]; then
             .github/scripts/publish-docs.sh dev
+          else
+            .github/scripts/publish-docs.sh "${MODE}" "${VERSION}"
           fi
