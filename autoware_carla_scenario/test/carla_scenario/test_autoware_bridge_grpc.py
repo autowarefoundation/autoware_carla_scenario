@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import math
 import time
+import threading
 from contextlib import contextmanager
 from typing import Iterator
 
@@ -179,17 +180,18 @@ def test_autostart_false_binds_nothing_until_started() -> None:
     # may hold it.
     first = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
     address = f"localhost:{first.port}"
+    deferred = GrpcAutowareBridgeServer(
+        AutowareBridgeConfig(address=address), autostart=False
+    )
     try:
-        deferred = GrpcAutowareBridgeServer(
-            AutowareBridgeConfig(address=address), autostart=False
-        )
         assert deferred.port is None
         first.close()
         deferred.start()
         assert deferred.port == int(address.rsplit(":", 1)[-1])
         deferred.start()  # idempotent
-        deferred.close()
     finally:
+        # Both, whatever failed: no server thread outlives the test (#2257).
+        deferred.close()
         first.close()
 
 
@@ -338,3 +340,16 @@ def test_there_is_nothing_to_re_route_before_configure(
 ) -> None:
     with pytest.raises(RuntimeError, match="before configure"):
         bridge.reroute(_GOAL)
+
+
+def test_no_thread_of_the_server_outlives_close() -> None:
+    """#2257: grpc.Server.stop() leaves its handler pool running; close() ends
+    it, so a test worker carries no gRPC thread into the tests after it."""
+    before = set(threading.enumerate())
+    server = GrpcAutowareBridgeServer(AutowareBridgeConfig(address="localhost:0"))
+    try:
+        with _client(server) as stub:
+            stub.GetMission(pb2.GetMissionRequest(), timeout=_RPC_TIMEOUT_S)
+    finally:
+        server.close()
+    assert [t for t in threading.enumerate() if t not in before] == []

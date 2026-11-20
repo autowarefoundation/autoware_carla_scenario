@@ -1204,6 +1204,10 @@ def test_builds_waiting_out_a_stuck_lock_together_all_take_the_fresh_one(
     # gated with the fresh lock -- one at a time.
     monkeypatch.setattr(memory_gate, "LOCK_TIMEOUT_S", 0.5)
     monkeypatch.setattr(memory_gate, "_NAMES_CHECK_S", 0.05)
+    # As in the other crowd tests: the six pass the fresh lock among
+    # themselves within LOCK_TIMEOUT_S, which the default 0.05 s poll eats
+    # into by up to one interval per hand-over on a loaded runner (#2257).
+    monkeypatch.setattr(memory_gate, "_LOCK_POLL_S", 0.002)
     default_gate.mkdir(mode=0o700)
     fd = _hold_lock(default_gate / "gate.lock")
     try:
@@ -1231,15 +1235,27 @@ def test_the_gate_s_own_directory_whose_lock_is_held_elsewhere_is_given_up(
     lock.chmod(0o644)  # to be removed, under the directory's lock
     held = os.open(default_gate, os.O_RDONLY | os.O_DIRECTORY)
     fcntl.flock(held, fcntl.LOCK_EX)
+    # Count the tries for the directory's lock rather than time the builds:
+    # "not tried again" is what matters, not how fast a fallback build is on
+    # a loaded runner (#2257).
+    real_try_lock = memory_gate._try_lock
+    directory_tries = [0]
+
+    def try_lock(fcntl_module, fd, deadline, *rest, **kwargs):  # type: ignore[no-untyped-def]
+        if stat.S_ISDIR(os.fstat(fd).st_mode):
+            directory_tries[0] += 1
+        return real_try_lock(fcntl_module, fd, deadline, *rest, **kwargs)
+
+    monkeypatch.setattr(memory_gate, "_try_lock", try_lock)
     try:
         crowd = _Crowd(fallbacks)
         began = time.monotonic()
         crowd.build()
         assert time.monotonic() - began < 2.0
-        began = time.monotonic()
+        assert directory_tries == [1]  # waited for it once, then gave up
         crowd.build()
-        assert time.monotonic() - began < 0.15  # given up on: not tried again
         crowd.run(6, crowd.build)
+        assert directory_tries == [1]  # given up on: not tried again
     finally:
         os.close(held)
     assert crowd.gated == [True] * 8  # gated, in the fallback

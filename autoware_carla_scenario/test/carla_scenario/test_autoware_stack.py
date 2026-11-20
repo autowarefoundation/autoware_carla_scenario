@@ -352,6 +352,7 @@ code = group.stop()
 json.dump(
     {
         "parent_int_ignored": signal.getsignal(signal.SIGINT) == signal.SIG_IGN,
+        "parent_quit_ignored": signal.getsignal(signal.SIGQUIT) == signal.SIG_IGN,
         "child": json.loads(child_out.read_text()) if child_out.exists() else None,
         "code": code,
     },
@@ -374,13 +375,19 @@ def test_process_group_child_hears_sigint_from_a_background_run(
     out = tmp_path / "result.json"
     pid_file = out.with_suffix(".pid")
 
-    def ignore_sigint() -> None:
-        signal.signal(signal.SIGINT, signal.SIG_IGN)
-        signal.signal(signal.SIGQUIT, signal.SIG_IGN)
-
+    # Started as a shell starts a background job: SIGINT and SIGQUIT ignored
+    # by a trap, which survives the exec.  Not preexec_fn, which forces a
+    # real fork() in this multithreaded worker and runs at-fork hooks (gRPC's,
+    # say) and Python code in the child before the exec (#2257).
     parent = subprocess.Popen(  # noqa: S603 - a fixed test command
-        [sys.executable, str(script), str(out)],
-        preexec_fn=ignore_sigint,  # noqa: PLW1509 - the point of the test
+        [
+            "sh",
+            "-c",
+            'trap \'\' INT QUIT; exec "$0" "$@"',
+            sys.executable,
+            str(script),
+            str(out),
+        ],
         start_new_session=True,
     )
     try:
@@ -400,8 +407,13 @@ def test_process_group_child_hears_sigint_from_a_background_run(
             signal_group(pgid, (pgid, started))
         parent.wait()
 
+    assert parent.returncode == 0, (
+        f"the background parent exited with {parent.returncode}"
+        " (its traceback, if any, is in the captured stderr)"
+    )
     result = json.loads(out.read_text())
     assert result["parent_int_ignored"] is True
+    assert result["parent_quit_ignored"] is True
     assert result["child"] == {"int_ignored": False, "quit_default": True}
     # Python dies of the SIGINT it did not catch; a SIGTERM would be -15.
     assert result["code"] == -signal.SIGINT
