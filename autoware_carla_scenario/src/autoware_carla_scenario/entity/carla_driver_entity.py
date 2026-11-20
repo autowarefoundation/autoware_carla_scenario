@@ -21,6 +21,7 @@ then the entity is not initialized, so the runner holds the scenario clock.
 
 from __future__ import annotations
 
+import dataclasses
 import logging
 import math
 import uuid
@@ -42,7 +43,12 @@ from ..constants import FIXED_DELTA_SECONDS
 from ..debug_markers import DebugMarkers
 from ..coordinate.map_manager import run_carla_map
 from ..driver.base import BaseEgoDriverClient, DriverClientConfig, EgoObservation
-from ..driver.control import ControlConfig, TrajectoryFollower
+from ..driver.control import (
+    ControlConfig,
+    TrajectoryFollower,
+    steer_angle,
+    steer_command,
+)
 from ..driver.egodriver_client import EgoDriverGrpcClient
 from ..driver.geometry import Pose, Trajectory
 from ..ego_plan import ego_plan_markers
@@ -79,6 +85,7 @@ if TYPE_CHECKING:
     import typesafe_carla.carla as carla
 
     from ..autoware_bridge.base import AutowareBridge, AutowareBridgeConfig
+    from ..driver.autoware_lateral import AutowareLateralChain, LateralChainConfig
     from ..autoware_stack.launcher import AutowareLauncher
     from ..coordinate import CarlaWorldPose, GroundProjectionConfig, Lanelet2Pose
 
@@ -115,6 +122,12 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         config: Driver connection settings.  ``None`` uses the defaults, which dial
             ``localhost:50051``.
         control_config: Gains for the trajectory follower.  ``None`` uses the defaults.
+        lateral_config: The lateral control chain (``driver.lateral``): with
+            ``controller: mpc``, Autoware's TSO, publish delay and MPC steer the
+            plan (:mod:`~autoware_carla_scenario.driver.autoware_lateral`), and the
+            follower's longitudinal controller follows the published trajectory.
+            ``None`` (or ``controller: pure_pursuit``) steers on the follower's pure
+            pursuit, as before.
         client: Pre-built driver client, used by tests to substitute a fake or an
             in-process gRPC channel.  ``None`` builds an
             :class:`~autoware_carla_scenario.driver.egodriver_client.EgoDriverGrpcClient`
@@ -147,6 +160,7 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         bridge_config: Optional["AutowareBridgeConfig"] = None,
         launcher: Optional["AutowareLauncher"] = None,
         episode_name: str = "",
+        lateral_config: Optional["LateralChainConfig"] = None,
     ) -> None:
         super().__init__()
         if launcher is not None and bridge is None:
@@ -171,6 +185,13 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             client if client is not None else EgoDriverGrpcClient(self._config)
         )
         self._follower = TrajectoryFollower(control_config)
+        #: Autoware's lateral chain, when ``driver.lateral.controller`` is ``mpc``.
+        self._lateral: Optional["AutowareLateralChain"] = None
+        if lateral_config is not None and lateral_config.enabled:
+            # Imported here: the chain needs scipy, which a pure-pursuit run does not.
+            from ..driver.autoware_lateral import AutowareLateralChain  # noqa: PLC0415
+
+            self._lateral = AutowareLateralChain(lateral_config, self._follower.config)
 
         self._cameras: List[Tuple[str, "CarlaCameraSensor"]] = []
         #: ``(logical_id, sensor, mount in the rig frame)`` per LiDAR.
@@ -354,6 +375,8 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         )
         # A new session: nothing of a previous run's plans or control state.
         self._follower.reset()
+        if self._lateral is not None:
+            self._lateral.reset()
         self._plan = Trajectory.empty()
 
         # CARLA rebuilds the map object on every ``get_map()`` call, so the run's
@@ -760,6 +783,15 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             self._renderer_data(observation),
         )
         self._plan = outcome.trajectory
+        if self._lateral is not None and len(outcome.trajectory):
+            self._lateral.submit(
+                outcome.trajectory,
+                self._sim_time_us,
+                observation.pose,
+                observation.speed_mps,
+                self._measured_steer(actor),
+                float(observation.linear_acceleration[0]),
+            )
         self._drive_count += 1
         self._plan_markers = ego_plan_markers(
             outcome.trajectory,
@@ -971,8 +1003,24 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
         except Exception:  # noqa: BLE001 - a lost frame must not stop the run
             logger.exception("recording camera %s's frame failed", logical_id)
 
+    def _measured_steer(self, actor: "carla.Actor") -> float:
+        """The ego's tire angle, rad, positive left: CARLA's front wheels', else
+        the angle the last command asked for."""
+        try:
+            angle = _tire_steering_angle(actor)
+        except Exception:  # noqa: BLE001 - a carried or fake actor has no wheels
+            angle = float("nan")
+        if math.isfinite(angle):
+            return angle
+        steer = float(actor.get_control().steer)
+        # CARLA steers positive right; the rig frame is positive left.
+        return -steer_angle(steer, self._follower.config)
+
     def _apply_control(self, actor: "carla.Actor", observation: EgoObservation) -> None:
         """Track the cached plan and push the resulting control to CARLA."""
+        if self._lateral is not None:
+            self._apply_chain_control(actor, observation, self._lateral)
+            return
         command = self._follower.step(
             self._plan,
             observation.pose,
@@ -982,6 +1030,43 @@ class CarlaDriverEntity(ExternallyDrivenEgo):
             now_us=observation.timestamp_us,
             gear=int(actor.get_control().gear),
         )
+        actor.apply_control(command.to_carla_control())
+
+    def _apply_chain_control(
+        self,
+        actor: "carla.Actor",
+        observation: EgoObservation,
+        chain: "AutowareLateralChain",
+    ) -> None:
+        """The control of Autoware's chain: the longitudinal controller on the
+        published trajectory, the steering the MPC's."""
+        now_us = observation.timestamp_us
+        published = chain.published(now_us)
+        plan = Trajectory.empty() if published is None else published.trajectory
+        command = self._follower.step(
+            plan,
+            observation.pose,
+            observation.speed_mps,
+            _FIXED_DELTA_S,
+            yaw_rate_rps=float(observation.angular_velocity[2]),
+            now_us=now_us,
+            gear=int(actor.get_control().gear),
+            plan_velocities_mps=None if published is None else published.velocities,
+            plan_accelerations_mps2=(
+                None if published is None else published.accelerations
+            ),
+        )
+        angle = chain.step(
+            now_us,
+            observation.pose,
+            observation.speed_mps,
+            self._measured_steer(actor),
+        )
+        if angle is not None and math.isfinite(angle):
+            # Rig frame positive left; CARLA steers positive right.
+            command = dataclasses.replace(
+                command, steer=-steer_command(angle, self._follower.config)
+            )
         actor.apply_control(command.to_carla_control())
 
     def debug_markers(self) -> DebugMarkers:

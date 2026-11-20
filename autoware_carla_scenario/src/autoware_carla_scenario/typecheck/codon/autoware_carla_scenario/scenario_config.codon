@@ -191,6 +191,22 @@ class DriverControlSpec:
     stop_brake: float = 0.6
 
 
+class DriverLateralSpec:
+    controller: str = "pure_pursuit"
+    trajectory_optimizer: str = "tso"
+    mpc_param_file: str = ""
+    tso_param_file: str = ""
+    wheelbase_m: float = 2.75
+    publish_delay_s: float = 0.078
+    localization_lag_s: float = 0.03
+    ctrl_period_s: float = 0.03
+    mpc_companion: bool = True
+    tso_v0_from_ego: bool = True
+    tso_upstream_semantics: bool = True
+    tso_bounds: bool = True
+    tso_t0_point: bool = True
+
+
 class DriverConfig:
     address: str = "localhost:50051"
     policy: Optional[str] = None
@@ -219,6 +235,7 @@ class DriverConfig:
     t4_scene_goal: str = "scenario"
     t4_scene_map: str = "run"
     control: DriverControlSpec = DriverControlSpec()
+    lateral: DriverLateralSpec = DriverLateralSpec()
 
 
 class SweepConfig:

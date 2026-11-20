@@ -196,6 +196,7 @@ from .traffic_light_compliance import TrafficLightComplianceScenario
 if TYPE_CHECKING:
     from autoware_carla_scenario import AutowareBridgeConfig
     from autoware_carla_scenario.driver import ControlConfig
+    from autoware_carla_scenario.driver.autoware_lateral import LateralChainConfig
 
 logger = logging.getLogger(__name__)
 
@@ -1197,10 +1198,13 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
         driver_dict = _with_fog_density_scale(_to_dict(driver_cfg), cfg)
         # ``driver.control: null`` means the default gains, as ``ros2.control`` does.
         control = _control_config(driver_dict, "driver")
+        lateral = _lateral_config(driver_dict)
         bridge_dict = driver_dict.get("bridge")
         if bridge_dict is None:
             return CarlaDriverEntity(
-                DriverClientConfig.from_mapping(driver_dict), control
+                DriverClientConfig.from_mapping(driver_dict),
+                control,
+                lateral_config=lateral,
             )
         # A stack serving the policy's world (splatsim, say) dials the bridge the
         # framework hosts for the mission and reports when it is ready, as
@@ -1240,6 +1244,7 @@ def build_ego_entity(cfg: DictConfig) -> EgoVehicle | None:
             bridge=GrpcAutowareBridgeServer(bridge_cfg, autostart=False),
             bridge_config=bridge_cfg,
             episode_name=str(scenario_cfg.get("name", "")),
+            lateral_config=lateral,
         )
 
     if entity == "ros2":
@@ -3347,6 +3352,26 @@ def _check_driver_settings(cfg: DictConfig) -> None:
             "from its renderer_data: driver.lidars needs "
             "driver.send_renderer_data"
         )
+
+
+def _lateral_config(section: Mapping[str, Any]) -> "LateralChainConfig":
+    """The lateral control chain of ``driver.lateral``: ``null`` (or none) is
+    the default, pure pursuit; anything else but a mapping is refused.
+
+    Raises:
+        ValueError: naming ``driver.lateral.<key>``.
+    """
+    from autoware_carla_scenario.driver.autoware_lateral import (  # noqa: PLC0415
+        LateralChainConfig,
+    )
+
+    try:
+        return LateralChainConfig.from_mapping(section.get("lateral"))
+    except ValueError as exc:
+        text = str(exc)
+        if text.startswith("must be"):
+            raise ValueError(f"driver.lateral {text}") from None
+        raise ValueError(f"driver.lateral.{text}") from None
 
 
 def _control_config(section: Mapping[str, Any], name: str) -> "ControlConfig":
