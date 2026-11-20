@@ -2914,9 +2914,13 @@ least 1), the time step (<code>dt</code>), the horizon (<code>horizon_s</code>),
 (<code>radius_m</code>), CommonRoad-Reach's settings, the command and the timeouts
 (<code>request_timeout_s</code>, <code>start_timeout_s</code>). The periods, <code>dt</code>, <code>horizon_s</code>,
 <code>radius_m</code> and the timeouts (unless <code>None</code>) must be positive, finite
-numbers -- a bool or a string is refused -- and <code>cache_dir</code> is <code>None</code> or a
-path (a <code>str</code> is taken as one): a bad value raises <code>ValueError</code>, naming the
-field, when the settings are built, not later in a run. A timeout far past what <code>poll()</code> waits at once
+numbers -- a bool or a string is refused --, <code>cache_dir</code> is <code>None</code> or a
+path (a <code>str</code> is taken as one), <code>metric_periods_s</code> is <code>None</code> (the default
+periods) or a mapping, <code>reach_settings</code> is <code>None</code> (no overrides) or a mapping
+of sections to mappings, and <code>command</code> is <code>None</code> (find the worker) or a
+non-empty tuple or list of non-empty strings (not a <code>str</code>): a bad value
+raises <code>ValueError</code>, naming the field, when the settings are built, not later
+in a run. A timeout far past what <code>poll()</code> waits at once
 (about 25 days) is waited in pieces.</p>
 <p>AlpaSim's other metrics need more than the world, and are not metrics here:</p>
 <table>
@@ -3093,7 +3097,7 @@ refuses one that returns anything but a <code>float</code> or an <code>Optional[
     <span class="md-icon" title="Last update">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24"><path d="M21 13.1c-.1 0-.3.1-.4.2l-1 1 2.1 2.1 1-1c.2-.2.2-.6 0-.8l-1.3-1.3c-.1-.1-.2-.2-.4-.2m-1.9 1.8-6.1 6V23h2.1l6.1-6.1zM12.5 7v5.2l4 2.4-1 1L11 13V7zM11 21.9c-5.1-.5-9-4.8-9-9.9C2 6.5 6.5 2 12 2c5.3 0 9.6 4.1 10 9.3-.3-.1-.6-.2-1-.2s-.7.1-1 .2C19.6 7.2 16.2 4 12 4c-4.4 0-8 3.6-8 8 0 4.1 3.1 7.5 7.1 7.9l-.1.2z"/></svg>
     </span>
-    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 15, 2026 03:57:20 UTC"><span class="timeago" datetime="2026-11-15T03:57:20+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 15, 2026 03:57:20 UTC">2026-11-15</span>
+    <span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-timeago" title="November 20, 2026 00:02:30 UTC"><span class="timeago" datetime="2026-11-20T00:02:30+00:00" locale="en"></span></span><span class="git-revision-date-localized-plugin git-revision-date-localized-plugin-iso_date" title="November 20, 2026 00:02:30 UTC">2026-11-20</span>
   </span>
 
     
