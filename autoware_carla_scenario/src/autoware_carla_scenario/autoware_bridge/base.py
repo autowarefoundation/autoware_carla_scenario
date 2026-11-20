@@ -41,6 +41,23 @@ from typing import Optional
 logger = logging.getLogger(__name__)
 
 
+def _check_number(key: str, value: float) -> None:
+    """Refuse *value*, a float field as a mapping left it, unless it is an int
+    or a float: not a bool, which ``float()`` takes as 0 or 1, nor a quoted
+    number or ``None``, which ``math.isfinite()`` refuses with a ``TypeError``
+    naming no field.  :mod:`..ros2.config` checks its own fields so, headed
+    with the command source.  Not imported from there, nor is
+    :func:`~autoware_carla_scenario.seed.check_whole_number`: the
+    ``scenario_bridge`` node imports this package alone, without the rest of
+    the framework (:func:`~autoware_carla_scenario.autoware_stack.bridge_node.host_python_root`).
+
+    Raises:
+        ValueError: naming *key*.
+    """
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ValueError(f"{key} must be a number, got {value!r}")
+
+
 @dataclass(frozen=True)
 class AutowareBridgeConfig:
     """Connection settings for a concrete :class:`AutowareBridge`.
@@ -107,12 +124,19 @@ class AutowareBridgeConfig:
             a node started elsewhere is not seen, so keep to it there by
             hand.
 
+    Every number is an int or a float: a bool or a quoted number is
+    refused, not read as 0, 1 or the number.  Built from a mapping (the
+    ``autoware`` group, ``driver.bridge``), a null or absent setting is its
+    default.
+
     Raises:
-        ValueError: Naming the field, when ``ready_timeout_ticks`` is not a
-            positive whole number, ``timeout_s`` (when given) or
-            ``boot_timeout_s`` is not positive and finite,
-            ``boot_tick_period_s`` or ``liveness_timeout_s`` is negative or not
-            finite, or ``base_link_offset_m`` is not finite.
+        ValueError: Naming the field and the value, when ``address`` is not a
+            non-empty string, ``ready_timeout_ticks`` is not a positive whole
+            number (``1200``, or ``1200.0`` kept as the int ``1200``),
+            ``timeout_s`` (when given) or ``boot_timeout_s`` is not positive
+            and finite, ``boot_tick_period_s`` or ``liveness_timeout_s`` is
+            negative or not finite, or ``base_link_offset_m`` is not finite;
+            or any of them is not a number.
     """
 
     address: str = "localhost:50052"
@@ -124,22 +148,40 @@ class AutowareBridgeConfig:
     liveness_timeout_s: float = 30.0
 
     def __post_init__(self) -> None:
-        # Hydra reads ``=nan`` and ``=inf`` as floats, and a NaN fails every
-        # comparison: a NaN ready or boot timeout never fires, and the run
-        # waits for the stack forever.  The messages name the field; the
-        # caller prefixes the group it came from (``autoware.``).
-        ticks = float(self.ready_timeout_ticks)
-        if not math.isfinite(ticks) or ticks <= 0.0 or ticks != math.floor(ticks):
+        # A mapping (a Hydra node) is not coerced: a field typed float may
+        # hold a quoted "1200" or a bool, which float() would take (True is
+        # one tick, a 1 m offset) or math.isfinite() refuse with a TypeError
+        # naming no field; and ``liveness_timeout_s: false`` would turn the
+        # liveness check off.  Hydra reads ``=nan`` and ``=inf`` as floats,
+        # and a NaN fails every comparison: a NaN ready or boot timeout never
+        # fires, and the run waits for the stack forever.  The messages name
+        # the field; the caller prefixes the group it came from
+        # (``autoware.``), and reads a null setting as the default
+        # (:func:`~autoware_carla_scenario.utils.config.null_as_default`).
+        address = self.address
+        if not isinstance(address, str) or not address.strip():
+            # Else refused only when the gRPC server starts, with the ego.
+            raise ValueError(f"address must be a host:port to bind to, got {address!r}")
+        # Kept as an int: the entity compares ticks with it.
+        given_ticks = self.ready_timeout_ticks
+        _check_number("ready_timeout_ticks", given_ticks)
+        if (
+            not math.isfinite(given_ticks)
+            or given_ticks <= 0
+            or given_ticks != math.floor(given_ticks)
+        ):
             raise ValueError(
                 "ready_timeout_ticks must be a positive whole number, "
-                f"got {self.ready_timeout_ticks}"
+                f"got {given_ticks!r}"
             )
+        object.__setattr__(self, "ready_timeout_ticks", int(given_ticks))
         if self.timeout_s is not None:
             # An annotated local: Codon unwraps the Optional there.
             timeout_s: float = self.timeout_s
+            _check_number("timeout_s", timeout_s)
             if not math.isfinite(timeout_s) or timeout_s <= 0.0:
                 raise ValueError(
-                    f"timeout_s must be positive and finite, got {timeout_s}"
+                    f"timeout_s must be positive and finite, got {timeout_s!r}"
                 )
             logger.warning(
                 "timeout_s (%s) is deprecated and has no effect: set the "
@@ -147,23 +189,29 @@ class AutowareBridgeConfig:
                 "bridge_parameters instead",
                 timeout_s,
             )
+        _check_number("boot_timeout_s", self.boot_timeout_s)
         if not math.isfinite(self.boot_timeout_s) or self.boot_timeout_s <= 0.0:
             raise ValueError(
-                f"boot_timeout_s must be positive and finite, got {self.boot_timeout_s}"
+                "boot_timeout_s must be positive and finite, "
+                f"got {self.boot_timeout_s!r}"
             )
+        _check_number("boot_tick_period_s", self.boot_tick_period_s)
         if not math.isfinite(self.boot_tick_period_s) or self.boot_tick_period_s < 0.0:
             raise ValueError(
                 "boot_tick_period_s must be finite and not negative, "
-                f"got {self.boot_tick_period_s}"
+                f"got {self.boot_tick_period_s!r}"
             )
         liveness = self.liveness_timeout_s
+        _check_number("liveness_timeout_s", liveness)
         if not math.isfinite(liveness) or liveness < 0.0:
             raise ValueError(
-                f"liveness_timeout_s must be finite and not negative, got {liveness}"
+                f"liveness_timeout_s must be finite and not negative, got {liveness!r}"
             )
-        offset = self.base_link_offset_m
-        if offset is not None and not math.isfinite(offset):
-            raise ValueError(f"base_link_offset_m must be finite, got {offset}")
+        if self.base_link_offset_m is not None:
+            offset: float = self.base_link_offset_m
+            _check_number("base_link_offset_m", offset)
+            if not math.isfinite(offset):
+                raise ValueError(f"base_link_offset_m must be finite, got {offset!r}")
 
 
 @dataclass(frozen=True)

@@ -26,7 +26,9 @@ from ..utils.cache_dir import user_cache_dir
 __all__ = [
     "BRIDGE_APT_PACKAGES",
     "BRIDGE_MODULE",
+    "BRIDGE_PROTOBUF_REQUIREMENT",
     "DOUBLE_PARAMETERS",
+    "INTEGER_PARAMETERS",
     "MISSION_POLL_TIMEOUT_S",
     "ROUTE_WATCH_PERIOD_S",
     "bridge_command",
@@ -44,6 +46,16 @@ BRIDGE_MODULE: str = "autoware_carla_scenario.autoware_bridge.ros_bridge"
 #: What the node needs beyond ROS 2 and Autoware's message packages, as the
 #: Ubuntu packages a ROS 2 distribution's Python takes them from.
 BRIDGE_APT_PACKAGES: tuple[str, ...] = ("python3-grpcio", "python3-protobuf")
+
+#: The protobuf runtime the node's generated code needs, as pip takes it:
+#: ``autoware_bridge/_proto`` is protobuf 4.25 gencode (it imports
+#: ``google.protobuf.internal.builder``, which protobuf 3.20 added), the
+#: package's own floor (``pyproject.toml``).  Ubuntu 22.04's
+#: ``python3-protobuf`` (3.12, the one ROS 2 Humble's images have) is too old
+#: for it, so the dependency image installs this over it with pip when the
+#: one it has cannot import the generated code (#2217); Ubuntu 24.04's (3.21)
+#: can.
+BRIDGE_PROTOBUF_REQUIREMENT: str = "protobuf>=4.25.0,<8"
 
 
 #: The node's ``route_watch_period_s`` when it is not given: how often, in
@@ -66,6 +78,12 @@ DOUBLE_PARAMETERS: tuple[str, ...] = (
     "tick_period_s",
 )
 
+#: The node's parameters declared as integers (``ros_bridge/node.py``,
+#: ``_declare_parameters()``).  rclpy refuses a DOUBLE override of an INTEGER
+#: declaration, and YAML or Hydra may well read ``10.0`` for one: a whole
+#: float is passed as the int (``10``), and any other float refused (#2217).
+INTEGER_PARAMETERS: tuple[str, ...] = ("reroute_max_attempts",)
+
 
 def bridge_package_dir() -> Path:
     """The installed :mod:`autoware_carla_scenario.autoware_bridge` directory."""
@@ -80,16 +98,35 @@ def bridge_ros_args(bridge_address: str, parameters: Mapping[str, Any]) -> list[
     A parameter set to ``None`` is left out: it is the node's default, as a
     null is everywhere in the config.  A whole number for a parameter the node
     declares as a double (:data:`DOUBLE_PARAMETERS`) is passed as a float,
-    which rclpy takes where it refuses the integer.
+    which rclpy takes where it refuses the integer; a whole float for one it
+    declares as an integer (:data:`INTEGER_PARAMETERS`) is passed as the int.
+
+    Raises:
+        ValueError: naming the parameter, for a float that is not a whole
+            number given for an integer parameter, or a boolean for a number,
+            which the node would refuse as it starts, after the scenario has.
     """
     args = ["--ros-args", "-p", f"bridge_address:={bridge_address}"]
     for name, value in parameters.items():
         if value is None:
             continue
         if isinstance(value, bool):
+            if name in DOUBLE_PARAMETERS or name in INTEGER_PARAMETERS:
+                # Passed as ``:=true``, which rclpy refuses for a number.
+                raise ValueError(
+                    f"{name} must be a number, as the scenario_bridge node "
+                    f"declares it, got {value!r}"
+                )
             value = str(value).lower()
         elif isinstance(value, int) and name in DOUBLE_PARAMETERS:
             value = float(value)
+        elif isinstance(value, float) and name in INTEGER_PARAMETERS:
+            if not math.isfinite(value) or value != math.floor(value):
+                raise ValueError(
+                    f"{name} must be a whole number, as the scenario_bridge "
+                    f"node declares it an integer, got {value!r}"
+                )
+            value = int(value)
         args += ["-p", f"{name}:={value}"]
     return args
 

@@ -15,6 +15,9 @@ import pytest
 from omegaconf import DictConfig, OmegaConf
 
 from autoware_carla_scenario import BaseScenario, EgoConfig, SpawnTransform
+from autoware_carla_scenario.autoware_stack.bridge_node import (
+    launcher_bridge_parameters,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -1853,6 +1856,70 @@ class TestBuildAutowareLauncher:
         )
         cfg.autoware.launcher[name] = value
         with pytest.raises(ValueError, match=rf"^autoware\.launcher\.{message}"):
+            build_autoware_launcher(cfg)
+
+    @pytest.mark.parametrize("kind", ["docker", "command"])
+    @pytest.mark.parametrize("given", ["absent", None])
+    def test_absent_or_null_bridge_parameters_are_the_default(
+        self, kind: str, given: object
+    ) -> None:
+        """#2217: both launchers start the node on CARLA's clock, as documented,
+        where null (and an absent key, for the command launcher) gave none."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+        )
+        if given != "absent":
+            cfg.autoware.launcher["bridge_parameters"] = given
+        launcher = build_autoware_launcher(cfg)
+        assert launcher_bridge_parameters(launcher) == {"use_sim_time": True}
+
+    @pytest.mark.parametrize("kind", ["docker", "command"])
+    def test_bridge_parameters_merge_over_the_default(self, kind: str) -> None:
+        """Setting another parameter keeps use_sim_time; setting it (or a null,
+        the node's own default) is what changes it."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        def parameters(given: dict) -> object:
+            cfg = self._cfg(
+                type=kind,
+                workspace="/nowhere",
+                launch=["autoware_launch", "x.launch.xml"],
+                command=["true"],
+                bridge_parameters=given,
+            )
+            return launcher_bridge_parameters(build_autoware_launcher(cfg))
+
+        assert parameters({"auto_engage": False}) == {
+            "use_sim_time": True,
+            "auto_engage": False,
+        }
+        assert parameters({"use_sim_time": False}) == {"use_sim_time": False}
+        assert parameters({"use_sim_time": None}) == {"use_sim_time": None}
+
+    @pytest.mark.parametrize("kind", ["docker", "command"])
+    def test_a_fraction_for_an_integer_bridge_parameter_is_refused(
+        self, kind: str
+    ) -> None:
+        """#2217: refused naming the key, not by the node once it starts."""
+        from autoware_carla_scenario.examples.run import build_autoware_launcher
+
+        cfg = self._cfg(
+            type=kind,
+            workspace="/nowhere",
+            launch=["autoware_launch", "x.launch.xml"],
+            command=["true"],
+            bridge_parameters={"reroute_max_attempts": 2.5},
+        )
+        with pytest.raises(
+            ValueError,
+            match=r"^autoware\.launcher\.bridge_parameters\.reroute_max_attempts "
+            r"must be a whole number",
+        ):
             build_autoware_launcher(cfg)
 
     def test_a_config_refusal_names_the_group(self) -> None:

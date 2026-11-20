@@ -21,9 +21,8 @@ from typing import Any, Mapping, Optional
 
 import yaml
 
-# Re-exported: the text parsers live in the checked devcontainer_text.
-from .devcontainer_text import (  # noqa: F401
-    _VARIABLE,
+# The text parsers live in the checked devcontainer_text.
+from .devcontainer_text import (
     _interpolate,
     _mount_target,
     _strip_jsonc,

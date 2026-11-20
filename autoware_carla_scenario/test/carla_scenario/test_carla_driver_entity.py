@@ -1413,7 +1413,7 @@ def test_run_draws_the_lidars_fog_with_the_servers_scale() -> None:
 def test_run_refuses_an_unknown_bridge_setting() -> None:
     from autoware_carla_scenario.examples.run import build_ego_entity
 
-    with pytest.raises(ValueError, match="adress"):
+    with pytest.raises(ValueError, match=r"^driver\.bridge: .*adress"):
         build_ego_entity(
             _composed(["ego.entity=carla_driver", "driver.bridge={adress:'x'}"])
         )

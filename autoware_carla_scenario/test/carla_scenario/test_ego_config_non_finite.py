@@ -108,6 +108,93 @@ def test_timeout_s_is_deprecated(caplog: pytest.LogCaptureFixture) -> None:
 
 
 @pytest.mark.parametrize(
+    ("key", "value"),
+    [
+        ("address", None),
+        ("address", ""),
+        ("address", "  "),
+        ("address", 50052),
+        ("ready_timeout_ticks", "1200"),
+        ("ready_timeout_ticks", True),
+        ("ready_timeout_ticks", None),
+        ("timeout_s", "60"),
+        ("timeout_s", True),
+        ("boot_timeout_s", "300"),
+        ("boot_timeout_s", True),
+        ("boot_timeout_s", None),
+        ("boot_tick_period_s", False),
+        ("liveness_timeout_s", False),
+        ("liveness_timeout_s", "30"),
+        ("liveness_timeout_s", None),
+        ("base_link_offset_m", True),
+        ("base_link_offset_m", "-1.4"),
+    ],
+)
+def test_the_autoware_bridge_config_refuses_what_is_no_number_naming_it(
+    key: str, value: Any
+) -> None:
+    """#2217: a quoted number crashed minutes into the run, a bool was 0 or 1
+    (``liveness_timeout_s=False`` turned liveness off), and None a TypeError."""
+    with pytest.raises(ValueError, match=f"^{key} must be") as refused:
+        AutowareBridgeConfig(**{key: value})
+    assert repr(value) in str(refused.value)
+
+
+def test_the_autoware_bridge_config_keeps_ints_as_ints() -> None:
+    config = AutowareBridgeConfig(boot_timeout_s=300, liveness_timeout_s=0)
+    assert type(config.ready_timeout_ticks) is int
+    assert type(config.boot_timeout_s) is int
+    assert type(config.liveness_timeout_s) is int
+
+
+@pytest.mark.parametrize(
+    ("override", "message"),
+    [
+        ("autoware.ready_timeout_ticks='1200'", "ready_timeout_ticks must be"),
+        ("autoware.ready_timeout_ticks=true", "ready_timeout_ticks must be"),
+        ("autoware.liveness_timeout_s=false", "liveness_timeout_s must be"),
+        ("+autoware.base_link_offset_m=true", "base_link_offset_m must be"),
+        ("autoware.address=''", "address must be"),
+    ],
+)
+def test_an_autoware_setting_that_is_no_number_is_refused_naming_the_key(
+    override: str, message: str
+) -> None:
+    from autoware_carla_scenario.examples.run import build_ego_entity
+
+    with pytest.raises(ValueError, match=f"^autoware\\.{message}"):
+        build_ego_entity(_composed(["ego.entity=autoware", override]))
+
+
+def test_a_null_autoware_setting_is_its_default() -> None:
+    """#2217: absent or null is the default, not a TypeError."""
+    from autoware_carla_scenario.examples.run import _autoware_bridge_config
+
+    config = _autoware_bridge_config(
+        _composed(
+            [
+                "ego.entity=autoware",
+                "autoware.address=null",
+                "autoware.ready_timeout_ticks=null",
+                "autoware.boot_timeout_s=null",
+                "autoware.liveness_timeout_s=null",
+                "+autoware.boot_tick_period_s=null",
+                "+autoware.timeout_s=null",
+                "+autoware.base_link_offset_m=null",
+            ]
+        )
+    )
+    defaults = AutowareBridgeConfig()
+    assert config.address == defaults.address
+    assert config.ready_timeout_ticks == defaults.ready_timeout_ticks
+    assert config.boot_timeout_s == defaults.boot_timeout_s
+    assert config.liveness_timeout_s == defaults.liveness_timeout_s
+    assert config.boot_tick_period_s == defaults.boot_tick_period_s
+    assert config.timeout_s is None
+    assert config.base_link_offset_m is None
+
+
+@pytest.mark.parametrize(
     "override",
     [
         "autoware.ready_timeout_ticks=nan",

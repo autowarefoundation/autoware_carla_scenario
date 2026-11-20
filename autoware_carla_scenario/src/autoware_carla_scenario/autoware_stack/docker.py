@@ -21,11 +21,11 @@ when the scenario ends::
 
 Each stack's container also runs the ``scenario_bridge`` node (:mod:`.bridge_node`),
 the framework's own, from this package mounted into it; it needs ``grpcio`` and
-``protobuf`` in the image.  And the dev container's image is what its sources
-were set up against when it was built: a workspace whose packages have since
-gained dependencies (``rosdep`` keys in their ``package.xml``) is run in a dev
-container those were installed into by hand, and a fresh container from the
-image does not have them.  So both are installed into an image of its own, made
+``protobuf`` (3.20 or later, which Ubuntu 22.04's is not) in the image.  And
+the dev container's image is what its sources were set up against when it was
+built: a workspace whose packages have since gained dependencies (``rosdep``
+keys in their ``package.xml``) is run in a dev container those were installed
+into by hand, and a fresh container from the image does not have them.  So both are installed into an image of its own, made
 once from the dev container's and kept for as long as the ``package.xml`` files
 and the image do not change.
 
@@ -57,6 +57,7 @@ from ..utils.owner_label import owner_alive as _owner_alive
 from ..utils.owner_label import owner_value as _owner_value
 from .bridge_node import (
     BRIDGE_APT_PACKAGES,
+    BRIDGE_PROTOBUF_REQUIREMENT,
     bridge_command,
     bridge_package_dir,
 )
@@ -203,6 +204,37 @@ def _shapes_the_cli(key: str) -> bool:
     )
 
 
+#: Imports what the node's generated protobuf code needs of the runtime
+#: (``google.protobuf.internal.builder``, protobuf 3.20 or later).
+_PROTOBUF_CHECK: str = "from google.protobuf.internal import builder"
+
+
+def _protobuf_upgrade_script() -> str:
+    """The dependency image's step that brings its protobuf up to what the
+    ``scenario_bridge`` node's generated code needs
+    (:data:`~.bridge_node.BRIDGE_PROTOBUF_REQUIREMENT`), when the
+    ``python3-protobuf`` just installed is older (Ubuntu 22.04's 3.12):
+    ``&& ...``, to append to the install script, after rosdep's.
+
+    ``python3`` is the one the node runs on.  In an image with Autoware's
+    Python venv (``VIRTUAL_ENV``, on ``PATH``) pip installs into it, as
+    rosdep's pip keys do; otherwise into the system's ``/usr/local``, with
+    sudo (and ``python3-pip``), where it comes before Ubuntu's package.
+    """
+    requirement = shlex.quote(BRIDGE_PROTOBUF_REQUIREMENT)
+    return (
+        " && if ! python3 -c "
+        + shlex.quote(_PROTOBUF_CHECK)
+        + " 2>/dev/null; then "
+        + 'if [ -n "${VIRTUAL_ENV:-}" ]; then python3 -m pip install '
+        + requirement
+        + "; else sudo apt-get install -y --no-install-recommends python3-pip"
+        + " && sudo python3 -m pip install "
+        + requirement
+        + "; fi; fi"
+    )
+
+
 def _label_value() -> str:
     """The value of :data:`STACK_LABEL` on this user's containers."""
     return f"uid-{os.getuid()}"
@@ -264,9 +296,10 @@ class DockerAutowareConfig:
             :data:`BuildPolicy`, ``launch``, ``colcon_args`` or
             ``docker_args`` is a ``str`` (or ``bytes``) rather than a sequence
             of arguments, ``launch`` is empty, ``stop_timeout_s`` is not
-            positive and finite, a ``ros_domain_ids`` entry is a boolean or
-            outside 0 to 232, ``rosdep`` is not a ``bool``, ``devcontainer``,
-            ``docker`` or ``container_prefix`` is not non-empty text, or
+            positive and finite, a ``ros_domain_ids`` entry is not an
+            ``int`` (a boolean, a float, a string) or is outside 0 to 232,
+            ``rosdep`` is not a ``bool``, ``devcontainer``, ``docker`` or
+            ``container_prefix`` is not non-empty text, or
             ``image``, ``workspace_mount``, ``gpus`` or ``user`` is neither
             ``None`` nor non-empty text.
     """
@@ -314,11 +347,17 @@ class DockerAutowareConfig:
             )
         # Checked here: an id out of range would only be refused inside the
         # container, by the stack's DDS, once a scenario has started.
+        # An int, as the run's config takes it (examples.run): 7.5 is no
+        # domain, and a "7" would fail the comparison with a TypeError.
         for domain_id in self.ros_domain_ids:
-            if isinstance(domain_id, bool) or not (0 <= domain_id <= MAX_ROS_DOMAIN_ID):
+            if (
+                isinstance(domain_id, bool)
+                or not isinstance(domain_id, int)
+                or not (0 <= domain_id <= MAX_ROS_DOMAIN_ID)
+            ):
                 raise ValueError(
                     "ros_domain_ids must be ROS domain ids, whole numbers from 0 "
-                    f"to {MAX_ROS_DOMAIN_ID}, got {domain_id}"
+                    f"to {MAX_ROS_DOMAIN_ID}, got {domain_id!r}"
                 )
         _check_stop_timeout_s(self.stop_timeout_s)
         # Read by truthiness (it runs rosdep and feeds the image's hash): a
@@ -752,6 +791,9 @@ class DockerAutowareLauncher:
         )
         digest = hashlib.sha256(listed.stdout.strip().encode())
         digest.update(" ".join(BRIDGE_APT_PACKAGES).encode())
+        # What the image's protobuf is brought up to (#2217): an image made
+        # before it, with Ubuntu 22.04's protobuf alone, is made again.
+        digest.update(b"\0" + BRIDGE_PROTOBUF_REQUIREMENT.encode())
         if not self._config.rosdep:
             return digest.hexdigest()[:16]
         digest.update(b"rosdep\0")
@@ -809,6 +851,9 @@ class DockerAutowareLauncher:
                 '--rosdistro "${ROS_DISTRO}"'
                 "${VIRTUAL_ENV:+ --as-root pip:false}"
             )
+        # Last, so it checks the protobuf the image ends up with: one of
+        # rosdep's keys may have installed another (#2217).
+        script += _protobuf_upgrade_script()
         argv = [
             *self._run_argv(
                 name=name,

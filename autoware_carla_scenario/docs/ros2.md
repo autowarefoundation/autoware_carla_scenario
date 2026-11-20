@@ -80,7 +80,8 @@ CARLA's `/clock` carries, which is what nodes with `use_sim_time` read.
 | `clock_topic` (off) | `rosgraph_msgs/Clock` | for a CARLA server built without ROS 2 |
 | `turn_indicators_report_topic` (`/vehicle/status/turn_indicators_status`) | `autoware_vehicle_msgs/TurnIndicatorsReport` | the indicators the ego shows (hazard, both lit, reports as off, as the report has no hazard) |
 
-`null` leaves a topic unpublished. Every topic the settings name -- these, the command
+`null` leaves a topic unpublished; `false`, `0` or `''` is refused rather than
+read as `null` too. `frame_id` and `child_frame_id` must be non-empty names. Every topic the settings name -- these, the command
 sources' and the cameras' -- is checked as the config is read: a ROS 2 name, absolute
 or relative (taken from the root namespace), made of `A-Z`, `a-z`, `0-9`, `_` and `/`,
 with no `//`, no trailing `/` and no token starting with a digit. A private name (`~`)
@@ -223,6 +224,10 @@ batch's first scenario starts, as well as when the entity is built -- and a bad 
 refused naming its key (`ros2: domain_id must be ...`), not once the ego has spawned
 and joined the domain:
 
+* A setting that is null is its default, as an absent one is (`domain_id: null` is
+  domain 0, `on_stale: null` is `hold`, a source's `stale_s: null` is 0.3 s), except
+  a topic, which null leaves unpublished, and `rear_axle_offset_m` and
+  `pair_window_s`, which null derives or measures.
 * `domain_id` is a whole number from 0 to 232, the
   `ROS_DOMAIN_ID` range ROS 2 can use, the bound the docker launcher's
   `ros_domain_ids` share ([autoware.md](autoware.md)).
@@ -240,6 +245,10 @@ and joined the domain:
   `carla.VehicleAckermannControl` takes by default.
 * A source's `steering_sign` is not zero, which would pin the steering straight. Its
   magnitude scales the steering and a negative value flips it, so both are kept.
+* `sources` and `cameras` are lists of mappings (null is the default); `false` or a
+  string is refused.
+* A `steer_accel` source's `steering_topic` and `acceleration_topic` differ: one
+  topic for both would pair each message with itself.
 
 ## The Open AD Kit safety-island demo
 

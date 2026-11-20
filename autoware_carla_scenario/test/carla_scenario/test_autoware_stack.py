@@ -23,9 +23,11 @@ from typing import Any
 import pytest
 
 from autoware_carla_scenario.autoware_stack.bridge_node import (
+    BRIDGE_PROTOBUF_REQUIREMENT,
     MISSION_POLL_TIMEOUT_S,
     ROUTE_WATCH_PERIOD_S,
     DOUBLE_PARAMETERS,
+    INTEGER_PARAMETERS,
     bridge_package_dir,
     bridge_ros_args,
     host_python_root,
@@ -1662,7 +1664,7 @@ def test_process_group_rejects_a_stop_timeout_before_it_starts_anything(
         ProcessGroup([sys.executable, "-c", "pass"], stop_timeout_s=stop_timeout_s)
 
 
-@pytest.mark.parametrize("ids", [(-3,), (233,), (7, 999), (True,)])
+@pytest.mark.parametrize("ids", [(-3,), (233,), (7, 999), (True,), (7.5,), ("7",)])
 def test_docker_config_rejects_a_ros_domain_id_out_of_range(
     ids: tuple[int, ...],
 ) -> None:
@@ -1827,7 +1829,11 @@ def test_rosdep_keeps_pip_keys_in_the_images_venv(
     _docker_launcher(ws, docker, rosdep=True).prepare(log_dir=tmp_path / "out")
 
     script = next(c for c in calls() if c[0] == "run" and "rosdep install" in c[-1])[-1]
-    rosdep = script[script.index("rosdep install") :]
+    rosdep = script[
+        script.index("rosdep install") : script.index(
+            docker_module._protobuf_upgrade_script()
+        )
+    ]
     expanded = subprocess.run(
         ["bash", "-c", f'printf %s "{rosdep}"'],
         env={"VIRTUAL_ENV": virtual_env, "ROS_DISTRO": "jazzy"},
@@ -1886,6 +1892,110 @@ def test_without_rosdep_the_image_still_gets_the_bridges_packages(
     deps = next(c for c in calls() if c[0] == "run" and "apt-get install" in c[-1])
     assert "python3-grpcio python3-protobuf" in deps[-1]
     assert "rosdep" not in deps[-1]
+
+
+def test_the_image_gets_a_protobuf_the_generated_code_imports(
+    tmp_path: Path, fake_docker
+) -> None:
+    """#2217: Ubuntu 22.04's python3-protobuf (3.12) cannot import the node's
+    protobuf 4.25 gencode, so the apt step brings it up when it is too old."""
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    _docker_launcher(ws, docker, rosdep=False).prepare()
+
+    deps = next(c for c in calls() if c[0] == "run" and "apt-get install" in c[-1])
+    assert docker_module._protobuf_upgrade_script() in deps[-1]
+    assert "pip install 'protobuf>=4.25.0,<8'" in deps[-1]
+
+
+def test_the_protobuf_step_comes_after_rosdep(tmp_path: Path, fake_docker) -> None:
+    """It checks the protobuf the image ends up with, whatever rosdep installed."""
+    docker, calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    _docker_launcher(ws, docker, rosdep=True).prepare()
+
+    deps = next(c for c in calls() if c[0] == "run" and "rosdep install" in c[-1])
+    assert deps[-1].endswith(docker_module._protobuf_upgrade_script())
+
+
+def _fake_tools(bin_dir: Path, log: Path, *, has_builder: bool) -> None:
+    """``python3``, ``sudo`` and ``apt-get`` that log what they are asked."""
+    bin_dir.mkdir()
+    import_exit = 0 if has_builder else 1
+    tools = {
+        "python3": (
+            f'if [ "$1" = "-c" ]; then exit {import_exit}; fi\n'
+            f'echo "python3 $*" >> {log}\n'
+        ),
+        "sudo": f'echo "sudo" >> {log}\nexec "$@"\n',
+        "apt-get": f'echo "apt-get $*" >> {log}\n',
+    }
+    for name, body in tools.items():
+        tool = bin_dir / name
+        tool.write_text("#!/bin/sh\n" + body)
+        tool.chmod(0o755)
+
+
+@pytest.mark.parametrize(
+    ("has_builder", "venv", "expected"),
+    [
+        (True, None, []),
+        (
+            False,
+            None,
+            [
+                "sudo",
+                "apt-get install -y --no-install-recommends python3-pip",
+                "sudo",
+                f"python3 -m pip install {BRIDGE_PROTOBUF_REQUIREMENT}",
+            ],
+        ),
+        (False, "/opt/venv", [f"python3 -m pip install {BRIDGE_PROTOBUF_REQUIREMENT}"]),
+    ],
+)
+def test_the_protobuf_step_installs_only_when_the_runtime_is_too_old(
+    tmp_path: Path, has_builder: bool, venv: str | None, expected: list[str]
+) -> None:
+    """pip runs only for a protobuf without ``internal.builder``: into
+    Autoware's venv when the image has one, else system-wide with sudo."""
+    log = tmp_path / "calls.log"
+    log.touch()
+    _fake_tools(tmp_path / "bin", log, has_builder=has_builder)
+    env = {"PATH": f"{tmp_path / 'bin'}:/usr/bin:/bin"}
+    if venv is not None:
+        env["VIRTUAL_ENV"] = venv
+    subprocess.run(
+        ["bash", "-c", "true" + docker_module._protobuf_upgrade_script()],
+        env=env,
+        check=True,
+    )
+    assert log.read_text().splitlines() == expected
+
+
+def test_the_protobuf_requirement_is_the_packages_own_floor() -> None:
+    """The node runs the vendored gencode the package itself needs
+    protobuf>=4.25 for (pyproject.toml)."""
+    if sys.version_info >= (3, 11):
+        import tomllib
+    else:
+        import tomli as tomllib
+
+    pyproject = Path(__file__).resolve().parents[2] / "pyproject.toml"
+    dependencies = tomllib.loads(pyproject.read_text())["project"]["dependencies"]
+    assert BRIDGE_PROTOBUF_REQUIREMENT in dependencies
+
+
+def test_the_protobuf_requirement_feeds_the_dependency_images_digest(
+    tmp_path: Path, fake_docker, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """An image made before the protobuf step (#2217) is made again."""
+    docker, _calls = fake_docker
+    ws = _workspace(tmp_path, built=True, scenario=True)
+    launcher = _docker_launcher(ws, docker, rosdep=False)
+    launcher.prepare()
+    before = launcher._dependency_digest("base")  # noqa: SLF001
+    monkeypatch.setattr(docker_module, "BRIDGE_PROTOBUF_REQUIREMENT", "protobuf>=9")
+    assert launcher._dependency_digest("base") != before  # noqa: SLF001
 
 
 def test_a_built_workspace_without_scenario_mode_is_refused(
@@ -2133,6 +2243,35 @@ def test_the_launchers_parameters_are_found(tmp_path: Path) -> None:
     assert launcher_bridge_parameters(command) == {"a": 1}
     assert launcher_bridge_parameters(docker) == {"b": 2}
     assert launcher_bridge_parameters(object()) is None
+
+
+@pytest.mark.parametrize("value", [10.0, 1e1])
+def test_a_whole_float_for_an_integer_parameter_is_passed_as_an_int(
+    value: float,
+) -> None:
+    """#2217: ``reroute_max_attempts:=10.0`` is refused by rclpy, killing the node."""
+    assert INTEGER_PARAMETERS == ("reroute_max_attempts",)
+    args = bridge_ros_args("h:1", {"reroute_max_attempts": value})
+    assert args[3:] == ["-p", "reroute_max_attempts:=10"]
+
+
+@pytest.mark.parametrize("value", [10.5, float("nan"), float("inf")])
+def test_a_fraction_for_an_integer_parameter_is_refused_naming_it(
+    value: float,
+) -> None:
+    with pytest.raises(ValueError, match=r"^reroute_max_attempts must be a whole"):
+        bridge_ros_args("h:1", {"reroute_max_attempts": value})
+
+
+@pytest.mark.parametrize("name", ["reroute_max_attempts", "rpc_timeout_s"])
+@pytest.mark.parametrize("value", [True, False])
+def test_a_boolean_for_a_number_parameter_is_refused_naming_it(
+    name: str, value: bool
+) -> None:
+    """Not passed as ``:=true``, which rclpy refuses as the node starts."""
+    assert name in INTEGER_PARAMETERS + DOUBLE_PARAMETERS
+    with pytest.raises(ValueError, match=rf"^{name} must be a number, .* got {value}"):
+        bridge_ros_args("h:1", {name: value})
 
 
 def test_a_null_bridge_parameter_is_the_nodes_default() -> None:

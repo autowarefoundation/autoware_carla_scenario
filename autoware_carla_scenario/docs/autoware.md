@@ -84,7 +84,11 @@ What happens:
       `install/`, so a workspace built in VS Code runs here, and the reverse.
     - What the stack needs is installed into an image of its own, made from
       the dev container's and tagged `autoware-carla-scenario-deps:<digest>`:
-      the `scenario_bridge` node's `python3-grpcio` and `python3-protobuf`,
+      the `scenario_bridge` node's `python3-grpcio` and `python3-protobuf`
+      -- and, when that protobuf is too old for the node's generated code
+      (Ubuntu 22.04's 3.12; it needs 3.20 or later), `protobuf>=4.25.0,<8`
+      from pip, into Autoware's Python venv when the image has one, checked once
+      rosdep has run --
       and the workspace's dependencies (`rosdep install --from-paths src`).
       A dev container gets the dependencies a branch added since its image
       was built by someone running `rosdep install` in it; a fresh container
@@ -244,7 +248,15 @@ The `autoware` group holds the bridge's settings (`AutowareBridgeConfig`:
 `liveness_timeout_s`, `base_link_offset_m`) and `launcher`. Any other key is
 refused when the ego is built, with an error naming it:
 `+autoware.boot_timout_s=30` fails the run rather than leaving the default
-timeout in place.
+timeout in place. The values are checked too, naming the key and showing the
+value: a null setting is its default, as an absent one is; `address` is a
+non-empty `host:port`; `ready_timeout_ticks` a positive whole number (`1200`,
+or `1200.0`, kept as the int); and the seconds and `base_link_offset_m` are
+numbers, an int or a float. A boolean or a quoted number is refused rather
+than read as 0, 1 or the number: `autoware.liveness_timeout_s=false` does not
+turn the liveness check off (`0` does), and `ready_timeout_ticks: "1200"` no
+longer fails minutes into the run. `driver.bridge` takes the same settings and
+is checked the same way.
 
 `timeout_s` is still accepted but deprecated: it never had an effect, and
 setting it only logs a warning. The `scenario_bridge` node's RPC timeouts are
@@ -321,7 +333,7 @@ such a `stop_timeout_s`, `DockerAutowareConfig` such a domain id, and
 | `workspace_mount` | `null` | Where to mount the workspace instead of where the dev container does |
 | `build` | `auto` | `auto` / `always` / `never`; `null` is the default |
 | `rosdep` | `true` | Also install the workspace's dependencies into the image the stack runs in. `true` or `false`, or one of their spellings as [the run's switches](usage.md#the-switches) take (`"false"`, `"off"`, `"no"`, `0` are false); anything else (`ture`, `2`) is refused, naming `autoware.launcher.rosdep`; `null` is the default |
-| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, `rpc_timeout_s`, `mission_poll_timeout_s`, ... `route_watch_period_s` and `mission_poll_timeout_s` must suit `autoware.liveness_timeout_s` ([above](#a-local-workspace-in-its-dev-container)). A null leaves a parameter at the node's default, and a whole number for a seconds parameter is passed as a float, as the node declares it |
+| `bridge_parameters` | `{use_sim_time: true}` | ROS parameters of the `scenario_bridge` node: `auto_engage`, `initialize_localization`, `require_localization_initialized`, `route_watch_period_s`, `reroute_max_attempts`, `rpc_timeout_s`, `mission_poll_timeout_s`, ... `route_watch_period_s` and `mission_poll_timeout_s` must suit `autoware.liveness_timeout_s` ([above](#a-local-workspace-in-its-dev-container)). For both launcher types, the mapping is merged over the default, and null or absent is the default: `{auto_engage: false}` keeps `use_sim_time: true`, which `use_sim_time: false` turns off. A null leaves a parameter at the node's default; a whole number for a seconds parameter is passed as a float, and a whole float for an integer one (`reroute_max_attempts: 10.0`) as the int, as the node declares them; a fraction for an integer one, or a boolean for a number, is refused |
 | `colcon_args` | `[--symlink-install, --cmake-args, -DCMAKE_BUILD_TYPE=Release]` | Arguments to `colcon build` |
 | `launch` | (required) | `ros2 launch` package, file and `name:=value` arguments |
 | `mounts` | `{~/autoware_data: /home/aw/autoware_data}` | Further mounts; a missing host path is skipped |
@@ -397,7 +409,10 @@ uv run scenario ego.entity=autoware autoware.launcher.type=command \
 ```
 
 The node runs on the ROS 2 distribution's own `python3`, which needs
-`python3-grpcio` and `python3-protobuf`. It imports nothing of the framework
+`python3-grpcio` and `python3-protobuf` 3.20 or later: Ubuntu 24.04's
+`python3-protobuf` will do, but 22.04's (3.12, ROS 2 Humble's) cannot import
+the node's generated code, so install a newer one over it there
+(`pip install 'protobuf>=4.25.0,<8'`). It imports nothing of the framework
 but `autoware_carla_scenario.autoware_bridge`: `{scenario_bridge}` puts a
 directory on `PYTHONPATH` that holds that package alone
 (`~/.cache/autoware_carla_scenario/ros_bridge/`).

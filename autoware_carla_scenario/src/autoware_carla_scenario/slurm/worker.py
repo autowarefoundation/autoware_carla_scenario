@@ -226,12 +226,16 @@ def _domain_overrides(cfg: "DictConfig", domains: RosDomains) -> dict[str, Any]:
     ego = cfg.get("ego")
     ros2 = cfg.get("ros2")
     if ego is not None and run._ego_entity_setting(cfg) == "ros2" and ros2 is not None:
-        # A ros2 group without domain_id joins Ros2EgoConfig's default, which
-        # every task on the node would then share (#1885).
+        # A ros2 group without domain_id (or a null one, #2217) joins
+        # Ros2EgoConfig's default, which every task on the node would then
+        # share (#1885).
         from ..ros2.config import Ros2EgoConfig  # noqa: PLC0415
 
         key = "ros2.domain_id"
-        wanted = check_whole_number(key, ros2.get("domain_id", Ros2EgoConfig.domain_id))
+        given = ros2.get("domain_id")
+        wanted = check_whole_number(
+            key, Ros2EgoConfig.domain_id if given is None else given
+        )
         new = wanted not in domains.mapping
         domain = _take_domain(domains, wanted, key)
         if new and domain != wanted:

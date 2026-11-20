@@ -11,7 +11,6 @@ against an in-process server.
 from __future__ import annotations
 
 from dataclasses import dataclass
-import logging
 import threading
 import time
 from typing import Callable, Optional
@@ -20,7 +19,6 @@ from .._proto import autoware_bridge_pb2 as pb2
 from .._proto import autoware_bridge_pb2_grpc as pb2_grpc
 import grpc
 
-logger = logging.getLogger(__name__)
 
 __all__ = ["ScenarioBridgeClient", "Mission", "TurnIndicatorForwarder"]
 
@@ -59,27 +57,9 @@ class ScenarioBridgeClient:
         *,
         channel: Optional[grpc.Channel] = None,
     ) -> None:
-        self._address = address
         self._owns_channel = channel is None
         self._channel = channel or grpc.insecure_channel(address)
         self._stub = pb2_grpc.AutowareBridgeStub(self._channel)
-
-    def wait_for_ready(self, timeout: float) -> bool:
-        """Block until the channel connects, returning ``True`` on success.
-
-        Args:
-            timeout: Seconds to wait for the server to become reachable.
-        """
-        try:
-            grpc.channel_ready_future(self._channel).result(timeout=timeout)
-            return True
-        except grpc.FutureTimeoutError:
-            logger.warning(
-                "AutowareBridge server at %s not reachable within %.1fs",
-                self._address,
-                timeout,
-            )
-            return False
 
     def get_mission(self, timeout: Optional[float] = None) -> Optional[Mission]:
         """Return the mission once the scenario has one, else ``None``.
