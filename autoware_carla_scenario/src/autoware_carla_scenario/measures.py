@@ -102,7 +102,11 @@ import lanelet2.geometry
 
 from .constants import BUMPER_PROBE_ROLE_NAME, EGO_ROLE_NAME
 from .coordinate.map_manager import MapManager
-from .coordinate.transform import _STACKED_HEIGHT_TOLERANCE, _project_with_height
+from .coordinate.transform import (
+    _STACKED_HEIGHT_TOLERANCE,
+    _project_with_height,
+    lanelets_beside,
+)
 from .entity_role import find_actor_in_world
 from .kinematics.walker_motion import WalkerVelocities, simulated_seconds
 from .metrics import is_metric
@@ -967,28 +971,6 @@ def _overlapping(lanelet_id: int) -> list[int]:
     return rivals
 
 
-def _beside(lanelet_id: int) -> list[int]:
-    """The lanelets beside *lanelet_id*, either side, a lane change allowed
-    across the line between or not (the routing graph's neighbours)."""
-    mm = MapManager.get_instance()
-    graph = mm.routing_graph
-    lanelet = mm.lanelet_map.laneletLayer[lanelet_id]
-    found: list[int] = []
-    left = graph.left(lanelet)
-    if left is not None:
-        found.append(int(left.id))
-    right = graph.right(lanelet)
-    if right is not None:
-        found.append(int(right.id))
-    adjacent_left = graph.adjacentLeft(lanelet)
-    if adjacent_left is not None:
-        found.append(int(adjacent_left.id))
-    adjacent_right = graph.adjacentRight(lanelet)
-    if adjacent_right is not None:
-        found.append(int(adjacent_right.id))
-    return found
-
-
 class _LaneFrame:
     """The ego's lane: its lanelet, those following and the one before it,
     each with the ``s`` it starts at; and the lanelets beside them."""
@@ -1091,7 +1073,7 @@ class _LaneFrame:
             back = previous_id
         self.beside = {}
         for lanelet_id in list(self.start):
-            for other in _beside(lanelet_id):
+            for other in lanelets_beside(lanelet_id):
                 if other not in self.start and other not in self.beside:
                     self.beside[other] = lanelet_id
         self.rivals = _overlapping(ego_lanelet)

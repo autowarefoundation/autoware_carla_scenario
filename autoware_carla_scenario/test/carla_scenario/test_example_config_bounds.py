@@ -237,6 +237,25 @@ def test_the_turn_indicator_distance_must_be_a_finite_number(value: Any) -> None
         IntersectionPassingConfig(turn_direction="left", turn_indicator_before_m=value)
 
 
+@pytest.mark.parametrize("value", POSITIVE_BAD)
+def test_the_turn_indicator_distance_must_be_positive(value: float) -> None:
+    """At 0 or below ``near_junction`` never latches, and the indicator check
+    fails the run on junction entry even while the ego signals (#2253)."""
+    with pytest.raises(
+        ValueError,
+        match=_message("turn_indicator_before_m", "finite and positive, not "),
+    ):
+        IntersectionPassingConfig(turn_direction="left", turn_indicator_before_m=value)
+
+
+@pytest.mark.parametrize("value", [1e-6, 5.0, 30.0])
+def test_a_positive_turn_indicator_distance_is_accepted(value: float) -> None:
+    config = IntersectionPassingConfig(
+        turn_direction="right", turn_indicator_before_m=value
+    )
+    assert config.turn_indicator_before_m == value
+
+
 @pytest.mark.parametrize("side", ["up", "", "Left", "straight"])
 def test_an_unknown_cut_in_side_is_refused(side: str) -> None:
     with pytest.raises(

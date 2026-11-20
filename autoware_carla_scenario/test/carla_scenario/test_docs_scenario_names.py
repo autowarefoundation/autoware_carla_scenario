@@ -47,6 +47,7 @@ _SCENARIO = re.compile(r"(?<![\w.+])scenario=['\"]?([A-Za-z0-9_*?][^\s'\"`)]*)")
 _NOT_SHIPPED: dict[str, str] = {
     "my_scenario/default": "the tutorial's own scenario (docs/tutorial.md, docs/docker.md)",
     "my_scenario/*": "the tutorial's own scenarios, as a batch",
+    "my_scenario/sweep": "the tutorial's own logical scenario (docs/tutorial.md)",
     "reach_goal/default": "examples/scenario_package_template's scenario",
     "reach_goal/*": "examples/scenario_package_template's scenarios",
     "my_package/*": "any package author's scenarios (docs/typecheck.md)",

@@ -180,6 +180,10 @@ def lane_beside(lanelet_id: int, direction: str) -> Optional[int]:
     raise NotImplementedError()
 
 
+def lanelets_beside(lanelet_id: int) -> List[int]:
+    raise NotImplementedError()
+
+
 def lane_change_target_lanelets(lanelet_id: int, direction: str,
                                 distance_m: float = 1000.0) -> List[int]:
     raise NotImplementedError()

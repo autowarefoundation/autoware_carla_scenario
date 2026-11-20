@@ -184,7 +184,8 @@ class IntersectionPassingConfig:
     #: enters the junction if it never showed it on that approach (one fast
     #: enough is through it before the grace runs out).  In the junction the
     #: indicator is ``max_turn_indicator_changes``' to judge.
-    #: ``None`` checks nothing.  Needs a ``"left"`` or ``"right"`` turn.
+    #: ``None`` checks nothing; otherwise finite and above 0.  Needs a
+    #: ``"left"`` or ``"right"`` turn.
     turn_indicator_before_m: float | None = None
 
     #: How long the indicator may be wrong before the run fails, in seconds:
@@ -254,7 +255,10 @@ class IntersectionPassingConfig:
             )
         turn_indicator_before_m = self.turn_indicator_before_m
         if turn_indicator_before_m is not None:
-            _require_finite("turn_indicator_before_m", turn_indicator_before_m)
+            # At 0 or below the ego is never "that close and not yet in the
+            # junction": near_junction never latches, and the check fails the
+            # run on junction entry even while the ego signals.
+            _require_positive("turn_indicator_before_m", turn_indicator_before_m)
         if self.turn_indicator_before_m is not None and self.turn_direction not in (
             "left",
             "right",
