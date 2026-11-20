@@ -46,8 +46,9 @@ configs), or an override names a key the config does not have
 shows the traceback). Every config of a glob that does not compose is
 reported, each headed by its name, before it exits with 2. A config the check
 could not compile at all (`[SKIPPED] <config>: ...`, such as a scenario with
-no source file) is no pass either: with none failed, the exit status is 2. A check that raises (an error of the checker itself,
-not a verdict on the scenario) fails that config only: it is reported as
+no source file) is no pass either: with none failed, the exit status is 2
+(`--library` likewise prints `[SKIPPED] ...` and exits with 2). A check that
+raises (an error of the checker itself, not a verdict on the scenario) fails that config only: it is reported as
 `[FAILED] <config>: checker error: <exception>`, its traceback goes to
 stderr, the other configs are still checked and reported, and the exit
 status is 1, as for any failed config (`--library` likewise reports

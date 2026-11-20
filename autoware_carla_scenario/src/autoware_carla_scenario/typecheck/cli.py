@@ -79,6 +79,10 @@ def main(argv: list[str] | None = None) -> int:
         except Exception as exc:  # noqa: BLE001 - reported as a failed check
             print(_checker_error("library check", exc))  # noqa: T201
             return 1
+        if result.skipped is not None:
+            # No verdict either way, as for a skipped config (#2249).
+            print(f"[SKIPPED] {result.format()}")  # noqa: T201
+            return 2
         print(f"[{'ok' if result.ok else 'FAILED'}] {result.format()}")  # noqa: T201
         return 0 if result.ok else 1
 

@@ -319,3 +319,23 @@ def test_a_codon_that_cannot_run_is_no_codon(
     assert code == 2
     assert "cannot be run" in err
     assert "Traceback" not in err
+
+
+def test_a_skipped_library_check_is_not_a_pass(
+    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # As a skipped config (#2249): no verdict, so not exit 0.
+    from autoware_carla_scenario.typecheck import cli  # noqa: PLC0415
+    from autoware_carla_scenario.typecheck.check import (  # noqa: PLC0415
+        TypeCheckResult,
+    )
+
+    def library(modules: object, *, toolchain: object) -> TypeCheckResult:
+        return TypeCheckResult("library", ok=True, skipped="no CARLA API to check: x")
+
+    monkeypatch.setattr(cli, "find_supported_codon", _fake_toolchain)
+    monkeypatch.setattr(cli, "typecheck_library", library)
+    code = main(["--library"])
+    out = capsys.readouterr().out
+    assert code == 2
+    assert "[SKIPPED] library: static check skipped" in out
