@@ -26,6 +26,7 @@ from .base import SimulationFidelity
 
 __all__ = [
     "MESOSCOPIC_ENGINES",
+    "MESOSCOPIC_KEY",
     "FidelityCandidate",
     "MesoscopicConfig",
     "closest_approach",
@@ -36,6 +37,21 @@ __all__ = [
 #: second SUMO with ``--mesosim``), or the cut-down queue model of
 #: :mod:`.mesoscopic`, in-process.
 MESOSCOPIC_ENGINES = ("sumo", "queue")
+
+#: The key :class:`MesoscopicConfig` is read from, which its errors name
+#: each option under: the ``sumo`` and ``hybrid`` backends both read it from
+#: ``traffic.options.mesoscopic``.
+MESOSCOPIC_KEY = "traffic.options.mesoscopic"
+
+
+def _in_range(key: str, value: float, requirement: str, zero: bool) -> float:
+    """*value* as a float (:func:`_number`), finite and above 0 -- or at
+    least 0 where *zero* -- or the keyed ``ValueError`` saying *requirement*
+    and showing *value* as written (``0``, not ``0.0``)."""
+    number = _number(key, value, requirement)
+    if not (math.isfinite(number) and (number >= 0.0 if zero else number > 0.0)):
+        raise ValueError(f"{key} must be {requirement} (got {shown(value)})")
+    return number
 
 
 def _number(key: str, value: float, requirement: str) -> float:
@@ -138,82 +154,64 @@ class MesoscopicConfig:
         # says "off".  Each is a number first: a bool, a string or null is
         # refused by its key, and an int is kept as its float (#1663).
         # The switches are read strictly (config_flags.check_flag): "false"
-        # is false and a typo is refused, named under ``mesoscopic.`` since
-        # a bare ``scenario_vehicles`` is the SUMO option of that name (#1757).
-        self.enabled = check_flag("mesoscopic.enabled", self.enabled)
+        # is false and a typo is refused (#1757).  Every error names its
+        # option by its full key, ``traffic.options.mesoscopic.<option>`` (a
+        # bare ``scenario_vehicles`` is the SUMO option of that name), and
+        # shows the value as written: ``0``, not the ``0.0`` it became (#2221).
+        key = MESOSCOPIC_KEY
+        self.enabled = check_flag(f"{key}.enabled", self.enabled)
         self.scenario_vehicles = check_flag(
-            "mesoscopic.scenario_vehicles", self.scenario_vehicles
+            f"{key}.scenario_vehicles", self.scenario_vehicles
         )
         self.junction_control = check_flag(
-            "mesoscopic.junction_control", self.junction_control
+            f"{key}.junction_control", self.junction_control
         )
-        self.micro_radius_m = _number(
-            "micro_radius_m", self.micro_radius_m, "positive and finite"
+        positive = "positive and finite"
+        not_negative = "finite and not negative"
+        micro_written = self.micro_radius_m
+        self.micro_radius_m = _in_range(
+            f"{key}.micro_radius_m", micro_written, positive, False
         )
         if self.meso_radius_m is not None:
-            self.meso_radius_m = _number(
-                "meso_radius_m", self.meso_radius_m, "finite or null"
-            )
-        self.update_interval_s = _number(
-            "update_interval_s", self.update_interval_s, "finite and not negative"
+            meso_written: float = self.meso_radius_m
+            meso = _number(f"{key}.meso_radius_m", meso_written, "finite or null")
+            if not math.isfinite(meso):
+                raise ValueError(
+                    f"{key}.meso_radius_m must be finite or null "
+                    f"(got {shown(meso_written)})"
+                )
+            if meso < self.micro_radius_m:
+                raise ValueError(
+                    f"{key}.meso_radius_m must be at least {key}.micro_radius_m "
+                    f"(got {shown(meso_written)} < {shown(micro_written)})"
+                )
+            self.meso_radius_m = meso
+        self.update_interval_s = _in_range(
+            f"{key}.update_interval_s", self.update_interval_s, not_negative, True
         )
         if self.engine not in MESOSCOPIC_ENGINES:
             raise ValueError(
-                f"mesoscopic.engine must be one of {', '.join(MESOSCOPIC_ENGINES)} "
+                f"{key}.engine must be one of {', '.join(MESOSCOPIC_ENGINES)} "
                 f"(got {self.engine!r})"
             )
-        both = "positive and finite"
-        self.segment_length_m = _number("segment_length_m", self.segment_length_m, both)
-        if not (math.isfinite(self.segment_length_m) and self.segment_length_m > 0.0):
-            raise ValueError(
-                f"segment_length_m must be positive and finite (got {self.segment_length_m!r})"
-            )
-        self.horizon_s = _number("horizon_s", self.horizon_s, "finite and not negative")
-        if not (math.isfinite(self.horizon_s) and self.horizon_s >= 0.0):
-            raise ValueError(
-                f"horizon_s must be finite and not negative (got {self.horizon_s!r})"
-            )
+        self.segment_length_m = _in_range(
+            f"{key}.segment_length_m", self.segment_length_m, positive, False
+        )
+        self.horizon_s = _in_range(
+            f"{key}.horizon_s", self.horizon_s, not_negative, True
+        )
         count = self.max_microscopic
         if count is not None and (
             isinstance(count, bool) or not isinstance(count, int) or count < 0
         ):
             raise ValueError(
-                "max_microscopic must be a whole number, not negative, or null "
-                f"(got {count!r})"
+                f"{key}.max_microscopic must be a whole number, not negative, "
+                f"or null (got {count!r})"
             )
-        self.headway_s = _number("headway_s", self.headway_s, both)
-        self.jam_spacing_m = _number("jam_spacing_m", self.jam_spacing_m, both)
-        if not (math.isfinite(self.micro_radius_m) and self.micro_radius_m > 0.0):
-            raise ValueError(
-                "micro_radius_m must be positive and finite "
-                f"(got {self.micro_radius_m!r})"
-            )
-        if self.meso_radius_m is not None and not math.isfinite(self.meso_radius_m):
-            raise ValueError(
-                f"meso_radius_m must be finite or null (got {self.meso_radius_m!r})"
-            )
-        if self.meso_radius_m is not None and self.meso_radius_m < self.micro_radius_m:
-            raise ValueError(
-                "meso_radius_m must be at least micro_radius_m "
-                f"(got {self.meso_radius_m!r} < {self.micro_radius_m!r})"
-            )
-        if not (
-            math.isfinite(self.update_interval_s) and self.update_interval_s >= 0.0
-        ):
-            raise ValueError(
-                "update_interval_s must be finite and not negative "
-                f"(got {self.update_interval_s!r})"
-            )
-        if not (
-            math.isfinite(self.headway_s)
-            and self.headway_s > 0.0
-            and math.isfinite(self.jam_spacing_m)
-            and self.jam_spacing_m > 0.0
-        ):
-            raise ValueError(
-                "headway_s and jam_spacing_m must be positive and finite "
-                f"(got {self.headway_s!r} and {self.jam_spacing_m!r})"
-            )
+        self.headway_s = _in_range(f"{key}.headway_s", self.headway_s, positive, False)
+        self.jam_spacing_m = _in_range(
+            f"{key}.jam_spacing_m", self.jam_spacing_m, positive, False
+        )
 
     @property
     def demote_radius_m(self) -> float:

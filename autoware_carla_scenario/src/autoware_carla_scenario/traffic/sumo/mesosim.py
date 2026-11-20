@@ -729,7 +729,9 @@ class MesoRoads:
     Positions are in SUMO's frame (:mod:`.geometry` turns CARLA's into it):
     a vehicle's front bumper, as SUMO places a vehicle, and the edge offset
     along its road's rightmost lane a car may use -- the mesoscopic model has
-    no lanes.
+    no lanes.  A place's height is its lane's, interpolated along the lane's
+    3D shape: a network converted from OpenDRIVE keeps the road's elevation
+    (:attr:`has_elevation` says whether this one has any).
     """
 
     def __init__(self, net: Any) -> None:
@@ -738,6 +740,13 @@ class MesoRoads:
         self.links: dict[str, MesoLink] = {}
         #: Each road's rightmost lane a car may use: where a vehicle on it is.
         self._shapes: dict[str, list[tuple[float, float]]] = {}
+        #: The height of each point of :attr:`_shapes`, m.
+        self._heights: dict[str, list[float]] = {}
+        #: Whether any lane of the network has a height other than 0: a
+        #: network without elevation (one from ``netgenerate``, or a flat
+        #: map) puts every place at z = 0, which the caller had better look
+        #: up in CARLA instead.
+        self.has_elevation = False
         #: Every lane a car may use, as ``(edge, shape)``, and those near each
         #: cell of the plane, so a point is matched against a few.
         self._lanes: list[tuple[str, list[tuple[float, float]]]] = []
@@ -752,9 +761,14 @@ class MesoRoads:
             self.links[edge_id] = MesoLink(
                 edge_id, float(edge.getLength()), len(lanes), float(edge.getSpeed())
             )
-            self._shapes[edge_id] = _shape(lanes[0])
+            shape, heights = _shape(lanes[0])
+            self._shapes[edge_id] = shape
+            self._heights[edge_id] = heights
             for lane in lanes:
-                self._index(edge_id, _shape(lane))
+                shape, heights = _shape(lane)
+                if any(z != 0.0 for z in heights):
+                    self.has_elevation = True
+                self._index(edge_id, shape)
 
     def _index(self, edge_id: str, shape: list[tuple[float, float]]) -> None:
         index = len(self._lanes)
@@ -798,7 +812,8 @@ class MesoRoads:
 
     def pose(self, edge_id: str, offset: float) -> Pose2D:
         """Where *offset* metres along *edge_id* is, in SUMO's frame, facing
-        along the road (SUMO's angle)."""
+        along the road (SUMO's angle), at the lane's height there (0 on a
+        network without elevation)."""
         import sumolib  # noqa: PLC0415
 
         geom = sumolib.geomhelper
@@ -807,7 +822,12 @@ class MesoRoads:
         offset = min(max(offset, 0.0), max(geom.polyLength(shape) - 0.01, 0.0))
         x, y = geom.positionAtShapeOffset(shape, offset)
         rotation = geom.rotationAtShapeOffset(shape, offset) or 0.0
-        return Pose2D(float(x), float(y), 0.0, (90.0 - math.degrees(rotation)) % 360.0)
+        return Pose2D(
+            float(x),
+            float(y),
+            _height_at(shape, self._heights[edge_id], offset),
+            (90.0 - math.degrees(rotation)) % 360.0,
+        )
 
     def route_on(
         self, route: list[str], rng: random.Random, edges: int = ROUTE_EDGES
@@ -827,8 +847,35 @@ class MesoRoads:
         return route
 
 
-def _shape(lane: Any) -> list[tuple[float, float]]:
-    return [(float(p[0]), float(p[1])) for p in lane.getShape()]
+def _shape(lane: Any) -> tuple[list[tuple[float, float]], list[float]]:
+    """*lane*'s shape across the ground, and the height of each point: z as
+    the network has it (sumolib reads a missing one as 0)."""
+    points = lane.getShape3D()
+    return (
+        [(float(p[0]), float(p[1])) for p in points],
+        [float(p[2]) if len(p) > 2 else 0.0 for p in points],
+    )
+
+
+def _height_at(
+    shape: Sequence[tuple[float, float]], heights: Sequence[float], offset: float
+) -> float:
+    """The height *offset* metres along *shape* (measured across the ground,
+    as sumolib measures a shape offset), interpolated between the heights of
+    the points either side."""
+    if not heights:
+        return 0.0
+    walked = 0.0
+    for i in range(1, len(shape)):
+        (x0, y0), (x1, y1) = shape[i - 1], shape[i]
+        length = math.hypot(x1 - x0, y1 - y0)
+        if walked + length >= offset:
+            if length <= 0.0:
+                return heights[i]
+            t = min(max((offset - walked) / length, 0.0), 1.0)
+            return heights[i - 1] + (heights[i] - heights[i - 1]) * t
+        walked += length
+    return heights[-1]
 
 
 def _cell(value: float) -> int:

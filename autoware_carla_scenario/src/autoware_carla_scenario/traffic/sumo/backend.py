@@ -3041,7 +3041,9 @@ class SumoTrafficBackend(TrafficBackend):
                     pose = self._background_origin(
                         sumo_id, self._meso_carla_pose(sumo_id, now)
                     )
-                    out[sumo_id] = (pose.x, pose.y, None)
+                    # Its lane's height where the network has one.
+                    meso_z = pose.z if self._meso_has_height() else None
+                    out[sumo_id] = (pose.x, pose.y, meso_z)
         for sumo_id in self._background & present:
             x, y, z = vehicle.getPosition3D(sumo_id)
             pose = self._background_origin(
@@ -4448,7 +4450,7 @@ class SumoTrafficBackend(TrafficBackend):
                 world,
                 self._meso_blueprints.get(sumo_id, self._config.blueprint),
                 str(getattr(entity, "role_name", None) or sumo_id),
-                self._meso_carla_pose(sumo_id, now),
+                self._meso_carla_pose(sumo_id, now, world),
             )
             if actor is None:
                 return False
@@ -4502,6 +4504,10 @@ class SumoTrafficBackend(TrafficBackend):
         self._level_changes[1] += 1
         return True
 
+    def _meso_has_height(self) -> bool:
+        """Whether the mesoscopic roads put a vehicle at its lane's height."""
+        return self._meso_roads is not None and self._meso_roads.has_elevation
+
     def _meso_pose(self, sumo_id: str, now: float) -> Pose2D:
         """Where the queue model has *sumo_id*, in SUMO's frame (front bumper).
 
@@ -4510,15 +4516,27 @@ class SumoTrafficBackend(TrafficBackend):
         assert self._meso is not None and self._meso_roads is not None
         return self._meso_roads.pose(*self._meso.position(sumo_id, now))
 
-    def _meso_carla_pose(self, sumo_id: str, now: float) -> Pose2D:
+    def _meso_carla_pose(self, sumo_id: str, now: float, world: Any = None) -> Pose2D:
         """Where the queue model has *sumo_id*, in CARLA's frame: its box
-        centre (:meth:`_spawn_at_centre` puts an actor's there)."""
-        assert self._meso is not None
-        return sumo_to_carla(
+        centre (:meth:`_spawn_at_centre` puts an actor's there).
+
+        At the height of its lane in SUMO's network, which keeps the
+        OpenDRIVE's elevation; on a network that has none, and given the
+        *world*, at the height of CARLA's driving lane there
+        (:func:`_carla_road_height`), so an actor spawned there is not put
+        at z = 0 on a map whose roads are not.
+        """
+        assert self._meso is not None and self._meso_roads is not None
+        pose = sumo_to_carla(
             self._meso_pose(sumo_id, now),
             self._meso.vehicle(sumo_id).length,
             self._offset,
         )
+        if world is not None and not self._meso_roads.has_elevation:
+            z = _carla_road_height(world, pose.x, pose.y)
+            if z is not None:
+                pose = Pose2D(pose.x, pose.y, z, pose.heading_deg)
+        return pose
 
     def _spawn_actor(
         self, world: Any, blueprint_id: str, role_name: str, pose: Pose2D
@@ -5360,3 +5378,26 @@ def world_opendrive(context: TrafficContext, who: str) -> str:
         )
     # The run's map where one is held: get_map() builds a whole new one.
     return str(run_carla_map(context.world).to_opendrive())
+
+
+def _carla_road_height(world: Any, x: float, y: float) -> Optional[float]:
+    """The height of CARLA's driving lane nearest ``(x, y)``, m, or ``None``
+    where CARLA has none (or the map cannot be asked).
+
+    For a place the SUMO network gives no height for: asked at z = 0, the
+    nearest lane is the one CARLA projects to, which on a stacked road may be
+    either level -- still nearer than z = 0 on any road that is not at it.
+    """
+    import typesafe_carla.carla as carla  # noqa: PLC0415
+
+    try:
+        found = run_carla_map(world).get_waypoint(
+            carla.Location(x, y, 0.0),
+            project_to_road=True,
+            lane_type=int(carla.LaneType.Driving),
+        )
+    except RuntimeError:
+        return None
+    if found is None:
+        return None
+    return float(found.transform.location.z)

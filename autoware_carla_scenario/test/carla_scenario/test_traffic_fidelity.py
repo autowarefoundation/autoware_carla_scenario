@@ -8,6 +8,7 @@ None of them needs a simulator; the SUMO backend's use of all three is in
 from __future__ import annotations
 
 import math
+import re
 from typing import Any, Optional
 
 import pytest
@@ -126,10 +127,94 @@ def test_the_policy_refuses_impossible_options(options: dict[str, Any]) -> None:
         MesoscopicConfig(**options)
 
 
+@pytest.mark.parametrize(
+    ("options", "message"),
+    [
+        (
+            {"micro_radius_m": 0},
+            "traffic.options.mesoscopic.micro_radius_m must be positive and "
+            "finite (got 0)",
+        ),
+        (
+            {"micro_radius_m": -5},
+            "traffic.options.mesoscopic.micro_radius_m must be positive and "
+            "finite (got -5)",
+        ),
+        (
+            {"micro_radius_m": 100, "meso_radius_m": 50},
+            "traffic.options.mesoscopic.meso_radius_m must be at least "
+            "traffic.options.mesoscopic.micro_radius_m (got 50 < 100)",
+        ),
+        (
+            {"meso_radius_m": math.inf},
+            "traffic.options.mesoscopic.meso_radius_m must be finite or null "
+            "(got inf)",
+        ),
+        (
+            {"update_interval_s": -1},
+            "traffic.options.mesoscopic.update_interval_s must be finite and "
+            "not negative (got -1)",
+        ),
+        (
+            {"headway_s": 0},
+            "traffic.options.mesoscopic.headway_s must be positive and finite "
+            "(got 0)",
+        ),
+        (
+            {"jam_spacing_m": 0.0},
+            "traffic.options.mesoscopic.jam_spacing_m must be positive and "
+            "finite (got 0.0)",
+        ),
+        (
+            {"segment_length_m": 0},
+            "traffic.options.mesoscopic.segment_length_m must be positive and "
+            "finite (got 0)",
+        ),
+        (
+            {"horizon_s": -2},
+            "traffic.options.mesoscopic.horizon_s must be finite and not "
+            "negative (got -2)",
+        ),
+        (
+            {"max_microscopic": -1},
+            "traffic.options.mesoscopic.max_microscopic must be a whole number, "
+            "not negative, or null (got -1)",
+        ),
+        (
+            {"engine": ""},
+            "traffic.options.mesoscopic.engine must be one of sumo, queue " "(got '')",
+        ),
+        (
+            {"engine": False},
+            "traffic.options.mesoscopic.engine must be one of sumo, queue "
+            "(got False)",
+        ),
+    ],
+)
+def test_a_refused_option_is_named_by_its_full_key_and_shown_as_written(
+    options: dict[str, Any], message: str
+) -> None:
+    """``micro_radius_m: 0`` was refused as ``micro_radius_m ... (got 0.0)``:
+    no ``traffic.options.mesoscopic.``, and not the value written (#2221)."""
+    for read in (
+        MesoscopicConfig.from_mapping,
+        lambda o: SumoBackendConfig.from_mapping({"mesoscopic": o}).mesoscopic,
+    ):
+        with pytest.raises(ValueError) as refused:
+            read(options)
+        assert str(refused.value) == message
+    # Absent or null is the default.
+    for key in options:
+        default = getattr(MesoscopicConfig(), key)
+        assert getattr(MesoscopicConfig.from_mapping({key: None}), key) == default
+        assert getattr(MesoscopicConfig.from_mapping({}), key) == default
+
+
 def test_a_nan_radius_from_a_mapping_is_refused_rather_than_never_demoting() -> None:
-    with pytest.raises(ValueError, match="meso_radius_m must be finite"):
+    message = r"^traffic\.options\.mesoscopic\.meso_radius_m must be finite"
+    with pytest.raises(ValueError, match=message):
         MesoscopicConfig.from_mapping({"enabled": True, "meso_radius_m": math.nan})
-    with pytest.raises(ValueError, match="meso_radius_m must be finite"):
+    with pytest.raises(ValueError, match=message):
         SumoBackendConfig.from_mapping(
             {"mesoscopic": {"enabled": True, "meso_radius_m": math.nan}}
         )
@@ -151,16 +236,18 @@ def test_a_mesoscopic_number_refuses_what_is_no_number_by_its_key(
     # A bool passed as 0 or 1, and a string or a null in a required field
     # raised a TypeError naming no key (#1663); 10**400 an OverflowError.
     bad: list[Any] = [True, False, "2", "", [1.0], 10**400]
+    # Named by its full key (#2221).
+    name = re.escape(f"traffic.options.mesoscopic.{key}")
     if not nullable:
         # Null is the default in a mapping (#2174); the constructor refuses it.
         default = getattr(MesoscopicConfig(), key)
         assert getattr(MesoscopicConfig.from_mapping({key: None}), key) == default
-        with pytest.raises(ValueError, match=f"^{key} {message}"):
+        with pytest.raises(ValueError, match=f"^{name} {message}"):
             MesoscopicConfig(**{key: None})  # type: ignore[arg-type]
     for value in bad:
-        with pytest.raises(ValueError, match=f"^{key} {message}"):
+        with pytest.raises(ValueError, match=f"^{name} {message}"):
             MesoscopicConfig.from_mapping({"enabled": True, key: value})
-        with pytest.raises(ValueError, match=f"^{key} {message}"):
+        with pytest.raises(ValueError, match=f"^{name} {message}"):
             SumoBackendConfig.from_mapping(
                 {"mesoscopic": {"enabled": True, key: value}}
             )
@@ -202,7 +289,7 @@ def test_a_mesoscopic_switch_is_read_strictly_by_its_key(
     with pytest.raises(ValueError, match=r"must be true or false, got None"):
         MesoscopicConfig(**{key: None})  # type: ignore[arg-type]
     for bad in ("maybe", 2, 0.0, [True]):
-        message = rf"^mesoscopic\.{key} must be true or false, got "
+        message = rf"^traffic\.options\.mesoscopic\.{key} must be true or false, got "
         with pytest.raises(ValueError, match=message):
             MesoscopicConfig.from_mapping({key: bad})
         with pytest.raises(ValueError, match=message):
@@ -351,12 +438,13 @@ def test_at_most_max_microscopic_are_microscopic_the_nearest() -> None:
         ({"max_microscopic": -1}, "max_microscopic must be a whole number"),
         ({"max_microscopic": 2.5}, "max_microscopic must be a whole number"),
         ({"max_microscopic": True}, "max_microscopic must be a whole number"),
-        ({"engine": "vissim"}, "mesoscopic.engine must be one of sumo, queue"),
+        ({"engine": "vissim"}, "engine must be one of sumo, queue"),
     ],
 )
 def test_the_look_ahead_and_the_budget_are_checked(
     options: dict[str, Any], message: str
 ) -> None:
+    message = "^" + re.escape(f"traffic.options.mesoscopic.{message}")
     with pytest.raises(ValueError, match=message):
         MesoscopicConfig.from_mapping(options)
     with pytest.raises(ValueError, match=message):
