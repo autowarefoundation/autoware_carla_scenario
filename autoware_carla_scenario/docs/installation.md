@@ -191,7 +191,7 @@ The package's runtime dependencies (declared in `pyproject.toml`):
   result viewer
 - `python-multipart>=0.0.9` — reads the Scenario Editor's form posts
 - `pyyaml>=6.0`, `pydantic>=2.0.0`
-- `openodd-py>=0.47.0` — ASAM OpenODD: the ODD model, the sampler and
+- `openodd-py>=0.47.1` — ASAM OpenODD: the ODD model, the sampler and
   coverage; this package is its CARLA backend
 - `packaging>=23.0`, `tomli>=1.1.0` (Python < 3.11) — read a scenario
   package's `requires-python` for its wheelhouse
