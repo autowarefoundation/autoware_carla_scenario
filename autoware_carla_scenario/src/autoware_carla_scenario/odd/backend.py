@@ -235,7 +235,13 @@ class _ByProbeName(Mapping[Any, Any]):
     """A table keyed by built-in probe name, looked up by name or by probe
     (:func:`_probe_name`): a probe replaced in :mod:`.probes` (a test's
     monkeypatch, a plugin), which the built-in lookup returns, keeps its
-    entry, as keying by the original function object did not (#2226)."""
+    entry, as keying by the original function object did not (#2226).
+
+    It iterates the probes the built-in lookup gives now, as the table keyed
+    by probe it replaces did, not their names: a copy (``dict(...)``,
+    ``{**DEFAULT_KNOBS, probe: knob}``) is keyed by probe, so openodd's
+    :meth:`Backend.knob`, which looks a knob up by ``attribute.probe``, still
+    finds the built-in ones in it."""
 
     def __init__(self, by_name: Mapping[str, Any]) -> None:
         self._by_name = by_name
@@ -246,8 +252,9 @@ class _ByProbeName(Mapping[Any, Any]):
             raise KeyError(key)
         return self._by_name[name]
 
-    def __iter__(self) -> Iterator[str]:
-        return iter(self._by_name)
+    def __iter__(self) -> Iterator[Any]:
+        for name in self._by_name:
+            yield BUILT_IN_PROBES[name][0]
 
     def __len__(self) -> int:
         return len(self._by_name)

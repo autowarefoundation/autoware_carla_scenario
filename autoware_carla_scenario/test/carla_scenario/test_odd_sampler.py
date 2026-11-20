@@ -2687,9 +2687,39 @@ def test_a_replaced_built_in_probe_keeps_its_knob_and_read_back_check(
 def test_the_knobs_name_every_built_in_probe_they_set() -> None:
     from autoware_carla_scenario.odd.backend import BUILT_IN_PROBES, DEFAULT_KNOBS
 
-    assert set(DEFAULT_KNOBS) <= set(BUILT_IN_PROBES)
-    for name in DEFAULT_KNOBS:
-        assert DEFAULT_KNOBS[BUILT_IN_PROBES[name][0]] is DEFAULT_KNOBS[name]
+    probes = {name: probe for name, (probe, _unit) in BUILT_IN_PROBES.items()}
+    by_id = {id(probe): name for name, probe in probes.items()}
+    assert {id(probe) for probe in DEFAULT_KNOBS} <= set(by_id)
+    for probe in DEFAULT_KNOBS:
+        assert DEFAULT_KNOBS[by_id[id(probe)]] is DEFAULT_KNOBS[probe]
+
+
+def test_a_copy_of_the_knobs_is_keyed_by_probe(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A copy of DEFAULT_KNOBS -- a backend given the built-in knobs and one
+    of its own -- is keyed by the probes the built-in lookup gives, as the
+    dict keyed by probe it replaced was, so Backend.knob still finds the
+    built-in knobs in it, a replaced probe's included (#2226)."""
+    from autoware_carla_scenario.odd import probes
+    from autoware_carla_scenario.odd.backend import (
+        BUILT_IN_PROBES,
+        DEFAULT_KNOBS,
+        CarlaBackend,
+    )
+
+    monkeypatch.setattr(probes, "illumination", lambda world: "day")
+    fake_sun = BUILT_IN_PROBES["illumination"][0]
+    copy = dict(DEFAULT_KNOBS)
+    assert len(copy) == len(DEFAULT_KNOBS)
+    assert copy[fake_sun] is DEFAULT_KNOBS["illumination"]
+    backend = CarlaBackend(knobs={**DEFAULT_KNOBS})
+    sun = OddAttribute(
+        "environment.illumination",
+        fake_sun,
+        values=["day", "low_sun", "twilight", "night"],
+    )
+    assert backend.knob(sun, {}) is DEFAULT_KNOBS["illumination"]
 
 
 _KNOBS = "sweep.odd_sample.knobs"
