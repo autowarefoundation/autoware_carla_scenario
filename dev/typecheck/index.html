@@ -4979,7 +4979,7 @@ lists here. -->
 <p>Every module now has an entry other than <code>"not yet checked (#45)"</code>.
 342 of the package's 472
 modules (72%; about 106,300 of
-178,600 lines) are <code>CHECKED</code>: the kinematics, the
+178,700 lines) are <code>CHECKED</code>: the kinematics, the
 coordinate frames and poses and the conversions between Lanelet2, OpenDRIVE
 and CARLA world poses, the map manager and the map sources, the route search,
 the trajectories, the conditions, the actions and the entities, the scenario
@@ -6750,7 +6750,7 @@ the first:</p>
 <li><code>driver.renderer</code>: imports carla_driver_interface.protocol (the protobuf messages it builds and reads: CarlaRendererData, CarlaActorState, CarlaWeather, TrafficLight, StopPoint, LidarSweep, the TrafficLightState values, and common_pb2's AABB, DynamicState and Vec3), which its model (geometry only) does not declare; and _weather() reads the weather's fields by a name held in a variable, through getattr(), and passes them to CarlaWeather as ** a dict, neither of which Codon compiles; and the velocity it reports for an actor is a measured Vector3 or CARLA's Vector3D in one conditional expression, which Codon cannot type; which light governs the ego and where it stops for it are the checked driver.stop_lines'</li>
 <li><code>editor</code>: imports argparse and serve_cli (argparse), which is not checked; imports uvicorn and editor.app (fastapi) inside main()</li>
 <li><code>editor.app</code>: imports fastapi and web_guard (starlette), and authoring.models (pydantic), authoring.hydra_config, authoring.persistence, authoring._builders_generated and editor.service (pydantic, through authoring.models), authoring.registry, trajectory.authoring and editor.forms, and, inside create_app(), editor.routes (fastapi), which are neither checked nor modelled</li>
-<li><code>editor.forms</code>: imports trajectory.authoring and authoring.registry, which are not checked, and authoring.registry has no model; parses form values typed Any against a FieldSpec (parse_int_list(), parse_value(), parse_params(), parse_records() and _apply_row_op() stay here, and the bools through authoring.registry's read_bool()); the whole numbers it parses, a list field's items and a record list's row count, are the checked editor.form_values's (_parse_list_int(), the split at _LIST_SEPARATORS and the _MAX_RECORDS bound, #2135)</li>
+<li><code>editor.forms</code>: imports trajectory.authoring, authoring.hydra_config (yaml, pydantic) and authoring.registry, which are not checked, and authoring.registry has no model; parses form values typed Any against a FieldSpec (parse_int_list(), parse_value(), parse_params(), parse_records() and _apply_row_op() stay here, and the bools through authoring.registry's read_bool()); the whole numbers it parses, a list field's items and a record list's row count, are the checked editor.form_values's (_parse_list_int(), the split at _LIST_SEPARATORS and the _MAX_RECORDS bound, #2135)</li>
 <li><code>editor.map_preview</code>: imports authoring.models (pydantic) and authoring.hydra_config (yaml, and pydantic through authoring.models), which are not checked and have no model</li>
 <li><code>editor.routes</code>: imports fastapi, starlette, pydantic (<code>ValidationError</code>), web_guard (starlette), which is not checked, and anyio inside a function</li>
 <li><code>editor.scenario_map</code>: imports authoring.models (pydantic), authoring.hydra_config (yaml, and pydantic through authoring.models) and editor.map_preview, which are not checked and have no model</li>
