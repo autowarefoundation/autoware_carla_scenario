@@ -1640,7 +1640,13 @@ class ResolvedTrajectory:
 
 
 def _wrap_degrees(angle: float) -> float:
-    """*angle* wrapped into ``[-180, 180)``."""
+    """*angle* wrapped into ``[-180, 180)``.
+
+    :func:`~autoware_carla_scenario.kinematics.angle.normalize_angle_deg`,
+    written out again: importing ``kinematics`` imports ``coordinate`` and
+    CARLA with it, and this module imports nothing from CARLA (the trajectory
+    editor reads it without a simulator).
+    """
     wrapped = (angle + 180.0) % 360.0 - 180.0
     # Rounding can land a value just below -180 on +180 itself.
     return -180.0 if wrapped >= 180.0 else wrapped

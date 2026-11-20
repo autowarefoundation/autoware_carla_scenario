@@ -41,6 +41,7 @@ import random
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Optional
 
+from ..kinematics.angle import normalize_angle_rad
 from ..trajectory.relative_lane import _centreline, _heading_at
 from .geometry import MapFeatures, paths_from_left
 from .model import (
@@ -99,11 +100,6 @@ def lane_shape(heading_change_rad: float) -> str:
     if abs(degrees) <= STRAIGHT_MAX_TURN_DEG:
         return "straight"
     return "curved_left" if degrees > 0.0 else "curved_right"
-
-
-def _wrap(angle: float) -> float:
-    wrapped = (angle + math.pi) % (2.0 * math.pi) - math.pi
-    return -math.pi if wrapped >= math.pi else wrapped
 
 
 @dataclass
@@ -316,7 +312,7 @@ class _Search:
             stop_s = f.length(last) if end_s is None else end_s
             before = _heading_at(_centreline(lanelets[0]), start_s)
             after = _heading_at(_centreline(last), max(0.0, stop_s - 1e-6))
-            if lane_shape(_wrap(after - before)) != seg.shape:
+            if lane_shape(normalize_angle_rad(after - before)) != seg.shape:
                 return False
         return True
 

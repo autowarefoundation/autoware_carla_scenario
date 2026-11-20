@@ -217,6 +217,53 @@ class TestWhereTheReferenceIs:
         assert reference_lane_pose(road[0], 20.5, -0.2, -math.pi / 4).lanelet_id == B
 
 
+def _stacked_lanelet(z0: float, z1: float, dy_end: float) -> Any:
+    """A 100 m lanelet East from x = 0, rising from *z0* to *z1*, its end
+    *dy_end* north of its start."""
+    from lanelet2.core import Lanelet, LineString3d, Point3d, getId
+
+    def bound(y: float) -> Any:
+        return LineString3d(
+            getId(),
+            [Point3d(getId(), 0.0, y, z0), Point3d(getId(), 100.0, y + dy_end, z1)],
+        )
+
+    return Lanelet(
+        getId(), bound(1.75), bound(-1.75), lanelet2.core.AttributeMap(_LANE)
+    )
+
+
+class TestStackedLanelets:
+    """A deck over a nearly parallel road: elevation picks the level, heading
+    only chooses among lanelets on it (#2221)."""
+
+    def test_a_pose_on_the_deck_is_on_the_deck(self) -> None:
+        lanelet_map = lanelet2.core.LaneletMap()
+        ground = _stacked_lanelet(0.0, 0.0, 0.0)  # heading 0
+        deck = _stacked_lanelet(10.0, 10.0, 0.5)  # heading about 0.005 rad
+        lanelet_map.add(ground)
+        lanelet_map.add(deck)
+        # Heading 0.002 is nearer the ground road's direction than the deck's.
+        on_deck = reference_lane_pose(lanelet_map, 50.0, 0.2, 0.002, z=10.0)
+        assert on_deck.lanelet_id == deck.id
+        on_ground = reference_lane_pose(lanelet_map, 50.0, 0.2, 0.004, z=0.0)
+        assert on_ground.lanelet_id == ground.id
+        # Without an elevation, heading alone decides.
+        assert reference_lane_pose(lanelet_map, 50.0, 0.2, 0.004).lanelet_id == deck.id
+
+    def test_the_height_is_read_where_the_pose_is_not_averaged(self) -> None:
+        lanelet_map = lanelet2.core.LaneletMap()
+        # A ramp from 0 to 16 m (mean 8 m) and a deck level at 8 m: at x = 10
+        # the ramp is 1.6 m high, so a pose at z = 1.6 is on the ramp even
+        # though its heading matches the deck's exactly.
+        ramp = _stacked_lanelet(0.0, 16.0, 0.5)
+        deck = _stacked_lanelet(8.0, 8.0, 0.0)
+        lanelet_map.add(ramp)
+        lanelet_map.add(deck)
+        pose = reference_lane_pose(lanelet_map, 10.0, 0.0, 0.0, z=1.6)
+        assert pose.lanelet_id == ramp.id
+
+
 class TestAlongTheLane:
     def test_within_one_lanelet(self, road: tuple[Any, Any]) -> None:
         assert advance_along_lane(*road, R0, 2.0, 5.0) == (R0, pytest.approx(7.0))
