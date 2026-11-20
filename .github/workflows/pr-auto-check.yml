@@ -22,8 +22,9 @@ jobs:
       - name: Get changed workflow files
         id: changed-workflows
         run: |
-          # Get changed files in .github/workflows/
-          CHANGED_FILES=$(git diff --name-only origin/${{ github.base_ref }}...HEAD -- '.github/workflows/*.yml' '.github/workflows/*.yaml')
+          # Get changed files in .github/workflows/. `--diff-filter=d` leaves
+          # out deleted ones, which actionlint could not read.
+          CHANGED_FILES=$(git diff --name-only --diff-filter=d origin/${{ github.base_ref }}...HEAD -- '.github/workflows/*.yml' '.github/workflows/*.yaml')
           {
             echo "changed_files<<EOF"
             echo "$CHANGED_FILES"

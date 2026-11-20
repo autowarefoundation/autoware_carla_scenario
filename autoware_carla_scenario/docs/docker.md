@@ -55,7 +55,8 @@ flowchart LR
 ```
 
 `wheelhouse` is Alpine because everything it touches is pure Python — `uv
-build` emits `py3-none-any` wheels for all three packages — so the stage needs
+build` emits `py3-none-any` wheels for the framework's workspace package and
+for the scenario package — so the stage needs
 neither glibc nor a compiler, and nothing but the wheels survives it.
 
 The runtime is **not** Alpine, and cannot be. `typesafe-carla` and its Codon

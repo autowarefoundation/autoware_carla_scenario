@@ -1,6 +1,6 @@
 name: Build Documentation
 description: >
-  Build mkdocs documentation for a package with version info injection.
+  Build mkdocs documentation for a package.
   Supports strict mode, PDF export, and optional PDF copy to a target path.
 
 inputs:
@@ -11,10 +11,6 @@ inputs:
     description: MkDocs config file name relative to package-dir (e.g., mkdocs.ci.yml or mkdocs.yml)
     required: false
     default: "mkdocs.yml"
-  version:
-    description: Version string to inject. If empty, extracted from package-dir/pyproject.toml.
-    required: false
-    default: ""
   strict:
     description: Enable --strict mode (treats warnings as errors)
     required: false
@@ -39,22 +35,6 @@ runs:
         set -euo pipefail
         pkg_dir="${{ inputs.package-dir }}"
         config_file="${pkg_dir}/${{ inputs.config-file }}"
-
-        # Resolve version
-        version="${{ inputs.version }}"
-        if [ -z "${version}" ]; then
-          version=$(grep '^version = ' "${pkg_dir}/pyproject.toml" | sed 's/version = "\(.*\)"/\1/')
-        fi
-
-        # Inject version info into mkdocs.yml
-        GIT_BRANCH=$(git rev-parse --abbrev-ref HEAD)
-        GIT_COMMIT=$(git rev-parse --short HEAD)
-
-        cat >> "${pkg_dir}/mkdocs.yml" << EOF
-          version_string: v${version}
-          git_branch: ${GIT_BRANCH}
-          git_commit: ${GIT_COMMIT}
-        EOF
 
         # Build
         strict_flag=""

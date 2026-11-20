@@ -566,7 +566,7 @@ The workflow uses [lychee](https://github.com/lycheeverse/lychee), a fast Rust-b
 
 - **Scans multiple file types**: Markdown (.md), Python (.py), YAML (.yml, .yaml), TOML (.toml), HTML (.html)
 - **Caches results**: Uses GitHub Actions cache to avoid rate-limiting (1-day TTL)
-- **Creates issues**: Automatically creates GitHub issues when broken links are found (scheduled runs only)
+- **Creates issues**: Automatically creates a GitHub issue when broken links are found (scheduled runs only), or updates the report issue that is still open
 - **Generates reports**: Uploads detailed reports as workflow artifacts (30-day retention)
 
 ### Configuration Files
@@ -586,7 +586,7 @@ Main configuration file with settings:
 - **Redirects**: Follows up to 10 redirects
 - **User Agent**: Identifies as Lychee link checker
 - **Schemes**: Only checks http and https URLs
-- **Excluded paths**: Ignores .git, node_modules, __pycache__, etc.
+- **Excluded paths and URLs**: Ignores .git, .github/workflows, node_modules, __pycache__, the test fixtures, etc. -- the workflow passes no excludes of its own, so add new ones here
 
 ### Local Usage
 

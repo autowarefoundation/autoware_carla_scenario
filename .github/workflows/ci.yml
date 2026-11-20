@@ -359,7 +359,6 @@ jobs:
       with:
         install-dev-deps: "true"
         run-precommit: "true"
-        precommit-continue-on-error: "false"
 
   auto-format:
     name: Auto-fix formatting

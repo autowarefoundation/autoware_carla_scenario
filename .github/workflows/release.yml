@@ -28,7 +28,6 @@ jobs:
     # A manual release only ever comes from master.
     if: github.event_name == 'push' || github.ref == 'refs/heads/master'
     outputs:
-      bump_type: ${{ steps.pr-labels.outputs.bump_type }}
       new_version: ${{ steps.version.outputs.version }}
       # Read by the `pypi-*` jobs below: whether this run releases, and the
       # commit the release was cut from.
@@ -298,7 +297,6 @@ jobs:
         uses: ./.github/actions/build-docs
         with:
           package-dir: autoware_carla_scenario
-          version: ${{ steps.version.outputs.version }}
           enable-pdf: "true"
           pdf-output-path: carla-scenario-documentation-v${{ steps.version.outputs.version }}.pdf
 
