@@ -448,11 +448,20 @@ sweep:
               type: previous_of
               constraints:
                 - type: is_junction
+          # Nor one that leads onto a lanelet with no 3D model: the route
+          # below ends there, so CARLA must draw it too.
+          - type: not
+            constraint:
+              type: previous_of
+              constraints:
+                - type: in_set
+                  values: ${map.no_3d_model_lanelet_ids}
   bindings:
     # The spawn lanelet and the lanelet after it: the route the run asserts,
     # replaced with each pick.  Without it every case would still expect
     # [460, 265], which almost no spawn leads to.
-    # A pick with no lanelet after it has no such route and is skipped.
+    # A pick with no lanelet after it has no such route and is skipped; where
+    # the lane splits in two, the lower lanelet ID is taken.
     scenario.expected_lanelet_ids:
       type: route_through
       depth: 1
@@ -461,6 +470,10 @@ sweep:
 Every swept key that a case depends on must move with the pick: a value
 outside `sweep:` that only fits the fixed case (a `spawn_s` beyond a shorter
 lanelet's end, a route from another lanelet) is kept as it is for every case.
+Even so, a pick where the lane splits in two outside a junction (7 of the
+80 cases on the default map) expects the branch with the lower ID, and the
+default TrafficManager ego, told nothing about which way to go, may take
+the other; an ego that plans its own route to the goal does not.
 The shipped sweeps do the same -- `intersection_passing/straight` binds
 `ego.spawn_s` with `stop_line_offset` and the route with `route_through`
 ([Usage](usage.md)). Check what a sweep expands to, without CARLA, before
