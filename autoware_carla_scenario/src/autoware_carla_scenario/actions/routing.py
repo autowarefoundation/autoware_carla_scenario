@@ -57,7 +57,12 @@ from ..utils.clearance import HIDDEN_BELOW_M
 from ..waypoint_arrival import WaypointArrival
 from ._route_pacing import PaceMark, RoutePacer
 from ._road_threat import DEFAULT_TURN_BACK_WITHIN_M
-from ._trajectory_run import ARRIVAL_TOLERANCE_M, TrajectoryRun, _entity_actor
+from ._trajectory_run import (
+    ARRIVAL_TOLERANCE_M,
+    TrajectoryRun,
+    _entity_actor,
+    _tick_seconds,
+)
 from ..control_domain import ControlDomain, movement_of
 from .base import TickTiming
 
@@ -1020,6 +1025,7 @@ class RoutingAction(TrajectoryRun):
             cruise,
             limit,
             (location.x, location.y),
+            _tick_seconds(world),
         )
         if abs(speed - self._sent) >= _SPEED_RESEND_MPS or (
             speed == 0.0 and self._sent != 0.0
@@ -1142,6 +1148,7 @@ class RoutingAction(TrajectoryRun):
                 self._cruise_walk(),
                 _WALKER_LIMIT_MPS,
                 (location.x, location.y),
+                _tick_seconds(world),
             )
         if actor is not None:
             from ._trajectory_run import _vehicle_before_walker  # noqa: PLC0415

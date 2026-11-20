@@ -31,6 +31,7 @@ __all__ = [
     "WalkerVelocities",
     "is_walker",
     "simulated_seconds",
+    "world_seconds",
 ]
 
 
@@ -39,10 +40,16 @@ def is_walker(actor: "carla.Actor") -> bool:
     return str(actor.type_id).startswith("walker.")
 
 
+def world_seconds(world: "carla.World") -> float:
+    """*world*'s simulated time (s), read from its snapshot; what fails to
+    read it raises (:func:`simulated_seconds` answers ``None`` instead)."""
+    return float(world.get_snapshot().timestamp.elapsed_seconds)
+
+
 def simulated_seconds(world: "carla.World") -> Optional[float]:
     """*world*'s simulated time (s), or ``None`` where it does not say."""
     try:
-        return float(world.get_snapshot().timestamp.elapsed_seconds)
+        return world_seconds(world)
     except Exception:
         return None
 

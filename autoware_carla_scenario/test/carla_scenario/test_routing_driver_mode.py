@@ -42,7 +42,16 @@ from autoware_carla_scenario.npc_collisions import SCAN_EVERY_TICKS, NpcCollisio
 from autoware_carla_scenario.trajectory_recorder import SCHEMA_PATH, TrajectoryRecorder
 from autoware_carla_scenario.waypoint_arrival import WaypointArrival
 
-_WORLD: Any = object()
+
+class _TickedWorld:
+    """A world that says only how long its last tick was, the step the
+    pacer's smoothing reads."""
+
+    def get_snapshot(self) -> Any:
+        return SimpleNamespace(timestamp=SimpleNamespace(delta_seconds=0.05))
+
+
+_WORLD: Any = _TickedWorld()
 
 
 class _Never(BaseCondition):
@@ -91,6 +100,44 @@ class TestPacer:
         for _ in range(30):
             last = pacer.speed(_WORLD, 0.0, 0.0, cruise=8.0, limit=15.0)
         assert last == pytest.approx(5.0, abs=0.01)
+
+    @staticmethod
+    def _settle_seconds(tick: float) -> float:
+        """The simulated time the command takes from 0 to within 1 % of a
+        5 m/s target, at ticks of *tick* seconds."""
+        pacer = RoutePacer("npc1", "driver", [PaceMark(1, 50.0, time=10.0)], 1.0, 0.0)
+        for n in range(1, 2000):
+            speed = pacer.speed(
+                _WORLD, 0.0, 0.0, cruise=8.0, limit=15.0, tick_seconds=tick
+            )
+            if speed >= 0.99 * 5.0:
+                return n * tick
+        raise AssertionError("never settled")
+
+    def test_the_smoothing_settles_in_the_same_simulated_time_at_any_tick_rate(
+        self,
+    ) -> None:
+        # #2219: smoothed once per tick, the command settled twice as fast
+        # (in simulated time) at 10 Hz as at 20 Hz.
+        assert self._settle_seconds(0.1) == pytest.approx(
+            self._settle_seconds(0.05), abs=0.1
+        )
+        assert self._settle_seconds(0.025) == pytest.approx(
+            self._settle_seconds(0.05), abs=0.05
+        )
+
+    def test_at_the_tuned_tick_the_smoothing_is_what_it_was(self) -> None:
+        # 0.05 s, the default step: each tick moves exactly 0.3 of the way,
+        # bit for bit, as before the smoothing was scaled.
+        pacer = RoutePacer("npc1", "driver", [PaceMark(1, 50.0, time=10.0)], 1.0, 0.0)
+        command = 0.0
+        for _ in range(20):
+            command += 0.3 * (5.0 - command)
+            assert pacer.speed(_WORLD, 0.0, 0.0, cruise=8.0, limit=15.0) == command
+            assert (
+                pacer.speed(_WORLD, 0.0, 0.0, cruise=8.0, limit=15.0, tick_seconds=0.0)
+                == command  # a tick that covered no time moves nothing
+            )
 
     def test_a_late_entity_catches_up_at_the_limit(self) -> None:
         pacer = RoutePacer("npc1", "driver", [PaceMark(1, 50.0, time=10.0)], 1.0, 15.0)

@@ -187,6 +187,16 @@ class AdversarialAction(BaseAction):
         self._elapsed = elapsed
         super().tick(world, elapsed)
 
+    def _watch_trigger(self, world: "carla.World", elapsed: float) -> None:
+        """Not its own feasibility check (no ``condition`` given), while a
+        run is under way: it keeps no state between ticks but its draws from
+        the seed, so watching it would only build a scene each tick and spend
+        draws the next run's trigger would otherwise have made (#2219).  A
+        trigger the scenario gave is watched (:meth:`BaseAction._watch_trigger`)."""
+        if self._gated:
+            return
+        super()._watch_trigger(world, elapsed)
+
     def _control_claims(self) -> list[tuple[str, ControlDomain]]:
         """The entity's movement: the adversity drives it along its path."""
         return movement_of(str(self._entity_name))
