@@ -1,5 +1,14 @@
 # Migrating
 
+## A T4 dataset's LiDAR intensity is on the 0-255 scale
+
+A run's T4 dataset (`t4.enabled`) wrote its sweeps' intensity on CARLA's
+`[0, 1]` scale, which T4's readers take for a nearly black cloud. It is now
+on T4's 0-255 scale, as Autoware's point clouds and the T4Scenes' sweeps are
+([T4 Dataset](t4_dataset.md)): CARLA's value times 255. Code reading an
+earlier dataset's `.pcd.bin` files that scaled the intensity itself drops
+that; datasets written before stay on `[0, 1]` (#2237).
+
 ## An adversity trigger's draws have a stream of their own
 
 `AdversityFeasibleCondition`, the default trigger of every adversarial action,

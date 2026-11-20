@@ -604,6 +604,55 @@ def test_the_submission_carries_its_metadata(tmp_path: Path) -> None:
         build_submission(scenarios, {"scenario_rollouts": []})
 
 
+def test_a_rollout_is_written_after_its_sidecar(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each file goes in one rename, the ``.wosac.json`` first, and an earlier
+    export's ``.wosac.pb`` is removed before: a killed export never leaves a
+    rollout without its sidecar (``pack`` would take it for a merged file) or
+    beside an earlier export's (#2237)."""
+    from autoware_carla_scenario import atomic_file
+
+    log = _write_log(tmp_path / "Run-1.trajectory.jsonl")
+    out = tmp_path / "out"
+    rollouts_path, agents_path = write_rollout(log, out, scenario_id="S")
+    written: list[str] = []
+    real = atomic_file.os.replace
+
+    def replace(src: str, dst: str) -> None:
+        written.append(Path(dst).name)
+        if dst.endswith(".pb"):
+            raise OSError("killed before the rename")
+        real(src, dst)
+
+    monkeypatch.setattr(atomic_file.os, "replace", replace)
+    with pytest.raises(OSError, match="killed"):
+        write_rollout(log, out, scenario_id="S")
+    assert written == [agents_path.name, rollouts_path.name]
+    assert not rollouts_path.exists()
+    assert sorted(p.name for p in out.iterdir()) == [agents_path.name]
+
+
+def test_a_shard_killed_mid_write_leaves_no_shard(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A shard goes in one rename: a killed pack leaves no truncated shard,
+    which would parse as a submission short of scenarios (#2237)."""
+    from autoware_carla_scenario import atomic_file
+
+    scenarios = merge_rollouts([_rollout(tmp_path, f"r{n}", f"S{n}") for n in range(3)])
+    submission = build_submission(scenarios, {"unique_method_name": "m"})
+
+    def killed(src: str, dst: str) -> None:
+        raise OSError("killed before the rename")
+
+    monkeypatch.setattr(atomic_file.os, "replace", killed)
+    out = tmp_path / "submission"
+    with pytest.raises(OSError, match="killed"):
+        write_submission(submission, out)
+    assert list(out.iterdir()) == []
+
+
 def test_the_submission_is_written_in_shards(tmp_path: Path) -> None:
     scenarios = merge_rollouts([_rollout(tmp_path, f"r{n}", f"S{n}") for n in range(5)])
     submission = build_submission(

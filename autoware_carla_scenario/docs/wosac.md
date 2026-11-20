@@ -198,6 +198,14 @@ result.
 | `submission.binproto-00000-of-00001` | One serialised `SimAgentsChallengeSubmission` per shard: the metadata, and a contiguous share of the scenarios, sorted by `scenario_id` (`read_submission()` reads them back as one: every shard's scenarios, and the metadata once, the last shard's) |
 | `submission.tar.gz` | The shards, with `--tar` |
 
+Each `.wosac.pb`, `.wosac.json` and shard is written in one rename (a
+scratch file beside it, renamed over it), so a run killed while it writes
+leaves no truncated message, which would often still parse. `export` writes
+the `.wosac.json` first and the `.wosac.pb` last, removing an earlier
+export's `.wosac.pb` before: a rollout on disk always has its own sidecar,
+never none (which `pack` would take for a merged file) nor an earlier
+export's.
+
 The run's own files are named after its stem (`run_outputs.WOSAC_SUFFIX`),
 so a case run again under that stem removes the last attempt's rollout
 rather than leave it to be packed.

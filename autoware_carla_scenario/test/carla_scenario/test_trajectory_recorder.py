@@ -353,6 +353,27 @@ def test_the_rear_axle_is_the_one_a_driver_entity_offered(tmp_path: Path) -> Non
     assert rear_axles == [{"type": "rear_axle", "id": 1, "offset": -1.4}]
 
 
+def test_the_rear_axle_is_the_t4_datasets_driver_override(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Beside a T4 dataset of ``driver.rear_axle_offset_m``, and with no ego
+    saying where its base_link is, the log takes that offset too, by the
+    dataset's rule (``t4.ego_rear_axle``), not one from the box (#2237)."""
+    from autoware_carla_scenario import ego_base_link, t4
+
+    monkeypatch.setattr(ego_base_link, "_OFFSET_M", None)
+    monkeypatch.setattr(t4, "_driver_rear_axle", None)
+    monkeypatch.setattr(t4, "_active", SimpleNamespace(_rear_axle_override=-1.7))
+    world = _World()
+    recorder = TrajectoryRecorder(tmp_path / "s.trajectory.jsonl")
+    recorder.start(world)
+    world.snapshot = [_ActorSnapshot(1, 0.0, 0.0)]
+    recorder.record(world, 0.0)
+    recorder.close()
+    rear_axles = [r for r in _lines(recorder.path) if r["type"] == "rear_axle"]
+    assert rear_axles == [{"type": "rear_axle", "id": 1, "offset": -1.7}]
+
+
 def test_records_without_an_ego_or_a_light_change_follow_the_schema(
     tmp_path: Path,
 ) -> None:

@@ -1050,6 +1050,45 @@ def test_write_names_the_files_after_the_run(tmp_path: Path) -> None:
     assert scene_path.read_bytes() == first
 
 
+def test_an_export_without_a_map_removes_the_stale_map(tmp_path: Path) -> None:
+    """A map an earlier export wrote is not the new scene's: it goes, rather
+    than sit beside a scene that does not name it (#2237)."""
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl", EGO, _tick(100, _state(1, 0.0, 0.0))
+    )
+    stale = tmp_path / "out" / f"Run{MAP_SUFFIX}"
+    stale.parent.mkdir()
+    stale.write_bytes(b"an earlier export's map")
+    scene_path, map_path = write_t4_scene(log, tmp_path / "out", with_map=False)
+    assert map_path is None
+    assert not stale.exists()
+    assert sorted(p.name for p in (tmp_path / "out").iterdir()) == [scene_path.name]
+
+
+def test_a_scene_killed_mid_write_leaves_no_scene(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Each file goes in one rename, the scene's after its map's, and an
+    earlier export's scene is removed first: a killed export leaves no
+    truncated scene (which would often still parse), nor an old one beside
+    a new map (#2237)."""
+    from autoware_carla_scenario import atomic_file
+
+    log = _write_log(
+        tmp_path / "Run.trajectory.jsonl", EGO, _tick(100, _state(1, 0.0, 0.0))
+    )
+    scene_path, _ = write_t4_scene(log, tmp_path / "out", with_map=False)
+
+    def killed(src: str, dst: str) -> None:
+        raise OSError("killed before the rename")
+
+    monkeypatch.setattr(atomic_file.os, "replace", killed)
+    with pytest.raises(OSError, match="killed"):
+        write_t4_scene(log, tmp_path / "out", with_map=False)
+    assert list((tmp_path / "out").iterdir()) == []
+    assert not scene_path.exists()
+
+
 def test_cli_converts_every_log_under_a_directory(
     tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ) -> None:

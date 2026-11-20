@@ -409,6 +409,37 @@ def test_t4_points_scale_the_intensity_and_zero_the_fifth_column() -> None:
     assert out.shape == (1, 5) and out[0, 3] == 255.0 and out[0, 4] == 0.0
 
 
+def test_t4_points_scale_as_the_t4_datasets_sweeps() -> None:
+    from autoware_carla_scenario.t4_settings import t4_lidar_points
+
+    points = np.array([[1.0, 2.0, 3.0, 0.3], [4.0, 5.0, 6.0, 0.7]], dtype=np.float32)
+    np.testing.assert_array_equal(_t4_points(points)[:, :4], t4_lidar_points(points))
+
+
+def test_a_stopped_recorder_stops_the_scenes_and_freezes_nothing_more(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    """Once the recorder fails (and closes), a tick no longer overwrites the
+    frozen last row's extras, and no scene shows that history as now: the
+    scene is None, as before the first tick, said once (#2237)."""
+    live = _run(ticks=5)
+    frozen = dict(live._extras)
+    assert live.scene("run") is not None and not live.stopped
+    world = _World()
+    world.get_snapshot = MagicMock(side_effect=RuntimeError("gone"))  # type: ignore[method-assign]
+    late = EgoExtras(
+        acceleration_rig=np.array([9.0, 9.0]),
+        angular_velocity=np.array([0.0, 0.0, 9.0]),
+    )
+    with caplog.at_level("WARNING"):
+        for tick in range(5, 8):
+            live.record(world, 0.05 * tick, late)
+    assert live.stopped
+    assert live._extras == frozen
+    assert live.scene("run") is None
+    assert caplog.text.count("Live T4Scenes stopped") == 1
+
+
 # -- the road ahead on the lanelets ---------------------------------------------
 
 

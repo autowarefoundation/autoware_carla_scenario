@@ -343,9 +343,10 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
         ),
     },
     f"{_PACKAGE}.t4": _each(
-        "DATASET_SUFFIX INSTALL_HINT LIDAR_CHANNEL T4Settings T4UnavailableError "
-        "active_recording camera_channel category_of dataset_path opencv_of_ftheta "
-        "offer_driver_sensors offered_rear_axle require_writer withdraw_driver_sensors",
+        "DATASET_SUFFIX INSTALL_HINT INTENSITY_SCALE LIDAR_CHANNEL T4Settings "
+        "T4UnavailableError active_recording camera_channel category_of "
+        "dataset_path ego_rear_axle opencv_of_ftheta offer_driver_sensors "
+        "offered_rear_axle require_writer t4_lidar_points withdraw_driver_sensors",
         "writes a run as a T4 dataset with the autoware-carla-scenario-t4 "
         "package, which the runner does (t4.enabled), not a scenario; the "
         "model declares only the T4Recorder and T4Recording the checked "
@@ -361,6 +362,11 @@ NOT_MODELLED: dict[str, dict[str, str]] = {
             "the path of the schema's draft-07 copy beside the Python module "
             "(`Path(__file__)`), a value the model, compiled elsewhere, has "
             "no counterpart of; it is for the log's readers, not a scenario"
+        ),
+        "map_frame_offset": (
+            "the loaded map's offsets, which the recorder's map record and "
+            "the T4 dataset (t4, excluded) read, not the checked runner nor "
+            "a scenario"
         ),
     },
     f"{_PACKAGE}.ui.models": _each(
