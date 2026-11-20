@@ -9,8 +9,11 @@
 An ODD is named the way the ``odd`` config key names it: ``default``, a
 registered name, an OpenODD ``.yaml`` file, or ``package.module:function``.
 ``check`` builds it, and compiles a Python one with Codon as the runner would.
-The exit status is 0 when every ODD passed, 1 when one failed, and 2 when a
-Python ODD could not be compiled for want of Codon.
+The exit status is 0 when every ODD passed, 1 when one failed (or the checker
+itself raised on it: ``[FAILED] <odd>: checker error: ...``, with the
+traceback on stderr, and the other ODDs are still checked and reported), and 2
+when a Python ODD could not be compiled: for want of Codon, or because the
+check cannot compile it (``[SKIPPED] ...`` says why).
 
 ``route`` plans each scenario config's ego route on its Lanelet2 map (no
 CARLA server) and checks it against the ODD (:mod:`.route`).  Scenario
@@ -209,6 +212,7 @@ def describe_error(exc: BaseException, spec: Optional[str] = None) -> str:
 
 def _check(spec: str) -> int:
     from ..typecheck import typecheck_odd  # noqa: PLC0415
+    from ..typecheck.cli import _checker_error  # noqa: PLC0415
 
     try:
         odd = resolve_odd(spec)
@@ -219,10 +223,16 @@ def _check(spec: str) -> int:
     if builder is None:
         print(f"[ok] {spec}: {odd.name} reads ({len(odd.attributes)} attributes)")  # noqa: T201
         return 0
-    result = typecheck_odd(builder)
+    try:
+        result = typecheck_odd(builder)
+    except Exception as exc:  # noqa: BLE001 - reported as a failed check (#2249)
+        print(_checker_error(spec, exc))  # noqa: T201
+        return 1
     if result.skipped is not None:
+        # No verdict either way, whatever the reason (no Codon, or nothing
+        # the check can compile): never a pass (#2249).
         print(f"[SKIPPED] {spec}: {result.format()}")  # noqa: T201
-        return 2 if "Codon" in result.skipped else 0
+        return 2
     print(f"[{'ok' if result.ok else 'FAILED'}] {spec}: {result.format()}")  # noqa: T201
     return 0 if result.ok else 1
 

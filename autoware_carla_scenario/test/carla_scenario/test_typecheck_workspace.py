@@ -141,3 +141,87 @@ def test_the_workspace_is_utf8_whatever_the_locale(tmp_path: Path) -> None:
     )
     assert proc.returncode == 0, proc.stderr
     assert proc.stdout.strip() == "# naïve math.codon"
+
+
+def _checked_workspace(tmp_path: Path) -> check._Workspace:
+    """A workspace whose checked files are a package's ``__init__.py`` and
+    ``config.py``, unchanged copies of the author's."""
+    source = "a = 1\nb = 2\nc = 3\n"
+    ws = check._Workspace(tmp_path, None)
+    for rel in ("my_pkg/__init__.py", "my_pkg/config.py"):
+        (tmp_path / rel).parent.mkdir(parents=True, exist_ok=True)
+        (tmp_path / rel).write_text(check.PRELUDE + source, encoding="utf-8")
+        ws.files[rel] = f"/user/{rel}"
+        ws.origins[rel] = [1, 2, 3]
+    return ws
+
+
+@pytest.mark.parametrize(
+    "file",
+    [
+        "autoware_carla_scenario/__init__.codon",
+        "autoware_carla_scenario/config.py",
+        "typesafe_carla/__init__.py",
+        "/opt/codon/lib/codon/stdlib/config.py",
+        "../elsewhere/my_pkg/__init__.py",
+    ],
+)
+def test_a_frame_outside_the_checked_files_is_not_theirs(
+    tmp_path: Path, file: str
+) -> None:
+    # Same basename as a checked file, another directory: the model's,
+    # typesafe_carla's or Codon's, never the author's (#2249).
+    ws = _checked_workspace(tmp_path)
+    line = check._PRELUDE_LINES + 2
+    (diagnostic,) = check._parse_output(f"{file}:{line} (1): error: bad\n", ws)
+    assert diagnostic.path is None
+    assert diagnostic.message == "bad"
+
+
+@pytest.mark.parametrize(
+    "file",
+    ["my_pkg/config.py", "./my_pkg/config.py", "my_pkg/../my_pkg/config.py"],
+)
+def test_a_workspace_relative_frame_is_its_checked_file(
+    tmp_path: Path, file: str
+) -> None:
+    ws = _checked_workspace(tmp_path)
+    line = check._PRELUDE_LINES + 2
+    (diagnostic,) = check._parse_output(f"{file}:{line} (1): error: bad\n", ws)
+    assert diagnostic.path == "/user/my_pkg/config.py"
+    assert diagnostic.line == 2
+
+
+def test_an_absolute_frame_in_the_workspace_is_its_checked_file(
+    tmp_path: Path,
+) -> None:
+    ws = _checked_workspace(tmp_path)
+    line = check._PRELUDE_LINES + 3
+    file = tmp_path.resolve() / "my_pkg" / "__init__.py"
+    (diagnostic,) = check._parse_output(f"{file}:{line} (1): error: bad\n", ws)
+    assert diagnostic.path == "/user/my_pkg/__init__.py"
+    assert diagnostic.line == 3
+
+
+def test_a_frame_in_the_model_is_not_the_users_init(tmp_path: Path) -> None:
+    # The reproduction of #2249: an error in the model's __init__.codon,
+    # reached from the author's config.py, is reported at config.py.
+    ws = _checked_workspace(tmp_path)
+    line = check._PRELUDE_LINES + 2
+    output = (
+        f"my_pkg/config.py:{line} (1): error: during the realization of f\n"
+        f"╰─ autoware_carla_scenario/__init__.codon:30 (5): error: bad\n"
+    )
+    (diagnostic,) = check._parse_output(output, ws)
+    assert diagnostic.path == "/user/my_pkg/config.py"
+    assert diagnostic.line == 2
+
+
+def test_a_bare_basename_falls_back_to_the_one_checked_file_of_that_name(
+    tmp_path: Path,
+) -> None:
+    ws = _checked_workspace(tmp_path)
+    line = check._PRELUDE_LINES + 1
+    (diagnostic,) = check._parse_output(f"config.py:{line} (1): error: bad\n", ws)
+    assert diagnostic.path == "/user/my_pkg/config.py"
+    assert diagnostic.line == 1

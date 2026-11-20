@@ -429,6 +429,20 @@ def test_a_read_entry_has_its_times_touched(cache_dir: Path) -> None:
     assert (cache_dir / "k.json").stat().st_mtime > 0
 
 
+def test_an_entry_whose_times_cannot_be_touched_is_still_a_hit(
+    cache_dir: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    # A read-only cache (restored by CI) serves its verdicts (#2249).
+    _store("k", _failed(), _sources("/run1"))
+    check._CACHE.clear()
+
+    def read_only(*args: object, **kwargs: object) -> None:
+        raise PermissionError("read-only file system")
+
+    monkeypatch.setattr(check.os, "utime", read_only)
+    assert _cached("k", _sources("/run1")) == _failed()
+
+
 def test_a_crash_is_kept_for_the_process_only(cache_dir: Path) -> None:
     crashed = TypeCheckResult("pkg.MyScenario", ok=False, crashed=True)
     _store("k", crashed, _sources("/run1"))
@@ -495,6 +509,38 @@ def test_the_default_directory(
     monkeypatch.setattr(check.Path, "home", lambda: Path(home))
     found = check._cache_dir()
     assert (str(found) if found is not None else None) == expected
+
+
+def test_a_tilde_in_xdg_cache_home_is_expanded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    # The default is utils.cache_dir.user_cache_dir()'s (#2187, #2249).
+    monkeypatch.delenv(CACHE_DIR_ENV, raising=False)
+    monkeypatch.setenv("HOME", "/home/u")
+    monkeypatch.setenv("XDG_CACHE_HOME", "~/xdg")
+    assert check._cache_dir() == Path("/home/u/xdg/autoware_carla_scenario/typecheck")
+
+
+def test_a_tilde_in_the_configured_directory_is_expanded(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setenv("HOME", "/home/u")
+    monkeypatch.setenv(CACHE_DIR_ENV, "~/verdicts")
+    assert check._cache_dir() == Path("/home/u/verdicts")
+
+
+def test_a_relative_configured_directory_is_ignored_with_a_warning(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, caplog: pytest.LogCaptureFixture
+) -> None:
+    # It would put the cache wherever the check runs from (#2249).
+    monkeypatch.setenv(CACHE_DIR_ENV, "relative/cache")
+    monkeypatch.setenv("XDG_CACHE_HOME", str(tmp_path))
+    check._warn_relative_cache_dir.cache_clear()
+    with caplog.at_level("WARNING", logger=check.logger.name):
+        found = check._cache_dir()
+    assert found == tmp_path / "autoware_carla_scenario" / "typecheck"
+    assert "relative/cache" in caplog.text
+    assert "not an absolute path" in caplog.text
 
 
 def test_without_a_home_directory_verdicts_stay_in_the_process(
@@ -646,3 +692,50 @@ def test_a_reused_scenario_verdict_is_named_for_the_check_it_answers(
     other = check._reused("pkg.Second", "k", {}, kept)
     assert other.scenario == "pkg.Second" and other.seconds == 4.0
     assert kept.scenario == "pkg.First"
+
+
+def _digest_of(root: Path) -> str:
+    import hashlib  # noqa: PLC0415
+
+    digest = hashlib.sha256()
+    check._tree_digest(digest, list(root.rglob("*.codon")), root)
+    return digest.hexdigest()
+
+
+def test_a_tree_digest_covers_paths_as_well_as_bytes(tmp_path: Path) -> None:
+    # Three trees of the same bytes in the same order: three digests (#2249).
+    a = tmp_path / "a"
+    (a / "pkg").mkdir(parents=True)
+    (a / "pkg" / "x.codon").write_text("x = 1\n", encoding="utf-8")
+    moved = tmp_path / "moved"
+    (moved / "other").mkdir(parents=True)
+    (moved / "other" / "x.codon").write_text("x = 1\n", encoding="utf-8")
+    renamed = tmp_path / "renamed"
+    (renamed / "pkg").mkdir(parents=True)
+    (renamed / "pkg" / "y.codon").write_text("x = 1\n", encoding="utf-8")
+    added = tmp_path / "added"
+    shutil.copytree(a, added)
+    (added / "pkg" / "__init__.codon").write_text("", encoding="utf-8")
+    digests = {_digest_of(t) for t in (a, moved, renamed, added)}
+    assert len(digests) == 4
+
+
+def test_a_tree_digest_does_not_depend_on_where_the_tree_is(tmp_path: Path) -> None:
+    a = tmp_path / "a"
+    (a / "pkg").mkdir(parents=True)
+    (a / "pkg" / "x.codon").write_text("x = 1\n", encoding="utf-8")
+    b = tmp_path / "elsewhere" / "b"
+    shutil.copytree(a, b)
+    assert _digest_of(a) == _digest_of(b)
+
+
+def test_a_split_between_files_is_another_digest(tmp_path: Path) -> None:
+    one = tmp_path / "one"
+    one.mkdir()
+    (one / "a.codon").write_text("ab", encoding="utf-8")
+    (one / "b.codon").write_text("", encoding="utf-8")
+    two = tmp_path / "two"
+    two.mkdir()
+    (two / "a.codon").write_text("a", encoding="utf-8")
+    (two / "b.codon").write_text("b", encoding="utf-8")
+    assert _digest_of(one) != _digest_of(two)
