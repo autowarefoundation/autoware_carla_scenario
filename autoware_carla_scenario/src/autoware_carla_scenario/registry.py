@@ -61,6 +61,7 @@ __all__ = [
     "get_scenario_builder",
     "get_scenario_classes",
     "get_scenario_document",
+    "SCENARIO_DOCUMENT_RESOLVER",
     "register_conf_dir",
     "unregister_conf_dir",
     "get_conf_dirs",
@@ -169,8 +170,71 @@ def register_scenario_document(name: str, loader: ScenarioDocumentLoader) -> Non
 
     The loader is called on every :func:`get_scenario_document`, with no
     caching here: each lookup reads the document as it is then.
+
+    It also makes sure the ``${scenario_document:...}`` resolver
+    (:data:`SCENARIO_DOCUMENT_RESOLVER`) exists, through which an exported
+    package's Hydra config reads the ego's settings out of this document.
     """
     _SCENARIO_DOCUMENTS[name] = loader
+    _register_scenario_document_resolver()
+
+
+#: The OmegaConf resolver an exported scenario package's Hydra config reads its
+#: document's values through: ``${scenario_document:<scenario>,<path>}`` is the
+#: attribute *path* (``ego.spawn.lanelet_id``) of the document the scenario
+#: registered (:func:`register_scenario_document`), read when the key is first
+#: read on a composed config (OmegaConf keeps the value with that config, so
+#: a batch does not re-read the document at every access).  The ``ego`` keys of an export are written this way, so a run follows the
+#: document as it is then -- an edited one, or the one ``<PKG>_DOCUMENT_PATH``
+#: points at -- while a ``key=value`` override (the command line's, the
+#: sweeper's) replaces the interpolation and wins.  A path through an unset
+#: value (an ego with no goal) reads as ``None``.
+SCENARIO_DOCUMENT_RESOLVER = "scenario_document"
+
+
+def _resolve_scenario_document(name: Any, path: Any) -> Any:
+    """The value ``${scenario_document:<name>,<path>}`` stands for.
+
+    Raises:
+        ValueError: When *name* registered no document, or *path* names no
+            attribute of it or ends on something that is not a plain value.
+    """
+    reference = f"${{{SCENARIO_DOCUMENT_RESOLVER}:{name},{path}}}"
+    document = get_scenario_document(str(name))
+    if document is None:
+        raise ValueError(
+            f"{reference}: scenario {str(name)!r} registered no document "
+            "(is its package installed?)"
+        )
+    value: Any = document
+    for part in str(path).split("."):
+        if value is None:
+            return None
+        if not part or part.startswith("_") or not hasattr(value, part):
+            raise ValueError(f"{reference}: the document has no {path!r}")
+        value = getattr(value, part)
+    if value is not None and not isinstance(value, (str, int, float, bool)):
+        raise ValueError(
+            f"{reference}: {path!r} is a {type(value).__name__}, not a plain value"
+        )
+    return value
+
+
+#: Held while the resolver is registered: two threads registering documents at
+#: once must not both find it missing, and the second one's
+#: ``register_new_resolver`` then raise that it exists.
+_RESOLVER_LOCK = threading.Lock()
+
+
+def _register_scenario_document_resolver() -> None:
+    """Register :data:`SCENARIO_DOCUMENT_RESOLVER` with OmegaConf, once."""
+    from omegaconf import OmegaConf  # noqa: PLC0415 - only a document needs it
+
+    with _RESOLVER_LOCK:
+        if not OmegaConf.has_resolver(SCENARIO_DOCUMENT_RESOLVER):
+            OmegaConf.register_new_resolver(
+                SCENARIO_DOCUMENT_RESOLVER, _resolve_scenario_document, use_cache=True
+            )
 
 
 def get_scenario_document(name: str) -> ScenarioDocument | None:

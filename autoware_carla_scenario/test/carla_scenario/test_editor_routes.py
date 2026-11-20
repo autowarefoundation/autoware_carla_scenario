@@ -1456,8 +1456,9 @@ class TestLaneletSearches:
         config = build_scenario_config(_document(store, draft_id))
         key = f"scenario.param_overrides.{node.id}.lanelet_id"
         assert config["sweep"]["constraints"] == {key: [{"type": "is_junction"}]}
-        # And the key it writes to is declared, or Hydra's struct mode refuses it.
-        assert config["scenario"]["param_overrides"][node.id]["lanelet_id"] == 183
+        # And the key it writes to is declared, or Hydra's struct mode refuses
+        # it -- null, the document's, unless the sweeper sets it.
+        assert config["scenario"]["param_overrides"][node.id] == {"lanelet_id": None}
 
     def test_no_inspector_nests_a_form_inside_another(
         self, client: TestClient, store: DraftStore, draft_id: str
@@ -1736,6 +1737,26 @@ class TestScenarioMetadata:
         document = _document(store, draft_id)
         assert document.map.no_3d_model_lanelet_ids == [3, 4]
         assert document.title != "Renamed"
+
+    def test_a_reference_is_not_an_excluded_lanelet_list(
+        self, client: TestClient, store: DraftStore, draft_id: str
+    ) -> None:
+        """The map's own list cannot name itself: refused beside the field,
+        not dropped (#2235)."""
+        client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"map_no_3d_model_lanelet_ids": "3, 4"},
+        )
+        ref = "${map.no_3d_model_lanelet_ids}"
+        response = client.post(
+            f"/draft/{draft_id}/scenario",
+            data={"title": "Renamed", "map_no_3d_model_lanelet_ids": ref},
+        )
+        assert response.status_code == 200
+        assert f"Excluded lanelet IDs: must be whole numbers, got {ref!r}" in (
+            html.unescape(response.text)
+        )
+        assert _document(store, draft_id).map.no_3d_model_lanelet_ids == [3, 4]
 
     def test_an_invalid_identifier_is_refused(
         self, client: TestClient, store: DraftStore, draft_id: str
@@ -5330,6 +5351,40 @@ class TestTheGate:
         gate = _document(store, draft_id).gate
         assert gate is not None
         assert [e.item for e in gate.coverage_items] == ["gap"]
+
+    @pytest.mark.parametrize("unticked", ["0", "off", "false", "no", ""])
+    def test_a_checkbox_posted_unticked_is_not_ticked(self, unticked: str) -> None:
+        """Read as every checkbox is (registry.is_checked, #2235), not by
+        truthiness: a posted "0" or "off" is not ticked."""
+        from autoware_carla_scenario.editor.service import parse_gate_form
+
+        assert parse_gate_form({"gate_enabled": unticked}) is None
+        gate = parse_gate_form(
+            {
+                "gate_enabled": "1",
+                "gate_on_min_success_rate": unticked,
+                "gate_min_success_rate": "95",
+                "gate_item_name_0": "gap",
+                "gate_item_on_0": unticked,
+                "gate_item_min_0": "80",
+            }
+        )
+        assert gate is not None
+        assert gate.min_success_rate is None
+        assert gate.coverage_items == []
+        ticked = parse_gate_form(
+            {
+                "gate_enabled": "on",
+                "gate_on_min_success_rate": "true",
+                "gate_min_success_rate": "95",
+                "gate_item_name_0": "gap",
+                "gate_item_on_0": "yes",
+                "gate_item_min_0": "80",
+            }
+        )
+        assert ticked is not None
+        assert ticked.min_success_rate == pytest.approx(0.95)
+        assert [e.item for e in ticked.coverage_items] == ["gap"]
 
     def test_every_threshold_of_the_gate_has_a_row(self) -> None:
         """A new GateSpec threshold must reach the editor, as a share in %

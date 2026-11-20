@@ -22,6 +22,13 @@ from ..serve_cli import add_bind_arguments, warn_if_exposed
 __all__ = ["main"]
 
 
+def _env_path(name: str) -> str | None:
+    """The variable *name*, or ``None`` when it is unset or blank: a blank
+    one means "unset", as every other editor variable does, not a directory
+    named by its spaces."""
+    return (os.environ.get(name) or "").strip() or None
+
+
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="scenario-editor",
@@ -41,14 +48,14 @@ def _parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--drafts",
         type=Path,
-        default=os.environ.get("SCENARIO_EDITOR_DRAFTS") or None,
+        default=_env_path("SCENARIO_EDITOR_DRAFTS"),
         help="where drafts are stored "
         "(env SCENARIO_EDITOR_DRAFTS; default ./scenario_drafts)",
     )
     parser.add_argument(
         "--export-dir",
         type=Path,
-        default=os.environ.get("SCENARIO_EDITOR_EXPORT_DIR") or None,
+        default=_env_path("SCENARIO_EDITOR_EXPORT_DIR"),
         help="where an exported wheelhouse's .zip is staged for download, kept "
         "until the draft is deleted or exported again "
         "(env SCENARIO_EDITOR_EXPORT_DIR; default "

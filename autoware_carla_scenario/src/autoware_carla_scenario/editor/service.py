@@ -1971,8 +1971,8 @@ def as_port(raw: Any, label: str, fallback: int) -> int:
 
 
 def _as_int_list(raw: Any, label: str) -> Any:
-    """Return *raw* as a list of ints (or an interpolation), or raise a
-    user-facing error naming *label*.
+    """Return *raw* as a list of ints, or raise a user-facing error naming
+    *label* (an interpolation too: no field read through here takes one).
 
     The form parser (:func:`_parse`) turns the same ``ValueError`` into an
     :class:`EditorError`; a handler that reads an id list itself goes through
@@ -2056,18 +2056,20 @@ def parse_gate_form(form: Mapping[str, Any]) -> Optional["GateSpec"]:
     default when it has none -- a threshold just ticked on.  A cover item is
     a row (``gate_item_name_<i>``, ``gate_item_min_<i>`` in percent) kept
     while its checkbox (``gate_item_on_<i>``) is ticked; ``gate_item_new``
-    adds one at 100 %.
+    adds one at 100 %.  Every checkbox is read by
+    :func:`~autoware_carla_scenario.authoring.registry.is_checked`, so a
+    posted ``"0"`` or ``"off"`` is not ticked.
 
     Raises:
         EditorError: If a value is not a number, or the gate refuses it.
     """
     from ..authoring.models import GateSpec  # noqa: PLC0415
 
-    if not form.get("gate_enabled"):
+    if not is_checked(form, "gate_enabled"):
         return None
     raw: dict[str, Any] = {}
     for field in GATE_FIELDS + GATE_CONSISTENCY_FIELDS:
-        if field.optional and not form.get(f"gate_on_{field.name}"):
+        if field.optional and not is_checked(form, f"gate_on_{field.name}"):
             continue
         if not field.optional and f"gate_{field.name}" not in form:
             continue  # not on the form yet: the model's default
@@ -2076,7 +2078,7 @@ def parse_gate_form(form: Mapping[str, Any]) -> Optional["GateSpec"]:
     index = 0
     while f"gate_item_name_{index}" in form:
         name = str(form[f"gate_item_name_{index}"]).strip()
-        if name and form.get(f"gate_item_on_{index}"):
+        if name and is_checked(form, f"gate_item_on_{index}"):
             grade = _gate_number(
                 form, GATE_ITEM_FIELD, f"gate_item_min_{index}", f"coverage of {name}"
             )

@@ -7,15 +7,29 @@ existing :class:`~autoware_carla_scenario.sweeper.LaneletConstraintSweeper`
 already understands.  Nothing here is editor-specific; the file this module
 produces is one a human could have written.
 
+The document decides
+--------------------
+An exported package runs its document as it is when the run starts -- the one
+it ships, edited or not, or the one ``<PKG>_DOCUMENT_PATH`` points at -- so
+nothing the document says is copied into the config as a value.  A key the
+config declares only so that it can be overridden is ``null``, which
+:class:`~autoware_carla_scenario.declarative.DeclarativeScenario` reads as "the
+document's"; a key the runner reads before the scenario is built (the ego's)
+names the document's value with ``${scenario_document:...}``
+(:data:`~autoware_carla_scenario.registry.SCENARIO_DOCUMENT_RESOLVER`).
+Either way a ``key=value`` override -- the command line's, the sweeper's,
+an expansion's -- replaces it and wins.
+
 Spawn keys
 ----------
 The ego's spawn reaches the runner through the framework's own
 ``ego.spawn_lanelet_id`` / ``ego.spawn_s`` keys, which is what the sweeper
 overrides today, with its lateral offset and heading as ``ego.spawn_t`` /
 ``ego.spawn_heading``.  Other entities get a declared ``scenario.spawn_overrides``
-sub-tree so that they are addressable by the same plain ``key=value`` override
-mechanism -- the keys are written into the generated YAML precisely so that
-Hydra's struct mode accepts them.
+sub-tree, all ``null``, so that they are addressable by the same plain
+``key=value`` override mechanism -- the keys are written into the generated
+YAML precisely so that Hydra's struct mode accepts them.  So does
+``scenario.timeout_seconds``, ``null`` too.
 
 Ego keys
 --------
@@ -23,10 +37,10 @@ The ego's goal travels the same way as its spawn, as ``ego.goal_lanelet_id`` /
 ``ego.goal_s``, and which stack drives it as ``ego.entity``.  Those are the keys
 the runner turns into the ego's configuration, so a document that sends the ego
 somewhere has to write them rather than hand the goal over some editor-only
-channel.  The goal keys are emitted only when the document has a goal: an ego
-the TrafficManager drives may have no destination, and a document being edited
-into shape should leave the ``ego`` group's own ``null`` in place rather than a
-lanelet nobody chose.
+channel.  They read the document (:func:`document_ref`), and an ego with no
+goal reads as the ``ego`` group's own ``null``: an ego the TrafficManager drives
+may have no destination, and a document being edited into shape should not
+send it to a lanelet nobody chose.
 
 Route keys
 ----------
@@ -90,6 +104,7 @@ __all__ = [
     "ROUTE_CONFIG_DEFAULTS",
     "build_map_group_config",
     "build_scenario_config",
+    "document_ref",
     "dump_map_group_config",
     "effective_no_3d_model_lanelet_ids",
     "map_group_no_3d_model_lanelet_ids",
@@ -229,13 +244,45 @@ def swept_entity(document: ScenarioDocument) -> Entity | None:
     return document.entity(slot.owner_id)
 
 
+def document_ref(document: ScenarioDocument, path: str) -> str:
+    """Return the interpolation that reads *path* of *document* at run time.
+
+    ``${scenario_document:<id>,<path>}``, resolved against the document the
+    package registered under the scenario's id
+    (:data:`~autoware_carla_scenario.registry.SCENARIO_DOCUMENT_RESOLVER`):
+    the document as it is when the key is read, not as it was exported.
+    """
+    from ..registry import SCENARIO_DOCUMENT_RESOLVER  # noqa: PLC0415
+
+    return f"${{{SCENARIO_DOCUMENT_RESOLVER}:{document.id},{path}}}"
+
+
+#: The ``ego`` keys an export writes, and the attribute of the document each
+#: reads (:func:`document_ref`).
+_EGO_DOCUMENT_KEYS: dict[str, str] = {
+    "vehicle_type": "ego.vehicle_type",
+    "initial_speed_kmh": "ego.initial_speed_kmh",
+    "spawn_lanelet_id": "ego.spawn.lanelet_id",
+    "spawn_s": "ego.spawn.s.value",
+    # Across the lane and turned against it, as an NPC's spawn is: the
+    # runner builds the ego's pose from these keys alone.
+    "spawn_t": "ego.spawn.t",
+    "spawn_heading": "ego.spawn.heading",
+    "entity": "ego.driven_by",
+    # ``null`` (the ego group's own) for an ego with no goal.
+    "goal_lanelet_id": "ego.goal.lanelet_id",
+    "goal_s": "ego.goal.s",
+}
+
+
 def _entity_spawn_overrides(document: ScenarioDocument) -> dict[str, Any]:
-    """Return the declared ``scenario.spawn_overrides`` tree for non-ego entities."""
+    """Return the declared ``scenario.spawn_overrides`` tree for non-ego entities.
+
+    Every value is ``null``, "the document's": the keys are declared only so
+    that an override (the sweeper's) can set them.
+    """
     return {
-        entity.id: {
-            "lanelet_id": entity.spawn.lanelet_id,
-            "s": entity.spawn.s.value,
-        }
+        entity.id: {"lanelet_id": None, "s": None}
         for entity in document.entities
         if entity.kind != "ego"
     }
@@ -247,12 +294,13 @@ def _param_override_defaults(document: ScenarioDocument) -> dict[str, Any]:
     Only searched and derived parameters are declared.  A pinned lanelet already reaches the
     runtime in the document itself, and declaring a key for every lanelet a
     primitive can name would fill the config with addresses nothing writes to.
+    Each is ``null``, "the document's", as a spawn override is.
     """
     tree: dict[str, Any] = {}
     for slot in document.lanelet_slots():
         if slot.field in ("spawn", "goal") or not (slot.searching or slot.deriving):
             continue
-        tree.setdefault(slot.owner_id, {})[slot.field] = slot.lanelet_id
+        tree.setdefault(slot.owner_id, {})[slot.field] = None
     return tree
 
 
@@ -622,7 +670,9 @@ def build_scenario_config(
     """
     scenario: dict[str, Any] = {
         "name": document.id,
-        "timeout_seconds": document.timeout_seconds,
+        # Declared so that ``scenario.timeout_seconds=...`` is accepted; null
+        # runs the document's own timeout.
+        "timeout_seconds": None,
     }
     if document_path is not None:
         scenario["document_path"] = document_path
@@ -636,23 +686,11 @@ def build_scenario_config(
     if map_overrides:
         config["map"] = map_overrides
 
-    ego = document.ego
-    if ego is not None:
-        ego_overrides: dict[str, Any] = {
-            "vehicle_type": ego.vehicle_type,
-            "initial_speed_kmh": ego.initial_speed_kmh,
-            "spawn_lanelet_id": ego.spawn.lanelet_id,
-            "spawn_s": ego.spawn.s.value,
-            # Across the lane and turned against it, as an NPC's spawn is: the
-            # runner builds the ego's pose from these keys alone.
-            "spawn_t": ego.spawn.t,
-            "spawn_heading": ego.spawn.heading,
-            "entity": ego.driven_by,
+    if document.ego is not None:
+        config["ego"] = {
+            key: document_ref(document, path)
+            for key, path in _EGO_DOCUMENT_KEYS.items()
         }
-        if ego.goal is not None:
-            ego_overrides["goal_lanelet_id"] = ego.goal.lanelet_id
-            ego_overrides["goal_s"] = ego.goal.s
-        config["ego"] = ego_overrides
 
     # Every searched parameter gets its key declared, whether or not it is the
     # one this run sweeps: a key Hydra's struct mode has never seen is a key an
