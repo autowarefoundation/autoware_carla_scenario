@@ -1527,11 +1527,13 @@ How a CARLA vehicle follows its SUMO vehicle is `vehicle_control`:
   queue at a light say, is given its zero once).
 
 **Visibility** (`traffic.vehicles.follow_visibility`, on by default): SUMO's traffic sees only
-as far as the run's weather lets a driver see. An
-`EnvironmentAction` that sets the fog, the rain or the sun records how far
-drivers see in the weather it leaves
-([Visibility follows the conditions](odd.md#visibility-follows-the-conditions)),
-and the backend holds each of SUMO's own vehicles (ambient and background)
+as far as the run's weather lets a driver see. How far drivers see is
+worked out before the run from the conditions the run names
+([Visibility follows the conditions](odd.md#visibility-follows-the-conditions));
+during the run only an `EnvironmentAction` given `visibility_m` changes it
+(one that sets the fog, the rain or the sun alone leaves the visibility as it
+was, so a mid-run fog change does not slow the traffic without one), and the
+backend holds each of SUMO's own vehicles (ambient and background)
 to the speed its driver keeps in that distance: the weather rules'
 `sight_speed` ([Weather rules](odd.md#weather-rules)), which reads the
 visibility, at the driver's own quantile (`visibility.driver_quantile`, from

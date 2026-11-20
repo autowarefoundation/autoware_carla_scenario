@@ -10,7 +10,7 @@ from ..conditions.base import BaseCondition, find_actor_in_list
 from ..constants import EGO_ROLE_NAME
 from ..entity.externally_driven import ExternallyDrivenEgo
 from ..entity.registry import find_vehicle_entity
-from ..entity_role import EntityRole
+from ..entity_role import EntityRole, canonical_role_name
 from ..perception_fault import (
     PerceivedCategory,
     PerceptionFault,
@@ -62,7 +62,7 @@ class PerceptionFaultInjectionAction(BaseAction):
 
     Raises:
         ValueError: If a size is negative or not finite, or *entity_name*
-            is the ego.
+            is the ego (``Ego``, or ``ego`` / ``hero`` in any case).
     """
 
     # Declared for the static check (docs/typecheck.md).
@@ -85,10 +85,13 @@ class PerceptionFaultInjectionAction(BaseAction):
     ) -> None:
         super().__init__(label=label, condition=condition, timing=timing, once=once)
         self._entity_name = str(entity_name)
-        if self._entity_name == str(EGO_ROLE_NAME):
+        # By the canonical name, as the actor lookup reads it: ``ego`` and
+        # ``hero``, in any case, are the ego too (EGO_ROLE_ALIASES).
+        if canonical_role_name(self._entity_name) == str(EGO_ROLE_NAME):
             raise ValueError(
-                "PerceptionFaultInjectionAction: the ego is not reported to its "
-                "own driver; name another road user"
+                f"PerceptionFaultInjectionAction: {self._entity_name!r} is the "
+                "ego, which is not reported to its own driver; name another "
+                "road user"
             )
         self._fault = PerceptionFault(
             category=category,

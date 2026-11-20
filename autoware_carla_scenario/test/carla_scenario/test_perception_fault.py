@@ -109,6 +109,14 @@ def test_the_ego_cannot_be_the_road_user() -> None:
         PerceptionFaultInjectionAction(EGO_ROLE_NAME, visible=False)
 
 
+@pytest.mark.parametrize("alias", ["hero", "ego", "HERO", "Hero", "EGO"])
+def test_the_ego_cannot_be_the_road_user_by_an_alias(alias: str) -> None:
+    # The actor lookup reads these as the ego (canonical_role_name), so the
+    # fault would land on the ego's own actor.
+    with pytest.raises(ValueError, match=repr(alias)):
+        PerceptionFaultInjectionAction(alias, visible=False)
+
+
 def test_an_autoware_ego_is_not_implemented_yet() -> None:
     register_vehicle_entity(EGO_ROLE_NAME, object.__new__(AutowareEgoEntity))
     action = PerceptionFaultInjectionAction("npc1", visible=False)
